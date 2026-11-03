@@ -14,6 +14,8 @@ import type { NumberedKind, ThingAddress } from '../api/addresses'
 import { addressOf, resolveNumber, resolveProject } from '../api/addresses'
 import { ApiError } from '../api/http'
 
+import { peekEarlyProjects } from './earlyProjects'
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const NUMBER = /^\d+$/
 
@@ -171,6 +173,18 @@ async function projectOf(ref: string): Promise<{ id: string; slug: string } | nu
   // 旧短名查得到 UUID，但地址要换成现在的短名，所以只认现在的短名和 UUID 本身。
   // 侧栏点频道时给的是 UUID：认得它，切一次频道就少等一个来回。
   if (known && slug && (slug === ref || known === ref)) return { id: known, slug }
+  if (typeof window !== 'undefined' && window.__cxEarlyProjects) {
+    const early = await peekEarlyProjects()
+    if (early) {
+      rememberProjects(early.data)
+      const afterKnown = projectIdByRef.get(ref)
+      const afterSlug = afterKnown ? slugById.get(afterKnown) : undefined
+      if (afterKnown && afterSlug && (afterSlug === ref || afterKnown === ref)) {
+        refusedByRef.delete(ref)
+        return { id: afterKnown, slug: afterSlug }
+      }
+    }
+  }
   try {
     const found = await once(`p/${ref}`, () => resolveProject(ref))
     rememberProject(found.id, found.slug)

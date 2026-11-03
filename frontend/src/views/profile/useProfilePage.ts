@@ -13,9 +13,12 @@ import { usePageActive } from '@/composables/usePageActive'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { getMemberSummary, getUserProfile, getUserTopics, listProjectAgents, setUserRemark } from '@/api'
+import { getMemberSummary, getUserProfile, getUserTopics, setUserRemark } from '@/api'
 import i18n, { t } from '@/i18n'
 import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { agentsQuery } from '@/query/project'
+import { fromSnapshot } from '@/query/snapshot'
 
 /** 「最近参与的话题」列几个。 */
 export const RECENT_TOPICS = 8
@@ -45,17 +48,14 @@ export function useProfilePage(handle: () => string, projectId: () => string | u
       enabled: pageActive.value,
       queryKey: pageKey.value,
       queryFn: async (): Promise<ProfilePage> => {
+        const target = handle()
         const [profile, member, recent, agents] = await Promise.all([
-          getUserProfile(handle()),
-          projectId() ? getMemberSummary(projectId()!, handle()).catch(() => null) : Promise.resolve(null),
-          getUserTopics(handle(), { limit: RECENT_TOPICS })
+          fromSnapshot(keys.userProfile(target), () => getUserProfile(target)),
+          projectId() ? getMemberSummary(projectId()!, target).catch(() => null) : Promise.resolve(null),
+          fromSnapshot(keys.userRecentTopics(target), () => getUserTopics(target, { limit: RECENT_TOPICS }))
             .then((r) => r.topics)
             .catch(() => null),
-          projectId()
-            ? listProjectAgents(projectId()!)
-                .then((r) => r.data)
-                .catch(() => [])
-            : Promise.resolve([]),
+          projectId() ? queryClient.fetchQuery(agentsQuery(projectId()!)).catch(() => []) : Promise.resolve([]),
         ])
         return { profile, member, recent, agents }
       },

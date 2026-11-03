@@ -89,6 +89,15 @@ export function connectMcpServer(projectId: string, name: string): Promise<{ aut
     method: 'POST',
   })
 }
+/** 从授权服务器回来时地址栏里的 `mcp_handoff`：回调没存任何东西，只把结果替发起连接的
+ *  成员留着。设置页的 MCP 一栏登录着去领，只有发起人、而且此刻还能配置这个项目的 AI 队友
+ *  时领得到；回的是这次连接的结果（`mcp` 加 `mcp_result` 或 `mcp_error`），和回调以前直接
+ *  落在地址栏里的一样。 */
+export function claimMcpHandoff(projectId: string, handoff: string): Promise<{ query: Record<string, string> }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/handoffs/${encodeURIComponent(handoff)}`, {
+    method: 'POST',
+  })
+}
 export function disconnectMcpServer(projectId: string, name: string): Promise<null> {
   return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}/connection`, {
     method: 'DELETE',

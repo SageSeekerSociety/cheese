@@ -51,7 +51,8 @@ def test_connect_strips_proxy_credentials_and_passes_binary_bytes(
         )
         token = mint_scoped_token(project_id=str(project))
         with client.websocket_connect(
-            f"/sandbox/forge-tunnel/{project}?token={token}"
+            f"/sandbox/forge-tunnel/{project}",
+            headers={"Authorization": f"Bearer {token}"},
         ) as ws:
             ws.send_bytes(
                 (
@@ -82,7 +83,7 @@ def test_unrelated_destinations_never_dial(client, project, monkeypatch, target)
     monkeypatch.setattr("app.api.routes.forge_token.asyncio.open_connection", forbidden)
     token = mint_scoped_token(project_id=str(project))
     with client.websocket_connect(
-        f"/sandbox/forge-tunnel/{project}?token={token}"
+        f"/sandbox/forge-tunnel/{project}", headers={"Authorization": f"Bearer {token}"}
     ) as ws:
         ws.send_bytes(f"CONNECT {target} HTTP/1.1\r\n\r\n".encode())
         assert ws.receive_bytes() == b"HTTP/1.1 403 Forbidden\r\n\r\n"
@@ -98,5 +99,8 @@ def test_tunnel_requires_current_project_token(client, project, kind):
         else "invalid"
     )
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(f"/sandbox/forge-tunnel/{project}?token={token}"):
+        with client.websocket_connect(
+            f"/sandbox/forge-tunnel/{project}",
+            headers={"Authorization": f"Bearer {token}"},
+        ):
             pytest.fail("unauthorized socket accepted")

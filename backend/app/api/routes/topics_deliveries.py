@@ -3,7 +3,7 @@
 A slice of `app/api/routes/topics.py`, which is over its 1,500-line cap and may
 only shrink. It moved when the route stopped being agent-only: a person in the
 room sets a reminder for themselves through it, the same way an AI teammate
-calls `cheese_deliver_at`.
+calls `cheese_session(action=deliver_at)`.
 
 Ordering. This module sorts after `topics.py` and `topics_compute.py` and before
 `topics_documents.py` (`compute` < `deliveries` < `documents`). No route

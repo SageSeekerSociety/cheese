@@ -54,4 +54,13 @@ describe('BaseLoadError', () => {
     expect(await screen.findByText("You don't have access to this")).toBeTruthy()
     expect(screen.getByText('HTTP 403 for /library')).toBeTruthy()
   })
+
+  // Last: the hold lasts for the rest of the page, as it does in a browser.
+  it('says nothing once the page knows it is outdated: the refresh notice is the only message', async () => {
+    const { holdFailureNotices } = await import('@/lib/toast')
+    holdFailureNotices()
+    mount({ title: "Couldn't load overview", error: 'This page is out of date; refresh to continue' })
+    expect(screen.queryByText("Couldn't load overview")).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
 })

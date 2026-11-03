@@ -19,12 +19,15 @@ defineProps<{
   failed?: boolean
   /** 重试那颗的读屏标签；给了才画。 */
   retryLabel?: string
+  /** 拿掉了、还留着位置的那一枚（芝士面板里关掉的「当前页面」）：名字划掉，
+   *  × 换成一颗 +，点了带回来。给了 `restoreLabel` 才是这一种。 */
+  restoreLabel?: string
 }>()
-const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
+const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void; (e: 'restore'): void }>()
 </script>
 
 <template>
-  <span class="chip" :class="{ 'chip--quiet': quiet, 'chip--failed': failed }">
+  <span class="chip" :class="{ 'chip--quiet': quiet, 'chip--failed': failed, 'chip--off': !!restoreLabel }">
     <span class="chip__face"><slot name="face" /></span>
     <span v-if="$slots.detail" class="chip__label chip__label--open" role="button" tabindex="0">
       {{ label }}
@@ -48,7 +51,10 @@ const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
     >
       <v-icon size="13">mdi-refresh</v-icon>
     </button>
-    <button type="button" class="chip__x" :aria-label="removeLabel" @click="emit('remove')">
+    <button v-if="restoreLabel" type="button" class="chip__x" :aria-label="restoreLabel" @click="emit('restore')">
+      <v-icon size="12">mdi-plus</v-icon>
+    </button>
+    <button v-else type="button" class="chip__x" :aria-label="removeLabel" @click="emit('remove')">
       <v-icon size="12">mdi-close</v-icon>
     </button>
   </span>
@@ -108,6 +114,10 @@ const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
 .chip__face :deep(.att-face) {
   width: 20px;
   height: 20px;
+}
+.chip--off .chip__label {
+  color: var(--muted);
+  text-decoration: line-through;
 }
 .chip__label {
   min-width: 0;

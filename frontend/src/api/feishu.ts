@@ -42,6 +42,20 @@ export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_
   return request<{ url: string; redirect_uri: string }>(`/me/integrations/${encodeURIComponent(id)}/feishu/authorize`)
 }
 
+/** 从飞书回来时地址栏里的 `feishu_handoff`：回调没存任何东西，只把结果替发起人留着。
+ *  登录着的这一页去领（改这一行连接：`feishu_handoff`），只有这行连接的主人领得到，领到
+ *  才存。回的 `authorization` 是这一次授权的结果，和回调以前直接落在地址栏里的那几项一样
+ *  （`feishu`，可能还有 `feishu_detail`）。 */
+export function claimFeishuHandoff(
+  integrationId: string,
+  handoff: string
+): Promise<{ authorization: Record<string, string> }> {
+  return request<{ authorization: Record<string, string> }>(`/me/integrations/${encodeURIComponent(integrationId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ feishu_handoff: handoff }),
+  })
+}
+
 /* ---- 管理端（`/admin/integrations`）----
  *
  * 平台上**唯一**一处飞书应用凭据（`backend/app/api/routes/admin_integrations.py`）。

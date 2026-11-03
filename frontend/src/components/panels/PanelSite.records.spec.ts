@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePanelSite } from '../../composables/usePanelSite'
 import { storageRemove } from '../../lib/browserStorage'
+import { forgetWindows } from '../../lib/siteWindow'
 
 import PanelSite from './PanelSite.vue'
 
@@ -72,6 +73,8 @@ function open() {
   )
 }
 beforeEach(() => {
+  // 现场那一窗存在模块级的表里：前一条用例留下的窗口会变成这一条的「上次打开」。
+  forgetWindows()
   storageRemove('cheese.site.view')
   api.getTranscript.mockReset()
   api.sessionRecordImageUrl.mockReset()
@@ -209,7 +212,15 @@ describe('raw records and overview share one timeline', () => {
       .mockResolvedValue({ data: [tool('3', 'only A', 'cheese-a')], has_more: false })
     const view = open()
     await fireEvent.click(await view.findByRole('tab', { name: 'A' }))
-    await waitFor(() => expect(api.getTranscript).toHaveBeenCalledWith('room', { limit: 120, author: 'cheese-a' }))
+    // 换视角 = 重新开这一格：和打开一样，先问数据库里已有的那一版（`resident`），
+    // 少了归档部分再整页补齐。
+    await waitFor(() =>
+      expect(api.getTranscript).toHaveBeenCalledWith('room', {
+        limit: 120,
+        author: 'cheese-a',
+        resident: true,
+      })
+    )
     expect((await view.findAllByText('only A')).length).toBeGreaterThan(0)
     expect(view.queryByText('two')).toBeNull()
   })

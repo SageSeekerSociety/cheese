@@ -622,3 +622,45 @@ async def test_existing_repository_subscriptions_are_reconciled(monkeypatch):
     assert job.interval_seconds > 0
     await job._job()
     reconcile.assert_awaited_once()
+
+
+async def test_a_job_woken_between_ticks_runs_at_once_each_time():
+    """Something that should not wait an hour for the clock wakes the job, as
+    often as it happens."""
+    woken = asyncio.Event()
+    ran = asyncio.Queue()
+
+    async def wake(seconds: float) -> bool:
+        try:
+            await asyncio.wait_for(woken.wait(), seconds)
+        except TimeoutError:
+            return False
+        woken.clear()
+        return True
+
+    async def job():
+        await ran.put(datetime.now(UTC))
+
+    runner = PeriodicRunner("assistant routines", 3600, job, woken_by=wake)
+    runs = _Runs()
+    runner.start(runs, datetime.now(UTC))
+    try:
+        await asyncio.sleep(0)
+        assert ran.empty()
+        woken.set()
+        await asyncio.wait_for(ran.get(), HANG_S)
+        woken.set()
+        await asyncio.wait_for(ran.get(), HANG_S)
+        assert runs.claims == []
+    finally:
+        await runner.stop()
+
+
+def test_a_job_that_can_be_woken_runs_on_the_lock_holder_only():
+    async def never(seconds: float) -> bool:
+        return False
+
+    with pytest.raises(ValueError):
+        PeriodicRunner(
+            "assistant routines", 30, asyncio.sleep, owner_only=False, woken_by=never
+        )

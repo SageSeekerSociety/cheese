@@ -148,6 +148,99 @@ describe('正文被就地改写', () => {
     expect(scroll.atBottom.value).toBe(false)
     expect(box.el.scrollTop).toBe(1300)
   })
+
+  // 在对话区点一下（点一条消息、点住又松手）位置一个像素都没动，那不是人在滚。
+  // 曾经 `pointerdown` 一按就记「人在滚」，于是下面那条改写兜底失效：停住的人被留在
+  // 半路，「回到最新」冒出来（真机 2026-10-24 反馈：拖到最下面又回弹一点）。
+  it('只在面板上点一下、位置没动：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    box.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup'))
+    await rewrite(box, scroll.contentRef.value!, 1600 - 306)
+    scroll.rememberScroll('t-tap')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
+
+  // 按住指针把这一栏挪动了位置（浏览器发的一整套指针事件里位置真的变了）仍算人在滚：
+  // 那一下不该被拽回底部。
+  it('按住拖动了位置：算他翻走了，不拽回去', async () => {
+    const { box, scroll } = await mounted(2000)
+    box.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    box.el.scrollTop = 1300
+    window.dispatchEvent(new PointerEvent('pointermove'))
+    window.dispatchEvent(new PointerEvent('pointerup'))
+    await rewrite(box, scroll.contentRef.value!, 1300)
+    scroll.rememberScroll('t-drag')
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1300)
+  })
+
+  // 输入框里打字用的是同一批键：空格（输入法上屏就是它）、方向键（挪光标），它们的
+  // keydown 一路冒到 window。那不是人在滚这一栏——按它记「人在滚」，打字的人就一路
+  // 把下面那条改写兜底关掉了。
+  it('在输入框里打空格：不算人在滚，仍回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    const caret = document.createElement('span')
+    editor.append(caret)
+    document.body.append(editor)
+    for (const key of [' ', 'ArrowUp']) caret.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+    editor.remove()
+    await rewrite(box, scroll.contentRef.value!, 1600 - 306)
+    scroll.rememberScroll('t-typing')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
+
+  // 焦点不在输入框里时，空格和方向键确实滚这一栏：那一下仍算他翻走了。
+  it('焦点不在输入框里按空格：算他翻走了，不拽回去', async () => {
+    const { box, scroll } = await mounted(2000)
+    const row = document.createElement('div')
+    document.body.append(row)
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    row.remove()
+    await rewrite(box, scroll.contentRef.value!, 1300)
+    scroll.rememberScroll('t-space')
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1300)
+  })
+
+  // 面板**里面**的可编辑区不一样：光标走到可视范围外时，浏览器为了让光标可见会把这一栏
+  // 往上挪；翻页键更是直接翻这一栏。这时候还得算——不算的话，人在这几行中间改自己的
+  // 消息，被当成「没人动、位置却往上挪」而拽回底部（2026-10-24 审阅发现，合并基线上
+  // 每个键都算，所以这是本次改动不能开的口子）。
+  for (const key of ['PageUp', 'ArrowUp', ' ']) {
+    it(`在面板里的就地编辑器里按 ${key}：算他翻走了，不拽回去`, async () => {
+      const { box, scroll } = await mounted(2000)
+      const editor = document.createElement('div')
+      editor.setAttribute('contenteditable', 'true')
+      box.el.append(editor)
+      // 这个夹具里的滚动框平时挂在文档外，事件冒不到 window——先挂上去。
+      document.body.append(box.el)
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+      await rewrite(box, scroll.contentRef.value!, 1300)
+      scroll.rememberScroll('t-editable-in-pane')
+      box.el.remove()
+      expect(scroll.atBottom.value).toBe(false)
+      expect(box.el.scrollTop).toBe(1300)
+    })
+  }
+
+  // 焦点在发消息的输入框里（它在面板外）时，PageUp 挪的是输入框自己，不是这一栏。
+  it('在发消息的输入框里按 PageUp：不算人在滚，仍回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    document.body.append(editor)
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }))
+    editor.remove()
+    await rewrite(box, scroll.contentRef.value!, 1600 - 306)
+    scroll.rememberScroll('t-pageup-composer')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
 })
 
 // 滚动框底下那一块（输入框、「谁在忙」那一行）在同一个任务里没了又回来：这一下滚动框
@@ -202,5 +295,60 @@ describe('时间线外面还包了一层，输入区在包装层外面', () => {
     scroll.rememberScroll('t-zone')
     expect(scroll.atBottom.value).toBe(true)
     expect(box.el.scrollTop).toBe(1600)
+  })
+})
+
+// 停在对话最底下，点左上角书签跳到上面某一条（真人 2026-10-26 反馈：被拽回来，到不了
+// 那一条）。书签浮条挂在滚动框外面，点它不算「人在滚」；而 agent 在跑时输入框上方那行
+// 「用时」每秒都在改这一栏，上面那条改写兜底正好把这次往上的移动读成浏览器锚定，当场
+// 钉回底部。这一下滚动是我们自己发的，两条判据都该让开。
+describe('点书签跳到上面那一条', () => {
+  /** 这一栏刚被就地改写：agent 在跑时每秒都有一次。 */
+  async function rewriteNow(content: HTMLElement) {
+    content.append(document.createElement('p'))
+    await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
+  }
+
+  it('是我们自己发的滚动：停在最底下点书签，落到那一条上，不拽回底部', async () => {
+    const { box, scroll } = await mounted(2000)
+    await rewriteNow(scroll.contentRef.value!)
+    scroll.beginOwnScroll() // scrollIntoView 之前
+    box.el.scrollTop = 1600 - 30 // 平滑滚动的第一帧：离底部还不到 80
+    scroll.rememberScroll('t-jump')
+    // 这一帧近底部、又赶上刚被改写：那一瞬间位置和「在不在底部」都还没定，跟随由
+    // 窗口自己挡着（下面长高一截，也不该被拽回底部）。
+    box.grow(400)
+    fire()
+    expect(box.el.scrollTop).toBe(1600 - 30)
+    box.el.scrollTop = 1600 - 900 // 落到了书签那一条
+    scroll.rememberScroll('t-jump')
+    await new Promise((r) => setTimeout(r, 200)) // 安静下来，算滚完了
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(700)
+  })
+
+  it('跳过去之后读的人自己滚轮：仍是他翻走了，不拽回底部', async () => {
+    const { box, scroll } = await mounted(2000)
+    await rewriteNow(scroll.contentRef.value!)
+    scroll.beginOwnScroll()
+    box.el.scrollTop = 1600 - 900
+    box.el.dispatchEvent(new WheelEvent('wheel', { deltaY: 300 }))
+    await rewriteNow(scroll.contentRef.value!)
+    box.el.scrollTop = 700 + 300
+    scroll.rememberScroll('t-jump-wheel')
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1000)
+  })
+
+  it('跳的地方本来就靠底部：停下之后照常跟新消息', async () => {
+    const { box, scroll } = await mounted(2000)
+    scroll.beginOwnScroll()
+    box.el.scrollTop = 1600 - 40 // 书签正是最后一条那一带
+    scroll.rememberScroll('t-jump-bottom')
+    await new Promise((r) => setTimeout(r, 200)) // 安静下来，算滚完了
+    expect(scroll.atBottom.value).toBe(true)
+    box.grow(10)
+    fire()
+    expect(box.el.scrollTop).toBe(1610)
   })
 })

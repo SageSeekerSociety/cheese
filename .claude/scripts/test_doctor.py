@@ -43,7 +43,7 @@ class StubHandler(BaseHTTPRequestHandler):
         self.paths.append(self.path)
         if self.path == "/sandbox/forge-token":
             type(self).received_session_auth = (
-                self.headers.get("X-Cheese-Token") == "session-secret"
+                self.headers.get("Authorization") == "Bearer session-secret"
             )
             data = {
                 "kind": "github_app",

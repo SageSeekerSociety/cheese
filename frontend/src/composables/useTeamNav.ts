@@ -1,18 +1,16 @@
 // 首页那一格目录的判断：取数、写回、盯路由。
 //
-// `views/home/HomeNav.vue` 只吃 props 出事件（A 档），四个弹窗也只吃 props 出事件；
+// `views/home/HomeNav.vue` 只吃 props 出事件（A 档），三个弹窗也只吃 props 出事件；
 // 真去问后端、真去跳地址、真去确认「退不退得掉」的都在这一层。两端（桌面侧栏
 // `HomeSidebar`、手机整页 `HomeHub`）各挂一份目录，判断只有这一份。
 import type { SpaceLink, Team, TeamMember } from '@/types'
 
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
 import { awaitingCount } from '@/composables/useAwaitingCount'
-import { useJoinSpace } from '@/composables/useJoinSpace'
 
 import { createAvatar } from '@/api/avatars'
 import { onAwaitingChanged } from '@/api/awaitingChanged'
@@ -20,6 +18,7 @@ import { SpacesApi } from '@/api/spaces'
 import { onSpacesChanged } from '@/api/spacesChanged'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 import { patchQuery, queryClient } from '@/query/client'
 import { mySpacesQuery, myTeamsQuery } from '@/query/homeNav'
@@ -99,14 +98,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   )
 
   const awaiting = awaitingCount()
-
-  // ---- 用邀请码加入空间：问后端、成了进那个空间，和待办页共用 `useJoinSpace`。
-  const {
-    open: joinOpen,
-    busy: joinBusy,
-    error: joinError,
-    join: joinSpace,
-  } = useJoinSpace(() => void spacesRead.refetch())
 
   // ---- 新建空间：提交以后就是一份待审核的申请，落到那份申请上。侧栏那一组由
   // `onSpacesChanged` 重读，这里不用管。
@@ -248,10 +239,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     spaces,
     awaiting,
     currentHandle,
-    joinOpen,
-    joinBusy,
-    joinError,
-    joinSpace,
     createOpen,
     createBusy,
     createError,

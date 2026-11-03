@@ -184,15 +184,15 @@ describe('这次交付的是什么，点采纳之前读得到', () => {
     expect(container.textContent).toContain('chore: do a thing')
   })
 
-  it('拿不到那一份时说出原因，卡不变成一条错误', async () => {
-    downloadFile.mockRejectedValue(new Error('这一版没有留存文件'))
+  it('卡上没有放失败的红字位置，失败由底层弹一句', async () => {
+    // 「拿不到那一份」现在是 `downloadFile` 那一层的事：它说一句、不往上抛
+    // （`lib/download`），所以卡上不再留一行红字。这条钉的是卡本身不长出那种位置。
     const { container } = await mountWith(card({}))
 
     await fireEvent.click(button(container, '下载')!)
     await flush()
 
-    const alert = container.querySelector('[role="alert"]')
-    expect(alert?.textContent).toContain('这一版没有留存文件')
+    expect(container.querySelector('.review-head__error')).toBeNull()
     expect(button(container, '采纳')).toBeTruthy()
   })
 })

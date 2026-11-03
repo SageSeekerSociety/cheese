@@ -25,8 +25,7 @@ import { getTask } from '@/api/tasks'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
 import { refRoute } from '@/lib/refDirectory'
-import { queryClient } from '@/query/client'
-import { roomRowQuery, usePlace } from '@/query/project'
+import { readProjectTopic, usePlace } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 export function useTopicAddress(opts: { place: () => TopicPlace; desktop: Ref<boolean> }) {
@@ -103,9 +102,10 @@ export function useTopicAddress(opts: { place: () => TopicPlace; desktop: Ref<bo
 
   // ---- 地址里这个 id 指向谁 ----
   const { place: selectedTopic, resolving: placeResolving } = usePlace(
-    computed(() => store.projectId),
+    computed(() => store.projectId || opts.place().projectId),
     computed(() => opts.place().topicId),
-    computed(() => store.topics)
+    computed(() => store.topics),
+    computed(() => store.loadingTopics)
   )
   const redirecting = ref(false)
   // 清单还在路上，「找不到」就还不是事实；这个 id 正被直接问着的时候（深链接走的那条
@@ -126,7 +126,7 @@ export function useTopicAddress(opts: { place: () => TopicPlace; desktop: Ref<bo
    *  支线都白打一次会 404 的请求。 */
   async function openPlace() {
     const { projectId, topicId } = opts.place()
-    if (!selectedTopic.value) await queryClient.fetchQuery(roomRowQuery(topicId)).catch(() => null)
+    if (!selectedTopic.value) await readProjectTopic(projectId, topicId).catch(() => null)
     if (selectedTopic.value) {
       opened = true
       store.markRead(conversationId.value)

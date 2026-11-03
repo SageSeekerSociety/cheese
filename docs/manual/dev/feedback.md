@@ -4,6 +4,7 @@ kind: 参考
 summary: 平台级收件箱：提案卡、提交、作者与提交者、可见性并集、状态时间线与后台分诊。
 covers:
   - backend/app/domain/feedback/
+  - backend/app/domain/routine/builtin_triage.py
   - backend/app/api/routes/feedback.py
   - backend/app/api/routes/feedback_proposals.py
   - backend/app/api/routes/admin_feedback.py
@@ -38,9 +39,9 @@ covers:
 
 ## 提案：芝士举手，人决定 {#proposals}
 
-`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是频道里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
+`cheese_feedback(action=propose)`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是频道里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
 
-**agent 不能自己发布**（`FeedbackService.create`）：命中 `IdentityService.is_agent` 就直接 `ForbiddenError`，报错文案点名 `cheese_feedback_propose`，给模型一个下一步而不是死胡同。同一个判断收掉了另一扇门 —— agent 去发送一张已有的卡，仍是 agent 在发布自己，只是分两步走。作者从卡上取（`Block.author`），提交者取验证过的调用者，客户端两样都说了不算。
+**agent 不能自己发布**（`FeedbackService.create`）：命中 `IdentityService.is_agent` 就直接 `ForbiddenError`，报错文案点名 `cheese_feedback(action=propose)`，给模型一个下一步而不是死胡同。同一个判断收掉了另一扇门 —— agent 去发送一张已有的卡，仍是 agent 在发布自己，只是分两步走。作者从卡上取（`Block.author`），提交者取验证过的调用者，客户端两样都说了不算。
 
 卡本身不落表：它是消息，历史就是历史。落表的只有「不用」——`FeedbackProposalDismissal`（`topic_id` + `fingerprint`）。原型里「不用」只把组件状态置成 dismissed，刷新就回来；服务端不落一行的话，同一个问题每轮都会再问一遍，而它会让人对整张卡产生免疫。「这张卡已经发过了」也不落表，它是卡自己的状态，写在卡自己的 `meta` 上（`ACCEPTED_FEEDBACK_KEY`）跟着卡走。
 
@@ -106,7 +107,7 @@ covers:
 
 领取存在只为一件事：**别让两个人修同一个问题**。所以第二个人的领取必须失败，回 409（`feedbackClaimedByOther`），原话里点名持有人，`error.data.holder` 也带着他——他下一步是去找那个人，不是换个说法再领一次。判「有没有人领着」之前先 `SELECT … FOR UPDATE` 锁住这一行（`claims.lock`）：两个同时到的领取，后到的那个在锁上等先到的提交，再读到它写下的名字。不锁的话两个都读到「没人」，后写的悄悄盖掉先到的，两个人都以为是自己在修。持有人自己再领一次是空操作。
 
-谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback_claim` / `cheese_feedback_release` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
+谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback(action=claim)` / `cheese_feedback(action=release)` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
 
 领取走 `advance` 记「处理中」。已经办完的（`CLOSED_STATUSES` = 已修复 + 已上线 + 不修复）不接领取：回 409（`feedbackClaimClosed`），不改持有人、不写时间线——领取记的是「谁在修」，这几档已经没有要修的了，挂一个处理人只会让详情自相矛盾。同样也不接放弃：回 409（`feedbackReleaseClosed`），持有人保持原样；领取和放弃是修这件事的两端，办完就一起关掉。管理员要清掉挂错的人，走管理端的改派（`patch_admin` 把 `assignee_handle` 置空），那是数据修正，不是放弃领取。放弃清掉持有人，并把「处理中」退回「已收录」：领取把一条反馈推成「处理中」，放弃之后就没有人在修了，留着「处理中」会让详情自相矛盾（状态说有人在弄，处理人却是空的）。退回和它那条时间线一起写（`set_status` 走唯一的 `_move`），历史里读得到是谁在什么时候放下的；本来就不在「处理中」的不动。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好（两者都要求状态没办完），详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮；办完且没人领着的，那一格不出现，有人领着的只显示处理人。
 
@@ -116,9 +117,9 @@ agent 的凭据只认一个房间：不说房间的 `/feedback/*` 请求会被�
 
 | 入口 | 作用 | agent 的工具 |
 | --- | --- | --- |
-| `GET /feedback` | 公开列表，栏位和 `q` / `status` / `kind` / `author` / `since` 筛选和页面同一份 | `cheese_feedback_list` |
-| `GET /feedback/{ref}` | 一条的详情：正文、时间线、第一页评论、`can_claim`。`ref` 是 `FB-12` 或 uuid | `cheese_feedback_get` |
-| `GET /feedback/{id}/comments` | 往下翻评论 | `cheese_feedback_get` 在评论多于一页时接着取 |
+| `GET /feedback` | 公开列表，栏位和 `q` / `status` / `kind` / `author` / `since` 筛选和页面同一份 | `cheese_feedback(action=list)` |
+| `GET /feedback/{ref}` | 一条的详情：正文、时间线、第一页评论、`can_claim`。`ref` 是 `FB-12` 或 uuid | `cheese_feedback(action=get)` |
+| `GET /feedback/{id}/comments` | 往下翻评论 | `cheese_feedback(action=get)` 在评论多于一页时接着取 |
 
 带了房间，就只认做平台本身的项目里的房间（`FeedbackService.require_platform_room`，和领取同一个判据 `claims.is_platform_project`）；别的房间回 403（`feedbackReadPlatformRoomsOnly`）。反馈中心装的是平台本身的活，在别的项目里的 agent 一条也领不了，读到的只会是它不该动手的东西，所以直接告诉它为什么读不到。
 
@@ -158,19 +159,35 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 
 ## 新反馈推到团队的飞书群 {#announce}
 
-每条新反馈（直接提交的和从提案卡发出的都算）在事务提交之后往一个飞书群推一条消息，只推一次（`feedback/announce.py`）。群由 `FEISHU_FEEDBACK_WEBHOOK`（`settings.feishu_feedback_webhook`）指定，是那个群里自定义机器人的 webhook；不配就什么都不发。发送借用告警的那条投递（`alerting.post`）：不阻塞请求，失败只记日志；但不走告警的限额和去重，因为每一条都是一件不同的事。
+每条新反馈（直接提交的和从提案卡发出的都算）在事务提交之后往一个飞书群推一条消息，只推一次（`feedback/announce.py`）。群由 `FEISHU_FEEDBACK_WEBHOOK`（`settings.feishu_feedback_webhook`）指定，是那个群里自定义机器人的 webhook。没配时什么都不发，而在部署上（`DEPLOYED_VIA_COMPOSE`）这不算正常的安静：健康报告里 `feedback_announce` 一项是 `down`，原因写着缺的是这个变量，管理看板的平台健康那一行照样显示（见[配置](#triage-config)）。开发机和测试上没配时是 `skipped`。发送借用告警的那条投递（`alerting.post`）：不阻塞请求，失败只记日志；但不走告警的限额和去重，因为每一条都是一件不同的事。
 
 消息里放什么，由这条反馈自己的可见性决定。公开的带编号、类型、标题、提交人、正文开头 300 字和链接：这些登录的人本来都看得到。私密的只带编号和链接：群里的人比 `may_see` 放行的人多，链接对其他人是 404。安全标记是分诊时才打的，提交那一刻还没有。
 
-## 每日分诊：定时规则带一批没人处理的反馈 {#triage}
+## 每日分诊：平台自带的那条规则 {#triage}
 
-一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service/firing.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、存下来就在跑，结果交回给规则的主人。
+反馈的入口对所有人一直开着，处理它的那一步也随平台一起上线，不靠谁记得去建。平台启动时装一条内置的分诊规则（`routine/builtin_triage.py`，`main.py` 的 `lifespan` 里调 `install`）：每天 10:00（Asia/Shanghai）把 5 条「没人处理」的反馈（没发过的在前，同一档里早提交的在前）连同分诊步骤附在工作说明后面，交给房间里的队友（`feedback/triage.py`，在 `routine/service/firing.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套，结果交回给规则的主人。
 
-- **「没人处理」** 是 `received` 且没有指派人：指派和领取都会把它推到「处理中」，放弃领取又把它退回「已收录」，和从来没领过一样。同一批不会发两次：规则自己记着发过哪几条（`routine_runs.feedback_offered`），那次执行失败或没能开始的不算，下一轮照常发。只发公开、没被标成安全问题的：队友读得到的只有这些。私密和安全的那几栏照旧由反馈管理员看，新来的时候飞书群里有那条只带编号的消息。
+- **只有一条。** 它的 id 是固定的（`BUILTIN_ID`），每次启动、每台机器都是同一个，重复部署或滚动发布时两个进程同时装，找到的都是同一行，不会多出第二条。
+- **谁定什么。** 名字、目标、钟点和每批几条是产品的，每次启动都写回这几样，规则页上改了也会在下次部署时回到产品的值。在哪个房间、主人是谁、哪个队友干活，由部署的配置决定（见下一节），配置变了，下次启动时跟着改。**开关是人的**：有人在规则页暂停了它，重新部署不会把它打开，健康报告里一直显示「已暂停」，直到有人恢复。删掉它，下次启动会重新装上，所以要停用就暂停，不要删。
+- **「没人处理」** 是 `received` 且没有指派人：指派和领取都会把它推到「处理中」，放弃领取又把它退回「已收录」，和从来没领过一样。只发公开、没被标成安全问题的：队友读得到的只有这些。私密和安全的那几栏照旧由反馈管理员看，新来的时候飞书群里有那条只带编号的消息。
+- **按有没有后续去重，不按发过没有。** 一条反馈的后续都记在它自己身上：队友建了任务、在等主人回答、写了建议在等主人决定的，领取一直留在它名下（步骤里这样写）；主人决定之后状态会变。所以那一轮跑完之后，还是「没人处理」的，就是被放下了，下一轮照常发。规则自己记着发过哪几条（`routine_runs.feedback_offered`），只用来做两件事：那一轮还没结束时，同一条不进另一批；排队时没发过的排在前面，发过的按上次发的时间往后排，一条反复被跳过的不会把新来的一直挤出去。失败或没能开始的那一轮不算发过。
 - **选哪几条是平台定的**，不是队友自己去列表里挑：两天的执行不会各自理解一遍「没人处理」，一天里一条都没有的时候整次执行记成 `skipped`（「没有待分诊的反馈」），不派活，也不通知主人。
-- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的先问规则的主人要不要建任务，他选了「建任务」才另开一件，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线的会话](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。
-- **只有做平台本身的项目里的房间能用**（`claims.is_platform_project`，和领取同一个判据），别处建或改成这样的规则会被拒：那里的队友领不了反馈。
-- 前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineCompose.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine_draft` 起草或直接调 `POST /topics/{id}/routines`。
+- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的先问规则的主人要不要建任务，他选了「建任务」才另开一件，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线的会话](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。什么后续都没有的，放掉领取，它回到队列。
+- **只有做平台本身的项目里的房间能用**（`claims.is_platform_project`，和领取同一个判据）：那里的队友才领得了反馈。内置规则的房间不在这样的项目里时不装，健康报告说明原因；别人在别处手建带 `feedback_batch` 的规则会被拒。
+
+### 部署要给的配置 {#triage-config}
+
+| 变量 | 是什么 |
+| --- | --- |
+| `FEEDBACK_TRIAGE_TOPIC_ID` | 内置规则所在的房间（topic id），要在做平台本身的项目里（`DOCS_DEV_REPOSITORIES`） |
+| `FEEDBACK_TRIAGE_OWNER_HANDLE` | 规则的主人，结果交给他；要在 `FEEDBACK_TRIAGE_HANDLES` 里，也要在那个房间里 |
+| `FEEDBACK_TRIAGE_AGENT_HANDLE` | 干活的 AI 队友，是那个房间里的队友席位，且没有停用 |
+| `FEEDBACK_TRIAGE_HANDLES` | 反馈管理员名单（已有，见[谁能看见](#visibility)） |
+| `FEISHU_FEEDBACK_WEBHOOK` | 新反馈推送的飞书群机器人 webhook（已有，见[上一节](#announce)） |
+
+在部署上，这几样缺一个、指向不存在或不合格的东西、内置规则不存在、被暂停、或最近一次执行失败，健康报告（`/health/detailed`，管理看板的平台健康那一行）里 `feedback_triage` 一项都是 `down`，带一句说明缺什么、哪里不对。这几项由领域注册进健康报告（`core/health.py` 的 `set_domain_checks`），要读数据库，所以公开的 `/readyz` 不跑它们，也不会因为它们把进程拿出流量。开发机和测试上什么都没配时是 `skipped`。
+
+手建的分诊规则照旧能用：定时规则的 `spec` 里加 `feedback_batch: N`（1–10）。前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineCompose.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine(action=create)` 起草或直接调 `POST /topics/{id}/routines`。
 
 ## 栏位是过滤器，不是分区 {#tabs}
 

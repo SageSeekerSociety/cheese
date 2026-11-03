@@ -199,7 +199,9 @@ def test_a_document_ai_wrote_is_the_person_who_asked_for_it(client):
     written = client.post(
         f"/projects/{project}/documents",
         json={"title": "新人须知", "content": "第一周：熟悉组里的代码。"},
-        headers={"X-Cheese-Token": mint_session_token(project, general, seat)},
+        headers={
+            "Authorization": f"Bearer {mint_session_token(project, general, seat)}"
+        },
     )
     assert written.status_code == 200, written.text
     doc = written.json()["data"]["id"]
@@ -214,3 +216,39 @@ def test_a_document_ai_wrote_is_the_person_who_asked_for_it(client):
 
     assert _share(client, doc, session_auth_headers("bob")).status_code == 403
     assert _share(client, doc, alice).status_code == 200
+
+
+# A tiny valid PNG: the share route serves image bytes as they are.
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360000002000100e221bc330000000049454e44ae426082"
+)
+
+
+def test_a_link_shows_the_pictures_its_document_names_and_no_others(client):
+    """Whoever holds the link sees the pictures the document shows, from the
+    project library. Not the rest of the library: the link is to a document,
+    and naming another picture's path in the address must not reach it."""
+    from tests.support import library_uploads
+
+    project, doc = _project_doc(client)
+    for name in ("图表.png", "工资表.png"):
+        put = library_uploads.put_in(client, project, name, _PNG, headers=OWNER)
+        assert put.status_code == 200, put.text
+    written = client.put(
+        f"/documents/{doc}",
+        json={
+            "content": "进展见图：\n\n![图表](library/图表.png)",
+            "expected_version": 1,
+        },
+        headers=OWNER,
+    )
+    assert written.status_code == 200, written.text
+    token = _share(client, doc).json()["data"]["link"]["token"]
+
+    shown = client.get(f"/shared/{token}/image", params={"path": "library/图表.png"})
+    assert shown.status_code == 200, shown.text
+    assert shown.content == _PNG
+
+    other = client.get(f"/shared/{token}/image", params={"path": "library/工资表.png"})
+    assert other.status_code == 422, other.text

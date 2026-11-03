@@ -66,6 +66,11 @@ BUBBLEWRAP_REVISION = "0.13.0-cheese.2"
 #: xfs_quota) whatever the system has, and tmux and git where the system's are
 #: missing or too old.
 HOST_TOOLS_REVISION = "2"
+#: The libfuse 2 runtime a Linux connector places for its rooms' executors,
+#: built by `scripts/build-fuse-runtime.sh`: the library a room's transcript
+#: view is mounted through (`fusepy` loads it by path, `FUSE_LIBRARY_PATH`).
+#: A machine's own `fusermount` is used; the package holds no setuid binary.
+FUSE_RUNTIME_REVISION = "2.9.9-cheese.2"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -98,6 +103,10 @@ _BWRAP_BASE = (
 _HOST_TOOLS_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"host-tools-v{HOST_TOOLS_REVISION}"
+)
+_FUSE_RUNTIME_BASE = (
+    "https://github.com/SageSeekerSociety/cheese/releases/download/"
+    f"fuse-runtime-v{FUSE_RUNTIME_REVISION}"
 )
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
@@ -159,6 +168,22 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
         "a2222ef87684bc647aa6978e4e46a34f4ad5776d7a04534ef8914516fced1f5b",
         620292,
+        ".tar.gz",
+    ),
+    # `libfuse.so.2`, not a binary: unpacked into `runtime/fuse-runtime/`, it is
+    # the one file `bootstrap.placed_libfuse` names. Both architectures are
+    # built from the same source and the same recipe, the aarch64 one with the
+    # header patch that recipe carries.
+    ("fuse-runtime", "linux-x64"): Artifact(
+        f"{_FUSE_RUNTIME_BASE}/fuse-{FUSE_RUNTIME_REVISION}-linux-x64.tar.gz",
+        "579586b81a2f50718e1bfa7a720be87eddf2c7e5369c01a317b7dd164d185296",
+        94977,
+        ".tar.gz",
+    ),
+    ("fuse-runtime", "linux-arm64"): Artifact(
+        f"{_FUSE_RUNTIME_BASE}/fuse-{FUSE_RUNTIME_REVISION}-linux-arm64.tar.gz",
+        "cef0249e5baf3b78a78b78ca1d8ba6956cdd75c13098ed865e71feeb4c3026c0",
+        92212,
         ".tar.gz",
     ),
     ("git", "linux-x64"): Artifact(

@@ -297,7 +297,7 @@ async def execute(
                     continue
                 if kind == "turn_ceiling":
                     ceiling_s = float(frame.get("seconds", policy.timeout))
-                    # `topic_work()` reads this so `cheese_status` reports the
+                    # `topic_work()` reads this so `cheese_session(action=status)` reports the
                     # backend's REAL ceiling, not the generic outer default.
                     rec["ceiling_s"] = ceiling_s
                     # The frame's only remaining job here: it is emitted before

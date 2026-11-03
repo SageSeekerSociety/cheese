@@ -15,7 +15,7 @@ from tests.integration.test_app_preview_proxy import (
     _open_preview,
     _project_topic,
     _room_agent,
-    _tunnel_url,
+    _tunnel,
 )
 from tests.integration.test_app_preview_proxy import (
     preview_config as preview_config,
@@ -30,10 +30,9 @@ def test_content_host_auth_precedes_gated_live_tunnel_stream(client, preview_con
     release = threading.Event()
     requests = []
     errors = []
-    with client.websocket_connect(
-        _tunnel_url(project, topic_id, seat),
-        headers={wire.CAPS_HEADER: ",".join(sorted(wire.CAPABILITIES))},
-    ) as tunnel:
+    dial = _tunnel(project, topic_id, seat)
+    dial["headers"][wire.CAPS_HEADER] = ",".join(sorted(wire.CAPABILITIES))
+    with client.websocket_connect(**dial) as tunnel:
 
         def machine_peer():
             try:

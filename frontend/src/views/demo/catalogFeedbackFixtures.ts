@@ -154,7 +154,7 @@ export const FEEDBACK_META: FeedbackMeta = {
   priorities: ['low', 'normal', 'high', 'urgent'],
   visibilities: ['public', 'private'],
   status_ladder: ['received', 'in_progress', 'resolved', 'deployed'],
-  tabs: ['all', 'hot', 'active', 'resolved'],
+  tabs: ['all', 'hot', 'resolved'],
   admin_tabs: ['public', 'private', 'agent', 'security'],
   hot_score: 10,
   hot_half_life_days: 2,

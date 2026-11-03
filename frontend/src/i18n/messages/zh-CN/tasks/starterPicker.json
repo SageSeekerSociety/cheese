@@ -1,0 +1,17 @@
+{
+  "title": "起始代码",
+  "hint": "一个 .zip 压缩包。开始做后解开到项目里，作为代码仓库的第一个提交",
+  "pick": "选择 .zip",
+  "replace": "替换起始代码",
+  "remove": "移除起始代码",
+  "uploading": "上传中…",
+  "uploadingPercent": "上传中 {percent}%",
+  "uploadFailed": "起始代码上传失败：{error}",
+  "removeFailed": "起始代码移除失败：{error}",
+  "replaceShort": "替换",
+  "removeShort": "移除",
+  "processing": "处理中…",
+  "removeTitle": "移除起始代码？",
+  "removeBody": "移除当场生效，题目记一个新版本。之后开始做的人，代码仓库里不再有起始代码；已经开始的不受影响。",
+  "hintWithLimit": "一个 .zip 压缩包，不超过 {size}；更大的可以在发布后到改题页上传。开始做后解开到项目里，作为代码仓库的第一个提交"
+}

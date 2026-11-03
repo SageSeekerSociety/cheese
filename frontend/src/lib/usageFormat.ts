@@ -103,6 +103,19 @@ export function fmtSI(n: number | null | undefined, unit = ''): string {
  * land on the top rung): a byte count that is not a finite number is a bug
  * upstream, and inventing a size here would hide it.
  */
+/** 一条大小上限怎么写：取够得着的最大一级（GB / MB / KB），去掉多余的零 —— 「20 GB」
+ *  「200 MB」「1.5 GB」。和后端说上限的那句话同一个写法（`app.core.sentences.size_text`），
+ *  所以页面上的提示和服务端的拒绝写的是同一个数。 */
+export function fmtSizeLimit(bytes: number): string {
+  for (const [unit, scale] of [
+    ['GB', 1024 ** 3],
+    ['MB', 1024 ** 2],
+    ['KB', 1024],
+  ] as const)
+    if (bytes >= scale) return `${Math.round((bytes / scale) * 10) / 10} ${unit}`
+  return `${bytes} B`
+}
+
 export function fmtFileSize(bytes: number, decimals = 2): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(decimals)} KB`

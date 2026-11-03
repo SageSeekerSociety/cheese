@@ -73,6 +73,7 @@ def task_row_json(task: Task) -> dict:
         "reporter_handle": task.reporter_handle,
         "contributor_handles": list(task.contributor_handles or []),
         "created_by": task.created_by,
+        "created_by_assistant": task.created_by_assistant,
         "branch_name": task.branch_name,
         "base_branch": task.base_branch,
         "base_task_id": _text(task.base_task_id),

@@ -65,6 +65,13 @@ vi.mock('@/api', async (importOriginal) => {
   return { ...actual, listAgentTypes: (...a: unknown[]) => listAgentTypes(...a) }
 })
 
+// 「技能」那一格的候选，同一个理由（`useSkillCatalog` → `@/api/projectSkills`）。
+const listPlatformSkills = vi.fn()
+vi.mock('@/api/projectSkills', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listPlatformSkills: (...a: unknown[]) => listPlatformSkills(...a),
+}))
+
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/components/tasks/TaskForm.vue', async () => {
@@ -129,6 +136,7 @@ afterAll(() => {
 
 beforeEach(() => {
   listAgentTypes.mockResolvedValue({ data: [], total: 0 })
+  listPlatformSkills.mockResolvedValue({ data: [], total: 0 })
   spaceDetail.mockResolvedValue({ space: { id: SPACE_ID, name: 'Systems', admins: [] } })
   listCategories.mockResolvedValue({ categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] })
   listDomainGroups.mockResolvedValue({ groups: [] })

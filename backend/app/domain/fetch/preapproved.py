@@ -4,7 +4,7 @@ Claude Code's auto mode reads these without asking (``isPreapprovedUrl``,
 Claude Code 2.1.306); we take its list as it is, so 芝士 asks no more than
 Claude Code does. Any other page still goes through the gate, because its
 address can carry what 芝士 read out to the host it names
-(``api.auth.GATED_ROUTES``).
+(``cheese_web.fetch`` reaches others, ``sandbox/cheese``).
 
 An entry with a path covers that path and what lies under it on that host
 alone. On GitHub only Anthropic's own repositories count, and under

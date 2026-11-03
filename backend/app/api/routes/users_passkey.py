@@ -48,6 +48,7 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,10 +69,19 @@ from app.core.config import settings
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.passkey.prompt import PasskeyPromptService
-from app.domain.passkey.services import PasskeyService
+from app.domain.passkey.services import PasskeyService, related_origins
 from app.domain.user.services import UserAuthService
 
 router = APIRouter(prefix="/users", tags=["Users"])
+well_known = APIRouter(tags=["Users"])
+
+
+@well_known.get("/.well-known/webauthn", include_in_schema=False)
+async def webauthn_related_origins() -> JSONResponse:
+    """The origins that may use this deployment's RP ID (WebAuthn Related
+    Origin Requests): a browser on an alias fetches this from the RP ID's own
+    host before it lets the page use a passkey made there."""
+    return JSONResponse({"origins": related_origins()})
 
 
 @router.post(

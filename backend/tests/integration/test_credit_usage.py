@@ -138,7 +138,7 @@ def test_a_persons_page_splits_their_spend_by_product_line(client, plan):
     outsider = _auth(seed_user(client, "cu-personal-outsider"))
     assert (
         client.get(f"/teams/{personal_id}/credits/usage", headers=outsider).status_code
-        == 403
+        == 404
     )
 
 

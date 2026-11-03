@@ -89,15 +89,10 @@ private per-run directory either way.
 **`cheese api`** mounts the server's OpenAPI (fetched live from
 `<base>/openapi.json`) as subcommands, rebuilt each run so it never goes stale.
 It is hidden from the top-level help; run `cheese api` to list operations and
-`cheese api <op> -h` for one operation's generated help. Two things happen
-automatically:
-
-- the stored credential is attached as `Authorization: Bearer …`;
-- if the call comes from **inside a screen**, it is tagged with that screen's
-  token via `X-Cheese-Screen`. The host injects a per-screen token as
-  `CHEESE_SCREEN` into every process a screen spawns, so the server can tell
-  exactly which screen (and thus which hosted program) made any given call —
-  with no cooperation from the program itself.
+`cheese api <op> -h` for one operation's generated help. Inside a session the
+session's credential (`CHEESE_TOKEN`) is attached as `Authorization: Bearer …`,
+so a call acts as that session's teammate; the machine's own device token opens
+only the connector's channel and is never sent.
 
 ## Build
 

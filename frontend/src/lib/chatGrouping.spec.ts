@@ -118,6 +118,14 @@ describe('runEdgeBetween', () => {
     expect(runEdgeBetween(prev, cur, { broken: false })).toBe('cont')
   })
 
+  it('starts a run where his own 芝士 writes for him after he spoke, and back', () => {
+    const own = block('a')
+    const later = new Date(Date.parse(own.created_at) + 60_000).toISOString()
+    const forHim = block('b', { created_at: later, meta: { by_assistant: true } })
+    expect(runEdgeBetween(own, forHim, { broken: false })).toBe('start')
+    expect(runEdgeBetween(forHim, block('c', { created_at: later }), { broken: false })).toBe('start')
+  })
+
   it('regroups when the same speaker comes back an hour later', () => {
     const prev = block('a')
     const cur = block('b', { created_at: new Date(Date.parse(prev.created_at) + REGROUP_GAP_MS).toISOString() })

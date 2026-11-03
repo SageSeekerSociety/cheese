@@ -16,6 +16,7 @@ import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 import { desktopCan } from '@/lib/desktopApp'
 
 const CHALLENGE_KEY = 'cheese.appChallenge'
+const RETURN_KEY = 'cheese.appReturnTo'
 
 /** False for anything that is not a challenge the app could have made. */
 export function keepAppChallenge(challenge: string): boolean {
@@ -32,6 +33,21 @@ export function pendingAppChallenge(): string | null {
 /** Used once: after a hand-off, the tab is an ordinary one again. */
 export function forgetAppChallenge(): void {
   storageRemove(CHALLENGE_KEY, 'session')
+  storageRemove(RETURN_KEY, 'session')
+}
+
+/**
+ * A sign-in started on another origin of this deployment (desktopApp.ts
+ * signInAtOrigin) goes back there rather than to the app. The backend refuses
+ * a code for an origin that is not one of the deployment's.
+ */
+export function keepReturnOrigin(origin: string): void {
+  storageSet(RETURN_KEY, origin, 'session')
+}
+
+/** The origin a pending sign-in goes back to, or null when it goes to the app. */
+export function pendingReturnOrigin(): string | null {
+  return storageGet(RETURN_KEY, 'session')
 }
 
 const ENTRY_OF: Record<string, BrowserSignInEntry> = {

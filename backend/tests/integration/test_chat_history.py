@@ -354,7 +354,7 @@ def test_the_replies_tool_reads_through_the_real_route(client):
             return response.json()
 
     said = tools.run_platform_tool(
-        "cheese_chat_replies", {"message_id": str(parent)}, Host()
+        "cheese_chat", {"action": "replies", "message_id": str(parent)}, Host()
     )
     replying_to, reply = said.split("\n\n", 1)
     assert replying_to.startswith("Replying to:")

@@ -109,7 +109,14 @@ onBeforeUnmount(() => {
   <!-- 失败说一句，别留一块空白：空白和「这条消息本来就没图」长得一样。 -->
   <span v-else-if="failed" class="im-image-failed">{{ t('work.image.failed') }}</span>
 
-  <ImageLightbox v-if="viewing && url" :src="url" :alt="altText" @close="viewing = false" />
+  <ImageLightbox
+    v-if="viewing && url"
+    :src="url"
+    :alt="altText"
+    :topic-id="topicId"
+    :path="path"
+    @close="viewing = false"
+  />
 </template>
 
 <style scoped>

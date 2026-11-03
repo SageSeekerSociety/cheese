@@ -15,7 +15,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.project.ports import AcceptedTerms, Claim, TaskBrief
+from app.domain.project.ports import AcceptedTerms, Claim, StarterSource, TaskBrief
+from app.domain.task import package
 from app.domain.task.inputs import APPROVE_APPROVED, SUBMITTER_TEAM
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.teaching import protocol_for_task
@@ -91,6 +92,20 @@ class TaskTerms:
         return AcceptedTerms(
             default_role=protocol.default_role,
             compute_credits=protocol.compute_credits,
-            prompt=protocol.prompt,
-            skills=tuple(protocol.skills),
+            pack_prompt=protocol.pack_prompt,
+        )
+
+    async def starter(self, task_id: int) -> StarterSource | None:
+        """这道题此刻的起始代码是哪一份；没有、或者题已经删了是 ``None``。"""
+        task = await self._session.get(Task, task_id)
+        if task is None or task.deleted_at is not None:
+            return None
+        row = await package.starter_file(self._session, task.id)
+        if row is None:
+            return None
+        revision = await package.current_number(self._session, task.id) or 1
+        return StarterSource(
+            library_file_id=row.id,
+            revision=revision,
+            message=f"Starter code from task {task.name} (version {revision})",
         )

@@ -92,7 +92,9 @@ async def project_distribution(db, project_id) -> dict:
             )
         else:
             specs[environment.spec] = specs.get(environment.spec, 0) + 1
-    devices = await sql_device_service(db).get_devices(list(on_devices))
+    devices = (
+        await sql_device_service(db).get_devices(list(on_devices)) if on_devices else {}
+    )
     listed = [
         {
             "device_id": device_id,

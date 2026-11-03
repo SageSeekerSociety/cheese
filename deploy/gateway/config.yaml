@@ -10,7 +10,7 @@
 model_list: []
 
 # The platform's own web search (backend `/web-search`, the agents'
-# `cheese_web_search`), asked on the caller's virtual key at
+# `cheese_web(action=search)`), asked on the caller's virtual key at
 # /v1/search/deepseek-search, so it is admitted, logged and drained like that
 # key's model calls. DeepSeek's search API as a provider: deepseek_search.py.
 search_tools:

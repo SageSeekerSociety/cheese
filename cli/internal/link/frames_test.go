@@ -133,6 +133,20 @@ func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 				built = ExecutionResult(id, failure)
 			case "heartbeat":
 				built = Heartbeat()
+			case "exec.output":
+				built = ExecOutput(f.Meaning["exec_id"].(string), f.Meaning["line"].(string))
+			case "machine.open":
+				built = MachineOpen(f.Meaning["stream_id"].(string), f.Meaning["state"].(string))
+			case "machine.data":
+				built = MachineData(f.Meaning["stream_id"].(string), []byte(f.Meaning["payload"].(string)))
+			case "machine.end":
+				built = MachineEnd(f.Meaning["stream_id"].(string))
+			case "machine.close":
+				var failure error
+				if reason := f.Meaning["error"].(string); reason != "" {
+					failure = errors.New(reason)
+				}
+				built = MachineClose(f.Meaning["stream_id"].(string), failure)
 			default:
 				t.Fatalf("no builder for %s", f.Type)
 			}

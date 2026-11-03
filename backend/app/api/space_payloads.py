@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
+from app.domain.space.access_service import SpaceAccessService
 from app.domain.space.services import SpaceService
 from app.domain.task.protocol import Teaching
 from app.domain.user.repositories import (
@@ -27,20 +28,9 @@ class SpaceRow(Protocol):
     visible_task_limit: Mapped[int | None]
     default_category_id: Mapped[int | None]
     task_templates: Mapped[list]
+    open_scope: Mapped[list[str] | None]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
-
-
-class SpaceInviteCodeRow(Protocol):
-    id: Mapped[int]
-    space_id: Mapped[int]
-    code: Mapped[str]
-    max_uses: Mapped[int]
-    use_count: Mapped[int]
-    expires_at: Mapped[datetime | None]
-    created_at: Mapped[datetime]
-    note: Mapped[str | None]
-    created_by: Mapped[int | None]
 
 
 class SpaceCategoryRow(Protocol):
@@ -108,6 +98,12 @@ class TeachingRequest(BaseModel):
             str, Field(pattern=r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
         ]
     ] = Field(default_factory=list, alias="documentIds")
+    #: Skills every AI teammate of the projects under this level carries on
+    #: every turn (`Teaching.skills`): names from the platform's skill catalog
+    #: (`GET /skill-catalog`), or a skill a participant's own machine holds.
+    skills: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list
+    )
 
 
 def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
@@ -130,6 +126,7 @@ def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dic
         "learningGoals": list(teaching.learning_goals),
         "materialIds": list(teaching.material_ids),
         "documentIds": list(teaching.document_ids),
+        "skills": list(teaching.skills),
     }
     if include_private:
         data["privatePrompt"] = teaching.private_prompt
@@ -178,33 +175,6 @@ class PatchSpaceDomainGroupRequest(BaseModel):
     domains: list[str] | None = None
 
 
-class CreateSpaceInviteCodeRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    max_uses: int | None = Field(default=None, alias="maxUses")
-    expires_at: int | None = Field(default=None, alias="expiresAt")
-    # 这张码给谁 / 干什么用. Optional and free text; omitted or blank is stored
-    # as NULL, which the read side reports as "no note" rather than "".
-    note: str | None = Field(default=None, alias="note")
-
-
-class PatchSpaceInviteCodeRequest(BaseModel):
-    """What may still be changed on a live code.
-
-    Both fields are nullable and both are optional, and the two mean different
-    things: an absent ``expiresAt`` leaves the date alone, an explicit null
-    clears it. The route reads ``model_fields_set`` to tell them apart.
-    ``note`` follows the same rule: absent leaves the 说明 alone, null (or a
-    blank string, which the service normalises to the same thing) clears it.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    max_uses: int | None = Field(default=None, alias="maxUses")
-    expires_at: int | None = Field(default=None, alias="expiresAt")
-    note: str | None = Field(default=None, alias="note")
-
-
 class AddSpaceManagerRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -233,6 +203,9 @@ def _space_to_api_model(space: SpaceRow, *, include_private: bool = False) -> di
         "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
         "taskTemplates": json.dumps(space.task_templates or []),
+        # NULL: members-only. A list: open to everyone signed in whose email
+        # is in it (``app.domain.space.access_service``).
+        "openScope": list(space.open_scope) if space.open_scope is not None else None,
         # 空间级「给 AI 队友的指导」(#944) — the settings form reads it back, so it
         # has to be here rather than only on the write path. `include_private` is
         # set only where the caller is a board manager (the settings page).
@@ -243,64 +216,6 @@ def _space_to_api_model(space: SpaceRow, *, include_private: bool = False) -> di
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
-
-
-def _invite_code_to_api_model(
-    invite: SpaceInviteCodeRow, created_by: dict | None = None
-) -> dict:
-    """One code as the 邀请码 screen reads it.
-
-    ``createdBy`` is the same hydrated person object a member row carries, and
-    is passed in rather than read off the row because turning a user id into a
-    name is a batched query the caller already runs for the whole list. It is
-    ``None`` when the row names nobody — the screen says 未知 rather than
-    rendering an empty name.
-    """
-    created_at_ms = (
-        int(invite.created_at.timestamp() * 1000) if invite.created_at else 0
-    )
-    expires_at_ms = (
-        int(invite.expires_at.timestamp() * 1000) if invite.expires_at else None
-    )
-    return {
-        "id": invite.id,
-        "spaceId": invite.space_id,
-        "code": invite.code,
-        "maxUses": invite.max_uses,
-        "useCount": invite.use_count,
-        "expiresAt": expires_at_ms,
-        "createdAt": created_at_ms,
-        "note": invite.note,
-        "createdBy": created_by,
-    }
-
-
-async def _invite_codes_to_api_models(
-    invites: Sequence[SpaceInviteCodeRow],
-    *,
-    db: AsyncSession,
-) -> list[dict]:
-    """The list form of the above, with its makers hydrated in one query.
-
-    Two queries for however many codes, the same shape ``_hydrate_members``
-    uses: a per-row lookup would grow with the number of codes on the board.
-    """
-    maker_ids = [c.created_by for c in invites if c.created_by is not None]
-    people = (
-        await _hydrate_people(
-            maker_ids,
-            user_repo=UserRepository(session=db),
-            profile_repo=UserProfileRepository(session=db),
-        )
-        if maker_ids
-        else {}
-    )
-    return [
-        _invite_code_to_api_model(
-            invite, people.get(invite.created_by) if invite.created_by else None
-        )
-        for invite in invites
-    ]
 
 
 def _category_to_api_model(
@@ -358,6 +273,17 @@ def _admin_to_api_model(
     return result
 
 
+async def people_by_ids(
+    user_ids: Sequence[int], *, db: AsyncSession
+) -> dict[int, dict]:
+    """``_hydrate_people`` for a route that holds only the session."""
+    return await _hydrate_people(
+        user_ids,
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+
+
 async def _hydrate_people(
     user_ids: Sequence[int],
     *,
@@ -379,12 +305,11 @@ async def _hydrate_people(
     """
     ids = list(user_ids)
     users = await user_repo.get_by_ids(ids)
-    profiles = await profile_repo.get_profiles_by_user_ids(ids)
-    # 「挑过的头像」和档案分开问，别回档案上的 avatar_id：每个注册路径都往那一列写死
+    # 「挑过的头像」按头像类型认，别回档案上的 avatar_id：每个注册路径都往那一列写死
     # 了全局默认（默认头像 id 因环境而异，见 UserProfileRepository.chosen_avatar_ids），
     # 直接回它会让所有没挑过头像的人共用同一张脸 —— 而区分人正是头像唯一的活。没挑过
-    # 的人不在映射里，这里回 None，前端据此画彩色首字母。
-    chosen_avatars = await profile_repo.chosen_avatar_ids(ids)
+    # 的人不在映射里，这里回 None，前端据此画彩色首字母。档案和头像出自同一次读取。
+    profiles, chosen_avatars = await profile_repo.profiles_and_chosen_avatars(ids)
     people: dict[int, dict] = {}
     for user_id in ids:
         user = users.get(user_id)
@@ -451,4 +376,22 @@ async def _build_full_space_payload(
     )
     topics = await service.list_classification_topics(space.id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    if include_private:
+        # The settings page shows whether opening the space is waiting for
+        # review, or why it was sent back; nobody else is told.
+        request = await SpaceAccessService(db).latest_request(space.id)
+        space_data["openRequest"] = (
+            None
+            if request is None
+            else {
+                "id": request.id,
+                "scope": list(request.scope),
+                "status": request.status,
+                "reason": request.reason,
+                "createdAt": request.created_at.isoformat(),
+                "reviewedAt": (
+                    request.reviewed_at.isoformat() if request.reviewed_at else None
+                ),
+            }
+        )
     return space_data

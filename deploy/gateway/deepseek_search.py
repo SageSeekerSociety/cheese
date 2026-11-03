@@ -1,6 +1,6 @@
 """DeepSeek's search API as a LiteLLM search provider.
 
-The platform's own web search (`cheese_web_search`, backend `/web-search`) is
+The platform's own web search (`cheese_web(action=search)`, backend `/web-search`) is
 asked through this gateway with the caller's virtual key, so a search is
 admitted by that key's budget, logged on that key, and drained into credits
 with its model calls (`backend/app/domain/agent/gateway.py`). LiteLLM 1.103.3

@@ -111,7 +111,8 @@
       "failures": "provider 失败",
       "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
       "hostsNote": "整机虚拟机也算在上限里；已放弃、释放中的不算",
-      "warm": "温机另算：此刻 {n} 台，目标 {target} 台。"
+      "warm": "温机另算：此刻 {n} 台，目标 {target} 台。",
+      "fixed": "固定常开 {n} 台。"
     },
     "alert": {
       "notConfigured": "这个部署没有配置 MicroCloud，云端沙箱不可用",
@@ -145,7 +146,9 @@
       "waiting": "等宿主机",
       "working": "工作中",
       "idle": "空闲",
-      "stopping": "销毁中"
+      "stopping": "销毁中",
+      "frozen": "已冻结",
+      "parked": "停机留盘"
     },
     "note": {
       "failed": "provider 弄坏了，{at} 放弃，等 provider 删掉",
@@ -153,14 +156,18 @@
       "enrollFailing": "注册第 {n} 次失败：{error}",
       "offline": "连接器已断开 {for}",
       "idle": "已空闲 {for}",
-      "vm": "{project} 的整机虚拟机"
+      "vm": "{project} 的整机虚拟机",
+      "draining": "正在滚动重建，已 {for}；等它空了就释放换新"
     },
     "when": {
       "waiting": "已等 {for}",
       "stopping": "销毁已 {for}",
       "active": "{ago}前用过工具",
       "reclaim": "最早 {in}后回收",
-      "overdue": "已过空闲期还没回收（频道里 AI 队友最近一次停下得更晚、或后台命令还在跑，都会往后推）"
+      "overdue": "已过空闲期还没回收（频道里 AI 队友最近一次停下得更晚、或后台命令还在跑，都会往后推）",
+      "frozen": "已冻结 {for}（进程停着，不计费）",
+      "discard": "最迟 {in}后销毁",
+      "parked": "停机留盘：进程停了、目录留着，最迟 {in}后删"
     },
     "placed": "{at} 放上来",
     "personal": "个人对话",
@@ -176,8 +183,30 @@
     "fact": {
       "prepared": "开始准备的沙箱",
       "ready": "准备好的",
-      "wait": "等待时长 p50 / p95 / 最长",
+      "wait": "等主机开机 p50 / p95 / 最长",
       "waitValue": "{p50} / {p95} / {max}",
+      "timed": {
+        "sandbox_prepared": "准备沙箱（{count} 次）p50 / p95",
+        "sandbox_frozen": "冻结（{count} 次）p50 / p95",
+        "sandbox_checked_out": "打开任务目录（{count} 次，含装依赖）p50 / p95",
+        "sandbox_parked": "停机留盘（{count} 次）p50 / p95"
+      },
+      "stageValue": "{stage} {p50} / {p95}",
+      "stage": {
+        "total": "合计",
+        "place": "排位",
+        "host": "等主机",
+        "thaw": "解冻",
+        "executor": "装执行器",
+        "release": "放发布包",
+        "claude": "取 Claude Code",
+        "sandbox": "起沙箱",
+        "ready": "等执行器应答",
+        "checkpoint": "推送检查点",
+        "freeze": "主机冻结",
+        "checkout": "检出",
+        "park": "停进程"
+      },
       "abandoned": "没准备好就放弃",
       "replaced": "宿主机坏掉、换了一台",
       "released": "回收（空闲 / 额度用完）",
@@ -203,6 +232,7 @@
       "disk": "磁盘",
       "inodes": "inode",
       "memory": "内存",
+      "swap": "交换",
       "cpu": "CPU",
       "gb": "{used} / {total} GB",
       "gib": "{used} / {total} GiB",
@@ -217,7 +247,15 @@
       "sandboxDisk": "磁盘 {used} / {cap} GB",
       "sandboxFiles": "文件 {used} / {cap}",
       "sandboxRead": "内存读数 {memory} · 磁盘读数 {disk}",
+      "sandboxSwap": "交换 {used} GiB",
+      "sandboxSwapCap": "交换 {used} / {cap} GiB",
+      "oomKilled": "被 OOM 杀过 {n} 次",
+      "pressure": "内存压力（1 分钟 / 5 分钟）：some {some}，full {full}",
       "foot": "用量（含每个沙箱的磁盘）每 {check}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"
-    }
+    },
+    "draining": "重建中",
+    "outdated": "镜像过期",
+    "fixedFoot": "固定池常开 {n} 台普通宿主机；注册脚本、模板或规格变了的机器要换，满 {days} 天的机器也要换，一次只换一台：先不再接新沙箱，等空了再释放、补一台新的。",
+    "fixedFootNoAge": "固定池常开 {n} 台普通宿主机；注册脚本、模板或规格变了的机器要换，一次只换一台：先不再接新沙箱，等空了再释放、补一台新的。"
   }
 }

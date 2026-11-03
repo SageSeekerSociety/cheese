@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import type { TopicNotifyLevel, TopicNotifySetting, TopicUnread } from '@/api'
 import type { RoomTask, Topic } from '@/cx_types'
+import type { ChannelSpeakers } from '@/types/channels'
 import type { RememberedPlace } from './types'
 
 import {
@@ -18,7 +19,7 @@ import {
   upgradeBlock,
 } from '@/api'
 import { renameTask as renameTaskApi } from '@/api/tasks'
-import { setChannelMembersOnly } from '@/api/topicMembers'
+import { setChannelMembersOnly, setChannelSpeakers } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { patchQuery } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -97,6 +98,27 @@ export function useChannelActions(deps: ChannelDeps) {
       return true
     } catch (e) {
       reportError(e, t('work.channel.describeFailed'))
+      return false
+    }
+  }
+
+  /** 谁能在主线发言、支线是否人人能回（管理者，#4795）。成功之后这一行跟着变。 */
+  async function setSpeakers(topicId: string, speakerRoles: string[] | null, threadRepliesOpen: boolean) {
+    try {
+      const saved = await setChannelSpeakers(topicId, speakerRoles, threadRepliesOpen)
+      const said = saved as Topic & ChannelSpeakers
+      await patchRows(
+        topicId,
+        (topic) =>
+          ({
+            ...topic,
+            speaker_roles: said.speaker_roles ?? null,
+            thread_replies_open: said.thread_replies_open !== false,
+          }) as Topic
+      )
+      return true
+    } catch (e) {
+      reportError(e, t('work.channel.speakersFailed'))
       return false
     }
   }
@@ -346,6 +368,7 @@ export function useChannelActions(deps: ChannelDeps) {
     setNotifyLevel,
     describe,
     setMembersOnly,
+    setSpeakers,
     setJoined,
     markAllRead,
     markRead,

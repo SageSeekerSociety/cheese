@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import (
@@ -19,7 +20,10 @@ from app.domain.agent_instance.models import (
     OwnAgent,
     PersonalModelResource,
 )
-from app.domain.agent_instance.repositories import AgentInstanceRepository
+from app.domain.agent_instance.repositories import (
+    AGENT_INSTANCE_TABLES,
+    AgentInstanceRepository,
+)
 from app.domain.agent_type.library import AgentTypeDef, preset_types
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.identity.handles import (
@@ -27,6 +31,7 @@ from app.domain.identity.handles import (
     CHEESE_NAME,
     UNRESOLVED_AGENT_HANDLE,
     agent_instance_handle,
+    agent_instance_id_bounds,
 )
 from app.domain.identity.services import IdentityService
 from app.domain.memory.models import agent_project_scope_id
@@ -174,7 +179,7 @@ class AgentInstanceService:
         if peer is not None:
             return peer
         seat = await TopicMemberService(self._session).addressable_agent_handle(
-            topic.id
+            topic.id, room_id=topic.id
         )
         seated = await self.for_seat_handle(project, seat)
         return seated if seated is not None else await self.for_project(project)
@@ -294,10 +299,48 @@ class AgentInstanceService:
         """Which project's teammate sits on rosters as ``handle``, or None when
         the handle is not a saved teammate's seat at all (a person, the shared
         ``cheese`` seat, a room-derived seat, a device's agent)."""
-        for instance in await self._repo.list_all():
-            if agent_instance_handle(instance.id) == handle:
-                return instance.project_id
-        return None
+        if agent_instance_id_bounds(handle) is None:
+            return None
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            key = ("seat_project", handle)
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
+            for obj in self._session.sync_session.identity_map.values():
+                if (
+                    isinstance(obj, AgentInstance)
+                    and agent_instance_handle(obj.id) == handle
+                ):
+                    remember(
+                        self._session,
+                        key,
+                        obj.project_id,
+                        tables=AGENT_INSTANCE_TABLES,
+                    )
+                    return obj.project_id
+                if (
+                    isinstance(obj, Project)
+                    and obj.default_agent_instance_id is not None
+                    and agent_instance_handle(obj.default_agent_instance_id) == handle
+                ):
+                    remember(
+                        self._session,
+                        key,
+                        obj.id,
+                        tables=AGENT_INSTANCE_TABLES | frozenset({"projects"}),
+                    )
+                    return obj.id
+            pid = await self._repo.project_of_seat_handle(handle)
+            remember(
+                self._session,
+                key,
+                pid,
+                tables=AGENT_INSTANCE_TABLES,
+            )
+            return pid
+        return await self._repo.project_of_seat_handle(handle)
 
     async def for_handle(self, project: Project, handle: str | None) -> AgentInstance:
         """The saved teammate a caller named by handle, else the project default.
@@ -396,10 +439,12 @@ class AgentInstanceService:
             name_source=NameSource.human if name else NameSource.default,
             configuration=config.model_dump(),
         )
-        await self.ensure_identity(instance)
+        await self.ensure_identity(instance, newly_created=True)
         return instance
 
-    async def ensure_identity(self, instance: AgentInstance) -> str:
+    async def ensure_identity(
+        self, instance: AgentInstance, *, newly_created: bool = False
+    ) -> str:
         """Give this agent the identity it acts under, and return its handle.
 
         An agent is a collaborator: it can be seated in a room, attributed to,
@@ -412,7 +457,7 @@ class AgentInstanceService:
         """
 
         user = await IdentityService(self._session).ensure_instance_agent_user(
-            instance.id, instance.display_name
+            instance.id, instance.display_name, newly_created=newly_created
         )
         return user.username
 
@@ -450,12 +495,14 @@ class AgentInstanceService:
         here (``living_doc.repositories.set_content`` takes the same stand).
         """
         await self._validate_model(instance.project_id, config, instance.id)
+        dumped = config.model_dump()
+        now = datetime.now(UTC)
         if expected_version is None:
-            instance.configuration = config.model_dump()
+            instance.configuration = dumped
             # The attribute, not the SQL expression below: assigning the
             # expression here would put a BinaryExpression where an int lives.
             instance.version = instance.version + 1
-            instance.updated_at = datetime.now(UTC)
+            instance.updated_at = now
             return
         written = await self._session.scalar(
             update(AgentInstance)
@@ -464,9 +511,9 @@ class AgentInstanceService:
                 AgentInstance.version == expected_version,
             )
             .values(
-                configuration=config.model_dump(),
+                configuration=dumped,
                 version=AgentInstance.version + 1,
-                updated_at=datetime.now(UTC),
+                updated_at=now,
             )
             .returning(AgentInstance.id)
         )
@@ -477,27 +524,16 @@ class AgentInstanceService:
             raise ConflictError(
                 say("agentSkillsStale"), data={"version": instance.version}
             )
-        await self._session.refresh(instance)
+        instance.configuration = dumped
+        instance.version = expected_version + 1
+        instance.updated_at = now
 
-    async def apply_protocol(
-        self,
-        instance: AgentInstance,
-        *,
-        prompt: str | None,
-        skills: list[str],
-    ) -> None:
-        """落一个题目包带来的 prompt 与 skill 名字（#944）。
-
-        调用方（project，在赛题被接受时）只说「加什么」；一份配置长什么样留在
-        这里，project 不必再 import ``configuration``（那是一条向上的边）。
-        ``skills`` 去重、保序：题目列的名字与 preset 那份重叠时不重复带。
-        """
+    async def append_to_persona(self, instance: AgentInstance, text: str) -> None:
+        """Add a paragraph to the end of this teammate's persona (``body``):
+        the 资源包's prompt, at project creation (``adapters.default_teammate``)."""
         config = AgentConfiguration.model_validate(instance.configuration or {})
-        config.body = "\n\n".join(part for part in (config.body, prompt) if part)
-        config.skills = list(dict.fromkeys([*config.skills, *skills]))
+        config.body = "\n\n".join(part for part in (config.body, text) if part)
         await self.configure(instance, config)
-
-        await self._validate_model(instance.project_id, config, instance.id)
 
     async def _validate_model(
         self,
@@ -605,7 +641,7 @@ class AgentInstanceService:
             raise ValidationError(say("teammateInactiveNoDefault"))
         project.default_agent_instance_id = instance.id
         await self._session.flush()
-        return await self.for_project(project)
+        return self.resolved(instance)
 
     async def materialize_default(
         self, project: Project, *, display_name: str | None = None
@@ -649,15 +685,25 @@ class AgentInstanceService:
         # An agent gets its identity when it comes into being, and the project's
         # 芝士 comes into being here rather than in create(). Without it the
         # project's own room could not seat it under its own seat.
-        await self.ensure_identity(instance)
+        await self.ensure_identity(instance, newly_created=existing is None)
         # Configuring the project's 芝士 is choosing it, so a retired row under
         # that handle comes back rather than becoming a default nobody may pick.
         # Same pool either way — the handle never moved.
         instance.is_active = True
         project.default_agent_instance_id = instance.id
         if project.root_topic_id is not None:
+            seat = agent_instance_handle(instance.id)
+            if existing is None and isinstance(self._session, AsyncSession):
+                if self._session.autoflush:
+                    await self._session.flush()
+                remember(
+                    self._session,
+                    ("topic_member_row", project.root_topic_id, seat),
+                    None,
+                    tables=frozenset({"topic_memberships"}),
+                )
             await TopicMemberService(self._session).ensure_agent_seat(
-                project.root_topic_id, agent_instance_handle(instance.id)
+                project.root_topic_id, seat
             )
         await self._session.flush()
         return instance

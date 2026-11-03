@@ -1,3 +1,8 @@
+import type { QuotedContext } from './quotedContext'
+
+/** Where a room file's thread points, as stored: one of the quoting shapes. */
+export type QuotedContextLike = QuotedContext | Record<string, unknown>
+
 /** The room's agent answering a thread now: waiting for a free session, or answering. */
 export type DocThreadAnswering = 'queued' | 'working'
 
@@ -8,6 +13,9 @@ export interface DocComment {
   content: string
   /** The words an opening comment is about, as they read when it was written. */
   anchor_quote: string | null
+  /** Where a thread on a room file points — a place in it, and the version it
+   *  was read at. A document's thread has none: its own text carries the mark. */
+  anchor?: QuotedContextLike | null
   created_at: string
   /** The people its @s told. A name it @s is drawn as a mention only for them. */
   notified?: string[]

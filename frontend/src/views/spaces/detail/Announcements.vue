@@ -33,7 +33,6 @@ import type { AnnouncementDraft } from './AnnouncementsView.vue'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -43,6 +42,7 @@ import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import { SpacesApi } from '@/api/spaces'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 

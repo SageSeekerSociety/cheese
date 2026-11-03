@@ -40,11 +40,12 @@ import asyncio
 import logging
 import time
 
-from fastapi import APIRouter, Header, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.api.ws_pipe import _Activity, _pump_tcp_to_ws, _pump_ws_to_tcp
+from app.core import credentials
 from app.core.config import settings
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 
 logger = logging.getLogger("cheesex.llm_tunnel")
 
@@ -84,21 +85,22 @@ async def _until_idle(activity: _Activity, idle_s: float, check_s: float) -> Non
 @router.websocket("/tunnel")
 async def tunnel(
     websocket: WebSocket,
-    token: str | None = Query(default=None),
-    x_cheese_session: str | None = Header(default=None, alias="X-Cheese-Session"),
 ) -> None:
     """Relay one TCP connection to the metering proxy's CONNECT listener.
 
     Authenticated with the same scoped cheese token the caller would have used
     as the proxy password had it reached the listener directly, so opening this
     transport widens nothing: a caller that cannot prove which project to bill
-    is refused here exactly as it would be there. Verification is an HMAC over
-    the token's own claims, so this route touches no database — which also keeps
+    is refused here exactly as it would be there. Verification is a signature
+    over the token's own claims, so this route touches no database — which also keeps
     it clear of the trap a long-lived socket falls into when it holds a request
     session open for the life of the connection (#356).
     """
-    claims = scoped_token_claims(x_cheese_session or token or "")
-    if not claims or not claims.get("p"):
+    claims = scoped_token_claims(credentials.presented(websocket.headers))
+    # A sandbox's own credential is no tunnel credential: the tunnel carries a
+    # session host's Claude Code to the metering proxy, and a sandbox asks for
+    # a model on its platform socket (`sandbox_auth.held_by_a_machine`).
+    if not claims or not claims.get("p") or held_by_a_machine(claims):
         # Refused BEFORE accept: an unaccepted handshake is a plain HTTP 403 the
         # helper can report as "bad token", instead of a socket that opens and
         # then dies for reasons it cannot distinguish from a network fault.

@@ -7,7 +7,7 @@
  *
  * 修复前这条会红：框一出来，焦点就在那个输入框上。
  */
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import PreviewLocator from './PreviewLocator.vue'
@@ -18,8 +18,152 @@ beforeEach(() => setLocale('zh-CN'))
 
 afterEach(cleanup)
 
+const stubs = {
+  VIcon: true,
+  VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+}
+
+it('指出一处以后去处由一个下拉定：默认发进对话，切到「仅留评论」就挂成评论', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '这里数字不对', canComment: true },
+    global: { stubs },
+  })
+  const labels = () => [...ui.container.querySelectorAll('button')].map((b) => b.textContent?.trim())
+  // 同一个选择不再摆两颗按钮：底部只有「加入待发」「发送」，去处在下拉里。
+  expect(labels()).not.toContain('评论')
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().send).toHaveLength(1)
+
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-comment'))
+  // 切到评论以后：主按钮改叫「评论」，「加入待发」收起（评论不进发给任务芝士的那一篮）。
+  expect(labels()).toContain('评论')
+  expect(labels()).not.toContain('加入待发')
+  ;[...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!.click()
+  expect(ui.emitted().comment).toHaveLength(1)
+  expect(ui.emitted().send).toHaveLength(1)
+})
+
+it('去处里有「问个人芝士」：选中它以后发送走私聊那一路，不进这间房', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const personal = ui.getByTestId('locator-recipient-personal')
+  expect(personal.textContent).toContain('问个人芝士（私聊）')
+  await fireEvent.click(personal)
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().personal).toHaveLength(1)
+  // 私聊的那一句不能同时发进房间、也不能被当成评论。
+  expect(ui.emitted().send).toBeUndefined()
+  expect(ui.emitted().comment).toBeUndefined()
+})
+
+it('篮里有待发批注时切到私聊：主按钮不再写「全部发送」，那一下只发当前这一处', async () => {
+  const props = {
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: true,
+    queuedCount: 2,
+  }
+  const ui = render(PreviewLocator, { props, global: { stubs } })
+  const primary = () => [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.includes('发送'))!
+  // 去处是芝士时，主按钮把篮里那几条也算上。
+  expect(primary().textContent).toContain('全部发送（3）')
+
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  // 私下问只发当前这一处、篮里那两条原地不动——还写「全部发送（3）」就是骗人。
+  expect(primary().textContent?.trim()).toBe('发送')
+  expect(primary().textContent).not.toContain('全部发送')
+  // 切回芝士又算上了。
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-agent'))
+  expect(primary().textContent).toContain('全部发送（3）')
+})
+
+it('问不了个人芝士时那一项不列出来：留着一条按下去没反应的项比不摆更糟', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  expect(ui.queryByTestId('locator-recipient-personal')).toBeNull()
+})
+
+it('停在个人芝士上、这一项又没了（换了人）：切回发给任务芝士，不能让发送键按下去悄没声', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  await ui.rerender({
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: false,
+  })
+  expect(ui.getByTestId('locator-recipient').textContent).toContain('发给任务芝士')
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().send).toHaveLength(1)
+  expect(ui.emitted().personal).toBeUndefined()
+})
+
+it('给了位置就弹在那一处下面；下面放不下就翻到上面；左右夹在面板里', async () => {
+  const anchor = { top: 100, bottom: 120, left: 600, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor },
+    global: { stubs },
+  })
+  const card = ui.container.querySelector('.locator') as HTMLElement
+  expect(card.classList.contains('locator--floating')).toBe(true)
+  expect(card.dataset.side).toBe('below')
+  expect(card.style.top).toBe('128px')
+  // 面板 700 宽、卡片最宽 348、边距 12：左边最多到 340，不会伸出面板。
+  expect(card.style.left).toBe('340px')
+
+  await ui.rerender({ anchor: { ...anchor, top: 700, bottom: 720 } })
+  expect(card.dataset.side).toBe('above')
+  expect(parseFloat(card.style.top)).toBeLessThan(700)
+
+  // 没有位置（键盘选中、那一处滚出视野、面板太窄）：退回贴在可见区底边。
+  await ui.rerender({ anchor: null })
+  expect(card.classList.contains('locator--floating')).toBe(false)
+  expect(card.style.top).toBe('')
+})
+
+it('这一份文件挂不了评论时，只留「发送」一条出口', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'library/a.pdf', quote: '第一段' }, note: '这里', canComment: false },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const labels = [...ui.container.querySelectorAll('button')].map((b) => b.textContent?.trim())
+  expect(labels).toContain('发送')
+  expect(labels).not.toContain('评论')
+})
+
 it('弹出时不去抢正文那边的焦点', async () => {
-  // 按钮原样落成 <button>：这条读的是焦点，Vuetify 的按钮和图标在这一条里没有用。
   const ui = render(PreviewLocator, {
     props: { target: null, note: '' },
     global: {
@@ -36,9 +180,9 @@ it('弹出时不去抢正文那边的焦点', async () => {
     note: '',
   })
   const input = await waitFor(() => {
-    const box = ui.container.querySelector('.locator__input') as HTMLInputElement | null
+    const box = ui.container.querySelector('.locator__input') as HTMLTextAreaElement | null
     expect(box).toBeTruthy()
-    return box as HTMLInputElement
+    return box as HTMLTextAreaElement
   })
 
   expect(document.activeElement).not.toBe(input)
@@ -46,4 +190,235 @@ it('弹出时不去抢正文那边的焦点', async () => {
   // 反面：这一条不是「焦点根本动不了」才绿的——框本身照样能聚焦，读者点一下就进来。
   input.focus()
   expect(document.activeElement).toBe(input)
+})
+
+it('支持把当前指认加入待发列表，并在待发条上一键全部发送', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '改这里', queuedCount: 0 },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const queueBtn = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '加入待发')
+  expect(queueBtn).toBeTruthy()
+  queueBtn!.click()
+  expect(ui.emitted().queue).toHaveLength(1)
+
+  await ui.rerender({ target: null, note: '', queuedCount: 2 })
+  expect(ui.container.textContent).toContain('待发批注 2 处')
+  const sendAllBtn = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '全部发送（2）')
+  expect(sendAllBtn).toBeTruthy()
+  sendAllBtn!.click()
+  expect(ui.emitted().sendQueued).toHaveLength(1)
+})
+
+it('支持通过投递目标下拉切换为「仅留评论」并回车提交', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '留条评论', canComment: true },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-comment'))
+  const input = ui.container.querySelector('.locator__input') as HTMLTextAreaElement
+  await fireEvent.keyDown(input, { key: 'Enter' })
+  expect(ui.emitted().comment).toHaveLength(1)
+  expect(ui.emitted().send).toBeUndefined()
+})
+
+it('拖选一段字：先只出「添加批注」，点了才展开整张卡；Esc 撤掉', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: '第 1 页 · 二、时间安排', quote: '报名截止 11 月 8 日' },
+      note: '',
+      anchor,
+      armFirst: true,
+    },
+    global: { stubs },
+  })
+  const arm = ui.getByTestId('locator-arm')
+  expect(arm.textContent).toContain('添加批注')
+  expect(ui.container.querySelector('.locator')).toBeNull()
+  // 贴在选区左下 8px，不压选区。
+  expect(arm.style.top).toBe('128px')
+  expect(arm.style.left).toBe('40px')
+  await fireEvent.click(arm)
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  expect(document.activeElement).toBe(field)
+  expect(ui.container.textContent).toContain('第 1 页 · 二、时间安排')
+
+  // 换一处又先出按钮。
+  await ui.rerender({ target: { label: '第 2 页', quote: '另一段' } })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+  await fireEvent.keyDown(ui.getByTestId('locator-arm'), { key: 'Escape' })
+  expect(ui.emitted().cancel).toHaveLength(1)
+})
+
+it('小按钮浮着的时候读者把选中撤掉（点正文别处）：按钮跟着收，不再挡字', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+
+  // 点正文别处：浏览器把页面上那段选中收掉了。
+  window.getSelection()!.removeAllRanges()
+  document.dispatchEvent(new Event('selectionchange'))
+
+  expect(ui.emitted().cancel).toHaveLength(1)
+})
+
+it('卡展开了以后点输入框（选区也会被收掉）不算取消：那是在写这句话', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-arm'))
+  await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+
+  window.getSelection()!.removeAllRanges()
+  document.dispatchEvent(new Event('selectionchange'))
+
+  expect(ui.emitted().cancel).toBeUndefined()
+})
+
+it('先出按钮的一处滚出视野时按钮先藏起来，滚回来再出现，中途不变成整张卡', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+  await ui.rerender({ anchor: null })
+  expect(ui.queryByTestId('locator-arm')).toBeNull()
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+  await ui.rerender({ anchor })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+})
+
+it('选区靠右时按钮按自己的宽贴边，不被卡片宽拉离选区', () => {
+  const anchor = { top: 100, bottom: 120, left: 600, panelWidth: 800, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  // 800 − 132 − 12 = 656 > 600：按钮就在选区左下，不被拉到 440。
+  expect(ui.getByTestId('locator-arm').style.left).toBe('600px')
+})
+
+it('去处菜单可以只用键盘：下键打开并落在当前项，上下移动，回车选中后焦点回到按钮；发送中不能换', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '改', canComment: true },
+    global: { stubs },
+  })
+  const trigger = ui.getByTestId('locator-recipient')
+  await fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+  await waitFor(() => expect(document.activeElement).toBe(ui.getByTestId('locator-recipient-agent')))
+  await fireEvent.keyDown(ui.getByRole('listbox'), { key: 'ArrowDown' })
+  expect(document.activeElement).toBe(ui.getByTestId('locator-recipient-comment'))
+  await fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
+  await waitFor(() => expect(document.activeElement).toBe(trigger))
+  expect(trigger.textContent).toContain('仅留评论')
+
+  await ui.rerender({ busy: true })
+  await fireEvent.click(trigger)
+  expect(ui.queryByRole('listbox')).toBeNull()
+})
+
+it('两行输入：Shift+Enter 换行不发送，Enter 发送；卡底写着怎么发', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '第一行' },
+    global: { stubs },
+  })
+  const field = ui.getByPlaceholderText('输入修改要求或批注内容…') as HTMLTextAreaElement
+  expect(field.tagName).toBe('TEXTAREA')
+  expect(field.getAttribute('rows')).toBe('2')
+  await fireEvent.keyDown(field, { key: 'Enter', shiftKey: true })
+  expect(ui.emitted().send).toBeUndefined()
+  await fireEvent.keyDown(field, { key: 'Enter' })
+  expect(ui.emitted().send).toHaveLength(1)
+  expect(ui.container.textContent).toContain('「加入待发」可合并多处一起发')
+})
+
+it('焦点在去处按钮上、菜单没开时按 Esc 也撤掉这一处', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  const trigger = ui.getByTestId('locator-recipient')
+  await fireEvent.keyDown(trigger, { key: 'Escape' })
+  expect(ui.emitted().cancel).toHaveLength(1)
+})
+
+it('焦点落在菜单本身时，上键从最后一项走，不会又跳回第一项', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const list = ui.getByRole('listbox')
+  list.focus()
+  await fireEvent.keyDown(list, { key: 'ArrowUp' })
+  expect(document.activeElement).toBe(ui.getByTestId('locator-recipient-comment'))
+})
+
+it('去处菜单每一项都说清会发生什么', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const text = ui.getByRole('listbox').textContent ?? ''
+  expect(text).toContain('发给任务芝士')
+  expect(text).toContain('由任务芝士按这一处修改文件')
+  expect(text).toContain('仅留评论')
+  expect(text).toContain('不触发芝士修改')
+})
+
+it('卡关掉时焦点回到打开它的那一处', async () => {
+  // 卡自己不抢焦点，所以打开它的那一处就是按下去那一刻拿着焦点的东西：图上那颗
+  // 图上框一块、表格里那一格。不还的话焦点掉到 body。
+  const opener = document.createElement('button')
+  document.body.append(opener)
+  opener.focus()
+  const ui = render(PreviewLocator, { props: { target: null, note: '' }, global: { stubs } })
+  // 和真产品一样：这一格一直在，指了一处之后 target 才从 null 变成那一处。
+  await ui.rerender({ target: { label: '第 1 页', quote: '一段原文' } })
+  const input = await waitFor(() => {
+    const box = ui.container.querySelector('.locator__input') as HTMLTextAreaElement | null
+    expect(box).toBeTruthy()
+    return box as HTMLTextAreaElement
+  })
+  // 读者点了输入框（焦点进了卡里），然后关掉这一处。
+  input.focus()
+  await ui.rerender({ target: null })
+  await waitFor(() => expect(document.activeElement).toBe(opener))
+  opener.remove()
+})
+
+it('读者点去别处把卡关掉时，焦点不被他拽回来', async () => {
+  // 反面：焦点已经不在卡里了，说明读者自己去了别处。这时还硬拉回按钮，比不还更烦人。
+  const opener = document.createElement('button')
+  const elsewhere = document.createElement('button')
+  document.body.append(opener, elsewhere)
+  opener.focus()
+  const ui = render(PreviewLocator, { props: { target: null, note: '' }, global: { stubs } })
+  await ui.rerender({ target: { label: '第 1 页', quote: '一段原文' } })
+  await waitFor(() => expect(ui.container.querySelector('.locator__input')).toBeTruthy())
+  elsewhere.focus()
+  await ui.rerender({ target: null })
+  await waitFor(() => expect(ui.container.querySelector('.locator')).toBeNull())
+  expect(document.activeElement).toBe(elsewhere)
+  opener.remove()
+  elsewhere.remove()
 })

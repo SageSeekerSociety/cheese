@@ -1,18 +1,15 @@
-"""Existing GitHub projects keep local work without changing their remote refs."""
+"""Existing GitHub projects archive local work without changing their remote refs."""
 
 import json
-import shutil
+import tarfile
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.storage import LocalStorageBackend
 from app.domain.project.forge_migration import git, references
 from app.domain.project.models import Project, ProjectForge
-from app.domain.room_task import snapshots
-from app.domain.room_task.models import Task, TaskSnapshot
+from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from scripts import migrate_forge
 from tests.integration.conftest import a_team
@@ -20,15 +17,12 @@ from tests.unit.test_forge_migration import legacy_repository
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("interrupt_upload", [False, True])
 async def test_github_local_work_survives_migration_without_remote_writes(
-    db_factory, monkeypatch, tmp_path, interrupt_upload
+    db_factory, monkeypatch, tmp_path
 ):
     root = tmp_path / "workspaces"
     monkeypatch.setattr(settings, "workspace_root", str(root))
     monkeypatch.setattr(migrate_forge, "async_session_factory", db_factory)
-    storage = LocalStorageBackend(str(tmp_path / "private"), "unused-private-url")
-    monkeypatch.setattr(snapshots, "private_storage", lambda: storage)
     tokens = AsyncMock(side_effect=AssertionError("GitHub must remain unchanged"))
     monkeypatch.setattr(migrate_forge, "tokens_for_project", tokens)
     async with db_factory() as session:
@@ -71,31 +65,9 @@ async def test_github_local_work_survives_migration_without_remote_writes(
     git(worktree, "commit", "-am", "Local commit")
     before = references(source)
     backups = tmp_path / "backups"
-    uploads = []
-    original_upload = storage.upload
-
-    async def upload(file, key, content_type):
-        uploads.append(key)
-        if interrupt_upload and len(uploads) == 2:
-            raise OSError("Interrupted upload")
-        return await original_upload(file, key, content_type)
-
-    monkeypatch.setattr(storage, "upload", upload)
     assert await migrate_forge.migrate(project.id, backups, apply=False) == "planned"
-    if interrupt_upload:
-        with pytest.raises(OSError, match="Interrupted upload"):
-            await migrate_forge.migrate(project.id, backups, apply=True)
-        async with db_factory() as session:
-            completed = (await session.scalars(select(TaskSnapshot))).all()
-            assert len(completed) == 1
-            assert await snapshots.download(completed[0])
-            first_key = completed[0].storage_key
     assert await migrate_forge.migrate(project.id, backups, apply=True) == "migrated"
     assert await migrate_forge.migrate(project.id, backups, apply=True) == "skipped"
-    if interrupt_upload:
-        assert uploads.count(first_key) == 1
-    async with db_factory() as session:
-        assert await snapshots.latest(session, second.id)
     assert references(source) == before
     tokens.assert_not_called()
     async with db_factory() as session:
@@ -103,19 +75,16 @@ async def test_github_local_work_survives_migration_without_remote_writes(
         assert current.kind == "github_app"
         assert current.repo == binding.repo
         assert current.default_branch == "main"
-        snapshot = await snapshots.latest(session, task.id)
-        bundle = tmp_path / "recovery.bundle"
-        bundle.write_bytes(await snapshots.download(snapshot))
-    # Recovery has no access to the old checkout or its migration archive.
-    shutil.move(root, tmp_path / "retired-workspaces")
-    shutil.move(backups, tmp_path / "retired-backups")
-    restored = tmp_path / "restored"
-    restored.mkdir()
-    git(restored, "init")
-    git(restored, "fetch", str(bundle), f"refs/cheese/snapshots/{task.id}")
-    git(restored, "checkout", "--detach", snapshot.snapshot_sha)
-    assert (restored / "file.txt").read_text() == "unpublished history\n"
-    assert (restored / "new.txt").read_bytes() == b"untracked\x00bytes"
+    # The working files of every task are in the one immutable archive: the
+    # platform uploads neither the commit GitHub has not seen nor the file
+    # nobody committed.
+    (archive,) = sorted((backups / str(project.id)).glob("*/working-files.tar.gz"))
+    with tarfile.open(archive) as bundle:
+        names = bundle.getnames()
+        untracked = next(n for n in names if n.endswith("/task/new.txt"))
+        assert bundle.extractfile(untracked).read() == b"untracked\x00bytes"
+        second_file = next(n for n in names if n.endswith("/second/file.txt"))
+        assert bundle.extractfile(second_file).read() == b"committed\n"
 
 
 @pytest.mark.anyio

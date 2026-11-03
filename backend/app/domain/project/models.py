@@ -9,17 +9,19 @@ fully self-governing.
 import enum
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Select,
     String,
     Text,
@@ -254,6 +256,11 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
     )
     invitee_handle: Mapped[str] = mapped_column(String(64), index=True)
     inviter_handle: Mapped[str] = mapped_column(String(64))
+    # The inviter's own 芝士 sent it for them (`Actor.by_assistant`); the
+    # invitee is told so wherever the inviter is named.
+    invited_by_assistant: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     status: Mapped[InvitationStatus] = mapped_column(
         Enum(InvitationStatus, native_enum=False, length=16),
         default=InvitationStatus.pending,
@@ -261,8 +268,20 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
     responded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    #: The role the invitee takes once they accept: ``member`` or ``mentor``.
+    #: The role the invitee takes once they accept: ``member``, or ``custom``
+    #: with the project's own role in ``role_id``. A waiting invitation moves
+    #: with its role's holders when the role is deleted; an answered one is a
+    #: record and lets go of it (``SET NULL``).
     role: Mapped[str] = mapped_column(String(16), default="member")
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "project_role_defs.id",
+            ondelete="SET NULL",
+            name="fk_project_invitations_role_id_project_role_defs",
+        ),
+        nullable=True,
+        index=True,
+    )
 
 
 class ProjectRole(UuidPk, Timestamps, Base):
@@ -270,14 +289,20 @@ class ProjectRole(UuidPk, Timestamps, Base):
 
     Without a row a person's role follows from how they are in the project: the
     team's owner and admins are admins, everyone else is a member
-    (``app.auth.project_roles``). A row says otherwise — a member made admin, a
-    person invited as mentor. The owner is never a row: that is
-    ``projects.owner_handle``.
+    (``app.auth.project_roles``). A row says otherwise: ``admin`` for a member
+    made admin, ``custom`` for one of the project's own roles, named by
+    ``role_id``. A role someone holds cannot be deleted from under them
+    (``RESTRICT``): they are moved to another role first. The owner is never a
+    row: that is ``projects.owner_handle``.
     """
 
     __tablename__ = "project_roles"
     __table_args__ = (
         UniqueConstraint("project_id", "user_handle", name="uq_project_role"),
+        CheckConstraint(
+            "(role = 'custom') = (role_id IS NOT NULL)",
+            name="ck_project_roles_custom_has_role_id",
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -290,29 +315,55 @@ class ProjectRole(UuidPk, Timestamps, Base):
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     role: Mapped[str] = mapped_column(String(16))
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "project_role_defs.id",
+            ondelete="RESTRICT",
+            name="fk_project_roles_role_id_project_role_defs",
+        ),
+        nullable=True,
+        index=True,
+    )
 
 
-class ProjectRoleGrant(UuidPk, Timestamps, Base):
-    """What one role may do in one project, when the project changed it.
+class ProjectRoleDef(UuidPk, Timestamps, Base):
+    """A role of one project and what it may do (#4795).
 
-    No row means the role's defaults (``project.permissions.DEFAULT_GRANTS``);
-    restoring the defaults deletes the row.
+    Two kinds of row, one thing — a role's definition here:
+
+    - a built-in role (``builtin`` = ``admin`` or ``member``) whose permissions
+      this project changed. No row means its defaults
+      (``project_permissions.DEFAULT_GRANTS``); restoring them deletes the row.
+      Its name is fixed and not stored.
+    - one of the project's own roles: a ``name`` and its permissions, and a
+      ``template`` mark when it was made from one (a mentor), which is how the
+      platform knows it whatever it is called. A role made from a template and
+      never renamed stores no name: each reader sees the template's name in
+      their own language.
     """
 
-    __tablename__ = "project_role_grants"
+    __tablename__ = "project_role_defs"
     __table_args__ = (
-        UniqueConstraint("project_id", "role", name="uq_project_role_grant"),
+        UniqueConstraint("project_id", "builtin", name="uq_project_role_def_builtin"),
+        UniqueConstraint("project_id", "name", name="uq_project_role_def_name"),
+        CheckConstraint(
+            "(builtin IS NOT NULL AND name IS NULL AND template IS NULL)"
+            " OR (builtin IS NULL AND (name IS NOT NULL OR template IS NOT NULL))",
+            name="ck_project_role_defs_builtin_or_named",
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey(
             "projects.id",
             ondelete="CASCADE",
-            name="fk_project_role_grants_project_id_projects",
+            name="fk_project_role_defs_project_id_projects",
         ),
         index=True,
     )
-    role: Mapped[str] = mapped_column(String(16))
+    builtin: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    template: Mapped[str | None] = mapped_column(String(16), nullable=True)
     permissions: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
 
@@ -399,6 +450,68 @@ class ProjectForge(UuidPk, Timestamps, Base):
     default_branch: Mapped[str] = mapped_column(String(255), default="main")
     # Only the backend can mint credentials; the account password never leaves it.
     account_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class StarterPushState(str, enum.Enum):
+    pending = "pending"
+    done = "done"
+    failed = "failed"
+
+
+class ProjectStarterPush(Base):
+    """A 题目's starter code on its way into a claimed project's repository (#4767).
+
+    The claim records which archive it took (the library row as it was that
+    moment, so a later replacement reaches only later claims) and commits; the
+    push itself runs in the background (`task.starter_jobs`), because unpacking
+    and pushing a large archive must not hold the claim open. ``state`` is what
+    the overview and the project's agents read; ``error`` is the sentence that
+    says why a push could not land, as ``{key, params}``.
+    """
+
+    __tablename__ = "project_starter_pushes"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'done', 'failed')",
+            name="ck_project_starter_pushes_state",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_starter_pushes_project_id_projects",
+        ),
+        primary_key=True,
+    )
+    # The archive the claim took. NULL once the publisher removed the starter
+    # code (with every version of it) before the push ran.
+    library_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "library_files.id",
+            ondelete="SET NULL",
+            name="fk_project_starter_pushes_library_file_id_library_files",
+        ),
+        index=True,
+    )
+    #: The 题目's version (`task_package_revisions.number`) at the claim.
+    revision: Mapped[int] = mapped_column(Integer)
+    #: The first commit's message.
+    message: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), default=StarterPushState.pending)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_token: Mapped[uuid.UUID | None] = mapped_column()
+    #: The starter commit the job built, recorded before it is pushed: on a later
+    #: attempt, the repository's `main` holding it means the push landed.
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ForgeToken(UuidPk, Timestamps, Base):
@@ -506,6 +619,68 @@ class RoomFileRevision(UuidPk, Timestamps, Base):
     #: (each 「保存」, then on close), and its own previous save is not somebody
     #: else's change — this is how the second save tells the two apart.
     editor_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class RoomFileCollab(UuidPk, Base):
+    """A room file's collaborative (Yjs) state — what several people editing it
+    at once are all looking at.
+
+    A room file has no id of its own: it is ``(room_id, path)``, and its
+    version is a content hash. The collaboration service names a document once
+    and expects that name to keep opening the same live document, so each one
+    being edited together gets this row and its own id (``id``), which is what
+    the service's name carries. The row is created by opening the file in a
+    live editor, not by the file existing.
+
+    The state is only ever a step toward a version. What a reader sees — the
+    preview, the history, a restore — is still the file's own revision
+    (``room_file_revisions``): each store arrives here and becomes a new
+    revision through ``room_files.save_room_file``. This row is the editing
+    session; the revisions are the file.
+
+    ``content`` trails the state by one store: it is the Markdown the service
+    last exported, kept so a reopen hands the service the text it recognises
+    instead of re-converting a document it already has (a second conversion of
+    the same text is a structurally different document, and merging it in
+    would double everything).
+    """
+
+    __tablename__ = "room_file_collab"
+    __table_args__ = (
+        UniqueConstraint("room_id", "path", name="uq_room_file_collab_room_path"),
+        Index("ix_room_file_collab_room_path", "room_id", "path"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_room_file_collab_project_id_projects",
+        ),
+        index=True,
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "topics.id", ondelete="CASCADE", name="fk_room_file_collab_room_id_topics"
+        )
+    )
+    path: Mapped[str] = mapped_column(String(512))
+    state: Mapped[bytes] = mapped_column(LargeBinary)
+    #: The Markdown the service last exported from ``state``.
+    content: Mapped[str] = mapped_column(Text, default="", server_default="")
+    #: Every suggestion still waiting for a decision: ``{id, author, old, new,
+    #: reason}``, as the service reported them. Rooms keep the shape documents
+    #: do, so a decision here needs no second implementation.
+    suggestions: Mapped[list] = mapped_column(JSONB, default=list)
+    #: When this state was last stored. Assigned on every write in Python
+    #: rather than left to the database: a store mutates the row in place, and
+    #: a column whose name says "last edited" must not keep reading its
+    #: creation time.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
 
 class ProjectSlug(Base):

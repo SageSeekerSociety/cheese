@@ -9,5 +9,6 @@
   "roomArchivedWithParent": "Channel “{room}” was archived along with its parent channel “{parent}”",
   "roomUnarchived": "{actor} unarchived channel “{room}”; it is active again",
   "taskCreated": "{actor} created the task “{title}”, owned by {owner}",
-  "threadArchivedWithRoom": "Archived along with its channel “{room}”"
+  "threadArchivedWithRoom": "Archived along with its channel “{room}”",
+  "previewWakeRequested": "{actor} asked {seat} to wake and restart the app in the preview"
 }

@@ -351,9 +351,9 @@ def test_an_agent_token_cannot_leave_on_someone_elses_behalf(client, bearer):
     pid = _project(client)
     _add(client, pid, "alice")
     scoped = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=pid, agent_handle="unprivileged-agent"
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=pid, agent_handle='unprivileged-agent')
+        }"
     }
 
     r = client.delete(f"/projects/{pid}/membership", headers=scoped)

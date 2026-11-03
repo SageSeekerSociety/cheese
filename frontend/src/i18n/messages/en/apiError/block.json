@@ -1,5 +1,6 @@
 {
   "askAlreadyAnswered": "This question has already been answered",
+  "askAlreadyClosed": "This question has been put away and no longer waits",
   "askAlreadySkipped": "You've already skipped this question",
   "askAnswerNotInGroup": "These questions are not in the same group: {ids}",
   "askAnswerObject": "Each answer must be an object with options and an optional note",
@@ -19,7 +20,10 @@
   "askQuestionObject": "Each question must be an object",
   "askQuestionsCount": "questions must contain 1–{limit} questions",
   "askSkipNotYours": "This question isn't waiting on you, so you can't skip it",
+  "askWithdrawNotYours": "Only the teammate that asked this question can take it back",
   "optionsDistinct": "Options can't repeat",
   "quoteNeedsMessage": "A quote needs a message of your own",
-  "quoteTooLong": "The message and the quote together can't be longer than {limit} characters"
+  "quoteTooLong": "The message and the quote together can't be longer than {limit} characters",
+  "askLifetimeNumber": "The lifetime has to be a number of hours (0 means no deadline)",
+  "askLifetimeTooLong": "A question's lifetime is at most {limit} hours"
 }

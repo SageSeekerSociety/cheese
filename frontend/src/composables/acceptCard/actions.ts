@@ -63,18 +63,15 @@ export function useAcceptCardActions(host: AcceptCardActionsHost) {
   // 这一版交出去的那一份，在人点采纳之前拿到手 (#1085 结论五)。走下载而不是预览：
   // 给的是递卡那一刻落下的快照，要审的就是这些字节本身。
   const deliverableBusy = ref(false)
-  const deliverableError = ref('')
-
   async function onDownloadDeliverable() {
     const card = pendingCard.value
     const filename = card?.deliverable?.filename
     if (!card || !filename || deliverableBusy.value) return
     deliverableBusy.value = true
-    deliverableError.value = ''
     try {
+      // 成功和失败各弹一句，都在 `downloadFile` 那一层（`lib/download`）：卡上的
+      // 「拿不到那份」那行红字撤掉了，失败的信息不再留在卡里。
       await downloadFile(cardDeliverableUrl(card.id), filename)
-    } catch (e) {
-      deliverableError.value = e instanceof Error ? e.message : t('files.downloadFailed')
     } finally {
       deliverableBusy.value = false
     }
@@ -240,7 +237,6 @@ export function useAcceptCardActions(host: AcceptCardActionsHost) {
     showForceMergeInput,
     forceMergeReason,
     deliverableBusy,
-    deliverableError,
     onDownloadDeliverable,
     onApproveCard,
     onReassignCard,

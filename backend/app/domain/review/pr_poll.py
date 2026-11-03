@@ -56,6 +56,7 @@ from app.domain.review.ports import (
 from app.domain.review.room_notices import tell_room_undelivered
 from app.domain.review.task_landing import delivery_landed, go_on_while_working
 from app.domain.room_task.closing import close_overdue
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -377,7 +378,7 @@ async def poll_uncarded_task_prs(
                             exc,
                         )
                 async with sessions() as session:
-                    task = await session.get(Task, task_id, with_for_update=True)
+                    task = await lock_task_for_change(session, task_id)
                     if (
                         task is None
                         or task.pr_number != number
@@ -580,7 +581,7 @@ async def _wake_when_checks_pass(
             )
         return
     async with sessions() as session:
-        task = await session.get(Task, task_id, with_for_update=True)
+        task = await lock_task_for_change(session, task_id)
         if task is None or task.project_id != project_id or task.pr_number != number:
             return
         if task.status is not TaskStatus.open or task.closing_since is not None:
@@ -649,7 +650,7 @@ async def _remember_checks(
     number: int,
 ) -> None:
     async with sessions() as session:
-        task = await session.get(Task, task_id, with_for_update=True)
+        task = await lock_task_for_change(session, task_id)
         if (
             task is not None
             and task.project_id == project_id

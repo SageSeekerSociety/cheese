@@ -55,7 +55,7 @@ func TestSessionCredentialsNeverOnACommandLine(t *testing.T) {
 
 	out := filepath.Join(t.TempDir(), "seen")
 	argv := []string{"sh", "-c", `printf %s "$CHEESE_TOKEN" > "$1"; exec sleep 30`, "sh", out}
-	session, err := m.Spawn("seat", argv, []string{"CHEESE_TOKEN=" + secret, "CHEESE_SCREEN=screen-" + needle}, 80, 24)
+	session, err := m.Spawn("seat", argv, []string{"CHEESE_TOKEN=" + secret}, 80, 24)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ def test_backend_git_protocol_endpoint_is_retired(client):
     pid = _project(client)
     response = client.get(
         f"/projects/{pid}/git/info/refs?service=git-upload-pack",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+        headers={"Authorization": f"Bearer {mint_scoped_token(project_id=pid)}"},
     )
     assert response.status_code == 404
 
@@ -24,9 +24,11 @@ def test_task_manifest_names_only_that_tasks_branch_and_target(client):
     project = post_project(client, json={"name": "Task manifest"}).json()["data"]
     task = delivery_task(client, project["root_topic_id"], commit=False)
     headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project["id"], topic_id=project["root_topic_id"]
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project['id'], topic_id=project['root_topic_id']
+            )
+        }"
     }
     response = client.get(
         f"/projects/{project['id']}/git/tasks/{task.id}", headers=headers
@@ -44,7 +46,7 @@ def test_manifest_refuses_an_unknown_task(client):
     pid = _project(client)
     response = client.get(
         f"/projects/{pid}/git/tasks/{uuid.uuid4()}",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+        headers={"Authorization": f"Bearer {mint_scoped_token(project_id=pid)}"},
     )
     assert response.status_code == 404
 
@@ -53,7 +55,7 @@ def test_room_branch_negotiation_endpoint_is_retired(client):
     pid = _project(client)
     response = client.post(
         f"/projects/{pid}/git/branch/{uuid.uuid4()}",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+        headers={"Authorization": f"Bearer {mint_scoped_token(project_id=pid)}"},
     )
     assert response.status_code == 404
 
@@ -89,11 +91,13 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
 
     def headers(agent, conversation=room):
         return {
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=pid,
-                topic_id=str(conversation),
-                agent_handle=agent["seat_handle"],
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=pid,
+                    topic_id=str(conversation),
+                    agent_handle=agent['seat_handle'],
+                )
+            }"
         }
 
     assert client.get(route, headers=headers(reviewer)).json()["data"]["author"] is None
@@ -144,9 +148,11 @@ def test_historical_task_does_not_invent_an_agent_author(client):
 
 def _credential(project_id, conversation, agent):
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=str(conversation), agent_handle=agent
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project_id, topic_id=str(conversation), agent_handle=agent
+            )
+        }"
     }
 
 

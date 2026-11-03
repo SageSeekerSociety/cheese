@@ -35,12 +35,10 @@
     "clearBody": "Cheese forgets these {n}. This cannot be undone."
   },
   "routines": {
-    "title": "Routines",
-    "desc": "Cheese runs these on a schedule or when something happens, and notifies you of the result. To create or change one, tell Cheese in the panel.",
-    "count": "{n}/{max}",
-    "empty": "No routines",
+    "title": "Automations",
+    "desc": "Cheese does these on its own, at a time or when something happens, and tells you the result. To add or change one, ask Cheese in the panel.",
+    "empty": "No automations",
     "next": "Next run: {time}",
-    "ran": "Has run; deleted automatically after 3 days",
     "paused": {
       "person": "Paused",
       "credits": "Paused: out of credits",
@@ -59,9 +57,10 @@
     "pause": "Pause",
     "resume": "Resume",
     "delete": "Delete",
-    "deleteTitle": "Delete routine “{title}”?",
+    "deleteTitle": "Delete the automation “{title}”?",
     "deleteBody": "It will no longer run. Its conversations are kept.",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "waiting": "Waiting"
   },
   "recent": {
     "title": "Recent actions",

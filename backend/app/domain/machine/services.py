@@ -36,7 +36,12 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent import environment
-from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LEFT_HOST_KEY,
+    LOST_KEY,
+    THAW_KEY,
+    AgentSession,
+)
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -45,7 +50,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
 from app.domain.machine import holder as holders
 from app.domain.machine.holder import SandboxHolder
-from app.domain.machine.lifecycle import SandboxRemoving
+from app.domain.machine.lifecycle import SandboxLifecycle, SandboxRemoving
 from app.domain.machine.microcloud import MicroCloudClient
 from app.domain.machine.models import (
     GONE,
@@ -74,9 +79,10 @@ from app.domain.machine.reaper import (
     _still_moving,
     accepting,
     free_slots,
+    memory_admits,
 )
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.supply import data_disk_gb, pick_offering
+from app.domain.machine.supply import data_disk_gb, effective_spec, pick_offering
 from app.domain.machine.warm import WarmPoolService
 from app.domain.team.services import team_service
 from app.domain.usage.compute import VM, admit_start, vm_spec
@@ -158,6 +164,10 @@ class HostPool(PoolSweep):
         agent_session = await self._session.get(AgentSession, session_id)
         if agent_session is None:
             raise NotFoundError("agent session not found")
+        # A frozen sandbox is being woken (`THAW_KEY`): it is not in use yet,
+        # though its row no longer says frozen, so every look goes through the
+        # pool until its executor answers again.
+        thawing = bool((agent_session.execution_request or {}).get(THAW_KEY))
         holder_id = await holders.holder_of(
             self._session, agent_session.conversation_id
         )
@@ -172,7 +182,12 @@ class HostPool(PoolSweep):
             # idle sweep, and the session is placed on a host below.
             await self.leave(session_id)
             home = None
-        if home is not None and home.host_id is not None:
+        if (
+            home is not None
+            and home.host_id is not None
+            and home.frozen_at is None
+            and not thawing
+        ):
             host = await self._repo.get(home.host_id)
             assert host is not None
             if host.warm_claim_pending:
@@ -227,7 +242,38 @@ class HostPool(PoolSweep):
                 # Gone upstream: what was there is gone with it.
                 await self.forget(host)
                 home = None
+            elif home.parked_at is not None:
+                # Parked: its home is on the host, nothing of it runs. Started
+                # again there when the host has room for it; otherwise its
+                # home goes and the session gets a new sandbox below.
+                if await self._unpark(home, host, session_id):
+                    host.idle_since = None
+                    await self._session.flush()
+                    return host
+                await self._session.commit()
+                await SandboxLifecycle(self._session, hub=self._hub).destroy_parked(
+                    home.id
+                )
+                await self._lock_holder(holder_id)
+                return await self.place(
+                    session_id,
+                    actor=actor,
+                    resource_id=resource_id,
+                    whole_machine=whole_machine,
+                )
             elif _keeps(host):
+                request = await self._session.scalar(
+                    select(AgentSession.execution_request).where(
+                        AgentSession.id == session_id
+                    )
+                )
+                if home.frozen_at is not None or (request or {}).get(THAW_KEY):
+                    # Frozen, or already asked to wake: hand it back now and
+                    # let the install thaw it with no lock held.
+                    await self._wake_frozen(home, session_id)
+                    host.idle_since = None
+                    await self._session.flush()
+                    return host
                 if self._answers(host) or not await self.leave_unusable(
                     session_id, host.id
                 ):
@@ -256,13 +302,32 @@ class HostPool(PoolSweep):
             return await self._place_on_own_vm(session_id, holder, home)
         avoid = await self._moved_off(session_id)
         host = await self._place_on_free(home, avoid)
+        if host is None and settings.cloud_sandbox_freeze:
+            # No host has room: a frozen sandbox on a host that could take one
+            # gives up its slot first — it is not in use, and its session
+            # wakes it to a new one when it comes back. Its destroy commits,
+            # so the holder and the pool are taken again before retrying.
+            await self._session.commit()
+            evicted = await SandboxLifecycle(
+                self._session, hub=self._hub
+            ).evict_one_frozen()
+            await self._lock_holder(holder_id)
+            await self._repo.lock_pool()
+            if await self._repo.current_home(session_id) is not None:
+                return await self.place(
+                    session_id, actor=actor, resource_id=resource_id
+                )
+            if evicted:
+                host = await self._place_on_free(home, avoid)
+                if host is not None:
+                    return host
         if host is not None:
             return host
         # No host has room. The provider is read with no lock held; another
         # admission may have added a host meanwhile, so look again after.
         await self._require_room_to_grow()
         await self._session.commit()
-        body, data_disk = await self._host_body()
+        body, data_disk, image_version = await self._host_body()
         await self._lock_holder(holder_id)
         await self._repo.lock_pool()
         if await self._repo.current_home(session_id) is not None:
@@ -271,7 +336,7 @@ class HostPool(PoolSweep):
         if host is not None:
             return host
         await self._require_room_to_grow()
-        return await self._acquire(body, home, data_disk)
+        return await self._acquire(body, home, data_disk, image_version=image_version)
 
     async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._repo.current_home(session_id)
@@ -317,24 +382,44 @@ class HostPool(PoolSweep):
         off."""
         load = await self._repo.occupancy()
         now = datetime.now(UTC)
-        free = [
+        live = [
             host
             for host in await self._repo.live()
-            if accepting(host)
-            and free_slots(host, load)
-            and self._can_start(host, now)
-            and host.id != avoid
+            if accepting(host) and self._can_start(host, now) and host.id != avoid
         ]
+        free = [host for host in live if free_slots(host, load)]
+        if not free and settings.cloud_pool_admit_by_use:
+            # Every reserved slot is taken: a host whose reading shows the
+            # memory free takes one more (`reaper.memory_admits`).
+            readings = await self._repo.last_readings([host.id for host in live])
+            since = await self._repo.placed_since(readings)
+            free = [
+                host
+                for host in live
+                if memory_admits(
+                    host, load, readings.get(host.id), since.get(host.id, 0), now
+                )
+            ]
         if not free and avoid is not None:
             return await self._place_on_free(home)
         if not free:
             return None
+        project_key = home.get("project_id") or home.get("topic_id")
+        cached = await self._repo.stores(project_key) if project_key else set()
 
-        # A host that can run the sandbox now first; among those, the one with
-        # the fewest free slots, so the others can empty and be released.
+        # A host that can run the sandbox now first; then one that has this
+        # project's store, so its dependencies and cache are the ones this
+        # sandbox starts with — that beats packing, which is what decides
+        # among hosts equally good at that: the fewest free slots, so the
+        # others can empty and be released.
         def rank(host: CloudHost):
             ready = host.device_id is not None and self._hub.is_online(host.device_id)
-            return (not ready, free_slots(host, load), host.created_at)
+            return (
+                not ready,
+                host.id not in cached,
+                free_slots(host, load),
+                host.created_at,
+            )
 
         host = min(free, key=rank)
         await self._repo.put_home(host.id, home)
@@ -383,9 +468,10 @@ class HostPool(PoolSweep):
         if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
             raise CloudPoolFull(whole_machine=whole_machine)
 
-    async def _host_body(self) -> tuple[dict, int]:
-        """What every new host is asked for, and the data disk its offering
-        gives it, in GB. Reads the provider: call it with no lock held."""
+    async def _host_body(self) -> tuple[dict, int, str]:
+        """What every new host is asked for, the data disk its offering gives
+        it in GB, and the image version a host made of this now carries. Reads
+        the provider: call it with no lock held."""
         offering = await pick_offering(self._client)
         disk = data_disk_gb(offering)
         body = await self._body(
@@ -394,7 +480,15 @@ class HostPool(PoolSweep):
             memory_mb=settings.microcloud_default_memory_mb,
             disk_gb=settings.microcloud_default_disk_gb,
         )
-        return body, disk
+        # From the body, not the settings: a value the offering clamped is what
+        # the machine actually gets, and what a later version compares against.
+        version = enrollment.host_image_version(
+            offering,
+            cores=body["cores"],
+            memory_mb=body["memoryMb"],
+            disk_gb=body["diskGb"],
+        )
+        return body, disk, version
 
     async def _vm_body(self) -> dict:
         """What every whole cloud VM is asked for. Reads the provider: call it
@@ -409,16 +503,9 @@ class HostPool(PoolSweep):
     async def _body(
         self, offering: dict, *, cores: int, memory_mb: int, disk_gb: int
     ) -> dict:
-        spec = {
-            name: max(
-                int(offering[f"{name}Min"]), min(int(offering[f"{name}Max"]), value)
-            )
-            for name, value in (
-                ("cores", cores),
-                ("memoryMb", memory_mb),
-                ("diskGb", disk_gb),
-            )
-        }
+        spec = effective_spec(
+            offering, cores=cores, memory_mb=memory_mb, disk_gb=disk_gb
+        )
         customer_id, account_id = await self._platform_account()
         return {
             "customerId": customer_id,
@@ -433,15 +520,33 @@ class HostPool(PoolSweep):
         }
 
     async def _acquire(
-        self, body: dict, home: dict | None, data_disk: int
+        self,
+        body: dict,
+        home: dict | None,
+        data_disk: int,
+        *,
+        image_version: str | None = None,
     ) -> CloudHost:
         """One more host for the pool, holding ``home`` if given: a warm machine
         when one is ready, else a new one with a data disk of ``data_disk`` GB.
-        Called holding the pool; returns with no transaction open."""
-        warm = await self._warm_pool.reserve(body=body, home=home)
-        if warm is not None:
-            return warm
-        return await self._create(body, home, data_disk=data_disk)
+        Called holding the pool; returns with no transaction open.
+
+        ``image_version`` is what a host created this way is made of. A warm
+        machine keeps none: it was prepared before any of this was recorded, so
+        its row says unknown.
+
+        A fixed pool does not take warm machines at all: it keeps its own hosts
+        up, and the warm sweep deletes the unused ones (``models.warm_pool_target``).
+        Adopting one would add a host whose version is unknown only to have the
+        sweep roll it at once — one machine claimed and deleted for nothing.
+        """
+        if not settings.cloud_pool_fixed_hosts:
+            warm = await self._warm_pool.reserve(body=body, home=home)
+            if warm is not None:
+                return warm
+        return await self._create(
+            body, home, data_disk=data_disk, image_version=image_version
+        )
 
     async def _create(
         self,
@@ -450,6 +555,7 @@ class HostPool(PoolSweep):
         *,
         whole_machine: bool = False,
         data_disk: int | None = None,
+        image_version: str | None = None,
     ) -> CloudHost:
         host_id = uuid.uuid4()
         prefix = "vm" if whole_machine else "host"
@@ -486,6 +592,7 @@ class HostPool(PoolSweep):
             ai_mode="none",
             ai_status=AiStatus.unknown,
             bootstrap_key=bootstrap_private,
+            image_version=image_version,
             whole_machine=whole_machine,
             project_id=(
                 home["project_id"] if whole_machine and home is not None else None
@@ -692,14 +799,123 @@ class HostPool(PoolSweep):
         if (
             home is None
             or home.stopped_at is not None
+            or home.frozen_at is not None
             or home.active_at is None
             or datetime.now(UTC) - home.active_at >= ACTIVE_STEP
         ):
+            return False
+        request = await self._session.scalar(
+            select(AgentSession.execution_request).where(AgentSession.id == session_id)
+        )
+        if (request or {}).get(THAW_KEY):
+            # The row says it is awake but its processes are still stopped:
+            # sending a call to it now would wait on the freezer.
             return False
         if home.host_id is None:
             return home.device_id == device_id
         host = await self._repo.get(home.host_id)
         return host is not None and host.device_id == device_id and _keeps(host)
+
+    async def _unpark(
+        self, home: SandboxHome, host: CloudHost, session_id: uuid.UUID
+    ) -> bool:
+        """Start a parked sandbox again on its host, under the pool's lock:
+        when the host takes sandboxes, answers, and has a slot for it — a
+        reserved one, or the memory to go past them (``memory_admits``). Its
+        executor is installed afresh by the attempt that follows: the lease's
+        check is dropped so nothing is handed to the one that was stopped.
+        False leaves it parked, for the caller to replace."""
+        if not (_keeps(host) and accepting(host) and self._answers(host)):
+            return False
+        load = await self._repo.occupancy()
+        if not free_slots(host, load):
+            readings = await self._repo.last_readings([host.id])
+            since = await self._repo.placed_since(readings)
+            if not memory_admits(
+                host,
+                load,
+                readings.get(host.id),
+                since.get(host.id, 0),
+                datetime.now(UTC),
+            ):
+                return False
+        home.parked_at = None
+        home.frozen_at = None
+        home.active_at = datetime.now(UTC)
+        row = await self._session.scalar(
+            select(AgentSession).where(AgentSession.id == session_id)
+        )
+        if row is not None:
+            row.execution_request = {
+                key: value
+                for key, value in (row.execution_request or {}).items()
+                if key != THAW_KEY
+            }
+            if row.work_lease and "verified_at" in row.work_lease:
+                row.work_lease = {
+                    key: value
+                    for key, value in row.work_lease.items()
+                    if key != "verified_at"
+                }
+        return True
+
+    async def _wake_frozen(self, home: SandboxHome, session_id: uuid.UUID) -> None:
+        """Ask for a frozen sandbox to be woken, under the pool's lock.
+
+        The mark goes at once so a concurrent freeze sees that somebody wants
+        it back (``lifecycle._freeze`` re-checks after stopping the processes
+        and thaws it itself); ``THAW_KEY`` is left for the install, which does
+        the host call with no database lock held (`session_work._install`).
+        The idle clock moves to now: the first real tool call lands here."""
+        home.frozen_at = None
+        home.active_at = datetime.now(UTC)
+        row = await self._session.scalar(
+            select(AgentSession).where(AgentSession.id == session_id)
+        )
+        if row is not None:
+            row.execution_request = {
+                **(row.execution_request or {}),
+                THAW_KEY: home.resource_id,
+            }
+
+    async def mark_awake(self, session_id: uuid.UUID) -> tuple[str | None, str] | None:
+        """Ask for the session's frozen sandbox to be woken, under the pool's
+        lock, without a tool call behind it (a reader opening its preview).
+
+        Marked exactly as ``place`` marks one a tool call is waiting on: the
+        home is kept frozen in its row and ``THAW_KEY`` says it is wanted, so a
+        freeze on its way to the host sees the mark and thaws it itself
+        (``lifecycle._freeze``), and the host call is left to the caller with
+        no lock held. Returns the host's device and the resource to wake, or
+        None when there is no sandbox to wake: none yet, frozen or not, or
+        already being removed. A home that is not frozen is returned with a
+        None device, which is a sandbox that can be used as it is."""
+        await self._repo.lock_pool()
+        home = await self._repo.current_home(session_id)
+        if home is not None:
+            home = await self._repo.lock_home(home.id)
+        if home is None or home.stopped_at is not None:
+            await self._session.commit()
+            return None
+        if home.parked_at is not None:
+            # Nothing of it runs to wake: its session starts it again.
+            await self._session.commit()
+            return None
+        device_id = None
+        if home.frozen_at is not None:
+            if home.host_id is not None:
+                host = await self._repo.get(home.host_id)
+                device_id = None if host is None else host.device_id
+            else:
+                device_id = home.device_id
+            if device_id is None:
+                # No connector to thaw it with: leave it frozen and let the
+                # caller wake the agent, rather than telling it it is awake.
+                await self._session.commit()
+                return None
+            await self._wake_frozen(home, session_id)
+        await self._session.commit()
+        return device_id, str(home.resource_id)
 
     async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
         """Tell the session's room, once, that its sandbox is being prepared.
@@ -721,6 +937,15 @@ class HostPool(PoolSweep):
             return None
         home.waiting_since = None
         return await tell_ready(self._session, home, await self._vm(home))
+
+    async def waited_s(self, session_id: uuid.UUID) -> float | None:
+        """How long the session has waited for a host still coming up, if it
+        was told to wait (``tell_waiting``); read before ``tell_ready`` ends
+        the wait."""
+        home = await self._locked_home(session_id)
+        if home is None or home.waiting_since is None:
+            return None
+        return (datetime.now(UTC) - home.waiting_since).total_seconds()
 
     async def _vm(self, home: SandboxHome) -> bool:
         host = None if home.host_id is None else await self._repo.get(home.host_id)
@@ -819,6 +1044,7 @@ class HostPool(PoolSweep):
                 .where(DeviceRow.device_id == device.device_id)
                 .values(cloud_control_private=True)
             )
+        token = await self._devices.bootstrap_token(device.device_id)
         # The device row and its token have to be visible to the connector route
         # before the machine dials in, and the bootstrap below makes it dial in
         # while this sweep's transaction is still open. Uncommitted, the first
@@ -826,7 +1052,7 @@ class HostPool(PoolSweep):
         await self._session.commit()
         script = enrollment.bootstrap_script(
             origin=origin,
-            token=device.token,
+            token=token,
             device_id=device.device_id,
             sandbox_disk=not host.whole_machine,
         )
@@ -841,7 +1067,7 @@ class HostPool(PoolSweep):
             disk_gb = None if host.whole_machine else enrollment.sandbox_disk_gb(output)
         except enrollment.EnrollmentError as exc:
             # Never let the token reach a log line or an API error body.
-            reason = enrollment.redact(str(exc), device.token)
+            reason = enrollment.redact(str(exc), token)
             logger.warning("enrolling host %s failed: %s", host.hostname, reason)
             # The next attempt mints a device of its own, and nothing points at
             # this one: the host records a device only once it enrolls. Kept, a
@@ -855,7 +1081,7 @@ class HostPool(PoolSweep):
             "enrolled host %s as device %s: %s",
             host.hostname,
             device.device_id,
-            enrollment.redact(output, device.token)[-200:],
+            enrollment.redact(output, token)[-200:],
         )
         return await self._repo.mark_enrolled(
             host,

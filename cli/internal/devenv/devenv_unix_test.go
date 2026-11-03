@@ -52,10 +52,11 @@ func toolchainServer(t *testing.T, body []byte, claimed string, asked *atomic.In
 func toolchainServerCounting(t *testing.T, body []byte, claimed string, asked *atomic.Int32) (string, *sync.Map) {
 	t.Helper()
 	served := map[string][]byte{
-		"bubblewrap": pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap}),
-		"host-tools": pythonArchive(t, map[string]string{"host-tools-1/bin/ip": "#!/bin/sh\necho placed ip\n"}),
-		"tmux":       pythonArchive(t, map[string]string{"tmux-1/bin/tmux": "#!/bin/sh\necho placed tmux\n"}),
-		"git":        pythonArchive(t, map[string]string{"git-1/bin/git": "#!/bin/sh\necho placed git\n"}),
+		"bubblewrap":   pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap}),
+		"host-tools":   pythonArchive(t, map[string]string{"host-tools-1/bin/ip": "#!/bin/sh\necho placed ip\n"}),
+		"tmux":         pythonArchive(t, map[string]string{"tmux-1/bin/tmux": "#!/bin/sh\necho placed tmux\n"}),
+		"git":          pythonArchive(t, map[string]string{"git-1/bin/git": "#!/bin/sh\necho placed git\n"}),
+		"fuse-runtime": pythonArchive(t, map[string]string{"fuse-2.9.9-cheese.2/libfuse.so.2": "placed libfuse"}),
 	}
 	var counts sync.Map
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +305,71 @@ func TestOnLinuxTheHostToolsArePlacedButNotOnPath(t *testing.T) {
 	if _, err := exec.LookPath("ip"); err == nil {
 		t.Fatal("the host tools are on the connector's PATH")
 	}
+}
+
+func TestOnLinuxTheFuseRuntimeIsPlacedWhereTheExecutorLooksForIt(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the fuse runtime is placed on Linux only")
+	}
+	home := machine(t, true)
+	var asked atomic.Int32
+	if err := Ensure(context.Background(), toolchainServer(t, nil, "", &asked), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	// The archive's own top directory is dropped, so the file lands directly
+	// inside — the path `bootstrap.placed_libfuse` reads.
+	placed := filepath.Join(home, ".cheese", "runtime", "fuse-runtime", "libfuse.so.2")
+	body, err := os.ReadFile(placed)
+	if err != nil {
+		t.Fatalf("the library was not placed at %s: %v", placed, err)
+	}
+	if string(body) != "placed libfuse" {
+		t.Fatalf("placed file is %q", body)
+	}
+	// It is not a program: putting it on PATH would be a file nothing runs.
+	if strings.HasPrefix(os.Getenv("PATH"), filepath.Join(home, ".cheese", "runtime", "fuse-runtime")+":") {
+		t.Fatal("the fuse runtime is on the connector's PATH")
+	}
+}
+
+func TestOnLinuxAMissingFuseRuntimeDoesNotFailTheConnect(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the fuse runtime is placed on Linux only")
+	}
+	// Everything else is served; only the fuse runtime answers 404, which is
+	// what a transient outage on the toolchain route or a release not fetched
+	// yet looks like. `Ensure`'s error is fatal in `cheesehost connect`
+	// (`daemoncmd.model_login`), so this artifact must not produce one: the
+	// machine runs without a transcript view rather than without a connector.
+	machine(t, true)
+	// Everything else is served, so the only failure is the optional one.
+	base := toolchainServerWithout(t, "fuse-runtime")
+	if err := Ensure(context.Background(), base, io.Discard); err != nil {
+		t.Fatalf("an unfetchable fuse runtime failed the whole Ensure: %v", err)
+	}
+}
+
+func toolchainServerWithout(t *testing.T, absent string) string {
+	t.Helper()
+	served := map[string][]byte{
+		"bubblewrap": pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap}),
+		"host-tools": pythonArchive(t, map[string]string{"host-tools-1/bin/ip": "#!/bin/sh\necho placed ip\n"}),
+		"tmux":       pythonArchive(t, map[string]string{"tmux-1/bin/tmux": "#!/bin/sh\necho placed tmux\n"}),
+		"git":        pythonArchive(t, map[string]string{"git-1/bin/git": "#!/bin/sh\necho placed git\n"}),
+	}
+	delete(served, absent)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.Split(strings.TrimPrefix(r.URL.Path, "/connector/toolchain/"), "/")[0]
+		archive, ok := served[name]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("X-Checksum-SHA256", digest(archive))
+		w.Write(archive)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/connector"
 }
 
 func TestOnLinuxWhatWasPlacedIsUsedWhileTheServerCannotBeReached(t *testing.T) {

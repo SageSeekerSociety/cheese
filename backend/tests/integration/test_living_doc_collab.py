@@ -56,7 +56,7 @@ def test_a_caller_without_a_credential_can_only_read(client, monkeypatch):
 
     monkeypatch.setattr(settings, "authz_enforce_topic_access", False)
     task = _topic(client)
-    client.headers.pop("X-Cheese-Token", None)
+    client.headers.pop("Authorization", None)
     assert _ticket(client, task, {})["read_only"] is True
 
 
@@ -278,7 +278,7 @@ def test_a_project_document_in_no_room_is_its_members_and_nobody_elses(client):
     path = f"/documents/{client.portal.call(make)}"
     owner = session_auth_headers("owner")
     outsider = session_auth_headers("outsider")
-    client.headers.pop("X-Cheese-Token", None)
+    client.headers.pop("Authorization", None)
 
     assert client.get(path, headers=owner).json()["data"] is None
     written = client.put(

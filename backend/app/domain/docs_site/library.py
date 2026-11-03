@@ -1,8 +1,8 @@
 """The docs, for AI teammates: search them, read a page.
 
 An agent asked how to do something in 知是 should answer from the manual, not
-from memory. These back the platform tools ``cheese_docs_search`` and
-``cheese_docs_read`` (backend/sandbox/cheese), over the same index and ranking
+from memory. These back the platform tools ``cheese_help`` and
+``cheese_help`` (backend/sandbox/cheese), over the same index and ranking
 as 问芝士 (``retrieval``) and the same ``.md`` twins readers can fetch.
 
 Developer pages describe this platform's internals, so only agents working on
@@ -93,6 +93,18 @@ async def search(query: str, *, dev: bool, limit: int = 6) -> list[Found] | None
         )
         for h, is_dev in hits[:limit]
     ]
+
+
+async def page_title(slug: str, *, dev: bool) -> str | None:
+    """The title the docs index gives the page ``slug``; None when no index
+    that is read knows it."""
+    sources = [retrieval.source] + ([retrieval.dev_source] if dev else [])
+    for source in sources:
+        index = await source.get()
+        for section in index.sections if index is not None else ():
+            if page_slug(section.url) == slug:
+                return section.title
+    return None
 
 
 def page_slug(page: str) -> str | None:

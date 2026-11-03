@@ -44,13 +44,11 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_user_realname_service
 from app.api.response import ok
 from app.api.space_deps import (
-    _ensure_space_admin,
-    _ensure_space_visible,
     get_space_analytics_view_service,
     require_reviewed_space,
 )
 from app.api.task_deps import get_task_submission_service
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
@@ -58,6 +56,7 @@ from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.task.services import TaskSubmissionService
 from app.domain.user.realname_services import UserRealNameService
 
@@ -77,6 +76,7 @@ router = APIRouter(
 @router.get(
     "/{spaceId}/analytics/overview",
     summary="Get Space Analytics Overview",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_overview(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -91,7 +91,6 @@ async def get_space_analytics_overview(
     db=Depends(get_db),
 ) -> dict:
     """Return KPI cards, trend data, and distribution summaries for the space."""
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_overview(
         space_id=space_id,
@@ -108,6 +107,7 @@ async def get_space_analytics_overview(
 @router.get(
     "/{spaceId}/analytics/alerts",
     summary="Get Space Analytics Alerts",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_alerts(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -116,7 +116,6 @@ async def get_space_analytics_alerts(
     db=Depends(get_db),
 ) -> dict:
     """Return governance alert cards for the space."""
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_alerts(space_id=space_id)
     return ok(data)
@@ -125,6 +124,7 @@ async def get_space_analytics_alerts(
 @router.get(
     "/{spaceId}/analytics/publishers",
     summary="Get Space Analytics Publishers",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_publishers(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -139,7 +139,6 @@ async def get_space_analytics_publishers(
     db=Depends(get_db),
 ) -> dict:
     """Return publisher comparison table data."""
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers(
         space_id=space_id,
@@ -156,6 +155,7 @@ async def get_space_analytics_publishers(
 @router.get(
     "/{spaceId}/analytics/participants",
     summary="Get Space Analytics Participants",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -176,7 +176,6 @@ async def get_space_analytics_participants(
     # 这一格把 ``_decode_identity`` 出来的年级/专业/班级做成分组统计 —— 是成员
     # 个人信息的聚合，所以和下面的导出同一个门：管理员版面只有管理员看。非管理员答
     # 403（不是空的分布），原因和导出一样：空的会把「你没权限」说成「这个班没人」。
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_participants(
         space_id=space_id,
@@ -196,6 +195,7 @@ async def get_space_analytics_participants(
 @router.get(
     "/{spaceId}/analytics/people",
     summary="Get Space Analytics People",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_people(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -204,7 +204,6 @@ async def get_space_analytics_people(
     db=Depends(get_db),
 ) -> dict:
     """Return per-person participation rows plus the claims that never moved."""
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_people(space_id=space_id)
     return ok(data)
@@ -213,6 +212,7 @@ async def get_space_analytics_people(
 @router.get(
     "/{spaceId}/analytics/participants/export",
     summary="Export Space Analytics Participants",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def export_space_analytics_participants(
     request: Request,
@@ -239,7 +239,6 @@ async def export_space_analytics_participants(
     # 管理员版面：这份 CSV 逐行写着成员的真实姓名、学号、年级、专业、班级、电话、
     # 邮箱（``_decode_identity`` 负责解密），所以只有题目板的管理员/创建者能拿。
     # 非管理员明确 403 —— 不返回空 CSV，空的会把「你没权限」误报成「这个班没人」。
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     csv_text, memberships = await service.export_participants_csv(
         space_id=space_id,
         from_ts=from_ts,
@@ -319,6 +318,7 @@ async def get_space_submission_service(
 @router.get(
     "/{spaceId}/submissions",
     summary="Get Space Submission Queue",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_submissions(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -341,7 +341,6 @@ async def get_space_submissions(
     存在），在板里但不是管理员答 403。成员看自己那一份走既有的按题接口 ——
     整门课的提交是管理员版面。`reviewed=false` 就是验收队列；不给就是全部。
     """
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     if sortBy not in {"createdAt", "updatedAt"}:
         raise BadRequestError(f"Invalid sortBy: {sortBy}")
     if sortOrder not in {"asc", "desc"}:
@@ -394,6 +393,7 @@ def _learning_handle(actor) -> str | None:
 @router.get(
     "/{spaceId}/analytics/learning/filters",
     summary="Get Space Learning Filters",
+    dependencies=[Can(SpacePermission.view)],
 )
 async def get_space_learning_filters(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -412,7 +412,6 @@ async def get_space_learning_filters(
     板里的人在 404 的 `GET /spaces/{id}` 旁边拿到 200，还能读出别人课程的设计。
     门本身照抄本文件其它空间路由的那道 (非成员答 404，不确认板子存在)。
     """
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     actor = await resolver.resolve()
     data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
     return ok(data)
@@ -502,6 +501,7 @@ async def build_space_learning_outline(
 @router.get(
     "/{spaceId}/analytics/tasks/export",
     summary="Export Space Analytics Tasks",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def export_space_analytics_tasks(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -517,7 +517,6 @@ async def export_space_analytics_tasks(
     db=Depends(get_db),
 ) -> Response:
     """Export task analytics as CSV (16 columns, NT-aligned)."""
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_tasks_csv(
         space_id=space_id,
@@ -541,6 +540,7 @@ async def export_space_analytics_tasks(
 @router.get(
     "/{spaceId}/analytics/publishers/export",
     summary="Export Space Analytics Publishers",
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def export_space_analytics_publishers(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -553,7 +553,6 @@ async def export_space_analytics_publishers(
     db=Depends(get_db),
 ) -> Response:
     """Export publisher analytics as CSV (11 columns, NT-aligned)."""
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_publishers_csv(
         space_id=space_id,

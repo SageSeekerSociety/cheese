@@ -29,6 +29,7 @@
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",
+    "mineUnread": "My feedback, 1 unread update | My feedback, {n} unread updates",
     "admin": "Admin console",
     "guide": "New-user guide",
     "tour": "Interface tour",
@@ -173,6 +174,7 @@
     "terms": "Terms of service",
     "feedbackDetail": "Feedback details",
     "openPreview": "Open preview",
+    "slidesPresenter": "Presenter view",
     "openSite": "Open site",
     "openDocs": "Open docs",
     "connect": "Connect a device",
@@ -194,6 +196,7 @@
     "projectWorkspace": "Project workspace",
     "dm": "Direct message",
     "artifact": "Artifact",
-    "member": "Member"
+    "member": "Member",
+    "taskVersions": "Version history"
   }
 }

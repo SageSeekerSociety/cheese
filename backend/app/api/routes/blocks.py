@@ -22,7 +22,12 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent.announce import finish_answering
-from app.domain.agent.ask import publish_answered, skip, withdraw
+from app.domain.agent.ask import (
+    publish_answered,
+    skip,
+    withdraw,
+    withdraw_question_by_asker,
+)
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
@@ -40,9 +45,11 @@ from app.domain.block.repositories import BlockRepository
 # import a domain's models directly (C2 in `.importlinter`), and `schemas` is
 # the module that re-exports the two enums a route writes with.
 from app.domain.block.schemas import BlockKind, BlockOut, ReactionToggleIn
-from app.domain.conversation.services import room_of
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.delivery.agent import dispatch_pending, record_task_instruction
 from app.domain.event_author import AuthorType
+from app.domain.room_task.place import place_or_404
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
@@ -92,10 +99,14 @@ async def edit_block(
     actor = await resolver.resolve(
         topic_id=block.conversation_id, project_id=block.project_id
     )
+    place = await place_or_404(db, block.conversation_id)
+    room_id = place.room_id
+    await TopicMemberService(db).list_for_topic(room_id)
     await resolver.authorize_topic(
         actor,
         project_id=block.project_id,
-        topic_id=await room_of(db, block.conversation_id),
+        topic_id=room_id,
+        room=place.room,
         enforce=True,
     )
     payload = await edit_message(
@@ -144,10 +155,12 @@ async def toggle_reaction(
     actor = await resolver.resolve(
         topic_id=block.conversation_id, project_id=block.project_id
     )
+    place = await place_or_404(db, block.conversation_id)
     await resolver.authorize_topic(
         actor,
         project_id=block.project_id,
-        topic_id=await room_of(db, block.conversation_id),
+        topic_id=place.room_id,
+        room=place.room,
         enforce=True,
     )
     if not actor.authenticated:
@@ -218,6 +231,63 @@ async def withdraw_answer(
     return await _respond(block_id, db, resolver, broker, chat, runner, act=withdraw)
 
 
+@router.delete(
+    "/{block_id}/question",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(WithdrawnAnswer),
+)
+async def withdraw_own_question(
+    block_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
+) -> dict:
+    """Take back your own question, before anyone answers it.
+
+    Only the asking agent may (`block.questions.withdraw_question` checks the
+    block's author) and only while nobody has answered: an answer belongs to
+    whoever gave it, and taking that back is their own route
+    (``DELETE /blocks/{block_id}/answer``). Nothing is said in the room — the
+    question's own message stays where it was — and no turn is run: the agent
+    is the one acting, so there is nobody to tell.
+
+    The question stops waiting: it leaves the 待你回答 lists, its notice is
+    settled, and the channel's yellow light goes out. Where it is drawn its
+    options are hidden and it says it was taken back."""
+    repo = BlockRepository(db)
+    question = await repo.get(block_id)
+    if question is None:
+        raise NotFoundError(say("cursorMessageNotFound"))
+    actor = await resolver.resolve(
+        topic_id=question.conversation_id, project_id=question.project_id
+    )
+    place = await place_or_404(db, question.conversation_id)
+    room_id = place.room_id
+    await resolver.authorize_topic(
+        actor,
+        project_id=question.project_id,
+        topic_id=room_id,
+        room=place.room,
+        enforce=True,
+    )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("signInRequired"))
+    # Numbering first, then the question read again, as `_answer_group` does: an
+    # answer recorded meanwhile is refused on, not written over.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
+    await withdraw_question_by_asker(
+        db, block=question, room_id=room_id, handle=actor.handle
+    )
+    payload = BlockOut.model_validate(question).model_dump(mode="json")
+    payload["reactions"] = await repo.reactions_for_block(block_id)
+    await db.commit()
+    await broker.publish(
+        str(question.conversation_id), {"type": "block_updated", "block": payload}
+    )
+    return ok(payload)
+
+
 @router.post(
     "/{block_id}/answers",
     dependencies=[ROUTE_DECIDES],
@@ -251,13 +321,24 @@ async def _answer_group(block_id, body, db, resolver, broker, chat, runner) -> d
     actor = await resolver.resolve(
         topic_id=question.conversation_id, project_id=question.project_id
     )
-    room_id = await room_of(db, question.conversation_id)
+    place = await place_or_404(db, question.conversation_id)
+    room_id = place.room_id
     await resolver.authorize_topic(
-        actor, project_id=question.project_id, topic_id=room_id, enforce=True
+        actor,
+        project_id=question.project_id,
+        topic_id=room_id,
+        room=place.room,
+        enforce=True,
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
 
+    # The conversation's numbering first, then the questions read again: a
+    # reply answering one of them takes that numbering before it writes the
+    # question (`conversation.numbering`), so one that landed while this
+    # request was on its way is read here, not written over.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
     questions = await group_of(db, question)
     answers = answers_from(body)
     known = {q.id for q in questions}
@@ -306,17 +387,24 @@ async def _respond(block_id, db, resolver, broker, chat, runner, *, act) -> dict
     actor = await resolver.resolve(
         topic_id=question.conversation_id, project_id=question.project_id
     )
-    room_id = await room_of(db, question.conversation_id)
+    place = await place_or_404(db, question.conversation_id)
+    room_id = place.room_id
     await resolver.authorize_topic(
         actor,
         project_id=question.project_id,
         topic_id=room_id,
+        room=place.room,
         enforce=True,
     )
     # A credential that names nobody (the gate-only sandbox token) has no answer
     # to take back: refuse it as what it is rather than as the wrong person.
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
+    # Numbering first, then the question read again, as `_answer_group` does:
+    # ``act`` writes the question's whole meta back, so it must start from what
+    # an answer recorded meanwhile left there.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
     await act(
         db,
         block=question,

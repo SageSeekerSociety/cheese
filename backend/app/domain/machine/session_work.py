@@ -1,10 +1,12 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
 import asyncio
+import contextlib
 import errno
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -12,12 +14,12 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.core.sandbox_auth import bind_resource_token
+from app.core.sandbox_auth import bind_resource_token, for_a_machine
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
 from app.domain.agent import execution
@@ -36,7 +38,14 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LEFT_HOST_KEY,
+    LOST_KEY,
+    LOST_PROCESSES_KEY,
+    PARKED_KEY,
+    THAW_KEY,
+    AgentSession,
+)
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_of
 from app.domain.delivery.ledger import deliver
@@ -48,9 +57,15 @@ from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
-from app.domain.machine.infra_records import keep_refusal
+from app.domain.machine.infra_records import keep_prepared, keep_refusal
+from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
-from app.domain.machine.lifecycle import SandboxRemoving
+from app.domain.machine.lifecycle import (
+    SandboxRemoving,
+    frozen_sessions,
+    thaw_if_asked,
+    use_session_work,
+)
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
@@ -60,6 +75,8 @@ from app.domain.machine.sandbox_wait import (
     SANDBOX_LOST,
     SANDBOX_PREPARING,
     SANDBOX_REPLACED,
+    SANDBOX_RESUMED,
+    STOPPED_PROCESSES,
     VM_PREPARING,
     _cloud_progress,
     _home_removed,
@@ -172,6 +189,13 @@ async def _session_author(db, project, handle: str) -> str:
     return await AgentInstanceService(db).ensure_identity(teammate)
 
 
+async def session_author(db, project, handle: str) -> str:
+    """``_session_author``, for the caller of a sandbox's platform-socket
+    request (`domain.machine.caller`): what the session's launch credential
+    names, and so what the request acts as."""
+    return await _session_author(db, project, handle)
+
+
 async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
     """Tell a device's owner that an agent session started working on it,
     and whether it runs there over the whole machine (``whole``: a
@@ -269,11 +293,10 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
     """One best-effort checkpoint on the machine a session is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
-    --all``): every task checkout's unpushed commits go to its branch, and
-    what is not committed is backed up as a snapshot. Whatever happens — the
-    machine is away, the command fails or outlasts ``PUSH_WAIT_S`` — the caller
-    goes on: what a lost checkpoint loses is what changed since the last
-    turn's, which the platform snapshot of that turn already holds. Answers
+    --all``): every task checkout's unpushed commits go to its branch. What is
+    not committed is not kept. Whatever happens — the machine is away, the
+    command fails or outlasts ``PUSH_WAIT_S`` — the caller goes on: what a lost
+    checkpoint loses is what was committed since the last turn's push. Answers
     whether it ran to the end, for the log.
 
     The session's executor runs only while the session is in use, so ``start``
@@ -323,8 +346,8 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     """One best-effort checkpoint (``checkpoint``) of each of the room's
     sessions on its machine, all at once, before the room's cleanup stops them
     (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
-    cleanup goes on whatever they answer: what a lost checkpoint loses is held
-    by the snapshot of the session's last turn."""
+    cleanup goes on whatever they answer: what a lost checkpoint does not push
+    goes with the machine."""
     rows = list(
         await session.scalars(
             select(AgentSession).where(
@@ -333,8 +356,12 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
             )
         )
     )
+    # Frozen: checkpointed before it was frozen, and nothing ran since.
+    frozen = await frozen_sessions(session, [row.id for row in rows])
     starts = []
     for row in rows:
+        if row.id in frozen:
+            continue
         lease = row.work_lease or {}
         if lease.get("status", "ready") != "ready" or not lease.get("state"):
             continue
@@ -358,7 +385,8 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
             if key.startswith(("CHEESE_", "GIT_"))
         },
         "CHEESE_API": api,
-        "CHEESE_TOKEN": token,
+        # The machine's copy, marked as held there (`sandbox_auth.for_a_machine`).
+        "CHEESE_TOKEN": for_a_machine(token) if token else "",
         # Empty for a sandbox in no project (``holder``).
         "CHEESE_PROJECT": str(project_id or ""),
         "CHEESE_TOPIC": str(topic_id),
@@ -378,6 +406,25 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
 NO_EXIT_STATUS = -1
 
 
+#: The steps of an install the machine times (`bootstrap.configure_idle`):
+#: staging the release, finding the pinned Claude Code, starting the sandbox,
+#: and waiting for the executor's first answer. Parts of ``executor``.
+INSTALL_STEPS = ("release", "claude", "sandbox", "ready")
+
+
+def _install_steps(info: dict) -> dict[str, float]:
+    """The install's own step times from what it answered; an executor that
+    was only prepared, or a release that does not time them, answers none."""
+    timings = info.get("timings")
+    if not isinstance(timings, dict):
+        return {}
+    return {
+        step: float(timings[step])
+        for step in INSTALL_STEPS
+        if isinstance(timings.get(step), int | float)
+    }
+
+
 async def _start_executor(
     hub,
     lease,
@@ -388,6 +435,7 @@ async def _start_executor(
     setup,
     sandbox,
     platform_machine,
+    on_stderr=None,
 ):
     """Bring a session's executor up on ``device_id`` and answer what it
     reports: a running one on this release, in a sandbox exactly when asked,
@@ -398,7 +446,8 @@ async def _start_executor(
     ``isolated`` on the machine gets (`_sandboxed`). ``platform_machine``: a
     Cloud machine, where the install may add what a sandbox needs. Raises
     ``launch.SandboxRefused`` when the machine cannot give the room its
-    sandbox.
+    sandbox. ``on_stderr`` hears what the install writes to stderr while it
+    runs (`install_progress`).
 
     Every call into the machine is bounded by ``lease_claim.INSTALL_MOST_S``:
     a machine that stopped answering — its connector gone silent, its executor
@@ -461,6 +510,7 @@ async def _start_executor(
             platform_machine=platform_machine,
         ),
         timeout=lease_claim.INSTALL_MOST_S,
+        on_stderr=on_stderr,
     )
     if (refusal := launch.refused(installed)) is not None:
         raise refusal
@@ -491,7 +541,13 @@ class ExecutorSetupFailed(RuntimeError):
     def reason(self) -> str:
         if f"[Errno {errno.ENOSPC}]" in str(self):
             return DISK_FULL
-        lines = [line.strip() for line in str(self).splitlines() if line.strip()]
+        # The download's progress lines are for the room's line
+        # (`install_progress`), not an account of why it stopped.
+        lines = [
+            line.strip()
+            for line in str(self).splitlines()
+            if line.strip() and downloaded(line.strip()) is None
+        ]
         return lines[-1] if lines else "Executor setup failed"
 
 
@@ -632,7 +688,9 @@ async def switch_environment(
         # The machine was unbound: nothing can reach it, and nothing left on it
         # can be cleaned up.
         old = None
-    if old:
+    # A frozen sandbox is not checkpointed: it was before it was frozen, and
+    # its stopped processes could not run `cheese sync` now.
+    if old and not await frozen_sessions(db, [session_id]):
         generation = request.get("generation")
         start = await restart_executor(db, row, old)
         await db.commit()
@@ -737,9 +795,21 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     if holder is None:
         return None
     resource = holder.generation
-    row = await AgentSessionService(db).by_id(session_id)
-    if row is None:
+    # The session's row, with whether the agent its credential names is still
+    # a live account: the last thing asked below, in the same statement.
+    found = (
+        await db.execute(
+            select(
+                AgentSession,
+                exists().where(
+                    User.username == claims.get("a", ""), User.deleted_at.is_(None)
+                ),
+            ).where(AgentSession.id == session_id)
+        )
+    ).first()
+    if found is None:
         return None
+    row, agent_live = found
     lease = row.work_lease or {}
     request = row.execution_request or {}
     location = row.runtime_location or {}
@@ -754,6 +824,8 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         or lease.get("room_resource_id") != resource
         or lease.get("setup_digest") != _setup_digest(env)
         or request.get(LOST_KEY)
+        or request.get(THAW_KEY)
+        or request.get(PARKED_KEY) is not None
         or claims.get("session") != str(row.id)
         or claims.get("t") != str(row.conversation_id)
         or not holder.signed_for(claims)
@@ -770,7 +842,7 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         session_id, lease["device_id"]
     ):
         return None
-    if await user_by_handle(db, claims.get("a", "")) is None:
+    if not agent_live:
         return None
     await db.commit()
     return {
@@ -1025,6 +1097,7 @@ async def _attempt(
             await db.commit()
             return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
     cloud_host = None
+    placed_s = None
     if selected is None and not cloud_provisionable(settings):
         await db.commit()
         return {"unavailable": str(say("platformSpecUnavailable"))}
@@ -1038,6 +1111,7 @@ async def _attempt(
         )
         pool = HostPool(db, hub=hub)
         whole_machine = spec is not None and spec.name == VM
+        placing = time.monotonic()
         try:
             cloud_host = await pool.place(
                 session_id,
@@ -1065,6 +1139,7 @@ async def _attempt(
             # gone, places the session in a new one.
             await db.commit()
             return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
+        placed_s = time.monotonic() - placing
         if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
             line = await pool.tell_waiting(session_id)
             await db.commit()
@@ -1179,6 +1254,11 @@ async def _attempt(
             owner_device=selected is not None,
             own=isinstance(environment, Sandbox),
             tells_agent=tells_agent,
+            # Timed only when the call brings up hands it did not hold: a new
+            # sandbox, one another host now has, or one woken from a freeze
+            # (`infra_records.keep_prepared`). A re-check of ready hands is not.
+            fresh=holding is reservation,
+            placed_s=placed_s,
         )
     )
     _INSTALLS.add(work)
@@ -1240,6 +1320,8 @@ async def _install(
     owner_device,
     own,
     tells_agent=False,
+    fresh=False,
+    placed_s=None,
 ):
     """Bring the session's executor up under ``claim`` and record the outcome."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
@@ -1258,18 +1340,43 @@ async def _install(
             work_resource=work_resource,
         )
         disk_full_mb = None
+        # On a person's own computer the room sees the runtime download
+        # (`install_progress`); a Cloud machine's getting ready is the
+        # platform's own, kept out of the conversation (`progress`).
+        shown = (
+            InstallProgress(bind, session_id=session_id, device_id=device_id)
+            if owner_device
+            else contextlib.nullcontext()
+        )
+        started = time.monotonic()
+        thaw_s = None
+        install_steps: dict[str, float] = {}
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
-                info = await _start_executor(
+                thawed = await thaw_if_asked(
+                    db,
                     hub,
-                    lease,
+                    session_id=session_id,
                     device_id=device_id,
-                    namespace=namespace,
                     work_resource=work_resource,
-                    setup=setup,
-                    sandbox=sandbox,
-                    platform_machine=platform_machine,
                 )
+                if thawed:
+                    thaw_s = time.monotonic() - started
+                executor_from = time.monotonic()
+                async with shown as heard:
+                    info = await _start_executor(
+                        hub,
+                        lease,
+                        device_id=device_id,
+                        namespace=namespace,
+                        work_resource=work_resource,
+                        setup=setup,
+                        sandbox=sandbox,
+                        platform_machine=platform_machine,
+                        on_stderr=heard,
+                    )
+                executor_s = time.monotonic() - executor_from
+                install_steps = _install_steps(info)
                 target = {
                     **reservation,
                     "status": "ready",
@@ -1385,11 +1492,24 @@ async def _install(
             and target["status"] == "ready"
             and (row.execution_request or {}).get(LOST_KEY)
         )
-        if lost:
+        resumed = (
+            tells_agent
+            and not lost
+            and target["status"] == "ready"
+            and (row.execution_request or {}).get(PARKED_KEY) is not None
+        )
+        stopped = []
+        if lost or resumed:
+            request = row.execution_request or {}
+            stopped = [
+                str(one)
+                for one in request.get(LOST_PROCESSES_KEY if lost else PARKED_KEY) or []
+                if one
+            ]
             row.execution_request = {
                 key: value
-                for key, value in (row.execution_request or {}).items()
-                if key != LOST_KEY
+                for key, value in request.items()
+                if key not in (LOST_KEY, LOST_PROCESSES_KEY, PARKED_KEY)
             }
         conversation_id = row.conversation_id
         device = (
@@ -1407,6 +1527,20 @@ async def _install(
             )
         ready_line = None
         if cloud_host_id is not None and target["status"] == "ready":
+            if fresh or thaw_s is not None:
+                await keep_prepared(
+                    db,
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                    stages={
+                        "place": placed_s,
+                        "thaw": thaw_s,
+                        "executor": executor_s,
+                        **install_steps,
+                    },
+                    total_s=time.monotonic() - started + (placed_s or 0),
+                    waited_s=await HostPool(db, hub=hub).waited_s(session_id),
+                )
             ready_line = await HostPool(db, hub=hub).tell_ready(session_id)
         await db.commit()
         await publish_line(topic_id, ready_line)
@@ -1433,7 +1567,13 @@ async def _install(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
         lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
-        notices = [lost_notice] * bool(lost)
+        notices = [lost_notice] * bool(lost) + [SANDBOX_RESUMED] * bool(resumed)
+        if stopped:
+            notices.append(
+                STOPPED_PROCESSES.format(
+                    processes="\n".join(f"  {one}" for one in stopped)
+                )
+            )
         if disk_full_mb is not None:
             notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {
@@ -1445,3 +1585,8 @@ async def _install(
 
 async def _another_attempt() -> bool:
     return True
+
+
+# Freezing a sandbox runs this module's checkpoint first; `lifecycle` cannot
+# import this module (it is imported by it), so it is handed the two it uses.
+use_session_work(checkpoint=checkpoint, restart_executor=restart_executor)

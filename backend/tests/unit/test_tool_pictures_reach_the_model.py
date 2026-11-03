@@ -31,7 +31,7 @@ cheese = platform_tools()
 PICTURE = {"data": "d2lkZQ==", "mimeType": "image/png"}
 
 
-def _saying_with_a_picture(tool, arguments, host):
+def _saying_with_a_picture(tool, arguments, host, *, delegated=False):
     return cheese.Said("已保存小程序 k1 的第 1 版。", [PICTURE])
 
 
@@ -106,7 +106,7 @@ class _Launching:
 async def test_a_session_started_on_a_model_that_reads_pictures_is_launched_saying_so(
     tmp_path,
 ):
-    """What every harness's tools read (`cheese_app_save` among them) is the
+    """What every harness's tools read (`cheese_app` among them) is the
     environment the session is launched with."""
     assert await gateway_catalog.refresh(_gateway(sees=True, blind=False))
     host = SessionHost(_Machine(), mirrors=tmp_path)
@@ -142,13 +142,13 @@ def test_pi_is_told_which_models_can_look_at_pictures():
 
 def test_codex_is_handed_the_pictures_after_the_text(monkeypatch):
     tools = RemoteTools({})
-    tools.routes["cheese_app_save"] = (PLATFORM, "cheese_app_save")
+    tools.routes["cheese_app"] = (PLATFORM, "cheese_app")
     monkeypatch.setattr(tools.platform, "run_platform_tool", _saying_with_a_picture)
 
     answer = asyncio.run(
         tools(
             "item/tool/call",
-            {"tool": "cheese_app_save", "callId": "c1", "arguments": {}},
+            {"tool": "cheese_app", "callId": "c1", "arguments": {"action": "save"}},
         )
     )
 
@@ -165,13 +165,15 @@ def test_pis_runner_hands_the_extension_the_pictures(monkeypatch, tmp_path):
     monkeypatch.setattr(pi_runner.catalog, "run_platform_tool", _saying_with_a_picture)
 
     without_hands = Runner(tmp_path / "pi")
-    without_hands.tools = {"names": ["cheese_app_save"]}
+    without_hands.tools = {"names": ["cheese_app"]}
     without_hands.platform_token = "token"
     with_hands = Runner(tmp_path / "pi-machine")
     with_hands.machine = SimpleNamespace(client=None)
 
     for runner in (without_hands, with_hands):
-        answer = asyncio.run(runner.run_cli("cheese_app_save", {}, None, "c1"))
+        answer = asyncio.run(
+            runner.run_cli("cheese_app", {"action": "save"}, None, "c1")
+        )
 
         assert answer["status"] == 0
         assert answer["stdout"] == "已保存小程序 k1 的第 1 版。"

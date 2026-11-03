@@ -197,6 +197,42 @@
      to --ink. */
   --avatar-ink: #fff;
 
+  /* ---- Picture viewer ----
+     The full-screen picture viewer (ImageLightbox) is dark in both themes: a
+     picture is judged against a dark surround, and a light scrim lets the page
+     behind compete with it. The ground does not change with the theme, so the
+     ink and fills on it do not either (same exception as --avatar-ink). The
+     dark block repeats these values deliberately. */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
+
+  /* ---- Transparency checker ----
+     Behind a picture whose format can carry an alpha channel. A white ground makes
+     an empty area read as white paint, so the two squares say "nothing here".
+     These do follow the theme: on a light page the checker is light grey on white,
+     on a dark one it is two greys. */
+  --checker-a: #e9eaec;
+  --checker-b: #fff;
+  /* The crop marquee: white on the dimmed-out surround, in both themes — it sits on top
+     of the picture itself, not on a themed surface. */
+  --crop-ink: #fff;
+  --crop-dim: rgba(25, 26, 28, 0.55);
+
+  /* ---- Presentation ground ----
+     A deck shown full-screen takes the whole screen: unlike the picture viewer,
+     nothing behind it should read through. Same dark in both themes for the same
+     reason (a slide is judged against a neutral surround), but opaque. The dark
+     block repeats these values deliberately. */
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
+
   /* ---- Terminal ground ----
      DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
      theme.background is this same #1e1e1e), so the ground under it, and the
@@ -205,6 +241,19 @@
   --terminal-ground: #1e1e1e;
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
+  /* ---- Video picture ground ----
+     The box a recording is drawn in (the conversation card, the preview panel)
+     is dark in both themes, for the reason the picture viewer is: a picture is
+     judged against a dark surround, and a pale box would compete with it. On a
+     portrait phone recording the letterbox bars are most of the box, so this is
+     not a detail — it is what the reader sees when nothing else is loaded yet.
+     The dark block repeats these values deliberately. */
+  --video-ground: #1b1d20;
+  --video-ink: #fff;
+  /* 画面上的播放键：垫在它后面的一层半透明深底。画面可能整片是浅色的（白底录屏），
+     白图标直接放上去就看不见了。和 --lightbox-* 同一个理由，深色主题重复同一个值。 */
+  --video-scrim: rgba(0, 0, 0, 0.42);
 
   /* ---- AI teammate avatar ----
      CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
@@ -521,11 +570,32 @@
   --inverse-fill: rgba(255, 255, 255, 0.1);
 
   --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
+
+  --checker-a: #2a2d33;
+  --checker-b: #1b1d20;
+  --crop-ink: #fff;
+  --crop-dim: rgba(25, 26, 28, 0.55);
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
 
   /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
   --terminal-ground: #1e1e1e;
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
+  /* Same as light, deliberately: a recording is drawn on the same dark box in both themes. */
+  --video-ground: #1b1d20;
+  --video-ink: #fff;
+  --video-scrim: rgba(0, 0, 0, 0.42);
 
   /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
   --agent-ink: #f6efe4;
@@ -1392,6 +1462,65 @@ button:not(.v-btn) {
   background: none;
   padding: 0;
 }
+/* 代码块右上角的两颗（自动换行 / 复制）。它们由 `reader.ts` 的 `withCopy` 挂在
+   `.md-pre` 里，但样式以前只写在对话那一个组件的作用域里，于是**只有对话栏里的
+   Markdown 带得住这两颗**：预览面板用的是同一个渲染器、同一份正文，按钮画出来了
+   却没有任何样式（绝对定位失效，两颗灰字压在代码第一行上）。定义搬到这一处公共
+   样式里，两处一起管——和上面那段 `overflow-x` 的教训是同一条。 */
+.md-content .md-pre {
+  position: relative;
+}
+.md-content .md-pre-bar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+.md-content .md-pre:hover .md-pre-bar,
+.md-content .md-pre-bar:focus-within {
+  opacity: 1;
+}
+.md-content .md-code-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+.md-content .md-code-btn:hover {
+  color: var(--ink);
+}
+/* 换行开着时那颗按钮换个色，看得出这是个「现在生效」的开态（同 .rx-chip--mine）。 */
+.md-content .md-wrap-btn[aria-pressed='true'] {
+  color: var(--accent-ink);
+}
+/* 没有悬停的设备上这条工具条一直在，不能按悬停版那样浮在代码上：绝对定位在右上角、
+   24px 高，而代码块只留了 10px 上内边距，头一行尾巴会被两颗按钮盖住、点也点不到。
+   这种设备上让它回正常流、排在代码块上方一行。 */
+@media (hover: none) {
+  .md-content .md-pre-bar {
+    position: static;
+    justify-content: flex-end;
+    padding: 0 0 4px;
+    opacity: 1;
+  }
+}
+/* 换行开着（那颗「自动换行」）：长行折进框里，横向滚动让位。默认不换行——一条命令、
+   一段长 URL 站在一行上比折成几截更好读。 */
+.md-content pre.md-wrap,
+.md-content pre.md-wrap code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+}
 .md-content img {
   max-width: 100%;
   height: auto;
@@ -1401,6 +1530,49 @@ button:not(.v-btn) {
   padding-left: 12px;
   border-left: 2px solid var(--line-2);
   color: var(--muted);
+}
+/* 有人在预览里评过的那几个字（`.md-content` 这块正文里，`markdownAnchors` 包出来的）。
+   和文档正文的同一种标记（`DocProse.vue` 的 `.doc-comment-mark`）：浅琥珀底加一道琥珀
+   下划线，正看着的那一串更重。两处不共用一条规则是因为它们挂在两套不同的正文容器上
+   （这里是 `v-html` 渲染的阅读视图，那里是编辑器），但那对颜色必须一致——同一个东西
+   在两处长得不一样，读者会以为是两种标记。 */
+.file-comment-mark {
+  background: color-mix(in srgb, var(--accent-wash) 70%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.file-comment-mark:hover,
+.file-comment-mark.is-active {
+  background: var(--accent-wash);
+  border-bottom-color: var(--accent);
+}
+
+/* 攒在待发篮里、还没发出去的那几处：那句话末尾一颗序号，和篮里那一行的编号对得上
+   （原型里的 ②③）。和评论标记的区别要看得出来——那几处还没交给谁，所以是实心琥珀
+   圆点，不是底色。 */
+.pending-pin {
+  display: inline-flex;
+  /* 不参与选字：浏览器把 `user-select: none` 的东西排除在 `Selection.toString()` 之外，
+     所以读者选中一段正好含着这颗序号时，取出来的原文里不会多一个数字。这只挡得住
+     `Selection.toString()` 这一条——`Range.toString()` 和 `cloneContents()` 不管 CSS，
+     所以按字找位置（`collectText`）和前后文（`markdownQuote` 的 `rangeText`）另按
+     `ANCHOR_IGNORE_ATTR` 跳过它。 */
+  user-select: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin: 0 2px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-on);
+  vertical-align: text-top;
+  background: var(--accent);
+  border-radius: 8px;
 }
 
 /* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。

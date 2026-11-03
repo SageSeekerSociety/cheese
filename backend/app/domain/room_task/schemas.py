@@ -36,6 +36,8 @@ class TaskOut(BaseModel):
     reporter_handle: str | None = None
     contributor_handles: list[str] = Field(default_factory=list)
     created_by: str | None = None
+    # ``created_by``'s own 芝士 opened it for them.
+    created_by_assistant: bool = False
     branch_name: str | None = None
     base_branch: str | None = None
     base_task_id: uuid.UUID | None = None
@@ -78,7 +80,7 @@ class TaskOut(BaseModel):
 
 
 class ProgressIn(BaseModel):
-    """What the task's AI teammate reports (`cheese_task_state`)."""
+    """What the task's AI teammate reports (`cheese_task(action=state)`)."""
 
     state: TaskProgress
     note: str | None = Field(default=None, max_length=NOTE_MAX_CHARS)

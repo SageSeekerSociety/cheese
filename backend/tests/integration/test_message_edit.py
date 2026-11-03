@@ -135,7 +135,7 @@ def test_nobody_else_edits_a_persons_message(client):
     attempts = [
         session_auth_headers("bob"),  # in the room, not the author
         session_auth_headers("mallory"),  # not in the project
-        {"X-Cheese-Token": agent_token},  # the room's agent
+        {"Authorization": f"Bearer {agent_token}"},  # the room's agent
         {},  # nobody signed in
     ]
     for headers in attempts:
@@ -145,7 +145,9 @@ def test_nobody_else_edits_a_persons_message(client):
 
 def test_an_agent_edits_its_own_message_through_the_same_route(client):
     room, project = _room(client)
-    headers = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+    headers = {
+        "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=room)}"
+    }
     posted = client.post(
         f"/topics/{room}/messages",
         json={
@@ -227,7 +229,9 @@ def test_a_persons_edit_stores_what_sending_it_stores(client, make_room):
 @ROOMS
 def test_an_agents_edit_stores_what_publishing_it_stores(client, make_room):
     room, project, _ = make_room(client)
-    headers = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+    headers = {
+        "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=room)}"
+    }
 
     def publish(content: str) -> str:
         response = client.post(

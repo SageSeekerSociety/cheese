@@ -28,9 +28,12 @@
 
        uv run --project backend python scripts/perf-awaiting-me/seed_awaiting_me.py
 
-   它是 asyncpg 直插，先 `TRUNCATE` 再灌，只碰 `cheese_perf`。所有内容都归
-   `perfviewer`，一屏摆 66 行。`conversations` 那几行不用自己写——`topics`、
-   `tasks`、`threads` 上的 BEFORE INSERT 触发器会登记。
+   它是 asyncpg 直插，先 `TRUNCATE` 再灌，只碰 `cheese_perf`。`seed_awaiting_me.py`
+   内置 `assert_safe_perf_dsn` 双重校验（解析连接串 + 连接后核对 `current_database()`），
+   强制要求主机为本机回环（`127.0.0.1` / `localhost` / `::1`）且库名包含 `perf` 或
+   `test`，防止误指业务库导致清表。所有内容都归 `perfviewer`，一屏摆 72 行。
+   `conversations` 那几行不用自己写——`topics`、`tasks`、`threads` 上的 BEFORE INSERT
+   触发器会登记。
 
    主项目里另有 18 个**边界房间**：6 个空房间、6 个归档房（各带一道指着
    `perfviewer` 的题）、6 个「芝士问完自己又接了一句」的房间（#2046）。三类都看得

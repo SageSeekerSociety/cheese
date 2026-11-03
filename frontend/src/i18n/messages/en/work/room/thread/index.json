@@ -26,5 +26,10 @@
   "titleLabel": "Thread title",
   "titlePlaceholder": "What is this thread about",
   "toTask": "Convert to task",
-  "unread": "New replies"
+  "unread": "New replies",
+  "recycled": "Recycled",
+  "recycledCaption": "Threads nobody came back to after three days of holding an error",
+  "recycledAt": "Recycled {time}",
+  "restore": "Restore",
+  "restoreFailed": "Could not restore it. Try again later"
 }

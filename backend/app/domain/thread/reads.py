@@ -9,7 +9,7 @@ reads.
 """
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import (
     BigInteger,
@@ -28,6 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.block.indexed_rows import FAILED_TURN_ROWS
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -68,6 +69,13 @@ _routines = table(
 )
 
 
+_ROUTINE_RUN_TABLES = frozenset({"routine_runs", "routines"})
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 async def routine_runs_of(
     session: AsyncSession, block_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, dict]:
@@ -75,6 +83,37 @@ async def routine_runs_of(
     title and its owner, keyed by the message."""
     if not block_ids:
         return {}
+    if _can_cache(session):
+        if session.autoflush:
+            await session.flush()
+        out: dict[uuid.UUID, dict] = {}
+        missing: list[uuid.UUID] = []
+        for bid in dict.fromkeys(block_ids):
+            found, cached = recall(session, ("routine_run_owner_title", bid))
+            if found:
+                if cached is not None:
+                    out[bid] = {"title": cached[0], "owner": cached[1]}
+            else:
+                missing.append(bid)
+        if not missing:
+            return out
+        rows = await session.execute(
+            select(_runs.c.message_id, _routines.c.title, _routines.c.owner_handle)
+            .join(_routines, _routines.c.id == _runs.c.routine_id)
+            .where(_runs.c.message_id == _among(missing))
+        )
+        fetched = {msg: (title, owner) for msg, title, owner in rows}
+        for bid in missing:
+            pair = fetched.get(bid)
+            remember(
+                session,
+                ("routine_run_owner_title", bid),
+                pair,
+                tables=_ROUTINE_RUN_TABLES,
+            )
+            if pair is not None:
+                out[bid] = {"title": pair[0], "owner": pair[1]}
+        return out
     rows = await session.execute(
         select(_runs.c.message_id, _routines.c.title, _routines.c.owner_handle)
         .join(_routines, _routines.c.id == _runs.c.routine_id)
@@ -102,9 +141,8 @@ LAST_REPLY_CHARS = 200
 async def said_in(session: AsyncSession, block_id: uuid.UUID) -> uuid.UUID | None:
     """The conversation a message was said in, or None when there is no such
     message."""
-    return await session.scalar(
-        select(Block.conversation_id).where(Block.id == block_id)
-    )
+    block = await BlockRepository(session).get(block_id)
+    return block.conversation_id if block is not None else None
 
 
 async def root_of(session: AsyncSession, thread: Thread) -> Block | None:
@@ -205,6 +243,12 @@ def _summary(thread: Thread, last: Block | None) -> dict:
         if thread.last_reply_at
         else None,
         "last_reply": _reply(last),
+        # 开这条支线的人（`threads.created_by`）：收起来之后能把它放回来的人之一
+        # （`thread/recycle.py`）。不在 `participants` 里推 —— 那个列表是「谁说过
+        # 话」，头一个是挂着的那条消息的作者，和「谁开的」是两回事。
+        "created_by": thread.created_by,
+        # 收起来的时刻（`thread/recycle.py`）；开着的是 None。
+        "recycled_at": thread.recycled_at.isoformat() if thread.recycled_at else None,
     }
 
 
@@ -212,14 +256,17 @@ async def under_messages(
     session: AsyncSession,
     block_ids: list[uuid.UUID],
     *,
-    replying: Callable[[uuid.UUID], list[str]] = lambda _thread: [],
+    replying: Callable[[list[uuid.UUID]], Awaitable[dict[uuid.UUID, list[str]]]]
+    | None = None,
+    roots: dict[uuid.UUID, Block] | None = None,
 ) -> dict[uuid.UUID, dict]:
     """The line under each of these main-line messages whose 支线 has a reply
     in it, an AI teammate answering in it now, or a turn that failed in it,
     keyed by the message: what `in_room` says of a 支线, and who is answering
-    (``replying``: the seats with a turn running in a 支线). A 支线 that became
-    a task keeps its line: the task's card is drawn on top of it, the same
-    conversation with an owner."""
+    (``replying``: the seats with a turn running in each 支线 it is handed,
+    asked only for the 支线 found here and not at all when there are none). A
+    支线 that became a task keeps its line: the task's card is drawn on top of
+    it, the same conversation with an owner."""
     if not block_ids:
         return {}
     found = list(
@@ -227,13 +274,16 @@ async def under_messages(
             select(Thread).where(Thread.root_block_id == _among(block_ids))
         )
     )
+    seats = (
+        await replying([t.id for t in found]) if replying is not None and found else {}
+    )
     failed = await _failed(session, [t for t in found if t.reply_count == 0])
     threads = [
-        t for t in found if t.reply_count > 0 or replying(t.id) or t.id in failed
+        t for t in found if t.reply_count > 0 or seats.get(t.id) or t.id in failed
     ]
-    rows = await _describe(session, threads, viewer=None)
+    rows = await _describe(session, threads, viewer=None, roots=roots)
     return {
-        thread.root_block_id: {**row, "replying": replying(thread.id)}
+        thread.root_block_id: {**row, "replying": seats.get(thread.id, [])}
         for thread, row in zip(threads, rows, strict=True)
     }
 
@@ -328,11 +378,21 @@ async def _unread(
 
 async def in_room(
     session: AsyncSession, room_id: uuid.UUID, *, viewer: str | None, limit: int
-) -> list[dict]:
-    """A channel's 支线 that have replies or a failed turn, the latest first:
-    the message each hangs under, its last reply, who took part, the tasks
-    made from it, and whether something new is waiting for ``viewer``. One
-    that became a task is listed with the channel's tasks, not here."""
+) -> dict:
+    """A channel's 支线, in two lists: the open ones, and the recycled ones.
+
+    ``{"open": [...], "recycled": [...]}``. An open one has replies or a failed
+    turn, latest first: the message each hangs under, its last reply, who took
+    part, the tasks made from it, and whether something new is waiting for
+    ``viewer``. One that became a task is listed with the channel's tasks, not
+    here.
+
+    A recycled one is a 支线 nobody came back to after it broke
+    (`thread/recycle.py`): it has left the list it used to sit in and does not
+    count towards the channel's red light, but it is still readable — nothing
+    was deleted — so it is handed back in a list of its own, most recently
+    recycled first. Its rows are the same shape plus ``recycled_at``.
+    """
     failed_turn = (
         select(Block.id)
         .where(
@@ -347,6 +407,7 @@ async def in_room(
             select(Thread)
             .where(
                 Thread.room_id == room_id,
+                Thread.recycled_at.is_(None),
                 or_(Thread.reply_count > 0, failed_turn),
                 ~_became_a_task(),
             )
@@ -354,24 +415,45 @@ async def in_room(
             .limit(limit)
         )
     )
-    if not threads:
-        return []
-    return await _describe(session, threads, viewer=viewer)
+    recycled = list(
+        await session.scalars(
+            select(Thread)
+            .where(
+                Thread.room_id == room_id,
+                Thread.recycled_at.is_not(None),
+                ~_became_a_task(),
+            )
+            .order_by(Thread.recycled_at.desc(), Thread.id)
+            .limit(limit)
+        )
+    )
+    return {
+        "open": await _describe(session, threads, viewer=viewer),
+        # 收起来的那几条一起读：它们和开着的一样有回复、有最后一句、有参与的人。
+        "recycled": await _describe(session, recycled, viewer=None),
+    }
 
 
 async def _describe(
-    session: AsyncSession, threads: list[Thread], *, viewer: str | None
+    session: AsyncSession,
+    threads: list[Thread],
+    *,
+    viewer: str | None,
+    roots: dict[uuid.UUID, Block] | None = None,
 ) -> list[dict]:
     """Each 支线 as a screen shows it, in the order given."""
     if not threads:
         return []
     last = await BlockRepository(session).last_messages([t.id for t in threads])
-    roots = {
-        block.id: block
-        for block in await session.scalars(
-            select(Block).where(Block.id == _among([t.root_block_id for t in threads]))
-        )
-    }
+    if roots is None:
+        roots = {
+            block.id: block
+            for block in await session.scalars(
+                select(Block).where(
+                    Block.id == _among([t.root_block_id for t in threads])
+                )
+            )
+        }
     tasks: dict[uuid.UUID, list] = {}
     for task in await session.execute(
         select(

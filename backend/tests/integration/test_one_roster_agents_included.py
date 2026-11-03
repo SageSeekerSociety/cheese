@@ -76,12 +76,14 @@ def _seat(client, room: str, handle: str) -> None:
 def _as_teammate(project_id: str, room: str, seat: str) -> dict:
     """这一轮的凭据，署名是坐在 ``room`` 里的那位队友。"""
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id,
-            topic_id=room,
-            access_scope="project",
-            agent_handle=seat,
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project_id,
+                topic_id=room,
+                access_scope='project',
+                agent_handle=seat,
+            )
+        }"
     }
 
 

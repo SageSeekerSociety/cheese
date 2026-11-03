@@ -1,21 +1,21 @@
-"""Membership in a 题目版, and the invite codes that hand it out, end to end.
+"""Membership in a 题目版, end to end.
 
 There is no visibility tier. Who can see a 题目版 exists is answered by
 membership and nothing else, so the acceptance list is short:
 
 - a 题目版 you did not create and have not joined is absent from your list
   and 404 through a direct link, including every sub-resource;
-- every 题目版 is created holding a code, and redeeming one is the ordinary
-  way in — the board shows up on the redeemer's list immediately after;
-- the owner can also put someone in without a code;
+- joining through the board's link is the ordinary way in — the board shows
+  up on the joiner's list immediately after (the link itself is
+  `test_space_join_link.py`'s);
+- the owner can also put someone in directly;
 - leaving (or being removed) hides it again and takes nothing else away — not
   the leaver's projects;
 - and the writes behind「加入」hold up when the same request arrives twice:
-  one live membership row per person, one invite-code use spent for one join,
-  and a roster whose hydration does not grow with the roster.
+  one live membership row per person, and a roster whose hydration does not
+  grow with the roster.
 """
 
-import time
 from datetime import UTC, datetime
 
 import pytest
@@ -25,7 +25,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.space.models import SpaceMember
-from app.domain.space.repositories import SpaceInviteCodeRepository
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
@@ -110,95 +109,21 @@ def _member_row(
     raise AssertionError(f"user {user_id} is not on space {space_id}'s roster")
 
 
-def _mint_code(
-    api_client: TestClient,
-    token: str,
-    space_id: int,
-    *,
-    max_uses: int | None = 10,
-    expires_at: int | None = None,
-    note: str | None = None,
-) -> str:
-    return _mint_code_row(
-        api_client,
-        token,
-        space_id,
-        max_uses=max_uses,
-        expires_at=expires_at,
-        note=note,
-    )["code"]
-
-
-def _mint_code_row(
-    api_client: TestClient,
-    token: str,
-    space_id: int,
-    *,
-    max_uses: int | None = 10,
-    expires_at: int | None = None,
-    note: str | None = None,
-) -> dict:
-    """Mint a code and hand back the whole row — editing needs its id."""
-    body: dict = {}
-    if max_uses is not None:
-        body["maxUses"] = max_uses
-    if expires_at is not None:
-        body["expiresAt"] = expires_at
-    if note is not None:
-        body["note"] = note
-    resp = api_client.post(
-        f"/spaces/{space_id}/invite-codes", json=body, headers=_auth(token)
-    )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["data"]["inviteCode"]
-
-
-def _listed_codes(api_client: TestClient, token: str, space_id: int) -> list[dict]:
-    resp = api_client.get(f"/spaces/{space_id}/invite-codes", headers=_auth(token))
+def _link(api_client: TestClient, token: str, space_id: int) -> str:
+    """The board's join link token, as its owner or an admin reads it."""
+    resp = api_client.get(f"/spaces/{space_id}/join-link", headers=_auth(token))
     assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["inviteCodes"]
+    return resp.json()["data"]["token"]
 
 
-def _code_row(api_client: TestClient, token: str, space_id: int, code_id: int) -> dict:
-    """One row of the space's list, by id.
-
-    Every space is created holding a code of its own, so the list is never
-    just the codes the test minted — index 0 would answer for the wrong one.
-    """
-    for row in _listed_codes(api_client, token, space_id):
-        if row["id"] == code_id:
-            return row
-    raise AssertionError(f"code id {code_id} is not in the space's list")
+def _try_join(api_client: TestClient, token: str, link: str):
+    return api_client.post(f"/space-invites/{link}/join", headers=_auth(token))
 
 
-def _use_count(api_client: TestClient, token: str, space_id: int, code: str) -> int:
-    for row in _listed_codes(api_client, token, space_id):
-        if row["code"] == code:
-            return int(row["useCount"])
-    raise AssertionError(f"code {code} is not in the space's list")
-
-
-def _patch_code(
-    api_client: TestClient, token: str, space_id: int, code_id: int, body: dict
-):
-    return api_client.patch(
-        f"/spaces/{space_id}/invite-codes/{code_id}", json=body, headers=_auth(token)
-    )
-
-
-def _revoke_code(api_client: TestClient, token: str, space_id: int, code_id: int):
-    return api_client.delete(
-        f"/spaces/{space_id}/invite-codes/{code_id}", headers=_auth(token)
-    )
-
-
-def _try_join(api_client: TestClient, token: str, code: str):
-    return api_client.post("/spaces/join", json={"code": code}, headers=_auth(token))
-
-
-def _join(api_client: TestClient, token: str, code: str) -> None:
-    resp = _try_join(api_client, token, code)
+def _join(api_client: TestClient, token: str, link: str) -> None:
+    resp = _try_join(api_client, token, link)
     assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["joinStatus"] == "member", resp.text
 
 
 def _newcomer(user_client: UserCreator, api_client: TestClient) -> str:
@@ -265,21 +190,7 @@ class TestABoardIsInvisibleUntilYouAreInIt:
             assert resp.status_code == 404, f"{path} -> {resp.status_code}"
             assert _error_name(resp) == "NotFoundError", resp.text
 
-    def test_every_board_is_born_holding_a_code(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        """Membership is the only way in, so a board with no code to hand out
-        would be one nobody could ever reach."""
-        creator = user_client.create_user()
-        creator_token = _login(user_client, api_client, creator)
-
-        created = _create_space(api_client, creator_token)
-
-        invite = created["inviteCode"]
-        assert invite is not None
-        assert invite["code"]
-
-    def test_redeeming_the_code_is_what_puts_it_on_your_list(
+    def test_joining_through_the_link_is_what_puts_it_on_your_list(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
@@ -289,12 +200,10 @@ class TestABoardIsInvisibleUntilYouAreInIt:
 
         created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        code = created["inviteCode"]["code"]
+        link = _link(api_client, creator_token, space_id)
         assert space_id not in _listed_space_ids(api_client, joiner_token)
 
-        join = api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(joiner_token)
-        )
+        join = _try_join(api_client, joiner_token, link)
         assert join.status_code == 200, join.text
         assert join.json()["data"]["space"]["id"] == space_id
 
@@ -307,255 +216,6 @@ class TestABoardIsInvisibleUntilYouAreInIt:
             ).status_code
             == 200
         )
-
-        assert _use_count(api_client, creator_token, space_id, code) == 1
-
-    def test_an_unknown_code_is_a_404(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        seeker = user_client.create_user()
-        seeker_token = _login(user_client, api_client, seeker)
-
-        resp = api_client.post(
-            "/spaces/join", json={"code": "NOPE-NOPE-NOPE"}, headers=_auth(seeker_token)
-        )
-        assert resp.status_code == 404, resp.text
-        assert _error_name(resp) == "NotFoundError", resp.text
-
-
-class TestInviteCodes:
-    """Exhausted and expired codes, and the use counter behind them."""
-
-    def test_exhausted_and_expired_codes_are_refused(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        creator = user_client.create_user()
-        creator_token = _login(user_client, api_client, creator)
-
-        created = _create_space(api_client, creator_token)
-        space_id = created["space"]["id"]
-
-        single = api_client.post(
-            f"/spaces/{space_id}/invite-codes",
-            json={"maxUses": 1},
-            headers=_auth(creator_token),
-        )
-        assert single.status_code == 201, single.text
-        code = single.json()["data"]["inviteCode"]["code"]
-
-        first = user_client.create_user()
-        first_token = _login(user_client, api_client, first)
-        second = user_client.create_user()
-        second_token = _login(user_client, api_client, second)
-
-        ok = api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(first_token)
-        )
-        assert ok.status_code == 200, ok.text
-
-        exhausted = api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(second_token)
-        )
-        assert exhausted.status_code == 400, exhausted.text
-        assert _error_name(exhausted) == "BadRequestError", exhausted.text
-
-        stale = api_client.post(
-            f"/spaces/{space_id}/invite-codes",
-            json={"maxUses": 5, "expiresAt": int(time.time() * 1000) - 86_400_000},
-            headers=_auth(creator_token),
-        )
-        assert stale.status_code == 201, stale.text
-        stale_code = stale.json()["data"]["inviteCode"]["code"]
-        third = user_client.create_user()
-        third_token = _login(user_client, api_client, third)
-        expired = api_client.post(
-            "/spaces/join", json={"code": stale_code}, headers=_auth(third_token)
-        )
-        assert expired.status_code == 400, expired.text
-
-
-class TestEditingAHandedOutCode:
-    """A code already in people's hands can be re-aimed, or taken back.
-
-    Every case below ends by redeeming the code and reading the answer, because
-    "the budget was raised" and "one more person got in" are different claims
-    and only the second one is the point. The same goes for the refusals: what
-    is pinned is that the change reached the person at the door.
-
-    No attempt is retried by the person who was just refused. In production the
-    whole request rolls back, but the test harness replaces ``get_db`` with a
-    bare ``yield db_session`` (tests/integration/conftest.py), so a membership
-    row written before the refusal stays visible for the rest of the test and
-    the retry would come back 200 through the "already in" path — measuring the
-    harness rather than the code. Each attempt below walks up as someone new.
-    """
-
-    def test_raising_the_budget_lets_the_next_person_in(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=1)
-
-        _join(api_client, _newcomer(user_client, api_client), row["code"])
-        refused = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
-        assert refused.status_code == 400, refused.text
-
-        updated = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"maxUses": 2}
-        )
-        assert updated.status_code == 200, updated.text
-        body = updated.json()["data"]["inviteCode"]
-        assert body["maxUses"] == 2
-        # Raising the budget is not the same as spending it.
-        assert body["useCount"] == 1
-
-        later = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
-        assert later.status_code == 200, later.text
-        assert _code_row(api_client, owner_token, space_id, row["id"])["useCount"] == 2
-
-    def test_an_expiry_can_be_moved_and_cleared_but_survives_being_ignored(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        future = int(time.time() * 1000) + 3_600_000
-        row = _mint_code_row(
-            api_client, owner_token, space_id, max_uses=5, expires_at=future
-        )
-        admitted = _try_join(
-            api_client, _newcomer(user_client, api_client), row["code"]
-        )
-        assert admitted.status_code == 200, admitted.text
-
-        # An edit that says nothing about the date leaves it where it was.
-        ignored = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"maxUses": 6}
-        )
-        assert ignored.status_code == 200, ignored.text
-        assert (
-            _code_row(api_client, owner_token, space_id, row["id"])["expiresAt"]
-            == future
-        )
-
-        moved = _patch_code(
-            api_client,
-            owner_token,
-            space_id,
-            row["id"],
-            {"expiresAt": int(time.time() * 1000) - 1000},
-        )
-        assert moved.status_code == 200, moved.text
-        refused = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
-        assert refused.status_code == 400, refused.text
-
-        # An explicit null is a different sentence from an absent field: the
-        # code stops expiring rather than keeping the date that just lapsed.
-        cleared = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"expiresAt": None}
-        )
-        assert cleared.status_code == 200, cleared.text
-        assert cleared.json()["data"]["inviteCode"]["expiresAt"] is None
-        admitted = _try_join(
-            api_client, _newcomer(user_client, api_client), row["code"]
-        )
-        assert admitted.status_code == 200, admitted.text
-
-    def test_a_budget_below_what_is_already_used_is_refused_and_changes_nothing(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-        _join(api_client, _newcomer(user_client, api_client), row["code"])
-        _join(api_client, _newcomer(user_client, api_client), row["code"])
-
-        lowered = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"maxUses": 1}
-        )
-        assert lowered.status_code == 400, lowered.text
-        assert _error_name(lowered) == "BadRequestError", lowered.text
-
-        # A refusal that quietly wrote the value anyway would read as a code
-        # nobody can use, so the row is checked, not just the status code.
-        assert _code_row(api_client, owner_token, space_id, row["id"])["maxUses"] == 5
-        admitted = _try_join(
-            api_client, _newcomer(user_client, api_client), row["code"]
-        )
-        assert admitted.status_code == 200, admitted.text
-
-    def test_a_revoked_code_admits_nobody_and_leaves_the_list(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-
-        revoked = _revoke_code(api_client, owner_token, space_id, row["id"])
-        assert revoked.status_code == 204, revoked.text
-        listed = [
-            item["id"] for item in _listed_codes(api_client, owner_token, space_id)
-        ]
-        assert row["id"] not in listed
-
-        # To someone holding the code, a revoked one is indistinguishable from
-        # one that never existed — which is the shape a withdrawal should have.
-        refused = _try_join(api_client, _newcomer(user_client, api_client), row["code"])
-        assert refused.status_code == 404, refused.text
-
-    def test_a_revoked_code_cannot_be_edited_back_into_circulation(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-
-        revoked = _revoke_code(api_client, owner_token, space_id, row["id"])
-        assert revoked.status_code == 204, revoked.text
-
-        edited = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"maxUses": 99}
-        )
-        assert edited.status_code == 404, edited.text
-        again = _revoke_code(api_client, owner_token, space_id, row["id"])
-        assert again.status_code == 404, again.text
-
-    def test_only_the_boards_admins_may_edit_or_revoke(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-
-        member_token = _newcomer(user_client, api_client)
-        _join(api_client, member_token, row["code"])
-
-        edited = _patch_code(
-            api_client, member_token, space_id, row["id"], {"maxUses": 99}
-        )
-        assert edited.status_code == 403, edited.text
-        revoked = _revoke_code(api_client, member_token, space_id, row["id"])
-        assert revoked.status_code == 403, revoked.text
-        assert _code_row(api_client, owner_token, space_id, row["id"])["maxUses"] == 5
-
-    def test_a_code_of_another_board_is_not_reachable_by_its_id(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        mine_token = _newcomer(user_client, api_client)
-        my_space_id = _create_space(api_client, mine_token)["space"]["id"]
-
-        theirs_token = _newcomer(user_client, api_client)
-        their_space_id = _create_space(api_client, theirs_token)["space"]["id"]
-        their_row = _mint_code_row(api_client, theirs_token, their_space_id, max_uses=5)
-
-        edited = _patch_code(
-            api_client, mine_token, my_space_id, their_row["id"], {"maxUses": 99}
-        )
-        assert edited.status_code == 404, edited.text
-        revoked = _revoke_code(api_client, mine_token, my_space_id, their_row["id"])
-        assert revoked.status_code == 404, revoked.text
-        kept = _code_row(api_client, theirs_token, their_space_id, their_row["id"])
-        assert kept["maxUses"] == 5
 
 
 class TestLeavingAndBeingRemoved:
@@ -571,10 +231,8 @@ class TestLeavingAndBeingRemoved:
 
         created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        code = created["inviteCode"]["code"]
-        api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(member_token)
-        )
+        link = _link(api_client, creator_token, space_id)
+        _try_join(api_client, member_token, link)
         assert space_id in _listed_space_ids(api_client, member_token)
 
         # A project of their own, made while a member.
@@ -604,8 +262,8 @@ class TestLeavingAndBeingRemoved:
         assert project_id in ids, listed.text
 
 
-class TestTheOwnerCanAddWithoutACode:
-    """The other way in, for when only one person should have the code."""
+class TestTheOwnerCanAddDirectly:
+    """The other way in, for when only one person should get in."""
 
     def test_an_added_member_sees_it_and_a_stranger_still_does_not(
         self, user_client: UserCreator, api_client: TestClient
@@ -739,7 +397,7 @@ class TestSpaceManagerPermissions:
             headers=_auth(first_token),
         )
         assert resp.status_code == 403, resp.text
-        assert _error_name(resp) == "ForbiddenError", resp.text
+        assert _error_name(resp) == "AccessDeniedError", resp.text
 
 
 class TestSideDoors:
@@ -806,13 +464,11 @@ class TestSideDoors:
 
         created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        code = created["inviteCode"]["code"]
+        link = _link(api_client, creator_token, space_id)
 
         self._assert_every_door_is_shut(api_client, space_id, outsider_token)
 
-        joined = api_client.post(
-            "/spaces/join", json={"code": code}, headers=_auth(outsider_token)
-        )
+        joined = _try_join(api_client, outsider_token, link)
         assert joined.status_code == 200, joined.text
 
         # Joining is the door: the same routes now answer.
@@ -906,80 +562,38 @@ async def _insert_live_row(db: AsyncSession, space_id: int, user_id: int) -> Non
         await db.flush()
 
 
-async def _insert_row_without_a_code(
-    db: AsyncSession, space_id: int, user_id: int
-) -> None:
-    """A membership row holding no code id — what every pre-migration row is.
-
-    Nothing is contrived here: the column is nullable, no backfill ran, and
-    this is the shape the table holds for anyone who joined before the fact
-    was recorded. Reaching the endpoint through the API cannot produce it,
-    which is why it is written directly.
-    """
-    now = datetime.now(UTC)
-    async with db.begin_nested():
-        db.add(
-            SpaceMember(
-                space_id=space_id,
-                user_id=user_id,
-                invite_code_id=None,
-                created_at=now,
-                updated_at=now,
-                deleted_at=None,
-            )
-        )
-        await db.flush()
-
-
-async def _spend(db: AsyncSession, code: str) -> bool:
-    repo = SpaceInviteCodeRepository(session=db)
-    row = await repo.get_by_code(code)
-    assert row is not None, f"{code} is not in the table"
-    return await repo.consume_use(row.id)
-
-
-async def _use_count_of(db: AsyncSession, code: str) -> int:
-    repo = SpaceInviteCodeRepository(session=db)
-    row = await repo.get_by_code(code)
-    assert row is not None, f"{code} is not in the table"
-    return int(row.use_count)
-
-
 class TestMembershipIsOneRow:
     """The writes behind「加入」, and what makes repeating them safe.
 
     One live row per (space, person) is a property the database has to hold,
     not one a reader can establish: two requests for the same person really do
-    arrive together — a double-tapped「加入」, or a code redeemed while an admin
-    adds that same person — and a read-then-write pair lets both read "not a
-    member" and both write. That spends an extra invite-code use at best, and
-    at worst leaves two live rows for the pair, which turns `get_member`'s
+    arrive together — a double-tapped「加入」, or a join through the link while
+    an admin adds that same person — and a read-then-write pair lets both read
+    "not a member" and both write. That leaves two live rows for the pair,
+    which turns `get_member`'s
     `scalar_one_or_none` into `MultipleResultsFound`: the documented
     double-tap no-op becoming a 500 on every later check of that membership.
     """
 
-    def test_joining_twice_keeps_one_row_and_spends_one_use(
+    def test_joining_twice_keeps_one_row(
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
         creator_token = _login(user_client, api_client, creator)
         created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        code = _mint_code(api_client, creator_token, space_id, max_uses=5)
+        link = _link(api_client, creator_token, space_id)
 
         joiner = user_client.create_user()
         joiner_token = _login(user_client, api_client, joiner)
 
-        # The double tap. The second redemption is a no-op, and「no-op」has to
-        # include the use counter — otherwise a code runs out because people
-        # were enthusiastic, which is the one thing a no-op must not do.
-        _join(api_client, joiner_token, code)
-        _join(api_client, joiner_token, code)
+        # The double tap. The second join is a no-op.
+        _join(api_client, joiner_token, link)
+        _join(api_client, joiner_token, link)
 
         assert [
             member["userId"] for member in _members(api_client, creator_token, space_id)
         ] == [joiner.user_id]
-        assert _use_count(api_client, creator_token, space_id, code) == 1
         # Still answerable: `get_member` is what every visibility check runs
         # on, so a duplicated row would surface here rather than in the list.
         assert space_id in _listed_space_ids(api_client, joiner_token)
@@ -995,11 +609,11 @@ class TestMembershipIsOneRow:
         creator_token = _login(user_client, api_client, creator)
         created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        code = _mint_code(api_client, creator_token, space_id, max_uses=5)
+        link = _link(api_client, creator_token, space_id)
 
         joiner = user_client.create_user()
         joiner_token = _login(user_client, api_client, joiner)
-        _join(api_client, joiner_token, code)
+        _join(api_client, joiner_token, link)
         assert (
             api_client.post(
                 f"/spaces/{space_id}/leave", headers=_auth(joiner_token)
@@ -1007,14 +621,12 @@ class TestMembershipIsOneRow:
             == 204
         )
 
-        _join(api_client, joiner_token, code)
+        _join(api_client, joiner_token, link)
 
         assert [
             member["userId"] for member in _members(api_client, creator_token, space_id)
         ] == [joiner.user_id]
-        # Re-joining spends a use — it is a join, not a no-op — while the
-        # table keeps one row for the pair rather than one per attempt.
-        assert _use_count(api_client, creator_token, space_id, code) == 2
+        # The table keeps one row for the pair rather than one per attempt.
         assert _portal.call(_rows_for_pair, db_session, space_id, joiner.user_id) == 1
 
     def test_the_database_refuses_a_second_live_row(
@@ -1036,10 +648,10 @@ class TestMembershipIsOneRow:
         creator_token = _login(user_client, api_client, creator)
         created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        code = created["inviteCode"]["code"]
+        link = _link(api_client, creator_token, space_id)
 
         joiner = user_client.create_user()
-        _join(api_client, _login(user_client, api_client, joiner), code)
+        _join(api_client, _login(user_client, api_client, joiner), link)
 
         with pytest.raises(IntegrityError):
             _portal.call(_insert_live_row, db_session, space_id, joiner.user_id)
@@ -1058,7 +670,7 @@ class TestMembershipIsOneRow:
         """剔除 then 添加 is one row again, not two.
 
         The re-add arrives through the other caller — an admin putting someone
-        back, not the person redeeming a code — and has to land on the same
+        back, not the person joining through the link — and has to land on the same
         revive path.
         """
         creator = user_client.create_user()
@@ -1095,38 +707,6 @@ class TestMembershipIsOneRow:
         ] == [member.user_id]
         assert _portal.call(_rows_for_pair, db_session, space_id, member.user_id) == 1
 
-    def test_an_expired_code_cannot_be_spent(
-        self,
-        user_client: UserCreator,
-        api_client: TestClient,
-        db_session: AsyncSession,
-        _portal,
-    ):
-        """Expiry is checked in the statement that spends a use, not only in
-        the read before it.
-
-        `join_space` reads the code, decides, and then spends — so a code that
-        expires in between is honoured by a read-only check, and the window is
-        however long the request takes, not zero. Reached here through the
-        repository directly because the endpoint refuses an already-expired
-        code at the read above, which is exactly why the second check needs
-        its own test.
-        """
-        creator = user_client.create_user()
-        creator_token = _login(user_client, api_client, creator)
-        created = _create_space(api_client, creator_token)
-        space_id = created["space"]["id"]
-        stale = _mint_code(
-            api_client,
-            creator_token,
-            space_id,
-            max_uses=5,
-            expires_at=int(time.time() * 1000) - 60_000,
-        )
-
-        assert _portal.call(_spend, db_session, stale) is False
-        assert _portal.call(_use_count_of, db_session, stale) == 0
-
     def test_hydrating_the_roster_does_not_grow_with_the_roster(
         self, user_client: UserCreator, api_client: TestClient, sql_log: list[str]
     ):
@@ -1143,10 +723,10 @@ class TestMembershipIsOneRow:
         creator_token = _login(user_client, api_client, creator)
         created = _create_space(api_client, creator_token)
         space_id = created["space"]["id"]
-        code = _mint_code(api_client, creator_token, space_id, max_uses=20)
+        link = _link(api_client, creator_token, space_id)
 
         first = user_client.create_user()
-        _join(api_client, _login(user_client, api_client, first), code)
+        _join(api_client, _login(user_client, api_client, first), link)
         # Warm-up, so the measured calls are not the ones paying for anything
         # the process does once.
         api_client.get(f"/spaces/{space_id}/members", headers=_auth(creator_token))
@@ -1156,7 +736,7 @@ class TestMembershipIsOneRow:
 
         for _ in range(4):
             extra = user_client.create_user()
-            _join(api_client, _login(user_client, api_client, extra), code)
+            _join(api_client, _login(user_client, api_client, extra), link)
         sql_log.clear()
         api_client.get(f"/spaces/{space_id}/members", headers=_auth(creator_token))
         five_members = _selects(sql_log)
@@ -1165,302 +745,4 @@ class TestMembershipIsOneRow:
         assert five_members == one_member, (
             f"{one_member} selects for 1 member but {five_members} for 5 — the "
             "hydration is per row again"
-        )
-
-
-class TestHowAMemberGotIn:
-    """「加入方式」 on the 成员 page: which code a member came in on.
-
-    Nothing recorded this before, so the fact starts out absent for everyone
-    already in a board. The column is nullable and the read side answers null
-    for two different situations — "nobody recorded it" and "the owner added
-    him directly" — because the row cannot tell those two apart (see
-    ``SpaceMember.invite_code_id``). Both are pinned below, along with the one
-    thing that must not happen to either: a name invented for it.
-    """
-
-    def test_a_member_row_names_the_code_that_let_him_in(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-
-        joiner = user_client.create_user()
-        _join(api_client, _login(user_client, api_client, joiner), row["code"])
-
-        member = _member_row(api_client, owner_token, space_id, joiner.user_id)
-        assert member["inviteCode"] == {"id": row["id"], "code": row["code"]}
-
-    def test_a_member_the_owner_added_directly_has_no_code_on_record(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        """The other way in is not through a code, and the row says so by
-        naming none — not by naming the board's code, which he never used."""
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-
-        added_user = user_client.create_user()
-        added = api_client.post(
-            f"/spaces/{space_id}/members",
-            json={"userId": added_user.user_id},
-            headers=_auth(owner_token),
-        )
-        assert added.status_code == 201, added.text
-
-        # The response to the add says it, and so does the roster afterwards.
-        assert added.json()["data"]["member"]["inviteCode"] is None
-        assert (
-            _member_row(api_client, owner_token, space_id, added_user.user_id)[
-                "inviteCode"
-            ]
-            is None
-        )
-
-    def test_a_row_written_before_the_column_reads_as_unknown(
-        self,
-        user_client: UserCreator,
-        api_client: TestClient,
-        db_session: AsyncSession,
-        _portal,
-    ):
-        """The historical shape, written the way the table held it.
-
-        Every member who joined before this column existed has no code id, and
-        the migration backfills nothing — so this row is not a simulation of
-        that state, it *is* that state. What the read side must not do is fill
-        the gap in: the board has a code, this member is in the board, and
-        putting those two together would be inventing 「他怎么进来的」.
-        """
-        owner_token = _newcomer(user_client, api_client)
-        created = _create_space(api_client, owner_token)
-        space_id = created["space"]["id"]
-        assert created["inviteCode"]["code"]  # the tempting answer
-
-        old_member = user_client.create_user()
-        _portal.call(
-            _insert_row_without_a_code, db_session, space_id, old_member.user_id
-        )
-
-        member = _member_row(api_client, owner_token, space_id, old_member.user_id)
-        assert member["inviteCode"] is None
-
-    def test_the_code_still_names_the_member_after_it_is_revoked(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        """Revoking stops the code working; it does not rewrite how the people
-        who already used it got in. That question is exactly when the column
-        gets read, so the row has to survive the soft delete."""
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-
-        joiner = user_client.create_user()
-        _join(api_client, _login(user_client, api_client, joiner), row["code"])
-
-        revoked = _revoke_code(api_client, owner_token, space_id, row["id"])
-        assert revoked.status_code == 204, revoked.text
-
-        member = _member_row(api_client, owner_token, space_id, joiner.user_id)
-        assert member["inviteCode"] == {"id": row["id"], "code": row["code"]}
-
-    def test_a_rejoin_reports_the_code_of_the_membership_that_is_live(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        """The column describes the membership now, not the first one ever.
-
-        He left, and the owner added him back without a code: the revival
-        writes over the code he originally redeemed, because leaving the old
-        code's name on the row would report the wrong thing from then on.
-        """
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-
-        joiner = user_client.create_user()
-        joiner_token = _login(user_client, api_client, joiner)
-        _join(api_client, joiner_token, row["code"])
-        assert _member_row(api_client, owner_token, space_id, joiner.user_id)[
-            "inviteCode"
-        ] == {"id": row["id"], "code": row["code"]}
-
-        assert (
-            api_client.post(
-                f"/spaces/{space_id}/leave", headers=_auth(joiner_token)
-            ).status_code
-            == 204
-        )
-        added = api_client.post(
-            f"/spaces/{space_id}/members",
-            json={"userId": joiner.user_id},
-            headers=_auth(owner_token),
-        )
-        assert added.status_code == 201, added.text
-
-        assert (
-            _member_row(api_client, owner_token, space_id, joiner.user_id)["inviteCode"]
-            is None
-        )
-
-    def test_a_member_of_the_board_still_reads_the_roster(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        """The column rides on a route members already had. Adding a field is
-        not licence to add a gate: everyone in the board reads the roster, and
-        they read it exactly as before."""
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        member = user_client.create_user()
-        member_token = _login(user_client, api_client, member)
-        board_code = _listed_codes(api_client, owner_token, space_id)[0]["code"]
-        _join(api_client, member_token, board_code)
-
-        resp = api_client.get(
-            f"/spaces/{space_id}/members", headers=_auth(member_token)
-        )
-        assert resp.status_code == 200, resp.text
-        assert (
-            _member_row(api_client, member_token, space_id, member.user_id)[
-                "inviteCode"
-            ]
-            is not None
-        )
-
-
-class TestWhatACodeSaysAboutItself:
-    """A code's 说明 and its maker.
-
-    Both are read off the 邀请码 screen, which is only ever opened by the
-    board's owner and admins — so the two new fields inherit that door rather
-    than opening one of their own. The last case here is that door.
-    """
-
-    def test_a_code_keeps_the_note_it_was_minted_with(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-
-        made = api_client.post(
-            f"/spaces/{space_id}/invite-codes",
-            json={"maxUses": 20, "note": "十月这批同学"},
-            headers=_auth(owner_token),
-        )
-        assert made.status_code == 201, made.text
-        created = made.json()["data"]["inviteCode"]
-        assert created["note"] == "十月这批同学"
-
-        # And the list agrees with the write — the screen reads that one.
-        assert (
-            _code_row(api_client, owner_token, space_id, created["id"])["note"]
-            == "十月这批同学"
-        )
-
-    def test_a_code_without_a_note_says_nothing_rather_than_an_empty_string(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-
-        blank = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-        assert blank["note"] is None
-
-        # A note that is only whitespace is the same as no note: storing it
-        # would put a row on the screen that looks like it says something.
-        spaced = api_client.post(
-            f"/spaces/{space_id}/invite-codes",
-            json={"maxUses": 5, "note": "   "},
-            headers=_auth(owner_token),
-        )
-        assert spaced.status_code == 201, spaced.text
-        assert spaced.json()["data"]["inviteCode"]["note"] is None
-
-    def test_a_code_names_the_admin_who_minted_it(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        owner = user_client.create_user()
-        owner_token = _login(user_client, api_client, owner)
-        created = _create_space(api_client, owner_token)
-        space_id = created["space"]["id"]
-
-        # The board's own first code was minted by whoever created the board.
-        first = _code_row(
-            api_client, owner_token, space_id, created["inviteCode"]["id"]
-        )
-        assert first["createdBy"]["id"] == owner.user_id
-        assert first["createdBy"]["username"] == owner.username
-
-        # A code minted later names the same person until somebody else mints.
-        later = _mint_code_row(api_client, owner_token, space_id, max_uses=5)
-        assert (
-            _code_row(api_client, owner_token, space_id, later["id"])["createdBy"]["id"]
-            == owner.user_id
-        )
-
-    def test_a_note_can_be_corrected_and_cleared_but_survives_being_ignored(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        """Same absent-vs-null rule the 有效期 already follows.
-
-        Correcting a 说明 must not be the same request as deleting it, or the
-        调整 form can only ever lose it.
-        """
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-        row = _mint_code_row(
-            api_client, owner_token, space_id, max_uses=10, note="十月这批同学"
-        )
-        assert row["note"] == "十月这批同学"
-
-        # Absent: the note is left alone even though maxUses moved.
-        ignored = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"maxUses": 11}
-        )
-        assert ignored.status_code == 200, ignored.text
-        assert ignored.json()["data"]["inviteCode"]["note"] == "十月这批同学"
-
-        # Present: it is replaced.
-        corrected = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"note": "十一月这批"}
-        )
-        assert corrected.status_code == 200, corrected.text
-        assert corrected.json()["data"]["inviteCode"]["note"] == "十一月这批"
-
-        # Explicit null: cleared, and the code itself is untouched.
-        cleared = _patch_code(
-            api_client, owner_token, space_id, row["id"], {"note": None}
-        )
-        assert cleared.status_code == 200, cleared.text
-        assert cleared.json()["data"]["inviteCode"]["note"] is None
-        assert _code_row(api_client, owner_token, space_id, row["id"])["maxUses"] == 11
-
-    def test_a_plain_member_reads_neither_the_note_nor_who_minted_it(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
-        """The door on the 邀请码 screen stays where it was.
-
-        Both new fields arrive on routes that already refused members, so this
-        pins that they still do — a field an admin-only screen shows is not a
-        reason for the route under it to open up.
-        """
-        owner_token = _newcomer(user_client, api_client)
-        space_id = _create_space(api_client, owner_token)["space"]["id"]
-
-        member_token = _newcomer(user_client, api_client)
-        _join(api_client, member_token, _mint_code(api_client, owner_token, space_id))
-
-        listed = api_client.get(
-            f"/spaces/{space_id}/invite-codes", headers=_auth(member_token)
-        )
-        assert listed.status_code == 403, listed.text
-
-        minted = api_client.post(
-            f"/spaces/{space_id}/invite-codes",
-            json={"maxUses": 5, "note": "偷偷建的"},
-            headers=_auth(member_token),
-        )
-        assert minted.status_code == 403, minted.text
-        assert all(
-            row["note"] != "偷偷建的"
-            for row in _listed_codes(api_client, owner_token, space_id)
         )

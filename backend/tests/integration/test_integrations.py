@@ -7,6 +7,7 @@ itself is exercised against a real mail server in `test_mail_server.py`.
 
 import asyncio
 import json
+import sys
 import time
 import uuid
 from urllib.parse import parse_qs, urlparse
@@ -18,7 +19,11 @@ from app.core.config import settings
 from app.domain.integration import feishu, mail
 from app.domain.integration.mail import IntegrationError
 from app.domain.integration.models import Integration
-from app.domain.integration.service import seal, unseal
+from app.domain.integration.service import (
+    IntegrationService,
+    seal,
+    unseal,
+)
 from app.domain.library import service as library
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
@@ -333,6 +338,49 @@ class FeishuStub:
         self.bearers: list[str] = []
         #: The (app_id, app_secret) each tenant-token call carried.
         self.app_credentials: list[tuple[str, str]] = []
+        #: What the person agreed to on the authorization page, by the code it
+        #: sent them back with: Feishu issues a refresh token only when that
+        #: included ``offline_access``.
+        self.consents: dict[str, set[str]] = {}
+        #: Refresh tokens Feishu no longer takes: each is good for one refresh,
+        #: and one not renewed in time expires.
+        self.used: set[str] = set()
+        self.expired: set[str] = set()
+        self._issued = 0
+
+    def consent(self, authorize_url: str) -> str:
+        """The person agrees to everything the authorization page asked for."""
+        scopes = parse_qs(urlparse(authorize_url).query).get("scope", [""])[0]
+        code = f"code-{len(self.consents) + 1}"
+        self.consents[code] = set(scopes.split())
+        return code
+
+    def _exchange(self, body: dict) -> httpx.Response:
+        if body.get("grant_type") == "refresh_token":
+            spent = body.get("refresh_token")
+            if spent in self.expired:
+                return httpx.Response(
+                    400, json={"code": 20037, "msg": "refresh token expired"}
+                )
+            if spent in self.used:
+                return httpx.Response(
+                    400, json={"code": 20073, "msg": "refresh token used"}
+                )
+            self.used.add(spent)
+            offline = True
+        else:
+            offline = "offline_access" in self.consents.get(body.get("code"), set())
+        # A different token each time, so "the refreshed one came back and was
+        # used" is visible in the document calls rather than identical strings.
+        self._issued += 1
+        fresh = f"u{self._issued}"
+        answer = {"code": 0, "access_token": fresh, "expires_in": 7200}
+        if offline:
+            answer |= {
+                "refresh_token": f"r-{fresh}",
+                "refresh_token_expires_in": 604800,
+            }
+        return httpx.Response(200, json=answer)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -348,18 +396,7 @@ class FeishuStub:
             self.tokens.append(body)
             if self.refuse_code and body.get("grant_type") == "authorization_code":
                 return httpx.Response(400, json={"code": 20003, "msg": "invalid code"})
-            # A different token each time, so "the refreshed one came back and was
-            # used" is visible in the document calls rather than identical strings.
-            fresh = "u1" if body.get("grant_type") == "authorization_code" else "u2"
-            return httpx.Response(
-                200,
-                json={
-                    "code": 0,
-                    "access_token": fresh,
-                    "refresh_token": f"r-{fresh}",
-                    "expires_in": 7200,
-                },
-            )
+            return self._exchange(body)
         if path.startswith("/open-apis/docx") or path.endswith(
             ("/metas/batch_query", "/suite/docs-api/search/object", "/drive/v1/files")
         ):
@@ -427,9 +464,14 @@ class FeishuStub:
         return httpx.Response(404, json={"code": 91402, "msg": "not found"})
 
 
+#: The stand-in Feishu of the running test, for the authorization page to answer.
+_feishu: FeishuStub | None = None
+
+
 @pytest.fixture
 def feishu_stub(monkeypatch):
     stub = FeishuStub()
+    monkeypatch.setattr(sys.modules[__name__], "_feishu", stub)
     transport = httpx.MockTransport(stub)
     monkeypatch.setattr(
         feishu.FeishuClient,
@@ -452,11 +494,13 @@ def _configure_platform_app(client, secret=PLATFORM_SECRET, admin=ADMIN):
     return r.json()["data"]
 
 
-def _authorize(client, person, row_id, code="the-code"):
-    """「连接飞书」的第二步：拿授权地址、走回调，把 token 存进自己那一行。"""
+def _authorize(client, person, row_id):
+    """「连接飞书」的第二步：拿授权地址、在飞书那边同意、走回调，把 token 存进自己那一行。"""
     url = client.get(
         f"/me/integrations/{row_id}/feishu/authorize", headers=person
     ).json()["data"]["url"]
+    assert _feishu is not None, "authorizing needs the feishu_stub fixture"
+    code = _feishu.consent(url)
     state = parse_qs(urlparse(url).query)["state"][0]
     back = client.get(
         "/integrations/feishu/callback",
@@ -464,8 +508,23 @@ def _authorize(client, person, row_id, code="the-code"):
         follow_redirects=False,
     )
     assert back.status_code == 302, back.text
-    assert "feishu=ok" in back.headers["location"], back.headers["location"]
+    query = _claim(client, person, back.headers["location"])
+    assert query == {"feishu": "ok"}, query
     return url
+
+
+def _claim(client, person, location: str) -> dict:
+    """The connections page, signed in, claiming what the callback held."""
+    query = parse_qs(urlparse(location).query)
+    (integration,) = query["feishu_integration"]
+    (handoff,) = query["feishu_handoff"]
+    r = client.patch(
+        f"/me/integrations/{integration}",
+        json={"feishu_handoff": handoff},
+        headers=person,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["authorization"]
 
 
 def _shared_app_connection(client, person, project, *, admin=ADMIN, monkeypatch=None):
@@ -634,10 +693,56 @@ def test_the_callback_lands_with_an_outcome_code(client, feishu_stub, monkeypatc
         "feishu_detail": ["access_denied"],
     }
     feishu_stub.refuse_code = True
-    assert _feishu_landing(client, code="c", state=state) == {
-        "feishu": ["exchange_failed"],
-        "feishu_detail": ["20003 invalid code"],
+    back = client.get(
+        "/integrations/feishu/callback",
+        params={"code": "c", "state": state},
+        follow_redirects=False,
+    )
+    assert _claim(client, person, back.headers["location"]) == {
+        "feishu": "exchange_failed",
+        "feishu_detail": "20003 invalid code",
     }
+
+
+def test_an_authorization_finished_by_someone_else_saves_nothing(
+    client, feishu_stub, monkeypatch
+):
+    """The state names a flow, not whose browser finishes it. Somebody who
+    starts a connection and sends its link to another person must not end up
+    holding that person's Feishu tokens: the callback keeps the result for the
+    starter, and another person's claim spends it without saving anything."""
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    starter, _project, _room = _setup(client)
+    _configure_platform_app(client)
+    row = client.post("/me/integrations/feishu", headers=starter).json()["data"]
+    url = client.get(
+        f"/me/integrations/{row['id']}/feishu/authorize", headers=starter
+    ).json()["data"]["url"]
+    code = feishu_stub.consent(url)
+    state = parse_qs(urlparse(url).query)["state"][0]
+    back = client.get(
+        "/integrations/feishu/callback",
+        params={"code": code, "state": state},
+        follow_redirects=False,
+    )
+    # Nothing is saved by the callback itself.
+    listed = client.get("/me/integrations", headers=starter).json()["data"]["data"]
+    assert listed[0]["user_authorized"] is False
+
+    stranger = {"Authorization": f"Bearer {seed_user(client, 'stranger')}"}
+    query = parse_qs(urlparse(back.headers["location"]).query)
+    claimed = client.patch(
+        f"/me/integrations/{query['feishu_integration'][0]}",
+        json={"feishu_handoff": query["feishu_handoff"][0]},
+        headers=stranger,
+    )
+    # Not the stranger's connection: nothing of it exists for them.
+    assert claimed.status_code == 404, claimed.text
+    listed = client.get("/me/integrations", headers=starter).json()["data"]["data"]
+    assert listed[0]["user_authorized"] is False
+    assert not any(
+        t.get("grant_type") == "authorization_code" for t in feishu_stub.tokens
+    )
 
 
 def test_the_callback_keeps_the_members_own_tokens(client, feishu_stub, monkeypatch):
@@ -700,6 +805,80 @@ def test_a_member_token_that_cannot_be_refreshed_names_the_way_back(
     r = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
     assert r.status_code == 401, r.text
     assert "授权已失效，到「我的连接」里重新授权" in r.text
+
+
+def _set_secret(client, row_id, **changes):
+    async def _change() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(Integration, uuid.UUID(row_id))
+            assert row is not None
+            seal(row, unseal(row) | changes)
+            await s.commit()
+
+    asyncio.run(_change())
+
+
+def test_two_calls_that_both_find_the_token_expired_both_go_through(
+    client, feishu_stub, monkeypatch
+):
+    """A refresh token is good for one refresh. Two calls at once must not both
+    spend it: the second would be refused and the person told to authorize
+    again for nothing."""
+    person, project, _room = _setup(client)
+    row = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)
+    _expire_user_token(client, row["id"])
+
+    async def read_once() -> dict:
+        async with client.test_factory() as s:
+            found = await s.get(Integration, uuid.UUID(row["id"]))
+            assert found is not None
+            service = IntegrationService(s, None, None)  # type: ignore[arg-type]
+            doc = await service.feishu(found, lambda c: c.read("doc-ok"))
+            await s.commit()
+            return doc
+
+    async def both() -> list:
+        return await asyncio.gather(read_once(), read_once(), return_exceptions=True)
+
+    results = asyncio.run(both())
+    assert all(isinstance(r, dict) for r in results), results
+    listed = client.get("/me/integrations", headers=person).json()["data"]["data"]
+    assert listed[0]["status"] == "ok", listed[0]
+
+
+def test_an_authorization_nobody_uses_for_a_week_still_works(
+    client, feishu_stub, monkeypatch
+):
+    """Feishu's refresh token lasts about a week; one nobody used in that time
+    is renewed before it lapses, so the connection works whenever it is next
+    used."""
+    person, project, room = _setup(client)
+    row = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)
+    _set_secret(client, row["id"], refresh_token_expires_at=time.time() + 3600)
+
+    from app.domain.integration.service import renew_feishu
+
+    asyncio.run(renew_feishu(client.test_factory))
+    # The week passes: the refresh token the authorization gave has expired.
+    feishu_stub.expired.add("r-u1")
+    _expire_user_token(client, row["id"])
+
+    read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+
+
+def test_checking_a_lapsed_authorization_says_it_lapsed(
+    client, feishu_stub, monkeypatch
+):
+    """「重新检查」 answers for the person's own authorization, not only for
+    the platform's app: one Feishu no longer refreshes reads as failed."""
+    person, project, _room = _setup(client)
+    row = _shared_app_connection(client, person, project, monkeypatch=monkeypatch)
+    feishu_stub.expired.add("r-u1")
+
+    checked = client.post(f"/me/integrations/{row['id']}/check", headers=person)
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["data"]["status"] == "auth_failed", checked.text
 
 
 def test_a_connection_with_its_own_app_credentials_still_works(

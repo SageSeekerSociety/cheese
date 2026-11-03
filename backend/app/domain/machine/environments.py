@@ -32,6 +32,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
+from app.domain.usage import compute
 
 
 @dataclass(frozen=True)
@@ -89,25 +90,67 @@ async def environment_of(
     return stored(written.environment) or default_environment()
 
 
-async def offered_specs(db: AsyncSession, project) -> list[dict]:
+async def offered_specs(
+    db: AsyncSession, project, *, project_devices: list | None = None
+) -> list[dict]:
     """The sandbox specs this project may choose, each with the words a
-    reader sees for it: the platform's machines where this deployment has
-    them, and the project's team devices that can make a sandbox."""
+    reader sees for it — its name, and what it is and what it costs: the
+    platform's machines where this deployment has them, and the project's team
+    devices that can make a sandbox."""
     out = []
     if cloud_provisionable(settings):
-        out.append(_spec(STANDARD, say("specStandard")))
+        out.append(_spec(STANDARD, say("specStandard"), _standard_about()))
     if cloud_vm_provisionable(settings):
-        out.append(_spec(VM, say("specVm")))
+        out.append(_spec(VM, say("specVm"), _vm_about()))
     devices = sql_device_service(db)
-    mine = await devices.list_devices_for_project(project.id)
-    refusing = await devices.refusing_sandboxes([d.device_id for d in mine])
+    mine = (
+        project_devices
+        if project_devices is not None
+        else await devices.list_devices_for_project(project.id)
+    )
+    refusing = (
+        await devices.refusing_sandboxes([d.device_id for d in mine]) if mine else set()
+    )
     if any(d.device_id not in refusing for d in mine):
-        out.append(_spec(TEAM_DEVICES, say("specTeamDevices")))
+        out.append(
+            _spec(TEAM_DEVICES, say("specTeamDevices"), say("specTeamDevicesAbout"))
+        )
     return out
 
 
-def _spec(spec: str, label) -> dict:
-    return {"spec": spec, "label": str(label), **notice_keys(label=label)}
+def _standard_about():
+    """What a standard sandbox is, and the credits it is charged per running
+    hour — the price ``usage.compute`` charges it at."""
+    price = compute.hourly_price(compute.SANDBOX, compute.SANDBOX)
+    if price is None:
+        return say("specStandardAboutUnpriced")
+    return say("specStandardAbout", credits=_number(price))
+
+
+def _vm_about():
+    """What a whole VM is, the size every one is created with, and the
+    credits that size is charged per hour."""
+    cores, memory_mb = settings.cloud_vm_cores, settings.cloud_vm_memory_mb
+    price = compute.hourly_price(compute.VM, compute.vm_spec(cores, memory_mb))
+    if price is None:
+        return say("specVmAboutUnpriced")
+    return say(
+        "specVmAbout", cores=cores, memory=memory_mb // 1024, credits=_number(price)
+    )
+
+
+def _number(price: float) -> int | float:
+    """``price`` without a trailing ``.0``: a sentence says ``5``, not ``5.0``."""
+    return int(price) if price.is_integer() else price
+
+
+def _spec(spec: str, label, description) -> dict:
+    return {
+        "spec": spec,
+        "label": str(label),
+        "description": str(description),
+        **notice_keys(label=label, description=description),
+    }
 
 
 async def environment_words(db: AsyncSession, environment: Sandbox | SelfHosted):

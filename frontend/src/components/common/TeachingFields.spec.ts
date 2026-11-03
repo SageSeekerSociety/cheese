@@ -1,14 +1,16 @@
 // 「AI 队友辅导」那几格的控件。空间设置和发题页、改题页共用它，所以这里量的是它出什么：
-//   1. 方式四选一；题目那一层多一个「沿用空间设置」，底下给出空间那一份要求；
+//   1. 方式四选一；题目那一层多一个「沿用上层设置」，底下给出空间那一份要求；
 //   2. 每改一格都把**整份**报回去；
-//   3. 人敲的字不要在回程里被改写（那个还没成形的空格）。
+//   3. 人敲的字不要在回程里被改写（那个还没成形的空格）；
+//   4. 选上的技能在格子里带着它的说明。
+import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching } from '@/types'
 
 import { defineComponent, h, type PropType } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('vue-i18n', async () => {
@@ -35,6 +37,7 @@ const Host = defineComponent({
     },
     inherit: { type: Boolean, default: false },
     spaceTeaching: { type: Object as PropType<SpaceTeaching | null>, default: null },
+    skillCatalog: { type: Array as PropType<SkillChoice[]>, default: undefined },
   },
   data() {
     return { value: (this.modelValue ?? {}) as SpaceTeaching }
@@ -46,6 +49,7 @@ const Host = defineComponent({
       materialsState: this.materialsState,
       inherit: this.inherit,
       spaceTeaching: this.spaceTeaching,
+      skillCatalog: this.skillCatalog,
       'onUpdate:modelValue': (next: SpaceTeaching) => {
         captured = next
         this.value = next
@@ -68,6 +72,20 @@ afterEach(() => {
 })
 
 describe('TeachingFields', () => {
+  it('选上的技能在格子里带着它的说明，不只是一个标识', () => {
+    const view = mount({
+      modelValue: { skills: ['documents'] },
+      skillCatalog: [
+        { name: 'documents', description: '读写或修改 Word、PowerPoint、Excel、PDF 文件时用' },
+        { name: 'wolfram', description: '用户问可以算出来的问题时用' },
+      ],
+    })
+
+    const field = view.getByTestId('teaching-skills')
+    expect(within(field).getByText('读写或修改 Word、PowerPoint、Excel、PDF 文件时用')).toBeTruthy()
+    expect(within(field).queryByText('用户问可以算出来的问题时用')).toBeNull()
+  })
+
   it('三样：方式、补充要求、可读取的资料；方式是四选一', () => {
     const view = mount()
 
@@ -125,11 +143,12 @@ describe('TeachingFields', () => {
         learningGoals: [],
         materialIds: [],
         documentIds: [],
+        skills: [],
       })
     )
   })
 
-  it('题目那一层：多一个「沿用空间设置」，底下给出空间那一份要求', async () => {
+  it('题目那一层：多一个「沿用上层设置」，底下给出空间那一份要求', async () => {
     const view = mount({ inherit: true, spaceTeaching: { mode: 'guide', systemPrompt: '先问他试过什么。' } })
 
     expect(view.getByText('spaces.teaching.mode.inherit')).toBeTruthy()

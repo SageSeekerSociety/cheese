@@ -408,6 +408,7 @@ def test_a_session_that_skips_the_check_is_still_refused_by_the_platform(client)
 
     from app.domain.memory.files import MemoryFileScope
     from app.domain.memory.session import apply_tree, read_tree
+    from app.domain.memory.writers import MemoryWriter
 
     project_id = _project(client)
     written = _put(
@@ -427,6 +428,7 @@ def test_a_session_that_skips_the_check_is_still_refused_by_the_platform(client)
                 {"files": {"team/answer-first.md": _long_note()}, "refused": {}},
                 scopes=scopes,
                 updated_by="cheese",
+                writer=MemoryWriter.turn,
             )
             await session.commit()
             return change

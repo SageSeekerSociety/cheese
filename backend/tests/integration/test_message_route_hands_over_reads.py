@@ -32,6 +32,10 @@ def test_the_general_channel_hands_over_the_project_and_its_roster(client, hando
     assert "<@alice>" in sent["content"]
     [handoff] = handoffs
     assert handoff.project is not None and str(handoff.project.id) == project["id"]
+    assert (
+        handoff.place is not None
+        and str(handoff.place.room_id) == project["root_topic_id"]
+    )
     assert handoff.roster is not None
     assert "alice" in {member.handle for member in handoff.roster}
 
@@ -51,4 +55,5 @@ def test_another_channel_hands_over_the_project_alone(client, handoffs):
     assert "<@alice>" in sent["content"]
     [handoff] = handoffs
     assert handoff.project is not None and str(handoff.project.id) == project["id"]
+    assert handoff.place is not None and str(handoff.place.room_id) == topic["id"]
     assert handoff.roster is None

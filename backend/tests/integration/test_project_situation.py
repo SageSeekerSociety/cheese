@@ -276,7 +276,7 @@ def _answering(project: str, *, agent: str = "cheese") -> dict:
         read_only=False,
         ttl_s=300,
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_an_answering_agent_writes_only_a_blank_document_whole(client):

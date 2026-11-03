@@ -360,7 +360,6 @@ class TestTwoFactorIntegration:
         import jwt
 
         from app.common.auth import PENDING_2FA_TTL_S
-        from app.core.config import settings
 
         secret, _codes = self._enable_2fa()
         ticket = self._temp_token()
@@ -370,7 +369,7 @@ class TestTwoFactorIntegration:
         replacement = bad.json()["error"]["data"]["tempToken"]
 
         def claims(token: str) -> dict:
-            return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+            return jwt.decode(token, options={"verify_signature": False})
 
         assert claims(replacement)["exp"] == claims(ticket)["exp"]
         # Said the other way round, in case the deadline ever stops being an

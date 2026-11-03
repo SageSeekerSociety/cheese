@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.machine.models import (
@@ -14,6 +15,8 @@ from app.domain.machine.models import (
     TRANSITIONAL,
     AiStatus,
     CloudHost,
+    HostProjectStore,
+    HostReading,
     MachineStatus,
     SandboxHome,
 )
@@ -58,16 +61,55 @@ class CloudHostRepository:
             )
         )
 
-    async def occupancy(self) -> dict[uuid.UUID, int]:
+    async def occupancy(self, *, parked: bool = False) -> dict[uuid.UUID, int]:
         """How many homes each live host carries (hosts with none are
-        absent): each is a sandbox, or one being placed or destroyed."""
-        rows = await self._session.execute(
+        absent): each is a sandbox, or one being placed or destroyed. A parked
+        one holds no slot and is left out, unless ``parked``: whether a host
+        is empty, for releasing it, counts them too."""
+        query = (
             select(SandboxHome.host_id, func.count())
             .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(CloudHost.released_at.is_(None))
             .group_by(SandboxHome.host_id)
         )
+        if not parked:
+            query = query.where(SandboxHome.parked_at.is_(None))
+        rows = await self._session.execute(query)
         return {host_id: int(homes) for host_id, homes in rows.all()}
+
+    async def last_readings(
+        self, host_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, HostReading]:
+        """Each of these hosts' last reading, for those that have one."""
+        if not host_ids:
+            return {}
+        rows = await self._session.scalars(
+            select(HostReading)
+            .where(HostReading.host_id.in_(host_ids))
+            .distinct(HostReading.host_id)
+            .order_by(HostReading.host_id, HostReading.read_at.desc())
+        )
+        return {row.host_id: row for row in rows}
+
+    async def placed_since(
+        self, readings: dict[uuid.UUID, HostReading]
+    ) -> dict[uuid.UUID, int]:
+        """How many homes each host was given after its reading here was taken:
+        sandboxes that reading cannot have seen."""
+        counts: dict[uuid.UUID, int] = {}
+        for host_id, reading in readings.items():
+            counts[host_id] = int(
+                await self._session.scalar(
+                    select(func.count())
+                    .select_from(SandboxHome)
+                    .where(
+                        SandboxHome.host_id == host_id,
+                        SandboxHome.created_at > reading.read_at,
+                    )
+                )
+                or 0
+            )
+        return counts
 
     async def failures_since(self, since: datetime) -> tuple[int, datetime | None]:
         """How many hosts the provider failed since ``since``, and the last."""
@@ -83,11 +125,38 @@ class CloudHostRepository:
     # --- homes ---------------------------------------------------------------
 
     async def put_home(self, host_id: uuid.UUID, home: dict) -> SandboxHome:
-        """Place a new home on a host, from its fields."""
+        """Place a new home on a host, from its fields. The host now keeps its
+        project's store too, whatever happens to this home later."""
         row = SandboxHome(host_id=host_id, **home)
         self._session.add(row)
+        project_key = home.get("project_id") or home.get("topic_id")
+        if project_key is not None:
+            now = datetime.now(UTC)
+            await self._session.execute(
+                insert(HostProjectStore)
+                .values(
+                    host_id=host_id,
+                    project_key=project_key,
+                    last_placed_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=["host_id", "project_key"],
+                    set_={"last_placed_at": now},
+                )
+            )
         await self._session.flush()
         return row
+
+    async def stores(self, project_key: uuid.UUID) -> set[uuid.UUID]:
+        """The hosts that have placed a sandbox of this project (or of this
+        conversation, for one in no project), and so hold its store."""
+        return set(
+            await self._session.scalars(
+                select(HostProjectStore.host_id).where(
+                    HostProjectStore.project_key == project_key
+                )
+            )
+        )
 
     async def put_device_home(self, device_id: str, home: dict) -> SandboxHome:
         """Place a new home on a person's computer, from its fields."""

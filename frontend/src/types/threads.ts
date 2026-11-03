@@ -41,6 +41,11 @@ export interface ThreadSummary {
   failed_code?: string | null
   /** 此刻在这条支线里有一轮在跑的 AI 队友（handle）。只在主线那一行上有。 */
   replying?: string[]
+  /** 收起来的时刻（`thread/recycle.py`），开着的是 null。收起来的支线仍然读得到，
+   *  只是从默认那一栏挪到了「已回收」。 */
+  recycled_at?: string | null
+  /** 开这条支线的人：收起来之后，他是能点「恢复」的人之一（还有频道管理员）。 */
+  created_by?: string
 }
 
 /** 一条支线本身，以及它挂着的那条主线消息。 */
@@ -69,6 +74,13 @@ export interface Thread {
 export interface ThreadRow extends ThreadSummary {
   root: ThreadReply | null
   unread: boolean
+}
+
+/** 一个频道的支线，两栏：开着的和收起来的。收起来的仍然读得到，只是从默认那一栏
+ *  挪开了。 */
+export interface ThreadLists {
+  open: ThreadRow[]
+  recycled: ThreadRow[]
 }
 
 /** 一位 AI 队友在频道的某条支线里开始或停下回答：频道主线收到这一帧，那条消息下面

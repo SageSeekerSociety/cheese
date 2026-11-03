@@ -26,7 +26,7 @@ steps:
   - label: 开 draft PR
     desc: pr_publish.sweep_draft_prs 发现分支领先于基准分支，为这个任务开一个 draft PR。之后的推送更新同一个 PR。
   - label: 去掉 draft
-    desc: cheese_ready 去掉 draft 状态。递验收卡也会让 PR 变成可评审；反过来只标记可评审不会生成验收卡。
+    desc: cheese_card(action=ready) 去掉 draft 状态。递验收卡也会让 PR 变成可评审；反过来只标记可评审不会生成验收卡。
   - label: 看改动和检查
     desc: 验收面板显示改动、检查和评审状态。芝士自己跑检查；托管平台上的 CI 由那边的 runner 跑，平台只读结果。
   - label: 采纳
@@ -45,7 +45,7 @@ steps:
 
 1. 任务声明自己的分支和基准分支，机器推上第一批改动。分支和工作目录怎么来见[任务与工作目录](/dev/tasks#worktree)。
 2. 分支领先于基准分支时，平台替这个任务开一个 draft PR（`pr_publish.sweep_draft_prs`，还没递卡的任务也扫）；之后的推送更新同一个 PR。见[代码托管](/dev/forge#poll)。
-3. `cheese_ready` 去掉 draft 状态。递验收卡也会让 PR 变成可评审；只标记可评审不会生成验收卡。
+3. `cheese_card(action=ready)` 去掉 draft 状态。递验收卡也会让 PR 变成可评审；只标记可评审不会生成验收卡。
 4. 验收面板显示改动、检查和评审状态。芝士自己跑检查；托管平台上的 CI 由那边的 runner 跑，平台只读结果。
 5. 采纳时检查评审人、需要的采纳人数、项目策略，以及浏览器里显示的那一版，然后调用托管平台的合并接口（`backend/app/api/routes/accept.py`）。检查了什么、状态怎么算见[验收与采纳](/dev/accept#accept-is-merge)。
 6. 合并成功就记录交付。验收卡说这是最后一步（`completes_task`）就关闭任务；不是最后一步，任务换到下一步的分支上继续，见[分步交付](/dev/tasks#steps)。房间继续可用。

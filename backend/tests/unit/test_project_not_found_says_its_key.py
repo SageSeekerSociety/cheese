@@ -21,7 +21,7 @@ SAYING = {
     "domain/project/environment.py": 3,
     "domain/project/reads.py": 1,
     "api/routes/agent_credential.py": 1,
-    "api/routes/projects_run_config.py": 3,
+    "api/routes/projects_run_config.py": 2,
 }
 
 

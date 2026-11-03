@@ -1,11 +1,20 @@
 {
-  "spaceTaskClaimApproved": "「{task}」的领取已通过",
-  "spaceTaskClaimRejected": "「{task}」的领取未通过",
+  "spaceTaskChanged": "「{task}」{changes}",
+  "spaceTaskChangedName": "改名为「{name}」",
+  "spaceTaskChangedRequirements": "修改了提交内容或评分要点",
+  "spaceTaskChangedStageDue": "阶段「{stage}」的截止时间改为 {due}（{zone}）",
+  "spaceTaskChangedStageDueCleared": "阶段「{stage}」不再设截止时间",
+  "spaceTaskChangedStageName": "阶段「{stage}」改名为「{name}」",
+  "spaceTaskChangedStagesAdded": "新增了阶段{stages}",
+  "spaceTaskChangedStagesRemoved": "去掉了阶段{stages}",
+  "spaceTaskClaimApproved": "「{task}」的申请已通过",
+  "spaceTaskClaimRejected": "「{task}」的申请未通过",
   "spaceTaskDeadlineMoved": "「{task}」的提交截止时间已调整",
   "spaceTaskDueInDays": "「{task}」距提交截止还有 3 天，尚未提交",
   "spaceTaskDueTomorrow": "「{task}」距提交截止不到 24 小时，尚未提交",
   "spaceTaskMissed": "「{task}」有 {n} 人过了提交截止时间仍未提交",
   "spaceTaskRequirementsChanged": "「{task}」修改了提交内容或评分要点",
   "spaceTaskReviewFailed": "「{task}」的提交未通过，{score} 分",
-  "spaceTaskReviewPassed": "「{task}」的提交已通过，{score} 分"
+  "spaceTaskReviewPassed": "「{task}」的提交已通过，{score} 分",
+  "timeZoneBeijing": "北京时间"
 }

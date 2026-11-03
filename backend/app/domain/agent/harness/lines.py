@@ -11,9 +11,12 @@
 
 import re
 from collections.abc import Collection
+from datetime import UTC, datetime
 
 from app.core import raster_images
+from app.core.config import settings
 from app.domain.agent.harness.notices import strip_platform_notice
+from app.domain.block.authorship import speaker
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.identity.handles import recipient_seat
@@ -53,12 +56,13 @@ def attachment_prompt_line(
             f"需要它的话，请对方重新发一份。"
         )
     if undecodable:
-        # Named or sent as a picture, but its bytes do not decode (`model_images`).
-        # Read would hand it to the model as a picture all the same, and the
-        # model's API refuses every later request of the conversation over it.
+        # Named or sent as a picture, but its bytes do not decode or are more
+        # than a model takes in one picture (`model_images`). Read would hand it
+        # to the model as a picture all the same, and the model's API refuses
+        # every later request of the conversation over it.
         return (
-            f"[{author}] 发来一个文件：{path}。它看起来是图片，但内容解不开，"
-            f"不能当图片看。不要用 Read 打开它；要查看，用命令行工具检查它的字节。"
+            f"[{author}] 发来一个文件：{path}。它看起来是图片，但内容解不开或者文件"
+            f"太大，不能当图片看。不要用 Read 打开它；要查看，用命令行工具检查它的字节。"
         )
     if not is_inline_image(mime):
         return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"
@@ -143,6 +147,33 @@ def addressee(b, *, recipient: str | None, recipient_instance_id=None) -> str | 
     return recipient_seat(recipient_meta)
 
 
+def waited_note(sent_at: datetime | None, now: datetime | None = None) -> str | None:
+    """The line under a message that reaches its reader long after it was sent:
+    when it was sent (UTC, as every time a tool shows) and how long ago.
+
+    A message can sit for days before a turn carries it — behind a turn that
+    never ended, or an input nothing would settle. Its line alone reads as if
+    just said, and the reader answers a stale question as a current one. Past
+    as long as a turn may go without a word (``turn_silence_timeout_s``) it is
+    no longer that.
+    """
+    if sent_at is None:
+        return None
+    waited_s = ((now or datetime.now(UTC)) - sent_at).total_seconds()
+    if waited_s <= settings.turn_silence_timeout_s:
+        return None
+    if waited_s >= 86400:
+        span = f"{int(waited_s // 86400)} 天"
+    elif waited_s >= 3600:
+        span = f"{int(waited_s // 3600)} 小时"
+    else:
+        span = f"{int(waited_s // 60)} 分钟"
+    return (
+        f"（这条发于 {sent_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC，到现在已过 {span}；"
+        "回答前先确认现在的情况）"
+    )
+
+
 def prompt_line(
     b,
     *,
@@ -176,7 +207,7 @@ def prompt_line(
     longer exists; ``undecodable`` that it looks like a picture and is not one."""
     if b.kind == BlockKind.attachment:
         line = attachment_prompt_line(
-            b.author,
+            speaker(b),
             b.content,
             embeds_images=embeds_images,
             mime=b.mime_type or "",
@@ -185,13 +216,16 @@ def prompt_line(
         )
     else:
         line = message_prompt_line(
-            b.author,
+            speaker(b),
             b.content,
             (b.meta or {}).get("quoted_context"),
             addressed_to=addressee(
                 b, recipient=recipient, recipient_instance_id=recipient_instance_id
             ),
         )
+    waited = waited_note(getattr(b, "created_at", None))
+    if waited is not None:
+        line = f"{line}\n{waited}"
     if replied is None:
         return line
     return f"{line}\n{reply_quote(replied, recipient=recipient)}"
@@ -225,7 +259,7 @@ def live_input_lines(
     ]
     lines.extend(
         attachment_prompt_line(
-            author,
+            speaker(stored) if stored is not None else author,
             f["path"],
             embeds_images=True,
             mime=f["media_type"],

@@ -48,7 +48,7 @@ def configured(monkeypatch):
         binding,
         minter,
         permissions,
-        {"X-Cheese-Token": mint_scoped_token(project_id=str(project_id))},
+        {"Authorization": f"Bearer {mint_scoped_token(project_id=str(project_id))}"},
     )
 
 
@@ -84,7 +84,7 @@ def test_token_identifies_provider_repository_and_expiry(client, configured, kin
 
 def test_unscoped_caller_is_rejected(client):
     response = client.get(
-        "/sandbox/forge-token", headers={"X-Cheese-Token": "nonsense"}
+        "/sandbox/forge-token", headers={"Authorization": f"Bearer {'nonsense'}"}
     )
     assert response.status_code == 401
 

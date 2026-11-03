@@ -100,6 +100,13 @@ jobs:
           python3 .claude/pr-review/tiers.py --self-test
           python3 .claude/pr-review/ready.py --self-test
           python3 .claude/pr-review/render.py --self-test
+          # The OCR entry point's wall clock. Nothing else exercises it, and a
+          # version of it that stopped signalling the process group would look
+          # the same from every other angle: the review still runs and the
+          # result still lands. What breaks is only the run that overruns, and
+          # then the platform's own timeout kills it and nothing is written —
+          # which is the failure this ceiling exists to prevent.
+          bash .claude/scripts/ocr-review.sh --self-test
 
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).

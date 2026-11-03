@@ -11,8 +11,8 @@
       "label": "Overdue reviews"
     },
     "pendingClaims": {
-      "hint": "Open challenges with claims to approve",
-      "label": "Claims to approve"
+      "hint": "Open challenges with applications to approve",
+      "label": "Applications to approve"
     },
     "pendingReviews": {
       "hint": "Open challenges with submissions to review",
@@ -23,7 +23,7 @@
       "label": "Challenges to review"
     },
     "stalledTasks": {
-      "hint": "Claimed, but nothing submitted in 14 days",
+      "hint": "Started, but nothing new submitted in 14 days",
       "label": "Stalled challenges"
     }
   },
@@ -42,7 +42,7 @@
     "NONE": "Pending",
     "NOT_STARTED": "Nothing submitted",
     "NOT_SUBMITTED": "Not submitted",
-    "NO_PARTICIPANTS": "No claims",
+    "NO_PARTICIPANTS": "No participants",
     "PARTIAL_SUCCESS": "Some passed",
     "PENDING_REVIEW": "Awaiting review",
     "REJECTED_RESUBMITTABLE": "Returned, can resubmit",
@@ -138,8 +138,8 @@
     "loadFailed": "Couldn't load the overview",
     "metric": {
       "claims": {
-        "hint": "A person or a team counts once",
-        "label": "Claims"
+        "hint": "A person or a team counts once; pending and declined applications included",
+        "label": "Applied/started"
       },
       "members": {
         "hint": "Teams counted by member",
@@ -163,15 +163,15 @@
       }
     },
     "trend": {
-      "joined": "Claims",
+      "joined": "Applied/started",
       "succeeded": "Successes"
     }
   },
   "participants": {
-    "approval": "Claim review",
+    "approval": "Review status",
     "completion": "Completion",
     "distribution": {
-      "approval": "Claim review",
+      "approval": "Review status",
       "className": "Class",
       "completion": "Completion",
       "grade": "Grade",
@@ -183,19 +183,19 @@
     "loadFailed": "Couldn't load participant data",
     "metric": {
       "approved": {
-        "hint": "Claims that were approved",
-        "label": "Approved claims"
+        "hint": "Approved applications and direct starts",
+        "label": "Participating"
       },
       "claims": {
-        "hint": "A person or a team counts once",
-        "label": "Claims"
+        "hint": "A person or a team counts once; pending and declined applications included",
+        "label": "Applied/started"
       },
       "realName": {
         "hint": "Members with a verified real name",
         "label": "Verified members"
       },
       "succeeded": {
-        "hint": "Claims marked successful",
+        "hint": "Applications marked successful",
         "label": "Succeeded"
       }
     },
@@ -206,7 +206,7 @@
       "without": "Not verified"
     },
     "trend": {
-      "joined": "Claims",
+      "joined": "Applied/started",
       "submitted": "Submissions",
       "succeeded": "Successes"
     }
@@ -217,10 +217,10 @@
   },
   "publishers": {
     "col": {
-      "approvedParticipantCount": "Approved claims",
-      "avgParticipantsPerTask": "Claims per challenge",
+      "approvedParticipantCount": "Participating",
+      "avgParticipantsPerTask": "Avg. applied/started",
       "lastTaskCreatedAt": "Last published",
-      "participantCount": "Claims",
+      "participantCount": "Applied/started",
       "publisherName": "Publisher",
       "submissionConversionRate": "Submit rate",
       "submittedParticipantCount": "Submitted",
@@ -233,14 +233,14 @@
     "loadFailed": "Couldn't load publisher data",
     "rank": {
       "bestRate": "Best success rate",
-      "claims": "{n} claims",
-      "mostClaims": "Most claims",
+      "claims": "{n} applied/started",
+      "mostClaims": "Most applied/started",
       "mostTasks": "Most challenges",
       "tasks": "{n} challenges"
     },
     "sort": {
       "lastTaskCreatedAt": "Last published",
-      "participantCount": "Claims",
+      "participantCount": "Applied/started",
       "successRate": "Success rate",
       "taskCount": "Challenges"
     },
@@ -266,8 +266,8 @@
       "category": "Category",
       "createdAt": "Created",
       "deadline": "Deadline",
-      "participantCount": "Claims",
-      "pendingParticipantApprovalCount": "Claims to approve",
+      "participantCount": "Applied/started",
+      "pendingParticipantApprovalCount": "Applications to approve",
       "pendingReviewCount": "To review",
       "publisher": "Publisher",
       "submissionConversionRate": "Submit rate",
@@ -277,11 +277,11 @@
     "empty": "No tasks",
     "export": "Export challenges",
     "loadFailed": "Couldn't load challenge data",
-    "pendingClaims": "Claims to approve",
+    "pendingClaims": "Applications to approve",
     "pendingReviews": "Submissions to review",
     "sort": {
       "createdAt": "Created",
-      "participantCount": "Claims",
+      "participantCount": "Applied/started",
       "pendingReviewCount": "To review",
       "successRate": "Success rate"
     },

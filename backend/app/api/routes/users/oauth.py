@@ -22,6 +22,7 @@ from fastapi import (
 from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import HTTPConnection
 
 from app.api.app_return import back_in_app, started_in_app
 from app.api.deps import (
@@ -52,7 +53,7 @@ from app.api.users_deps import (
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core import single_use_state
+from app.core import origins, single_use_state
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import (
@@ -94,10 +95,14 @@ async def get_oauth_providers(
     return ok({"providers": providers})
 
 
-def _oauth_frontend_url(path: str, **params: str | None) -> str:
-    """Build a frontend landing URL (success/error) for the browser redirect."""
+def _oauth_frontend_url(
+    request: HTTPConnection, path: str, **params: str | None
+) -> str:
+    """A frontend landing URL (success/error) for the browser redirect, on the
+    origin the browser is on: the sign-in cookie this flow sets is that
+    origin's, and a landing elsewhere would find none."""
     query = urlencode({k: v for k, v in params.items() if v is not None})
-    return f"{settings.frontend_url}{path}" + (f"?{query}" if query else "")
+    return f"{origins.of_request(request)}{path}" + (f"?{query}" if query else "")
 
 
 # --- OAuth client-completion flow (reference contract) --------------------
@@ -198,9 +203,9 @@ async def _clear_oauth_password_attempts(username: str) -> None:
         await redis.aclose()
 
 
-def _oauth_too_many_attempts_redirect() -> RedirectResponse:
+def _oauth_too_many_attempts_redirect(request: HTTPConnection) -> RedirectResponse:
     return _oauth_error_redirect(
-        "TOO_MANY_ATTEMPTS", "Too many failed attempts. Try again later"
+        request, "TOO_MANY_ATTEMPTS", "Too many failed attempts. Try again later"
     )
 
 
@@ -361,6 +366,7 @@ async def _oauth_login_redirect(
         if trust_id is None:
             return RedirectResponse(
                 _oauth_frontend_url(
+                    request,
                     settings.frontend_2fa_verify_path,
                     token=await _issue_2fa_pending_token(user_id),
                 ),
@@ -370,6 +376,7 @@ async def _oauth_login_redirect(
     user_obj, _profile = await auth_service.get_user_with_profile(user_id)
     redirect = RedirectResponse(
         _oauth_frontend_url(
+            request,
             settings.frontend_oauth_success_path,
             email=user_obj.email or user_obj.username,
             provider=provider_id,
@@ -392,10 +399,15 @@ async def _oauth_login_redirect(
     return redirect
 
 
-def _oauth_error_redirect(error_code: str, message: str) -> RedirectResponse:
+def _oauth_error_redirect(
+    request: HTTPConnection, error_code: str, message: str
+) -> RedirectResponse:
     return RedirectResponse(
         _oauth_frontend_url(
-            settings.frontend_oauth_error_path, error_code=error_code, error=message
+            request,
+            settings.frontend_oauth_error_path,
+            error_code=error_code,
+            error=message,
         ),
         status_code=302,
     )
@@ -505,10 +517,15 @@ async def _spend_oauth_login_state(
         return False
 
 
-def _oauth_callback_error_redirect(provider_id: str, message: str) -> RedirectResponse:
+def _oauth_callback_error_redirect(
+    request: HTTPConnection, provider_id: str, message: str
+) -> RedirectResponse:
     return RedirectResponse(
         _oauth_frontend_url(
-            settings.frontend_oauth_error_path, message=message, provider=provider_id
+            request,
+            settings.frontend_oauth_error_path,
+            message=message,
+            provider=provider_id,
         ),
         status_code=302,
     )
@@ -530,7 +547,7 @@ async def get_oauth_login_url(
     if intent:
         read = _read_github_intent(intent, "github_intent")
         if provider_id != GITHUB_APP_PROVIDER or read is None:
-            return _oauth_callback_error_redirect(provider_id, "invalid_state")
+            return _oauth_callback_error_redirect(request, provider_id, "invalid_state")
         connecting, jti = read
         holder = await SessionService(session).holder(
             request.cookies.get(REFRESH_COOKIE) or ""
@@ -543,6 +560,7 @@ async def get_oauth_login_url(
                 connecting.user_id,
             )
             return _oauth_error_redirect(
+                request,
                 "GITHUB_CONNECT_SIGNED_OUT",
                 "Sign in to the account that started connecting GitHub",
             )
@@ -552,7 +570,7 @@ async def get_oauth_login_url(
             logger.exception("GitHub connect: cannot claim intent")
             spent = False
         if not spent:
-            return _oauth_callback_error_redirect(provider_id, "invalid_state")
+            return _oauth_callback_error_redirect(request, provider_id, "invalid_state")
         state = _github_intent_token(
             connecting, "github_intent_state", uuid.uuid4().hex
         )
@@ -574,7 +592,7 @@ async def get_oauth_login_url(
         )
     except SingleUseUnavailableError:
         logger.exception("OAuth login: cannot reserve state for %s", provider_id)
-        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+        return _oauth_callback_error_redirect(request, provider_id, "oauth_failed")
 
     redirect = RedirectResponse(auth_url, status_code=302)
     redirect.set_cookie(
@@ -635,7 +653,7 @@ async def handle_oauth_callback(
         provider_id, state, request.cookies.get(_OAUTH_LOGIN_STATE_COOKIE)
     ):
         logger.info("OAuth callback: state rejected for %s", provider_id)
-        return _oauth_callback_error_redirect(provider_id, "invalid_state")
+        return _oauth_callback_error_redirect(request, provider_id, "invalid_state")
 
     # Step 1: exchange the code and fetch the provider profile. Any failure here
     # is an authentication problem — bounce to the frontend error page.
@@ -646,7 +664,7 @@ async def handle_oauth_callback(
         )
     except Exception:
         logger.exception("OAuth callback: provider exchange failed for %s", provider_id)
-        return _oauth_callback_error_redirect(provider_id, "oauth_failed")
+        return _oauth_callback_error_redirect(request, provider_id, "oauth_failed")
 
     return await _resolve_oauth_identity(
         request, session, oauth_service, auth_service, provider_id, user_info
@@ -706,6 +724,7 @@ async def _resolve_oauth_identity(
         if conflict_user is not None:
             return RedirectResponse(
                 _oauth_frontend_url(
+                    request,
                     settings.frontend_oauth_verify_path,
                     **await _start_oauth_ownership(
                         provider_id, info_dict, conflict_user
@@ -717,7 +736,7 @@ async def _resolve_oauth_identity(
         state_token = await _issue_oauth_state_token(provider_id, info_dict)
         return RedirectResponse(
             _oauth_frontend_url(
-                settings.frontend_oauth_complete_path, stateToken=state_token
+                request, settings.frontend_oauth_complete_path, stateToken=state_token
             ),
             status_code=302,
         )
@@ -728,6 +747,7 @@ async def _resolve_oauth_identity(
         )
         return RedirectResponse(
             _oauth_frontend_url(
+                request,
                 settings.frontend_oauth_error_path,
                 message="account_error",
                 provider=provider_id,
@@ -737,6 +757,7 @@ async def _resolve_oauth_identity(
 
 
 async def _connect_github_to(
+    request: HTTPConnection,
     session: AsyncSession,
     oauth_service: OAuthService,
     intent: _GithubIntent,
@@ -766,12 +787,15 @@ async def _connect_github_to(
         connections = await oauth_service.list_user_connections(intent.user_id)
         if any(c["providerId"] == GITHUB_APP_PROVIDER for c in connections):
             return _oauth_error_redirect(
+                request,
                 "ACCOUNT_MISMATCH",
                 "This GitHub account is not linked to the Cheese account that started authorization",
             )
         if existing is not None:
             return _oauth_error_redirect(
-                "ALREADY_LINKED", "This OAuth account is linked to another user"
+                request,
+                "ALREADY_LINKED",
+                "This OAuth account is linked to another user",
             )
         try:
             await oauth_service.create_connection(
@@ -788,13 +812,16 @@ async def _connect_github_to(
             # Linked by a concurrent request since the lookup.
             await session.rollback()
             return _oauth_error_redirect(
-                "ALREADY_LINKED", "This OAuth account is linked to another user"
+                request,
+                "ALREADY_LINKED",
+                "This OAuth account is linked to another user",
             )
     # The landing page reads the connection back as soon as it loads, which
     # dependency teardown would commit after.
     await session.commit()
     return RedirectResponse(
-        f"{settings.frontend_url}{intent.return_path or '/users/settings/security'}",
+        f"{origins.of_request(request)}"
+        f"{intent.return_path or '/users/settings/security'}",
         status_code=302,
     )
 
@@ -918,7 +945,7 @@ async def _complete_oauth_binding(
     if existing is not None and existing["userId"] != user_id:
         await session.rollback()
         return _oauth_error_redirect(
-            "ALREADY_LINKED", "This OAuth account is linked to another user"
+            request, "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
     return await _oauth_login_redirect(
         request, session, auth_service, user_id, provider_id, **extra
@@ -942,21 +969,26 @@ async def oauth_verify_conflict(
     session_id = payload.get("sessionId") or ""
     pending = await _pop_oauth_pending(session_id) if session_id else None
     if not pending or pending.get("type") != "password":
-        return _oauth_error_redirect("SESSION_EXPIRED", "OAuth session expired")
+        return _oauth_error_redirect(
+            request, "SESSION_EXPIRED", "OAuth session expired"
+        )
 
     user_id = int(pending["userId"])
     if not await _spend_oauth_password_attempt(pending["username"]):
-        return _oauth_too_many_attempts_redirect()
+        return _oauth_too_many_attempts_redirect(request)
     try:
         password = payload.get("password") or ""
         user, _profile = await auth_service.get_user_with_profile(user_id)
         if not await auth_service.verify_password(user, password):
             if pending["providerId"] == GITHUB_APP_PROVIDER:
                 return _oauth_error_redirect(
+                    request,
                     "GITHUB_PASSWORD_VERIFICATION_FAILED",
                     "Password verification failed",
                 )
-            return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
+            return _oauth_error_redirect(
+                request, "INVALID_PASSWORD", "Invalid password"
+            )
 
         await _clear_oauth_password_attempts(pending["username"])
         return await _complete_oauth_binding(
@@ -972,7 +1004,9 @@ async def oauth_verify_conflict(
     except Exception:
         await session.rollback()
         logger.exception("OAuth verify: binding failed")
-        return _oauth_error_redirect("VERIFICATION_FAILED", "Verification failed")
+        return _oauth_error_redirect(
+            request, "VERIFICATION_FAILED", "Verification failed"
+        )
 
 
 @router.post(
@@ -998,21 +1032,23 @@ async def oauth_create_user(
     try:
         provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
-        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+        return _oauth_error_redirect(request, "TOKEN_EXPIRED", "Session expired")
     # Set only by /auth/oauth/email/verify: every account starts with an
     # address it can be recovered through, proven by a code sent to it.
     email = user_info.get("verifiedEmail")
     if not email:
-        return _oauth_error_redirect("EMAIL_UNVERIFIED", "Email not verified")
+        return _oauth_error_redirect(request, "EMAIL_UNVERIFIED", "Email not verified")
 
     if not is_valid_username(username):
-        return _oauth_error_redirect("INVALID_USERNAME", "Invalid username format")
+        return _oauth_error_redirect(
+            request, "INVALID_USERNAME", "Invalid username format"
+        )
     try:
         nickname = normalize_nickname(nickname)
     except UnprocessableEntityError as exc:
-        return _oauth_error_redirect("INVALID_NICKNAME", str(exc))
+        return _oauth_error_redirect(request, "INVALID_NICKNAME", str(exc))
     if passwordMode not in ("none", "password"):
-        return _oauth_error_redirect("INVALID_AUTH_MODE", "Invalid auth mode")
+        return _oauth_error_redirect(request, "INVALID_AUTH_MODE", "Invalid auth mode")
     consent = {
         k: v
         for k, v in (("terms", consentTerms), ("privacy", consentPrivacy))
@@ -1020,38 +1056,42 @@ async def oauth_create_user(
     }
     consent_problem = _signup_consent(consent, consentMethod)
     if consent_problem:
-        return _oauth_error_redirect("CONSENT_REQUIRED", consent_problem)
+        return _oauth_error_redirect(request, "CONSENT_REQUIRED", consent_problem)
     assert consentMethod is not None
     if passwordMode == "password":
         try:
             require_new_password(password or "")
         except (BadRequestError, UnprocessableEntityError) as exc:
-            return _oauth_error_redirect("WEAK_PASSWORD", str(exc))
+            return _oauth_error_redirect(request, "WEAK_PASSWORD", str(exc))
     # Same gate as /users registration: an OAuth account is still a new account.
     try:
         invite_code = _normalize_registration_invite_code(
             inviteCode, required=settings.require_invite_code
         )
     except UnprocessableEntityError as exc:
-        return _oauth_error_redirect("INVITE_CODE_REQUIRED", str(exc))
+        return _oauth_error_redirect(request, "INVITE_CODE_REQUIRED", str(exc))
     invite_service = InviteCodeService(session)
-    if invite_code and settings.require_invite_code:
+    if invite_code:
         try:
             await invite_service.validate_code(invite_code)
         except ValueError as exc:
             return _oauth_error_redirect(
-                "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+                request, "INVALID_INVITE_CODE", str(_invite_code_error(exc))
             )
     if is_reserved_username(username):
         # Ahead of the try/except below on purpose: that block catches
         # Exception broadly and answers with a generic "creation failed" plus an
         # exception log, which is the wrong shape for a name the user can simply
         # change (#345).
-        return _oauth_error_redirect("USERNAME_RESERVED", "Username is reserved")
+        return _oauth_error_redirect(
+            request, "USERNAME_RESERVED", "Username is reserved"
+        )
     if await auth_service.is_username_taken(username):
-        return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
+        return _oauth_error_redirect(
+            request, "USERNAME_TAKEN", "Username already taken"
+        )
     if not await _redeem_oauth_state_token(jti):
-        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+        return _oauth_error_redirect(request, "TOKEN_EXPIRED", "Session expired")
     # Before the account is created, not after: a second stateToken for an
     # identity linked meanwhile would otherwise leave an account behind with
     # nothing linked to it.
@@ -1059,13 +1099,14 @@ async def oauth_create_user(
         provider_id=provider_id, provider_user_id=str(user_info.get("id"))
     ):
         return _oauth_error_redirect(
-            "ALREADY_LINKED", "This OAuth account is linked to another user"
+            request, "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
     # Registered by someone else since it was verified.
     owner = await auth_service.get_user_by_email(email)
     if owner is not None:
         return RedirectResponse(
             _oauth_frontend_url(
+                request,
                 settings.frontend_oauth_verify_path,
                 **await _start_oauth_ownership(provider_id, user_info, owner),
             ),
@@ -1083,9 +1124,13 @@ async def oauth_create_user(
         except ValueError as exc:
             # Lost a race the checks above could not see.
             if str(exc) == "USERNAME_TAKEN":
-                return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
+                return _oauth_error_redirect(
+                    request, "USERNAME_TAKEN", "Username already taken"
+                )
             if str(exc) == "EMAIL_TAKEN":
-                return _oauth_error_redirect("EMAIL_TAKEN", "Email already registered")
+                return _oauth_error_redirect(
+                    request, "EMAIL_TAKEN", "Email already registered"
+                )
             raise
         ip, user_agent = client_context(request)
         await ConsentService(session).record(
@@ -1100,14 +1145,11 @@ async def oauth_create_user(
             try:
                 consumed = await invite_service.consume_code(invite_code)
             except ValueError as exc:
-                if settings.require_invite_code:
-                    await session.rollback()
-                    return _oauth_error_redirect(
-                        "INVALID_INVITE_CODE", str(_invite_code_error(exc))
-                    )
-                consumed = None
-            if consumed is not None:
-                await referrals.record_referral(session, consumed, user.id)
+                await session.rollback()
+                return _oauth_error_redirect(
+                    request, "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+                )
+            await referrals.record_referral(session, consumed, user.id)
         response = await _complete_oauth_binding(
             request=request,
             session=session,
@@ -1126,7 +1168,9 @@ async def oauth_create_user(
     except Exception:
         await session.rollback()
         logger.exception("OAuth create: account creation failed")
-        return _oauth_error_redirect("CREATION_FAILED", "Account creation failed")
+        return _oauth_error_redirect(
+            request, "CREATION_FAILED", "Account creation failed"
+        )
 
 
 @router.post(
@@ -1146,21 +1190,25 @@ async def oauth_bind_user(
     try:
         provider_id, user_info, jti = _decode_oauth_state_token(stateToken)
     except AuthenticationRequiredError:
-        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+        return _oauth_error_redirect(request, "TOKEN_EXPIRED", "Session expired")
     if not await _redeem_oauth_state_token(jti):
-        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+        return _oauth_error_redirect(request, "TOKEN_EXPIRED", "Session expired")
 
     if not await _spend_oauth_password_attempt(username):
-        return _oauth_too_many_attempts_redirect()
+        return _oauth_too_many_attempts_redirect(request)
 
     user = await auth_service._user_repo.get_by_username(username)
     # Unknown users and wrong passwords get the same answer.
     if user is None or not await auth_service.verify_password(user, password):
         if provider_id == GITHUB_APP_PROVIDER:
             return _oauth_error_redirect(
-                "GITHUB_PASSWORD_VERIFICATION_FAILED", "Password verification failed"
+                request,
+                "GITHUB_PASSWORD_VERIFICATION_FAILED",
+                "Password verification failed",
             )
-        return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
+        return _oauth_error_redirect(
+            request, "INVALID_CREDENTIALS", "Invalid credentials"
+        )
     await _clear_oauth_password_attempts(username)
 
     try:
@@ -1177,7 +1225,7 @@ async def oauth_bind_user(
     except Exception:
         await session.rollback()
         logger.exception("OAuth bind: binding failed")
-        return _oauth_error_redirect("BINDING_FAILED", "Binding failed")
+        return _oauth_error_redirect(request, "BINDING_FAILED", "Binding failed")
 
 
 def _github_profile(user_info) -> dict:
@@ -1205,15 +1253,19 @@ async def sign_in_with_github(
         provider_id, state, request.cookies.get(_OAUTH_LOGIN_STATE_COOKIE)
     ):
         logger.info("GitHub sign-in: state rejected")
-        return _oauth_callback_error_redirect(provider_id, "invalid_state")
+        return _oauth_callback_error_redirect(request, provider_id, "invalid_state")
     read = _read_github_intent(state, "github_intent_state") if "." in state else None
     if "." in state and read is None:
-        return _oauth_callback_error_redirect(provider_id, "invalid_state")
+        return _oauth_callback_error_redirect(request, provider_id, "invalid_state")
     connecting = read[0] if read else None
 
     def shown(landing: RedirectResponse) -> RedirectResponse:
         # A connection started in the desktop app shows its result there.
-        return back_in_app(landing) if connecting and connecting.in_app else landing
+        return (
+            back_in_app(request, landing)
+            if connecting and connecting.in_app
+            else landing
+        )
 
     try:
         provider = oauth_service.get_provider(provider_id)
@@ -1222,10 +1274,14 @@ async def sign_in_with_github(
         user_info = await provider.get_user_info(access_token) if access_token else None
     except Exception:
         logger.exception("GitHub sign-in: provider exchange failed")
-        return shown(_oauth_callback_error_redirect(provider_id, "oauth_failed"))
+        return shown(
+            _oauth_callback_error_redirect(request, provider_id, "oauth_failed")
+        )
     if user_info is None:
         logger.info("GitHub sign-in: the exchange returned no access token")
-        return shown(_oauth_callback_error_redirect(provider_id, "oauth_failed"))
+        return shown(
+            _oauth_callback_error_redirect(request, provider_id, "oauth_failed")
+        )
     # Only present when the App expires its user tokens; otherwise the token
     # is long-lived and both are absent.
     expires_in = token_data.get("expires_in")
@@ -1247,7 +1303,7 @@ async def sign_in_with_github(
     if connecting is not None:
         return shown(
             await _connect_github_to(
-                session, oauth_service, connecting, user_info, tokens
+                request, session, oauth_service, connecting, user_info, tokens
             )
         )
     return await _resolve_oauth_identity(

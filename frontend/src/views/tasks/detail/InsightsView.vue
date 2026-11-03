@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 「数据」页签的画面：这一道题有多少人领、他们走到哪一步、卡在哪儿、什么时候动的。
 // 数字全部从 props 里的名单和提交算出来，取数在 `Insights.vue`。
-import type { Task, TaskMembership, TaskSubmissionReview } from '@/types'
+import type { Task, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -13,6 +13,7 @@ import MetricCard from '@/components/spaces/MetricCard.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import SplitBar from '@/components/spaces/SplitBar.vue'
 import TrendChart from '@/components/spaces/TrendChart.vue'
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 
 const { t } = useI18n()
 
@@ -33,12 +34,14 @@ const props = defineProps<{
   failureReason: string | null
   /** 401/403：不是「这次没读到」，是「不给你看」，不给重试。 */
   forbidden: boolean
+  /** 每个阶段上的进度；分了阶段的题，按阶段画全体的分布。 */
+  progress?: TaskProgress | null
 }>()
 
 const emit = defineEmits<{ retry: [] }>()
 
-/** 没领到 / 没权限的人看到的是一句说明，不是一张空表（真接口也会对无权的人 403）。 */
-const claimedRoster = computed(() => props.roster.filter((r) => r.approved !== 'DISAPPROVED'))
+/** 参与者是申请通过了的人：还在等批准的不算在做，被拒的更不算。 */
+const claimedRoster = computed(() => props.roster.filter((r) => r.approved === 'APPROVED'))
 
 function statusOf(participantId: number): ClaimStatus {
   if (!props.reviewByParticipant.has(participantId)) return 'IN_PROGRESS'
@@ -74,10 +77,12 @@ const statusSegments = computed(() => [
   { label: t('tasks.insights.status.rejected'), count: counts.value.REJECTED, tone: 'danger' as const },
 ])
 
-/** 「卡住的人」：领了但一步没动，而且领了超过 5 天。出题人最该盯的就是这一行。 */
+/** 「卡住的人」：开始做（项目建好）超过 5 天，一版都没交。从开始做那一下算，不从申请
+ *  那一下算；还没开始做的（没有 `startedAt`）不算。出题人最该盯的就是这一行。 */
 const stalled = computed(() =>
   claimedRoster.value.filter(
-    (r) => statusById.value.get(r.id) === 'IN_PROGRESS' && Date.now() - r.createdAt > 5 * 86_400_000
+    (r) =>
+      statusById.value.get(r.id) === 'IN_PROGRESS' && r.startedAt != null && Date.now() - r.startedAt > 5 * 86_400_000
   )
 )
 
@@ -161,6 +166,15 @@ const claimTrend = computed(() => {
       </div>
 
       <div class="ins__grid">
+        <PanelCard
+          v-if="task.stages?.length && progress?.distribution"
+          class="ins__span2"
+          :title="t('tasks.insights.stagesTitle')"
+          data-testid="insights-stages"
+        >
+          <TaskStageTimeline :stages="task.stages" :counts="progress.distribution" />
+        </PanelCard>
+
         <PanelCard
           class="ins__span2"
           :title="t('tasks.insights.trendTitle')"

@@ -64,6 +64,8 @@ class MembershipAsk:
     role: str | None = None
     #: 邀请或申请时附的那句话；没写就空。
     message: str = ""
+    #: 邀请是发起人自己的芝士代他发的。
+    by_assistant: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -74,6 +76,7 @@ class MembershipAsk:
             "person": self.person.as_dict(),
             "role": self.role,
             "message": self.message,
+            "byAssistant": self.by_assistant,
             "at": self.at.isoformat(),
         }
 
@@ -189,6 +192,7 @@ async def membership_asks(
                 person=person(invitation.inviter_handle),
                 at=invitation.created_at,
                 role=invitation.role,
+                by_assistant=invitation.invited_by_assistant,
             )
         )
     for transfer in transfers:

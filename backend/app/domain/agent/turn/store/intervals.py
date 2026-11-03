@@ -12,6 +12,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.agent.models import STOP_FINISHED
 from app.domain.agent.repositories import AgentTurnRepository
 
 logger = logging.getLogger(__name__)
@@ -75,10 +76,15 @@ async def open_turn(
 
 
 async def close_turns(
-    session_factory: async_sessionmaker[AsyncSession], turn_ids: Iterable[uuid.UUID]
+    session_factory: async_sessionmaker[AsyncSession],
+    turn_ids: Iterable[uuid.UUID],
+    *,
+    reason: str = STOP_FINISHED,
 ) -> None:
     async with session_factory() as session:
-        await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
+        await AgentTurnRepository(session).close(
+            turn_ids, datetime.now(UTC), reason=reason
+        )
         await session.commit()
 
 

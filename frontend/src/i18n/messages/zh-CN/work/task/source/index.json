@@ -1,5 +1,6 @@
 {
   "byAgent": "{name} 新建的任务，没有记下是从哪句话来的",
+  "byAssistant": "芝士代 {name} 新建的任务，不是从对话里转出来的",
   "byPerson": "{name} 新建的任务，不是从对话里转出来的",
   "channel": "来自 #{title} 的一条消息",
   "quote": "{name}：{text}",

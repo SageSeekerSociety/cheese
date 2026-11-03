@@ -12,9 +12,9 @@ separate data — don't conflate them.
 
 | Env | Public | App host | DB | Stack | Deploys via |
 |---|---|---|---|---|---|
-| **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
+| **dev / test** | `okcheese.com` (mainland entry `okcheese.cn`) | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
 | **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | Docker Compose (`deploy/deploy-docker.sh`) | **published GitHub Release → approval** |
-| **etrip** | `etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
+| **etrip** | `ruc-etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
 
 Notes:
 - dev and prod are on ghg's private `192.168.16.0/24` (no public inbound). etrip
@@ -245,7 +245,8 @@ services `backend` and `backend-b` on `BACKEND_PORT` and `BACKEND_PORT_NEXT`;
 with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
 `frontend-b` on loopback `FRONTEND_SLOT_PORT` (18088) and `FRONTEND_PORT_NEXT`.
 The deploy starts the idle slot of each on the new image, waits for its health
-check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
+check, smoke-tests both (below), rewrites `backend.conf` and `frontend.conf`
+and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
 `collab` is replaced at once, while the old frontend still runs, if its image
 content changed: collab, browser-render and office-render are named by digest,
@@ -273,6 +274,27 @@ compose's merged model, after every value the deploy exports, so they carry
 every overlay and differ only in their port and in answering to the service's
 network name (`backend`, dialled by `device-connection` and the office editor;
 `frontend`, by the backend's docs index).
+
+The smoke test (`smoke_release` in `deploy/deploy-docker.sh`, which runs
+`deploy/release-smoke.py` in the release's backend image) uses the new slots on
+their loopback ports the way a person does, before app-router sends them
+anything: the sign-in route refuses a wrong password, `/users/me` names the
+deploy's own account, that account's own task opens through
+`/topics/{task}/task` (a project and task it creates the first time), the inbox
+WebSocket every signed-in page holds sends its first frame, sign-out answers,
+and the new frontend serves `index.html` and the hashed script it
+names. Each check prints one `smoke <check> ok|FAILED` line into the deploy
+log. Any failure removes the new slots and stops the release with app-router
+untouched, so a release that is ready but cannot be used never takes traffic.
+
+The account is the one at `deploy-smoke@placeholder.internal`, an address the
+platform never mails, with a random handle and no password: the release opens
+its session inside its own image rather than signing in, because sign-in
+failures are counted per handle and handles are readable by any signed-in user,
+so a password sign-in would let anyone hold releases back. Nothing about it is
+stored on the box. A rollback does not smoke-test the release it returns to,
+and a box without app-router slots (prod, etrip) skips the test and logs that
+it did.
 
 The containers therefore alternate between `cheese-backend-1` and
 `cheese-backend-b-1` (likewise for the frontend); anything that needs one asks
@@ -345,6 +367,59 @@ reloading the persistent ingress once. That migration can reconnect existing
 devices; subsequent business releases do not reload their ingress. A box without
 `ACTIVE_BACKEND_DIR` still recreates application containers in place.
 
+### The api pool beside each backend
+
+One Python process uses one core, so a backend that is a single process
+serves every request in one queue. Each backend slot can run an api pool
+beside its realtime process (`backend/app/serve.py`,
+`backend/app/core/process_role.py`):
+
+- The realtime process on :8081 is the backend as it always was: the owner
+  lock, turns, sessions, room sockets, the broker and every write.
+- The pool on :8085 runs `API_POOL_WORKERS` uvicorn workers with
+  `BACKEND_ROLE=api`. They answer plain reads: every `GET` that is not a
+  WebSocket and not in `REALTIME_GET_PATTERNS`. They never take the owner lock.
+  What they publish reaches the room sockets through Valkey
+  (`cheesex:broker-relay`, `realtime/relay.py`).
+- app-router splits the traffic (`deploy/llm-tunnel/app-router.conf`,
+  `backend-pool.conf` written by `deploy-docker.sh`). The realtime process is
+  the pool's backup, so a pool that does not answer costs nothing but its
+  speed.
+- `API_POOL_WORKERS` defaults to 0: no pool, no pool port, every request to the
+  realtime process. dev's release workflow sets 8 (its box has 16 cores) and layers
+  `docker-compose.api-pool.yml` (pool ports 18091 and 18092 for the two slots).
+  To turn it off on dev, set it to 0 in `deploy-dev.yml` and release.
+- The pool's database budget is its own (`API_POOL_DB_POOL_SIZE`,
+  `API_POOL_DB_MAX_OVERFLOW`, 4 and 2 per worker by default), divided between
+  its workers as the backend's is. dev sets 24 and 8: 32 per slot, 64 while a
+  rollout runs both slots' pools, on dev's 200.
+- At three workers dev saturated at about 30 requests a second
+  (2026-11-01, the exempt account, 20 to 100 clients: median 0.65 s at 20,
+  3.4 s at 100) with 4 of its 16 cores busy, which is why it runs eight.
+  With eight (same test, 2026-11-01): 56 requests a second and a median of
+  0.26 s at 20 clients, 72 and 0.6 s at 50, 67 and 1.1 s at 100, no errors.
+  Past about 70 a second the time each request computes is the limit again;
+  the topic list is the heaviest read.
+- What it bought on dev (2026-10-31/11-01, one account, 30 s per level, the
+  reads a person opening a channel makes): at 20 concurrent clients the median
+  request went from 2.4 s to 0.36 s and a light read beside them from 1.2 s to
+  0.07 s. A write (marking a room read) kept 55 ms with 10 clients reading and
+  83 ms with 20, against 55 ms with none: reads no longer queue in front of the
+  realtime process. Above 10 clients one account meets its own request-rate
+  limit (about 22 a second), so the limit of the pool itself was not reached.
+- Production runs without it, and turning it on there takes two steps, not
+  dev's one. `API_POOL_WORKERS` in the environment of the step in
+  `deploy-prod.yml` that runs `deploy-docker.sh` layers
+  `docker-compose.api-pool.yml` and starts the pool, but nothing sends it a
+  read: app-router's `backend_pool_active` upstream is what does that, and prod
+  has no app-router (`ACTIVE_BACKEND_DIR` unset there; its release is the
+  in-place recreate of one backend). Install the standing data plane first
+  (`deploy/llm-tunnel/up.sh`, then `ACTIVE_BACKEND_DIR` in the box's
+  `deploy.env`). A release then runs the two slots, so check that the
+  database's `max_connections` covers both slots' pools during a rollout (the
+  arithmetic above; prod's server is still the default 100, so it may not),
+  and that the pool ports (18091 and 18092) are free on that host.
+
 ### dev — continuous deploy
 
 Merge to `main` → `deploy-dev.yml` runs on the **self-hosted runner on the dev
@@ -353,10 +428,12 @@ box** (label `cheese-dev`), gated on `build.yml`'s images, then
 
 ### Rolling dev back to a named commit
 
-The deploy's own rollback covers one case: the health check fails, and
-`deploy/deploy-docker.sh` restores the previous images. A release that is
-healthy but wrong is rolled back by nothing — it keeps serving until someone
-releases a commit they name:
+The deploy refuses a release whose new slots fail the smoke test before it
+takes traffic (see [the runtime section](#the-runtime-docker-deploy-by-sha)),
+and its own rollback covers a failed health check after the switch, where
+`deploy/deploy-docker.sh` restores the previous images. A release that passes
+both but is wrong in a way they do not exercise is rolled back by nothing — it
+keeps serving until someone releases a commit they name:
 
 ```bash
 gh workflow run deploy-dev.yml --ref main -f ref=<full sha>
@@ -476,7 +553,10 @@ The required gate compares executed JUnit node IDs with an independently
 collected full-suite manifest. Every required case must run once, with no skips.
 Artifacts retain each attempt; rerunning failed jobs uses the latest evidence
 for each partition. Layer floors apply before partitioning. The existing Kotlin
-exclusion and opt-in live Forgejo evaluations remain outside the required set.
+exclusion remains outside the required set. The live Forgejo tests
+(`tests/forgejo`) are not in it either: they need a real forge, so `e2e.yml`'s
+`forgejo live` job runs them after merge against the pinned container
+`tests/forgejo/start.sh` starts.
 
 Reproduce a partition from `backend/` with the same test services and pinned
 tools as `test.yml`. Use a fresh output directory for each run:
@@ -738,9 +818,9 @@ record the path and never the query string, because several URLs carry a
 credential in it (the room chat socket's `?token=`, `/llm/tunnel?token=`).
 
 The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
-covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
-`deploy-docker.sh`, so its logs used to vanish whenever an operator re-ran that
-script — including across the 「container up, pipe dead」 incident (#579), whose
+covered too. It is recreated outside `deploy-docker.sh` (the tunnel by
+`release-llm-tunnel.yml`, api-front by `deploy/llm-tunnel/up.sh`), so its logs
+used to vanish whenever one of them was recreated — including across the 「container up, pipe dead」 incident (#579), whose
 first-hand account was exactly what nobody could read afterwards.
 
 ## Box ops runbook — changing backend env on a box
@@ -791,11 +871,11 @@ recreate-not-restart rule (`deploy/gateway/README.md`).
 
 ## Backups
 
-Every box runs the same scripts (only the R2 prefix and host differ); details and
-restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
+dev 和 prod 使用 `db-backup.sh`，etrip 使用独立脚本；恢复步骤见
+[`deploy/README-backup.md`](../deploy/README-backup.md)。
 
-- **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
-  `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
+- **数据库**：dev 每小时 `pg_dump -Fc` 并校验本地备份；默认距上次 R2 上传成功至少 6 小时才再次上传。prod／etrip 保持每次备份上传。
+  桶为 `cheese-db-backups`，前缀分别为 `db/`（dev）、`prod-db/`（prod）、`etrip/`。
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
 - **Session records** (what each session's runner journaled,
   `session_records`): the last few minutes sit in the table and go out with the
@@ -822,9 +902,9 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   `backup-restore-test.yml` (weekly, restores the newest dump into a throwaway
   postgres and fails if it doesn't come back).
 
-The backup scripts are version-controlled, but **installing them on a box**
-(copying to `~/ops/`, systemd timers, the R2 credential in `~/ops/r2.env`) is a
-manual runbook, not automated provisioning — see `deploy/README-backup.md`.
+dev 发布流水线从同一发布提交安装备份脚本到 `~/ops/`，先备份旧脚本，再原子替换。
+systemd 小时 timer、`backup.env` 和 `r2.env` 保持原值；prod／etrip 没有此安装步骤。
+安装和异地上传间隔设置见 `deploy/README-backup.md`。
 
 ## Database encoding — always create with an explicit `ENCODING 'UTF8'`
 
@@ -901,7 +981,14 @@ way, one tunnel round trip.
 The client address travels in `X-Forwarded-For`. Caddy drops whatever the
 visitor sent there and writes the address the layer4 router's PROXY header
 gave it; the dev box's front door appends its own and the backend resolves the
-client through `FORWARDED_ALLOW_IPS`. The upstream is not TLS with PROXY
+client through `FORWARDED_ALLOW_IPS`. On dev every hop after Caddy is loopback
+or a docker network (`127.0.0.1,::1,172.16.0.0/12`, set in `deploy-dev.yml`);
+the frontend gateway resolves the same address (`mainland/main.conf`) and on
+dev caps the connections one visitor's address may hold at 2000
+(`GATEWAY_CONNECTIONS_PER_ADDRESS`), generous because a campus is one address
+behind NAT. Production sets neither until its own chain is checked: a hop left
+out of the list makes every visitor the same address.
+`GET /api/client-address` answers the address a caller is counted by. The upstream is not TLS with PROXY
 protocol to the dev box's `:18443`: with PROXY on, Caddy pools upstream
 connections per client address, so every new visitor would open its own and
 the round trips would come back.
@@ -1178,14 +1265,40 @@ number, linked to beian.miit.gov.cn, as the filing requires.
 - The Aliyun instance firewall and ufw allow 22, 80 and 443.
 - `okcheese.com` stays in Hong Kong and is not served here.
 
-The backend knows one public address, `FRONTEND_URL` (okcheese.com). Password
-and email-code sign-in and the workspace work on okcheese.cn because nothing
-checks the Host, and links copied there are okcheese.cn links. What is bound to
-okcheese.com does not work on okcheese.cn: passkeys (their rpId is okcheese.com),
-GitHub and Google sign-in (their callback is okcheese.com, where the state
-cookie set on .cn is missing), embedded previews and Sites (their CSP and grant
-check name okcheese.com), and docs sign-in. Mailed links point to okcheese.com.
+okcheese.com is the backend's canonical origin, `FRONTEND_URL`; okcheese.cn is
+served by the same backend as an alias once the backend env lists it in
+`FRONTEND_ALIASES` (`backend/app/core/origins.py`). A request's origin is read
+from its `Host`. Browser flows return to the origin they ran on; passkeys keep
+the rpId okcheese.com and are accepted on the alias through
+`/.well-known/webauthn`; previews, Sites and docs sign-in accept every origin.
+GitHub and Google sign-in started on okcheese.cn run on okcheese.com, where
+their callback is registered, and the sign-in is handed back to okcheese.cn
+(`backend/app/api/routes/app_sign_in.py`). Mailed links point to okcheese.com.
 Cookies are per host, so the two addresses keep separate sign-ins.
+
+**Which origin a visitor gets is decided by `MAINLAND_ENTRY`.** Set to
+`https://okcheese.cn`, the frontend image's nginx answers a request for a page on
+any other origin of the deployment — a navigation, asking for HTML — from a
+visitor whose address is in China with a 302 to it. Nobody else is moved: not a
+visitor outside China, not one signed in on the origin they are on (their session
+is that origin's cookie; a sign-in leaves `cheese_signed_in` at path `/` for
+this rule to see, because the refresh cookie is scoped to the auth routes and
+never rides a page request), not an API call or a WebSocket, not the desktop app
+(whose window runs only its own origin's pages, and names itself in its
+`User-Agent`), and not another host of the deployment. Unset, the rule is still
+in the image and fires for nobody, which is the default.
+
+The rules are `frontend/nginx/mainland/`, the domain names and the entry are
+written at container start by `frontend/scripts/mainland-redirect.sh`, and the
+address space that counts as China is `frontend/nginx/mainland/china-ip.txt` —
+regenerated monthly from APNIC by `scripts/ops/refresh-china-ip-ranges.py`
+(`--check` reports a stale one).
+
+A machine enrolled from an alias installs and approves on that alias: the
+connector's install script and the approve link name the origin the request
+arrived on, so a machine added from okcheese.cn keeps dialling it instead of
+crossing to Hong Kong on every request (`backend/app/api/routes/installer.py`,
+`.../connector/devices.py`).
 
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
 Kong tunnels inside TLS on `:443` do not apply inside the mainland.

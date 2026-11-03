@@ -2,7 +2,7 @@
   "commentDeleteOwnOnly": "只能删除自己的评论",
   "commentNotFound": "评论不存在",
   "feedbackAdminRequired": "需要反馈管理员",
-  "feedbackAgentCannotPublish": "AI 队友不能直接发布反馈：用 `cheese_feedback_propose` 提案，由人确认后再发送",
+  "feedbackAgentCannotPublish": "AI 队友不能直接发布反馈：用 `cheese_feedback(action=propose)` 提案，由人确认后再发送",
   "feedbackAlreadySent": "这个问题刚作为反馈发出去了，不要重复提",
   "feedbackAttachmentFiled": "这些附件已经属于另一条反馈了",
   "feedbackAttachmentNotFound": "附件不存在",

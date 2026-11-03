@@ -15,15 +15,17 @@
 // 刚请进来的队友在「现场」那一格也要叫得出名字。
 import type { Topic, TopicMemberRow } from '@/cx_types'
 import type { CardPhase } from '@/lib/topicState'
+import type { ThreadRow } from '@/types/threads'
 import type { TopicPlace } from './shared'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
+import { useChannelSpeakers } from '@/composables/useChannelSpeakers'
 import { useChannelThreads } from '@/composables/useChannelThreads'
 
-import { newThread } from '@/api/threads'
+import { newThread, restoreThread } from '@/api/threads'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { dayStamp } from '@/lib/dateText'
@@ -71,6 +73,27 @@ export function useTopicConversation(opts: {
       creatingThread.value = false
     }
   }
+  // 把一条收起来的支线放回来（`thread/recycle.py`）。只有开这条支线的人和频道管理员
+  // 点得动，后端是最后一道（`threadRestoreNotYours`）；这里只是把按钮少画给不能的人。
+  const restoringThread = ref(false)
+  function canRestoreThread(row: ThreadRow): boolean {
+    if (!myHandle()) return false
+    if (opts.room()?.can_manage) return true
+    // 开这条支线的人（`threads.created_by`），不是「说话的第一个人」：
+    // `participants` 的头一个是挂着的那条消息的作者，两者常常不是同一个人。
+    return row.created_by === myHandle()
+  }
+  async function restoreAThread(threadId: string) {
+    restoringThread.value = true
+    try {
+      await restoreThread(threadId)
+      channelThreads.markRestored(threadId)
+    } catch (e) {
+      store.reportError(e, t('work.room.thread.restoreFailed'))
+    } finally {
+      restoringThread.value = false
+    }
+  }
   /** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
   function threadTime(iso: string): string {
     return dayStamp(new Date(iso).getTime())
@@ -108,13 +131,17 @@ export function useTopicConversation(opts: {
     isOpen: taskOpen,
   } = taskPage
 
-  // 任务里项目的人都能说话，关了也能接着说：AI 队友只回答，不再改动项目。
+  const speakers = useChannelSpeakers(opts.room)
+
+  // 任务里项目的人都能说话，关了也能接着说：AI 队友只回答，不再改动项目。频道主线只让部分
+  // 角色发言、支线也不让人人回时，任务里同样只读。
   const composerClosed = computed(() => {
-    if (opts.place().taskId) return null
+    if (opts.place().taskId) return speakers.notice(true)
     // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
     const topic = opts.room()
     if (topic?.status === 'archived') return t('work.channel.archivedNotice')
-    return topic?.joined === false ? t('work.channel.notJoined') : null
+    if (topic?.joined === false) return t('work.channel.notJoined')
+    return speakers.notice(false)
   })
 
   // 提问只在这件事还开着时等回答：任务关了、频道归档了，题跟着结束（待办里同样不再列
@@ -148,6 +175,9 @@ export function useTopicConversation(opts: {
     creatingThread,
     canOpenThread,
     createThread,
+    restoringThread,
+    canRestoreThread,
+    restoreAThread,
     threadTime,
     AUTHOR,
     projectPeople,

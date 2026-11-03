@@ -4,5 +4,9 @@
   "created": "Created",
   "members": "Members",
   "membersOpen": "View members",
-  "open": "Details of “{name}”"
+  "open": "Details of “{name}”",
+  "speakers": "Who can post",
+  "speakersEveryone": "Everyone",
+  "speakersSome": "Chosen roles",
+  "threadsOpen": "Let everyone reply in threads"
 }

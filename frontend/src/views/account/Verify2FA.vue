@@ -28,7 +28,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { attemptMessage } from './attemptWait'
 import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './passkeyEnrollment'
@@ -37,6 +36,7 @@ import Verify2FAView from './Verify2FAView.vue'
 import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { postLoginTarget, takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 

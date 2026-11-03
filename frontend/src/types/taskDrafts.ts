@@ -3,14 +3,16 @@
 import type { SpaceTeaching } from './spaces'
 import type {
   TaskRubricLine,
+  TaskStage,
+  TaskStartMode,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
 } from './tasks'
 
 /** 草稿里存的那张表单，和 `POST /tasks` 收的形状一样；`descriptionMarkdown`、
- *  `teachingOwn` 和 `attachmentFiles` 只属于页面（芝士读写详情用 Markdown；「这道题
- *  单独写 AI 队友辅导」那一勾；附件列表上的名字）。 */
+ *  `teachingOwn`、`attachmentFiles` 和 `starterFile` 只属于页面（芝士读写详情用
+ *  Markdown；「这道题单独写 AI 队友辅导」那一勾；附件和起始代码一栏上的名字）。 */
 export interface TaskDraftFields {
   name?: string
   description?: string
@@ -20,6 +22,7 @@ export interface TaskDraftFields {
   deadline?: number | null
   registrationStartAt?: number | null
   defaultDeadline?: number
+  startMode?: TaskStartMode
   participantLimit?: number | null
   minTeamSize?: number
   maxTeamSize?: number
@@ -33,11 +36,20 @@ export interface TaskDraftFields {
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  stages?: TaskStage[]
   attachmentIds?: number[]
   /** 附件的名字和大小，页面列附件用；发布时不带。 */
   attachmentFiles?: { id: number; name: string; size: number }[]
+  /** 起始代码：先传成附件的一份 .zip 的 id；null 是没有。 */
+  starterAttachmentId?: number | null
+  /** 起始代码的名字和大小，页面列它用；发布时不带。 */
+  starterFile?: { id: number; name: string; size: number } | null
+  /** 改已发布的题目时不要起始代码了（芝士写了 `starter: 0`）。 */
+  removeStarter?: boolean
   teaching?: SpaceTeaching
   teachingOwn?: boolean
+  /** 这道题的默认队友（预设名）；`''` = 清掉这道题自己的，`null` = 不动。 */
+  defaultRole?: string | null
 }
 
 export type TaskDraftField = keyof TaskDraftFields
@@ -74,6 +86,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'deadline',
   'registrationStartAt',
   'defaultDeadline',
+  'startMode',
   'participantLimit',
   'minTeamSize',
   'maxTeamSize',
@@ -87,10 +100,15 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'submissionSchema',
   'rubric',
   'rubricPublic',
+  'stages',
   'attachmentIds',
   'attachmentFiles',
+  'starterAttachmentId',
+  'starterFile',
+  'removeStarter',
   'teaching',
   'teachingOwn',
+  'defaultRole',
 ]
 
 /** 只留下草稿收的那几个字段。 */

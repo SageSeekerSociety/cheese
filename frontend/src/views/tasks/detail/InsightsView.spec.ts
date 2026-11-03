@@ -122,7 +122,7 @@ describe('单题看板的「小队构成」', () => {
 
     expect(view.getByText('这道题的数据加载失败')).toBeTruthy()
     expect(view.getByText('服务端打盹了')).toBeTruthy()
-    expect(view.queryByText('领取人数')).toBeNull()
+    expect(view.queryByText('参与人数')).toBeNull()
     expect(panel('小队构成')).toBeUndefined()
 
     await fireEvent.click(view.getByText('重试'))
@@ -134,5 +134,34 @@ describe('单题看板的「小队构成」', () => {
 
     expect(view.getByText('你没有权限查看')).toBeTruthy()
     expect(view.queryByText('重试')).toBeNull()
+  })
+})
+
+describe('单题看板的「开始做后一直没动」', () => {
+  beforeEach(() => setLocale('zh-CN'))
+  afterEach(() => {
+    cleanup()
+  })
+
+  const DAY = 86_400_000
+
+  /** 那张数字卡上的数：按它的标签找。 */
+  function stalledCount(view: ReturnType<typeof mount>): string | undefined {
+    const label = view.getByText('开始做后一直没动')
+    return label.closest('.metric')?.querySelector('.metric__value')?.textContent?.trim()
+  }
+
+  it('从开始做那一下算，不从申请那一下算；还没开始做的不算', () => {
+    const appliedLongAgo = Date.now() - 30 * DAY
+    const view = mount([
+      // 一个月前申请、昨天才开始做：还没满 5 天。
+      claim({ id: 1, createdAt: appliedLongAgo, startedAt: Date.now() - DAY }),
+      // 一个月前申请、批了还没开始做：没有项目，谈不上没动。
+      claim({ id: 2, createdAt: appliedLongAgo, startedAt: null }),
+      // 6 天前开始做、一版没交：算。
+      claim({ id: 3, createdAt: appliedLongAgo, startedAt: Date.now() - 6 * DAY }),
+    ])
+
+    expect(stalledCount(view)).toBe('1')
   })
 })

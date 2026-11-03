@@ -12,7 +12,9 @@ import os
 import platform
 import runpy
 import shutil
+import socket
 import socketserver
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -156,11 +158,62 @@ def _recall(path):
     return None
 
 
+#: What the HTTP client raises besides OSError when an answer breaks off: a
+#: platform socket that stopped answering, as much as one that never did.
+_CLIENT_ERRORS = (
+    http.client.IncompleteRead,
+    http.client.BadStatusLine,
+    http.client.LineTooLong,
+    http.client.ImproperConnectionState,
+)
+
+
+class _UnixConnection(http.client.HTTPConnection):
+    def __init__(self, path, timeout):
+        super().__init__("platform.cheese", timeout=timeout)
+        self._socket_path = path
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._socket_path)
+        self.sock = sock
+
+
+def _platform_socket():
+    path = os.environ.get("CHEESE_PLATFORM_SOCKET", "")
+    return path if path and os.path.exists(path) else ""
+
+
+def _ask_socket(path, target, timeout=30):
+    """``GET target`` on the sandbox's platform socket, to its JSON: the
+    platform knows whose the request is without a token."""
+    connection = _UnixConnection(path, timeout)
+    try:
+        connection.request("GET", target)
+        response = connection.getresponse()
+        body = response.read()
+    except _CLIENT_ERRORS as exc:
+        raise OSError(
+            f"the platform socket broke off: {exc}"  # i18n-exempt: machine log
+        ) from exc
+    finally:
+        connection.close()
+    if response.status != 200:
+        raise OSError(
+            f"the platform socket answered HTTP {response.status}"  # i18n-exempt: machine log
+        )
+    return json.loads(body)
+
+
 def credentials():
+    socket_path = _platform_socket()
+    if socket_path:
+        return _ask_socket(socket_path, "/api/sandbox/forge-token")["data"]
     api = os.environ["CHEESE_API"].rstrip("/")
     request = urllib.request.Request(
         f"{api}/sandbox/forge-token",
-        headers={"X-Cheese-Token": os.environ["CHEESE_TOKEN"]},
+        headers={"Authorization": "Bearer " + os.environ["CHEESE_TOKEN"]},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)["data"]
@@ -188,9 +241,94 @@ def reaches(url):
     return reached
 
 
+def _pipe_unix(src, dst):
+    try:
+        while True:
+            chunk = src.recv(65536)
+            if not chunk:
+                break
+            dst.sendall(chunk)
+    except OSError:
+        pass
+    finally:
+        with contextlib.suppress(OSError):
+            dst.shutdown(socket.SHUT_WR)
+
+
+def _forge_socket():
+    """The host-side forge proxy's socket beside the platform socket, when this
+    machine runs one (#4896): the only route to the forge on which the
+    project's credential replaces the placeholder the room is given."""
+    socket_path = _platform_socket()
+    forge_sock = Path(socket_path).parent / "forge.sock" if socket_path else None
+    return forge_sock if forge_sock is not None and forge_sock.exists() else None
+
+
+@contextlib.contextmanager
+def room_proxy(env):
+    """Point ``env`` at the host-side forge proxy when this machine runs one,
+    and yield its URL ("" when there is none). The room's own `HTTPS_PROXY`
+    already leads there; a shell without it gets a loopback bridge to
+    `forge.sock` for this invocation."""
+    socket_path = _platform_socket()
+    if socket_path:
+        ca_bundle = Path(socket_path).parent / "ca-bundle.pem"
+        if ca_bundle.is_file():
+            env["SSL_CERT_FILE"] = str(ca_bundle)
+    forge_sock = _forge_socket()
+    if forge_sock is None:
+        yield ""
+        return
+    if env.get("HTTPS_PROXY") or env.get("https_proxy"):
+        yield env.get("HTTPS_PROXY") or env.get("https_proxy")
+        return
+
+    class _BridgeHandler(socketserver.BaseRequestHandler):
+        def handle(self):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
+                upstream.connect(str(forge_sock))
+                t1 = threading.Thread(
+                    target=_pipe_unix,
+                    args=(self.request, upstream),
+                    daemon=True,
+                )
+                t2 = threading.Thread(
+                    target=_pipe_unix,
+                    args=(upstream, self.request),
+                    daemon=True,
+                )
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+
+    class _Bridge(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+
+    with _Bridge(("127.0.0.1", 0), _BridgeHandler) as proxy:
+        thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+        thread.start()
+        destination = f"http://127.0.0.1:{proxy.server_address[1]}"
+        env.update(
+            HTTPS_PROXY=destination,
+            https_proxy=destination,
+            NO_PROXY="127.0.0.1,localhost,127.0.0.2",
+            no_proxy="127.0.0.1,localhost,127.0.0.2",
+        )
+        try:
+            yield destination
+        finally:
+            proxy.shutdown()
+            thread.join()
+
+
 @contextlib.contextmanager
 def github_transport(data, env):
     """Choose a route before invoking the CLI, never replay a native mutation."""
+    if _platform_socket():
+        with room_proxy(env):
+            yield
+        return
     if not reaches(data["api_url"]):
         helper = runpy.run_path(str(Path.home() / ".cheese/cheese-tunnel.py"))
         api = urllib.parse.urlsplit(os.environ["CHEESE_API"].rstrip("/"))
@@ -203,10 +341,13 @@ def github_transport(data, env):
                 "",
             )
         )
-        secret = os.environ["CHEESE_TOKEN"]
 
         class Connection(socketserver.BaseRequestHandler):
             def handle(self):
+                secret = os.environ.get("CHEESE_TOKEN", "")
+                if not secret:
+                    self.request.close()
+                    return
                 helper["handle_connection"](self.request, tunnel, secret)
 
         class Proxy(socketserver.ThreadingTCPServer):
@@ -266,13 +407,18 @@ def fj_destination(data, arguments):
             # scoped to this project's host and cannot authenticate another one.
             return public, args, None
     destination = public
-    try:
-        with urllib.request.urlopen(public + "/api/v1/version", timeout=5):
-            pass
-    except (OSError, urllib.error.URLError):
-        api = os.environ["CHEESE_API"].rstrip("/")
-        destination = f"{api}/sandbox/forge/{data['project_id']}"
-        print("[cheese] 仓库无法直连，本次通过平台访问", file=sys.stderr)
+    # With the host-side forge proxy, the forge is reached through it: it
+    # falls back to the platform itself when the forge is unreachable
+    # (`forge_proxy.ForgeProxyRuntime.forward_forge_http`), and it holds the
+    # credential either route needs. Only without one is a route chosen here.
+    if _forge_socket() is None:
+        try:
+            with urllib.request.urlopen(public + "/api/v1/version", timeout=5):
+                pass
+        except (OSError, urllib.error.URLError):
+            api = os.environ["CHEESE_API"].rstrip("/")
+            destination = f"{api}/sandbox/forge/{data['project_id']}"
+            print("[cheese] 仓库无法直连，本次通过平台访问", file=sys.stderr)
     if host_index is None:
         args = ["--host", destination + "/", *args]
         host_index = 1
@@ -282,21 +428,34 @@ def fj_destination(data, arguments):
 
 
 @contextlib.contextmanager
-def fj_path_transport(destination):
-    """fj 0.6 joins absolute API paths, so subpath hosts need a loopback relay."""
+def fj_path_transport(destination, proxy="", cafile=None):
+    """fj 0.6 joins absolute API paths, so subpath hosts need a loopback relay.
+    It sends through ``proxy`` (the room's forge proxy) when there is one."""
     parsed = urllib.parse.urlsplit(destination)
     if not parsed.path.strip("/"):
         yield destination
         return
 
+    def connect():
+        if parsed.scheme != "https":
+            return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=300)
+        if not proxy:
+            return http.client.HTTPSConnection(
+                parsed.hostname, parsed.port, timeout=300
+            )
+        via = urllib.parse.urlsplit(proxy)
+        connection = http.client.HTTPSConnection(
+            via.hostname or "",
+            via.port,
+            timeout=300,
+            context=ssl.create_default_context(cafile=cafile),
+        )
+        connection.set_tunnel(parsed.hostname, parsed.port or 443)
+        return connection
+
     class Forward(BaseHTTPRequestHandler):
         def forward(self):
-            connection_type = (
-                http.client.HTTPSConnection
-                if parsed.scheme == "https"
-                else http.client.HTTPConnection
-            )
-            connection = connection_type(parsed.hostname, parsed.port, timeout=300)
+            connection = connect()
             try:
                 headers = {
                     key: value
@@ -392,7 +551,7 @@ def run(name, arguments):
         for index in range(len(arguments) - 1)
     ) and not any(arg in ("--help", "-h") for arg in arguments):
         print(
-            "[cheese] Merging accepts this task. Use cheese_accept_request "
+            "[cheese] Merging accepts this task. Use cheese_card(action=request) "
             "to submit it for project review.",
             file=sys.stderr,
             flush=True,
@@ -420,7 +579,10 @@ def run(name, arguments):
     root = Path.home() / ".cheese" / "forge-auth"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with contextlib.ExitStack() as cleanup:
-        native_destination = cleanup.enter_context(fj_path_transport(destination))
+        proxy = cleanup.enter_context(room_proxy(env))
+        native_destination = cleanup.enter_context(
+            fj_path_transport(destination, proxy, env.get("SSL_CERT_FILE"))
+        )
         if host_index is not None:
             prefix = (
                 "--host="

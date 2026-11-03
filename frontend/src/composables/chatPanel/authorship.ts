@@ -6,14 +6,13 @@ import type { Ref } from 'vue'
 import type { useRoomRoster } from '../../components/room/composables/useRoomRoster'
 import type { Block } from '../../cx_types'
 import type { Outgoing } from '../../lib/composerDrafts'
-import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
+import type { NoticeAgent } from '../../lib/platformNotice'
 import type { useAgentNaming } from '../useAgentNaming'
 
 import { computed } from 'vue'
 
 import { isAgentHandle, isPersonBlock } from '../../lib/authorship'
 import { pendingMessageBlock } from '../../lib/outgoingMessage'
-import { AGENT_STATUS_EVENTS } from '../../lib/platformNotice'
 
 import i18n, { t } from '@/i18n'
 
@@ -41,33 +40,25 @@ export function usePanelAuthorship(deps: {
       : { name: deps.naming.agentName.value, handle: deps.naming.agentSeat.value?.handle ?? null }
   }
 
-  function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
-    // This event contains the worker's actual result, rather than a status notice.
-    if (block.meta?.event_type === 'subagent_stop') return null
+  function noticeAgent(block: Block): NoticeAgent | null {
+    // 一位 AI 队友这次工作的结果和它交出来的东西挂在它名下（`shown_as`）：它们是那次
+    // 工作的一部分。平台替它说的话也认得出是哪一位（那一行头像列里放它的小头像，不署
+    // 名字：不是它说的）。频道里发生的事不是哪位队友的。
+    const own = block.shown_as === 'result' || block.shown_as === 'card' || block.shown_as === 'for_agent'
+    if (!own) return null
     if (isPersonBlock(block)) return null
-    // 关于某位 AI 队友那件事的通知，以那位队友的身份出现（头像和名字），不另署「平
-    // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgent）。不属于任
-    // 何一位队友那一轮的平台通知（人编辑了文档之类）照旧不署队友。
     if (isAgentHandle(block.author) || deps.roster.seatByHandle.value.get(block.author)?.agent) {
       return { name: deps.roster.agentDisplayName(block.author), handle: block.author }
     }
-    if (deps.roster.seatByHandle.value.has(block.author) || deps.roster.memberByHandle.value.has(block.author))
-      return null
-    if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgent(block.turn_id)
-    if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgent(block.turn_id)
-    }
-    if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgent(block.turn_id)
-    }
-    return null
+    return block.turn_id ? turnAgent(block.turn_id) : null
   }
   const pendingBlock = (item: Outgoing) => pendingMessageBlock(item, deps.author)
 
-  // 时间那一格说的是送达状态。失败了就不说：失败那一行自己会说清楚是什么失败了。
+  // 时间那一格说的是送达状态。断网时当场说等待连接；正常连接下超过阈值还没回来才说发送中；失败那行自己会说原因。
   function outgoingState(item: Outgoing): string {
     if (item.state === 'failed') return ''
-    return deps.connected.value ? t('work.room.chat.sending') : t('work.room.chat.waitingConnection')
+    if (!deps.connected.value) return t('work.room.chat.waitingConnection')
+    return item.slow ? t('work.room.chat.sending') : ''
   }
 
   // Every visible row asks for its time on each timeline render, and

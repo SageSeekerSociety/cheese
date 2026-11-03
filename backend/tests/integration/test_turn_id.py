@@ -46,7 +46,7 @@ def test_cheese_created_block_inherits_turn_from_header(client):
     r = client.post(
         f"/topics/{tid}/weekly",
         json={"body": "Recall@10"},
-        headers={"X-Cheese-Token": SANDBOX_TOKEN, "X-Cheese-Turn": turn},
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}", "X-Cheese-Turn": turn},
     )
     assert r.status_code == 200
     blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]

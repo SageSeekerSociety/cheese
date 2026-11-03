@@ -1,11 +1,20 @@
 {
-  "spaceTaskClaimApproved": "Your claim on “{task}” was approved",
-  "spaceTaskClaimRejected": "Your claim on “{task}” was not approved",
+  "spaceTaskChanged": "“{task}” changed: {changes}",
+  "spaceTaskChangedName": "renamed to “{name}”",
+  "spaceTaskChangedRequirements": "what to submit or how it is scored",
+  "spaceTaskChangedStageDue": "stage “{stage}” now due {due} ({zone})",
+  "spaceTaskChangedStageDueCleared": "stage “{stage}” no longer has a due date",
+  "spaceTaskChangedStageName": "stage “{stage}” renamed to “{name}”",
+  "spaceTaskChangedStagesAdded": "stage {stages} added",
+  "spaceTaskChangedStagesRemoved": "stage {stages} removed",
+  "spaceTaskClaimApproved": "Your application to “{task}” was approved",
+  "spaceTaskClaimRejected": "Your application to “{task}” was not approved",
   "spaceTaskDeadlineMoved": "The submission deadline for “{task}” changed",
   "spaceTaskDueInDays": "“{task}” is due in 3 days and nothing is submitted yet",
   "spaceTaskDueTomorrow": "“{task}” is due within 24 hours and nothing is submitted yet",
   "spaceTaskMissed": "{n} past the submission deadline on “{task}” without submitting",
   "spaceTaskRequirementsChanged": "What to submit or how it is scored changed on “{task}”",
   "spaceTaskReviewFailed": "Your submission to “{task}” did not pass, {score} points",
-  "spaceTaskReviewPassed": "Your submission to “{task}” passed, {score} points"
+  "spaceTaskReviewPassed": "Your submission to “{task}” passed, {score} points",
+  "timeZoneBeijing": "Beijing time"
 }

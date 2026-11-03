@@ -27,7 +27,6 @@
 import type { User } from '@/types/users'
 
 import { computed, onMounted, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
@@ -40,6 +39,7 @@ import { createAvatar } from '@/api/avatars'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import AccountService from '@/services/account'
 
 // The server serves these four as images and anything else as an opaque file,

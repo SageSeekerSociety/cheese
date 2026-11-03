@@ -32,7 +32,7 @@ from app.domain.team.models import (
 )
 from app.domain.team.repositories import (
     TeamRepository,
-    refuse_admin_grant_by_non_owner,
+    refuse_anyone_but_the_owner,
 )
 from app.domain.user.services import (
     handle_is_available_shape,
@@ -121,24 +121,6 @@ def team_service(session: AsyncSession) -> "TeamService":
     return TeamService(TeamRepository(session=session))
 
 
-def may_remove_member(actor_role: int | None, target_role: int, *, own: bool) -> bool:
-    """Whether someone holding ``actor_role`` may take a ``target_role`` member
-    off the team. ``own``: the member is the actor (leaving). ``None``: the actor
-    is not in the team.
-
-    The one rule: ``remove_team_member`` enforces it and the roster's
-    ``canRemove`` is drawn from it, so the page never offers a removal the
-    server then refuses.
-    """
-    if target_role == TeamMemberRole.OWNER:
-        return False
-    if own:
-        return True
-    if actor_role == TeamMemberRole.OWNER:
-        return True
-    return actor_role == TeamMemberRole.ADMIN and target_role == TeamMemberRole.MEMBER
-
-
 @dataclass(frozen=True)
 class TeamLabel:
     handle: str
@@ -163,13 +145,13 @@ class TeamService:
         A personal team's handle is its owner's username.
         """
         teams = await self._repo.get_by_ids(list(team_ids))
-        names = await usernames_by_ids(
-            self._repo._session,
-            {
-                t.personal_owner_user_id
-                for t in teams.values()
-                if t.personal_owner_user_id is not None
-            },
+        owner_ids = {
+            t.personal_owner_user_id
+            for t in teams.values()
+            if t.personal_owner_user_id is not None
+        }
+        names = (
+            await usernames_by_ids(self._repo._session, owner_ids) if owner_ids else {}
         )
         out: dict[int, TeamLabel] = {}
         for tid, team in teams.items():
@@ -188,7 +170,7 @@ class TeamService:
         """
         team = await self._repo.get_by_id(team_id)
         if team is not None and (
-            await self._repo.is_team_member(team_id, user_id) or team.open_to_all
+            team.open_to_all or await self._repo.is_team_member(team_id, user_id)
         ):
             return team
         raise NotFoundError(
@@ -199,7 +181,9 @@ class TeamService:
         """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of
         :meth:`visible_team`: the ones the viewer is also in, and the public
         shared ones. A stealth team is not named to anyone outside it."""
-        theirs = await self._repo.list_teams_of_user(user_id=user_id)
+        theirs = list(await self._repo.list_teams_of_user(user_id=user_id))
+        if viewer_id == user_id:
+            return theirs
         mine = (
             {t.id for t in await self._repo.list_teams_of_user(user_id=viewer_id)}
             if viewer_id is not None
@@ -224,27 +208,37 @@ class TeamService:
         A shared team is its own handle. A user's handle names their personal
         team, which only they can open — so ``/teams/<your username>`` is yours.
         """
-        team = await self._repo.get_by_handle(handle)
-        if team is None:
-            owner = await user_by_handle(self._repo._session, handle)
-            personal = await self._repo.get_personal_team(owner.id) if owner else None
-            if personal is not None and owner is not None and owner.id == user_id:
-                return personal
-            raise NotFoundError(
-                "Resource team not found", data={"type": "team", "handle": handle}
+        owner = await user_by_handle(self._repo._session, handle)
+        if owner is not None:
+            personal = (
+                await self._repo.get_personal_team(owner.id)
+                if owner.id == user_id
+                else None
             )
-        return await self.visible_team(team.id, user_id)
+            if personal is not None:
+                return personal
+        else:
+            team = await self._repo.get_by_handle(handle)
+            if team is not None:
+                return await self.visible_team(team.id, user_id)
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "handle": handle}
+        )
 
     async def team_for_join_token(self, token: str) -> Team:
+        """The team a link names, for whoever holds it.
+
+        A personal team answers exactly like a bad link: it has no address of
+        its own and nobody but its owner belongs in it, so a token that somehow
+        got onto one must not let it be opened or joined.
+        """
         team = await self._repo.get_by_join_token(token)
-        if team is None:
+        if team is None or team.personal_owner_user_id is not None:
             raise NotFoundError("Invitation link is invalid or has been reset")
         return team
 
-    async def _managed_team(self, team_id: int, actor_user_id: int) -> Team:
+    async def _linked_team(self, team_id: int) -> Team:
         team = await self._get_team_or_error(team_id)
-        if not await self._repo.is_team_at_least_admin(team_id, actor_user_id):
-            raise ForbiddenError("Only team owner or admins can manage the join link")
         if team.personal_owner_user_id is not None:
             raise BadRequestError("A personal team has no join link")
         return team
@@ -253,12 +247,11 @@ class TeamService:
         self,
         *,
         team_id: int,
-        actor_user_id: int,
         reset: bool = False,
         approval: bool | None = None,
     ) -> Team:
         """The team's join link, created on first ask; ``reset`` replaces it."""
-        team = await self._managed_team(team_id, actor_user_id)
+        team = await self._linked_team(team_id)
         if reset or team.join_token is None:
             team.join_token = secrets.token_urlsafe(32)
         if approval is not None:
@@ -344,6 +337,12 @@ class TeamService:
         """Return raw membership records for a team."""
         return await self._repo.list_members_of_team(team_id=team_id)
 
+    async def get_teams_members(
+        self, team_ids: Sequence[int]
+    ) -> dict[int, list[TeamUserRelation]]:
+        """Return raw membership records grouped by team_id in one query."""
+        return await self._repo.list_members_of_teams(team_ids)
+
     async def list_teams_of_user(self, user_id: int) -> list[Team]:
         """Every team ``user_id`` is in, their personal team included."""
         return list(await self._repo.list_teams_of_user(user_id=user_id))
@@ -415,7 +414,6 @@ class TeamService:
         self,
         *,
         team_id: int,
-        actor_user_id: int,
         name: str | None = None,
         intro: str | None = None,
         description: str | None = None,
@@ -424,13 +422,6 @@ class TeamService:
         handle: str | None = None,
     ) -> Team:
         team = await self._get_team_or_error(team_id)
-        actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
-        if actor_relation is None or actor_relation.role not in (
-            TeamMemberRole.OWNER,
-            TeamMemberRole.ADMIN,
-        ):
-            raise ForbiddenError("Only team owner or admins can update team")
-
         if name is not None:
             if not isinstance(name, str):
                 raise BadRequestError("Team name must be string")
@@ -466,16 +457,11 @@ class TeamService:
         await self._repo._session.flush()
         return team
 
-    async def delete_team(
-        self, *, team_id: int, actor_user_id: int, has_live_projects: bool
-    ) -> None:
+    async def delete_team(self, *, team_id: int, has_live_projects: bool) -> None:
         """``has_live_projects``: the team still owns projects that are not
         archived. The caller reads it — a project names its team, so asking from
         here would make the two domains import each other."""
         team = await self._get_team_or_error(team_id)
-        actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
-        if actor_relation is None or actor_relation.role != TeamMemberRole.OWNER:
-            raise ForbiddenError("Only the team owner can disband a team")
         if team.personal_owner_user_id is not None:
             # 个人团队承载着这个人的个人项目和工作电脑，它跟着账号走，不能解散。
             raise ForbiddenError(say("personalTeamCannotDisband"))
@@ -498,8 +484,9 @@ class TeamService:
         *,
         team_id: int,
         target_user_id: int,
-        actor_user_id: int,
     ) -> None:
+        """Take someone off the team; who may is the caller's to decide
+        (``app.auth.team_roles.may_remove``)."""
         relation = await self._repo.get_member_relation(team_id, target_user_id)
         if relation is None:
             raise NotFoundError(
@@ -512,34 +499,20 @@ class TeamService:
                 "Team owner cannot be removed. Transfer ownership or disband the team."
             )
 
-        own = target_user_id == actor_user_id
-        actor_relation = (
-            relation
-            if own
-            else await self._repo.get_member_relation(team_id, actor_user_id)
-        )
-        actor_role = actor_relation.role if actor_relation is not None else None
-        if not may_remove_member(actor_role, relation.role, own=own):
-            if actor_role == TeamMemberRole.ADMIN:
-                raise ForbiddenError("Admins cannot remove other admins")
-            raise ForbiddenError("Only admins or owner can remove other members")
-
         await check_team_locking_status(self._repo._session, team_id)
         await self._repo.soft_delete_member(relation)
-
-    async def refuse_admin_grant(self, team_id: int, actor_user_id: int) -> None:
-        """Refuse ``actor_user_id`` making someone an admin unless they own the
-        team (``refuse_admin_grant_by_non_owner``)."""
-        await refuse_admin_grant_by_non_owner(self._repo, team_id, actor_user_id)
 
     async def update_team_member_role(
         self,
         *,
         team_id: int,
         target_user_id: int,
-        actor_user_id: int,
         new_role: TeamMemberRole,
     ) -> None:
+        team = await self._get_team_or_error(team_id)
+        # A personal team holds one person; there is no second seat to change,
+        # and a row left over from before that rule is ended, not reshaped.
+        refuse_anyone_but_the_owner(team, target_user_id)
         relation = await self._repo.get_member_relation(team_id, target_user_id)
         if relation is None:
             raise NotFoundError(
@@ -552,10 +525,6 @@ class TeamService:
         if new_role == TeamMemberRole.OWNER:
             raise BadRequestError("Cannot promote directly to owner via this endpoint")
 
-        actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
-        if actor_relation is None or actor_relation.role != TeamMemberRole.OWNER:
-            raise ForbiddenError("Only team owner can change member roles")
-
         relation.role = new_role  # type: ignore[assignment]
         relation.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
@@ -565,20 +534,17 @@ class TeamService:
         *,
         team_id: int,
         new_owner_user_id: int,
-        actor_user_id: int,
     ) -> None:
-        current_owner_relation = await self._repo.get_member_relation(
-            team_id, actor_user_id
-        )
-        if (
-            current_owner_relation is None
-            or current_owner_relation.role != TeamMemberRole.OWNER
-        ):
-            raise ForbiddenError("Only current owner can transfer ownership")
+        """Hand the team to another member; its owner steps down to admin."""
         team = await self._get_team_or_error(team_id)
         if team.personal_owner_user_id is not None:
             raise ForbiddenError(say("personalTeamCannotTransfer"))
-        if new_owner_user_id == actor_user_id:
+        current_owner_relation = next(
+            r
+            for r in await self._repo.list_members_of_team(team_id)
+            if r.role == TeamMemberRole.OWNER
+        )
+        if new_owner_user_id == current_owner_relation.user_id:
             raise BadRequestError(say("teamTransferToSelf"))
 
         target_relation = await self._repo.get_member_relation(

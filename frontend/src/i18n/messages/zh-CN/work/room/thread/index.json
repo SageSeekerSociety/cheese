@@ -26,5 +26,10 @@
   "titleLabel": "支线标题",
   "titlePlaceholder": "这条支线聊什么",
   "toTask": "转为任务",
-  "unread": "有新回复"
+  "unread": "有新回复",
+  "recycled": "已回收",
+  "recycledCaption": "报错满三天、没人回来的支线收在这里，点开还能读",
+  "recycledAt": "收于 {time}",
+  "restore": "恢复",
+  "restoreFailed": "恢复失败，稍后重试"
 }

@@ -23,6 +23,7 @@ from sqlalchemy import ColumnElement, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
@@ -122,8 +123,9 @@ async def _readable_rooms(
     resolver: ActorResolver,
     project_id: uuid.UUID,
     topic: uuid.UUID | None,
-) -> tuple[dict[uuid.UUID, Topic], int]:
-    """The rooms this caller may read, and how many others were left out."""
+) -> tuple[dict[uuid.UUID, Topic], int, Actor]:
+    """The rooms this caller may read, how many others were left out, and who the
+    caller is (their library shelf follows from it, `project_library`)."""
     if topic is not None:
         place = await place_or_404(db, topic)
         if place.project_id != project_id:
@@ -150,7 +152,7 @@ async def _readable_rooms(
     rooms = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))
     ids = await resolver.readable_topic_ids(actor, project_id=project_id, topics=rooms)
     readable = {room.id: room for room in rooms if room.id in ids}
-    return readable, len(rooms) - len(readable)
+    return readable, len(rooms) - len(readable), actor
 
 
 def _query(q: str) -> str:
@@ -185,13 +187,16 @@ async def search_project_context(
 ) -> dict:
     q = _query(q)
     groups = _only(only)
-    readable, skipped = await _readable_rooms(db, resolver, project_id, topic)
+    readable, skipped, actor = await _readable_rooms(db, resolver, project_id, topic)
+    shelf = await shelf_for(db, project_id)
     terms = bm25.words(q)
     await bm25.serial_scans(db)
     hits = (
-        await search_everything(db, project_id, q, terms, readable, limit)
+        await search_everything(db, project_id, q, terms, readable, limit, shelf)
         if groups is None
-        else await _page(db, project_id, q, terms, readable, groups, limit, offset)
+        else await _page(
+            db, project_id, q, terms, readable, groups, limit, offset, shelf
+        )
     )
     body: dict = {
         "query": q,
@@ -203,7 +208,7 @@ async def search_project_context(
     if with_counts:
         # The results page asks for its first page and the per-kind counts
         # together: one room check instead of two.
-        body["counts"] = await _counts(db, project_id, q, terms, list(readable))
+        body["counts"] = await _counts(db, project_id, q, terms, list(readable), shelf)
     return ok(body)
 
 
@@ -216,6 +221,7 @@ async def _page(
     groups: set[str],
     limit: int,
     offset: int,
+    shelf: Shelf,
 ) -> dict[str, list[dict]]:
     hits: dict[str, list[dict]] = {"records": [], "tasks": [], "library": []}
     in_readable = list(readable)
@@ -264,7 +270,7 @@ async def _page(
         hits["tasks"] = [_task(t, readable, terms) for t in tasks]
     if "library" in groups:
         hits["library"] = await library_listing.matching(
-            db, Shelf.of_project(project_id), q, limit=limit, offset=offset
+            db, shelf, q, limit=limit, offset=offset
         )
     return hits
 
@@ -275,6 +281,7 @@ async def _counts(
     q: str,
     terms: list[str],
     in_readable: list[uuid.UUID],
+    shelf: Shelf,
 ) -> dict[str, int]:
     """How many of each kind the search finds, named as `only` names them."""
     counts: dict[str, int] = dict.fromkeys(ONLY_VALUES, 0)
@@ -303,9 +310,7 @@ async def _counts(
             )
             or 0
         )
-    counts["library"] = await library_listing.count_matching(
-        db, Shelf.of_project(project_id), q
-    )
+    counts["library"] = await library_listing.count_matching(db, shelf, q)
     return counts
 
 
@@ -399,7 +404,11 @@ async def search_everything(
     terms: list[str],
     readable: dict[uuid.UUID, Topic],
     limit: int,
+    shelf: Shelf,
 ) -> dict[str, list[dict]]:
+    """``shelf`` is the project's library as the caller reads it
+    (`project_library.shelf_for`)."""
+
     def where(room_id: uuid.UUID) -> dict:
         room = readable[room_id]
         return {
@@ -460,9 +469,7 @@ async def search_everything(
         )
         hits["tasks"] = [_task(t, readable, terms) for t in tasks]
 
-    hits["library"] = await library_listing.matching(
-        db, Shelf.of_project(project_id), q, limit=limit
-    )
+    hits["library"] = await library_listing.matching(db, shelf, q, limit=limit)
     artifacts = await db.scalars(
         select(ProjectArtifact)
         .where(
@@ -496,7 +503,7 @@ async def search_documents(
     in the library's list, but they are found here, under their channel and
     task, to open there or keep a copy of."""
     q = _query(q)
-    readable, _ = await _readable_rooms(db, resolver, project_id, None)
+    readable, _, _ = await _readable_rooms(db, resolver, project_id, None)
     terms = bm25.words(q)
     await bm25.serial_scans(db)
     own = await doc_search.own(db, project_id)
@@ -630,10 +637,13 @@ async def agent_search(
     await bm25.serial_scans(db)
     parts: list[str] = []
     for project in projects:
-        readable, _ = await _readable_rooms(
+        readable, _, reader = await _readable_rooms(
             db, resolver.for_reading(), project.id, None
         )
-        hits = await search_everything(db, project.id, q, terms, readable, AGENT_HITS)
+        shelf = await shelf_for(db, project.id)
+        hits = await search_everything(
+            db, project.id, q, terms, readable, AGENT_HITS, shelf
+        )
         lines = await _agent_hits(db, project, hits, readable)
         if lines:
             parts.append(

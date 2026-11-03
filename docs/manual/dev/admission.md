@@ -34,7 +34,7 @@ covers:
 | `reason` | 人能读的一句话 | 拒绝时进响应正文 |
 | `reason_kind` | `"budget"` / `"binding"` | 代理据此决定拒绝的姿态：`budget` 走 429 `billing_error` 加额度用完的头（正文前缀 `cheese project budget: …`，见[计量代理](/dev/metering-proxy#refuse)），`binding` 走 400 `invalid_request_error` |
 | `reopens_at` | Unix 秒，或 `null` | 预算拒绝什么时候自己解除（时间窗口重置、月度额度重置）；额度包花完、不会自己恢复时是 `null`。代理拿它写 `retry-after` 和 reset 头 |
-| `supply` | `{pool, model}`；网关池、放行、且调用方同时出示了计量代理自己的凭据（`X-Cheese-Token` 为后端的 `SANDBOX_TOKEN`）时多一个 `key` | 代理拿它选路、改请求体里的模型名 |
+| `supply` | `{pool, model}`；网关池、放行、且问的是计量代理本身（`Authorization` 为后端的 `SANDBOX_TOKEN`，会话凭据放在请求体的 `session` 里）时多一个 `key` | 代理拿它选路、改请求体里的模型名 |
 
 只凭会话的 scoped token 问，拿到的是判定、不带 `key`：会话手里就是这枚令牌，把项目的网关 key 答给它，等于把一把共用的池子凭据放进每个房间。pi 的 runner 为分身问准入就是这样问的，它只要模型名。
 

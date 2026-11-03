@@ -12,8 +12,10 @@ from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 from tests.integration.conftest import (
     add_external_member,
+    open_task,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_project_roles import _invite
@@ -503,6 +505,42 @@ def test_a_teammates_edit_reaches_the_room_it_was_corrected_in(client):
     [line] = _proposal_lines(client, room, written["id"])
     assert "修改没有保存" in line["content"], line["content"]
     assert line["meta"]["state"] == "over"
+
+
+def test_a_proposal_raised_in_a_task_lands_in_the_task(client):
+    """A task is a conversation of its own. The card and the line about the
+    proposal are drawn where the teammate was, so a proposal raised while
+    working in a task belongs to that task — not to the channel it hangs in,
+    where the task page cannot find it and the channel would show a card about
+    work it never saw."""
+    project = _project(client)
+    room = _room(client, project)
+    task = open_task(client, room, owner=OWNER)["id"]
+
+    proposed = client.post(f"/topics/{task}/skills", json=_proposal())
+    assert proposed.status_code == 200, proposed.text
+    skill = proposed.json()["data"]
+    assert skill["source_topic_id"] == task, (
+        "the card is not in the task it was raised in"
+    )
+
+    [line] = _proposal_lines(client, task, skill["id"])
+    assert line["meta"]["who"] == "human"
+    assert _proposal_lines(client, room, skill["id"]) == [], (
+        "the task's proposal also went to the channel"
+    )
+
+    # The card itself, not only the line: it is drawn from the room snapshot a
+    # subscription opens with, so that is the reading that has to carry it.
+    # Without this, a snapshot still slicing by the room passes everything above.
+    with room_socket(client, task, OWNER) as ws:
+        in_task = ws.subscribed["room"]["skill_proposals"]
+    with room_socket(client, room, OWNER) as ws:
+        in_channel = ws.subscribed["room"]["skill_proposals"]
+    assert [s["id"] for s in in_task] == [skill["id"]], (
+        "the task's snapshot does not carry its own proposal"
+    )
+    assert in_channel == [], "the channel's snapshot carries the task's proposal"
 
 
 def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):

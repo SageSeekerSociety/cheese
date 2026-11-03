@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 import jwt
 from fastapi.testclient import TestClient
 
-from app.core.config import settings
 from app.domain.passkey.services import PasskeyService
 from tests.integration.conftest import UserCreator
 
@@ -19,7 +18,7 @@ from .test_passkey import _fake_credential
 
 
 def _decode(token: str) -> dict:
-    return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    return jwt.decode(token, options={"verify_signature": False})
 
 
 class TestRefreshTokenCarriesHandle:

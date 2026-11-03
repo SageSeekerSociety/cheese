@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.domain.questions.services import (
     QuestionInvitationService,
     QuestionsService,
@@ -823,7 +823,7 @@ class TestAcceptAnswer:
         repo.accept_answer.return_value = updated
         topic_repo.list_topic_ids.return_value = {10: [1, 2]}
 
-        result = await svc.accept_answer(question_id=10, answer_id=1, user_id=50)
+        result = await svc.accept_answer(question_id=10, answer_id=1)
 
         repo.accept_answer.assert_awaited_once_with(question_id=10, answer_id=1)
         assert result["acceptedAnswerId"] == 1
@@ -835,15 +835,7 @@ class TestAcceptAnswer:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Question not found"):
-            await svc.accept_answer(question_id=999, answer_id=1, user_id=50)
-
-    @pytest.mark.anyio
-    async def test_not_owner_forbidden(self):
-        svc, repo, _t_repo, _a_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _question(id=10, created_by_id=50)
-
-        with pytest.raises(ForbiddenError, match="Only the question owner"):
-            await svc.accept_answer(question_id=10, answer_id=1, user_id=77)
+            await svc.accept_answer(question_id=999, answer_id=1)
 
     @pytest.mark.anyio
     async def test_no_answer_repo(self):
@@ -853,7 +845,7 @@ class TestAcceptAnswer:
         repo.get_by_id.return_value = _question(id=10, created_by_id=50)
 
         with pytest.raises(BadRequestError, match="Answer repository not configured"):
-            await svc.accept_answer(question_id=10, answer_id=1, user_id=50)
+            await svc.accept_answer(question_id=10, answer_id=1)
 
     @pytest.mark.anyio
     async def test_answer_not_found(self):
@@ -862,7 +854,7 @@ class TestAcceptAnswer:
         answer_repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Answer not found"):
-            await svc.accept_answer(question_id=10, answer_id=999, user_id=50)
+            await svc.accept_answer(question_id=10, answer_id=999)
 
     @pytest.mark.anyio
     async def test_answer_wrong_question(self):
@@ -873,7 +865,7 @@ class TestAcceptAnswer:
         )  # different question
 
         with pytest.raises(BadRequestError, match="Answer does not belong"):
-            await svc.accept_answer(question_id=10, answer_id=1, user_id=50)
+            await svc.accept_answer(question_id=10, answer_id=1)
 
     @pytest.mark.anyio
     async def test_accept_answer_repo_returns_none(self):
@@ -883,7 +875,7 @@ class TestAcceptAnswer:
         repo.accept_answer.return_value = None
 
         with pytest.raises(NotFoundError, match="Question not found"):
-            await svc.accept_answer(question_id=10, answer_id=1, user_id=50)
+            await svc.accept_answer(question_id=10, answer_id=1)
 
 
 # ---------------------------------------------------------------------------
@@ -902,7 +894,7 @@ class TestUnacceptAnswer:
         repo.unaccept_answer.return_value = updated
         topic_repo.list_topic_ids.return_value = {10: [1]}
 
-        result = await svc.unaccept_answer(question_id=10, user_id=50)
+        result = await svc.unaccept_answer(question_id=10)
 
         repo.unaccept_answer.assert_awaited_once_with(question_id=10)
         assert result["acceptedAnswerId"] is None
@@ -914,15 +906,7 @@ class TestUnacceptAnswer:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Question not found"):
-            await svc.unaccept_answer(question_id=999, user_id=50)
-
-    @pytest.mark.anyio
-    async def test_not_owner_forbidden(self):
-        svc, repo, _t_repo, _a_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _question(id=10, created_by_id=50)
-
-        with pytest.raises(ForbiddenError, match="Only the question owner"):
-            await svc.unaccept_answer(question_id=10, user_id=77)
+            await svc.unaccept_answer(question_id=999)
 
     @pytest.mark.anyio
     async def test_unaccept_repo_returns_none(self):
@@ -931,7 +915,7 @@ class TestUnacceptAnswer:
         repo.unaccept_answer.return_value = None
 
         with pytest.raises(NotFoundError, match="Question not found"):
-            await svc.unaccept_answer(question_id=10, user_id=50)
+            await svc.unaccept_answer(question_id=10)
 
 
 # ---------------------------------------------------------------------------
@@ -988,14 +972,6 @@ class TestUpdateQuestion:
         with pytest.raises(NotFoundError, match="Question not found"):
             await svc.update_question(question_id=999, user_id=50, title="X")
 
-    @pytest.mark.anyio
-    async def test_not_owner_forbidden(self):
-        svc, repo, _t_repo, _a_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _question(id=10, created_by_id=50)
-
-        with pytest.raises(ForbiddenError, match="Only the question owner can update"):
-            await svc.update_question(question_id=10, user_id=77, title="Hack")
-
 
 # ---------------------------------------------------------------------------
 # delete_question
@@ -1009,7 +985,7 @@ class TestDeleteQuestion:
         q = _question(id=10, created_by_id=50)
         repo.get_by_id.return_value = q
 
-        await svc.delete_question(question_id=10, user_id=50)
+        await svc.delete_question(question_id=10)
 
         repo.soft_delete.assert_awaited_once_with(q)
 
@@ -1019,15 +995,7 @@ class TestDeleteQuestion:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Question not found"):
-            await svc.delete_question(question_id=999, user_id=50)
-
-    @pytest.mark.anyio
-    async def test_not_owner_forbidden(self):
-        svc, repo, _t_repo, _a_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _question(id=10, created_by_id=50)
-
-        with pytest.raises(ForbiddenError, match="Only the question owner can delete"):
-            await svc.delete_question(question_id=10, user_id=77)
+            await svc.delete_question(question_id=999)
 
 
 # ---------------------------------------------------------------------------
@@ -1045,7 +1013,7 @@ class TestSetBounty:
         repo.set_bounty.return_value = updated
         topic_repo.list_topic_ids.return_value = {10: [1]}
 
-        result = await svc.set_bounty(question_id=10, user_id=50, bounty=10)
+        result = await svc.set_bounty(question_id=10, bounty=10)
 
         repo.set_bounty.assert_awaited_once_with(q, 10)
         assert result["bounty"] == 10
@@ -1057,17 +1025,7 @@ class TestSetBounty:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Question not found"):
-            await svc.set_bounty(question_id=999, user_id=50, bounty=5)
-
-    @pytest.mark.anyio
-    async def test_not_owner_forbidden(self):
-        svc, repo, _t_repo, _a_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _question(id=10, created_by_id=50)
-
-        with pytest.raises(
-            ForbiddenError, match="Only the question owner can set bounty"
-        ):
-            await svc.set_bounty(question_id=10, user_id=77, bounty=5)
+            await svc.set_bounty(question_id=999, bounty=5)
 
     @pytest.mark.anyio
     async def test_bounty_negative(self):
@@ -1075,7 +1033,7 @@ class TestSetBounty:
         repo.get_by_id.return_value = _question(id=10, created_by_id=50, bounty=0)
 
         with pytest.raises(BadRequestError, match="Bounty must be between 0 and 20"):
-            await svc.set_bounty(question_id=10, user_id=50, bounty=-1)
+            await svc.set_bounty(question_id=10, bounty=-1)
 
     @pytest.mark.anyio
     async def test_bounty_exceeds_max(self):
@@ -1083,7 +1041,7 @@ class TestSetBounty:
         repo.get_by_id.return_value = _question(id=10, created_by_id=50, bounty=0)
 
         with pytest.raises(BadRequestError, match="Bounty must be between 0 and 20"):
-            await svc.set_bounty(question_id=10, user_id=50, bounty=21)
+            await svc.set_bounty(question_id=10, bounty=21)
 
     @pytest.mark.anyio
     async def test_bounty_not_higher_than_current(self):
@@ -1091,7 +1049,7 @@ class TestSetBounty:
         repo.get_by_id.return_value = _question(id=10, created_by_id=50, bounty=10)
 
         with pytest.raises(BadRequestError, match="New bounty must be higher"):
-            await svc.set_bounty(question_id=10, user_id=50, bounty=10)
+            await svc.set_bounty(question_id=10, bounty=10)
 
     @pytest.mark.anyio
     async def test_bounty_lower_than_current(self):
@@ -1099,7 +1057,7 @@ class TestSetBounty:
         repo.get_by_id.return_value = _question(id=10, created_by_id=50, bounty=10)
 
         with pytest.raises(BadRequestError, match="New bounty must be higher"):
-            await svc.set_bounty(question_id=10, user_id=50, bounty=5)
+            await svc.set_bounty(question_id=10, bounty=5)
 
     @pytest.mark.anyio
     async def test_bounty_from_none(self):
@@ -1111,7 +1069,7 @@ class TestSetBounty:
         repo.set_bounty.return_value = updated
         topic_repo.list_topic_ids.return_value = {10: []}
 
-        result = await svc.set_bounty(question_id=10, user_id=50, bounty=5)
+        result = await svc.set_bounty(question_id=10, bounty=5)
 
         assert result["bounty"] == 5
 
@@ -1400,7 +1358,7 @@ class TestDeleteInvitation:
         repo.get_by_id.return_value = inv
         q_repo.get_by_id.return_value = _question(id=10, created_by_id=50)
 
-        await svc.delete_invitation(question_id=10, invitation_id=3, user_id=50)
+        await svc.delete_invitation(question_id=10, invitation_id=3)
 
         repo.hard_delete.assert_awaited_once_with(inv)
 
@@ -1410,27 +1368,17 @@ class TestDeleteInvitation:
         repo.get_by_id.return_value = None
 
         with pytest.raises(BadRequestError, match="Invitation not found"):
-            await svc.delete_invitation(question_id=10, invitation_id=999, user_id=50)
+            await svc.delete_invitation(question_id=10, invitation_id=999)
 
     @pytest.mark.anyio
-    async def test_not_question_owner(self):
-        svc, repo, q_repo, _p_repo, _a_repo = _make_invitation_service()
-        inv = _invitation(id=3, question_id=10)
-        repo.get_by_id.return_value = inv
-        q_repo.get_by_id.return_value = _question(id=10, created_by_id=50)
-
-        with pytest.raises(ForbiddenError, match="Only the question owner"):
-            await svc.delete_invitation(question_id=10, invitation_id=3, user_id=77)
-
-    @pytest.mark.anyio
-    async def test_question_deleted_forbidden(self):
+    async def test_question_deleted_is_not_found(self):
         svc, repo, q_repo, _p_repo, _a_repo = _make_invitation_service()
         inv = _invitation(id=3, question_id=10)
         repo.get_by_id.return_value = inv
         q_repo.get_by_id.return_value = None  # question was deleted
 
-        with pytest.raises(ForbiddenError, match="Only the question owner"):
-            await svc.delete_invitation(question_id=10, invitation_id=3, user_id=50)
+        with pytest.raises(NotFoundError):
+            await svc.delete_invitation(question_id=10, invitation_id=3)
 
     @pytest.mark.anyio
     async def test_a_wrong_parent_question_is_answered_like_a_missing_one(self):
@@ -1448,11 +1396,11 @@ class TestDeleteInvitation:
         repo.get_by_id.return_value = _invitation(id=3, question_id=10)
 
         with pytest.raises(BadRequestError) as wrong:
-            await svc.delete_invitation(question_id=7, invitation_id=3, user_id=50)
+            await svc.delete_invitation(question_id=7, invitation_id=3)
 
         repo.get_by_id.return_value = None
         with pytest.raises(BadRequestError) as nowhere:
-            await svc.delete_invitation(question_id=7, invitation_id=3, user_id=50)
+            await svc.delete_invitation(question_id=7, invitation_id=3)
 
         assert wrong.value.to_response_body() == nowhere.value.to_response_body()
 

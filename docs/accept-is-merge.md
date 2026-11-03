@@ -22,7 +22,7 @@ task machine.
 1. A task declares its branch and base. The machine pushes its first changes.
 2. `pr_publish.sweep_draft_prs` observes a branch ahead of its base and opens a
    draft pull request for the task. Subsequent pushes update that request.
-3. `cheese_ready` removes the draft state. Filing an acceptance card also makes
+3. `cheese_card(action=ready)` removes the draft state. Filing an acceptance card also makes
    the request ready for review; marking it ready alone does not create a card.
 4. The panel displays the changes, checks and review state. The agent runs its
    own checks; any forge-hosted checks run on that forge's configured runners.
@@ -32,7 +32,7 @@ task machine.
 6. A successful merge records delivery. A step that is not the task's last
    moves the task onto a new branch from the latest code; the last one asks
    the task's AI teammate to update the task document, post a summary and
-   close the task with `cheese_close_task`; without that, the deadline closes
+   close the task with `cheese_task(action=close)`; without that, the deadline closes
    it (`room_task.closing`).
    A last step whose AI teammate is, when it lands or while it is written up,
    working on something a person or itself began after its card went up, or

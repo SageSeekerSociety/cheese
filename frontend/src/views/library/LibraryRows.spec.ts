@@ -130,4 +130,29 @@ describe('资料库那一列的行', () => {
     // 这一行还在：删不删由页面拿着确认框说了算。
     expect(rowNames(view.container)).toEqual(['报价.xlsx'])
   })
+
+  it('题目的材料只能读：菜单里只有下载和版本，那个文件夹没有菜单', async () => {
+    const taskFolder: LibraryRow = {
+      key: 'dir:题目',
+      rank: '0',
+      folder: { type: 'folder', rank: '0', path: '题目', name: '题目', count: 2, modified: 1758000300, readonly: true },
+    }
+    const material: LibraryRow = {
+      key: 'file:题目/数据.csv',
+      rank: '2',
+      file: { ...libraryFile('题目/数据.csv'), readonly: true },
+    }
+    mount([taskFolder, material])
+
+    expect(screen.queryByRole('button', { name: /^题目 的操作/ })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: /^数据\.csv 的操作/ }))
+    const labels = await waitFor(() => {
+      const found = Array.from(document.querySelectorAll('.v-list-item, [role="menuitem"]')).map((b) =>
+        b.textContent?.trim()
+      )
+      expect(found.length).toBeGreaterThan(0)
+      return found
+    })
+    expect(labels).toEqual(['下载', '版本…'])
+  })
 })

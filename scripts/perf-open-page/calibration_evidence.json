@@ -1,0 +1,92 @@
+{
+  "query_string_dedup": {
+    "passed": true,
+    "api_requests": [
+      "GET spaces?pageSize=50",
+      "GET spaces?pageSize=12",
+      "GET teams/my-teams",
+      "GET teams/my-teams"
+    ],
+    "duplicate_api_requests": [
+      "GET teams/my-teams"
+    ]
+  },
+  "critical_vs_background_delay": {
+    "passed": true,
+    "critical_delay_injected_ms": 550,
+    "critical_route_hits": 1,
+    "baseline_ready_ms": 436.3,
+    "critical_delayed_ready_ms": 873.1,
+    "critical_delta_ms": 436.8,
+    "background_delay_injected_ms": 800,
+    "background_route_hits": 2,
+    "background_delayed_ready_ms": 419.7,
+    "background_delta_ms": -16.6
+  },
+  "partial_and_total_failure_accounting": {
+    "passed": true,
+    "partial_n_attempts": 3,
+    "partial_n_ok": 1,
+    "partial_n_failed": 2,
+    "partial_ready_ms": 450.3,
+    "total_fail_ready_ms": null,
+    "report_excerpt": [
+      "| 页面/操作 | 成功/尝试 | DOM就绪(ms) | 真实绘制(ms) | 范围 / p95 | 关键路径API(ms) | 最后响应(ms) | 接口数(重复) | 长任务(ms) | 状态/错误 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+      "| project-channels-fail | 0/3 (3 失败) | FAIL | FAIL | — | — | — | 11 (4 重复) | 71 | run#1[error]: HTTP 500 (server error) on GET /ap |",
+      "| project-channels | 1/3 (2 失败) | 445 | 450 | [450–450] (N=1) | 421 | 426 | 7 | 118 | 2/3 failed: run#1[error]: HTTP 500 (server error |"
+    ]
+  },
+  "empty_forbidden_error_states": {
+    "passed": true,
+    "empty_strict": {
+      "status": "empty",
+      "ready_ms": null,
+      "error": "empty state (.chat-start, [data-chat-feed]:not([aria-busy='true']):not(:has(.im-row))) rendered instead of expected content (.im-row[data-row-id], .im-row[data-mid])"
+    },
+    "empty_allowed": {
+      "status": "empty",
+      "ready_ms": 456.6,
+      "error": null
+    },
+    "forbidden_403": {
+      "status": "forbidden",
+      "ready_ms": null,
+      "error": "HTTP 403 on GET /api/projects/51d3aca0-ca5f-4648-98e3-90014dbd34e5/channels"
+    }
+  },
+  "cache_modes_distinct": {
+    "passed": true,
+    "walk": {
+      "dom_ready_ms": 1276.0,
+      "paint_ms": 1369.1,
+      "dcl_ms": null,
+      "requests": 96,
+      "cached_requests": 95,
+      "api_count": 12
+    },
+    "warm": {
+      "dom_ready_ms": 1740.1,
+      "paint_ms": 1753.0,
+      "dcl_ms": 645.5,
+      "requests": 242,
+      "cached_requests": 240,
+      "api_count": 13
+    },
+    "cold": {
+      "dom_ready_ms": 2620.7,
+      "paint_ms": 2712.4,
+      "dcl_ms": 1232.6,
+      "requests": 244,
+      "cached_requests": 0,
+      "api_count": 14
+    }
+  },
+  "dom_vs_paint_separation": {
+    "passed": true,
+    "walk_dom_ready_ms": 1276.0,
+    "walk_paint_ms": 1369.1,
+    "cold_dom_ready_ms": 2620.7,
+    "cold_paint_ms": 2712.4
+  }
+}

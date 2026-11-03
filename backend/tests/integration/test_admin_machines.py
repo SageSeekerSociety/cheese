@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
+from app.domain.machine import infra_records
 from app.domain.machine.models import (
     CloudHost,
     MachineStatus,
@@ -241,3 +242,37 @@ def test_the_wait_for_a_sandbox_is_from_preparing_to_ready(client, admin):
     assert (history["prepared"], history["ready"], history["abandoned"]) == (3, 2, 1)
     assert history["wait_max_s"] == pytest.approx(300, abs=1)
     assert 30 <= history["wait_p50_s"] <= 300
+
+
+def test_how_long_each_step_of_preparing_a_sandbox_took_is_read_by_step(client, admin):
+    """Each prepared sandbox keeps its steps' seconds (`infra_records`); the
+    page gives each step's percentiles over the day, and its total."""
+    project, room = _room(client)
+
+    async def build(s):
+        for executor, thaw in ((2.0, None), (4.0, 1.0), (30.0, 3.0)):
+            await infra_records.keep_prepared(
+                s,
+                conversation_id=room,
+                session_id=uuid.uuid4(),
+                stages={"place": 0.1, "thaw": thaw, "executor": executor},
+                total_s=executor + (thaw or 0) + 0.1,
+                waited_s=None,
+            )
+        await infra_records.keep_checked_out(
+            s, conversation_id=room, session_id=None, total_s=20.0
+        )
+
+    _seed(client, build)
+
+    timings = client.get("/admin/stats/machines", headers=admin).json()["data"][
+        "history"
+    ]["timings"]
+    prepared = timings["sandbox_prepared"]
+    assert prepared["executor"]["count"] == 3
+    assert prepared["executor"]["p50_s"] == pytest.approx(4.0)
+    # A step that did not happen is not counted as a zero.
+    assert prepared["thaw"]["count"] == 2
+    assert "host" not in prepared
+    assert prepared["total"]["count"] == 3
+    assert timings["sandbox_checked_out"]["checkout"]["p50_s"] == pytest.approx(20.0)

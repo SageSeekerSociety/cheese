@@ -17,7 +17,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
-from app.domain.agent.models import AgentTurn
+from app.domain.agent.models import (
+    STOP_FINISHED,
+    STOP_STOPPED,
+    STOP_SWEEP,
+    AgentTurn,
+)
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.run_record.models import RunRecord
@@ -79,6 +85,7 @@ def _seed(client, project: str, room: str, specs: list[dict]) -> list[uuid.UUID]
                         content="做点事",
                         started_at=started,
                         stopped_at=spec.get("stopped_at"),
+                        stop_reason=spec.get("stop_reason"),
                     )
                 )
                 for i, event in enumerate(spec.get("events", [])):
@@ -583,3 +590,57 @@ def test_another_projects_room_cannot_read_one_turn(client, platform_room):
 
     assert response.status_code == 403, response.text
     assert "知是代码仓库" in response.text
+
+
+def test_a_turn_says_which_closer_ended_it(client, platform_room):
+    """`stopped_at` says when the row closed. `stop_reason` says who closed it —
+    the one question left after a turn sat open for thirteen hours: was it the
+    session finishing, the sweep, or the task being closed underneath it."""
+    project, room = platform_room
+    now = datetime.now(UTC)
+    finished, swept, open_turn = _seed(
+        client,
+        project,
+        room,
+        [
+            {
+                "started_at": now - timedelta(hours=1),
+                "stopped_at": now - timedelta(minutes=55),
+                "stop_reason": STOP_FINISHED,
+            },
+            {
+                "started_at": now - timedelta(hours=2),
+                "stopped_at": now - timedelta(hours=1, minutes=30),
+                "stop_reason": STOP_SWEEP,
+            },
+            {"started_at": now - timedelta(hours=3)},
+        ],
+    )
+
+    by_id = {t["turn_id"]: t for t in _turns(client, room, window="24h")["turns"]}
+
+    assert by_id[str(finished)]["stop_reason"] == STOP_FINISHED
+    assert by_id[str(swept)]["stop_reason"] == STOP_SWEEP
+    # Still running: nothing closed it, so nothing says who did.
+    assert by_id[str(open_turn)]["stop_reason"] is None
+
+
+def test_closing_a_turn_by_hand_records_the_closer(client, platform_room):
+    """The read is only worth anything if the writers actually write it."""
+    project, room = platform_room
+    now = datetime.now(UTC)
+    (turn_id,) = _seed(
+        client, project, room, [{"started_at": now - timedelta(minutes=5)}]
+    )
+
+    async def close() -> None:
+        async with client.test_factory() as session:
+            await AgentTurnRepository(session).close(
+                [turn_id], datetime.now(UTC), reason=STOP_STOPPED
+            )
+            await session.commit()
+
+    client.portal.call(close)
+
+    by_id = {t["turn_id"]: t for t in _turns(client, room, window="24h")["turns"]}
+    assert by_id[str(turn_id)]["stop_reason"] == STOP_STOPPED

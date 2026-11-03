@@ -119,6 +119,22 @@ export const CLOSED_STATUSES: FeedbackStatus[] = ['resolved', 'deployed', 'decli
 /** 这条还能不能支持/评论。列表卡片和详情页共用这一个判断。 */
 export const isClosed = (status: FeedbackStatus | undefined): boolean => !!status && CLOSED_STATUSES.includes(status)
 
+/**
+ * 某一栏里**真能出现**的状态 —— 状态药丸只该列这几颗。
+ *
+ * 判据是服务端 `_tab_where` 的同一件事：`resolved` 栏装的是 `CLOSED_STATUSES`
+ * （三种结局），其余栏位不按状态收窄。这也是「已办完的 Bug 沉底」那条规则撤掉之后的
+ * 形状：`all` 和 `hot` 装全部，所以五种状态在它们下面都选得出来。
+ *
+ * 为什么这条判据在前端还有一份：药丸要在发请求之前就画出来，而服务端那份是 SQL
+ * 条件，没法先问一遍。两边漂开的表现正是这一轮要修的东西 —— 看得见一颗选了必然空的
+ * 药丸。所以它和上面的 `CLOSED_STATUSES` 一样，后端动筛栏位的规则时要一起改。
+ */
+export const statusesForTab = (tab: string, fromServer?: FeedbackStatus[]): FeedbackStatus[] => {
+  const all = allStatuses(fromServer)
+  return tab === 'resolved' ? all.filter((status) => CLOSED_STATUSES.includes(status)) : all
+}
+
 export const KIND_LABEL: Record<FeedbackKind, string> = {
   get bug() {
     return t('feedback.kind.bug')

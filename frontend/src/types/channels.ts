@@ -32,3 +32,11 @@ export interface ChannelPin {
   /** 钉住的那一条：消息，或一个文件（附件、AI 队友摆出来的东西）。 */
   block: Block
 }
+
+/** 频道主线谁能发言（#4795），在 `Topic` 上。`cx_types.ts` 只许变小，所以写在这里。 */
+export interface ChannelSpeakers {
+  /** 能在主线发言的角色 key；空着是所有人。 */
+  speaker_roles?: string[] | null
+  /** 主线限了角色时，支线是否人人能回。 */
+  thread_replies_open?: boolean
+}

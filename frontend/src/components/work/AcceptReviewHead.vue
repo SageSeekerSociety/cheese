@@ -51,7 +51,6 @@ const round = computed(() => {
     :agent-name="accept.agentName.value"
     :agent-handle="accept.agentHandle.value"
     :deliverable-busy="accept.deliverableBusy.value"
-    :deliverable-error="accept.deliverableError.value"
     :round="round"
     @approve="accept.onApproveCard"
     @reassign="accept.onReassignCard"

@@ -13,6 +13,7 @@ future 和它们的序号。``send`` 是这条链路唯一的写入口（一把�
 """
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -97,11 +98,19 @@ class HubDevice:
     exec_pending: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict
     )
+    # The exec ids whose stderr lines someone hears while they run (``exec``'s
+    # ``on_stderr``), fed by ``exec.output`` frames.
+    exec_listeners: dict[str, Callable[[str], None]] = field(default_factory=dict)
     executor_pending: dict[str, tuple[asyncio.Future[Any], bytearray]] = field(
         default_factory=dict
     )
     session_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     local_fs_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    # Streams the machine's sandboxes opened on their platform sockets, by
+    # stream id (``machine``): they live on this link and end with it.
+    # (``machine.MachineStream``; not imported here, which would make the two
+    # modules a cycle.)
+    machine_streams: dict[str, Any] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connection_generation: int = 0
 
@@ -173,6 +182,12 @@ class HubDevice:
         for future in waiting:
             if not future.done():
                 future.set_exception(LinkInterrupted(self.device_id))
+        # The connector closed their sockets when the link went: nobody is
+        # left to read an answer.
+        for stream in self.machine_streams.values():
+            if stream.task is not None:
+                stream.task.cancel()
+        self.machine_streams.clear()
         return True
 
 

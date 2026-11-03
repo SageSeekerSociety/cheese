@@ -15,6 +15,7 @@ from app.domain.agent.harness.notices import (
     silence_reminder,
     stale_checklist_reminder,
     stale_progress_reminder,
+    still_working_reminder,
     without_reminders,
 )
 
@@ -31,6 +32,7 @@ def test_every_reminder_goes_in_both_languages():
     for language in (None, "en"):
         for said in (
             silence_reminder(10, language),
+            still_working_reminder(12, language),
             stale_checklist_reminder(7, language),
             stale_progress_reminder(None, language),
             stale_progress_reminder(42, language),

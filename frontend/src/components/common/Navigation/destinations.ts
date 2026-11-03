@@ -43,16 +43,6 @@ const HUB: Omit<NavItem, 'title'> = {
 // 手机底栏的「待办」。桌面上没有这一格：待办就是首页那一格点开的那一页。
 const INBOX: Omit<NavItem, 'title'> = { key: 'Inbox', type: 'item', to: '/inbox', icon: 'mdi-inbox-outline' }
 
-// 市场那一格：技能 / 插件 / MCP / Agent 模板的目录，全站一份、不属于任何项目。
-// 只进桌面 rail（手机从「首页」的目录进，见 `views/home/HomeNav.vue`），壳里排在
-// 「项目」那一摞之后 —— 于是它的 ⌘N 随项目数走，而**既有项目的编号一个都不动**。
-const MARKET: Omit<NavItem, 'title'> = {
-  key: 'market',
-  type: 'item',
-  to: '/market',
-  icon: 'mdi-storefront-outline',
-}
-
 export interface NavSources {
   projects: Project[]
   /** 工作区那一格落到哪个项目：当前打开的 → 上次打开的 → 第一个。 */
@@ -180,7 +170,6 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
         }
       }),
     ],
-    market: [{ ...MARKET, title: t('navigation.market') }],
     add: [
       {
         key: 'cx-add',

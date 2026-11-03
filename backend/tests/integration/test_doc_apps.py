@@ -76,7 +76,13 @@ def _project_with_room(client) -> tuple[str, str, dict, str, str]:
     token = mint_scoped_token(
         project_id=pid, topic_id=room, agent_handle=seat, access_scope="project"
     )
-    return pid, made.json()["data"]["id"], {"X-Cheese-Token": token}, room, seat
+    return (
+        pid,
+        made.json()["data"]["id"],
+        {"Authorization": f"Bearer {token}"},
+        room,
+        seat,
+    )
 
 
 def _save(client, doc: str, agent: dict, code: str = CODE):
@@ -235,7 +241,7 @@ def test_a_version_made_because_someone_asked_is_the_teammates_own(client, brows
         ttl_s=300,
     )
 
-    saved = _save(client, doc, {"X-Cheese-Token": asked})
+    saved = _save(client, doc, {"Authorization": f"Bearer {asked}"})
 
     assert saved.status_code == 200, saved.text
     assert saved.json()["data"]["author"] == seat

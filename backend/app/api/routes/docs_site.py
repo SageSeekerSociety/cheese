@@ -25,7 +25,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_current_session_id
-from app.core import model_roles
+from app.core import model_roles, origins
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import async_session_factory
 from app.core.errors import (
@@ -111,10 +111,11 @@ async def open_docs_session(request: Request, db: DbSession) -> Response:
 
     A plain form post the platform page submits, so the grant stays out of
     URLs, history and referrers. It must come from the platform's own origin:
-    the two hosts are same-site, and nothing else may sign a reader in."""
+    the two hosts are same-site, and nothing else may sign a reader in. Every
+    origin the platform is served under is its own (``app.core.origins``)."""
     if not site.on_docs_host(request.headers.get("host")):
         return Response(status_code=404)
-    if request.headers.get("origin") != site.platform_origin():
+    if not origins.is_ours(request.headers.get("origin")):
         return Response(status_code=403)
     body = bytearray()
     async for chunk in request.stream():
@@ -394,7 +395,7 @@ async def _settle(
         logger.warning("settling a docs question failed", exc_info=True)
 
 
-# ---------- the docs, for AI teammates: cheese_docs_search / cheese_docs_read ----
+# ---------- the docs, for AI teammates: cheese_help / cheese_help ----
 
 
 class AgentDocsIn(BaseModel):
@@ -430,7 +431,7 @@ async def _agent_scope(
 async def agent_search_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
-    """cheese_docs_search: the best sections of the manual for a query."""
+    """cheese_help: the best sections of the manual for a query."""
     if not body.query or not body.query.strip():
         raise ValidationError(say("queryRequired"))
     dev = await _agent_scope(body, db, actor)
@@ -459,7 +460,7 @@ async def agent_search_docs(
 async def agent_read_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
-    """cheese_docs_read: one page's Markdown, as readers fetch it."""
+    """cheese_help: one page's Markdown, as readers fetch it."""
     if not body.page or not body.page.strip():
         raise ValidationError(say("pageRequired"))
     dev = await _agent_scope(body, db, actor)
@@ -471,4 +472,6 @@ async def agent_read_docs(
         raise ValidationError(exception_text(exc)) from exc
     if text is None:
         raise NotFoundError(say("docsPageNotFound", page=body.page))
-    return ok({"page": library.page_slug(body.page), "markdown": text})
+    slug = library.page_slug(body.page) or ""
+    title = await library.page_title(slug, dev=dev)
+    return ok({"page": slug, "markdown": text, "title": title or slug})

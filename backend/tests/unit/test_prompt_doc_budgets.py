@@ -12,7 +12,7 @@ from app.domain.agent.harness.prompt import (
 )
 from app.domain.memory.files_store import IndexSection, MemoryIndex
 
-HINT = "用 `cheese_doc_get` 读全文"
+HINT = "用 `cheese_doc(action=get)` 读全文"
 
 
 def _index(*lines: str) -> MemoryIndex:
@@ -68,7 +68,7 @@ def test_an_unsectioned_doc_is_truncated_from_the_tail_with_a_note():
 def test_the_topic_doc_note_names_the_full_read_command():
     opening = build_session_opening(doc="## 临时\n" + "长" * 9000).text
 
-    assert "cheese_doc_get" in opening
+    assert "cheese_doc(action=get)" in opening
 
 
 def test_compressed_docs_leave_the_memory_block_untouched():

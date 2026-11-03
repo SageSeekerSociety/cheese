@@ -20,6 +20,7 @@ import type { ChatMessageBody } from '../cx_types'
 
 import { ApiError, listBlocks, listRoomTasks } from '../api'
 import { postChatMessage } from '../api/messages'
+import { cachedWindow, setCachedWindow } from '../query/blocks'
 
 import ChatPanel from './ChatPanel.vue'
 
@@ -47,10 +48,10 @@ class TestSocket {
   }
 }
 
-function mountPanel(showComposer = false) {
+function mountPanel(showComposer = false, id: string = crypto.randomUUID()) {
   return render(ChatPanel as unknown as Component, {
     props: {
-      topic: { id: crypto.randomUUID(), project_id: 'p', title: 'Recovery', kind: 'topic' } as Topic,
+      topic: { id, project_id: 'p', title: 'Recovery', kind: 'topic' } as Topic,
       showComposer,
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
@@ -185,6 +186,24 @@ describe('chat recovery after history errors', () => {
     expect(sockets[0].close).toHaveBeenCalledOnce()
   })
 
+  // 先摆上的那一页可能是上次从浏览器里放回来的：房间看不到了（403）就撤掉；401 只是换令牌
+  // 一时没通（刷新接口 5xx、超时），人还登录着，那一页留着。
+  it.each([
+    [403, false],
+    [401, true],
+  ])('a cached page meets a %i history answer: still shown is %s', async (status, kept) => {
+    const id = crypto.randomUUID()
+    setCachedWindow(id, {
+      blocks: [stored({ content: 'cached line', request_id: 'r' } as ChatMessageBody, id)],
+      hasMore: false,
+    })
+    vi.mocked(listBlocks).mockRejectedValue(new ApiError(status, 'refused'))
+    const view = mountPanel(false, id)
+    await flushPromises()
+    expect(view.container.textContent?.includes('cached line')).toBe(kept)
+    expect(cachedWindow(id) !== null).toBe(kept)
+  })
+
   it('does not restart recovery when a pending fetch fails after unmount', async () => {
     let reject!: (error: Error) => void
     vi.mocked(listBlocks).mockReturnValueOnce(
@@ -280,6 +299,26 @@ describe('chat recovery after history errors', () => {
     answer(undefined as unknown as Block)
     await flushPromises()
     expect(sends().map((b) => b.content)).toEqual(['first', 'second'])
+  })
+
+  it('a send in flight stays quiet at first and shows sending only after 500ms', async () => {
+    let answer!: (block: Block) => void
+    vi.mocked(postChatMessage).mockImplementationOnce(
+      (topic, body) => new Promise((yes) => (answer = () => yes(stored(body, topic))))
+    )
+    const view = mountPanel(true)
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+    await type(view, 'quiet at first')
+
+    expect(view.queryByText(t('work.room.chat.sending'))).toBeNull()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(view.queryByText(t('work.room.chat.sending'))).not.toBeNull()
+
+    answer(undefined as unknown as Block)
+    await flushPromises()
+    expect(view.queryByText(t('work.room.chat.sending'))).toBeNull()
   })
 
   it('a drop the first reconnect heals never puts up the reconnecting banner', async () => {

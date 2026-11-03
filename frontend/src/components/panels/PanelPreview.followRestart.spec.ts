@@ -27,6 +27,8 @@ vi.mock('../../api', () => ({
   getPreview: (...args: unknown[]) => getPreview(...args),
   readPreviewFile: (...args: unknown[]) => readPreviewFile(...args),
   requestPreviewSession: (...args: unknown[]) => requestPreviewSession(...args),
+  getPreviewSnapshot: () => Promise.resolve(null),
+  putPreviewSnapshot: () => Promise.resolve(null),
 }))
 
 import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
@@ -116,7 +118,8 @@ describe('应用重启/断线后面板自己跟上去', () => {
     const { container, findByText, queryByText } = mount()
     await flush()
     await loadFrame(submissions[0]!.target)
-    expect(container.textContent).toContain('Dev server')
+    // 地址栏里摆的是这个应用（桥还没报地址时显示它的名字）。
+    expect((container.querySelector('[data-testid="browser-address"]') as HTMLInputElement).value).toBe('Dev server')
     expect(requestPreviewSession).toHaveBeenCalledTimes(1)
 
     // 开发服务器在同一个端口上重启：实例从 A 变成 B。

@@ -35,6 +35,7 @@ uv run --project backend python evals/assistant/gate_eval.py              # 授�
 uv run --project backend python evals/assistant/gate_eval.py --repeat 3   # 看稳不稳
 uv run --project backend python evals/assistant/run.py                    # 全部题，约 15 分钟
 uv run --project backend python evals/assistant/run.py t11 t17            # 几道题
+uv run --project backend python evals/assistant/run.py --no-subagents t42 # 关掉分身再跑，和开着的比
 ```
 
 结果写在 `evals/results/`（不进仓库）：`report.md` 给人看，`results.jsonl` 每题一行，带问题、回答、工具调用、授权判断、改了什么和用量。

@@ -12,11 +12,13 @@ import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
 import type { LibraryRow } from './useLibraryPages'
 
 import { type Ref, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl } from '../api'
+import { uploadPercent } from '../api/partUpload'
 import { t } from '../i18n'
 import { replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
+
+import { toast } from '@/lib/toast'
 
 export function useLibraryTransfers(page: {
   /** 哪一个资料库（`LibraryShelf`）。 */
@@ -39,6 +41,10 @@ export function useLibraryTransfers(page: {
   /** 正在动的那一份或那个文件夹（路径）；没有是 `''`。 */
   const busy = ref('')
   const uploading = ref(false)
+  /** 正在传的那一份和它传到了百分之几：几 GB 的文件要传很久，不能只转一个圈。 */
+  const progress = ref<{ name: string; percent: number } | null>(null)
+  const track = (name: string) => (sent: number, total: number) =>
+    (progress.value = { name, percent: uploadPercent(sent, total) })
   // 要删的那一份或那个文件夹（文件夹连同里面的一切）。
   const confirming = ref<LibraryFile | LibraryFolder | null>(null)
   const replacing = ref<{ target: LibraryFile; file: File } | null>(null)
@@ -66,13 +72,14 @@ export function useLibraryTransfers(page: {
     let done = 0
     try {
       for (const file of list) {
-        await uploadLibraryFile(page.shelf(), file, page.dir())
+        await uploadLibraryFile(page.shelf(), file, page.dir(), track(file.name))
         done++
       }
     } catch (e) {
       page.error.value = e instanceof Error ? e.message : t('work.library.uploadFailed')
     } finally {
       uploading.value = false
+      progress.value = null
       if (done) toast(t('work.library.uploaded', { n: done }))
       page.reset()
     }
@@ -108,7 +115,7 @@ export function useLibraryTransfers(page: {
     busy.value = pending.target.path
     page.error.value = ''
     try {
-      await replaceLibraryFile(page.shelf(), pending.target.path, pending.file)
+      await replaceLibraryFile(page.shelf(), pending.target.path, pending.file, track(pending.file.name))
       page.changed()
       toast(t('work.library.replacedDone'))
       page.reset()
@@ -116,6 +123,7 @@ export function useLibraryTransfers(page: {
       page.error.value = e instanceof Error ? e.message : t('work.library.replaceFailed')
     } finally {
       busy.value = ''
+      progress.value = null
     }
   }
 
@@ -127,12 +135,9 @@ export function useLibraryTransfers(page: {
   }
 
   async function download(file: LibraryFile) {
-    page.error.value = ''
-    try {
-      await downloadFile(libraryFileRawUrl(page.shelf(), file.path), file.path.split('/').pop() || file.path)
-    } catch (e) {
-      page.error.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
-    }
+    // 成功和失败各弹一句，都在 `downloadFile` 那一层（`lib/download`）；资料库那一页
+    // 不再为下载留一行红字。
+    await downloadFile(libraryFileRawUrl(page.shelf(), file.path), file.path.split('/').pop() || file.path)
   }
 
   /** 确认框点「删除」：这时 `confirming` 一定是有值的，取出来交给 `remove`。 */
@@ -160,6 +165,7 @@ export function useLibraryTransfers(page: {
   return {
     busy,
     uploading,
+    progress,
     confirming,
     replacing,
     dragging,

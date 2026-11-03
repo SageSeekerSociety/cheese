@@ -68,7 +68,7 @@ def _task_session_headers(client, project_id, room_id, task_id) -> dict:
         topic_id=str(task_id),
         agent_handle=room_agent_seat(client, room_id),
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _say_in_task(client, room_id, task_id, headers, content="先看看现状"):
@@ -173,7 +173,7 @@ def _teammate_in(client, room_id: str, thread_id: str) -> dict[str, str]:
         topic_id=thread_id,
         agent_handle=room_agent_seat(client, room_id),
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _default_reviewer(client, project_id: str, handle: str) -> None:
@@ -862,8 +862,12 @@ def test_a_task_and_its_room_each_keep_their_own_preview_tunnel(client):
         project_id=project_id, topic_id=task["id"], agent_handle=seat
     )
 
-    with client.websocket_connect(f"/preview/tunnel?token={room_token}") as room_ws:
-        with client.websocket_connect(f"/preview/tunnel?token={task_token}"):
+    with client.websocket_connect(
+        "/preview/tunnel", headers={"Authorization": f"Bearer {room_token}"}
+    ) as room_ws:
+        with client.websocket_connect(
+            "/preview/tunnel", headers={"Authorization": f"Bearer {task_token}"}
+        ):
             hub = connection_hub(room_ws)
             assert hub.is_online(uuid.UUID(room_id), seat)
             assert hub.is_online(uuid.UUID(task["id"]), seat)

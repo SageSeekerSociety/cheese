@@ -128,15 +128,14 @@ def test_removing_a_server_takes_its_key_with_it(client, upstream):
 def test_only_who_configures_the_ai_teammates_adds_a_server(client, upstream):
     pid = _project(client, upstream)
     join_project_team(client, str(pid), "bob")
-    grants = client.get(
+    roles = client.get(
         f"/projects/{pid}/roles", headers=session_auth_headers("alice")
-    ).json()["data"]["grants"]
-    changed = client.put(
-        f"/projects/{pid}/roles",
+    ).json()["data"]["roles"]
+    member = next(r for r in roles if r["key"] == "member")
+    changed = client.patch(
+        f"/projects/{pid}/roles/member",
         json={
-            "grants": {
-                "member": [g for g in grants["member"] if g != "configure_agents"]
-            }
+            "permissions": [g for g in member["permissions"] if g != "configure_agents"]
         },
         headers=session_auth_headers("alice"),
     )

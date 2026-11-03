@@ -15,7 +15,7 @@ wrapper = os.environ.get("FORGEJO_TEST_WRAPPER", "/test/wrappers/fj")
 class Credentials(BaseHTTPRequestHandler):
     def do_GET(self):
         assert self.path == "/sandbox/forge-token"
-        assert self.headers["X-Cheese-Token"] == "isolated-smoke-test"
+        assert self.headers["Authorization"] == "Bearer isolated-smoke-test"
         token = Path(os.environ["FORGEJO_TEST_TOKEN_FILE"]).read_text().strip()
         self.send_response(200)
         self.end_headers()

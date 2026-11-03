@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import (
     BadRequestError,
     ConflictError,
-    ForbiddenError,
     NotFoundError,
 )
 from app.core.sentences import say
@@ -29,7 +28,6 @@ from app.domain.team.models import (
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
-    refuse_admin_grant_by_non_owner,
     refuse_anyone_but_the_owner,
 )
 from app.domain.user.models import User
@@ -167,6 +165,10 @@ class TeamMembershipService:
         status = await self.join_status(team.id, user_id)
         if status != "none":
             return status
+        # A personal team takes no members but its owner — and no application
+        # either: one waiting there could only ever sit unanswered. The owner
+        # is already in, so this only ever answers someone else.
+        refuse_anyone_but_the_owner(team, user_id)
         if not team.join_approval:
             # deferred-import: tests replace this name on app.domain.team.services
             from app.domain.team.services import check_team_locking_status
@@ -240,15 +242,7 @@ class TeamMembershipService:
         role: int | None,
         message: str | None,
     ) -> TeamMembershipApplication:
-        if not await self._team_repo.is_team_at_least_admin(team_id, initiator_user_id):
-            raise ForbiddenError(
-                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."
-            )
 
-        if role in (TeamMemberRole.ADMIN, TeamMemberRole.OWNER):
-            await refuse_admin_grant_by_non_owner(
-                self._team_repo, team_id, initiator_user_id
-            )
         team = await self._team_repo.get_by_id(team_id)
         if team is not None:
             # Refused now rather than when it is accepted: an invitation that
@@ -397,11 +391,6 @@ class TeamMembershipService:
         # deferred-import: tests replace this name on app.domain.team.services
         from app.domain.team.services import check_team_locking_status
 
-        if not await self._team_repo.is_team_at_least_admin(team_id, approver_user_id):
-            raise ForbiddenError(
-                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."
-            )
-
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
             application_id=request_id,
             team_id=team_id,
@@ -449,10 +438,6 @@ class TeamMembershipService:
         team_id: int,
         request_id: int,
     ) -> None:
-        if not await self._team_repo.is_team_at_least_admin(team_id, rejector_user_id):
-            raise ForbiddenError(
-                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."
-            )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
             application_id=request_id,
@@ -495,10 +480,6 @@ class TeamMembershipService:
         team_id: int,
         invitation_id: int,
     ) -> None:
-        if not await self._team_repo.is_team_at_least_admin(team_id, canceler_user_id):
-            raise ForbiddenError(
-                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."
-            )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
             application_id=invitation_id,
@@ -601,12 +582,6 @@ class TeamMembershipService:
         page_start: int | None,
         page_size: int | None,
     ) -> tuple[list[TeamMembershipApplication], dict]:
-        if not await self._team_repo.is_team_at_least_admin(
-            team_id, requesting_user_id
-        ):
-            raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."
-            )
         limit = page_size or self._default_page_size
         offset = page_start or 0
         apps, total = await self._app_repo.list_for_team(
@@ -637,12 +612,6 @@ class TeamMembershipService:
         page_start: int | None,
         page_size: int | None,
     ) -> tuple[list[TeamMembershipApplication], dict]:
-        if not await self._team_repo.is_team_at_least_admin(
-            team_id, requesting_user_id
-        ):
-            raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."
-            )
         limit = page_size or self._default_page_size
         offset = page_start or 0
         apps, total = await self._app_repo.list_for_team(

@@ -29,6 +29,7 @@
     "unread": "帮助与反馈，有未读更新",
     "center": "反馈中心",
     "mine": "我的反馈",
+    "mineUnread": "我的反馈，{n} 条未读更新",
     "admin": "管理后台",
     "guide": "新手引导",
     "tour": "界面导览",
@@ -173,6 +174,7 @@
     "terms": "用户协议",
     "feedbackDetail": "反馈详情",
     "openPreview": "打开预览",
+    "slidesPresenter": "讲者视图",
     "openSite": "打开网站",
     "openDocs": "打开文档",
     "connect": "连接设备",
@@ -187,13 +189,14 @@
     "spaceTasks": "题目",
     "taskSubmissions": "我的提交",
     "taskSubmit": "提交",
-    "taskParticipants": "领取者",
+    "taskParticipants": "参与者",
     "taskData": "数据",
     "taskEdit": "编辑题目",
     "spaceAnalytics": "数据分析",
     "projectWorkspace": "项目工作台",
     "dm": "私聊",
     "artifact": "产物",
-    "member": "成员"
+    "member": "成员",
+    "taskVersions": "历史版本"
   }
 }

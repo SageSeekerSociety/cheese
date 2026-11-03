@@ -31,6 +31,7 @@
   "moveDown": "下移",
   "moveUp": "上移",
   "openDiagram": "全屏查看",
+  "printApp": "小程序在纸上看不到，打开文档就能用",
   "removeColumn": "删除这一栏",
   "removeItem": "删除这一项",
   "removeStat": "删除这张指标卡",

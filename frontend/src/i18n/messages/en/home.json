@@ -47,7 +47,7 @@
       "added": "Added by {name} in project settings"
     },
     "task": {
-      "claims": "{n} claims to approve",
+      "claims": "{n} applications to approve",
       "reviews": "{n} submissions to review",
       "and": ", "
     }

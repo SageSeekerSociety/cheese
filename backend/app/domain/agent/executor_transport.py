@@ -90,7 +90,7 @@ SCRATCH_REFUSED = (
     "这个会话在支线里，改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器"
     "不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这由会话所在"
     "的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；有人要做这件事时，"
-    "用 cheese_task 把支线转为任务。"
+    "用 cheese_task(action=open) 把支线转为任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -257,7 +257,7 @@ def _claimed(token: str, claim: str) -> bool:
     (``sandbox_auth.bind_resource_token``): ``ro``, issued to only read the
     machine, or ``scratch``, whose work is not kept. Read off the token's own
     claims: the refusal's body is the backend's wording, not a contract."""
-    body = token.rpartition(".")[0].removeprefix("cxss_")
+    body = (token.split(".") + ["", ""])[1]
     try:
         claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError:
@@ -506,7 +506,7 @@ class PlatformHost:
         #: reports is known to be that run's (`presentation.task_presentation`).
         self.run = run
         #: Ask this session's harness to compact its context, for the one
-        #: tool that does (`cheese_compact`); a session with none refuses.
+        #: tool that does (`cheese_session(action=compact)`); a session with none refuses.
         self.compact = compact
 
     def request(self, plan):
@@ -523,8 +523,7 @@ class PlatformHost:
         on_the_machine(self.invoke, "true", f"{self.call_id}-wait", timeout_ms=60000)
 
     def sync_task(self, task_id):
-        # Pushing can include uploading a backup bundle; the CLI's own ceiling for
-        # that upload is two minutes, the Bash tool's is ten.
+        # A push to the forge can be slow; the Bash tool's ceiling is ten minutes.
         on_the_machine(
             self.invoke,
             "cheese sync --task " + shlex.quote(str(uuid.UUID(task_id))),
@@ -701,6 +700,48 @@ class RemoteClient:
             else os.environ.get("CHEESE_TOKEN", "")
         )
 
+    def _transcript(self, query):
+        """This session's transcript, as the platform answers for ``query``.
+
+        The transcript itself is on the session host, which this machine does
+        not reach; the platform relays the question to the session's runner
+        and hands back what it says (`topic_transcript_chunks`). Nothing the
+        caller writes names a path: which file is meant is this session's
+        own, decided by the credential and the room it names.
+        """
+        topic = os.environ.get("CHEESE_TOPIC")
+        if not topic:
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session cannot read its transcript: it names no room"
+            )
+        answer = self.platform_request(
+            {
+                "method": "GET",
+                "path": f"/topics/{topic}/session-transcript?{query}",
+            }
+        )
+        payload = json.loads(answer["value"]["stdout"])
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+            raise RuntimeError("The platform answered nothing about the transcript")
+        return data
+
+    def transcript_chunk(self, params):
+        """One chunk of this session's transcript: an offset and a size."""
+        query = f"offset={int(params['offset'])}&size={int(params['size'])}"
+        return self._transcript(query)
+
+    def transcript_path(self):
+        """Where the session host spells this session's transcript, or None.
+
+        The path is the session host's, and the build names it in what it
+        tells the model after a compaction. This machine mounts its read-only
+        view at exactly that path (`bootstrap.py` `mount_transcript`), so the
+        name resolves where the model's tools run.
+        """
+        return self._transcript("path=1").get("path")
+
     def platform_request(self, args):
         method = args.get("method", "GET").upper()
         path = args.get("path", "")
@@ -736,15 +777,12 @@ class RemoteClient:
                     headers={
                         **transport.transport.headers,
                         "Content-Type": "application/json",
-                        "X-Cheese-Token": token,
+                        "Authorization": f"Bearer {token}",
                         **(
                             {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
                             if os.environ.get("CHEESE_TURN")
                             else {}
                         ),
-                        # What a person's 芝士 does for them once its gate let
-                        # it (`assistant.passes`).
-                        **({"X-Cheese-Pass": args["pass"]} if args.get("pass") else {}),
                         # The run of the session this call is made in
                         # (`PlatformHost.run`).
                         **({RUN_HEADER: args["run"]} if args.get("run") else {}),
@@ -892,7 +930,7 @@ class RemoteClient:
                 body=body,
                 headers={
                     "Content-Type": "application/json",
-                    "X-Cheese-Token": token,
+                    "Authorization": f"Bearer {token}",
                     **publisher.transport.headers,
                     **(
                         {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
@@ -1462,7 +1500,7 @@ class RemoteClient:
                         body=payload,
                         headers={
                             "Content-Type": "application/json",
-                            "X-Cheese-Token": self.execution_token(),
+                            "Authorization": f"Bearer {self.execution_token()}",
                             **self.transport.headers,
                         },
                     )

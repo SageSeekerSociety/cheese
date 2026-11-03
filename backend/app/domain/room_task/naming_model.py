@@ -16,6 +16,7 @@ re-exported by `naming.py`, so no call point moved.
 """
 
 import asyncio
+import html
 import json
 import logging
 import re
@@ -113,10 +114,15 @@ _PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
 
 
 def normalize_title(raw: object) -> str | None:
-    """The model's title, cleaned; None when there is nothing usable."""
+    """The model's title, cleaned; None when there is nothing usable.
+
+    The model read the task with ``&``, ``<`` and ``>`` written as entities
+    (`naming_material._escape`), and a title it takes from those words comes
+    back written the same way. Decoding here gives the plain text a title is
+    stored as; the pages escape it when they show it."""
     if not isinstance(raw, str):
         return None
-    title = " ".join(raw.split())
+    title = " ".join(html.unescape(raw).split())
     title = re.sub(r"^(标题|话题名|名字|title)\s*[:：]\s*", "", title, flags=re.I)
     for _ in range(3):
         title = title.strip().rstrip(_TRAILING).strip()

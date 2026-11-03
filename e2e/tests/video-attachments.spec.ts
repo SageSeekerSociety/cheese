@@ -82,21 +82,27 @@ test('a video selected from the album uploads, persists and plays only on reques
   const unauthorized = await request.get(response.url());
   expect([401, 403]).toContain(unauthorized.status());
 
-  const player = row.locator('video');
+  const card = row.locator('.video-card');
+  const player = card.locator('video');
   await expect(player).toBeVisible();
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.readyState)).toBeGreaterThanOrEqual(1);
+  // 哪一套控件由指针类型决定：触屏（粗指针）交还给系统播放器——全屏、画中画、手势
+  // 都得靠它；精确指针才摆自绘那一条。浏览器模拟的这个值不一定和真实手机一致，所以
+  // 断言的是「实现跟着这个媒体查询走」，不是在模拟器里假装它一定是粗指针。
+  const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
   expect(await player.evaluate((video: HTMLVideoElement) => ({
     paused: video.paused, autoplay: video.autoplay, controls: video.controls, inline: video.playsInline,
-  }))).toEqual({ paused: true, autoplay: false, controls: true, inline: true });
+  }))).toEqual({ paused: true, autoplay: false, controls: coarse, inline: true });
+  await expect(card.getByTestId('video-bar')).toHaveCount(coarse ? 0 : 1);
   const bounds = await player.boundingBox();
   expect(bounds).not.toBeNull();
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
 
-  // Space is the native control's explicit keyboard play/pause action.
-  await player.press('Space');
+  // 播放器自己的动作照旧：播到某一刻、停、拖到 0.05 秒。
+  await player.evaluate((video: HTMLVideoElement) => video.play());
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(0.15);
-  await player.press('Space');
+  await player.evaluate((video: HTMLVideoElement) => video.pause());
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
   await player.evaluate((video: HTMLVideoElement) => { video.currentTime = 0.05; });
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.seeking)).toBe(false);
@@ -135,7 +141,7 @@ for (const [suffix, mimeType] of [['avi', 'video/x-msvideo'], ['mkv', 'video/x-m
     await page.reload();
     const file = row.locator('.im-file-link');
     await expect(file).toBeVisible();
-    await expect(row.locator('.attachment-video, video')).toHaveCount(0);
+    await expect(row.locator('.video-card, video')).toHaveCount(0);
     const [download] = await Promise.all([page.waitForEvent('download'), file.click()]);
     expect(download.suggestedFilename()).toBe(name);
     const savedPath = testInfo.outputPath(`download-${suffix}`);

@@ -20,13 +20,16 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import TaskFormClassify from '@/components/tasks/form/TaskFormClassify.vue'
 import TaskFormGrading from '@/components/tasks/form/TaskFormGrading.vue'
 import TaskFormMore from '@/components/tasks/form/TaskFormMore.vue'
+import TaskFormPart from '@/components/tasks/form/TaskFormPart.vue'
 import TaskFormParticipation from '@/components/tasks/form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from '@/components/tasks/form/TaskFormPrivacyDialog.vue'
 import TaskFormSection from '@/components/tasks/form/TaskFormSection.vue'
+import TaskFormStages from '@/components/tasks/form/TaskFormStages.vue'
 import TaskFormTime from '@/components/tasks/form/TaskFormTime.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import TaskMentorNotice from '@/components/tasks/TaskMentorNotice.vue'
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 
 /** 只吃 vuetify 的那几件。 */
 const UI: CatalogNeed[] = ['vuetify']
@@ -73,6 +76,7 @@ const time = (extra: Record<string, unknown> = {}) => ({
   registrationStartAt: null,
   deadline: new Date(2026, 9, 14),
   defaultDeadline: 30,
+  startMode: 'APPLY',
   registrationStartAtControl: OK,
   deadlineControl: OK,
   defaultDeadlineControl: OK,
@@ -95,7 +99,6 @@ const more = (extra: Record<string, unknown> = {}) => ({
   accessControlEnabled: false,
   accessDomainGroupIds: [],
   requireRealName: false,
-  teachingCustom: false,
   ...extra,
 })
 
@@ -114,6 +117,23 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         props: { title: '时间' },
         slot: '这里是这一节的字段。',
         expect: '时间',
+      },
+    ],
+  },
+  {
+    id: 'task-form-part',
+    title: 'TaskFormPart',
+    about: '发题表单的一大块：题目内容、AI 的设置、发布设置。块名是一行引导词，下面接这一块的几节。',
+    file: 'src/components/tasks/form/TaskFormPart.vue',
+    component: TaskFormPart,
+    needs: UI,
+    states: [
+      {
+        name: '带一句说明的一块',
+        note: '块名下面可以有一句说明，说这一块管到哪里。',
+        props: { title: 'AI 的设置', hint: '用于从本题建出的项目' },
+        slot: '这里是这一块的几节。',
+        expect: 'AI 的设置',
       },
     ],
   },
@@ -146,11 +166,11 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
           minTeamSize: 3,
           maxTeamSize: 5,
         }),
-        expect: '报名通过后锁定',
+        expect: '申请通过后锁定',
       },
       {
         name: '有导师',
-        note: '勾上后从空间管理员里挑导师，默认是出题人自己；领取者领取前会看到并同意。',
+        note: '勾上后从空间管理员里挑导师，默认是出题人自己；申请的人申请前会看到并同意。',
         props: participation({
           mentorsJoin: true,
           mentors: ['zhoulq'],
@@ -159,7 +179,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
             { title: '刘洋', value: 'liuyang' },
           ],
         }),
-        expect: '把导师加入领取者的项目',
+        expect: '把导师加入参与者的项目',
       },
       {
         name: '最多比最少还少（标红）',
@@ -177,14 +197,14 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-mentor-notice',
     title: 'TaskMentorNotice',
-    about: '领取确认框里说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
+    about: '开始做这道题时说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
     file: 'src/components/tasks/TaskMentorNotice.vue',
     component: TaskMentorNotice,
     needs: UI_T,
     states: [
       {
         name: '一位导师',
-        note: '领题前说清，学生同意后才能领。',
+        note: '开始做（用这道题新建项目）前说清，学生同意后才能开始；申请时不问。',
         props: { names: '周立群' },
         expect: '会作为导师加入你的项目',
       },
@@ -225,6 +245,25 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         expect: '合计 100 分',
       },
       {
+        name: '分了阶段',
+        note: '提交项和评分要点按阶段分组，每组下面加的那一项属于这个阶段，各阶段分别合计。',
+        props: {
+          stages: [
+            { id: 'need', name: '需求分析', description: '', dueAt: null },
+            { id: 'impl', name: '实现', description: '', dueAt: null },
+          ],
+          submissionSchema: [
+            { prompt: '需求文档', type: 'TEXT', stage: 'need' },
+            { prompt: 'csim.c 源文件', type: 'FILE', stage: 'impl' },
+          ],
+          rubric: [
+            { item: '完整性', points: 20, criteria: '覆盖题目列出的全部功能', stage: 'need' },
+            { item: '正确性', points: 80, criteria: '8 组访存记录全对', stage: 'impl' },
+          ],
+        },
+        expect: '阶段 2：实现',
+      },
+      {
         name: '有一行没写名称（标红）',
         note: '写了评分标准却没写项目名称：点过发布后那一格标红，下面一句说为什么。',
         props: { rubric: [{ item: '', points: 10, criteria: '格式规范' }], missingName: true },
@@ -233,9 +272,91 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'task-form-stages',
+    title: 'TaskFormStages',
+    about:
+      '「阶段」那一节：把题目分成几个阶段，每个阶段有名称、要求和截止日期，可以增删、调整先后。提交项和评分要点跟着阶段走。',
+    file: 'src/components/tasks/form/TaskFormStages.vue',
+    component: TaskFormStages,
+    needs: UI_T,
+    args: { stages: [], submissionSchema: [{ prompt: '提交文件', type: 'FILE' }], rubric: [] },
+    states: [
+      {
+        name: '不分阶段',
+        note: '新发一道题时不分阶段：只有一句说明和添加按钮，下面的提交与评分和以前一样。',
+        props: {},
+        expect: '不分阶段',
+      },
+      {
+        name: '两个阶段',
+        note: '每个阶段一行名称和截止日期，下面一格要求；可以上移、下移、删除。',
+        props: {
+          stages: [
+            {
+              name: '需求分析',
+              description: '交一份需求文档，说明要实现哪些功能',
+              dueAt: Date.UTC(2026, 10, 1, 15, 59),
+            },
+            { name: '实现与测试', description: '', dueAt: null },
+          ],
+        },
+        expect: '添加阶段',
+      },
+      {
+        name: '有阶段没写名称（标红）',
+        note: '点过发布后，没写名称的阶段那一格标红，下面一句说为什么。',
+        props: { stages: [{ name: '', description: '', dueAt: null }], missingName: true },
+        expect: '每个阶段都需要填写名称',
+      },
+    ],
+  },
+  {
+    id: 'task-stage-timeline',
+    title: 'TaskStageTimeline',
+    about:
+      '阶段时间轴：题目的阶段从左到右排开，写名称和截止时间。给了某个人的状态就写他每个阶段走到哪一步，给了人数就写全体的分布。',
+    file: 'src/components/tasks/TaskStageTimeline.vue',
+    component: TaskStageTimeline,
+    needs: UI_T,
+    args: {
+      stages: [
+        { name: '需求分析', description: '', dueAt: Date.UTC(2026, 10, 1, 15, 59) },
+        { name: '实现', description: '', dueAt: Date.UTC(2026, 10, 15, 15, 59) },
+        { name: '报告', description: '', dueAt: null },
+      ],
+    },
+    states: [
+      { name: '只有时间轴', note: '还没开始做，或者只是看题目有哪些阶段。', props: {}, expect: '需求分析' },
+      {
+        name: '学生自己的进度',
+        note: '第一个阶段通过了，第二个交了在等批改，第三个还没交。',
+        props: { statuses: ['PASSED', 'PENDING_REVIEW', 'NOT_SUBMITTED'] },
+        expect: '待批改',
+      },
+      {
+        name: '出题人看全体',
+        note: '每个阶段下面列各状态的人数。',
+        props: {
+          counts: [
+            { NOT_SUBMITTED: 2, PENDING_REVIEW: 5, PASSED: 20, REJECTED: 1 },
+            { NOT_SUBMITTED: 12, PENDING_REVIEW: 10, PASSED: 4, REJECTED: 2 },
+            { NOT_SUBMITTED: 28, PENDING_REVIEW: 0, PASSED: 0, REJECTED: 0 },
+          ],
+        },
+        expect: '已通过',
+      },
+      {
+        name: '选一个阶段',
+        note: '交作业和批改时，点一个阶段切过去；选中的那个名称下面加一道线。',
+        props: { selectable: true, current: 1, statuses: ['PASSED', 'NOT_SUBMITTED', 'NOT_SUBMITTED'] },
+        expect: '实现',
+      },
+    ],
+  },
+  {
     id: 'task-form-time',
     title: 'TaskFormTime',
-    about: '「时间」那一节：报名开始与截止（都可空）、领取后几天内完成。',
+    about: '「时间」那一节：开始方式、报名开始与截止（都可空）、申请制的题限时几天。',
     file: 'src/components/tasks/form/TaskFormTime.vue',
     component: TaskFormTime,
     needs: UI_T,
@@ -248,9 +369,21 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '完成期限没填（标红）',
-        note: '完成期限是必填的：领取那一刻按它算这个人的截止时间。',
+        note: '完成期限是必填的：从申请通过那天起按它算这个人的截止时间。',
         props: time({ defaultDeadline: undefined, defaultDeadlineControl: red('未填写完成期限') }),
         expect: '未填写完成期限',
+      },
+      {
+        name: '直接开始',
+        note: '直接开始的题设了截止日期所有人按它交，不设就没有截止；没有完成期限这一格。',
+        props: time({ startMode: 'DIRECT' }),
+        expect: '直接开始',
+      },
+      {
+        name: '已经有人领了（开始方式改不了）',
+        note: '有人申请或开始做之后，开始方式灰着，下面一行写明为什么。',
+        props: time({ startMode: 'APPLY', startModeLocked: true }),
+        expect: '开始方式不能再改',
       },
     ],
   },
@@ -279,7 +412,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-form-more',
     title: 'TaskFormMore',
-    about: '「更多设置」：可领取范围、实名、AI 指导。默认收起，收起时那一行写明现在设成了什么。',
+    about: '「更多设置」：可参与范围、实名。默认收起，收起时那一行写明现在设成了什么。',
     file: 'src/components/tasks/form/TaskFormMore.vue',
     component: TaskFormMore,
     needs: UI_T,
@@ -288,16 +421,15 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         name: '收起（全是默认）',
         note: '多数题目一样都不用改，所以收起；那一行不用点开就看得见现在是什么。',
         props: more(),
-        expect: '全部成员可领取',
+        expect: '全部成员可参与',
       },
       {
-        name: '收起（限了邮箱、要实名、单独写了指导）',
+        name: '收起（限了邮箱、要实名）',
         note: '限了哪几个邮箱域名组就写哪几个的名字。',
         props: more({
           accessControlEnabled: true,
           accessDomainGroupIds: [1],
           requireRealName: true,
-          teachingCustom: true,
         }),
         expect: '仅限 校内网络',
       },
@@ -316,6 +448,20 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         note: '上限是接口报的那个数，页面问来给它；问不到就不写那句话。',
         props: { files: [], uploading: false, maxFileBytes: 100 * 1024 * 1024 },
         expect: '添加文件',
+      },
+      {
+        name: '改题时：每一份都能换成新的一版',
+        note: '换上去的是新的一版，旧的一版留在题目资料库的历史里，题目跟着记一版。',
+        props: {
+          files: [
+            { id: '实验指导书.pdf', name: '实验指导书.pdf', size: 2_400_000 },
+            { id: 'starter.zip', name: 'starter.zip', size: 12_400_000 },
+          ],
+          uploading: false,
+          maxFileBytes: 100 * 1024 * 1024,
+          replaceable: true,
+        },
+        expect: 'starter.zip',
       },
       {
         name: '挂了两份、正在传第三份',

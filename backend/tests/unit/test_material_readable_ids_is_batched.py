@@ -1,7 +1,7 @@
 """``SpaceMaterialService.readable_material_ids`` 整批只查两次：关联表一次、管理员表一次。
 
 素材包一次带十几份，从前逐份调 ``may_read_outside_space``，每份一次关联查询、
-再逐板一次 ``is_space_admin``。这里用一个按表记账的假会话钉住次数，同时钉住
+再逐板一次 ``space_seats.runs``。这里用一个按表记账的假会话钉住次数，同时钉住
 判据没变：「所有成员」档对任何人可读，「仅管理员」档只对那块板的管理员可读。
 
 最后一条用例把实现换回逐份调用，证明两条计数断言会红 —— 计数器不是摆设。
@@ -19,6 +19,7 @@ from app.domain.space.models import (
     SpaceMaterial,
     SpaceMaterialVisibility,
 )
+from app.domain.space.repositories import SpaceAdminRelationRepository
 
 MEMBERS = SpaceMaterialVisibility.MEMBERS.value
 ADMINS = next(v.value for v in SpaceMaterialVisibility if v.value != MEMBERS)
@@ -75,7 +76,7 @@ class _CountingSession:
         boards = _as_set(params["space_id_1"])
         user_id = params["user_id_1"]
         managed = [b for b in boards if user_id in ADMINS_BY_BOARD.get(b, set())]
-        # 单行查询（``is_space_admin``）要一个对象；批量查询只要 space_id。
+        # 单行查询（``space_seats.runs``）要一个对象；批量查询只要 space_id。
         whole_row = stmt.column_descriptions[0]["type"] is SpaceAdminRelation
         return _Result(
             [SimpleNamespace(space_id=b) for b in managed] if whole_row else managed
@@ -137,7 +138,7 @@ async def test_single_material_gate_keeps_its_answer() -> None:
 
 
 async def _per_material(self, *, material_ids, user_id) -> set[int]:
-    """故意违规：逐份走老路 —— 每份一次关联查询，再逐板 ``is_space_admin``。"""
+    """故意违规：逐份走老路 —— 每份一次关联查询，再逐板查一次管理员关系。"""
     readable: set[int] = set()
     for material_id in material_ids:
         links = await self._links.list_live_by_material_ids(material_ids=[material_id])
@@ -145,9 +146,10 @@ async def _per_material(self, *, material_ids, user_id) -> set[int]:
             readable.add(material_id)
             continue
         for link in links:
-            if await material_service.is_space_admin(
-                self._session, space_id=link.space_id, user_id=user_id
-            ):
+            relation = await SpaceAdminRelationRepository(self._session).get_relation(
+                link.space_id, user_id
+            )
+            if relation is not None:
                 readable.add(material_id)
                 break
     return readable

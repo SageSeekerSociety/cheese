@@ -2,7 +2,7 @@
   "name": "default",
   "home": "workspace-overview",
   "nav": {
-    "rail": ["home", "projects", "market", "add"],
+    "rail": ["home", "projects", "add"],
     "tabs": ["home", "workspace", "inbox"],
     "project": ["project-library", "project-members", "project-routines", "project-skills"]
   },

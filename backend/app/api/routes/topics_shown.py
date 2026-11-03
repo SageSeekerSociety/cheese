@@ -182,6 +182,33 @@ def _shown_kind(mime: str | None) -> str:
     return "file"
 
 
+def _serve_meta(raw: object) -> dict | None:
+    """The launch spec ``cheese serve`` records for waking a sleeping app."""
+    if not isinstance(raw, dict):
+        return None
+    port = raw.get("port")
+    if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
+        return None
+    out: dict = {"port": port}
+    for key, limit in (
+        ("command", 2048),
+        ("cwd", 1024),
+        ("home", 1024),
+    ):
+        val = raw.get(key)
+        if isinstance(val, str) and val.strip():
+            out[key] = val.strip()[:limit]
+    raw_task = raw.get("task_id")
+    if isinstance(raw_task, str) and raw_task.strip():
+        try:
+            out["task_id"] = str(uuid.UUID(raw_task.strip()))
+        except ValueError:
+            pass
+    if raw.get("checkout") is True:
+        out["checkout"] = True
+    return out if "command" in out else None
+
+
 @router.post("/{topic_id}/shown", dependencies=[ROUTE_DECIDES])
 async def show_in_room(
     topic_id: uuid.UUID,
@@ -239,12 +266,15 @@ async def show_in_room(
     saved_at: datetime | None = None
     # `app` and `mcp-app` carry no bytes of their own (a note and a pointer).
     carries_bytes = as_ not in {"app", "mcp-app"}
-    #: A person writing the room's files does it on the files' own terms,
-    #: whichever door they use: their role has to change files.
+    #: A person writing the room's files or declaring a launch spec does it on
+    #: the room's own terms: their role has to change content.
     person = actor.authenticated and actor.via != "cheese"
+    if person and (
+        (carries_bytes and ("content" in body or "content_b64" in body))
+        or (as_ == "app" and "serve" in body)
+    ):
+        await require_role(db, actor, place.project_id, Permission.edit_content)
     if carries_bytes and ("content" in body or "content_b64" in body):
-        if person:
-            await require_role(db, actor, place.project_id, Permission.edit_content)
         # A remote machine's file is not in the backend worktree until published.
         # Office files and PDFs are not text, so they travel base64-encoded; a
         # caller that sends them as `content` would either fail to read them or
@@ -324,6 +354,7 @@ async def show_in_room(
         )
         if repeat is not None:
             return ok({**repeat.model_dump(mode="json"), "already_shown": True})
+    serve = _serve_meta(body.get("serve")) if as_ == "app" else None
     block = await add_shown_block(
         db,
         project_id=place.project_id,
@@ -331,6 +362,7 @@ async def show_in_room(
         path=path,
         author=author,
         mime=mime,
+        meta={"serve": serve} if serve is not None else None,
     )
     payload = block.model_dump(mode="json")
     await get_broker().publish(

@@ -41,8 +41,10 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
     topic = await api.create_topic(project["id"], "新成员答疑", "eval-owner")
     ctx.log.info("C1 setup: project=%s topic=%s", project["id"], topic["id"])
 
-    for fact in MEMORIES:
-        await api.seed_memory(project["id"], fact)
+    for index, fact in enumerate(MEMORIES):
+        await api.seed_memory(
+            project["id"], f"c1-fact-{index}", fact, as_handle="eval-owner"
+        )
     seeded = await api.list_memory(project["id"])
     ctx.log.info("C1 seeded %d memories", len(seeded))
 
@@ -56,7 +58,10 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
     blocks = await api.list_blocks(topic["id"])
     replies = ai_messages(blocks)
     ctx.log.info(
-        "C1 turn %s: %d frames, %d AI replies", turn["status"], len(frames), len(replies)
+        "C1 turn %s: %d frames, %d AI replies",
+        turn["status"],
+        len(frames),
+        len(replies),
     )
 
     checks = [
@@ -78,9 +83,9 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
         Check(
             name="summon_acked",  # 收到请求先 ✅ (spec §14.2, platform-side)
             passed=any(f.get("type") == "reaction" for f in frames),
-            detail="✅ reaction frame observed" if any(
-                f.get("type") == "reaction" for f in frames
-            ) else "no reaction frame",
+            detail="✅ reaction frame observed"
+            if any(f.get("type") == "reaction" for f in frames)
+            else "no reaction frame",
         ),
     ]
 

@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -27,12 +28,12 @@ space_admin_relation_seq = Sequence("space_admin_relation_seq")
 space_domain_group_seq = Sequence("space_domain_group_seq")
 space_domain_group_domain_seq = Sequence("space_domain_group_domain_seq")
 space_member_seq = Sequence("space_member_seq")
-space_invite_code_seq = Sequence("space_invite_code_seq")
 space_material_seq = Sequence("space_material_seq")
 
 
 class Space(Base):
     __tablename__ = "space"
+    __table_args__ = (Index("uq_space_join_token", "join_token", unique=True),)
 
     id: Mapped[int] = mapped_column(BigInteger, space_seq, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -51,8 +52,30 @@ class Space(Base):
     enable_rank: Mapped[bool] = mapped_column(
         "enable_rank", Boolean, nullable=False, default=False
     )
-    # There is no visibility tier. Who can see a 题目版 exists is answered by
-    # membership and nothing else — see ``SpaceMember``.
+    # Who reads a 题目版 besides its owner, admins and members. NULL is a
+    # members-only space, the default: its ``SpaceMember`` rows are everyone
+    # else who sees it. A list of registered-email suffixes (``["ruc.edu.cn"]``)
+    # is an open space: every signed-in person whose email domain is one of
+    # them, or ends in ``.`` plus one, reads it and takes part without joining,
+    # and its member rows are only the people outside the scope an admin named.
+    # Written only by an approved ``SpaceOpenRequest`` (widening) or by the
+    # owner narrowing it; the rule is ``SpaceRepository.build_reader_predicate``.
+    # `none_as_null`: None writes SQL NULL, not the JSON scalar `null`, which
+    # the predicate would try to read as an array.
+    open_scope: Mapped[list[str] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    # The space's join link (``/space-invites/<token>``), the way a member gets
+    # in besides being added by an owner or admin: permanent until one of them
+    # resets it, which makes the old link answer like a space that does not
+    # exist. NULL until first asked for; ``SpaceService.join_link`` mints it.
+    join_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Whether joining through the link waits for an owner or admin. Off by
+    # default: a course's members draw on nothing, so the link alone lets a
+    # student in (a team's switch defaults on for the opposite reason).
+    join_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     visible_task_limit: Mapped[int | None] = mapped_column(
         "visible_task_limit", Integer, nullable=True
     )
@@ -83,6 +106,59 @@ class Space(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceOpenRequestStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class SpaceOpenRequest(Base):
+    """A space owner's request to open the space to an email-suffix scope.
+
+    Opening a space widens who reads it from its members to everyone in the
+    scope, so it waits for the platform's review, as a new space does; until a
+    reviewer approves it the space keeps the mode it had. Approving copies
+    ``scope`` onto ``Space.open_scope``. At most one request per space is
+    pending; asking again while one waits rewrites that one, and going back to
+    members-only deletes it, since nobody has reviewed it yet.
+    """
+
+    __tablename__ = "space_open_request"
+    __table_args__ = (
+        Index("ix_space_open_request_space_id", "space_id"),
+        Index(
+            "uq_space_open_request_pending",
+            "space_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED')",
+            name="ck_space_open_request_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: The suffixes the space would read to once approved.
+    scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: Why a reviewer sent it back; NULL otherwise.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The reviewer's handle.
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )
 
 
@@ -164,8 +240,8 @@ class SpaceCategory(Base):
 class SpaceMaterialVisibility(str, Enum):
     """谁能看到这一份空间资料。
 
-    两档，没有第三档：「所有成员」是**这个板子里的人**（``SpaceRepository.is_member``
-    判的那一批）都能看；「仅管理员」只有所有者与管理员看得到，成员看清单时这一行
+    两档，没有第三档：「所有成员」是**读得到这个板子的人**（``SpaceRepository.is_reader``
+    判的那一批，开放空间里包括范围内的人）都能看；「仅管理员」只有所有者与管理员看得到，成员看清单时这一行
     根本不出现。档位是**读**的开关，不是写的开关 —— 两档都由管理员传。
     """
 
@@ -176,23 +252,21 @@ class SpaceMaterialVisibility(str, Enum):
 class SpaceMaterial(Base):
     """挂在题目板上的一份共用材料 (#944) —— 一个空间、一份文件、一档可见性。
 
-    和 ``task_attachment`` 同构，理由也一样：``material`` 表自己有名字和地址、
-    没有归属，**一份文件在不同的上下文里可以是不同东西**，所以归属写在另一边，
-    这里只管「哪个板子上的哪一份」和「谁看得到」。
+    ``material`` 表自己有名字和地址、没有归属，**一份文件在不同的上下文里可以是
+    不同东西**，所以归属写在另一边，这里只管「哪个板子上的哪一份」和「谁看得到」。
 
-    **为什么不复用 ``task_attachment``：** 那是「某道题的附件」，判据是「看得见这道
-    题的人」；这里是「这块板共用的资料」，判据是「这块板的成员 / 管理员」。两者
-    的读者范围不同（材料可以发给没领任何题的人），写在一张表上会让两套判据在
-    同一个 where 里互相污染。
+    **为什么不放进题目资料库：** 那是「某道题的材料」，判据是「看得见这道题的人」；
+    这里是「这块板共用的资料」，判据是「这块板的成员 / 管理员」。两者的读者范围
+    不同（材料可以发给没领任何题的人），放在一处会让两套判据在同一个 where 里互相
+    污染。
 
     **为什么挂在 ``material`` 而不是 ``attachment``：** 教学配置里的
     ``material_ids``（``app.domain.task.protocol.Teaching``）references 的正是
     ``material``，题目上勾选参考资料是把这里的 ``material_id`` 直接写进去，中间
     不需要做 id 翻译。
 
-    删除是**软删这一行**，``material`` 行与存储上的字节都留着 —— 同
-    ``TaskAttachmentService.remove`` 的理由：一道题删掉附件不该让另一个引用它的
-    地方变成裂图。
+    删除是**软删这一行**，``material`` 行与存储上的字节都留着：一块板删掉一份材料，
+    不该让另一个引用它的地方变成裂图。
     """
 
     __tablename__ = "space_material"
@@ -354,7 +428,11 @@ class SpaceClassificationTagRelation(Base):
 
 
 class SpaceMember(Base):
-    """A user who is *in* a 题目版 — the whole of who can see it.
+    """A user who is *in* a 题目版. In a members-only space these rows are the
+    whole of who sees it besides its managers; in an open space (see
+    ``Space.open_scope``) they are the people outside its scope an admin named,
+    who then read it as anyone in scope does. Nobody gets a row by reading,
+    claiming or publishing in an open space.
 
     Membership and the admin relation are two different questions: this row
     says "this 题目版 is mine to see and I am counted among its members",
@@ -390,23 +468,6 @@ class SpaceMember(Base):
     id: Mapped[int] = mapped_column(BigInteger, space_member_seq, primary_key=True)
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    # 这个人是怎么进来的: the ``space_invite_code`` row this membership came from,
-    # or NULL for "no code is on record". Two different situations share that
-    # NULL and this column cannot tell them apart, so nothing downstream should
-    # try to:
-    #
-    # * rows written before this column existed — nobody recorded which code
-    #   was taken, and the migration deliberately backfills nothing (naming a
-    #   code for an old member would be inventing history);
-    # * someone the owner put in directly (``SpaceService.add_member``), where
-    #   the truth is "no code was involved".
-    #
-    # Both read as 未知, which is not the same claim as "no code", and is the
-    # only honest thing to say for the first group.
-    #
-    # No FK, like every other id in this module; and the code it names stays
-    # readable after a revoke, because revoking is a soft delete.
-    invite_code_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -419,47 +480,49 @@ class SpaceMember(Base):
     )
 
 
-class SpaceInviteCode(Base):
-    """A code that, when redeemed, makes the redeemer a member of a 题目版.
+class SpaceJoinRequest(Base):
+    """Someone asking to join a 题目版 through its link, while the link asks
+    for approval.
 
-    Every 题目版 is created holding one, because a 题目版 nobody else can
-    reach is not much use: the creator hands the code out and the people who
-    take it are the ones who can see the board at all.
-
-    Deliberately NOT the platform's ``invite_code`` table (that one admits a
-    person to the platform at registration and has nothing to do with any
-    space); the two share a shape and nothing else, so they share no table.
+    One kind of thing, so its own table — not the team's application table,
+    whose rows belong to a team. A request is answered once: approved (the
+    person becomes a member) or rejected; ``decided_by`` / ``decided_at`` say
+    by whom and when. At most one request per person waits on a space at a
+    time, which the partial unique index holds even when two clicks race.
     """
 
-    __tablename__ = "space_invite_code"
-
-    id: Mapped[int] = mapped_column(BigInteger, space_invite_code_seq, primary_key=True)
-    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    code: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, index=True
+    __tablename__ = "space_join_request"
+    __table_args__ = (
+        Index(
+            "uq_space_join_request_pending",
+            "space_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+        Index("ix_space_join_request_space_id", "space_id"),
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED')",
+            name="ck_space_join_request_status",
+        ),
     )
-    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    expires_at: Mapped[datetime | None] = mapped_column(
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id", ondelete="CASCADE", name="fk_space_join_request_space_id_space"
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    decided_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Who minted it. Nullable because a row written before the field was read
-    # back — or by a caller that had no actor — may hold nobody; the roster
-    # renders that as 未知 rather than as an empty name.
-    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    # 这张码给谁 / 干什么用, in the maker's own words ("十月这批同学"). Optional:
-    # a code that says nothing about itself is a normal code, and every code
-    # minted before this column is exactly that.
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )
 
 

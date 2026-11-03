@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import delete, event, select
 
 from app.core.config import Settings, settings
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
@@ -32,6 +33,7 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
+    HostReading,
     MachineStatus,
     SandboxHome,
     WarmMachine,
@@ -44,6 +46,7 @@ from app.domain.machine.services import (
 )
 from app.domain.run_record.models import RunRecord
 from app.domain.user.repositories import UserRepository
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
@@ -220,6 +223,8 @@ def pool(client, monkeypatch):
     monkeypatch.setattr(settings, "cloud_pool_min_free_slots", 0)
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 600)
     monkeypatch.setattr(settings, "cloud_pool_max_hosts", 20)
+    # These tests are about the pool sized by demand: no fixed floor of hosts.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     online: set[str] = set()
     monkeypatch.setattr(device_hub, "is_online", lambda device: device in online)
     return Case(client, FakeMicroCloud(), online)
@@ -256,9 +261,7 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
     return alice[0], hers, his, her_device, his_device
 
 
-LOST_LINE = (
-    "环境不再响应，已换成新的：每次做完时推送和备份的工作会带过来，之后才做的改动不在了"
-)
+LOST_LINE = str(say("sandboxLost"))
 
 
 def _warm_machine_ready(case: Case) -> str:
@@ -274,7 +277,7 @@ def _warm_machine_ready(case: Case) -> str:
                     team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="warm-1",
                     name="warm-1",
-                    token="warm-token",
+                    token_digest=digest_token("warm-token"),
                     owner_user_id=owner.id,
                     supply=Supply.cloud,
                     created_at=datetime.now(UTC),
@@ -322,6 +325,64 @@ def test_sessions_of_two_projects_share_a_host_with_room(pool):
     # Placing again answers the same host and asks the provider for nothing.
     assert pool.place("alice", alice) == first
     assert len(pool.cloud.created) == 1
+
+
+def _empty_host(pool, host_id: uuid.UUID, *, draining: bool = False) -> None:
+    """Destroy every sandbox on a host, as the idle sweep does, and optionally
+    make it one the pool is rebuilding. Its project stores stay: they are
+    what outlive a sandbox."""
+
+    async def go():
+        async with pool.client.test_request_factory() as db:
+            await db.execute(delete(SandboxHome).where(SandboxHome.host_id == host_id))
+            if draining:
+                host = await db.get(CloudHost, host_id)
+                host.draining_since = datetime.now(UTC)
+            await db.commit()
+
+    pool.run(go)
+
+
+def test_a_host_that_has_this_projects_store_beats_the_one_packing_would_choose(pool):
+    """Packing puts the next sandbox on the host with the fewest free slots.
+    A host that has placed this project before is chosen first instead: its
+    store — dependencies, build cache — is there, and a sandbox started on it
+    does not fetch and build them again."""
+    alice = pool.room("alice", 2)
+    [bob] = pool.room("bob", 1)
+    [carol] = pool.room("carol", 1)
+
+    first = pool.place("alice", alice[0])
+    pool.up(first)
+    # Bob fills the host, so Carol's sandbox makes a second one.
+    assert pool.place("bob", bob) == first
+    second = pool.place("carol", carol)
+    assert second != first
+    pool.up(second)
+
+    # Alice's sandbox and Bob's are gone; Alice's project store is not, and
+    # the first host is now the emptier of the two.
+    _empty_host(pool, first)
+
+    assert pool.place("alice", alice[1]) == first
+
+
+def test_a_draining_host_is_not_chosen_for_its_store(pool):
+    """A host being rebuilt takes no new sandbox however good its store is:
+    what is placed there would be destroyed with it."""
+    alice = pool.room("alice", 2)
+    [bob] = pool.room("bob", 1)
+    [carol] = pool.room("carol", 1)
+
+    cached = pool.place("alice", alice[0])
+    pool.up(cached)
+    assert pool.place("bob", bob) == cached
+    other = pool.place("carol", carol)
+    assert other != cached
+    pool.up(other)
+    _empty_host(pool, cached, draining=True)
+
+    assert pool.place("alice", alice[1]) == other
 
 
 def _enrolled_long_ago_and_offline(pool, host_id, device, *, offline_for=None):
@@ -398,6 +459,54 @@ def test_a_host_takes_no_more_sandboxes_than_its_memory_holds(pool, monkeypatch)
     [bob] = pool.room("bob", 1)
     first = pool.place("alice", alice)
     pool.up(first)
+
+    assert pool.place("bob", bob) != first
+
+
+def _reads(pool, host_id: uuid.UUID, *, available_gib: int, pressure: float) -> None:
+    """The host's disk check has just read its memory."""
+
+    async def go():
+        async with pool.client.test_request_factory() as db:
+            db.add(
+                HostReading(
+                    host_id=host_id,
+                    read_at=datetime.now(UTC),
+                    disk_bytes=64 << 30,
+                    disk_free_bytes=40 << 30,
+                    memory_bytes=4 << 30,
+                    memory_available_bytes=available_gib << 30,
+                    memory_pressure_some_avg60=pressure,
+                )
+            )
+            await db.commit()
+
+    pool.run(go)
+
+
+def test_a_full_host_takes_one_more_when_it_reads_the_memory_free(pool, monkeypatch):
+    """Its one 3 GiB slot is taken, but the host reads 8 GiB available and no
+    pressure: the second session's sandbox goes on it, up to its two cores.
+    The third goes to another host."""
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    [alice] = pool.room("alice", 1)
+    [bob] = pool.room("bob", 1)
+    [carol] = pool.room("carol", 1)
+    first = pool.place("alice", alice)
+    pool.up(first)
+    _reads(pool, first, available_gib=8, pressure=0.0)
+
+    assert pool.place("bob", bob) == first
+    assert pool.place("carol", carol) != first
+
+
+def test_a_full_host_under_memory_pressure_takes_no_more(pool, monkeypatch):
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    [alice] = pool.room("alice", 1)
+    [bob] = pool.room("bob", 1)
+    first = pool.place("alice", alice)
+    pool.up(first)
+    _reads(pool, first, available_gib=8, pressure=20.0)
 
     assert pool.place("bob", bob) != first
 
@@ -730,7 +839,7 @@ def test_the_device_owner_admits_tool_calls_only_on_live_hosts(pool):
                     team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="host-device",
                     name="host",
-                    token="host-token",
+                    token_digest=digest_token("host-token"),
                     owner_user_id=owner.id,
                     supply=Supply.cloud,
                     created_at=datetime.now(UTC),

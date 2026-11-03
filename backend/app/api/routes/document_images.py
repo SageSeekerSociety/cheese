@@ -26,12 +26,12 @@ from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
 from app.api.doc_access import reach
+from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
-from app.domain.library.shelf import Shelf
 from app.domain.project.room_files import (
     ARTIFACT_MIME,
     artifact_kind_for,
@@ -73,7 +73,8 @@ async def document_image(
         raise UnprocessableEntityError(say("docTeamNoImages"))
     name = library.library_name(clean)
     if name is not None:
-        data = await library_records.read(db, Shelf.of_project(project_id), name)
+        shelf = await shelf_for(db, project_id)
+        data = await library_records.read(db, shelf, name)
     elif reached.place is not None:
         data = await asyncio.to_thread(
             library.read_room_file, project_id, reached.place.room_id, clean

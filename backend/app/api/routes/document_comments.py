@@ -42,7 +42,7 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_instance.adapters import project_team
 from app.domain.living_doc import collab
 from app.domain.living_doc.comment_schemas import CommentIn, ReplyIn, ThreadMutation
-from app.domain.living_doc.comments import CommentThreads, comment_out
+from app.domain.living_doc.comments import CommentThreads, OnDocument, comment_out
 from app.domain.living_doc.schemas import node_out
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import canonicalize_refs
@@ -83,7 +83,7 @@ async def add_comment(
     if not content:
         raise ValidationError(say("commentEmpty"))
     comment = await CommentThreads(db).open(
-        reached.doc,
+        OnDocument(reached.doc.id),
         author=reached.actor.handle,
         content=await _as_stored(db, reached, content),
         quote=(body.quote or "").strip() or None,
@@ -128,10 +128,11 @@ async def _announce(db, reached: Reached, comment) -> CommentMentions:
     place = reached.place
     return await announce_comment_mentions(
         db,
-        reached.doc,
+        reached.doc.project_id,
         place.room if place is not None else None,
         comment,
         title=reached.doc.title or (place.title if place is not None else ""),
+        document_id=reached.doc.id,
         task_id=reached.task.id if reached.task is not None else None,
     )
 
@@ -144,16 +145,25 @@ def _outside(told: CommentMentions) -> dict:
 
 async def _with_notified(db, described: dict) -> dict:
     """Each comment of a thread with whom its @s told."""
-    comments = [described["comment"]] + [r["comment"] for r in described["replies"]]
+    return (await _with_notified_many(db, [described]))[0]
+
+
+async def _with_notified_many(db, items: list[dict]) -> list[dict]:
+    if not items:
+        return []
+    comments = [
+        c
+        for described in items
+        for c in [described["comment"], *(r["comment"] for r in described["replies"])]
+    ]
     told = await comment_notified(db, [uuid.UUID(c["id"]) for c in comments])
     for c in comments:
         c["notified"] = told.get(c["id"], [])
-    return described
+    return items
 
 
-async def _member(db, resolver, document_id: uuid.UUID) -> tuple[Reached, str]:
-    reached = await reach(db, resolver, document_id, enforce=True)
-    return reached, await operation_actor(db, reached.actor)
+async def _member(db, resolver, document_id: uuid.UUID) -> Reached:
+    return await reach(db, resolver, document_id, enforce=True)
 
 
 @router.get("/{document_id}/comments/threads")
@@ -163,20 +173,18 @@ async def list_threads(
     """Every thread on the document with its replies, oldest first, and
     whether the agent is answering it now (``queued`` while it waits for a
     free session, ``working`` while it answers)."""
-    reached, _ = await _member(db, resolver, document_id)
+    reached = await _member(db, resolver, document_id)
     await DocumentJournal(db).lock(reached.doc.id)
     service = CommentThreads(db)
-    items = [
-        await _with_notified(db, await service.describe(c))
-        for c in await service.roots(reached.doc.id)
-    ]
+    roots = await service.roots(OnDocument(reached.doc.id))
+    items = await _with_notified_many(db, await service.describe_many(roots))
     await db.commit()
     states = (
         await answering(
             reached.doc.project_id,
             [uuid.UUID(item["comment"]["id"]) for item in items],
         )
-        if reached.doc.project_id is not None
+        if reached.doc.project_id is not None and items
         else {}
     )
     for item in items:
@@ -191,11 +199,14 @@ async def read_thread(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    reached, _ = await _member(db, resolver, document_id)
+    reached = await _member(db, resolver, document_id)
     await DocumentJournal(db).lock(reached.doc.id)
     service = CommentThreads(db)
     result = await _with_notified(
-        db, await service.describe(await service.root(reached.doc.id, comment_id))
+        db,
+        await service.describe(
+            await service.root(OnDocument(reached.doc.id), comment_id)
+        ),
     )
     await db.commit()
     return ok(result)
@@ -204,7 +215,13 @@ async def read_thread(
 async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=None):
     """Apply one thread mutation once per operation id. ``hand_off(reached)``
     runs after a first application commits, never on a replay."""
-    reached, identity = await _member(db, resolver, document_id)
+    reached = await _member(db, resolver, document_id)
+    identity = await operation_actor(db, reached.actor)
+    writable_error: Exception | None = None
+    try:
+        await require_writable(db, reached, Permission.comment)
+    except Exception as exc:
+        writable_error = exc
     journal = DocumentJournal(db)
     operation = await journal.claim(
         document_id=reached.doc.id,
@@ -219,16 +236,18 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     )
     if operation.receipt is not None:
         return operation.receipt
-    await require_writable(db, reached, Permission.comment)
+    if writable_error is not None:
+        raise writable_error
     reply = action == "reply"
     assert not reply or isinstance(body, ReplyIn)
     result = await CommentThreads(db).mutate(
-        reached.doc,
+        OnDocument(reached.doc.id),
         comment_id=comment_id,
         author=reached.actor.handle,
         expected_revision=body.expected_revision,
         action=action,
         content=await _as_stored(db, reached, body.content) if reply else None,
+        locked=True,
     )
     told = None
     if reply:
@@ -322,9 +341,9 @@ async def stop_agent(
 ) -> dict:
     """Stop the agent answering this thread: its wait, or the answer being
     written. Its reply keeps what was written, marked as stopped."""
-    reached, _ = await _member(db, resolver, document_id)
+    reached = await _member(db, resolver, document_id)
     # The thread named is this document's own, as for every other thread route.
-    await CommentThreads(db).root(reached.doc.id, comment_id)
+    await CommentThreads(db).root(OnDocument(reached.doc.id), comment_id)
     await db.commit()
     redis = get_redis_client()
     if redis is None:

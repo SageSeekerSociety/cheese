@@ -15,10 +15,14 @@ Rules held here:
   its end;
 * a viewer reconnecting from where it was gets the rest, and only the rest;
 * a question whose runner the machine says is gone ends at once, instead of
-  being taken up again on every sweep.
+  being taken up again on every sweep;
+* what the asker says while no backend reads the question (a deploy between
+  one reader and the next) reaches the session once one does; said and never
+  heard before the question ends, it is given back to the asker.
 """
 
 import asyncio
+import json
 import threading
 import time
 import uuid
@@ -363,6 +367,63 @@ async def test_a_viewer_reconnecting_from_where_it_was_gets_only_the_rest(
 
     assert rest == seen[len(seen) // 2 + 1 :]
     assert rest[-1][1] == "done"
+
+
+@pytest.mark.anyio
+async def test_what_is_said_while_no_backend_reads_a_question_reaches_it_once_one_does(
+    backends, platform, monkeypatch
+):
+    monkeypatch.setattr(consumptions_module, "RENEW_S", 0.2)
+    kind, ((old, before), (new, after)) = backends
+    release = threading.Event()
+    model = platform(
+        [{"text": ANSWER}, {"text": "好，只看第三份。"}], rest_held_until=release
+    )
+    work = await _begin(old, kind)
+
+    await _first_words(before, model)
+    await old.let_go()
+    asked = await new.get(work)
+    assert asked is not None
+    # Nobody holds the session now: what is said waits for whoever reads next.
+    await new.say(asked, "只看第三份", {"text": "只看第三份"})
+    assert await new.sweep() == 1
+
+    async def said() -> bool:
+        waiting = await new._valkey().llen(consumptions_module._said(work))
+        return waiting == 0
+
+    await _until(said, timeout=30)
+    release.set()
+    await _until(lambda: _ended(after))
+    assert "只看第三份" in json.dumps(model.requests, ensure_ascii=False)
+    told = [event async for _, event, _ in new.watch(work)]
+    assert "unheard" not in told
+
+
+@pytest.mark.anyio
+async def test_what_is_said_and_never_heard_before_the_end_is_given_back(
+    backends, platform, monkeypatch
+):
+    # Taken up, but never renewed before it ends: what waits is never said.
+    monkeypatch.setattr(consumptions_module, "RENEW_S", 600.0)
+    kind, ((old, before), (new, after)) = backends
+    release = threading.Event()
+    model = platform([{"text": ANSWER}], rest_held_until=release)
+    work = await _begin(old, kind)
+
+    await _first_words(before, model)
+    await old.let_go()
+    asked = await new.get(work)
+    assert asked is not None
+    said = {"text": "只看第三份", "files": [{"path": "报告/3.pdf", "name": "3.pdf"}]}
+    await new.say(asked, "只看第三份", said)
+    assert await new.sweep() == 1
+    release.set()
+    await _until(lambda: _ended(after))
+
+    told = [(event, data) async for _, event, data in new.watch(work)]
+    assert ("unheard", {"said": [said]}) in told
 
 
 class Away:

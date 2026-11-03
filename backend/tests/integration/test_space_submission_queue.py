@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    join_task_space,
     unique_int,
 )
 
@@ -92,6 +93,9 @@ def _enroll(
     api_client: TestClient, board: dict, task_id: int, user, user_token: str
 ) -> int:
     """一个成员报名一门课的某道作业，返回报名记录 id。"""
+    join_task_space(
+        api_client, task_id, user.user_id, admin_headers=_auth(board["creator_token"])
+    )
     join = api_client.post(
         f"/tasks/{task_id}/participants",
         params={"member": user.user_id},

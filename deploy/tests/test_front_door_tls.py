@@ -20,6 +20,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from reserved_port import reserve_port
+
 ROOT = Path(__file__).resolve().parents[2]
 NGINX = sys.argv[1] if len(sys.argv) > 1 else shutil.which("nginx") or "nginx"
 CLIENT = "203.0.113.7"
@@ -35,12 +37,6 @@ class Echo(BaseHTTPRequestHandler):
 
     def log_message(self, *_args):
         pass
-
-
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def configure(active: Path, plain_port: int) -> str:
@@ -74,7 +70,7 @@ def main() -> None:
         active = root / "active"
         active.mkdir()
 
-        assert "ssl" not in configure(active, free_port()), "TLS listener without a certificate"
+        assert "ssl" not in configure(active, reserve_port()), "TLS listener without a certificate"
 
         (active / "tls").mkdir()
         subprocess.run(
@@ -85,7 +81,7 @@ def main() -> None:
         )
         app = ThreadingHTTPServer(("127.0.0.1", 0), Echo)
         threading.Thread(target=app.serve_forever, daemon=True).start()
-        plain, tls, machines = free_port(), free_port(), free_port()
+        plain, tls, machines = reserve_port(), reserve_port(), reserve_port()
         site = configure(active, plain)
         site = (site.replace("127.0.0.1:18086", f"127.0.0.1:{app.server_port}")
                     .replace("127.0.0.1:18443", f"127.0.0.1:{tls}")

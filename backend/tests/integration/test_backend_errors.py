@@ -96,7 +96,7 @@ def _backend_events(client, topic_id: str) -> list[dict]:
 
 
 def _post(client, errors, *, token=None, **body):
-    headers = {"X-Cheese-Token": token} if token else None
+    headers = {"Authorization": f"Bearer {token}"} if token else None
     return client.post(
         "/backend-errors", json={**body, "errors": errors}, headers=headers
     )

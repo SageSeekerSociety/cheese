@@ -1,8 +1,6 @@
 # Backup & disaster recovery — cheese boxes
 
-The same scripts run on every environment; only `~/ops/r2.env` (the R2 prefix)
-and which host they run on differ. Both the dev/test box and the production box
-share this setup.
+dev 和 production 使用 `db-backup.sh`，etrip 使用独立备份脚本。dev 发布流水线将备份脚本安装到 `~/ops`；production 和 etrip 保持各自已部署的脚本及上传频率。
 
 | Box | App host | DB host | R2 prefixes |
 |---|---|---|---|
@@ -20,26 +18,22 @@ Docker volume. Everything else (R2 upload, verify, off-site) is shared.
 | Piece | Where | Cadence |
 |---|---|---|
 | `db-backup.sh` (pg_dump -Fc + verify + prune + off-site) | on the box, `~/ops/db-backup.sh` (`cheese-db-backup.timer`) | hourly, :00 |
-| `r2-upload.py` (off-site DB dump copy to R2) | on the box, `~/ops/r2-upload.py` | each DB backup, right after local verify |
-| `r2-prune-dumps.py` (tiered local retention, R2-verified deletes) | on the box, `~/ops/r2-prune-dumps.py`, only where `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` | each DB backup, at the end |
+| `r2-upload.py`（数据库备份上传 R2） | `~/ops/r2-upload.py` | dev：距上次成功至少 6 小时；prod／etrip：每次数据库备份 |
+| `r2-prune-dumps.py`（本地分层保留） | dev 的 `~/ops/r2-prune-dumps.py`，由 `~/ops/backup.env` 中的 `CHEESE_BACKUP_HOURLY_DAYS` 启用 | 每次数据库备份结束时 |
 | `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`); on dev it mirrors `/home/nictheboy/shared/uploads` to `dev-uploads/` (see "The dev mirror" below) | hourly, :30 |
 | `r2-sync-uploads.py` again, over the old transcript archives (already `.tar.gz`, so mirrored as they are; nothing writes new ones there: room cleanup uploads archived rooms' transcripts to the private bucket under `transcripts/rooms/`, see [`README-room-cleanup.md`](README-room-cleanup.md)) | on the box, same script (`cheese-transcripts-mirror.timer`, `UPLOADS_PREFIX=transcripts`) | hourly, :45 |
-| Backup freshness alert | `.github/workflows/backup-freshness.yml`, dev runner | daily; local DB > 26h, R2/ uploads markers and DB/tar objects > 6h fail |
+| 备份新鲜度告警 | `.github/workflows/backup-freshness.yml`，dev runner | 每天；本地数据库超过 26 小时、dev R2 数据库超过上传间隔加 2 小时（默认 8 小时）、其他 R2 标记或对象超过 6 小时则失败 |
 | Recovery proof | `.github/workflows/backup-restore-test.yml`, dev runner | weekly; local DB, R2 DB, uploads restore + verify |
 | `gateway-db-backup.sh` (LLM gateway DB: pg_dump -Fc via `docker exec`, verify, keep newest 8, then `r2-upload.py` to `db/gateway-litellm-<ts>.dump`) | `.github/workflows/gateway-db-backup.yml`, dev runner; dumps in `~/backups/gateway/`, restore in [`gateway/README.md`](gateway/README.md#backups) | every 6h, :23 UTC |
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |
 
-Backups: `~/backups/cheese-<ts>.dump` (compressed custom format), 30-day retention.
-A box whose `~/ops/backup.env` sets `CHEESE_BACKUP_HOURLY_DAYS` (dev: `7`) thins
-instead with `r2-prune-dumps.py`: every dump for that many days, then one dump
-per day up to the 30 days (the day's last with a matching R2 copy). Any other
-dump is deleted only once R2 holds an object of the same size; a missing or
-mismatched copy is re-uploaded and read back first, and stays local if that
-fails (logged as `WARN`). Size is the check because the uploader records no
-checksum. The plain 30-day prune runs after it either way, and a pruner that
-fails outright (bad config, missing script) makes the unit exit non-zero. A box
-without the file (prod) keeps only the plain 30-day prune. The pruner needs
-`r2-common.py` next to it in `~/ops`.
+备份写入 `~/backups/cheese-<ts>.dump`，使用压缩的 PostgreSQL 自定义格式，保留 30 天。
+`~/ops/backup.env` 设置了 `CHEESE_BACKUP_HOURLY_DAYS` 的机器（dev 为 `7`）使用
+`r2-prune-dumps.py --local-only`：最近 7 天保留全部小时备份，之后每天保留最后一份通过
+`pg_restore --list` 校验的备份，直到 30 天。其余文件按本地规则删除，包括有意未上传的小时备份。
+此模式不读写 R2；某天没有可读备份时，该天文件保留至原有 30 天清理边界，并记录警告。
+普通 30 天清理始终在其后执行；分层清理程序因配置错误或脚本缺失等原因失败时，服务以非零状态退出。
+没有此配置文件的 prod 保持普通 30 天清理。清理器要求 `~/ops` 中存在配套的 `r2-common.py`。
 Each DB is on a **separate host** from its app box, so the DB dumps already
 survive a DB-host loss; the off-site R2 copy survives loss of the app box too.
 
@@ -108,8 +102,15 @@ uploads marker. No remote deletion or backup failure policy changes.
 
 ### Off-site (3-2-1)
 
-Each verified dump is also pushed to Cloudflare R2 bucket `cheese-db-backups`
-(key `db/cheese-<ts>.dump`), so a copy survives loss of the app box itself.
+dev 在 `~/backups/.last-offsite-success` 距今至少达到
+`CHEESE_BACKUP_OFFSITE_INTERVAL_HOURS` 小时时，将已校验备份上传到 Cloudflare R2 的
+`cheese-db-backups` 桶，键为 `db/cheese-<ts>.dump`。此设置写在 `~/ops/backup.env`，默认 `6`。
+标记缺失、无效或在未来时尝试上传。只有上传成功才更新标记，失败后在下一次小时任务重试。
+production 和 etrip 保持现有脚本，每次备份均上传。
+
+dev 本地恢复点仍为每小时；整机丢失时，异地恢复点目标（RPO）为约 6 小时。
+由于每小时才检查一次是否到期，实际窗口可能接近 7 小时，另加备份和上传耗时；连续失败会继续延长窗口。
+新鲜度检查的额外 2 小时用于告警容差。
 Off-site retention of the dumps is the bucket's one lifecycle rule,
 `expire-db-dumps-30d`: objects under `db/` expire 30 days after upload (maxAge
 2592000 s, read from the Cloudflare API on 2026-10-19). It runs server-side, so
@@ -164,22 +165,23 @@ on an incomplete schema, or on zero rows across the critical `user`,
 experiment override, not a second default. Containers publish no ports and
 have no network access. Restore logs and TOC remain in `.tmp/restore-tests/`.
 
-The daily freshness workflow checks the local DB success at 26h and, if R2 is
-configured, both off-site and uploads success markers at 6h. It also reads R2
-objects for the dev DB, prod DB, both etrip DBs and etrip uploads tar; each
-must be nonempty and no older than 6h. Checks use exact seconds, not rounded
-hours. No R2 config is an explicit skip; partial config, missing markers,
-invalid timestamps, stale objects, wrong prefixes or failed R2 reads are red.
+每天的新鲜度检查要求本地数据库成功标记不超过 26 小时。配置 R2 时，dev 异地成功标记和
+dev R2 数据库对象的阈值为上传间隔加 2 小时（默认 8 小时），容纳小时 timer 的抖动和一次延迟运行。
+检查读取与备份脚本相同的 `~/ops/backup.env`。uploads 标记、prod 数据库、etrip 的两个数据库
+和 uploads tar 保持 6 小时阈值；R2 对象必须非空。年龄按秒计算。
+未配置 R2 时明确跳过；部分配置、标记缺失、时间戳无效、对象过旧、前缀错误或 R2 读取失败均报错。
 
-The CI changes do **not** install scripts into any box's `~/ops`. For the
-dev writer, CI reads `cheese-uploads-mirror.service`'s last completed
-successful exit (`Result=success`, normal exit, status 0). It records the
-service's exit timestamp as the uploads marker, not the check's timestamp.
-Stopped, failed or never-run services cannot create a fresh receipt. This
-keeps the dev check usable without changing any deployed backup writer.
+应用发布成功后，`.github/workflows/deploy-dev.yml` 从同一发布提交安装 `db-backup.sh`、
+`r2-upload.py`、`r2-prune-dumps.py` 和 `r2-common.py` 至 dev 的 `~/ops`。
+旧文件保存到 `~/ops/backup-rollouts/<release-sha>/`，依赖先安装，各文件通过重命名原子替换。
+小时 timer、凭据和 `backup.env` 保持原值；此步骤只在 dev 执行。
+历史发布回滚时，只安装该发布实际包含的备份脚本。早期 writer 不调用后续引入的 helper，机器上已有的这些文件保持原值。
 
-The marker-enabled writer and `r2-common.py` would need a separately authorized
-ops rollout to be installed together on other boxes. This task does not do it.
+dev uploads 的 CI 检查读取 `cheese-uploads-mirror.service` 最近一次成功退出记录
+（`Result=success`、正常退出、状态为 `0`），以服务退出时间写入 uploads 标记。
+服务停止、失败或从未运行时，无法产生新的成功记录。此检查无需更新已部署的 uploads 脚本。
+
+在其他机器安装支持成功标记的 uploads 脚本，需要单独授权的运维发布。
 
 A deliberately empty fresh installation can exercise the schema-only path with
 `CHEESE_RESTORE_ALLOW_EMPTY=1 bash deploy/db-restore-test.sh <dump>`. The script

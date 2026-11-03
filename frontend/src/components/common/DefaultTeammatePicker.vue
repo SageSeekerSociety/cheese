@@ -5,9 +5,9 @@
 // 和「参考资料」那一格一样，发题页、改题页、项目集设置共用这一份 —— 只吃 props、
 // 只往上发。预设清单由调用方取好传进来（`types` / `typesFailed`），这一格不碰 API 层。
 //
-// 选择项：第一项是「继承（不单独指定）」，其余每个平台预设一项，标题用 `title`、
-// 副标题用它的技能清单（没有技能就退回 `description`）。预设清单读不到时只留「继承」
-// 那一项，并在副标题里说一句，把整格藏掉反而让人没法表达「继承」。
+// 选择项：第一项是「沿用上层设置」，其余每个平台预设一项，标题用 `title`、
+// 副标题用它的技能清单（没有技能就退回 `description`）。预设清单读不到时只留「沿用上层设置」
+// 那一项，并在副标题里说一句，把整格藏掉反而让人没法表达「沿用上层设置」。
 //
 // 提交口径（`''` / 预设名 / 不带键）不在这里判：这一格只管报告人选，怎么落成 payload
 // 由调用方按 `defaultRolePayload` 算。
@@ -20,20 +20,30 @@ const props = withDefaults(
   defineProps<{
     /** 当前提交值：`''` = 这一层不单独指定（继承上层）；或一个预设名。 */
     modelValue?: string | null
-    /** 这一层现在写着的原始覆盖（`null` = 本来就没写）。只拿来把「继承」那一项讲准。 */
+    /** 这一层现在写着的原始覆盖（`null` = 本来就没写）。只拿来把「沿用上层设置」那一项讲准。 */
     rawValue?: string | null
     /** 平台预设清单。取数在调用方（页面 / 它用的组合式）—— 这一格只吃 props、
      *  只往上发，才作得成场景里的 A 级画面（docs/manual/dev/scenes.md）。 */
     types?: AgentType[]
-    /** 清单没读到时为 true：只留「继承」那一项，并在副标题里说一句。 */
+    /** 清单没读到时为 true：只留「沿用上层设置」那一项，并在副标题里说一句。 */
     typesFailed?: boolean
+    /** 上一层（项目集）设的那一位：预设名；`null` = 上一层也没设；不给 = 不知道上一层是哪个。
+     *  知道时「沿用上层设置」写出沿用的是谁，和「方式」那张卡片一样。 */
+    inherited?: string | null
   }>(),
-  { types: () => [], typesFailed: false }
+  { types: () => [], typesFailed: false, inherited: undefined }
 )
 
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
 
 const { t } = useI18n()
+
+/** 沿用的是谁：上一层那一位的名字，上一层没设时说没设；不知道上一层时为空。 */
+const inheritedText = computed(() => {
+  if (props.inherited === undefined) return ''
+  if (props.inherited === null) return t('spaces.teaching.defaultTeammate.inheritNone')
+  return props.types.find((type) => type.name === props.inherited)?.title ?? props.inherited
+})
 
 const items = computed(() => [
   {
@@ -41,7 +51,7 @@ const items = computed(() => [
     title: t('spaces.teaching.defaultTeammate.inherit'),
     subtitle: props.typesFailed
       ? t('spaces.teaching.defaultTeammate.loadFailed')
-      : t('spaces.teaching.defaultTeammate.inheritHint'),
+      : inheritedText.value || t('spaces.teaching.defaultTeammate.inheritHint'),
   },
   ...props.types.map((type) => ({
     value: type.name,
@@ -50,7 +60,7 @@ const items = computed(() => [
   })),
 ])
 
-/** 这一层本来就写过、现在又选回「继承」：保存会清掉它，说一句。 */
+/** 这一层本来就写过、现在又选回「沿用上层设置」：保存会清掉它，说一句。 */
 const willClear = computed(() => (props.modelValue ?? '') === '' && props.rawValue != null)
 </script>
 
@@ -76,6 +86,13 @@ const willClear = computed(() => (props.modelValue ?? '') === '' && props.rawVal
         <v-list-item v-bind="itemProps" role="option" :subtitle="item.raw?.subtitle" />
       </template>
     </v-select>
+    <p
+      v-if="(modelValue ?? '') === '' && inheritedText"
+      class="teammate__note"
+      data-testid="default-teammate-inherited"
+    >
+      {{ inheritedText }}
+    </p>
     <p v-if="willClear" class="teammate__note" data-testid="default-teammate-will-clear">
       {{ t('spaces.teaching.defaultTeammate.willClear') }}
     </p>

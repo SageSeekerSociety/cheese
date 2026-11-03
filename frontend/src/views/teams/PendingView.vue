@@ -186,7 +186,12 @@
       <v-list-item-title>{{ invitation.project_name || t('teams.pending.unnamedProject') }}</v-list-item-title>
       <v-list-item-subtitle class="text-caption">
         <i18n-t scope="global" keypath="teams.pending.projectInvitedBy" tag="span">
-          <template #inviter><UserRef :handle="invitation.inviter_handle" :project-id="null" /></template>
+          <template #inviter>
+            <i18n-t v-if="invitation.invited_by_assistant" scope="global" keypath="work.onBehalf.who" tag="span">
+              <template #name><UserRef :handle="invitation.inviter_handle" :project-id="null" /></template>
+            </i18n-t>
+            <UserRef v-else :handle="invitation.inviter_handle" :project-id="null" />
+          </template>
         </i18n-t>
       </v-list-item-subtitle>
 

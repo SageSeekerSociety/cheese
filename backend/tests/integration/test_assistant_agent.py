@@ -30,6 +30,7 @@ from tests.integration.conftest import (
 )
 from tests.integration.test_assistant import _ledger_user
 from tests.integration.test_message_edit import _room, _say
+from tests.support import assistant_actions
 
 
 def _auth_headers(client, handle: str) -> dict:
@@ -38,7 +39,7 @@ def _auth_headers(client, handle: str) -> dict:
 
 
 def _as(token: str) -> dict:
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _personal(client, handle: str, project: str | None = None) -> str:
@@ -49,6 +50,7 @@ def _personal(client, handle: str, project: str | None = None) -> str:
         work=str(uuid.uuid4()),
         project_id=project,
         ttl_s=300,
+        read_only=False,
     )
 
 
@@ -87,6 +89,20 @@ def test_a_channel_reads_by_its_address_with_its_latest_messages(client):
     # A link copied from the address bar reads the same.
     copied = _read(client, token, f"https://x.test/projects/{slug}/channels/{number}")
     assert copied.json()["data"]["text"] == text
+
+
+def test_a_read_names_what_it_read_the_way_the_person_knows_it(client):
+    """芝士's step shows what it read by name, never by the reference it was
+    given: a channel, the spaces the person is in."""
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    token = _personal(client, "alice")
+
+    channel = _read(client, token, f"{slug}/channels/{number}")
+    spaces = _read(client, token, "spaces")
+
+    assert channel.json()["data"]["subject"] == "频道「话题」"
+    assert spaces.json()["data"]["subject"] == "你加入的空间"
 
 
 def test_a_project_lists_its_channels_by_the_refs_that_read_them(client):
@@ -229,7 +245,7 @@ def test_a_message_the_person_asked_for_is_sent_as_them_through_the_gate(
     monkeypatch.setattr(gate, "gatekeeper", looks)
 
     r = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={
             "kind": "message",
             "where": f"{slug}/channels/{number}",
@@ -239,27 +255,21 @@ def test_a_message_the_person_asked_for_is_sent_as_them_through_the_gate(
     )
 
     assert r.status_code == 200, r.text
-    got = r.json()["data"]
-    assert got["done"] is True
+    assert r.json()["data"]["allowed"] is True
     # The gate read what she said, and the action; nothing 芝士 said.
     assert "[用户] 跟大家说周五组会改到下午三点" in keeper.shown[0]
     assert "周五组会改到下午三点" in keeper.shown[0].split("<要判断的操作>")[1]
-    # The call it hands back is the one the channel page makes, as her.
-    [call] = got["calls"]
-    sent = client.post(
-        call["path"],
-        json=call["body"],
-        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+    # The call it is carried out with is the one the channel page makes, as her.
+    [sent] = assistant_actions.carry_out(
+        client,
+        token,
+        {
+            "kind": "message",
+            "where": f"{slug}/channels/{number}",
+            "text": "周五组会改到下午三点",
+        },
     )
-    assert sent.status_code == 200, sent.text
     assert sent.json()["data"]["author"] == "alice"
-    # Once: the pass is spent.
-    again = client.post(
-        call["path"],
-        json={**call["body"], "request_id": str(uuid.uuid4())},
-        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
-    )
-    assert again.status_code == 403
     [check] = _checks(client, "alice")
     assert (check.verdict, check.stage, check.kind) == ("allowed", "quick", "message")
     assert check.cache_read_tokens == 80
@@ -298,42 +308,21 @@ def test_a_card_delivering_a_link_is_accepted_as_the_version_cheese_read(
         return _Gatekeeper("放")
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
-    r = client.post(
-        "/assistant/agent/act",
-        json={
+    assistant_actions.take(
+        client,
+        token,
+        {
             "kind": "review",
             "ref": f"{slug}/tasks/{task['number']}",
             "choice": "accept",
         },
-        headers=_as(token),
     )
-    assert r.status_code == 200, r.text
-    got = r.json()["data"]
-    [call] = got["calls"]
-    accepted = client.post(
-        call["path"],
-        json=call["body"],
-        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
-    )
-
-    assert accepted.status_code == 200, accepted.text
 
     async def status():
         async with client.test_factory() as db:
             return (await db.get(AcceptCard, card_id)).status
 
     assert asyncio.run(status()) == AcceptStatus.accepted
-
-
-def test_without_the_gate_the_route_refuses_the_persons_cheese(client):
-    room, _ = _room(client)
-    token = _acting(client, "alice", _asked_in(client, "alice", "你好"))
-    r = client.post(
-        f"/topics/{room}/messages",
-        json={"content": "我自己发", "request_id": str(uuid.uuid4())},
-        headers=_as(token),
-    )
-    assert r.status_code == 403
 
 
 def test_a_message_the_person_did_not_ask_for_goes_back_to_cheese_first(
@@ -354,7 +343,7 @@ def test_a_message_the_person_did_not_ask_for_goes_back_to_cheese_first(
 
     def act(**more) -> dict:
         r = client.post(
-            "/assistant/agent/act",
+            "/assistant/agent/review",
             json={
                 "kind": "message",
                 "where": f"{slug}/channels/{number}",
@@ -367,12 +356,12 @@ def test_a_message_the_person_did_not_ask_for_goes_back_to_cheese_first(
         return r.json()["data"]
 
     back = act()
-    assert back["done"] is False and back["returned"] is True
-    assert "card" not in back and "pass" not in back
+    assert back["allowed"] is False and back["returned"] is True
+    assert "card" not in back
     assert "你只让芝士查看频道，没有提到发消息。" in back["said"]
 
     got = act(confirm=True)
-    assert got["done"] is False and "pass" not in got
+    assert got["allowed"] is False
     assert got["card"]["kind"] == "message" and got["card"]["text"] == "收到"
     assert got["reason"] == "你只让芝士查看频道，没有提到发消息。"
     returned, asked = _checks(client, "alice")
@@ -395,7 +384,7 @@ def test_after_three_returns_in_an_answer_a_stopped_action_is_a_card(
     monkeypatch.setattr(gate, "gatekeeper", looks)
     got = [
         client.post(
-            "/assistant/agent/act",
+            "/assistant/agent/review",
             json={"kind": "message", "where": f"{slug}/channels/{number}", "text": t},
             headers=_as(token),
         ).json()["data"]
@@ -421,7 +410,7 @@ def test_cheese_waits_for_the_person_to_decide_on_its_card(client, monkeypatch):
 
     def card(text: str) -> int:
         r = client.post(
-            "/assistant/agent/act",
+            "/assistant/agent/review",
             json={
                 "kind": "message",
                 "where": f"{slug}/channels/{number}",
@@ -542,7 +531,7 @@ def test_removing_someone_is_asked_by_the_persons_rule_with_no_model(
     monkeypatch.setattr(gate, "gatekeeper", no_model)
 
     r = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={
             "kind": "member",
             "where": f"{slug}/channels/{number}",
@@ -553,7 +542,7 @@ def test_removing_someone_is_asked_by_the_persons_rule_with_no_model(
     )
 
     got = r.json()["data"]
-    assert got["done"] is False
+    assert got["allowed"] is False
     assert got["card"]["kind"] == "act"
     assert got["card"]["calls"][0]["method"] == "DELETE"
     [check] = _checks(client, "alice")
@@ -586,18 +575,20 @@ def test_someone_named_by_their_name_is_added_by_their_handle(client, monkeypatc
     where = f"{slug}/channels/{number}"
 
     r = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "member", "where": where, "who": "赵一鸣"},
         headers=_as(token),
     )
 
     assert r.status_code == 200, r.text
-    [call] = r.json()["data"]["calls"]
+    [call] = assistant_actions.calls(
+        client, token, {"kind": "member", "where": where, "who": "赵一鸣"}
+    )
     assert call["body"] == {"handle": "zhaoym"}
     [check] = _checks(client, "alice")
     assert "将 赵一鸣（zhaoym） 加入频道" in check.summary
     unknown = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "member", "where": where, "who": "钱多多"},
         headers=_as(token),
     )
@@ -619,18 +610,18 @@ def test_what_the_person_can_undo_is_done_with_no_look(client, monkeypatch):
 
     monkeypatch.setattr(gate, "gatekeeper", no_model)
     added = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "member", "where": f"{slug}/channels/{number}", "who": "zhaoym"},
         headers=_as(token),
     )
     made = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "channel", "where": slug, "title": "论文阅读"},
         headers=_as(token),
     )
 
-    assert added.json()["data"]["done"] is True, added.text
-    assert made.json()["data"]["done"] is True, made.text
+    assert added.json()["data"]["allowed"] is True, added.text
+    assert made.json()["data"]["allowed"] is True, made.text
     assert [(c.verdict, c.stage) for c in _checks(client, "alice")] == [
         ("allowed", "low"),
         ("allowed", "low"),
@@ -649,12 +640,12 @@ def test_what_the_person_can_undo_is_done_with_no_look(client, monkeypatch):
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
     let_in = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "member", "where": f"{slug}/channels/{number}", "who": "zhaoym"},
         headers=_as(token),
     )
 
-    assert let_in.json()["data"]["done"] is False, let_in.text
+    assert let_in.json()["data"]["allowed"] is False, let_in.text
     assert "加入私密频道" in keeper.shown[0]
 
 
@@ -681,12 +672,12 @@ def test_what_the_person_wants_asked_about_is_read_even_when_it_is_low(
     monkeypatch.setattr(gate, "gatekeeper", looks)
 
     made = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "channel", "where": slug, "title": "论文阅读"},
         headers=_as(token),
     )
 
-    assert made.json()["data"]["done"] is False, made.text
+    assert made.json()["data"]["allowed"] is False, made.text
     assert "建频道先问我" in keeper.shown[0]
 
 
@@ -757,10 +748,10 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
     )
     assert saved.json()["data"]["ask"] == ["remove_member"]
     token = _acting(client, "alice", _asked_in(client, "alice", "在综合频道说一声收到"))
-    # 芝士 cannot change them.
+    # 芝士 cannot change them: its credential does not open that route.
     assert (
         client.put("/assistant/rules", json={"ask": []}, headers=_as(token)).status_code
-        == 401
+        == 403
     )
     keeper = _Gatekeeper("放")
 
@@ -769,7 +760,7 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
     client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "message", "where": f"{slug}/channels/{number}", "text": "收到"},
         headers=_as(token),
     )
@@ -780,3 +771,28 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
         ("message", "allowed", "quick")
     ]
     assert "收到" in done[0]["summary"]
+
+
+def test_the_steps_of_a_long_piece_of_work_are_counted_back(client):
+    me = _as(_personal(client, "todo-asker"))
+    todos = [
+        {"content": "读评分标准", "status": "completed"},
+        {"content": "给 40 份报告打分", "status": "in_progress"},
+        {"content": "汇总成表", "status": "pending"},
+    ]
+
+    r = client.post("/assistant/agent/todo", json={"todos": todos}, headers=me)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["text"] == "清单已更新：1/3 项已完成。"
+    too_many = [{"content": f"第 {n} 步", "status": "pending"} for n in range(31)]
+    assert (
+        client.post(
+            "/assistant/agent/todo", json={"todos": too_many}, headers=me
+        ).status_code
+        == 400
+    )
+    assert client.post("/assistant/agent/todo", json={"todos": todos}).status_code in (
+        401,
+        403,
+    )

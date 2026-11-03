@@ -7,7 +7,7 @@ import type { Block } from '../cx_types'
 import type { NoticeRow } from './platformNotice'
 
 import { foldRepeats } from './noticeRepeats'
-import { changeSummary, mailOutcomes, platformNotice, whoTag } from './platformNoticeCards'
+import { changeSummary, mailOutcomes, platformNotice } from './platformNoticeCards'
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -29,7 +29,9 @@ function meta(block: Block): Record<string, unknown> | null {
  * 这一格）。它照常存着、照常在历史里，只是聊天区不显示 —— 藏起来，不是删掉。
  */
 function showsInRoom(block: Block): boolean {
-  return meta(block)?.in_room !== false
+  // `shown_as` 是后端那张表给每一行平台事件的答案；旧的行写下时还没有 `in_room`，
+  // 读出时一样按那张表算出来，所以两样都看。
+  return meta(block)?.in_room !== false && block.shown_as !== 'hidden'
 }
 
 /** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */
@@ -53,57 +55,6 @@ function foldKey(block: Block): string | null {
 function startsTask(block: Block): boolean {
   const action = meta(block)?.action
   return action === 'task_created' || action === 'split'
-}
-
-/**
- * 一张验收卡从递上来到合并（或作废）一路上的那些提示。它们说的是同一件事 —— 这张卡
- * 现在停在哪、归谁 —— 所以后一句会让前一句过时。
- */
-const CARD_EVENTS = new Set([
-  'card_filed',
-  'card_rejected',
-  'card_voided',
-  'card_redescribed',
-  'ci_failed',
-  'gate_failed',
-  'gate_blocked',
-  'gate_abandoned',
-  'pr_review',
-  'pr_conflict',
-  'upstream_conflict',
-  'merge_refused',
-  'merge_withheld',
-  'migration_collision',
-  'accept_ready',
-  'accept_conflict',
-  'accept_stopped',
-  'accept_dismissed',
-  'accept_done',
-  'force_merged',
-  'pr_closed',
-])
-
-function aboutTheCard(block: Block): boolean {
-  return block.kind === 'event' && CARD_EVENTS.has(str(meta(block)?.event_type))
-}
-
-/**
- * 卡上的「谁在管这件事」只对最新的那一句成立。
- *
- * `who` 是写下这一行那一刻的事实：「等 alice 采纳 · 等人处理」「退回了 · 芝士正在
- * 处理」。之后这段对话里关于这张卡又有一句说了现在归谁（芝士重新递了卡、PR 合了），
- * 前一句的尾标就过时了 —— 留着它，一张早已采纳的卡还在说等人手动处理。所以卡的那
- * 些提示里，尾标只留在最后一句说了归谁的那一行上，更早的只剩那件事本身。别的提示
- * （某位队友这一轮怎么了）各说各的事，不受影响。
- */
-function settleOwners(rows: NoticeRow[]): void {
-  let superseded = false
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const row = rows[i]
-    if (!aboutTheCard(row.block)) continue
-    if (superseded && row.notice?.mode === 'fold') row.notice = { ...row.notice, who: '', whoLabel: '' }
-    if (row.run.some((block) => aboutTheCard(block) && whoTag(block))) superseded = true
-  }
 }
 
 /** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
@@ -167,6 +118,31 @@ function foldTurnSummary(rows: NoticeRow[]): NoticeRow[] {
 }
 
 /**
+ * 一位队友一次工作里交出来的东西（`shown_as` 为 card：新建的文档、提议的技能……）放在
+ * 那次工作的最后，像一条消息的附件：读的人先读到它说了什么，再看到它交出来的东西。
+ * 它是工作途中做出来的，按时间会夹在两句话中间。只在同一次工作里挪，不跨出去。
+ */
+function cardsLast(rows: NoticeRow[]): NoticeRow[] {
+  // 每次工作里最后一行不是卡片的那一行：交出来的东西按原来的先后接在它后面。
+  const lastOfTurn = new Map<string, number>()
+  rows.forEach((row, i) => {
+    if (row.block.turn_id && row.block.shown_as !== 'card') lastOfTurn.set(row.block.turn_id, i)
+  })
+  const held = new Map<number, NoticeRow[]>()
+  const out: NoticeRow[] = []
+  rows.forEach((row, i) => {
+    const turn = row.block.turn_id
+    const last = turn ? lastOfTurn.get(turn) : undefined
+    if (row.block.shown_as === 'card' && last !== undefined && last > i) {
+      held.set(last, [...(held.get(last) ?? []), row])
+      return
+    }
+    out.push(row, ...(held.get(i) ?? []))
+  })
+  return out
+}
+
+/**
  * 把原始块流变成时间线的行：藏掉不属于房间的、折叠连续同类的系统事件。
  *
  * 两条折叠规则并存：
@@ -224,8 +200,7 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     row.notice = platformNotice(row.block, row.run)
     if (row.notice?.mode === 'mail-draft') row.notice.outcome = mailEnds.get(row.notice.mail.draftId) ?? null
   }
-  settleOwners(rows)
-  return foldRepeats(foldTurnSummary(rows))
+  return cardsLast(foldRepeats(foldTurnSummary(rows)))
 }
 
 /**

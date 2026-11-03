@@ -281,7 +281,7 @@ const props = defineProps<{
   /** participantId → 最新那一版提交。 */
   latestByParticipant: Map<number, Latest>
   loading: boolean
-  /** 名单接口由服务端按 `may_teach_task` 把关；403 是「不给你看」，说的是这一句。 */
+  /** 名单接口由服务端按 `task_roles.teaches` 把关；403 是「不给你看」，说的是这一句。 */
   denied: boolean
   /** 读失败，而且一行都没读到：画失败，不画「暂无领取者」。判断在 `Roster.vue`。 */
   failed: boolean

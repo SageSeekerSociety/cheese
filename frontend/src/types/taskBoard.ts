@@ -4,6 +4,8 @@ import type {
   SpaceTeaching,
   Task,
   TaskRubricLine,
+  TaskStage,
+  TaskStartMode,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -31,6 +33,7 @@ export type PostTaskRequestData = {
   submitterType: 'USER' | 'TEAM'
   deadline: number | null
   defaultDeadline: number
+  startMode?: TaskStartMode
   resubmittable: boolean
   editable: boolean
   description: string
@@ -48,7 +51,7 @@ export type PostTaskRequestData = {
   endedAt?: number | null
   hasEndedAt?: boolean
   /** 随题一起发出去的材料。文件先经 `AttachmentsApi`（`POST /attachments`）传上来拿到
-   *  id，建题时一次挂上——见 `TaskAttachmentPicker` 里对这条顺序的说明。 */
+   *  id，建题时拷进题目资料库：题目建好之前还没有资料库可放。 */
   attachmentIds?: number[]
   /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。整份替换；不带它 = 没说，
    *  让空间的默认生效。 */
@@ -58,19 +61,16 @@ export type PostTaskRequestData = {
   defaultRole?: string
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  stages?: TaskStage[]
 }
 
-export type { TaskAttachmentData, TaskAttachmentListResponseData } from '@/types/taskAttachments'
-import type { TaskAttachmentData } from '@/types/taskAttachments'
-
-export type UploadTaskAttachmentResponseData = {
-  attachment: TaskAttachmentData
-}
+export type { TaskFileData, TaskFileListData } from '@/types/taskFiles'
 
 export type PatchTaskRequestData = {
   name?: string
   deadline?: number | null
   defaultDeadline?: number
+  startMode?: TaskStartMode
   resubmittable?: boolean
   editable?: boolean
   description?: string
@@ -89,12 +89,13 @@ export type PatchTaskRequestData = {
   /** 评分要点：整份替换；省掉它 = 不动。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 阶段：整份替换；省掉它 = 不动。 */
+  stages?: TaskStage[]
   endedAt?: number | null
   hasEndedAt?: boolean
 }
 
 export type AddTaskParticipantRequestData = {
-  deadline: number | null
   /** 领取的人同意这道题的导师加入项目（#3830）；题目有导师时必须带上。 */
   agreeMentors?: boolean
   email?: string
@@ -163,9 +164,8 @@ export interface TaskInheritanceTeaching extends SpaceTeaching {
  * that matches no shipped preset — a name nobody ships is not a teammate.
  */
 export interface TaskInheritanceAgent {
-  /** 预设类型名；题目只带了技能、没指定发货预设时为 null。 */
-  typeName: string | null
-  displayName: string | null
+  typeName: string
+  displayName: string
   skills: string[]
 }
 
@@ -173,14 +173,13 @@ export interface TaskInheritanceAgent {
 export interface TaskInheritanceData {
   taskId: number
   spaceId: number
+  /** 资源包：算力额度（`compute_credits`）。 */
   resourcePack: Record<string, unknown>
-  /** 建项目时那个芝士会带上的默认队友（类型 + 技能）；没指定 = null。 */
+  /** 建项目时那个芝士会带上的默认队友（类型 + 预设技能）；没指定 = null。题目给每个
+   *  队友的技能在 `teaching.skills`。 */
   agent: TaskInheritanceAgent | null
-  /**
-   * 题目包里「手动加的一段 prompt」—— 建项目时并进默认队友的人设正文。
-   * 没写 = null。与 `agent` 的技能一样，是**这道题**给的（每道题可以不同）。
-   */
-  prompt: string | null
+  /** 资源包里的那段 prompt：建项目时加在默认队友的人设末尾；没有 = null。 */
+  packPrompt: string | null
   teaching: TaskInheritanceTeaching
   materials: TaskInheritanceMaterial[]
 }

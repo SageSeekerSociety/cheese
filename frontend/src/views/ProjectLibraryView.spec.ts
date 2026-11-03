@@ -24,6 +24,7 @@ import ProjectLibraryView from './ProjectLibraryView.vue'
 vi.mock('../api', () => ({
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
+  getProject: vi.fn(),
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
 }))
 
@@ -46,7 +47,8 @@ vi.mock('../lib/libraryApi', () => ({
   listLibraryFolders: vi.fn(async () => []),
 }))
 
-const { deleteLibraryFile, downloadFile } = await import('../api')
+const { deleteLibraryFile, downloadFile, getProject } = await import('../api')
+const { queryClient } = await import('../query/client')
 const { libraryFileBytes, listProjectLibrary, moveLibraryFile, replaceLibraryFile, uploadLibraryFile } = await import(
   '../lib/libraryApi'
 )
@@ -93,6 +95,9 @@ beforeEach(() => {
   vi.mocked(uploadLibraryFile).mockResolvedValue({ path: '新.txt', bytes: 1 })
   vi.mocked(replaceLibraryFile).mockResolvedValue({ path: '预算表.xlsx', bytes: 1 })
   vi.mocked(libraryFileBytes).mockResolvedValue(new ArrayBuffer(0))
+  // 项目那一行（`GET /projects/{id}`）：不是从题目来的项目。缓存是全局一份，每条测试从空的开始。
+  queryClient.clear()
+  vi.mocked(getProject).mockResolvedValue({ id: 'p1', name: '项目', task: null } as never)
 })
 
 const Blank = defineComponent({ render: () => h('div') })
@@ -103,6 +108,7 @@ async function renderRaw(url = '/projects/p1/library') {
     routes: [
       { path: '/projects/:projectId/library', name: 'project-library', component: ProjectLibraryView, props: true },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: Blank },
+      { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: Blank },
     ],
   })
   await router.push(url)
@@ -167,6 +173,30 @@ describe('资料库', () => {
     expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/library/raw?path=预算表.xlsx', '预算表.xlsx')
   })
 
+  it('超过预览上限的一份：平静地说只能下载，给一颗下载，不读字节、不报错重试', async () => {
+    library = [...library, file('数据集.docx', { bytes: 300 * 1024 * 1024 })]
+    vi.mocked(libraryFileBytes).mockRejectedValue(
+      new Error('这份文件太大（超过 200 MB），不能在这里打开，请下载后查看')
+    )
+    const { container } = await mount('/projects/p1/library?file=数据集.docx')
+
+    const preview = await waitFor(() => {
+      const found = container.querySelector('.library-detail__preview') as HTMLElement
+      expect(found.textContent).toContain('暂不支持预览')
+      return found
+    })
+    expect(libraryFileBytes).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /重试/ })).toBeNull()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+
+    // One way to download, not two: the page's own 下载 stands for the note too.
+    const downloads = screen.getAllByRole('button').filter((b) => b.textContent?.trim() === '下载')
+    expect(downloads).toHaveLength(1)
+    expect(preview.querySelector('button')).toBeNull()
+    await fireEvent.click(downloads[0])
+    expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/library/raw?path=数据集.docx', '数据集.docx')
+  })
+
   it('在这一页上放进来的每一份都上传，放完重新列一遍', async () => {
     const { container } = await mount()
     const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
@@ -174,6 +204,39 @@ describe('资料库', () => {
     await waitFor(() => expect(uploadLibraryFile).toHaveBeenCalledTimes(2))
     expect(vi.mocked(uploadLibraryFile).mock.calls.map((call) => (call[1] as File).name)).toEqual(['a.txt', 'b.txt'])
     await waitFor(() => expect(listProjectLibrary).toHaveBeenCalledTimes(2))
+  })
+
+  it('字节传完了平台还在收：写「处理中」，不停在 100%', async () => {
+    vi.mocked(uploadLibraryFile).mockImplementation(
+      (_shelf, _file, _folder, progress) =>
+        new Promise(() => {
+          progress?.(100, 100)
+        })
+    )
+    const { container } = await mount()
+    const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
+    await pick(input, [new File(['a'], '数据集.tar')])
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('处理中'))
+    expect(screen.getByRole('status').textContent).not.toContain('100%')
+  })
+
+  it('上传一份大文件时写着传到了百分之几，传完就不写了', async () => {
+    let finish: () => void = () => {}
+    vi.mocked(uploadLibraryFile).mockImplementation(
+      (_shelf, _file, _folder, progress) =>
+        new Promise((resolve) => {
+          progress?.(30, 100)
+          finish = () => resolve({ path: '数据集.tar', bytes: 100 })
+        })
+    )
+    const { container } = await mount()
+    const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
+    await pick(input, [new File(['a'], '数据集.tar')])
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('正在上传 数据集.tar · 30%'))
+    finish()
+    await waitFor(() => expect(container.textContent).not.toContain('正在上传'))
   })
 
   it('替换先问一句，答应了才换；取消什么也不动', async () => {
@@ -199,7 +262,9 @@ describe('资料库', () => {
       return button as HTMLElement
     })
     await fireEvent.click(confirm)
-    await waitFor(() => expect(replaceLibraryFile).toHaveBeenCalledWith('p1', '预算表.xlsx', expect.any(File)))
+    await waitFor(() =>
+      expect(vi.mocked(replaceLibraryFile).mock.calls[0]?.slice(0, 3)).toEqual(['p1', '预算表.xlsx', expect.any(File)])
+    )
   })
 
   it('删除先问一句，答应了才真的删', async () => {
@@ -330,7 +395,40 @@ describe('资料库的文件夹', () => {
     const { container } = await open('/projects/p1/library?dir=合同')
     const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
     await pick(input, [new File(['a'], 'a.txt')])
-    await waitFor(() => expect(uploadLibraryFile).toHaveBeenCalledWith('p1', expect.any(File), '合同'))
+    await waitFor(() =>
+      expect(vi.mocked(uploadLibraryFile).mock.calls[0]?.slice(0, 3)).toEqual(['p1', expect.any(File), '合同'])
+    )
+  })
+
+  it('题目的材料那个文件夹标着只读；拖文件进去不上传，说清为什么', async () => {
+    library = [file('题目/数据.csv', { readonly: true }), file('结题报告.docx')]
+    const { container, router } = await open()
+    const taskRow = screen.getByText('题目').closest('.library-row') as HTMLElement
+    // 「只读」 is set apart from the count, so it never reads as 「只读 1 份文件」.
+    expect(taskRow.textContent).toContain('只读 · 1 份文件')
+
+    await router.push('/projects/p1/library?dir=题目')
+    await waitFor(() => expect(rowNames(container)).toEqual(['数据.csv']))
+    const area = container.querySelector('.library') as HTMLElement
+    await fireEvent.drop(area, { dataTransfer: { files: [new File(['a'], 'a.txt')] } })
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('文件夹是只读的'))
+    expect(uploadLibraryFile).not.toHaveBeenCalled()
+  })
+
+  it('题目的材料那个文件夹里写明来自哪道题、现在第几版，并连到题目页', async () => {
+    vi.mocked(getProject).mockResolvedValue({
+      id: 'p1',
+      name: '项目',
+      task: { id: 7, space_id: 3, name: '实验一', version: 4 },
+    } as never)
+    library = [file('题目/数据.csv', { readonly: true }), file('结题报告.docx')]
+    const { container, router } = await open()
+    expect(container.textContent).not.toContain('来自题目')
+
+    await router.push('/projects/p1/library?dir=题目')
+    await waitFor(() => expect(container.textContent).toContain('来自题目「实验一」，当前第 4 版'))
+    expect(screen.getByRole('link', { name: '打开题目' }).getAttribute('href')).toBe('/spaces/3/tasks/7')
   })
 
   it('移动或重命名把新的完整名字交给服务端，再重新列一遍', async () => {

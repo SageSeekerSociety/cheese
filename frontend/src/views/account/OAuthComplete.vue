@@ -33,7 +33,6 @@ import type { OAuthBindValues, OAuthCreateValues } from './OAuthCompleteView.vue
 
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
@@ -45,6 +44,7 @@ import { oauthProviderName } from './oauthProvider'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const route = useRoute()
 const router = useRouter()

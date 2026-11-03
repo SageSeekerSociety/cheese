@@ -2,6 +2,7 @@
 
 import uuid
 
+from app.common.auth import verify_access_token
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
@@ -85,14 +86,12 @@ def delivery_artifact(client, room_id, name="报告", *, hands_over=False):
 def delivery_headers(client, room_id):
     """Authenticate delivery setup without changing decision-request identity."""
     # A person signed in on the client files as themselves.
-    if client.headers.get("Authorization"):
+    signed_in = client.headers.get("Authorization", "").removeprefix("Bearer ")
+    if verify_access_token(signed_in) is not None:
         return {}
     task = delivery_task(client, room_id)
     if task is None:
         return {}
     # Delivering is the task's own session's act: its credential names the task.
-    return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=str(task.project_id), topic_id=str(task.id)
-        )
-    }
+    token = mint_scoped_token(project_id=str(task.project_id), topic_id=str(task.id))
+    return {"Authorization": f"Bearer {token}"}

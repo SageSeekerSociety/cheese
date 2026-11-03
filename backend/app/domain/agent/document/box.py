@@ -37,10 +37,8 @@ from app.domain.agent.document import question, session
 from app.domain.agent.document.question import Asked
 from app.domain.agent.session_host.answer import (
     Answer,
-    Thinking,
+    Said,
     Tool,
-    ToolArgs,
-    ToolFailed,
     Waiting,
     Words,
 )
@@ -172,7 +170,9 @@ def _box_key(conversation: uuid.UUID | str) -> str:
 
 @dataclass(frozen=True)
 class Box:
-    """Whose a box's conversation is, and what it last answered."""
+    """Whose a box's conversation is, and what it last answered. A box is only
+    ever opened on a document (a selection has no file to be about), so its
+    subject is the document's id."""
 
     asker: str
     document_id: uuid.UUID
@@ -185,6 +185,13 @@ async def box_of(redis: Redis, conversation: uuid.UUID) -> Box | None:
         return None
     held = json.loads(raw)
     return Box(held["asker"], uuid.UUID(held["document"]), held.get("answer", ""))
+
+
+def _document_of(asked: Asked) -> uuid.UUID:
+    """The document a box's answer is about; a box is only ever opened on one."""
+    document_id = asked.document_id
+    assert document_id is not None
+    return document_id
 
 
 async def _keep(redis: Redis, conversation: uuid.UUID, box: Box) -> None:
@@ -265,7 +272,7 @@ def _question(
         rule = "这次只回答，不要改文档。"
     elif selection is not None:
         rule = (
-            "要改就只改 <选中> 标出的文字；cheese_doc_edit 的 old 从文档原文照抄，"
+            "要改就只改 <选中> 标出的文字；cheese_doc(action=edit) 的 old 从文档原文照抄，"
             "不含 <选中> 标记。"
         )
     else:
@@ -299,7 +306,10 @@ async def ask(
     allowed = may_edit and (chosen is None or chosen.kind == "edit")
     async with factory() as db:
         bound = await question.bind(db, asked)
-    await _keep(redis, conversation, Box(asker, asked.document_id))
+    # 输入框只开在文档上（选中的是正文），所以这里一定拿得到文档 id。
+    document_id = asked.document_id
+    assert document_id is not None
+    await _keep(redis, conversation, Box(asker, document_id))
     work = uuid.uuid4()
 
     async def queued() -> None:
@@ -401,7 +411,7 @@ class Answers:
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
@@ -459,6 +469,6 @@ class Answers:
             await _keep(
                 redis,
                 conversation,
-                Box(consumption.data["asker"], asked.document_id, text),
+                Box(consumption.data["asker"], _document_of(asked), text),
             )
         return [("done", {"answer": text, "changes": changed, "stopped": stopped})]

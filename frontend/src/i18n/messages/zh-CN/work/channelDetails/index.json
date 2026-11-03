@@ -4,5 +4,9 @@
   "created": "创建时间",
   "members": "成员",
   "membersOpen": "查看成员",
-  "open": "「{name}」的详情"
+  "open": "「{name}」的详情",
+  "speakers": "谁能发言",
+  "speakersEveryone": "所有人",
+  "speakersSome": "指定角色",
+  "threadsOpen": "允许所有人在支线里回复"
 }

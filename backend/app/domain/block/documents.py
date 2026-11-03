@@ -5,11 +5,13 @@ import html
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.request_facts import recall, remember
 from app.core.sentences import NoticeList, listing, say
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
@@ -86,20 +88,48 @@ def persisted_notice(block: Block) -> str | None:
     return agent_notice(block)
 
 
+class _OwningTask(NamedTuple):
+    id: uuid.UUID
+    room_id: uuid.UUID
+    title: str | None
+    title_source: str | None
+
+
+async def _owning_task(session: AsyncSession, doc: Document) -> _OwningTask | None:
+    """The task whose living document ``doc`` is — its id, room, title and
+    where the title came from — or None. Saving a document asks who owns it
+    before the write and what it is called after; both answers are this one
+    row, read once per request."""
+    can_cache = isinstance(session, AsyncSession)
+    if can_cache:
+        if session.autoflush:
+            await session.flush()
+        found, cached = recall(session, ("document_task", doc.id))
+        if found:
+            return cached
+    row = (
+        await session.execute(
+            select(
+                _tasks.c.id, _tasks.c.room_id, _tasks.c.title, _tasks.c.title_source
+            ).where(_tasks.c.document_id == doc.id)
+        )
+    ).first()
+    owner = None if row is None else _OwningTask(*row)
+    if can_cache:
+        remember(session, ("document_task", doc.id), owner, tables=frozenset({"tasks"}))
+    return owner
+
+
 async def whose_document(
     session: AsyncSession, doc: Document
 ) -> tuple[uuid.UUID | None, uuid.UUID | None]:
     """``(room, task)`` whose living document this is: a task's (told in the
     task, where its session reads it), or ``(None, None)`` for one of the
     project's own."""
-    owner = (
-        await session.execute(
-            select(_tasks.c.id, _tasks.c.room_id).where(_tasks.c.document_id == doc.id)
-        )
-    ).first()
-    if owner is None:
+    if doc.number is not None or doc.room_id is not None or doc.project_id is None:
         return None, None
-    return owner[1], owner[0]
+    owner = await _owning_task(session, doc)
+    return (None, None) if owner is None else (owner.room_id, owner.id)
 
 
 async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
@@ -108,16 +138,10 @@ async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
     unnamed)."""
     if doc.title:
         return doc.title
-    row = (
-        await session.execute(
-            select(_tasks.c.title, _tasks.c.title_source).where(
-                _tasks.c.document_id == doc.id
-            )
-        )
-    ).first()
-    if row is None or row.title_source == "placeholder" or not row.title:
+    owner = await _owning_task(session, doc)
+    if owner is None or owner.title_source == "placeholder" or not owner.title:
         return None
-    return row.title
+    return owner.title
 
 
 def _project_of(doc: Document) -> uuid.UUID:
@@ -180,6 +204,12 @@ class DocumentWriter:
         previous_content = doc.content
         if previous_content == content:
             return None, None
+        # The name the line shows it under, read now: the writes below end the
+        # request's remembered answers, and the owning task's row is in hand.
+        # Only a store that goes on to write a line needs it.
+        shown_title = (
+            None if quiet or room_id is None else await _shown_title(self._session, doc)
+        )
         base_version = doc.version
         # A quiet version only respells the text and is nobody's edit: the
         # document stays its last editor's, respelled nodes included. Unchanged
@@ -260,7 +290,7 @@ class DocumentWriter:
                 f"实况文档已被 {editors} 更新至第 {doc.version} 版，"
                 f"{self._summarize(previous_content, content)}。"
                 "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
-                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
+                "先用 cheese_doc(action=get) 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
         if for_agent is None and earlier is not None and consumed_turn(earlier) is None:
@@ -273,7 +303,7 @@ class DocumentWriter:
             "doc_version": doc.version,
             _DOC_FROM_VERSION_KEY: from_version,
             _DOC_ACTORS_KEY: everyone,
-            DOC_TITLE_KEY: await _shown_title(self._session, doc),
+            DOC_TITLE_KEY: shown_title,
             AGENT_NOTICE_META_KEY: for_agent,
             "detail_label": say("labelDocEditDiff"),
             "detail": "\n".join(

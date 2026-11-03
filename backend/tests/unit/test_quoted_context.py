@@ -60,6 +60,19 @@ CELL = {
     "value": "1200",
 }
 
+# 表格里的一片：两个角都是文件自己给的地址，加上摊平的那份内容。
+SHEET_AREA = {
+    "kind": "sheet-range",
+    "path": "room/预算.xlsx",
+    "source": "committed",
+    "version": "version-e",
+    "task_id": None,
+    "sheet": "预算",
+    "start": "B2",
+    "end": "D4",
+    "text": "90\t80\n70\t60",
+}
+
 RANGE = {
     "kind": "text-range",
     "path": "room/说明.md",
@@ -70,6 +83,21 @@ RANGE = {
     "heading": "配置",
     "prefix": "退避",
     "suffix": "，超过就报错",
+}
+
+# 图片上框的一块：坐标是原图像素，另带当时那张原图的尺寸。
+IMAGE_REGION = {
+    "kind": "image-region",
+    "path": "room/示意图.png",
+    "source": "live",
+    "version": "version-f",
+    "task_id": None,
+    "x": 12,
+    "y": 40,
+    "width": 180,
+    "height": 96,
+    "natural_width": 1024,
+    "natural_height": 768,
 }
 
 
@@ -231,6 +259,33 @@ class QuotedContextTest(unittest.TestCase):
             with self.subTest(quote=quote), self.assertRaises(ValidationError):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
 
+    def test_a_sheet_area_keeps_both_corners_and_rejects_a_cornerged_shape(self):
+        import uuid
+
+        body = {
+            "content": "这一片都不对",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": SHEET_AREA,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), SHEET_AREA)
+        # CSV has no sheet name: an empty one is the shape, not a missing field.
+        csv = ChatMessageIn.model_validate(
+            {**body, "quoted_context": {**SHEET_AREA, "sheet": ""}}
+        )
+        self.assertEqual(csv.quoted_context.sheet, "")
+        for quote in (
+            {**SHEET_AREA, "start": ""},
+            {**SHEET_AREA, "end": ""},
+            {k: v for k, v in SHEET_AREA.items() if k != "start"},
+            {k: v for k, v in SHEET_AREA.items() if k != "end"},
+            # An area has no page of its own; extra="forbid" refuses a smuggled one.
+            {**SHEET_AREA, "page": 2},
+            {**SHEET_AREA, "kind": "sheet-cells"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
     def test_a_text_range_keeps_its_passage_and_its_optional_heading(self):
         import uuid
 
@@ -257,8 +312,98 @@ class QuotedContextTest(unittest.TestCase):
             with self.subTest(quote=quote), self.assertRaises(ValidationError):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
 
+    def test_an_image_region_keeps_natural_pixels_and_rejects_a_displayed_one(self):
+        """图片上框的一块：坐标是原图像素，另带当时那张原图的尺寸。
+
+        它和网页那一类刚好相反：图片没有视口，有一份不变的原图，所以位置直接记原图
+        像素；原图尺寸是正整数（它来自图片自己，不是量出来的浮点数）。带上尺寸，受话
+        人不必先取一次原图就能按比例画回去。
+        """
+        import uuid
+
+        body = {
+            "content": "这一块改掉",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": IMAGE_REGION,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), IMAGE_REGION)
+        # 贴左上角（0）是合法的一处位置。
+        at_origin = {**IMAGE_REGION, "x": 0, "y": 0}
+        self.assertEqual(
+            ChatMessageIn.model_validate(
+                {**body, "quoted_context": at_origin}
+            ).quoted_context.model_dump(mode="json"),
+            at_origin,
+        )
+        for quote in (
+            {k: v for k, v in IMAGE_REGION.items() if k != "width"},
+            {k: v for k, v in IMAGE_REGION.items() if k != "natural_width"},
+            # 框不出东西来的宽高不是一处位置。
+            {**IMAGE_REGION, "width": 0},
+            {**IMAGE_REGION, "height": -1},
+            {**IMAGE_REGION, "x": -1},
+            # 原图尺寸是正整数，不是量出来的浮点数。
+            {**IMAGE_REGION, "natural_width": 0},
+            {**IMAGE_REGION, "natural_width": 1024.5},
+            {**IMAGE_REGION, "natural_height": True},
+            # 图片引用没有页码和视口；extra="forbid" 也不许夹带别的形状的字段。
+            {**IMAGE_REGION, "page": 1},
+            {**IMAGE_REGION, "viewport": {"w": 800, "h": 600}},
+            {**IMAGE_REGION, "kind": "image-area"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+    def test_what_the_reader_is_looking_at_is_a_quote_with_a_file_and_no_place(self):
+        """读者发消息时右侧开着的那一份：只有文件（和它所在的任务），没有位置和版本。
+
+        它让「这里不对」有个落点；位置和版本它不假装知道，要就去读文件的当前版。
+        """
+        import uuid
+
+        viewing = {"kind": "viewing", "path": "output/招募方案.docx", "task_id": None}
+        body = {
+            "content": "这一页太挤了",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": viewing,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), viewing)
+        for quote in (
+            {**viewing, "path": ""},
+            {**viewing, "path": "x" * 1001},
+            # 它不带位置、不带版本：夹带别的形状的字段会被拒。
+            {**viewing, "page": 2},
+            {**viewing, "version": "v1"},
+            {k: v for k, v in viewing.items() if k != "path"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+        block = SimpleNamespace(
+            kind=BlockKind.message,
+            author="alice",
+            content="这一页太挤了",
+            meta={"quoted_context": viewing},
+        )
+        prompt = prompt_line(block, embeds_images=False)
+        decoded, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+        self.assertEqual(decoded, viewing)
+
+    def test_an_image_region_reaches_the_model_as_the_same_data(self):
+        block = SimpleNamespace(
+            kind=BlockKind.message,
+            author="alice",
+            content="<@cheese-current> 看这块",
+            meta={"quoted_context": IMAGE_REGION},
+        )
+        prompt = prompt_line(block, embeds_images=False)
+        self.assertIn("{", prompt, "the model must receive the quoted source")
+        quote, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+        self.assertEqual(quote, IMAGE_REGION)
+
     def test_new_quote_kinds_reach_the_model_as_the_same_data(self):
-        for quote in (CELL, RANGE):
+        for quote in (CELL, SHEET_AREA, RANGE):
             with self.subTest(kind=quote["kind"]):
                 block = SimpleNamespace(
                     kind=BlockKind.message,
@@ -331,6 +476,7 @@ class QuotedContextTest(unittest.TestCase):
             "task_id": None,
             "selector": "body:nth-of-type(1) > main > p:nth-of-type(2)",
             "tag": "p",
+            "label": "二、时间安排",
             "text": "这一句说错了",
             "rect": {"x": 12.5, "y": 40, "w": 300, "h": 24},
             "viewport": {"w": 1024, "h": 768},
@@ -344,6 +490,13 @@ class QuotedContextTest(unittest.TestCase):
         self.assertEqual(parsed.quoted_context.model_dump(mode="json"), element)
         # 左上角可以是负的：被滚到视口左上角之外的元素就是这么报的，这是它有部分在
         # 视口外的事实，不是坏数据。运行时和前端都原样带着它。
+        # 给人读的名字是后加的：老消息里没有它，照样收下，读出来是空串。
+        unnamed = {k: v for k, v in element.items() if k != "label"}
+        parsed = ChatMessageIn.model_validate({**body, "quoted_context": unnamed})
+        self.assertEqual(parsed.quoted_context.label, "")
+        too_long = {**element, "label": "长" * 81}
+        with self.assertRaises(ValidationError):
+            ChatMessageIn.model_validate({**body, "quoted_context": too_long})
         rolled = {**element, "rect": {"x": -8, "y": -8, "w": 10, "h": 10}}
         parsed = ChatMessageIn.model_validate({**body, "quoted_context": rolled})
         self.assertEqual(parsed.quoted_context.model_dump(mode="json"), rolled)

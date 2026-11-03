@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -63,6 +64,8 @@ type Host struct {
 	// does not turn every access into a failure — see localfs.LoadStore.
 	localFSMu  sync.Mutex
 	localFSSet *localfs.GrantSet
+
+	machine machineRelay // streams a session's sandbox opened (machine.go)
 
 	updating    atomic.Bool // guards against concurrent / re-entrant self-updates
 	sleepMu     sync.Mutex
@@ -323,6 +326,8 @@ func (h *Host) onMsg(m link.Msg) {
 		h.startExec(m)
 	case "execution.call":
 		go h.runExecutor(m)
+	case "machine.data", "machine.close":
+		h.machineFrame(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
 	case "localfs.grants": // the platform's copy of what this machine may touch
@@ -367,13 +372,7 @@ func (h *Host) createSession(m link.Msg) {
 		// way of reaching it is per-message, so there is nothing to re-establish.
 		return
 	}
-	// The server owns the screen's identity: it hands down an opaque token in
-	// m.Screen, which the host injects as CHEESE_SCREEN so any process the screen
-	// spawns can prove which screen it belongs to when it calls back.
-	env := make([]string, 0, len(m.Env)+2)
-	if m.Screen != "" {
-		env = append(env, "CHEESE_SCREEN="+m.Screen)
-	}
+	env := make([]string, 0, len(m.Env)+1)
 	// The connector's own PATH, which carries the runtime it placed
 	// (`devenv`): a terminal server already running from before would
 	// otherwise hand the session the PATH it started with.
@@ -635,6 +634,13 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 	stdout := &cappedBuffer{limit: execMaxOut}
 	stderr := &cappedBuffer{limit: execMaxOut}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if m.Stream {
+		// cmd.Run returns only once its copy of stderr has drained into this
+		// writer, so every line goes up before the exec.result below.
+		cmd.Stderr = io.MultiWriter(stderr, &lineSender{send: func(line string) {
+			_ = h.conn.Send(link.ExecOutput(m.ID, line))
+		}})
+	}
 
 	exit := 0
 	if err := cmd.Run(); err != nil {
@@ -704,6 +710,34 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 		c.truncated = true
 	}
 	return len(p), nil
+}
+
+// execMaxLine bounds one streamed line: a command that writes a long run of
+// bytes with no line end still has it sent, in pieces of this size.
+const execMaxLine = 4 << 10
+
+// lineSender hands each complete line written to it to send, without its line
+// end. A last line with no line end is not sent: the exec.result carries it.
+type lineSender struct {
+	pending []byte
+	send    func(string)
+}
+
+func (l *lineSender) Write(p []byte) (int, error) {
+	l.pending = append(l.pending, p...)
+	for {
+		end := bytes.IndexByte(l.pending, '\n')
+		if end < 0 || end >= execMaxLine {
+			if len(l.pending) < execMaxLine {
+				return len(p), nil
+			}
+			l.send(string(l.pending[:execMaxLine]))
+			l.pending = l.pending[execMaxLine:]
+			continue
+		}
+		l.send(strings.TrimSuffix(string(l.pending[:end]), "\r"))
+		l.pending = l.pending[end+1:]
+	}
 }
 
 func (c *cappedBuffer) String() string { return c.buf.String() }

@@ -29,7 +29,9 @@ const facts = computed(() => {
       ? t(
           task.teamLockingPolicy === 'NO_LOCK'
             ? 'spaces.detail.auditTasks.teamLockingPolicyNoLock'
-            : 'spaces.detail.auditTasks.teamLockingPolicyLockOnApproval'
+            : task.startMode === 'DIRECT'
+              ? 'spaces.detail.auditTasks.teamLockingPolicyLockOnStart'
+              : 'spaces.detail.auditTasks.teamLockingPolicyLockOnApproval'
         )
       : '',
     task.requireRealName ? t('spaces.detail.auditTasks.requireRealName') : '',
@@ -57,7 +59,14 @@ const facts = computed(() => {
         <span>{{
           task.deadline == null
             ? t('spaces.detail.auditTasks.noDeadline')
-            : t('spaces.detail.auditTasks.deadline', { date: date(task.deadline) })
+            : t(
+                task.startMode === 'APPLY'
+                  ? 'spaces.detail.auditTasks.applyDeadline'
+                  : 'spaces.detail.auditTasks.deadline',
+                {
+                  date: date(task.deadline),
+                }
+              )
         }}</span>
         <v-icon :icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" class="ar__chevron" />
       </span>

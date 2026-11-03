@@ -2,7 +2,6 @@ import type { Locale } from '@/i18n'
 import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { UserApi } from '@/api/users'
 import i18n, {
@@ -21,6 +20,8 @@ import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { identityChanges } from '@/lib/identity'
 import { resetRoomLink } from '@/lib/roomLink'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
+import { forgetWindows } from '@/lib/siteWindow'
+import { toast } from '@/lib/toast'
 import { queryClient } from '@/query/client'
 import { forgetPersistedQueries } from '@/query/persist'
 import { forgetRoomSnapshots } from '@/query/snapshot'
@@ -97,6 +98,9 @@ function forgetServerData(): void {
   }
   forgetPersistedQueries()
   forgetRoomSnapshots()
+  // 现场那一窗不在 TanStack 里，得自己和上面几份一起放掉：上一个人读过的现场
+  // 不能留在下一个人第一帧上。
+  forgetWindows()
   resetRoomLink()
 }
 

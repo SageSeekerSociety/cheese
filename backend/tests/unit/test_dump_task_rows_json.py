@@ -31,6 +31,7 @@ def _make_tasks(count: int) -> list[Task]:
             reporter_handle=None,
             contributor_handles=[f"helper-{i}"] if i % 6 == 0 else [],
             created_by=f"creator-{i % 3}",
+            created_by_assistant=i % 5 == 0,
             branch_name=f"task/{i}" if i % 4 == 0 else None,
             base_branch="main",
             pr_number=1000 + i if i % 4 == 0 else None,

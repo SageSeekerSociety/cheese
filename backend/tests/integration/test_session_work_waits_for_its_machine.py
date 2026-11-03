@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
@@ -30,6 +31,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.project.models import Project
+from app.domain.run_record.models import RunRecord
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, session_auth_headers
@@ -121,6 +123,15 @@ def cloud_rooms(client, monkeypatch):
                     "state": f"/{device}/state",
                     "workspace": f"/{device}/work",
                     "mcp_servers": [],
+                    # The install's own step times; one it does not name
+                    # is not kept.
+                    "timings": {
+                        "release": 0.2,
+                        "claude": 0.1,
+                        "sandbox": 0.4,
+                        "ready": 1.5,
+                        "elsewhere": 9,
+                    },
                 }
             ),
         }
@@ -147,7 +158,7 @@ def _lease(case, seat, timeout=660):
     room_id, session_id, token = seat
     return case.client.post(
         f"/topics/{room_id}/sessions/{session_id}/work-lease",
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
         json={"env": {}, "timeout": timeout},
     )
 
@@ -228,6 +239,30 @@ def test_a_new_rooms_first_command_waits_for_its_own_machine(cloud_rooms, monkey
     assert time.monotonic() - started < 10, "Ready is noticed within a poll or two"
     installed_on = [call.args[0] for call in case.hub.exec.await_args_list]
     assert installed_on == ["older-rooms-machine", "new-rooms-machine"]
+
+    # Each sandbox brought up keeps how long its steps took; both rooms
+    # waited for a host coming up, and say for how long.
+    async def timed():
+        async with case.client.test_factory() as db:
+            return [
+                record.meta
+                for record in await db.scalars(
+                    select(RunRecord)
+                    .where(RunRecord.kind == "sandbox_prepared")
+                    .order_by(RunRecord.created_at)
+                )
+            ]
+
+    kept = case.client.portal.call(timed)
+    assert len(kept) == 2
+    for one in kept:
+        assert {"place", "executor", "host"} <= one["stages"].keys()
+        assert "thaw" not in one["stages"]
+        # What the install timed of itself, as parts of the executor's step.
+        assert one["stages"]["ready"] == 1.5
+        assert {"release", "claude", "sandbox"} <= one["stages"].keys()
+        assert "elsewhere" not in one["stages"]
+        assert one["total_s"] >= one["stages"]["host"] > 0
 
 
 def test_a_machine_that_drops_while_it_is_set_up_is_still_being_prepared(

@@ -66,7 +66,7 @@ def _library_documents(client, pid: str, headers) -> list[str]:
 
 def _agent(client, pid: str, room: str) -> dict:
     return {
-        "X-Cheese-Token": mint_session_token(pid, room, room_agent_seat(client, room))
+        "Authorization": f"Bearer {mint_session_token(pid, room, room_agent_seat(client, room))}"
     }
 
 

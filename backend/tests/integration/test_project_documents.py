@@ -55,8 +55,8 @@ def _setup(client, rooms: int = 1) -> list[tuple[str, str, dict[str, str]]]:
             agent_handle=room_agent_seat(client, room),
             access_scope="project",
         )
-        made.append((room, project, {"X-Cheese-Token": token}))
-    client.headers.pop("X-Cheese-Token", None)
+        made.append((room, project, {"Authorization": f"Bearer {token}"}))
+    client.headers.pop("Authorization", None)
     return made
 
 

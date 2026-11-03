@@ -104,4 +104,26 @@ describe('输入框下面那一行', () => {
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.composer.more') }))
     expect(await screen.findByText(t('global.shortcuts.open'))).toBeTruthy()
   })
+
+  it('攒着待发批注时，发送键上写着会带走几条', async () => {
+    pointer('mouse')
+    mount(1440, { pendingCount: 2 })
+    // 只写进 title 的话，读者在按下之前看不见这一下会带走什么。
+    expect(screen.getByText(t('work.room.preview.sendWithNotes', { count: 2 }))).toBeTruthy()
+  })
+
+  it('带着附件时发送键不写「含 N 条批注」：那一下发的是附件，不含这一批', async () => {
+    // 写了就是承诺它做不到的事——读者按下之后会发现批注还在那儿。批注由托盘上的
+    // 「全部发送」发（`RoomComposer` 的 `sendableCount` 在带附件时给 0）。
+    pointer('mouse')
+    mount(1440, { pendingCount: 0 })
+    expect(screen.queryByText(t('work.room.preview.sendWithNotes', { count: 2 }))).toBeNull()
+  })
+
+  it('没攒批注时发送键不带字', async () => {
+    pointer('mouse')
+    mount(1440)
+    expect(screen.queryByText(t('work.room.preview.sendWithNotes', { count: 0 }))).toBeNull()
+    expect(screen.queryByText(t('work.room.preview.sendWithNotes', { count: 2 }))).toBeNull()
+  })
 })

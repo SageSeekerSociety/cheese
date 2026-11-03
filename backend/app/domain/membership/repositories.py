@@ -3,19 +3,27 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.project.models import (
     InvitationStatus,
     ProjectInvitation,
     ProjectMember,
     ProjectMemberExclusion,
     ProjectRole,
-    ProjectRoleGrant,
+    ProjectRoleDef,
     ProjectTransfer,
 )
+from app.domain.topic.models import Topic
+
+_ROLE_DEF_TABLES = frozenset({"project_role_defs"})
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
 
 
 class MemberRepository:
@@ -32,26 +40,65 @@ class MemberRepository:
         再看排除，靠的就是它）。
         """
         await self.lift_exclusion(project_id=project_id, user_handle=user_handle)
-        member = ProjectMember(project_id=project_id, user_handle=user_handle)
+        now = datetime.now(UTC)
+        member = ProjectMember(
+            project_id=project_id,
+            user_handle=user_handle,
+            created_at=now,
+            updated_at=now,
+        )
         self._session.add(member)
         await self._session.flush()
-        await self._session.refresh(member)
         return member
 
     async def is_excluded(self, *, project_id: uuid.UUID, user_handle: str) -> bool:
         """Is this person out of this project even though the team may say otherwise?"""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found_all, cached_all = recall(
+                self._session, ("excluded_handles", project_id)
+            )
+            if found_all:
+                return user_handle in cached_all
+            found, cached = recall(
+                self._session, ("project_member_excluded", project_id, user_handle)
+            )
+            if found:
+                return cached
         stmt = select(ProjectMemberExclusion.id).where(
             ProjectMemberExclusion.project_id == project_id,
             ProjectMemberExclusion.user_handle == user_handle,
         )
-        return await self._session.scalar(stmt) is not None
+        excluded = await self._session.scalar(stmt) is not None
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_excluded", project_id, user_handle),
+                excluded,
+                tables=frozenset({"project_member_exclusions"}),
+            )
+        return excluded
 
     async def excluded_handles(self, project_id: uuid.UUID) -> set[str]:
         """Everyone excluded from this project, in one read — the roster's half."""
+        if self._session.autoflush:
+            await self._session.flush()
+        key = ("excluded_handles", project_id)
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
         stmt = select(ProjectMemberExclusion.user_handle).where(
             ProjectMemberExclusion.project_id == project_id
         )
-        return set((await self._session.scalars(stmt)).all())
+        handles = set((await self._session.scalars(stmt)).all())
+        remember(
+            self._session,
+            key,
+            handles,
+            tables=frozenset({"project_member_exclusions"}),
+        )
+        return handles
 
     async def exclude(self, *, project_id: uuid.UUID, user_handle: str) -> None:
         """Record 「他在小队里，但不属于这个项目」.
@@ -79,27 +126,56 @@ class MemberRepository:
     async def get(
         self, *, project_id: uuid.UUID, user_handle: str
     ) -> ProjectMember | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found_all, cached_all = recall(
+                self._session, ("project_member_rows", project_id)
+            )
+            if found_all:
+                return next(
+                    (m for m in cached_all if m.user_handle == user_handle), None
+                )
+            found, cached = recall(
+                self._session, ("project_member_row", project_id, user_handle)
+            )
+            if found:
+                return cached
         stmt = select(ProjectMember).where(
             ProjectMember.project_id == project_id,
             ProjectMember.user_handle == user_handle,
         )
-        return await self._session.scalar(stmt)
+        member = await self._session.scalar(stmt)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_row", project_id, user_handle),
+                member,
+                tables=frozenset({"project_members"}),
+            )
+        return member
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMember]:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_member_rows", project_id))
+            if found:
+                return list(cached)
         stmt = (
             select(ProjectMember)
             .where(ProjectMember.project_id == project_id)
             .order_by(ProjectMember.created_at.asc())
         )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def count_for_project(self, project_id: uuid.UUID) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(ProjectMember)
-            .where(ProjectMember.project_id == project_id)
-        )
-        return int((await self._session.scalar(stmt)) or 0)
+        rows = list((await self._session.scalars(stmt)).all())
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_rows", project_id),
+                tuple(rows),
+                tables=frozenset({"project_members"}),
+            )
+        return rows
 
     async def delete(self, member: ProjectMember) -> None:
         await self._session.delete(member)
@@ -121,18 +197,24 @@ class InvitationRepository:
         project_id: uuid.UUID,
         invitee_handle: str,
         inviter_handle: str,
-        role: str = "member",
+        role_id: uuid.UUID | None = None,
+        invited_by_assistant: bool = False,
     ) -> ProjectInvitation:
+        """``role_id`` is one of the project's own roles; none means member."""
+        now = datetime.now(UTC)
         invitation = ProjectInvitation(
             project_id=project_id,
             invitee_handle=invitee_handle,
             inviter_handle=inviter_handle,
+            invited_by_assistant=invited_by_assistant,
             status=InvitationStatus.pending,
-            role=role,
+            role="custom" if role_id is not None else "member",
+            role_id=role_id,
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(invitation)
         await self._session.flush()
-        await self._session.refresh(invitation)
         return invitation
 
     async def get(self, invitation_id: uuid.UUID) -> ProjectInvitation | None:
@@ -147,6 +229,19 @@ class InvitationRepository:
             ProjectInvitation.status == InvitationStatus.pending,
         )
         return await self._session.scalar(stmt)
+
+    async def waiting_for_role(self, role_id: uuid.UUID) -> bool:
+        """Whether an invitation still waiting would give this role."""
+        return (
+            await self._session.scalar(
+                select(ProjectInvitation.id)
+                .where(
+                    ProjectInvitation.role_id == role_id,
+                    ProjectInvitation.status == InvitationStatus.pending,
+                )
+                .limit(1)
+            )
+        ) is not None
 
     async def list_pending_for_project(
         self, project_id: uuid.UUID
@@ -175,87 +270,359 @@ class InvitationRepository:
     async def settle(
         self, invitation: ProjectInvitation, status: InvitationStatus
     ) -> ProjectInvitation:
+        now = datetime.now(UTC)
         invitation.status = status
-        invitation.responded_at = datetime.now(UTC)
+        invitation.responded_at = now
+        invitation.updated_at = now
         await self._session.flush()
-        await self._session.refresh(invitation)
         return invitation
 
 
+def role_key(role: str, role_id: uuid.UUID | None) -> str:
+    """The key a recorded role goes by: ``admin``, ``member``, or the id of
+    one of the project's own roles."""
+    return str(role_id) if role_id is not None else role
+
+
 class RoleRepository:
-    """The roles a project records, and what each role may do there (#3830)."""
+    """The roles a project has, who holds which, and what each may do (#3830,
+    #4795)."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
 
     async def role_of(self, *, project_id: uuid.UUID, user_handle: str) -> str | None:
-        return await self._session.scalar(
-            select(ProjectRole.role).where(
-                ProjectRole.project_id == project_id,
-                ProjectRole.user_handle == user_handle,
+        """The key of the role recorded for ``user_handle``; none when nothing is."""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(
+                self._session, ("project_role_of", project_id, user_handle)
             )
-        )
+            if found:
+                return cached
+            found_map, cached_map = recall(
+                self._session, ("project_roles_map", project_id)
+            )
+            if found_map and cached_map is not None:
+                return cached_map.get(user_handle)
+        row = (
+            await self._session.execute(
+                select(ProjectRole.role, ProjectRole.role_id).where(
+                    ProjectRole.project_id == project_id,
+                    ProjectRole.user_handle == user_handle,
+                )
+            )
+        ).first()
+        ans = role_key(row[0], row[1]) if row is not None else None
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_of", project_id, user_handle),
+                ans,
+                tables=frozenset({"project_roles"}),
+            )
+        return ans
 
     async def roles(self, project_id: uuid.UUID) -> dict[str, str]:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_roles_map", project_id))
+            if found and cached is not None:
+                return dict(cached)
         rows = await self._session.execute(
-            select(ProjectRole.user_handle, ProjectRole.role).where(
-                ProjectRole.project_id == project_id
-            )
+            select(
+                ProjectRole.user_handle, ProjectRole.role, ProjectRole.role_id
+            ).where(ProjectRole.project_id == project_id)
         )
-        return {handle: role for handle, role in rows.all()}
+        out = {handle: role_key(role, rid) for handle, role, rid in rows.all()}
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_roles_map", project_id),
+                out,
+                tables=frozenset({"project_roles"}),
+            )
+        return out
 
     async def set_role(
-        self, *, project_id: uuid.UUID, user_handle: str, role: str
+        self, *, project_id: uuid.UUID, user_handle: str, role_id: uuid.UUID | None
     ) -> None:
+        """Record one of the project's own roles (``role_id``), or admin (none)."""
+        role = "custom" if role_id is not None else "admin"
         await self._session.execute(
             pg_insert(ProjectRole)
-            .values(project_id=project_id, user_handle=user_handle, role=role)
+            .values(
+                project_id=project_id,
+                user_handle=user_handle,
+                role=role,
+                role_id=role_id,
+            )
             .on_conflict_do_update(
                 constraint="uq_project_role",
-                set_={"role": role, "updated_at": datetime.now(UTC)},
+                set_={
+                    "role": role,
+                    "role_id": role_id,
+                    "updated_at": datetime.now(UTC),
+                },
             )
         )
-        await self._session.flush()
+        if not _can_cache(self._session) or (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            await self._session.flush()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_of", project_id, user_handle),
+                role_key(role, role_id),
+                tables=frozenset({"project_roles"}),
+            )
 
     async def clear_role(self, *, project_id: uuid.UUID, user_handle: str) -> None:
+        if _can_cache(self._session) and not (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            found, cached = recall(
+                self._session, ("project_role_of", project_id, user_handle)
+            )
+            if found and cached is None:
+                return
         await self._session.execute(
             delete(ProjectRole).where(
                 ProjectRole.project_id == project_id,
                 ProjectRole.user_handle == user_handle,
             )
         )
-        await self._session.flush()
+        if not _can_cache(self._session) or (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            await self._session.flush()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_of", project_id, user_handle),
+                None,
+                tables=frozenset({"project_roles"}),
+            )
 
-    async def grants(self, project_id: uuid.UUID) -> dict[str, list[str]]:
-        """The roles this project changed, each with what it may do now."""
-        rows = await self._session.execute(
-            select(ProjectRoleGrant.role, ProjectRoleGrant.permissions).where(
-                ProjectRoleGrant.project_id == project_id
+    async def holders(self, role_id: uuid.UUID) -> list[str]:
+        """Who holds one of the project's own roles."""
+        return list(
+            (
+                await self._session.scalars(
+                    select(ProjectRole.user_handle).where(
+                        ProjectRole.role_id == role_id
+                    )
+                )
+            ).all()
+        )
+
+    async def move_holders(
+        self, *, role_id: uuid.UUID, to_role_id: uuid.UUID | None, to_admin: bool
+    ) -> None:
+        """Everyone holding ``role_id``, and every invitation waiting to give it,
+        moved to another role: one of the project's own, admin, or member
+        (neither)."""
+        held = ProjectRole.role_id == role_id
+        if to_role_id is None and not to_admin:
+            await self._session.execute(delete(ProjectRole).where(held))
+        else:
+            await self._session.execute(
+                update(ProjectRole)
+                .where(held)
+                .values(
+                    role="custom" if to_role_id is not None else "admin",
+                    role_id=to_role_id,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+        await self._session.execute(
+            update(ProjectInvitation)
+            .where(
+                ProjectInvitation.role_id == role_id,
+                ProjectInvitation.status == InvitationStatus.pending,
+            )
+            .values(
+                role="custom" if to_role_id is not None else "member",
+                role_id=to_role_id,
             )
         )
-        return {role: list(permissions or []) for role, permissions in rows.all()}
+        await self._session.flush()
 
-    async def set_grants(
-        self, *, project_id: uuid.UUID, role: str, permissions: list[str]
+    async def replace_speaker(
+        self, *, project_id: uuid.UUID, key: str, to_key: str | None
+    ) -> None:
+        """A role leaving the project: in every channel whose main line it could
+        speak in, the role its holders moved to (``to_key``) speaks instead, or
+        nobody does when it had no holders."""
+        for room in (
+            await self._session.scalars(
+                select(Topic).where(
+                    Topic.project_id == project_id, Topic.speaker_roles.is_not(None)
+                )
+            )
+        ).all():
+            keys = list(room.speaker_roles or [])
+            if key not in keys:
+                continue
+            keys = [k for k in keys if k != key]
+            if to_key is not None and to_key not in keys:
+                keys.append(to_key)
+            room.speaker_roles = keys
+        await self._session.flush()
+
+    async def defs(self, project_id: uuid.UUID) -> list[ProjectRoleDef]:
+        """The project's role rows, its own roles in the order they were made."""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return list(cached)
+        rows = list(
+            (
+                await self._session.scalars(
+                    select(ProjectRoleDef)
+                    .where(ProjectRoleDef.project_id == project_id)
+                    .order_by(ProjectRoleDef.created_at, ProjectRoleDef.id)
+                )
+            ).all()
+        )
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                tuple(rows),
+                tables=_ROLE_DEF_TABLES,
+            )
+        return rows
+
+    async def defs_of(
+        self, project_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[ProjectRoleDef]]:
+        out: dict[uuid.UUID, list[ProjectRoleDef]] = {pid: [] for pid in project_ids}
+        for row in (
+            await self._session.scalars(
+                select(ProjectRoleDef)
+                .where(ProjectRoleDef.project_id.in_(project_ids))
+                .order_by(ProjectRoleDef.created_at, ProjectRoleDef.id)
+            )
+        ).all():
+            out[row.project_id].append(row)
+        return out
+
+    async def get_def(
+        self, *, project_id: uuid.UUID, role_id: uuid.UUID
+    ) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.id == role_id), None)
+        row = await self._session.get(ProjectRoleDef, role_id)
+        return row if row is not None and row.project_id == project_id else None
+
+    async def templated(
+        self, *, project_id: uuid.UUID, template: str
+    ) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.template == template), None)
+        return await self._session.scalar(
+            select(ProjectRoleDef)
+            .where(
+                ProjectRoleDef.project_id == project_id,
+                ProjectRoleDef.template == template,
+            )
+            .order_by(ProjectRoleDef.created_at)
+            .limit(1)
+        )
+
+    async def named(self, *, project_id: uuid.UUID, name: str) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.name == name), None)
+        return await self._session.scalar(
+            select(ProjectRoleDef).where(
+                ProjectRoleDef.project_id == project_id, ProjectRoleDef.name == name
+            )
+        )
+
+    async def add_def(
+        self,
+        *,
+        project_id: uuid.UUID,
+        name: str,
+        permissions: list[str],
+        template: str | None = None,
+    ) -> ProjectRoleDef:
+        prior_found, prior_cached = (
+            recall(self._session, ("project_role_defs", project_id))
+            if _can_cache(self._session)
+            else (False, None)
+        )
+        row = ProjectRoleDef(
+            project_id=project_id, name=name, permissions=permissions, template=template
+        )
+        self._session.add(row)
+        await self._session.flush()
+        if _can_cache(self._session) and prior_found and prior_cached is not None:
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                (*prior_cached, row),
+                tables=_ROLE_DEF_TABLES,
+            )
+        return row
+
+    async def flush_def(
+        self, project_id: uuid.UUID, defs: list[ProjectRoleDef]
+    ) -> None:
+        await self._session.flush()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                tuple(defs),
+                tables=_ROLE_DEF_TABLES,
+            )
+
+    async def delete_def(self, row: ProjectRoleDef) -> None:
+        await self._session.delete(row)
+        await self._session.flush()
+
+    async def set_builtin_grants(
+        self, *, project_id: uuid.UUID, builtin: str, permissions: list[str]
     ) -> None:
         await self._session.execute(
-            pg_insert(ProjectRoleGrant)
-            .values(project_id=project_id, role=role, permissions=permissions)
+            pg_insert(ProjectRoleDef)
+            .values(project_id=project_id, builtin=builtin, permissions=permissions)
             .on_conflict_do_update(
-                constraint="uq_project_role_grant",
+                constraint="uq_project_role_def_builtin",
                 set_={"permissions": permissions, "updated_at": datetime.now(UTC)},
             )
         )
         await self._session.flush()
 
-    async def clear_grants(
-        self, project_id: uuid.UUID, *, role: str | None = None
+    async def clear_builtin_grants(
+        self, *, project_id: uuid.UUID, builtin: str
     ) -> None:
-        """Back to the defaults: one role's, or every role's."""
-        stmt = delete(ProjectRoleGrant).where(ProjectRoleGrant.project_id == project_id)
-        if role is not None:
-            stmt = stmt.where(ProjectRoleGrant.role == role)
-        await self._session.execute(stmt)
+        """A built-in role back to its defaults."""
+        await self._session.execute(
+            delete(ProjectRoleDef).where(
+                ProjectRoleDef.project_id == project_id,
+                ProjectRoleDef.builtin == builtin,
+            )
+        )
         await self._session.flush()
 
 
@@ -268,12 +635,17 @@ class TransferRepository:
     async def add(
         self, *, project_id: uuid.UUID, from_handle: str, to_handle: str
     ) -> ProjectTransfer:
+        now = datetime.now(UTC)
         offer = ProjectTransfer(
-            project_id=project_id, from_handle=from_handle, to_handle=to_handle
+            project_id=project_id,
+            from_handle=from_handle,
+            to_handle=to_handle,
+            status=InvitationStatus.pending,
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(offer)
         await self._session.flush()
-        await self._session.refresh(offer)
         return offer
 
     async def get(self, transfer_id: uuid.UUID) -> ProjectTransfer | None:

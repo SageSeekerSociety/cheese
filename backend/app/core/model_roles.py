@@ -19,8 +19,8 @@ path neither make a database call nor have to become async. Another process
 picks a change up within ``Settings.platform_model_roles_refresh_interval_s``.
 
 A project's own settings still win where a project has them: ``default_model``
-over ``agent_model``, ``default_subagent_model`` over ``subagent_model``
-(``model_catalog.subagent_default``).
+over ``agent_model``; ``default_subagent_model``, then ``default_model``, over
+``subagent_model`` (``model_catalog.subagent_default``).
 
 Infrastructure, not a domain: every domain that calls a model reads it, so it
 needs nothing but ``Settings``.

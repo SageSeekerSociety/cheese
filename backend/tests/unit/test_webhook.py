@@ -27,7 +27,8 @@ from app.domain.webhook import service as webhook_service
 def test_mint_and_verify_round_trip():
     token = mint_webhook_token(project_id="p1", topic_id="t1", version=3)
     claims = webhook_token_claims(token, topic_id="t1")
-    assert claims == {"p": "p1", "t": "t1", "v": 3}
+    assert claims is not None
+    assert (claims["p"], claims["t"], claims["v"]) == ("p1", "t1", 3)
 
 
 def test_verify_rejects_tampered_signature():
@@ -277,7 +278,7 @@ async def test_receive_webhook_rejects_invalid_token(monkeypatch):
     monkeypatch.setattr(
         webhooks_route.webhook_service, "verify", AsyncMock(return_value=False)
     )
-    request = _request_with_headers({"x-webhook-token": "bad"})
+    request = _request_with_headers({"authorization": "Bearer bad"})
     with pytest.raises(AuthenticationRequiredError):
         await webhooks_route.receive_webhook(
             uuid.uuid4(), {"content": "x", "source": "ci"}, request, db=None
@@ -289,7 +290,7 @@ async def test_receive_webhook_rejects_empty_content(monkeypatch):
     monkeypatch.setattr(
         webhooks_route.webhook_service, "verify", AsyncMock(return_value=True)
     )
-    request = _request_with_headers({"x-webhook-token": "good"})
+    request = _request_with_headers({"authorization": "Bearer good"})
     with pytest.raises(ValidationError):
         await webhooks_route.receive_webhook(
             uuid.uuid4(), {"content": "  ", "source": "ci"}, request, db=None

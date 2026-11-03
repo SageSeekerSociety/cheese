@@ -7,6 +7,11 @@ from pydantic import BaseModel
 class SandboxUsageOut(BaseModel):
     memory_bytes: int | None
     memory_peak_bytes: int | None
+    anon_bytes: int | None
+    file_bytes: int | None
+    swap_bytes: int | None
+    swap_max_bytes: int | None
+    oom_kills: int | None
     memory_read_at: str | None
     disk_bytes: int | None
     disk_inodes: int | None
@@ -21,6 +26,13 @@ class HostUsageOut(BaseModel):
     inodes_used: int | None
     memory_bytes: int | None
     memory_used_bytes: int | None
+    swap_bytes: int | None
+    swap_used_bytes: int | None
+    memory_pressure_some_avg10: float | None
+    memory_pressure_some_avg60: float | None
+    memory_pressure_full_avg10: float | None
+    memory_pressure_full_avg60: float | None
+    zswap: bool | None
     cpu_busy: float | None
     load1: float | None
     sandboxes: int | None
@@ -66,6 +78,10 @@ class MachineHostOut(BaseModel):
     offline_since: str | None
     failed_at: str | None
     released_at: str | None
+    image_version: str | None
+    image_outdated: bool | None
+    draining: bool
+    draining_since: str | None
     enroll_attempts: int
     enroll_error: str | None
     usage: HostUsageOut | None
@@ -105,6 +121,7 @@ class MachinePoolOut(BaseModel):
     provider_probe_min: int
     last_provider_failure: str | None
     refusing: bool
+    fixed_hosts: int
     warm_target: int
 
 
@@ -113,6 +130,7 @@ class MachineConfigOut(BaseModel):
     sandbox_memory_mb: int
     sandbox_idle_s: int
     host_idle_hold_s: int
+    rebuild_after_days: int
     vm_idle_s: int
     sandbox_disk_budget_gb: int
     sandbox_inode_budget: int
@@ -120,6 +138,12 @@ class MachineConfigOut(BaseModel):
     check_s: int
     alert_used: dict[str, float]
     history_step_s: int
+
+
+class StageTimingOut(BaseModel):
+    count: int
+    p50_s: float | None
+    p95_s: float | None
 
 
 class MachineHistoryOut(BaseModel):
@@ -138,6 +162,9 @@ class MachineHistoryOut(BaseModel):
     hosts_lost: int
     hosts_lost_by_reason: dict[str, int]
     sandboxes_lost: int
+    # By kind (`sandbox_prepared`, `sandbox_frozen`, `sandbox_checked_out`),
+    # by stage, and `total`: how long each took over the same window.
+    timings: dict[str, dict[str, StageTimingOut]] = {}
 
 
 class MachinesOverviewOut(BaseModel):

@@ -61,9 +61,11 @@ def _teammate_task(client, project: str, conversation: str, seat: str) -> str:
         f"/topics/{conversation}/teammate-tasks",
         json={"title": "修贴底", "summary": "回复变长时对话栏不再贴底"},
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project, topic_id=conversation, agent_handle=seat
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=project, topic_id=conversation, agent_handle=seat
+                )
+            }"
         },
     )
     assert made.status_code == 200, made.text

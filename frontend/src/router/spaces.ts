@@ -38,6 +38,26 @@ export async function spaceManageGuard(to: RouteLocationNormalized): Promise<Rou
 }
 
 /**
+ * `/spaces/:spaceId/…` 的登录门：空间只对有席位的人开放，没登录的访客在这里读不到
+ * 任何东西 —— 板的详情、分类、题目，后端一律答 401。
+ *
+ * 以前这一段没有门：登录过期的人点开一条空间里的题目链接，会话恢复被服务端拒掉之后
+ * 他就成了访客（`AccountService.restoreSession` 只清会话、不跳转），页面照常挂上，
+ * 每个面板各自拉到一个 401，屏幕上是「获取分类失败」和「Request failed with
+ * status code 401」，没有一处告诉他该去登录。现在判据提到路由层：没登录就送去登录
+ * 页，`?redirect=` 带上这条地址，登录完回到他要看的那道题。
+ *
+ * 连不上（`restorePhase === 'unreachable'`）不算没登录：本地会话还在，界面那一层会
+ * 说「连不上、可以重试」，这时把人送去登录页就是把一个好好的会话当生人。
+ */
+export async function spaceSignInGuard(to: RouteLocationNormalized): Promise<RouteLocationRaw | true> {
+  const { default: account } = await import('@/services/account')
+  await account.sessionRestored
+  if (account.loggedIn || account.restorePhase === 'unreachable') return true
+  return { name: 'SignIn', query: { redirect: to.fullPath } }
+}
+
+/**
  * 一个空间（`/spaces/:spaceId/…`）。侧栏是 `SpaceSidebar.vue`，每一页的标题行由
  * 页面自己的 `PageHeader` 画，和侧栏顶那一行等高。
  */
@@ -55,6 +75,7 @@ export default {
     drawer: true,
   },
   redirect: { name: 'SpacesDetailTasks' },
+  beforeEnter: spaceSignInGuard,
   children: [
     {
       path: 'announcements',
@@ -129,6 +150,13 @@ export default {
               name: 'TasksInsights',
               component: () => import('@/views/tasks/detail/Insights.vue'),
               meta: { titleKey: 'navigation.pages.taskData' },
+            },
+            {
+              // `?version=N` 落到第 N 版：项目里「题目更新」那一行、芝士读到的那一段都指到这里。
+              path: 'versions',
+              name: 'TasksVersions',
+              component: () => import('@/views/tasks/detail/Versions.vue'),
+              meta: { titleKey: 'navigation.pages.taskVersions' },
             },
           ],
         },
@@ -239,6 +267,12 @@ export default {
           component: () => import('@/views/spaces/detail/settings/BasicInfo.vue'),
         },
         {
+          // 只对成员开放，还是开放给一组邮箱后缀（开放要等平台审核）。
+          path: 'access',
+          name: 'SpacesDetailSettingsAccess',
+          component: () => import('@/views/spaces/detail/settings/Access.vue'),
+        },
+        {
           // 分类与话题是两页现成的管理页，并排画在这一栏里：设置页给话题留了一个具名出口。
           path: 'categories',
           name: 'SpacesDetailSettingsCategories',
@@ -251,11 +285,6 @@ export default {
           path: 'templates',
           name: 'SpacesDetailSettingsTemplates',
           component: () => import('@/views/spaces/detail/ManageTemplates.vue'),
-        },
-        {
-          path: 'invite-codes',
-          name: 'SpacesDetailSettingsInviteCodes',
-          component: () => import('@/views/spaces/detail/InviteCodes.vue'),
         },
         {
           path: 'domain-groups',

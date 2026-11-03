@@ -127,11 +127,29 @@ describe('芝士摆出来的东西', () => {
     history = [block('artifact', 'build/out/结题报告.pdf', { mime_type: 'application/pdf' })]
     const { container } = await open()
 
-    const card = container.querySelector('.im-artifact')
+    // 能翻页的文档画成卡片，其余照旧是小卡片。
+    const card = container.querySelector('[data-testid="message-file-card"]')
     expect(card?.textContent).toContain('结题报告.pdf')
     expect(card?.textContent).toContain('PDF')
     // 路径的前几段是它在工作区里的位置，读的人用不上，也打不开。
     expect(card?.textContent).not.toContain('build/out')
+  })
+
+  it('能翻页的文档带封面画成卡片，点它同样交出去开', async () => {
+    history = [
+      block('artifact', 'output/结题报告.docx', {
+        mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }),
+    ]
+    const { container, emitted } = await open()
+
+    const card = container.querySelector('[data-testid="message-file-card"]') as HTMLElement
+    expect(card).toBeTruthy()
+    expect(container.querySelector('.im-artifact')).toBeNull()
+    // 点卡面（文件名那一块）就交出去开。
+    ;[...card.querySelectorAll('span')].find((el) => el.textContent === '结题报告.docx')!.click()
+    await settle()
+    expect(emitted()['open-file']?.[0]).toEqual(['output/结题报告.docx'])
   })
 
   it('点它把这份东西交出去开', async () => {
@@ -152,6 +170,25 @@ describe('芝士摆出来的东西', () => {
     expect(card?.textContent).toContain('thing.weird')
     expect(card?.textContent).toContain('文件')
     expect(card?.textContent).not.toContain('weird 文件')
+  })
+
+  it('对话里收到的可预览文档与视频附件也能在右侧打开', async () => {
+    history = [
+      block('attachment', 'uploads/id/方案.pdf', { mime_type: 'application/pdf' }),
+      block('attachment', 'uploads/id/演示.mp4', { mime_type: 'video/mp4' }),
+    ]
+    const { container, emitted } = await open()
+
+    const docOpen = container.querySelector<HTMLElement>('[title="打开 方案.pdf"]')
+    const videoOpen = container.querySelector<HTMLElement>('[title="打开 演示.mp4"]')
+    expect(docOpen, '可预览文档附件应当能点开').not.toBeNull()
+    expect(videoOpen, '视频附件应当能在右侧打开').not.toBeNull()
+
+    docOpen!.click()
+    videoOpen!.click()
+    await settle()
+
+    expect(emitted()['open-file']).toEqual([['uploads/id/方案.pdf'], ['uploads/id/演示.mp4']])
   })
 })
 

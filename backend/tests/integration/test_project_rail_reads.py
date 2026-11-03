@@ -136,6 +136,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
         },
         "reactions": [],
         "created_at": _wire(NEWER),
+        "shown_as": None,
     }
 
 

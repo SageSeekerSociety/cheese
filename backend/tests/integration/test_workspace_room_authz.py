@@ -175,7 +175,7 @@ def test_topic_token_cannot_read_a_different_rooms_work(client, private_workspac
         project_id=project["id"], topic_id=project["root_topic_id"]
     )
     response = request_workspace(
-        client, project["id"], tid, "file", {"X-Cheese-Token": token}
+        client, project["id"], tid, "file", {"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 403, response.text
 
@@ -192,7 +192,9 @@ def test_matching_room_agent_can_read_its_own_work(client):
     )
     _connect_workspace(client, pid, tid)
     token = mint_scoped_token(project_id=pid, topic_id=tid)
-    response = request_workspace(client, pid, tid, "file", {"X-Cheese-Token": token})
+    response = request_workspace(
+        client, pid, tid, "file", {"Authorization": f"Bearer {token}"}
+    )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["content"] == "private draft\n"
 
@@ -284,7 +286,8 @@ def test_git_manifest_rejects_another_room_token(client, private_workspace):
         project_id=project["id"], topic_id=project["root_topic_id"]
     )
     response = client.get(
-        f"/projects/{project['id']}/git/tasks/{task}", headers={"X-Cheese-Token": token}
+        f"/projects/{project['id']}/git/tasks/{task}",
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code in (401, 403, 404), response.text
     assert "branch" not in response.json().get("data", {})

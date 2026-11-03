@@ -77,6 +77,12 @@ _cache_bytes = 0
 #: budget above.
 HTML_KEY_PREFIX = "html:"
 
+#: A deck's PDF now carries its hidden slides (``deploy/office-render``), and
+#: the copies cached before that do not: one is a page short for every hidden
+#: slide, which puts each speaker's note after it on the wrong page. A new key
+#: for decks retires those copies without touching any other kind's cache.
+PDF_KEY_PREFIX = {suffix: "deck-hidden:" for suffix in (".pptx", ".ppt", ".odp")}
+
 
 #: Converted PDFs on disk, by the same key. The memory cache dies with every
 #: deploy, and on dev that was often enough that the first open of a Word file
@@ -255,7 +261,7 @@ async def render_to_pdf(
     if not endpoint:
         raise OfficeRenderUnavailable(say("previewDisabled"))
 
-    key = hashlib.sha256(raw).hexdigest()
+    key = PDF_KEY_PREFIX.get(suffix, "") + hashlib.sha256(raw).hexdigest()
     kept = await _lookup(key, "pdf", _looks_like_pdf)
     if kept is not None:
         return kept

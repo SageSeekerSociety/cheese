@@ -186,7 +186,7 @@ def materials_text(items: list[dict]) -> str:
         if item["kind"] == "document":
             title = item["title"] or item["id"]
             lines.append(
-                f"- 文档「{title}」（`cheese_doc_get` document: {item['id']}）"
+                f"- 文档「{title}」（`cheese_doc(action=get)` document: {item['id']}）"
             )
         else:
             lines.append(f"- 文件 `{item['path']}`（{item['by']} 发的）")

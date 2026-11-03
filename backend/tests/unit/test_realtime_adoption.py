@@ -66,3 +66,25 @@ async def test_a_read_from_before_a_turn_ended_does_not_bring_it_back():
     assert broker.adopt("room", still_open, read_at=broker.books_read()) == [
         ("turn", "cheese")
     ]
+
+
+@pytest.mark.anyio
+async def test_a_replayed_run_record_says_it_is_older_than_a_later_read():
+    """A page reconnects mid-turn: the room's state, read now, reaches it
+    before the replay of a run record from earlier in the turn. The record
+    carries its place in the stream, and the read says its own, so the page
+    can tell the replay is older than the read and a record published after
+    the read is newer."""
+    broker = InProcessBroker()
+    await broker.publish(
+        "room", {"type": "turn_started", "turn_id": "turn", "agent": "cheese"}
+    )
+    await broker.publish("room", {"type": "run_record", "record": {"id": "old"}})
+    read_at = broker.books_read()
+    async with broker.subscribe("room", replay=True) as reconnect:
+        await broker.publish("room", {"type": "run_record", "record": {"id": "new"}})
+        frames = [reconnect.get_nowait() for _ in range(3)]
+    old, new = (f for f in frames if f["type"] == "run_record")
+    assert old["record"]["id"] == "old" and new["record"]["id"] == "new"
+    assert old["stream"] == new["stream"] == broker.stream
+    assert old["at"] <= read_at < new["at"]

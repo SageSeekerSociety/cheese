@@ -81,9 +81,8 @@ def _bearer(token: str) -> dict[str, str]:
 
 def _user_id(token: str) -> int:
     """The numeric user id inside a session token (``sub``)."""
-    from app.core.config import settings
 
-    claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    claims = jwt.decode(token, options={"verify_signature": False})
     return int(claims["sub"])
 
 

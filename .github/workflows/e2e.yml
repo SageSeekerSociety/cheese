@@ -300,3 +300,82 @@ jobs:
       - name: Remove the isolated project forge
         if: always()
         run: docker compose -p "$FORGEJO_TEST_PROJECT" -f backend/tests/forgejo/compose.yml down --volumes
+
+  # The backend tests that run against the real pinned Forgejo
+  # (backend/tests/forgejo). test.yml leaves that directory out because its
+  # runners have no forge; this job starts one the way the shards above do and
+  # runs the directory against it, so a red forge contract fails this workflow.
+  forgejo:
+    name: forgejo live
+    runs-on: ubuntu-latest
+    env:
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      DOCKER_CONTEXT: default
+      # tests/conftest.py creates and migrates its own databases on this server.
+      TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:5442
+      REDIS_URL: redis://localhost:6389/0
+      FORGEJO_TEST_PROJECT: cheese-forgejo-live-${{ github.run_id }}-${{ github.run_attempt }}
+      # Forgejo's container reaches the event relay the delivery test starts on
+      # the host through the Docker bridge, not through loopback.
+      FORGEJO_TEST_RELAY_HOST: 0.0.0.0
+    services:
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese_test
+        ports:
+          - 5442:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+      valkey:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        ports:
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 1s
+          --health-timeout 5s --health-retries 60
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Point uv at a per-job venv
+        run: |
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          # The tests skip themselves unless this file names the forge's admin token.
+          echo "FORGEJO_TEST_TOKEN_FILE=$RUNNER_TEMP/forgejo-live-token" >> "$GITHUB_ENV"
+
+      - name: Install backend deps
+        working-directory: backend
+        run: uv sync --frozen --all-extras
+
+      # On start.sh's default ports (33086, 33286), which the tests address.
+      - name: Start the isolated project forge
+        env:
+          FORGEJO_TEST_CI_PULL_RETRY: "1"
+        run: bash backend/tests/forgejo/start.sh
+
+      - name: Run the forge tests
+        working-directory: backend
+        run: uv run python -m pytest tests/forgejo -rs --tb=short --durations=20
+
+      - name: Remove the isolated project forge
+        if: always()
+        run: docker compose -p "$FORGEJO_TEST_PROJECT" -f backend/tests/forgejo/compose.yml down --volumes

@@ -23,7 +23,7 @@ import { useEventListener } from '@vueuse/core'
 
 import { useErrorFade } from '../../components/room/composables/useErrorFade'
 import { useRoomSocket } from '../../components/room/composables/useRoomSocket'
-import { runRecordOf, threadStatusOf } from '../../components/room/composables/useRunRecords'
+import { runRecordOf, streamAt, threadStatusOf } from '../../components/room/composables/useRunRecords'
 import { renderNoticeMessage } from '../../lib/noticeText'
 import { ANNOUNCED, SNAPSHOT_RESOURCES } from '../chatPanelContract'
 import { applyRoomState } from '../useRoomResync'
@@ -59,7 +59,7 @@ export function usePanelSocket(deps: {
   /** 往上翻着的时候来了几条：底部那颗提示读它。 */
   unseen: Ref<string[]>
   /** 落库的那条回声到了/重连读回来了：发件箱据此收尾。 */
-  settleOutbox: (block: Block) => boolean
+  settleOutbox: (block: Block) => 'dimmed' | 'fast' | false
   /** 断线期间没送出去的那几条，连上就自己走。 */
   flushOutbox: () => void
   /** 已经送达的那几条（useTimelineMotion）。 */
@@ -202,14 +202,14 @@ export function usePanelSocket(deps: {
     // 平台运行中记下的一件事：不进对话，现场和状态行读它。
     const recorded = runRecordOf(frame)
     if (recorded) {
-      deps.runRecords.receive(recorded)
+      deps.runRecords.receive(recorded, streamAt(frame))
       toSite(recorded)
     }
     const told = threadStatusOf(frame)
     if (told) deps.emit('thread-status', told.threadId, told.record)
     switch (frame.type) {
       case 'user_block':
-        if (deps.settleOutbox(frame.block)) deps.delivered().add(frame.block.id)
+        if (deps.settleOutbox(frame.block) === 'dimmed') deps.delivered().add(frame.block.id)
         pushBlock(frame.block)
         deps.autoScroll()
         break

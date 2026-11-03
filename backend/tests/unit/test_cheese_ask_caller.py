@@ -108,7 +108,7 @@ def test_the_questions_go_out_in_one_request_and_the_agent_is_told_to_stop(
     assert body["to_owner"] is True
     assert "author" not in body
     uuid.UUID(body["request_id"])
-    assert headers["X-Cheese-Token"] == "fixture-agent-credential"
+    assert headers["Authorization"] == "Bearer fixture-agent-credential"
     assert headers["X-Cheese-Turn"] == "original-turn"
     # The agent learns where its questions are, how to retry, and that it does
     # not wait: the answer starts its next turn.

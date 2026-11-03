@@ -1,6 +1,7 @@
 {
   "personalTeamCannotDisband": "Your personal team belongs to your account and can't be disbanded",
   "personalTeamCannotTransfer": "Your personal team belongs to your account and can't be transferred",
+  "personalTeamTakesNoRecruits": "A personal team takes no recruits",
   "teamAdminGrantOwnerOnly": "Can't make someone an admin: only the team owner can",
   "teamAlreadyMember": "This person is already a member of this team",
   "teamApplicationPending": "This person already has an invitation or join request for this team waiting to be answered",

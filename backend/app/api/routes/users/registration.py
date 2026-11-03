@@ -77,8 +77,7 @@ async def send_register_email_code(
         payload.invite_code, required=settings.require_invite_code
     )
 
-    # Open registration lets a stale code through: it is only an invitation.
-    if invite_code and settings.require_invite_code:
+    if invite_code:
         try:
             await InviteCodeService(db).validate_code(invite_code)
         except ValueError as exc:
@@ -156,7 +155,7 @@ async def register_user(
         raise UnprocessableEntityError(consent_problem)
     assert payload.consent is not None
 
-    if invite_code and settings.require_invite_code:
+    if invite_code:
         invite_service = InviteCodeService(session)
         try:
             await invite_service.validate_code(invite_code)
@@ -237,11 +236,8 @@ async def register_user(
         try:
             consumed = await invite_service.consume_code(invite_code)
         except ValueError as exc:
-            if settings.require_invite_code:
-                raise _invite_code_error(exc) from exc
-            consumed = None
-        if consumed is not None:
-            await referrals.record_referral(session, consumed, user.id)
+            raise _invite_code_error(exc) from exc
+        await referrals.record_referral(session, consumed, user.id)
 
     access_token = await issue_session(
         response,

@@ -165,6 +165,11 @@ assert_plan 'backend=false,frontend=true,office_render=false,browser_render=fals
 assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" workflow_dispatch branch
 assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" push tag
 
+# The web build bakes in the backend's API generation, so raising it rebuilds both.
+git -C "$test_repo" switch -q --detach "$base_sha"
+commit_path backend/api-generation
+assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+
 # Diff from the last successful build, not merely HEAD^, catches component
 # changes whose preceding build failed.
 git -C "$test_repo" switch -q --detach "$base_sha"

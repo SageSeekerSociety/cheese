@@ -165,7 +165,7 @@ export const CATALOG: CatalogEntry[] = [
   // `composables/useProject*Settings.ts` 之后升成的 A 级）在自己的文件里：
   // `catalogSettingsData.ts`（数据在 `catalogSettingsDataFixtures.ts`）。
   ...SETTINGS_DATA_ENTRIES,
-  // 市场页和节点看板、外壳上的版本徽标与首页外框：`catalogMarket.ts`、`catalogShell.ts`。
+  // 市场页、外壳上的版本徽标与首页外框：`catalogMarket.ts`、`catalogShell.ts`。
   ...MARKET_ENTRIES,
   ...SHELL_ENTRIES,
   // 账号与反馈那一组（注册表单底下那两句协议、反馈列表里的一行）：

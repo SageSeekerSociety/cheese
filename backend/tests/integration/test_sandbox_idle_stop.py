@@ -37,7 +37,7 @@ from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
-from app.domain.machine.sandbox_wait import SANDBOX_LOST
+from app.domain.machine.sandbox_wait import SANDBOX_LOST, STOPPED_PROCESSES
 from app.domain.machine.services import HostPool
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
@@ -151,7 +151,13 @@ def cloud(client, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "cloud_host_slots_per_core", 1)
     monkeypatch.setattr(settings, "cloud_pool_min_free_slots", 0)
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 0)
+    # Sized by demand: an empty host goes at once, which is what these tests
+    # measure.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     monkeypatch.setattr(settings, "cloud_sandbox_idle_stop_s", 600)
+    # These pin what an idle sandbox always did: destroyed. Freezing is its
+    # own file (`test_sandbox_freezing.py`).
+    monkeypatch.setattr(settings, "cloud_sandbox_freeze", False)
     monkeypatch.setattr(settings, "cloud_sandbox_background_cap_s", 3600)
     provider = FakeMicroCloud()
     monkeypatch.setattr(
@@ -242,7 +248,7 @@ def tool_call(case, seat, timeout=5, *, tells_agent=False):
     the agent called does."""
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": timeout, "tells_agent": tells_agent},
     ).json()["data"]
 
@@ -551,7 +557,7 @@ def host_of_machine(case, device_id) -> int:
     return run(case, read)
 
 
-def turn_runs(case, conversation_id):
+def turn_runs(case, conversation_id, started: datetime | None = None):
     async def go():
         async with case.client.test_request_factory() as db:
             db.add(
@@ -560,7 +566,7 @@ def turn_runs(case, conversation_id):
                     conversation_id=conversation_id,
                     continuation_id=uuid.uuid4(),
                     author="alice",
-                    started_at=datetime.now(UTC),
+                    started_at=started or datetime.now(UTC),
                 )
             )
             await db.commit()
@@ -585,9 +591,42 @@ def test_an_idle_sandbox_is_destroyed_and_the_next_tool_call_gets_a_new_one(clou
 
     answer = tool_call(cloud, seat, tells_agent=True)
     assert answer["target"]["device_id"] == "host-a"
+    # This machine has no sandbox cgroup for the host program to read, so no
+    # process is named: the copy is the one there always was.
     assert answer["notice"] == SANDBOX_LOST
     assert not (home / "room" / "notes.md").exists()
     # Told once.
+    assert "notice" not in tool_call(cloud, seat, tells_agent=True)
+
+
+def test_the_agent_is_told_what_was_running_when_its_sandbox_was_destroyed(
+    cloud, monkeypatch
+):
+    """The host reads the sandbox's processes before it stops them, and the
+    session's next tool call says what went with the sandbox. It is told once:
+    the list goes with the notice, not into the row for good."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    time_passes(cloud, seat, timedelta(minutes=11))
+
+    original = lifecycle.run_on_host
+
+    async def with_processes(hub, device_id, action, timeout, **request):
+        answer = await original(hub, device_id, action, timeout, **request)
+        if action == "destroy":
+            answer = {
+                **answer,
+                "processes": ["npm run dev", "python3 -m http.server 8000"],
+            }
+        return answer
+
+    monkeypatch.setattr(lifecycle, "run_on_host", with_processes)
+    assert sweep(cloud)["destroyed"] == 1
+
+    answer = tool_call(cloud, seat, tells_agent=True)
+    assert answer["notice"] == SANDBOX_LOST + "\n" + STOPPED_PROCESSES.format(
+        processes="  npm run dev\n  python3 -m http.server 8000"
+    )
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
 
 
@@ -634,6 +673,88 @@ def test_a_sandbox_is_kept_while_its_conversation_runs_a_turn_or_it_was_just_use
     time_passes(cloud, seat, timedelta(hours=1))
     assert sweep(cloud)["destroyed"] == 0
     assert (home / "room" / "notes.md").exists()
+
+
+def test_an_open_turn_that_has_not_used_its_sandbox_for_long_lets_it_go(cloud):
+    """A turn open for an hour whose sandbox was last used 40 minutes ago — a
+    subagent only reading the web, a runner that died — no longer holds it
+    (`cloud_sandbox_turn_hold_s`)."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    turn_runs(cloud, seat.room, started=datetime.now(UTC) - timedelta(hours=1))
+    time_passes(cloud, seat, timedelta(minutes=40))
+
+    assert sweep(cloud)["destroyed"] == 1
+    assert home_of(cloud, seat) is None
+
+
+def test_a_long_turn_that_keeps_using_its_sandbox_keeps_it(cloud):
+    """Three hours into a turn, a sandbox used 15 minutes ago is still held:
+    the turn's age alone no longer lets it go."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    turn_runs(cloud, seat.room, started=datetime.now(UTC) - timedelta(hours=3))
+    time_passes(cloud, seat, timedelta(minutes=15))
+
+    assert sweep(cloud)["destroyed"] == 0
+    assert home_of(cloud, seat) is not None
+
+
+def host_drains_since(case, seat, ago: timedelta) -> None:
+    async def go():
+        async with case.client.test_request_factory() as db:
+            home = await CloudHostRepository(db).current_home(seat.session)
+            await db.execute(
+                update(CloudHost)
+                .where(CloudHost.id == home.host_id)
+                .values(draining_since=datetime.now(UTC) - ago)
+            )
+            await db.commit()
+
+    run(case, go)
+
+
+def test_a_host_drained_for_hours_lets_a_sandbox_go_between_turns(cloud, monkeypatch):
+    """A host being rebuilt waits `cloud_host_drain_wait_s` for its sandboxes
+    to go idle; past that, one still in use goes once no turn is open and it
+    has had no tool call for two minutes."""
+    # A draining host has no free slot, so the pool counts as pressed: keep
+    # that shorter idle time out of the way to see the drain's own.
+    monkeypatch.setattr(settings, "cloud_sandbox_idle_stop_pressed_s", 3600)
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    host_drains_since(cloud, seat, timedelta(hours=7))
+    time_passes(cloud, seat, timedelta(minutes=3))
+
+    assert sweep(cloud)["destroyed"] == 1
+    assert home_of(cloud, seat) is None
+
+
+def test_a_draining_host_keeps_a_sandbox_whose_turn_runs(cloud, monkeypatch):
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    turn_runs(cloud, seat.room)
+    # A draining host has no free slot, so the pool counts as pressed: keep
+    # that shorter idle time out of the way to see the drain's own.
+    monkeypatch.setattr(settings, "cloud_sandbox_idle_stop_pressed_s", 3600)
+    host_drains_since(cloud, seat, timedelta(hours=7))
+    time_passes(cloud, seat, timedelta(minutes=3))
+
+    assert sweep(cloud)["destroyed"] == 0
+    assert home_of(cloud, seat) is not None
+
+
+def test_a_host_that_just_began_draining_keeps_its_sandbox_in_use(cloud, monkeypatch):
+    # A draining host has no free slot, so the pool counts as pressed: keep
+    # that shorter idle time out of the way to see the drain's own.
+    monkeypatch.setattr(settings, "cloud_sandbox_idle_stop_pressed_s", 3600)
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    host_drains_since(cloud, seat, timedelta(hours=1))
+    time_passes(cloud, seat, timedelta(minutes=3))
+
+    assert sweep(cloud)["destroyed"] == 0
+    assert home_of(cloud, seat) is not None
 
 
 def test_a_full_pool_takes_an_idle_cloud_sandbox_back_after_three_minutes(cloud):

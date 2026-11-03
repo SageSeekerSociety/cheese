@@ -32,6 +32,7 @@ from app.domain.room_cleanup import retire
 from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import project_service, registered
 from tests.support.devices import enrollment_team
 
@@ -90,6 +91,8 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             events=platform_line,
         )
         assert room.cleanup_due_at is None
+        # Unarchiving and archiving again are two requests: two transactions.
+        await session.commit()
         await service.archive(
             room_id,
             by="owner",
@@ -517,7 +520,7 @@ async def enrolled(session, *device_ids: str) -> None:
             DeviceRow(
                 device_id=device_id,
                 name=device_id,
-                token=f"{device_id}-token",
+                token_digest=digest_token(f"{device_id}-token"),
                 owner_user_id=owner,
                 team_id=await enrollment_team(sql_device_service(session), owner),
                 supply=Supply.cloud,

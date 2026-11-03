@@ -25,7 +25,6 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
         getViewport: ({ scale }: { scale: number }) => ({ width: 960 * scale, height: 540 * scale }),
         render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
         streamTextContent: () => ({}),
-        getTextContent: async () => ({ items: [{ str: '第一页的原话', hasEOL: true }] }),
       }),
       destroy: vi.fn(),
     }),

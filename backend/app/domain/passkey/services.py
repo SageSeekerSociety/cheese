@@ -22,6 +22,12 @@ from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.domain.passkey.repositories import PasskeyRepository
 
 
+def related_origins() -> list[str]:
+    """The origins a passkey of this deployment's RP ID is used from: the one
+    WebAuthn was set up for, and every alias the deployment is served under."""
+    return list(dict.fromkeys((settings.webauthn_origin, *settings.frontend_aliases)))
+
+
 @dataclass
 class PasskeyChallengeData:
     challenge: str
@@ -33,7 +39,10 @@ class PasskeyService:
         self._repo = repo
         self._rp_id = getattr(settings, "webauthn_rp_id", "localhost")
         self._rp_name = getattr(settings, "webauthn_rp_name", "Cheese Community")
-        self._origin = getattr(settings, "webauthn_origin", "http://localhost:5173")
+        # Every origin of this deployment signs in with the one RP ID: a
+        # browser on an alias checks that it may through `/.well-known/webauthn`
+        # (WebAuthn Related Origin Requests, `related_origins`).
+        self._origins = related_origins()
 
     @classmethod
     def for_session(cls, session: AsyncSession) -> "PasskeyService":
@@ -109,7 +118,7 @@ class PasskeyService:
                 credential=credential,
                 expected_challenge=base64url_to_bytes(challenge),
                 expected_rp_id=self._rp_id,
-                expected_origin=self._origin,
+                expected_origin=self._origins,
             )
         except Exception as e:
             raise BadRequestError(f"Passkey verification failed: {e}") from e
@@ -205,7 +214,7 @@ class PasskeyService:
                 credential=credential,
                 expected_challenge=base64url_to_bytes(challenge),
                 expected_rp_id=self._rp_id,
-                expected_origin=self._origin,
+                expected_origin=self._origins,
                 credential_public_key=stored_cred.public_key,
                 credential_current_sign_count=stored_cred.counter,
                 require_user_verification=True,

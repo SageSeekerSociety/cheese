@@ -10,8 +10,13 @@
 
 from sqlalchemy import ColumnElement
 
-from app.domain.block.models import Block
+from app.domain.block.models import Block, by_assistant
 from app.domain.event_author import AuthorType
+
+#: How a line an agent reads says the author's own 芝士 wrote the message for
+#: them (``meta.by_assistant``): what people see beside the name, the agents
+#: reading the room are told too (docs/agent-principles.md 十九).
+WRITTEN_BY_ASSISTANT = "由本人的个人芝士代发"
 
 
 def is_participant(author_type: AuthorType) -> bool:
@@ -22,3 +27,11 @@ def is_participant(author_type: AuthorType) -> bool:
 def participant_blocks() -> ColumnElement[bool]:
     """`is_participant` 的 SQL 孪生 —— 同一份判据，不另写一份。"""
     return Block.author_type == AuthorType.participant
+
+
+def speaker(block: Block, name: str | None = None) -> str:
+    """Who said ``block``, as a line an agent reads names them: ``name`` (the
+    author's handle unless given), and that their own 芝士 wrote it for them
+    when it did."""
+    who = name or block.author
+    return f"{who}（{WRITTEN_BY_ASSISTANT}）" if by_assistant(block) else who

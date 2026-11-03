@@ -98,6 +98,14 @@ class MachinePlace:
     #: (#2991): it calls the model with that connection, which the session's
     #: environment carries (`place.OWN_MODEL_*`), on the session host.
     own_key: bool = False
+    #: Where every room's home on this machine is (`device_provider.DEVICE_HOME_ROOT`),
+    #: as the CONNECTOR resolves it, like ``state``. The session is kept to its
+    #: own room among them (`remote_execution/namespace._keep_only`), and only
+    #: when ``home`` is one of them: the platform knows where its rooms are and
+    #: says so, rather than the launch guessing it from ``home``. Empty: this
+    #: session's home is not one of the machine's rooms (a probe, a fixture),
+    #: and it is kept apart from the room's other seats only.
+    homes: str = ""
 
 
 @dataclass(frozen=True, slots=True)

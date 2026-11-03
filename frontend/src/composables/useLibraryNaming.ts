@@ -5,11 +5,11 @@
 import type { LibraryShelf } from '@/lib/libraryApi'
 
 import { computed, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
 import { listLibraryFolders, moveLibraryFile } from '@/lib/libraryApi'
 import { folderOf, leafOf } from '@/lib/libraryFolders'
+import { toast } from '@/lib/toast'
 
 type Pending = { path: string } | { newFolder: true }
 

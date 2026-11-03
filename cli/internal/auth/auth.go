@@ -147,7 +147,7 @@ func Forgotten(ctx context.Context, base, token string) bool {
 	if err != nil {
 		return false
 	}
-	req.Header.Set("X-Cheese-Session", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false

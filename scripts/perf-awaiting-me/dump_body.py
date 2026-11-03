@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 import app.models  # noqa: E402,F401
-from app.api.routes.awaiting import waiting_items  # noqa: E402
+from app.api.awaiting_deps import waiting_items  # noqa: E402
 
 DB_URL = os.environ.get(
     "PERF_DB_URL", "postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433/cheese_perf"
@@ -41,11 +41,8 @@ VIEWER = os.environ.get("PERF_HANDLE", "perfviewer")
 async def main(out: str | None) -> None:
     engine = create_async_engine(DB_URL)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    from types import SimpleNamespace
-
-    chat = SimpleNamespace(live=SimpleNamespace(active_turn_ids={}))
     async with session_factory() as db:
-        items = await waiting_items(db, chat, handle=VIEWER, user_id=None)
+        items = await waiting_items(db, handle=VIEWER, user_id=None)
     body = json.dumps(
         [item.as_dict() for item in items], sort_keys=True, indent=1, default=str
     )

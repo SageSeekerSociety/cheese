@@ -44,7 +44,6 @@ export function getStartSteps(
 export function createProject(
   name: string,
   teamId?: number,
-  externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
   intent?: string,
   agentName?: string,
@@ -56,9 +55,6 @@ export function createProject(
       id,
       name,
       team_id: teamId,
-      // Set when the project is created FROM a 赛题, so the 赛题 can find it
-      // again. Absent for a project made from the rail.
-      external_task_id: externalTaskId,
       forge_kind: forgeKind,
       // 建项目时问的那一句「你打算做什么」。空串就是没答，服务端不写任何东西。
       intent,

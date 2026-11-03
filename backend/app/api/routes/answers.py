@@ -4,11 +4,12 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
 from app.api.deps import get_discussion_service
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
+from app.domain.answers.permissions import Permission as AnswerPermission
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.answers.services import AnswersService
 from app.domain.discussion.services import DiscussableModelType, DiscussionService
@@ -249,7 +250,11 @@ async def get_answer(
     return ok({"answer": answer, "question": question})
 
 
-@router.put("/{answer_id}", summary="Update Answer", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/{answer_id}",
+    summary="Update Answer",
+    dependencies=[Can(AnswerPermission.manage)],
+)
 async def update_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
@@ -266,15 +271,15 @@ async def update_answer(
     content = payload.get("content")
     if not isinstance(content, str) or not content.strip():
         raise BadRequestError("content is required")
-    answer = await service.update_answer(
-        answer_id=answer_id,
-        user_id=auth_user.user_id,
-        content=content,
-    )
+    answer = await service.update_answer(answer_id=answer_id, content=content)
     return ok({"answer": answer})
 
 
-@router.delete("/{answer_id}", summary="Delete Answer", dependencies=[ROUTE_DECIDES])
+@router.delete(
+    "/{answer_id}",
+    summary="Delete Answer",
+    dependencies=[Can(AnswerPermission.manage)],
+)
 async def delete_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
@@ -287,7 +292,7 @@ async def delete_answer(
     )
     if answer_data["question_id"] != question_id:
         raise NotFoundError("Answer not found for this question")
-    await service.delete_answer(answer_id=answer_id, user_id=auth_user.user_id)
+    await service.delete_answer(answer_id=answer_id)
     return ok({"deleted": True})
 
 

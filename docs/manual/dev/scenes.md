@@ -149,7 +149,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/ConnectView.vue` | 容器 | 画面在 `ConnectViewView.vue`（A 级）；本页留着：直接取数（`api.ts`）；读路由 |
 | `views/DocsSignIn.vue` | 容器 | 画面在 `DocsSignInView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `api/docs.ts` 取数；读路由 |
 | `views/InboxView.vue` | C | 直接取数（`api.ts`）；经 `composables/useJoinSpace.ts` 取数；经 `views/home/NotificationFeed.vue` 取数；读 store（workspace） |
-| `views/MarketView.vue` | 容器 | 画面在 `MarketViewView.vue`（A 级）；本页留着：经 `composables/useMarketNodes.ts` 取数；直接取数（`api.ts`） |
+| `views/MarketView.vue` | 容器 | 画面在 `MarketViewView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `api/machineSkills.ts` 取数 |
 | `views/MyArchivedProjectsView.vue` | 容器 | 画面在 `MyArchivedProjectsViewView.vue`（A 级）；本页留着：直接取数（`api.ts`）；读 store（workspace） |
 | `views/MyConnectionsView.vue` | 容器 | 画面在 `MyConnectionsViewView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `api/feishu.ts` 取数；读路由 |
 | `views/MyDevicesView.vue` | C | 直接取数（`api.ts`）；经 `components/DeviceLiveViewer.vue` 取数；经 `lib/desktop.ts` 取数；经 `api/ownAgents.ts` 取数；经 `commands/copy.ts` 取数；直接取数（`services/account.ts`） |
@@ -163,6 +163,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/ProjectSettingsView.vue` | D | 经 `composables/useBranchProtection.ts` 取数；经 `composables/useProjectAddress.ts` 取数；经 `composables/useProjectArchive.ts` 取数；经 `composables/useProjectComputeSettings.ts` 取数；经 `composables/useProjectDefaultModelSettings.ts` 取数；经 `composables/useProjectEnvironmentSettings.ts` 取数；经 `composables/useProjectExport.ts` 取数；经 `composables/useProjectMcpSettings.ts` 取数；经 `composables/useProjectSettings.ts` 取数；经 `composables/useProjectTaskNamingSettings.ts` 取数；经 `api/channels.ts` 取数；经 `api/environment.ts` 取数；经 `components/DeviceSessionsSwitch.vue` 取数；经 `components/settings/AgentTeamSettings.vue` 取数；经 `components/settings/CreditsPanel.vue` 取数；经 `components/settings/OwnAgentsSettings.vue` 取数；经 `components/settings/ProjectChannelSettings.vue` 取数；经 `query/project.ts` 取数；读路由；读 store（workspace） |
 | `views/ProjectSkillsView.vue` | 容器 | 画面在 `ProjectSkillsViewView.vue`（A 级）；本页留着：经 `api/projectSkills.ts` 取数；经 `query/project.ts` 取数；读路由 |
 | `views/SiteOpenView.vue` | 容器 | 画面在 `SiteOpenViewView.vue`（A 级）；本页留着：直接取数（`api.ts`）；读路由 |
+| `views/SpaceInviteView.vue` | 容器 | 画面在 `SpaceInviteViewView.vue`（A 级）；本页留着：经 `api/spaces.ts` 取数；读路由 |
 | `views/TeamInviteView.vue` | 容器 | 画面在 `TeamInviteViewView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `api/teams.ts` 取数；读路由 |
 | `views/account/AddEmail.vue` | 容器 | 画面在 `AddEmailView.vue`（A 级）；本页留着：经 `api/http.ts` 取数；经 `api/userAuth.ts` 取数；经 `api/users.ts` 取数；直接取数（`services/account.ts`）；读路由 |
 | `views/account/AppSignInFinish.vue` | 容器 | 画面在 `AppSignInFinishView.vue`（A 级）；本页留着：经 `api/userAuth.ts` 取数；直接取数（`services/account.ts`）；读路由 |
@@ -212,7 +213,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/spaces/Index.vue` | 容器 | 画面在 `IndexView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `api/avatars.ts` 取数；经 `api/spaces.ts` 取数；经 `commands/copy.ts` 取数；直接取数（`services/account.ts`）；读路由 |
 | `views/spaces/detail/Announcements.vue` | 容器 | 画面在 `AnnouncementsView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；经 `views/spaces/detail/useSpaceAnnouncements.ts` 取数；经 `api/spaces.ts` 取数；读路由；读 store（space） |
 | `views/spaces/detail/AuditTask.vue` | 容器 | 画面在 `AuditTaskView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；经 `api/taskBoard.ts` 取数；读 store（space） |
-| `views/spaces/detail/InviteCodes.vue` | 容器 | 画面在 `InviteCodesView.vue`（A 级）；本页留着：经 `api/spaces.ts` 取数；读路由 |
 | `views/spaces/detail/ManageCategories.vue` | 容器 | 画面在 `ManageCategoriesView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；读 store（space） |
 | `views/spaces/detail/ManageDenied.vue` | 容器 | 画面在 `ManageDeniedView.vue`（A 级）；本页留着：读路由 |
 | `views/spaces/detail/ManageDomainGroups.vue` | 容器 | 画面在 `ManageDomainGroupsView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；经 `api/spaces.ts` 取数；读路由；读 store（space） |

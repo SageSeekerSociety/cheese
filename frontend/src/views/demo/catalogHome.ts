@@ -20,7 +20,6 @@ import CreateSpaceDialog from '@/views/home/CreateSpaceDialog.vue'
 import HomeHubView from '@/views/home/HomeHubView.vue'
 import HomeNav from '@/views/home/HomeNav.vue'
 import HomeSidebarView from '@/views/home/HomeSidebarView.vue'
-import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
@@ -64,7 +63,6 @@ function navArgs(overrides: Record<string, unknown> = {}) {
     disbanding: null,
     transferring: null,
     transferCandidates: [] as TeamMember[],
-    joinOpen: false,
     createOpen: false,
     ...overrides,
   }
@@ -158,37 +156,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
     ],
   },
 
-  // ---- 目录带的四个弹窗 ---------------------------------------------------------
-  {
-    id: 'join-space-dialog',
-    title: 'JoinSpaceDialog',
-    about: '用邀请码加入一个空间。加进去了就直接进那个空间 —— 留在原地等于什么都没发生。',
-    file: 'src/views/home/JoinSpaceDialog.vue',
-    component: JoinSpaceDialog,
-    needs: ['vuetify', 'i18n'],
-    teleport: true,
-    args: { modelValue: true },
-    states: [
-      {
-        name: '刚打开',
-        note: '框里空着，邀请码由空间的创建者给。这个弹窗自己不知道后端，按一下「加入」只把码报上去；真去问、成了往哪跳在 `useJoinSpace`（首页那份目录和待办页共用那一份）。',
-        props: {},
-        expect: '邀请码由空间的创建者提供',
-      },
-      {
-        name: '正在加入',
-        note: '主按钮转圈，这时候按不动第二下。',
-        props: { busy: true },
-        expectSelector: '.v-btn--loading',
-      },
-      {
-        name: '码不对、或者过期了',
-        note: '上一回没成的理由由外面给回来，画在输入框下面；画面上这一格留着不清，人还在这里改码。',
-        props: { error: '邀请码无效、已过期或已达使用上限' },
-        expect: '邀请码无效、已过期或已达使用上限',
-      },
-    ],
-  },
+  // ---- 目录带的三个弹窗 ---------------------------------------------------------
   {
     id: 'create-space-dialog',
     title: 'CreateSpaceDialog',

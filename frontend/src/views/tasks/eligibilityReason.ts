@@ -5,7 +5,6 @@
 const REASON_KEYS: Record<string, string> = {
   TASK_NOT_APPROVED: 'tasks.eligibility.TASK_NOT_APPROVED',
   REGISTRATION_NOT_STARTED: 'tasks.eligibility.REGISTRATION_NOT_STARTED',
-  REGISTRATION_CLOSED: 'tasks.eligibility.REGISTRATION_CLOSED',
   PARTICIPANT_LIMIT_REACHED: 'tasks.eligibility.PARTICIPANT_LIMIT_REACHED',
   ALREADY_PARTICIPATING: 'tasks.eligibility.ALREADY_PARTICIPATING',
   MEMBER_ALREADY_PARTICIPATING: 'tasks.eligibility.MEMBER_ALREADY_PARTICIPATING',
@@ -17,7 +16,16 @@ const REASON_KEYS: Record<string, string> = {
   TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH: 'tasks.eligibility.TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH',
 }
 
-/** 这个原因对应的词条。 */
-export function eligibilityReasonKey(code: string | undefined): string {
-  return REASON_KEYS[code ?? ''] ?? 'tasks.eligibility.unknown'
+/** 直接开始的题没有报名、没有申请：这几条按「开始做」「开放」说。 */
+const DIRECT_REASON_KEYS: Record<string, string> = {
+  TASK_NOT_APPROVED: 'tasks.eligibility.direct.TASK_NOT_APPROVED',
+  REGISTRATION_NOT_STARTED: 'tasks.eligibility.direct.REGISTRATION_NOT_STARTED',
+  ALREADY_PARTICIPATING: 'tasks.eligibility.direct.ALREADY_PARTICIPATING',
+  MEMBER_ALREADY_PARTICIPATING: 'tasks.eligibility.direct.MEMBER_ALREADY_PARTICIPATING',
+}
+
+/** 这个原因对应的词条，按这道题怎么开始说。 */
+export function eligibilityReasonKey(code: string | undefined, startsDirectly = false): string {
+  const key = code ?? ''
+  return (startsDirectly && DIRECT_REASON_KEYS[key]) || REASON_KEYS[key] || 'tasks.eligibility.unknown'
 }

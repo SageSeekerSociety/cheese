@@ -260,6 +260,6 @@ def test_one_card_at_a_time_covers_both_live_and_delivered(client, blocked_statu
     assert r.status_code == 422
     message = r.json()["message"]
     if blocked_status == "pending":
-        assert "cheese_redeliver" in message
+        assert "cheese_card(action=redeliver)" in message
     else:
         assert "任务已结束" in message

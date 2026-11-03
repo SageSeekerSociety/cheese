@@ -16,6 +16,8 @@ import {
   analyticsPublishers,
   analyticsTask,
   announcement,
+  JOIN_LINK,
+  joinRequest,
   memberRow,
   publishedTask,
   task,
@@ -30,13 +32,14 @@ import PublishersView from '@/views/spaces/detail/analytics/PublishersView.vue'
 import AnalyticsTasksView from '@/views/spaces/detail/analytics/TasksView.vue'
 import AnnouncementsView from '@/views/spaces/detail/AnnouncementsView.vue'
 import MembersView from '@/views/spaces/detail/MembersView.vue'
+import SpaceJoinLinkCard from '@/views/spaces/detail/SpaceJoinLinkCard.vue'
 import TasksView from '@/views/spaces/detail/TasksView.vue'
 import TemplateFormView from '@/views/spaces/detail/TemplateFormView.vue'
 
 /** 画面本来要装 Vuetify 和一套语言包。 */
 const UI: CatalogNeed[] = ['vuetify', 'i18n']
 
-/** 成员页的画面里「邀请去哪」交给路由解析，所以场景里也把路由装上，落点是空白的通配页。 */
+/** 成员页的画面里「邮箱域名组」那颗按钮交给路由解析，所以场景里也把路由装上，落点是空白的通配页。 */
 const UI_TR: CatalogNeed[] = [...UI, 'router']
 
 /** 模板表单回列表那一条（`SpacesDetailSettingsTemplates`）：画面只把它透给 NavLink。 */
@@ -122,7 +125,7 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
     id: 'members-view',
     title: 'MembersView',
     about:
-      '「成员与角色」那一页的画面：页头（邀请入口指向设置里那两页）、搜索框、那张成员表（名字、角色的一句话说明、加入方式），改角色的按钮按所有者 / 管理员 / 成员分档。读名单、改角色、确认框都在容器 `Members.vue` 里。',
+      '「成员与角色」那一页的画面：页头（「邮箱域名组」指向设置里那一页）、加入方式那张卡（加入链接、「加入需要批准」）、开着批准时的加入申请、搜索框、那张成员表（名字、角色的一句话说明），改角色的按钮按所有者 / 管理员 / 成员分档。读名单、读写链接、批准申请、改角色、确认框都在容器 `Members.vue` 里。',
     file: 'src/views/spaces/detail/MembersView.vue',
     component: MembersView,
     needs: UI_TR,
@@ -133,6 +136,16 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       busy: false,
       failed: false,
       errorDetail: null,
+      joinLink: JOIN_LINK,
+      joinBusy: false,
+      joinError: '',
+      joinCopied: false,
+      requests: [],
+      requestsLoading: false,
+      requestsFailed: false,
+      requestsError: null,
+      answering: null,
+      answerError: '',
     },
     states: [
       {
@@ -143,9 +156,9 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '列着成员',
-        note: '一行普通成员（写着用过的码）：所有者才看得到「设为管理员」那颗按钮。',
+        note: '一行普通成员、一行管理员：所有者才看得到「设为管理员」那颗按钮。',
         props: {
-          rows: [memberRow(), memberRow({ userId: 12, handle: 'bo', name: '波波', role: 'ADMIN', viaCode: null })],
+          rows: [memberRow(), memberRow({ userId: 12, handle: 'bo', name: '波波', role: 'ADMIN' })],
         },
         expect: '共 2 人',
       },
@@ -154,6 +167,54 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
         note: '名单没读出来：错误替换整个列表区，不落进「暂无成员」—— 那会让失败看着像本来就没人。',
         props: { failed: true, errorDetail: '加载成员失败' },
         expect: '加载成员失败',
+      },
+      {
+        name: '开着批准，有人在等',
+        note: '「加入需要批准」开着：成员表上面多一块加入申请，每份写着是谁、什么时候申请的，拒绝 / 批准两颗。',
+        props: { joinLink: { ...JOIN_LINK, approval: true }, requests: [joinRequest()] },
+        expect: '林同学',
+      },
+      {
+        name: '开着批准，没人在等',
+        note: '开关开着、一份申请都没有：那一块还在，说一句「暂无加入申请」。',
+        props: { joinLink: { ...JOIN_LINK, approval: true } },
+        expect: '暂无加入申请',
+      },
+    ],
+  },
+  {
+    id: 'space-join-link-card',
+    title: 'SpaceJoinLinkCard',
+    about:
+      '空间成员页上「加入方式」那张卡：这个空间唯一的那条加入链接（复制、重置，重置后旧链接立即失效），和「加入需要批准」的开关。读链接、重置、切换、复制都由页面（`Members.vue`）做，卡只吃数据、往上报动作。和团队那张 `TeamJoinLinkCard` 同一个形状。',
+    file: 'src/views/spaces/detail/SpaceJoinLinkCard.vue',
+    component: SpaceJoinLinkCard,
+    needs: UI,
+    args: { link: JOIN_LINK, busy: false, error: '', copied: false },
+    states: [
+      {
+        name: '链接在，直接加入',
+        note: '读回来了：链接一格只读，旁边复制和重置；开关关着，拿到链接的人登录后直接成为成员。',
+        props: {},
+        expect: '复制链接',
+      },
+      {
+        name: '刚复制过',
+        note: '按钮上的字换成「已复制」，别处不变。',
+        props: { copied: true },
+        expect: '已复制',
+      },
+      {
+        name: '还在读',
+        note: '链接还没回来：一条进度线，开关那一行不画。',
+        props: { link: null, busy: true },
+        expectSelector: '.v-progress-linear',
+      },
+      {
+        name: '上一次没做成',
+        note: '重置、切换或复制失败：那一句画在卡顶上，链接和开关照旧在。',
+        props: { error: '操作失败，稍后重试' },
+        expect: '操作失败，稍后重试',
       },
     ],
   },
@@ -220,6 +281,10 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       refreshing: false,
       tasks: [task()],
       total: 1,
+      mineTasks: [],
+      mineTotal: 0,
+      mineHasMore: false,
+      mineLoadingMore: false,
       closedTasks: [],
       closedTotal: 0,
       closedHasMore: false,
@@ -259,6 +324,25 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
           closedOpen: true,
         },
         expectSelector: '[data-testid="tasks-closed"]',
+      },
+      {
+        name: '我参与的在最上面',
+        note: '「全部」最上面一组「我参与的」：我手上有一份的题，不收起；每一行写我这一份的状态和我自己的提交截止，右边不写题目的状态。',
+        props: {
+          mineTasks: [
+            task({
+              id: 3,
+              name: '动态规划入门',
+              startMode: 'APPLY',
+              joined: true,
+              submittable: true,
+              // 2030 年：截图哪天拍都还没到，这一行写「在做」。
+              userDeadline: 1893456000000,
+            }),
+          ],
+          mineTotal: 1,
+        },
+        expectSelector: '[data-testid="tasks-mine"]',
       },
     ],
   },
@@ -359,7 +443,7 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
         name: '一栏参与者数据',
         note: '读回来了：读数、趋势和六张分布都摆出来。',
         props: {},
-        expect: '报名主体数',
+        expect: '申请/开始主体数',
       },
       {
         name: '正在读取',
@@ -385,7 +469,7 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
     id: 'publishers-view',
     title: 'PublishersView',
     about:
-      '管理员看板「出题人」那一格的画面：三个榜首（发题最多、成功率最高、报名最多）加一张出题人明细表，右上那颗导出。取数与导出在页面 `Publishers.vue` 里，这里只吃数据、往上报动作。',
+      '管理员看板「出题人」那一格的画面：三个榜首（发题最多、成功率最高、申请/开始最多）加一张出题人明细表，右上那颗导出。取数与导出在页面 `Publishers.vue` 里，这里只吃数据、往上报动作。',
     file: 'src/views/spaces/detail/analytics/PublishersView.vue',
     component: PublishersView,
     needs: UI,

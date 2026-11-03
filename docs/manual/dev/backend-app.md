@@ -32,7 +32,7 @@ covers:
 |---|---|---|---|---|
 | 主 API | `app.main:app` | 8081 | 全部业务接口、投递与调度、Agent 轮、迁移 | 替换（滚动交接见[部署拓扑](/dev/topology#handover)） |
 | 机器连接服务 | `app.device_connection_app:app` | 8082 | 设备与终端 WebSocket，以及进出设备的 RPC | 不重启（`release-device-connection.yml`） |
-| 模型隧道 | `app.llm_tunnel_app:app` | 8091 | 远端机器把模型流量送进来的 WebSocket | 不重启（`deploy/llm-tunnel/up.sh`） |
+| 模型隧道 | `app.llm_tunnel_app:app` | 8091 | 远端机器把模型流量送进来的 WebSocket | 不重启（`release-llm-tunnel.yml`） |
 | 代码托管事件中继 | `app.forge_events_app:app` | 8093 | 接 GitHub App 的 webhook，再经 WebSocket 推给各部署 | 它跑的代码变了才替换（`deploy/code-digest.py`） |
 
 分开的原因写在各自模块的 docstring 里：机器连接服务要活过主 API 的替换，否则每次发版都会掐断设备链接；模型隧道单独成进程，是因为隧道 WebSocket 原来终结在后端进程里，换容器就切断了那个窗口内所有机器的模型流量（`llm_tunnel_app.py` 引 #551）。
@@ -40,7 +40,7 @@ covers:
 三个旁路进程都不做路由自动发现：它们显式 `include_router` 自己那几条，另加一个 `/healthz`。
 
 - **机器连接服务**用请求头 `x_device_connection_secret` 与 `settings.device_connection_auth_secret` 做常量比较（`_authorize`），不一致直接 403。它另外导出 `/internal/device-connection/{release-drain,release-resume,snapshot,call/<name>}`：`release-drain` 只在没有任何在跑的 RPC、没有待处理设备调用时返回 200，否则 409 —— 这是「现在就换，还是再等等」的判据。`call_executor` 那条路带 `asyncio.shield`：调用方（主 API）在发版中掉线，不能让已经发给设备的调用被取消。
-- **模型隧道**故意不 import `app.main` 的任何东西，也不碰数据库：它只按 scoped token 自己的 claims 做 HMAC 校验，这正是它能脱离整个应用单独跑的原因。
+- **模型隧道**故意不 import `app.main` 的任何东西，也不碰数据库：它只按 scoped token 自己的 claims 验签名，这正是它能脱离整个应用单独跑的原因。
 - **事件中继**按订阅投递。它维护 `connections: dict[deployment, Connection]`，没有连着的部署就返回 HTTP 503（发送方把这次 webhook 当作失败，之后靠重建订阅补上）；同一个部署要连第二次时回 `1013` 关闭，让滚动发版中的新后端重试到旧后端退出为止。校验分两种：Forgejo 看 `x-forgejo-signature`，GitHub 看 `x-hub-signature-256`，都按部署的 relay key（可再按 `project_id` 派生）算 HMAC-SHA256，请求体上限 5 MiB。
 
 ## 路由是按目录发现的 {#routers}
@@ -97,16 +97,15 @@ covers:
 
 ## 写面闸门：谁是芝士 {#gate}
 
-`main.py` 里 `cheese_token_gate` 这个中间件守着一张**用字符串写的**表 `_CHEESE_WRITE_PATHS`（8 条 `(方法, 正则)`）：会话里的 `cheese` CLI 能写、浏览器只读的那些接口。正则的捕获组必须叫 `topic` 或 `project`，闸门拿它和 `x-cheese-token` 比对。
+每条写路由在自己的依赖里声明谁能调它（`api/write_access.py`）：`Can(...)` 按权限判断（见[权限](/dev/seats)）；`ROUTE_DECIDES` 交给处理函数自己判断，只有 `Can` 还认不全调用方时写的那些旧路由还这样声明，正逐批改成 `Can`；新加的写路由不能再用它（`backend/scripts/check_route_decides.py` 拿合并基点比，只许减少）。凭据和别的请求一样从 `Authorization: Bearer` 读，是哪一种由 `core/credentials.py` 说了算。
 
-- 令牌先试 `is_valid_cheese_token(token, project_id=..., topic_id=...)`（每轮一次性令牌，按 URL 里的 id 匹配）。
-- 再试项目级凭据：`looks_like_project_agent_credential` 为真时不能按字符串比对（topic 路径里不带 project），走 `_credential_opens_gate` —— 它**在路由之前**就要读库，所以借 `app.dependency_overrides` 拿 `get_db` 的会话，保证测试换库时闸门和请求看的是同一个库。校验包含项目匹配、凭据未撤销、以及 `resolver.authorize_topic` / `authorize_project`。
-- 不通过就返回 `{"code": 401, "message": "invalid sandbox token", "data": null}`。
-- 通过之后把 `x-cheese-turn` 解析成 `current_work_id` 塞进 contextvar，这个请求写下的所有 block 都继承它。
+- 只有芝士调的写面（`cheese` CLI 给自己别的线程留便条、签频道的 webhook 凭据、记机器状态）声明的是只有 AI 队友才有的权限（`project_permissions.AGENT_ONLY`）：谁的角色都给不了，角色表也不列；人的登录会话在这里得到 403。
+- 每轮凭据只认签给它的那个对话，项目凭据读库核对项目和是否撤销，都在 `ActorResolver.resolve` 里。
+- 应用启动时 `seal` 检查每条写路由都声明了一种；没声明的启动不了，启动后才建的路由一律 403。
 
-这张表的正则就是闸门本身，**路由改名它不会跟着改**：#370 那次把路由前缀拍平之后 8 条全部失配 —— 失配不报错，它只是静默地把芝士的写面开放给任何够得到端口的人。测试抓到了这一条（`test_project_agent_credential`、`test_ask_options` 从「拒绝」变「放行」），这是唯一一次被发现。
+声明跟着路由走，路由改名不会让它失配。它取代的是一张和路由分开放的路径正则表：#370 把路由前缀拍平后那张表全部失配，芝士的写面静默地对任何够得到端口的人开放。
 
-「没列进白名单」本身拦不住任何东西：没列进去的写路由压根不过这个中间件，症状是静默放行而不是 401；真正拦住芝士的是路由上的登录校验加服务里的 `_forbid_ai`（同一形状的坑见[验收与采纳](/dev/accept#traps)）。
+`x-cheese-turn` 由 `main.py` 的中间件解析成 `current_work_id` 放进 contextvar，这个请求写下的所有 block 都继承它。
 
 ## 幂等：两张完全不同的表 {#idempotency}
 
@@ -163,7 +162,7 @@ covers:
 | notification email drain / push drain | `notification_email_drain_interval_s` / `notification_push_drain_interval_s` | 那两条 Redis 队列的唯一消费者，不跑就一封邮件、一条推送都不发 |
 | delivery resend | `delivery_resend_interval_s` | 投递账本上「记下了没发出去」的行 |
 | docs question retention | 固定 86400s | 清过期的问芝士记录 |
-| turn resumes | 固定 30s | 因模型服务临时故障（`agent/resumable_failures.py` 认得的那几类：限流、过载和 5xx、流中断、连不上、订阅出口离线、订阅账号冷却、说明了恢复时刻的额度）失败的轮次，到点把「接着做」记上投递账本（`agent/turn_resume.py`），由下一项派发 |
+| turn resumes | 固定 30s | 因模型服务临时故障（`agent/resumable_failures.py` 认得的那几类：限流、过载和 5xx、流中断、连不上、订阅出口离线、订阅账号冷却、说明了恢复时刻的额度，预计恢复不超过 30 分钟）失败的轮次，到点把「接着做」记上投递账本（`agent/turn_resume.py`），由下一项派发 |
 | timed deliveries | 固定 30s | 定时投递到点派发 |
 | overdue deliveries | `delivery_overdue_check_interval_s` | 给 AI 的投递记下超过 30 分钟还没送出去，就发告警（同一个问题一小时一条） |
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |

@@ -28,17 +28,24 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import task_roles as task_seats
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
-from app.domain.task.models import TaskDraft
+from app.domain.agent_type.library import preset_types
+from app.domain.skill_library import native_skill_doc, shipped_skill_names
+from app.domain.task.models import Task, TaskDraft, new_stage_key
+from app.domain.task.stages import rows_after_stage_change, settled_stage
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
 
-#: The form's fields, as the page and ``POST /tasks`` name them. Three are the
+#: The form's fields, as the page and ``POST /tasks`` name them.
+#: ``defaultRole`` is the 题目's default teammate: a preset name, ``""`` to
+#: clear the 题目's own, or ``None`` to leave it as it is. Three are the
 #: page's own and never reach ``POST /tasks`` (``PAGE_ONLY``):
 #: ``descriptionMarkdown`` (the description as Markdown, which is what 芝士
 #: reads and edits), ``teachingOwn`` (whether the 题目 has its own AI 队友辅导)
-#: and ``attachmentFiles`` (the names the page lists beside ``attachmentIds``).
+#: ``attachmentFiles`` (the names the page lists beside ``attachmentIds``) and
+#: ``starterFile`` (the name and size beside ``starterAttachmentId``).
 FORM_FIELDS = frozenset(
     {
         "name",
@@ -49,6 +56,7 @@ FORM_FIELDS = frozenset(
         "deadline",
         "registrationStartAt",
         "defaultDeadline",
+        "startMode",
         "participantLimit",
         "minTeamSize",
         "maxTeamSize",
@@ -62,15 +70,24 @@ FORM_FIELDS = frozenset(
         "submissionSchema",
         "rubric",
         "rubricPublic",
+        "stages",
         "attachmentIds",
         "attachmentFiles",
+        "starterAttachmentId",
+        "starterFile",
+        "removeStarter",
         "teaching",
         "teachingOwn",
+        "defaultRole",
     }
 )
 #: The page's own fields, left out of what is published: the files' names the
 #: page lists beside ``attachmentIds`` are one of them.
-PAGE_ONLY = frozenset({"descriptionMarkdown", "teachingOwn", "attachmentFiles"})
+PAGE_ONLY = frozenset(
+    {"descriptionMarkdown", "teachingOwn", "attachmentFiles", "starterFile"}
+)
+#: What only a 团队 题目 has: its team sizes and when its team locks.
+TEAM_ONLY = ("minTeamSize", "maxTeamSize", "teamLockingPolicy")
 
 #: The longest a draft's whole form may be, as JSON.
 MAX_FORM_BYTES = 200_000
@@ -84,6 +101,7 @@ INTRO_CHARS = 255
 AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "name": ("name",),
     "description": ("description", "descriptionMarkdown"),
+    "stages": ("stages",),
     "submission": ("submissionSchema",),
     "rubric": ("rubric",),
     "rubric_public": ("rubricPublic",),
@@ -92,6 +110,7 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "team_max": ("maxTeamSize",),
     "difficulty": ("rank",),
     "participant_limit": ("participantLimit",),
+    "start_mode": ("startMode",),
     "deadline": ("deadline",),
     "days_to_submit": ("defaultDeadline",),
     "category": ("categoryId",),
@@ -102,9 +121,31 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "mentors": ("mentors",),
     "access": ("accessControlEnabled", "accessDomainGroupIds"),
     "attachments": ("attachmentIds", "attachmentFiles"),
+    "starter": ("starterAttachmentId", "starterFile", "removeStarter"),
+    "ai_teammate": ("defaultRole",),
+    # The guidance's fields all land in the one ``teaching``; the first of them
+    # stands for it where a change is said by field (``_draft_parts``).
     "ai_guidance": ("teaching", "teachingOwn"),
     "ai_mode": ("teaching", "teachingOwn"),
+    "ai_private_guidance": ("teaching", "teachingOwn"),
+    "ai_goals": ("teaching", "teachingOwn"),
+    "ai_materials": ("teaching", "teachingOwn"),
+    "ai_skills": ("teaching", "teachingOwn"),
 }
+
+#: The 芝士 fields that write the 题目's own guidance (``teaching``).
+_TEACHING_KEYS = (
+    "ai_mode",
+    "ai_guidance",
+    "ai_private_guidance",
+    "ai_goals",
+    "ai_materials",
+    "ai_skills",
+)
+
+# i18n-data: what 芝士 writes for the default teammate or the way of helping
+# when the 题目 keeps the level above's.
+INHERIT = "沿用上层设置"
 
 # i18n-data: what 芝士 writes and reads, matched against its words.
 FORMS = {"个人": "USER", "团队": "TEAM"}
@@ -113,7 +154,16 @@ DIFFICULTIES = {"初级": 1, "中级": 2, "高级": 3}
 # i18n-data: what a submission item is handed in as.
 KINDS = {"文件": "FILE", "文字": "TEXT"}
 # i18n-data: whether a team's members may change once it is approved.
-LOCKING = {"允许变更": "NO_LOCK", "报名通过后锁定": "LOCK_ON_APPROVAL"}
+# The lock takes hold when the claim starts: when it is approved on a task
+# applied for, when it is made on a task started directly. 芝士 may say either;
+# the read-back says the one true of the task's mode.
+LOCKING = {
+    "允许变更": "NO_LOCK",
+    "申请通过后锁定": "LOCK_ON_APPROVAL",
+    "开始做这道题后锁定": "LOCK_ON_APPROVAL",
+}
+# i18n-data: how a claim of the 题目 starts, as the form names the two ways.
+START_MODES = {"直接开始": "DIRECT", "申请制": "APPLY"}
 # i18n-data: how the AI teammate helps, as the form names the four ways; the
 # fifth keeps the space's.
 AI_MODES = {
@@ -121,7 +171,7 @@ AI_MODES = {
     "讲解与示例": "example",
     "先明确需求再实现": "spec",
     "不加限制": "free",
-    "沿用空间设置": None,
+    INHERIT: None,
 }
 
 _WHEN = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?\s*$")
@@ -145,6 +195,9 @@ class Space:
     #: The space's 题目 templates (``Space.task_templates``): a name, what it is
     #: for, and the form it fills in.
     templates: tuple[dict, ...] = ()
+    #: The space library's files the person may point the AI teammates at
+    #: (``teaching.materialIds``), by name.
+    materials: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -174,9 +227,7 @@ class SpaceReads(Protocol):
 
     async def list_admins(self, space_id: int) -> Any: ...
 
-    async def list_domain_groups(
-        self, *, space_id: int, actor_user_id: int | None
-    ) -> Any: ...
+    async def list_domain_groups(self, *, space_id: int) -> Any: ...
 
 
 async def terms(
@@ -186,15 +237,17 @@ async def terms(
     zone_name: str | None,
     *,
     user_id: int,
+    materials: dict[str, int] | None = None,
 ) -> Space:
     """The space's categories, tags, mentors and domain groups by name, and
-    the person's clock."""
+    the person's clock. ``materials`` are the space library's files the person
+    can see, by name: the space domain's to read, so the caller hands them in."""
     space = await spaces.get_space(space_id)
     if space is None:
         raise NotFoundError.for_resource("space", space_id)
     categories = await spaces.list_categories(space_id)
     tags = await spaces.list_classification_topics(space_id)
-    groups = await spaces.list_domain_groups(space_id=space_id, actor_user_id=user_id)
+    groups = await spaces.list_domain_groups(space_id=space_id)
     admins = [a.user_id for a in await spaces.list_admins(space_id)]
     try:
         zone: tzinfo = ZoneInfo(zone_name or DEFAULT_ZONE)
@@ -213,6 +266,7 @@ async def terms(
             for t in (getattr(space, "task_templates", None) or [])
             if isinstance(t, dict) and str(t.get("name") or "").strip()
         ),
+        materials=dict(materials or {}),
     )
 
 
@@ -231,6 +285,18 @@ async def _people(session: AsyncSession, user_ids: list[int]) -> dict[str, str]:
     return dict(found[uid] for uid in ids if uid in found)
 
 
+async def published_items(
+    session: AsyncSession, rows: list[TaskDraft]
+) -> dict[int, int]:
+    """How many submission items each published 题目 these drafts change has:
+    what ``missing`` checks a change draft against."""
+    ids = [r.task_id for r in rows if r.task_id]
+    if not ids:
+        return {}
+    found = await TaskService.of(session).list_submission_schemas(ids)
+    return {task_id: len(found.get(task_id, [])) for task_id in ids}
+
+
 async def task_names(session: AsyncSession, rows: list[TaskDraft]) -> dict[int, str]:
     """The names of the published 题目 these drafts change."""
     ids = [r.task_id for r in rows if r.task_id]
@@ -241,14 +307,53 @@ async def task_names(session: AsyncSession, rows: list[TaskDraft]) -> dict[int, 
 
 
 async def context(
-    session: AsyncSession, spaces: SpaceReads, row: TaskDraft, zone_name: str | None
+    session: AsyncSession,
+    spaces: SpaceReads,
+    row: TaskDraft,
+    zone_name: str | None,
+    *,
+    materials: dict[str, int] | None = None,
 ) -> str:
     """The draft as 芝士 is shown it: with a question asked on its page, and
     when it reads it."""
-    space = await terms(session, spaces, row.space_id, zone_name, user_id=row.user_id)
+    space = await terms(
+        session,
+        spaces,
+        row.space_id,
+        zone_name,
+        user_id=row.user_id,
+        materials=materials,
+    )
     names = await task_names(session, [row])
     name = names.get(row.task_id or 0)
-    return scene(row, name) + "\n" + agent_view(row, space, task_name=name)
+    private = await private_shown(session, row)
+    return (
+        scene(row, name)
+        + "\n"
+        + agent_view(row, space, task_name=name, private=private)
+    )
+
+
+async def private_shown(session: AsyncSession, row: TaskDraft) -> bool:
+    """Whether a draft's private guidance is shown to its writer: a new 题目's
+    is their own; changes to a published one only while they may teach it
+    (``task_roles.teaches``), checked when it is read — an admin who opened the
+    changes and has since lost the board no longer reads it."""
+    if row.task_id is None:
+        return True
+    task = await session.get(Task, row.task_id)
+    return task is not None and await task_seats.teaches(session, task, row.user_id)
+
+
+def without_private(fields: dict) -> dict:
+    """The draft's fields with the 题目's private guidance left out."""
+    teaching = fields.get("teaching")
+    if not isinstance(teaching, dict) or "privatePrompt" not in teaching:
+        return fields
+    return {
+        **fields,
+        "teaching": {k: v for k, v in teaching.items() if k != "privatePrompt"},
+    }
 
 
 def scene(draft: TaskDraft, task_name: str | None = None) -> str:
@@ -262,7 +367,7 @@ def scene(draft: TaskDraft, task_name: str | None = None) -> str:
             "- 用户说「这道题」「表单」，指这道题。",
             "- 用户只附上文件、没说要做什么时，按文件内容修改这道题（给 draft），"
             "不新建草稿。",
-            "- 用户说保存时，用 cheese_problem_publish 保存修改。",
+            "- 用户说保存时，用 cheese_problem(action=publish) 保存修改。",
         ]
     else:
         lines = [
@@ -274,7 +379,7 @@ def scene(draft: TaskDraft, task_name: str | None = None) -> str:
             "- 这份草稿尚未填写时，文件里的第一道题写进它（给 draft），不要另建；其余每道"
             "题各新建一份草稿（给 space，source 写文件名）。草稿已经填写了，就不要覆盖它，"
             "文件里的题都新建。",
-            "- 用户说发布时，用 cheese_problem_publish 发布。",
+            "- 用户说发布时，用 cheese_problem(action=publish) 发布。",
         ]
     return "<这一页>\n" + "\n".join(lines) + "\n</这一页>"
 
@@ -398,12 +503,21 @@ def cheese_writes(draft: TaskDraft, fields: dict, *, read_at: int | None) -> Wri
 
 
 def from_agent(
-    args: dict, space: Space, current: dict, files: list[dict] | None = None
+    args: dict,
+    space: Space,
+    current: dict,
+    files: list[dict] | None = None,
+    removed: list[str] | None = None,
+    starter: dict | None = None,
 ) -> dict:
     """What 芝士 asked to write, as form fields. Refuses, with what to write
     instead, a value the form would not take: a category the space does not
     have, a deadline it cannot read. ``files`` are the attachments it named
-    (``attachments``), already found to be the person's: id, name and size."""
+    (``attachments``), already found to be the person's: id, name and size.
+    ``removed`` collects the names of the items and rubric lines that left
+    with a stage this write removed; ``starter`` is the file it named as
+    starter code (``starter``), found the same way, or None when it asked for
+    none."""
     out: dict = _template(args["template"], space) if "template" in args else {}
     if "name" in args:
         name = str(args["name"] or "").strip()
@@ -430,6 +544,10 @@ def from_agent(
         out["participantLimit"] = (
             None if limit in (None, 0, "") else _count(limit, "participant_limit")
         )
+    if "start_mode" in args:
+        if args["start_mode"] not in START_MODES:
+            raise BadRequestError(say("taskStartModeInvalid"))
+        out["startMode"] = START_MODES[args["start_mode"]]
     if "deadline" in args:
         out["deadline"] = _deadline(args["deadline"], space.zone)
     if "days_to_submit" in args:
@@ -453,10 +571,33 @@ def from_agent(
                 )
             )
         out["topics"] = [space.tags[n] for n in names]
+    if "stages" in args:
+        out["stages"] = _stages(args["stages"], space.zone, current.get("stages"))
+    # Items and lines name their stage by its id; 芝士 may name it by its id or
+    # its name, among the stages this write gives or the draft already has.
+    stages = out.get("stages", current.get("stages") or [])
     if "submission" in args:
-        out["submissionSchema"] = _submission(args["submission"])
+        out["submissionSchema"] = _submission(args["submission"], stages)
     if "rubric" in args:
-        out["rubric"] = _rubric(args["rubric"])
+        out["rubric"] = _rubric(args["rubric"], stages)
+    if "stages" in args:
+        # The stages changed under the items and lines already in the draft:
+        # they follow the same rules the page and the publish apply
+        # (``stages.rows_after_stage_change``), so the draft says now what the
+        # 题目 will say. What went with a removed stage is said back by name.
+        ids = [s["id"] for s in out["stages"]]
+        before = [
+            str(s.get("id"))
+            for s in current.get("stages") or []
+            if isinstance(s, dict) and s.get("id")
+        ]
+        for form_field, label in (("submissionSchema", "prompt"), ("rubric", "item")):
+            rows = out.get(form_field, current.get(form_field))
+            if isinstance(rows, list):
+                settled = rows_after_stage_change(rows, before, ids)
+                out[form_field] = settled.kept
+                if removed is not None:
+                    removed.extend(str(row.get(label) or "") for row in settled.removed)
     if "rubric_public" in args:
         out["rubricPublic"] = bool(args["rubric_public"])
     if "real_name" in args:
@@ -477,24 +618,113 @@ def from_agent(
         given = list(files or [])
         out["attachmentIds"] = [f["id"] for f in given]
         out["attachmentFiles"] = given
-    if "ai_guidance" in args or "ai_mode" in args:
-        # The 题目's own guidance, on top of the space's: what 芝士 did not name
-        # (the materials, the other of the two) stays as it is.
-        teaching = dict(current.get("teaching") or {})
-        if "ai_guidance" in args:
-            teaching["systemPrompt"] = str(args["ai_guidance"] or "").strip() or None
-        if "ai_mode" in args:
-            if args["ai_mode"] not in AI_MODES:
-                raise BadRequestError(say("draftAiModeChoice"))
-            teaching["mode"] = AI_MODES[args["ai_mode"]]
+    if "starter" in args:
+        out["starterAttachmentId"] = starter["id"] if starter else None
+        out["starterFile"] = starter
+        # No file named is "no starter code": on a published 题目, saving the
+        # changes removes the one it has.
+        out["removeStarter"] = starter is None
+    if "ai_teammate" in args:
+        out["defaultRole"] = _teammate(args["ai_teammate"], current)
+    if any(key in args for key in _TEACHING_KEYS):
+        teaching = _teaching(args, space, dict(current.get("teaching") or {}))
         out["teaching"] = teaching
         out["teachingOwn"] = bool(
             teaching.get("mode")
             or teaching.get("systemPrompt")
+            or teaching.get("privatePrompt")
+            or teaching.get("learningGoals")
             or teaching.get("materialIds")
             or teaching.get("documentIds")
+            or teaching.get("skills")
         )
     return out
+
+
+def _teaching(args: dict, space: Space, teaching: dict) -> dict:
+    """The 题目's own guidance, on top of the space's, with what 芝士 named
+    written in: what it did not name stays as it is."""
+    for key, target in (
+        ("ai_guidance", "systemPrompt"),
+        ("ai_private_guidance", "privatePrompt"),
+    ):
+        if key in args:
+            teaching[target] = str(args[key] or "").strip() or None
+    if "ai_mode" in args:
+        if args["ai_mode"] not in AI_MODES:
+            raise BadRequestError(say("draftAiModeChoice"))
+        teaching["mode"] = AI_MODES[args["ai_mode"]]
+    if "ai_goals" in args:
+        teaching["learningGoals"] = list(
+            dict.fromkeys(
+                str(g).strip() for g in args["ai_goals"] or [] if str(g).strip()
+            )
+        )
+    if "ai_materials" in args:
+        names = _named(args["ai_materials"])
+        unknown = [n for n in names if n not in space.materials]
+        if unknown:
+            raise BadRequestError(
+                say(
+                    "draftMaterialChoice",
+                    unknown="、".join(unknown),
+                    names=_names(space.materials),
+                )
+            )
+        teaching["materialIds"] = [space.materials[n] for n in names]
+    if "ai_skills" in args:
+        names = _named(args["ai_skills"])
+        catalog = skill_catalog()
+        unknown = [n for n in names if n not in catalog]
+        if unknown:
+            raise BadRequestError(
+                say(
+                    "draftSkillChoice",
+                    unknown="、".join(unknown),
+                    names="、".join(catalog) or "—",
+                )
+            )
+        teaching["skills"] = names
+    return teaching
+
+
+def _named(given) -> list[str]:
+    return list(dict.fromkeys(str(n).strip() for n in given or [] if str(n).strip()))
+
+
+def skill_catalog() -> dict[str, str]:
+    """The skills a 题目 may give its projects' teammates: the shipped ones
+    whose guidance can be put in a prompt, name -> what it is for (the list
+    ``GET /skill-catalog`` answers)."""
+    out: dict[str, str] = {}
+    for name in shipped_skill_names():
+        doc = native_skill_doc(name)
+        if doc is not None:
+            out[name] = doc[0]
+    return out
+
+
+def teammates() -> dict[str, str]:
+    """The platform's teammate presets 芝士 may name: title -> type name."""
+    return {preset.title: name for name, preset in preset_types().items()}
+
+
+def _teammate(given, current: dict) -> str | None:
+    """The default teammate 芝士 named, as ``defaultRole``: a preset by its
+    title or type name; ``INHERIT`` (or blank) leaves the level above
+    in force — ``""`` clears the 题目's own where the draft has one, ``None``
+    writes nothing where it has none."""
+    word = str(given or "").strip()
+    if not word or word == INHERIT:
+        return None if current.get("defaultRole") is None else ""
+    presets = teammates()
+    if word in presets:
+        return presets[word]
+    if word in presets.values():
+        return word
+    raise BadRequestError(
+        say("draftTeammateChoice", names="、".join([*presets, INHERIT]))
+    )
 
 
 def _mentors(given, space: Space) -> list[str]:
@@ -594,7 +824,73 @@ def _deadline(value, zone: tzinfo) -> int | None:
     return int(moment.timestamp() * 1000)
 
 
-def _submission(items) -> list[dict]:
+def _stages(items, zone: tzinfo, current=None) -> list[dict]:
+    """The stages 芝士 lists, in order: a name, what it asks for, and when it
+    is due on the person's clock. A stage the task already has keeps its
+    ``id`` (as the draft view shows it), so what was handed in under it
+    follows it. One written without an id is the stage the draft already
+    has under that name (``stages.keyed_by_name``), or else a new stage, which
+    gets its id here so the items and lines in the same write can name it
+    (``app.domain.task.stages``)."""
+    known = [
+        (str(s.get("id")), str(s.get("name")))
+        for s in current or []
+        if isinstance(s, dict) and s.get("id")
+    ]
+    taken = {str(item.get("id")) for item in items or [] if (item or {}).get("id")}
+    out = []
+    for item in items or []:
+        item = item or {}
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        key = str(item.get("id") or "").strip()
+        if not key:
+            same = [k for k, n in known if n == name]
+            key = same[0] if len(same) == 1 and same[0] not in taken else ""
+            taken.add(key)
+        out.append(
+            {
+                "id": key or new_stage_key(),
+                "name": name,
+                "description": str(item.get("description") or "").strip(),
+                "dueAt": _deadline(item.get("due"), zone),
+            }
+        )
+    return out
+
+
+def _stage_ref(item: dict, stages: list) -> str | None:
+    """The id of the stage 芝士 names for an item or line — by the stage's id
+    or its name. None on a task without stages."""
+    if not stages:
+        return None
+    said = str(item.get("stage") or "").strip()
+    ids = [str(s.get("id")) for s in stages if isinstance(s, dict)]
+    if not said:
+        return settled_stage(None, ids)
+    if said in ids:
+        return said
+    named = [
+        s.get("id") for s in stages if isinstance(s, dict) and s.get("name") == said
+    ]
+    if len(named) > 1:
+        raise BadRequestError(say("draftStageAmbiguous", name=said))
+    if named:
+        return named[0]
+    raise BadRequestError(
+        say(
+            "draftStageChoice",
+            names="、".join(
+                f"{s.get('name')}（{s.get('id')}）"
+                for s in stages
+                if isinstance(s, dict)
+            ),
+        )
+    )
+
+
+def _submission(items, stages: list) -> list[dict]:
     out = []
     for item in items or []:
         name = str((item or {}).get("name") or "").strip()
@@ -603,13 +899,19 @@ def _submission(items) -> list[dict]:
             continue
         if kind not in KINDS:
             raise BadRequestError(say("draftSubmissionKind"))
-        out.append({"prompt": name[:255], "type": KINDS[kind]})
+        out.append(
+            {
+                "prompt": name[:255],
+                "type": KINDS[kind],
+                "stage": _stage_ref(item or {}, stages),
+            }
+        )
     if not out:
         raise BadRequestError(say("draftSubmissionEmpty"))
     return out
 
 
-def _rubric(lines) -> list[dict]:
+def _rubric(lines, stages: list) -> list[dict]:
     out = []
     for line in lines or []:
         line = line or {}
@@ -622,6 +924,7 @@ def _rubric(lines) -> list[dict]:
                 "item": str(line.get("item") or "").strip(),
                 "points": points,
                 "criteria": str(line.get("criteria") or "").strip(),
+                "stage": _stage_ref(line, stages),
             }
         )
     return out
@@ -648,7 +951,13 @@ def _is_doc_json(text: str) -> bool:
         return False
 
 
-def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) -> str:
+def agent_view(
+    draft: TaskDraft,
+    space: Space,
+    *,
+    task_name: str | None = None,
+    private: bool,
+) -> str:
     """The draft as 芝士 reads it: every field in its own words, the way it
     writes them back."""
     head = (
@@ -664,17 +973,22 @@ def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) 
         draft.fields or {},
         space,
         "</草稿>",
+        private=private,
     )
 
 
-def published_view(task_id: int, name: str, fields: dict, space: Space) -> str:
-    """A published 题目 as 芝士 reads it, in the same words as a draft."""
+def published_view(
+    task_id: int, name: str, fields: dict, space: Space, *, private: bool
+) -> str:
+    """A published 题目 as 芝士 reads it, in the same words as a draft.
+    ``private``: the reader may teach it, so its private guidance is said."""
     return _view(
         f"<题目 id={task_id} 空间id={space.id} 空间={space.name}>",
         f"题目 {task_id}（已发布）：{name}",
         fields,
         space,
         "</题目>",
+        private=private,
     )
 
 
@@ -778,21 +1092,46 @@ def doc_markdown(text: str) -> str:
     return "\n\n".join(b for b in blocks if b.strip())
 
 
-def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) -> str:
+def _view(
+    open_tag: str,
+    head: str,
+    fields: dict,
+    space: Space,
+    close_tag: str,
+    *,
+    private: bool,
+) -> str:
     by_id = {v: k for k, v in space.categories.items()}
     tag_by_id = {v: k for k, v in space.tags.items()}
     forms = {v: k for k, v in FORMS.items()}
     levels = {v: k for k, v in DIFFICULTIES.items()}
     kinds = {v: k for k, v in KINDS.items()}
-    lockings = {v: k for k, v in LOCKING.items()}
+    lockings = {
+        "NO_LOCK": "允许变更",
+        "LOCK_ON_APPROVAL": "开始做这道题后锁定"
+        if fields.get("startMode") != "APPLY"
+        else "申请通过后锁定",
+    }
+    starts = {v: k for k, v in START_MODES.items()}
     modes = {v: k for k, v in AI_MODES.items() if v}
     group_by_id = {v: k for k, v in space.domain_groups.items()}
+    material_by_id = {v: k for k, v in space.materials.items()}
+    preset_titles = {v: k for k, v in teammates().items()}
+    teaching = fields.get("teaching") or {}
 
     def when(ms) -> str:
         if not ms:
             return ""
         moment = datetime.fromtimestamp(int(ms) / 1000, tz=UTC).astimezone(space.zone)
         return moment.strftime("%Y-%m-%d %H:%M")
+
+    stages = [s for s in fields.get("stages") or [] if isinstance(s, dict)]
+
+    def in_stage(entry: dict) -> str:
+        if not stages:
+            return ""
+        named = next((s for s in stages if s.get("id") == entry.get("stage")), {})
+        return f"｜阶段 {named.get('name', '?')}（{entry.get('stage')}）"
 
     lines = [
         open_tag,
@@ -814,6 +1153,7 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
             f"{space.mentors.get(h, h)}（{h}）" for h in fields.get("mentors") or []
         ),
         f"registration_start: {when(fields.get('registrationStartAt'))}",
+        f"start_mode: {starts.get(str(fields.get('startMode')), '直接开始')}",
         f"deadline: {when(fields.get('deadline'))}",
         f"days_to_submit: {fields.get('defaultDeadline') or ''}",
         f"category: {by_id.get(int(fields.get('categoryId') or 0), '')}",
@@ -835,18 +1175,54 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
             for f in fields.get("attachmentFiles") or []
             if isinstance(f, dict)
         ),
-        "ai_mode: "
-        + modes.get((fields.get("teaching") or {}).get("mode"), "沿用空间设置"),
-        "ai_guidance: "
-        + str((fields.get("teaching") or {}).get("systemPrompt") or "（无）"),
+        "starter: "
+        + (
+            f"{starter_file.get('name')}（files/{starter_file.get('id')}）"
+            if isinstance(starter_file := fields.get("starterFile"), dict)
+            else ("（不要起始代码）" if fields.get("removeStarter") else "")
+        ),
+        "ai_teammate: "
+        + (
+            preset_titles.get(
+                str(fields.get("defaultRole")), str(fields.get("defaultRole"))
+            )
+            if fields.get("defaultRole")
+            else INHERIT
+        ),
+        "ai_mode: " + modes.get(teaching.get("mode"), INHERIT),
+        "ai_guidance: " + str(teaching.get("systemPrompt") or "（无）"),
+        *(
+            ["ai_private_guidance: " + str(teaching.get("privatePrompt") or "（无）")]
+            if private
+            else []
+        ),
+        "ai_goals: " + ("、".join(teaching.get("learningGoals") or []) or "（无）"),
+        "ai_materials: "
+        + (
+            "、".join(
+                material_by_id.get(m, str(m)) for m in teaching.get("materialIds") or []
+            )
+            or "（无）"
+        ),
+        "ai_skills: " + ("、".join(teaching.get("skills") or []) or "（无）"),
+        "stages:" + ("" if stages else " （不分阶段）"),
+        *(
+            f"  {n}. {s.get('name')}"
+            + f"（id: {s.get('id')}）"
+            + f"｜截止 {when(s.get('dueAt')) or '不设'}"
+            + (f"｜{s.get('description')}" if s.get("description") else "")
+            for n, s in enumerate(stages, start=1)
+        ),
         "submission:",
         *(
             f"  - {e.get('prompt')}（{kinds.get(e.get('type'), e.get('type'))}）"
+            + in_stage(e)
             for e in fields.get("submissionSchema") or []
         ),
         f"rubric（对学生{'可见' if fields.get('rubricPublic', True) else '不可见'}）:",
         *(
             f"  - {r.get('item')}｜{r.get('points')} 分｜{r.get('criteria')}"
+            + in_stage(r)
             for r in fields.get("rubric") or []
         ),
         "description:",
@@ -856,6 +1232,9 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         f"这个空间的模板：{_templates(space)}",
         f"可以当导师的人：{_people_said(space)}",
         f"这个空间的邮箱域名组：{_names(space.domain_groups)}",
+        f"可以选的默认队友：{'、'.join([*teammates(), INHERIT])}",
+        f"这个空间资料库里可以给 AI 队友读的资料：{_names(space.materials)}",
+        f"可以给项目里每个 AI 队友带上的技能：{'、'.join(skill_catalog()) or '（无）'}",
         close_tag,
     ]
     return "\n".join(lines)
@@ -916,23 +1295,35 @@ def published_form(draft: TaskDraft) -> dict:
     """The draft as ``POST /tasks`` / ``PATCH /tasks/{id}`` take it."""
     fields = {k: v for k, v in (draft.fields or {}).items() if k not in PAGE_ONLY}
     fields["intro"] = intro_of(draft.fields or {})
+    # A draft keeps the team fields whichever form is chosen, so switching back
+    # to 团队 brings them back; only a 团队 题目 publishes them.
+    if fields.get("submitterType") != "TEAM":
+        for key in TEAM_ONLY:
+            fields.pop(key, None)
     if not draft.fields.get("teachingOwn", False):
         fields.pop("teaching", None)
+    # A new 题目 has no own default teammate to clear: "" and None both mean
+    # the level above stands, which is what leaving the key out says.
+    if fields.get("defaultRole") is None or (
+        draft.task_id is None and not fields.get("defaultRole")
+    ):
+        fields.pop("defaultRole", None)
     return fields
 
 
 def blank(fields: dict) -> bool:
     """Nothing of the 题目 is written yet: no name, no description, no
-    rubric — what the page starts a draft with is not writing."""
+    rubric, no stages — what the page starts a draft with is not writing."""
     return not (
         str(fields.get("name") or "").strip()
         or markdown_of(fields).strip()
         or _doc_text(fields.get("description")).strip()
         or fields.get("rubric")
+        or fields.get("stages")
     )
 
 
-def missing(draft: TaskDraft) -> list[str]:
+def missing(draft: TaskDraft, published_items: int = 0) -> list[str]:
     """What still has to be written before the draft can be published, in
     芝士's words."""
     fields = draft.fields or {}
@@ -945,6 +1336,21 @@ def missing(draft: TaskDraft) -> list[str]:
         out.append("form")
     if fields.get("rank") not in (1, 2, 3):
         out.append("difficulty")
+    # Changes that would take away every item the published 题目 has
+    # (``published_items``); a 题目 that never had any stays editable.
+    if published_items and fields.get("submissionSchema") == []:
+        out.append("submission")
+    # What the publish would refuse: an item or line naming a stage the draft
+    # does not have (``stages.stage_index``), said now rather than at publish.
+    ids = [str(s.get("id")) for s in fields.get("stages") or [] if isinstance(s, dict)]
+    for form_field, word in (("submissionSchema", "submission"), ("rubric", "rubric")):
+        for row in fields.get(form_field) or []:
+            ref = (
+                settled_stage(row.get("stage"), ids) if isinstance(row, dict) else None
+            )
+            if ref is not None and ref not in ids:
+                out.append(word)
+                break
     return out
 
 
@@ -956,6 +1362,7 @@ def task_form(task: dict) -> dict:
         "submitterType": task.get("submitterType"),
         "rank": task.get("rank"),
         "defaultDeadline": task.get("defaultDeadline"),
+        "startMode": task.get("startMode"),
         "registrationStartAt": task.get("registrationStartAt"),
         "deadline": task.get("deadline"),
         "description": task.get("description") or "",
@@ -972,6 +1379,10 @@ def task_form(task: dict) -> dict:
         "submissionSchema": task.get("submissionSchema") or [],
         "rubric": task.get("rubric") or [],
         "rubricPublic": task.get("rubricPublic", True),
+        "stages": task.get("stages") or [],
         "teaching": task.get("teaching") or {},
         "teachingOwn": bool(task.get("teaching")),
+        # The 题目's own default teammate; None when it has none, so leaving the
+        # draft as it is writes nothing.
+        "defaultRole": task.get("defaultRole"),
     }

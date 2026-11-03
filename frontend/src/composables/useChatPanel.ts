@@ -242,6 +242,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     roster: people.roster,
     turns,
     runRecords,
+    messages: timeline.messages,
   })
 
   // 翻页、断线对账、跳到某一条 —— 见 chatPanel/paging。`failed` 和 `flash` 分属下面两
@@ -260,6 +261,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom: scroll.scrollToBottom,
     rememberScroll: scroll.rememberScroll,
     forgetScroll: scroll.forgetScroll,
+    beginOwnScroll: scroll.beginOwnScroll,
     loadingHistory,
     unseen,
     errorMsg,

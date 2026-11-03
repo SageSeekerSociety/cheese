@@ -14,6 +14,7 @@
 
 import uuid
 
+from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -25,9 +26,11 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
+from app.domain.identity.actor import acted_by
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.project.services import ProjectService
 from app.domain.room_task import heard
@@ -43,6 +46,10 @@ from app.domain.topic.owner import resolve_owner
 from app.domain.topic.ports import ProjectTeam, RoomThread, SeatProject
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+
+#: The 支线 a task may be made from, as a bare table: `thread` is read by
+#: `topic`, not this package (`RoomThread`).
+_THREADS = table("threads", column("id", Uuid), column("root_block_id", Uuid))
 
 
 async def upgrade_block_to_place(
@@ -161,7 +168,7 @@ async def _card_block(
         author_type=AuthorType.platform,
         content=say(
             "taskCreated",
-            actor=f"<@{actor}>",
+            actor=acted_by(actor, by_assistant=task.created_by_assistant),
             title=said_title(task),
             owner=f"<@{task.owner_handle}>" if task.owner_handle else "",
         ),
@@ -200,9 +207,13 @@ async def create_task(
     thread_id: uuid.UUID | None = None,
     seat_project: SeatProject,
     team: ProjectTeam,
+    by_assistant: bool = False,
 ) -> Task:
     """Open a task in a room: a conversation of its own, owned by one person,
     with an empty living document for its agent to write.
+
+    ``by_assistant``: ``created_by``'s own 芝士 opens it for them
+    (`Actor.by_assistant`); the task and the line announcing it say so.
 
     ``thread_id`` turns a 支线 into the task, in place: the task takes its
     id, so its conversation and its AI teammate's session go on as they
@@ -235,6 +246,40 @@ async def create_task(
     ``seat_project`` 是递进来的口子，落座那一步用它挡住别家的队友；本包读不出
     「这一席落在哪个项目上」（`app.domain.topic.ports.SeatProject`）。
     """
+    # Everything creating it says something in, before anything is written
+    # (`conversation.numbering`): the room, the 支线 it turns into, and the
+    # 支线 under the message it is made from.
+    cached_origin_threads = (
+        [
+            tid
+            for obj in session.sync_session.identity_map.values()
+            if getattr(type(obj), "__tablename__", None) == "threads"
+            and getattr(obj, "root_block_id", None) == origin_block_id
+            and (tid := getattr(obj, "id", None)) is not None
+        ]
+        if origin_block_id is not None and isinstance(session, AsyncSession)
+        else []
+    )
+    await lock_conversations(
+        session,
+        [
+            room_id,
+            *([thread_id] if thread_id is not None else []),
+            *(
+                cached_origin_threads
+                if cached_origin_threads
+                else (
+                    await session.scalars(
+                        select(_THREADS.c.id).where(
+                            _THREADS.c.root_block_id == origin_block_id
+                        )
+                    )
+                    if origin_block_id is not None
+                    else []
+                )
+            ),
+        ],
+    )
     place = await PlaceResolver(session).resolve(room_id)
     if place is None:
         raise NotFoundError(say("topicNotFound"))
@@ -260,24 +305,7 @@ async def create_task(
     )
     tasks = TaskService(session)
     named = (title or "").strip()[:300]
-    task = await tasks.open_thread(
-        project_id=room.project_id,
-        room_id=room.id,
-        title=named or PLACEHOLDER_TITLE,
-        title_source=TaskTitleSource.placeholder
-        if not named
-        else TaskTitleSource.auto
-        if named_by_teammate
-        else TaskTitleSource.human,
-        owner_handle=owner,
-        created_by=created_by,
-        task_id=thread_id,
-    )
-    task.upgraded_from_block_id = origin_block_id
-    task.source_block_id = source_block_id
-    if named and named_by_teammate:
-        task.title_calibrated = True
-        tasks.record_title(task, reason="teammate", by=teammate)
+    assigned_agent: str | None = None
     if (
         teammate
         and project is not None
@@ -291,11 +319,35 @@ async def create_task(
             seat_project=seat_project,
             team=team,
         )
-        await tasks.give_agent(task, agent_handle=teammate)
-    await tasks.ensure_document(task)
+        assigned_agent = (teammate or "").strip() or None
     if owner:
         # Whoever the work is handed to is in its channel from then on.
         await TopicMemberService(session).take_in(room.id, owner)
+    task = await tasks.open_thread(
+        project_id=room.project_id,
+        room_id=room.id,
+        title=named or PLACEHOLDER_TITLE,
+        title_source=TaskTitleSource.placeholder
+        if not named
+        else TaskTitleSource.auto
+        if named_by_teammate
+        else TaskTitleSource.human,
+        owner_handle=owner,
+        created_by=created_by,
+        task_id=thread_id,
+        flush=False,
+    )
+    task.upgraded_from_block_id = origin_block_id
+    task.source_block_id = source_block_id
+    task.created_by_assistant = by_assistant
+    if named and named_by_teammate:
+        task.title_calibrated = True
+    if assigned_agent is not None:
+        task.agent_handle = assigned_agent
+    await session.flush()
+    if named and named_by_teammate:
+        tasks.record_title(task, reason="teammate", by=teammate)
+    await tasks.ensure_document(task)
     if origin_block_id is None:
         await _card_block(session, room, task, actor=created_by or "system")
     await session.flush()

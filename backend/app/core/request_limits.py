@@ -18,8 +18,6 @@ draft-ietf-httpapi-ratelimit-headers-11. WebSockets are not limited.
 """
 
 import asyncio
-import base64
-import binascii
 import math
 import time
 from collections import deque
@@ -32,6 +30,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.common.auth import verify_access_token
+from app.core import credentials
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
 from app.core.errors import format_error_response
@@ -98,32 +97,17 @@ def principal_of(scope: Scope) -> tuple[str, str] | None:
     a forged or expired token included — is counted by the address it came
     from, or a made-up token would be a fresh quota.
     """
-    headers = Headers(scope=scope)
-    authorization = headers.get("authorization", "")
-    scheme, _, value = authorization.partition(" ")
-    bearer = value.strip() if scheme.lower() == "bearer" else ""
-    claims = verify_access_token(bearer) if bearer else None
+    token = credentials.presented(Headers(scope=scope))
+    claims = verify_access_token(token) if token else None
     if claims is not None:
         return "user", f"user:{claims.handle}"
-    # A sandbox credential arrives wherever its client puts it: the `cheese`
-    # CLI as X-Cheese-Token, Claude Code through the LLM proxy as a bearer or
-    # x-api-key, git through the forge relay as the Basic password.
-    candidates = [
-        headers.get("x-cheese-token", ""),
-        bearer,
-        headers.get("x-api-key", ""),
-    ]
-    if scheme.lower() == "basic":
-        candidates.append(_basic_password(value.strip()))
-    tokens = [token.strip() for token in candidates if token.strip()]
-    for token in tokens:
-        key = _agent_key(token)
-        if key is not None:
-            return "agent", key
+    key = _agent_key(token) if token else None
+    if key is not None:
+        return "agent", key
     # The signing secret, used directly by the host's own timers and by dev
     # tooling. It cannot be forged, so it is one principal of its own rather
     # than whoever shares its address.
-    if any(is_global_sandbox_token(token) for token in tokens):
+    if is_global_sandbox_token(token):
         return "infra", "infra:sandbox-secret"
     address = resolved_client_address(Request(scope))
     if address is None:
@@ -151,13 +135,6 @@ def _agent_key(token: str) -> str | None:
     return None
 
 
-def _basic_password(value: str) -> str:
-    try:
-        return base64.b64decode(value, validate=True).decode().partition(":")[2]
-    except (ValueError, UnicodeError, binascii.Error):
-        return ""
-
-
 class _RedisWarning:
     """At most one warning a minute while Redis cannot be asked."""
 
@@ -179,19 +156,42 @@ class _RedisWarning:
 _redis_warning = _RedisWarning()
 
 
-async def _check_rate(key: str) -> _RateAnswer | None:
+@dataclass(frozen=True)
+class _Quota:
+    rate_per_s: float
+    burst: int
+    concurrency: int
+
+
+def _quota(kind: str) -> _Quota:
+    """The limits for one kind of principal. An address stands for everyone
+    behind it, so it gets the address limits (``request_ip_*``)."""
+    if kind == "ip":
+        return _Quota(
+            settings.request_ip_rate_per_s,
+            settings.request_ip_rate_burst,
+            settings.request_ip_concurrency,
+        )
+    return _Quota(
+        settings.request_rate_per_s,
+        settings.request_rate_burst,
+        settings.request_concurrency,
+    )
+
+
+async def _check_rate(key: str, quota: _Quota) -> _RateAnswer | None:
     """The GCRA answer for one request of ``key``, or None when Redis could
     not give one (the request then goes through)."""
     client = get_redis_client()
     if client is None:
         return None
-    interval = max(1, round(1000 / settings.request_rate_per_s))
+    interval = max(1, round(1000 / quota.rate_per_s))
     try:
         script = client.register_script(_GCRA)
         answer = await asyncio.wait_for(
             script(
                 keys=[f"request-rate:{key}"],
-                args=[int(time.time() * 1000), interval, settings.request_rate_burst],
+                args=[int(time.time() * 1000), interval, quota.burst],
             ),
             timeout=settings.request_limit_redis_timeout_s,
         )
@@ -263,12 +263,11 @@ class ConcurrencyLimiter:
             self._lines.pop(key, None)
 
 
-def _policy_header() -> str:
-    burst = settings.request_rate_burst
-    window = max(1, math.ceil(burst / settings.request_rate_per_s))
+def _policy_header(quota: _Quota) -> str:
+    window = max(1, math.ceil(quota.burst / quota.rate_per_s))
     return (
-        f'"{RATE}";q={burst};w={window}, '
-        f'"{CONCURRENCY}";q={settings.request_concurrency};qu="concurrent-requests"'
+        f'"{RATE}";q={quota.burst};w={window}, '
+        f'"{CONCURRENCY}";q={quota.concurrency};qu="concurrent-requests"'
     )
 
 
@@ -280,7 +279,9 @@ def _rate_item(rate: _RateAnswer) -> str:
     return f'"{RATE}";r={rate.remaining};t={_seconds(rate.reset_ms)}'
 
 
-def _refusal(policy: str, retry_after: int, path: str, kind: str) -> JSONResponse:
+def _refusal(
+    policy: str, retry_after: int, path: str, kind: str, quota: _Quota
+) -> JSONResponse:
     """The 429. Its `RateLimit` names only the policy that refused, whose
     window is exactly `Retry-After` — the draft has the server never send a
     `Retry-After` earlier than a window it reports alongside."""
@@ -302,10 +303,21 @@ def _refusal(policy: str, retry_after: int, path: str, kind: str) -> JSONRespons
     item = f'"{RATE}";r=0;t={retry_after}' if policy == RATE else f'"{CONCURRENCY}";r=0'
     headers = {
         "Retry-After": str(retry_after),
-        "RateLimit-Policy": _policy_header(),
+        "RateLimit-Policy": _policy_header(quota),
         "RateLimit": item,
     }
     return JSONResponse(body, status_code=429, headers=headers)
+
+
+def _exempt_handles() -> frozenset[str]:
+    """``settings.request_limit_exempt_handles`` as a set; read per request so a
+    test can change it."""
+    raw = settings.request_limit_exempt_handles
+    return (
+        frozenset(h.strip() for h in raw.split(",") if h.strip())
+        if raw
+        else frozenset()
+    )
 
 
 class RequestLimits:
@@ -336,25 +348,29 @@ class RequestLimits:
             await self.app(scope, receive, send)
             return
         kind, key = principal
-        rate = await _check_rate(key)
+        if kind == "user" and key.removeprefix("user:") in _exempt_handles():
+            await self.app(scope, receive, send)
+            return
+        quota = _quota(kind)
+        rate = await _check_rate(key, quota)
         if rate is not None and not rate.allowed:
             retry_after = max(1, _seconds(rate.retry_after_ms))
-            await _refusal(RATE, retry_after, path, kind)(scope, receive, send)
+            await _refusal(RATE, retry_after, path, kind, quota)(scope, receive, send)
             return
         admitted = await self.concurrency.acquire(
             key,
-            limit=settings.request_concurrency,
+            limit=quota.concurrency,
             depth=settings.request_queue_depth,
             timeout=settings.request_queue_timeout_s,
         )
         if not admitted:
-            await _refusal(CONCURRENCY, 1, path, kind)(scope, receive, send)
+            await _refusal(CONCURRENCY, 1, path, kind, quota)(scope, receive, send)
             return
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 raw = list(message.get("headers", []))
-                raw.append((b"ratelimit-policy", _policy_header().encode()))
+                raw.append((b"ratelimit-policy", _policy_header(quota).encode()))
                 if rate is not None:
                     raw.append((b"ratelimit", _rate_item(rate).encode()))
                 message = {**message, "headers": raw}

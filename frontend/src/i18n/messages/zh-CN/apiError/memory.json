@@ -1,5 +1,7 @@
 {
   "contentMustBeString": "content 必须是字符串",
+  "memoryChangeNotFound": "没有这条改动记录",
+  "memoryChangeWasCreation": "{path} 这一次是新建的，改动前没有内容可恢复",
   "memoryEntryIdInvalid": "无效的记忆条目 id",
   "memoryFileAlreadyExists": "它已经存在（现在是第 {current} 版）",
   "memoryFileDeleted": "它已经被删掉了",

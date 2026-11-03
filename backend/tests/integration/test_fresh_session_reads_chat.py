@@ -26,13 +26,23 @@ _LINE = re.compile(r"这里已经有 (\d+) 条聊天消息")
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
 
-def _platform_tool_names() -> tuple[str, ...]:
+def _platform_tool_names() -> set[str]:
+    """What a session can call: each tool, and each verb of an object written
+    as the call it is (`cheese_chat(action=list)`)."""
     loader = SourceFileLoader("cheese_platform_tools", str(_CHEESE))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     assert spec
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
-    return module.PLATFORM_TOOLS.names()
+    table = module.PLATFORM_TOOLS
+    return {
+        *table.names(),
+        *(
+            f"{name}(action={verb})"
+            for name in table.names()
+            for verb in table.actions(name) or ()
+        ),
+    }
 
 
 def _room(client) -> str:

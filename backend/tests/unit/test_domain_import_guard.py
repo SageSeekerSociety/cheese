@@ -115,7 +115,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # project.settings; no project/topic *service* exposes those reads
         # without dragging their full DI graph into credential minting)
         ("app.domain.agent_credential.services", "app.domain.project.repositories"),
-        ("app.domain.agent_credential.services", "app.domain.topic.repositories"),
         # --- agent --- (announce writes the room line itself: 平台说的每一句
         # 都从这一个函数出去，走 block 领域的 service 就要把整条 DI 图拖进来)
         ("app.domain.agent.announce", "app.domain.block.repositories"),
@@ -335,7 +334,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.tasks.lifecycle", "app.domain.user.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.space.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.task.repositories"),
-        ("app.api.routes.tasks.participation", "app.domain.user.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),

@@ -208,7 +208,9 @@ def test_a_last_step_accepted_while_its_teammate_works_on_more_keeps_the_task_op
     _goes_on(client, task_id, before)
     told = [i.payload["content"] for i in _instructions(client, task_id)]
     assert not any(i.payload.get(CLOSES_TASK) for i in _instructions(client, task_id))
-    assert any("没有关闭" in said and "cheese_accept_request" in said for said in told)
+    assert any(
+        "没有关闭" in said and "cheese_card(action=request)" in said for said in told
+    )
 
     # Nothing closes it behind the teammate's back, however long it works.
     time_passes(client, task_id, minutes=50)

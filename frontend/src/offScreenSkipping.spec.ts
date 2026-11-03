@@ -48,6 +48,9 @@ const SURFACES = [
   { file: 'components/room/RoomNotice.vue', selector: '.room-happening' },
   { file: 'views/ProjectDocsView.vue', selector: '.memory-card' },
   { file: 'views/ProjectDocsView.vue', selector: '.weekly-card' },
+  // 现场的一页**不在**这张表里：它的重内容收在 <details> 里，浏览器本来就不排版收起
+  // 的部分（一页 254KB 正文只排版了 4.4KB），离屏跳过没有可省的，展开后反而更慢。见
+  // SiteRecordRow.vue 里那段注释。
 ]
 
 describe('离屏跳过的块都带 auto 估计和测量帧后门', () => {

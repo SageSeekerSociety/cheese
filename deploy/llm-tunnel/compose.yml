@@ -2,13 +2,15 @@
 # :8081 front door. DELIBERATELY not part of deploy-docker.sh's stack — that
 # script must keep swapping backend/frontend freely without ever touching
 # these two, which is the entire point: a deploy no longer severs machine
-# model traffic. They change only when an operator runs `up.sh` here.
+# model traffic. The tunnel is released on its own by
+# .github/workflows/release-llm-tunnel.yml (deploy/release-llm-tunnel.sh);
+# api-front changes when an operator runs `up.sh` here.
 #
 # Values come from a box-local .env next to this file (never committed):
-#   LLM_TUNNEL_IMAGE   a backend image ref to run the tunnel from. Pin an
-#                      explicit sha you trust; it does NOT need to match the
-#                      deployed backend (the route is self-contained: HMAC over
-#                      the scoped token's claims, no DB).
+#   LLM_TUNNEL_IMAGE   the backend image the tunnel runs; the release writes it.
+#                      It verifies credentials with the backend's own code, so a
+#                      change to how they are signed or read reaches machines'
+#                      model traffic only once the tunnel is released with it.
 #   BACKEND_ENV_FILE   the box's backend/.env (for the signing secret and the
 #                      metering-proxy address).
 #   API_FRONT_CONF     path to nginx.conf (default: the one beside this file).
@@ -36,7 +38,7 @@ services:
       # 「container up, pipe dead」 was diagnosed on (#579) — every claude on the
       # box failing with ConnectionRefused while both showed healthy. Whatever
       # they said at that moment is the only first-hand account of it, so it
-      # must not sit in a file that `up.sh` deletes on the next operator run.
+      # must not sit in a file that the next recreate deletes.
       driver: journald
       options:
         tag: "{{.Name}}"

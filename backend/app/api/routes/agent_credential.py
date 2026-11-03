@@ -14,6 +14,7 @@ other credential this project has ever handed out).
 """
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can, InProject
 from app.auth.project_roles import may
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
@@ -65,14 +66,22 @@ class IssueCredentialIn(BaseModel):
     expires_in_days: int | None = Field(default=None, alias="expiresInDays")
 
 
-@router.post(
-    "/{project_id}/agent-credential",
-    dependencies=[ROUTE_DECIDES, Depends(require_credential_manager)],
-)
+def _signed_in(at: InProject) -> uuid.UUID:
+    """The project, once ``Can(Permission.edit_settings)`` let in somebody who
+    signed in: the development override names nobody, and nobody decides this."""
+    if not at.actor.authenticated:
+        raise ForbiddenError(say("projectCredentialManagerOnly"))
+    return at.project.id
+
+
+@router.post("/{project_id}/agent-credential")
 async def issue_agent_credential(
-    project_id: uuid.UUID, body: IssueCredentialIn, db: DbSession
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: IssueCredentialIn,
+    db: DbSession,
 ) -> dict:
     """Issue a credential. ``token`` appears in THIS response and nowhere else."""
+    project_id = _signed_in(at)
     issued = await ProjectAgentCredentialService(db).issue(
         project_id=project_id, expires_in_days=body.expires_in_days
     )
@@ -101,13 +110,13 @@ async def get_agent_credential_status(project_id: uuid.UUID, db: DbSession) -> d
     return ok({"project_id": str(project_id), "epoch": epoch})
 
 
-@router.delete(
-    "/{project_id}/agent-credential",
-    dependencies=[ROUTE_DECIDES, Depends(require_credential_manager)],
-)
-async def revoke_agent_credentials(project_id: uuid.UUID, db: DbSession) -> dict:
+@router.delete("/{project_id}/agent-credential")
+async def revoke_agent_credentials(
+    at: Annotated[InProject, Can(Permission.edit_settings)], db: DbSession
+) -> dict:
     """Revoke — every credential issued for this project stops working on the
     next request. There is no way to revoke just one, on purpose: a project has
     one agent, so "which one" is not a question the model can pose."""
+    project_id = _signed_in(at)
     epoch = await ProjectAgentCredentialService(db).revoke(project_id=project_id)
     return ok({"project_id": str(project_id), "epoch": epoch})

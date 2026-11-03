@@ -4,7 +4,7 @@
 先猜格式再写字，而它当场就能改；拒掉一次正当的更新，代价比一条警告大得多。
 所以这里只回答一个问题：**这份正文哪些地方不像「现在的状态」**，以及每一处
 当场该怎么改。检查跑在服务端（`PUT /documents/{id}`），警告跟着响应回到写它
-的人手里，`cheese_doc_set` 再把它拼进工具返回。
+的人手里，`cheese_doc(action=set)` 再把它拼进工具返回。
 
 检查是纯函数，同样的正文永远给同样的警告：提示词每轮重写、工具返回要能对着测，
 一个会随环境变脸的检查两样都做不到。
@@ -81,7 +81,7 @@ def living_doc_warnings(content: str) -> list[str]:
             f"正文 {len(content)} 字，超过 {LIVING_DOC_CHAR_LIMIT} 字的写作预算。"
             "删掉做完的事、过程和证据细节，只留读的人要知道的：为什么做、到哪了、"
             "在等谁、定了什么、还有什么没定；"
-            "细节留在聊天、任务卡和 PR 里。"
+            "过程看现场，细节留在任务卡和 PR 里。"
         )
 
     headings = [m.group(1) for m in _HEADING_RE.finditer(content)]
@@ -89,7 +89,7 @@ def living_doc_warnings(content: str) -> list[str]:
     if logs:
         warnings.append(
             "小节《" + "》《".join(logs) + "》是流水账：文档记状态，不记过程。"
-            "把这几天发生了什么留在聊天或结论卡里，正文只留「现在成立」的那几条。"
+            "这几天发生了什么现场里看得到，正文只留「现在成立」的那几条。"
         )
 
     lines = content.splitlines()

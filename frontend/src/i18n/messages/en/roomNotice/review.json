@@ -1,6 +1,6 @@
 {
   "acceptConflict": "Accept stopped: PR #{pr} conflicts with its target branch",
-  "acceptConflictDetail": "{url}\nThe conflict cannot be resolved by accepting: GitHub cannot merge this PR now. The platform hands the conflict to the AI teammate, which merges the target branch in the task directory, resolves it and pushes again. Accept again once the checks are green.",
+  "acceptConflictDetail": "{url}\nThe conflict cannot be resolved by accepting: the code hosting service cannot merge this PR now. The platform hands the conflict to the AI teammate, which merges the target branch in the task directory, resolves it and pushes again. Accept again once the checks are green.",
   "acceptDismissed": "PR #{pr} has new commits; its existing approvals were dismissed",
   "acceptDismissedDetail": "Dismissed approvals: {voided}.\nNew commits dismiss existing approvals (project branch protection, on by default). Look at this PR again before accepting it.\n{url}",
   "acceptDone": "{actor} accepted this change; PR #{pr} {how}",
@@ -21,7 +21,7 @@
   "acceptStoppedPrUnavailable": "Accept not completed: the PR could not be merged",
   "acceptStoppedPrUnavailableDetail": "{why}.\nA project bound to GitHub is accepted only by merging its PR; the platform will not bypass the PR and push upstream directly. Retry the accept once this is sorted out.",
   "acceptStoppedTitleDisagrees": "PR #{pr}'s title on GitHub differs from the title it was submitted for review with; the accept is paused",
-  "acceptTitleDisagreesDetail": "Title on GitHub's PR: {pr_title}\nTitle submitted for review: {subject}\nHow a title should read is the repository's own rule, and the platform does not guess which line is right; it only checks that the line it would land is the one the repository's checks judged. To merge, use cheese_describe to set this review's title to the line that should land (the platform changes the PR title with it, and the repository's checks re-run against the new title).",
+  "acceptTitleDisagreesDetail": "Title on GitHub's PR: {pr_title}\nTitle submitted for review: {subject}\nHow a title should read is the repository's own rule, and the platform does not guess which line is right; it only checks that the line it would land is the one the repository's checks judged. To merge, use cheese_card(action=describe) to set this review's title to the line that should land (the platform changes the PR title with it, and the repository's checks re-run against the new title).",
   "acceptStoppedStatusUnread": "Could not read the status of PR #{pr}: {error}",
   "archiveStoppedFollowing": "The channel was archived; the platform stopped following PR #{pr}",
   "archiveStoppedFollowingDetail": "{url}\nThis PR is not merged. The platform will not close it; someone needs to decide whether to close it.",

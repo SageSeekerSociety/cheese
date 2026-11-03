@@ -32,7 +32,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.common.auth import create_access_token
+from app.core import credentials
 from app.core.config import settings
+from app.core.credentials import Kind
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import seed_user
 
@@ -76,16 +78,68 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
 
 
 def _caller_handle(headers: dict | None) -> str | None:
-    """The handle a bearer token in ``headers`` names, as the route resolves it."""
+    """The person a bearer token in ``headers`` signs in, as the route resolves
+    it; None for no token or another kind (the platform's own secret)."""
+    from app.common.auth import verify_access_token
+
     auth = next(
         (v for k, v in (headers or {}).items() if k.lower() == "authorization"), ""
     )
     if not auth.startswith("Bearer "):
         return None
-    import jwt
+    claims = verify_access_token(auth[7:])
+    return claims.handle if claims is not None else None
 
-    claims = jwt.decode(auth[7:], options={"verify_signature": False})
-    return claims.get("handle") or claims.get("sub")
+
+async def shared_team_of(
+    session, project_id, *, joiner_user_id: int | None = None
+) -> int:
+    """The team a project must be in to hold ``joiner_user_id``.
+
+    A project is born in its owner's personal team, and a personal team takes
+    no members but its owner. The first time a test puts a second person on
+    it, the project moves into a shared team of that owner — the same move the
+    product makes (``ProjectTransferService.move_to_team``). Someone who is
+    that team's owner (or a joiner not named at all) needs no move. Returns the
+    team id to put the member row on.
+    """
+    import uuid as _uuid
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
+
+    now = datetime.now(UTC)
+    project = await session.get(Project, _uuid.UUID(str(project_id)))
+    assert project is not None, project_id
+    team = await session.get(Team, project.team_id)
+    assert team is not None, project_id
+    if team.personal_owner_user_id is None or (
+        joiner_user_id is not None and team.personal_owner_user_id == joiner_user_id
+    ):
+        return team.id
+    shared = Team(
+        name="Test team",
+        handle=f"t-{_uuid.uuid4().hex[:12]}",
+        intro="",
+        description="",
+        avatar_id=1,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(shared)
+    await session.flush()
+    session.add(
+        TeamUserRelation(
+            team_id=shared.id,
+            user_id=team.personal_owner_user_id,
+            role=TeamMemberRole.OWNER,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    project.team_id = shared.id
+    await session.flush()
+    return shared.id
 
 
 async def a_team(session, owner_handle: str | None = None) -> int:
@@ -232,12 +286,25 @@ def new_project(client, name: str = "P", owner: str = "owner", **extra) -> dict:
     return resp.json()["data"]
 
 
-def join_project_team(client, project_id: str, handle: str, *, admin: bool = False):
+def join_project_team(
+    client, project_id: str, handle: str, *, admin: bool = False
+) -> int:
     """Put ``handle`` (registered first) on the team the project belongs to.
 
     This is how a person is in a project now: team members are read from the
     team. ``admin`` makes them a team admin, which is who manages the project
     alongside its owner.
+
+    A project that still sits in its owner's personal team moves into a shared
+    team of that owner first: a personal team takes no members but its owner, so
+    two people on one project are a shared team — the same move the product
+    makes (``ProjectTransferService.move_to_team``). Without it the fixture
+    would be building a state the product forbids, and the database refuses it
+    (``team_membership_respects_personal_teams``).
+
+    Returns the id of the team the project ends up in, which is not necessarily
+    the one it had: callers that go on to ask the team something (its plan, its
+    documents) read it from here rather than from the project's earlier shape.
     """
     import asyncio as _asyncio
 
@@ -247,7 +314,7 @@ def join_project_team(client, project_id: str, handle: str, *, admin: bool = Fal
 
     _register(client, handle)
 
-    async def _join() -> None:
+    async def _join() -> int:
         now = datetime.now(UTC)
         async with client.test_factory() as session:
             project = await session.get(Project, uuid.UUID(str(project_id)))
@@ -256,20 +323,22 @@ def join_project_team(client, project_id: str, handle: str, *, admin: bool = Fal
             assert user is not None, handle
             from app.domain.team.repositories import TeamRepository
 
-            if await TeamRepository(session).is_team_member(project.team_id, user.id):
-                return
-            session.add(
-                TeamUserRelation(
-                    team_id=project.team_id,
-                    user_id=user.id,
-                    role=TeamMemberRole.ADMIN if admin else TeamMemberRole.MEMBER,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-            await session.commit()
+            team_id = await shared_team_of(session, project_id, joiner_user_id=user.id)
 
-    _asyncio.run(_join())
+            if not await TeamRepository(session).is_team_member(team_id, user.id):
+                session.add(
+                    TeamUserRelation(
+                        team_id=team_id,
+                        user_id=user.id,
+                        role=TeamMemberRole.ADMIN if admin else TeamMemberRole.MEMBER,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            await session.commit()
+            return team_id
+
+    return _asyncio.run(_join())
 
 
 def add_external_member(client, project_id: str, handle: str, *, by: str = "owner"):
@@ -349,6 +418,32 @@ def create_approved_space(client, **kwargs):
     return response
 
 
+def join_task_space(
+    client, task_id: int, user: int | dict, *, admin_headers: dict
+) -> None:
+    """Put ``user`` (a user id, or that user's auth headers) in the space
+    ``task_id`` is published in, as that space's owner or admin
+    (``admin_headers``) would. Only a space's members see and claim its
+    problems, so a test whose user claims one joins the space first. Already a
+    member is fine."""
+    if isinstance(user, dict):
+        import jwt
+
+        token = user["Authorization"].removeprefix("Bearer ")
+        user_id = int(jwt.decode(token, options={"verify_signature": False})["sub"])
+    else:
+        user_id = user
+    task = client.get(f"/tasks/{task_id}", headers=admin_headers)
+    assert task.status_code == 200, task.text
+    space_id = task.json()["data"]["task"]["space"]["id"]
+    joined = client.post(
+        f"/spaces/{space_id}/members",
+        json={"userId": user_id},
+        headers=admin_headers,
+    )
+    assert joined.status_code in (201, 409), joined.text
+
+
 def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     """A handle-only access token — the ONLY sanctioned way for a test to
     mint one.
@@ -370,9 +465,9 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     token = create_access_token(None, handle=handle)
     if ttl_s is None:
         return token
-    claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    claims = jwt.decode(token, options={"verify_signature": False})
     claims["exp"] = int(time.time()) + ttl_s
-    return jwt.encode(claims, settings.jwt_secret, algorithm="HS256")
+    return credentials.mint(Kind.ACCESS, claims)
 
 
 def room_agent_seat(client, topic_id) -> str:
@@ -395,7 +490,7 @@ def room_agent_headers(client, topic_id) -> dict[str, str]:
         topic_id=str(topic_id),
         agent_handle=room_agent_seat(client, topic_id),
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def task_agent_headers(project_id, task_id, seat: str) -> dict[str, str]:
@@ -405,7 +500,7 @@ def task_agent_headers(project_id, task_id, seat: str) -> dict[str, str]:
     token = mint_scoped_token(
         project_id=str(project_id), topic_id=str(task_id), agent_handle=seat
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def session_auth_headers(handle: str) -> dict[str, str]:
@@ -460,7 +555,7 @@ def teammate_task(
     said_by: str = "alice",
 ) -> dict:
     """A task the room's AI teammate made from a 支线 on someone's word
-    (``cheese_task``): a new task under the message the 支线 hangs under."""
+    (``cheese_task(action=open)``): a new task under the message the 支线 hangs under."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     thread = in_thread(client, room_id, said_by)
     token = mint_scoped_token(
@@ -479,7 +574,7 @@ def teammate_task(
                 "summary": summary,
                 "owner_handle": owner,
             },
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
     finally:
         if bearer is not None:
@@ -820,6 +915,20 @@ def _portal() -> Generator["BlockingPortal"]:
 
     with start_blocking_portal(backend="asyncio") as portal:
         yield portal
+
+
+@pytest.fixture(autouse=True)
+def _lookups_unbudgeted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lift the hourly `/users/lookup` budget for the suite.
+
+    Test accounts are seeded under fixed handles and ids recur from test to
+    test, while the budget lives in a Redis the whole run shares; a fixture that
+    looks up its cast for each of a dozen cases would spend one account's hour
+    and turn later setups into 429s. The test that pins the budget sets its own.
+    """
+    from app.api.routes.users import directory
+
+    monkeypatch.setattr(directory, "LOOKUPS_PER_WINDOW", 10**9)
 
 
 @pytest.fixture(autouse=True)

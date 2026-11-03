@@ -9,6 +9,7 @@ import pytest
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.agent.document import thread
 from app.domain.agent.document.question import Asked, Bound
+from app.domain.living_doc.comments import OnDocument
 
 
 class _Db:
@@ -69,7 +70,7 @@ def _wire(monkeypatch, outcomes):
 async def _reply(factory):
     await thread.reply(
         factory,
-        Asked(uuid.uuid4(), uuid.uuid4(), None),
+        Asked(uuid.uuid4(), OnDocument(uuid.uuid4()), None, None),
         uuid.uuid4(),
         Bound("cheese-x", "芝士", "m", "m", "s"),
         "hi {agent}",

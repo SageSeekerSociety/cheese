@@ -28,7 +28,13 @@ const docBytes = new ArrayBuffer(8)
 
 function setup(upload: UploadAnnotation) {
   const submit = vi.fn().mockReturnValue(true)
-  const deps = { snapshot: async () => ({ blob: new Blob(['png']) }), open: vi.fn(), clear: vi.fn() }
+  const deps = {
+    snapshot: async () => ({ blob: new Blob(['png']) }),
+    open: vi.fn(),
+    clear: vi.fn(),
+    // 指得动：这一档的用例测的是「钉一处」，不是「改」那一段里的拦。
+    pointing: () => true,
+  }
   const pin = usePreviewPagePin(
     {
       topicId: 'room',

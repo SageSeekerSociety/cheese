@@ -15,6 +15,7 @@ from app.api.auth import ActorResolverDep, session_in
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.errors import AuthenticationRequiredError, UnprocessableEntityError
 from app.domain.agent_instance.services import type_of_seat
 from app.domain.device import mcp_machines
@@ -42,7 +43,7 @@ async def start(
     member's computer it runs on lets run there (``allowed``, None on the
     platform's machines)."""
     project_id, claims = await session_in(
-        db, request.headers.get("x-cheese-token", ""), topic_id
+        db, credentials.presented(request.headers), topic_id
     )
     found = await service.seat_declared(
         db, project_id, claims.get("a"), type_of_seat=type_of_seat
@@ -82,7 +83,7 @@ async def run(
 ) -> dict:
     """How a local server fared, as the session's gateway saw it."""
     project_id, claims = await session_in(
-        db, request.headers.get("x-cheese-token", ""), topic_id
+        db, credentials.presented(request.headers), topic_id
     )
     machine = (
         await mcp_machines.machine(db, project_id, body.device_id)

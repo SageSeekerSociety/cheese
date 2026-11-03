@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.api import auth as auth_mod
+from app.auth import caller
 from app.common.auth import create_access_token
 
 pytestmark = pytest.mark.anyio
@@ -25,6 +26,7 @@ def _resolver(monkeypatch, *, token: str, user):
         get_by_username=AsyncMock(return_value=None),
     )
     monkeypatch.setattr(auth_mod, "UserRepository", lambda _session: repo)
+    monkeypatch.setattr(caller, "UserRepository", lambda _session: repo)
     resolver = auth_mod.ActorResolver(
         session=MagicMock(), bearer=token, cheese_token=""
     )
@@ -32,8 +34,8 @@ def _resolver(monkeypatch, *, token: str, user):
 
 
 async def test_numeric_handle_is_resolved_to_the_real_username(monkeypatch):
-    """sub=470 with no usable handle claim → the actor acts as the real user."""
-    token = create_access_token(470, handle="470")
+    """sub=470 with no handle claim → the actor acts as the real user."""
+    token = create_access_token(470)
     resolver, repo = _resolver(
         monkeypatch, token=token, user=SimpleNamespace(username="wangchangxin")
     )
@@ -48,7 +50,7 @@ async def test_numeric_handle_is_resolved_to_the_real_username(monkeypatch):
 
 async def test_unresolvable_user_keeps_the_numeric_handle(monkeypatch):
     """No such user → stay denied. Repair must never invent an identity."""
-    token = create_access_token(999999, handle="999999")
+    token = create_access_token(999999)
     resolver, _ = _resolver(monkeypatch, token=token, user=None)
 
     actor = await resolver.resolve()

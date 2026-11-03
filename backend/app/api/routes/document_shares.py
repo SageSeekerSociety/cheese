@@ -13,6 +13,7 @@ it is theirs or an admin of its team. Either way the person must be able to
 read it.
 """
 
+import re
 import uuid
 from datetime import datetime
 
@@ -167,13 +168,15 @@ class SharedDocumentOut(BaseModel):
 async def read_shared(token: str, db: DbSession, response: Response) -> dict:
     """The shared document's current version, for anyone holding the link."""
     doc = await _shared(db, token)
+    shared_by = await _shared_by(db, doc.id)
+    await db.commit()
     response.headers.update(_UNLISTED)
     return ok(
         {
             "title": doc.title,
             "content": doc.content,
             "updated_at": doc.updated_at,
-            "shared_by": await _shared_by(db, doc.id),
+            "shared_by": shared_by,
         }
     )
 
@@ -262,6 +265,24 @@ async def shared_app_version(
     )
 
 
+# `![说明](path)`: how a document names a picture, the same pattern the shared
+# page uses to turn those paths into this route's address (SharedDocument.vue).
+_IMAGE_REF = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)")
+
+
+def _images_named(markdown: str) -> set[str]:
+    """The library paths a document's Markdown shows as pictures."""
+    named: set[str] = set()
+    for src in _IMAGE_REF.findall(markdown):
+        if re.match(r"^(?:[a-z]+:|/)", src, re.IGNORECASE):
+            continue  # an address, not a path in the library
+        try:
+            named.add(clean_artifact_path(src.removeprefix("./")))
+        except Exception:  # a path the library could never hold
+            continue
+    return named
+
+
 @shared.get(
     "/{token}/image",
     response_class=Response,
@@ -275,15 +296,26 @@ async def shared_app_version(
 async def shared_image(
     token: str, db: DbSession, path: str = Query(max_length=1024)
 ) -> Response:
-    """An image of the shared document's project library. A picture kept in a
-    conversation is not shared with the document."""
+    """An image the shared document shows, from its project's library. A
+    picture kept in a conversation is not shared with the document, and
+    neither is any other picture of the library: the link reaches what the
+    document itself names (`![…](path)`), not the shelf it is on."""
     doc = await _shared(db, token)
     clean = clean_artifact_path(path)
     kind = artifact_kind_for(clean)
     name = library.library_name(clean)
-    if kind not in _IMAGE_KINDS or doc.project_id is None or name is None:
+    if (
+        kind not in _IMAGE_KINDS
+        or doc.project_id is None
+        or name is None
+        or clean not in _images_named(doc.content or "")
+    ):
         raise UnprocessableEntityError(say("docShareImageUnavailable"))
-    data = await library_records.read(db, Shelf.of_project(doc.project_id), name)
+    # A share link has no reader to hold to a task's rule, so `题目/` (the
+    # task's materials, `mount`) is not part of what a shared document shows:
+    # an image from there is refused like any file the link may not reach.
+    shelf = Shelf.of_project(doc.project_id, with_task=False)
+    data = await library_records.read(db, shelf, name)
     return Response(
         content=data,
         media_type=ARTIFACT_MIME[kind],

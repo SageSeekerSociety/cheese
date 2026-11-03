@@ -38,6 +38,11 @@ defineProps<{
   refreshing: boolean
   tasks: Task[]
   total: number
+  /** 「全部」最上面「我参与的」那一段：我手上有一份的题，不收起。别的范围是空的。 */
+  mineTasks: Task[]
+  mineTotal: number
+  mineHasMore: boolean
+  mineLoadingMore: boolean
   /** 「全部」里已截止或名额已满的那些：收在列表末尾，点开才画。别的范围是空的。 */
   closedTasks: Task[]
   closedTotal: number
@@ -54,6 +59,7 @@ const emit = defineEmits<{
   'update:pendingOnly': [on: boolean]
   loadMore: []
   loadMoreClosed: []
+  loadMoreMine: []
   loadPublishedTasks: []
 }>()
 
@@ -124,6 +130,22 @@ const { t } = useI18n()
       </template>
     </div>
     <div v-else class="tasks-list">
+      <!-- The tasks the viewer holds a claim on: their own group on top, never folded. -->
+      <section v-if="mineTotal" class="tasks-mine" data-testid="tasks-mine">
+        <h2 class="tasks-group">{{ t('spaces.detail.tasks.mineGroup', { n: mineTotal }) }}</h2>
+        <InfiniteScroll
+          :loading="mineLoadingMore"
+          :has-more="mineHasMore"
+          :initial-loading="false"
+          :is-empty="mineTasks.length === 0"
+          :shown="mineTasks.length"
+          :total="mineTotal"
+          @load-more="emit('loadMoreMine')"
+        >
+          <template #no-more><span /></template>
+          <TaskRow v-for="task in mineTasks" :key="task.id" :task="task" :to="rowTo(task)" />
+        </InfiniteScroll>
+      </section>
       <InfiniteScroll
         :loading="loadingMore"
         :has-more="hasMore"
@@ -134,7 +156,10 @@ const { t } = useI18n()
         @load-more="emit('loadMore')"
       >
         <template #empty>
+          <!-- Below the viewer's own group, an empty rest says nothing. -->
+          <span v-if="mineTotal" />
           <BaseEmptyState
+            v-else
             icon="mdi-trophy"
             :title="closedTotal ? t('spaces.detail.tasks.noOpenTasks') : t('spaces.detail.tasks.noTasks')"
           />
@@ -191,6 +216,16 @@ const { t } = useI18n()
 
 .tasks-list {
   padding: 0 16px 16px;
+}
+
+.tasks-group {
+  margin: 0;
+  padding: 14px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: var(--lh-14);
 }
 
 .tasks-closed__toggle {

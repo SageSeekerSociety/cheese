@@ -245,6 +245,14 @@ async def main():
         assert ends[0]["outcome"] == (
             "closed_before_eof" if close_early else "complete"
         )
+        # The first upstream byte is marked exactly once, before the end, so the
+        # gap a person waits through can be split from the generation after it.
+        firsts = [record for record in records if record["phase"] == "first_body"]
+        assert len(firsts) == 1, records
+        assert firsts[0]["elapsed_ms"] == 4000, firsts[0]
+        assert [r["phase"] for r in records].index("first_body") < [
+            r["phase"] for r in records
+        ].index("request_end")
         print(f"Consumer hold timing passed: close_early={close_early}")
     capture = io.StringIO()
     proxy_logger = logging.getLogger("LiteLLM Proxy")

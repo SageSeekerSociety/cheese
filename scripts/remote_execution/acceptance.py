@@ -159,6 +159,38 @@ def task_action(name, index):
     return action
 
 
+def stop_once_running(executor, index, marker):
+    """TaskStop for action `index`'s background command, sent once that
+    command runs on the executor (it writes `marker` first).
+
+    The build acknowledges a background launch before its shell prefix has
+    started the command there, so a stop sent on the acknowledgement reaches
+    the prefix on its way: the command never runs on the executor, and the
+    check that the stop reached it passes without testing anything. When the
+    stop lands while the prefix is mid-request, the fixture also writes its
+    answer to a closed socket and records that as its own failure."""
+    stop = task_action("TaskStop", index)
+
+    def action(body):
+        deadline = time.monotonic() + 60
+        while (
+            executor.call(
+                "invoke",
+                {
+                    "id": f"running-{uuid.uuid4().hex}",
+                    "tool": "Bash",
+                    "args": {"command": f"test -e {marker} && printf RUNNING"},
+                },
+            )["value"]["stdout"]
+            != "RUNNING"
+        ):
+            assert time.monotonic() < deadline, f"{marker} never appeared"
+            time.sleep(0.1)
+        return stop(body)
+
+    return action
+
+
 def read_background_output(body):
     result = next(
         r for r in tool_results(body) if r["tool_use_id"] == "toolu_acceptance_4"
@@ -174,7 +206,7 @@ def execution_handler():
         def do_POST(self):
             if self.path != "/execution":
                 return super().do_POST()
-            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            assert self.headers.get("Authorization") == "Bearer fixture-place-token"
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             wire = self.server.state["wire"]
             return self.reply(
@@ -263,11 +295,12 @@ def case(folder, options):
             {
                 "name": "Bash",
                 "input": {
-                    "command": "sleep 2; printf WRONG > cancelled.txt",
+                    "command": "printf RUNNING > running.txt; sleep 5; "
+                    "printf WRONG > cancelled.txt",
                     "run_in_background": True,
                 },
             },
-            task_action("TaskStop", 5),
+            stop_once_running(executor, 5, "running.txt"),
             {"name": "mcp__custom__echo", "input": {"message": "REMOTE_CUSTOM"}},
             {"name": "Skill", "input": {"skill": "remote-check"}},
             {"name": "Bash", "input": {"command": "rg --files -g '*.txt'"}},
@@ -468,7 +501,7 @@ def case(folder, options):
         if options.mode == "normal":
             # The spawn that asked for isolation is no longer refused: the
             # proxy drops the parameter and the subagent runs like any other.
-            # `cheese_task` is still what a caller should use when the work is
+            # `cheese_task(action=open)` is still what a caller should use when the work is
             # itself a deliverable to track and review, but nothing blocks the
             # spawn on it any more.
             isolated = results[-2]
@@ -525,10 +558,10 @@ def case(folder, options):
             diff = bound.control({"subtype": "get_workspace_diff"})
             assert "+AFTER_EDIT" in diff["diff"]
             dump(folder / "file-controls.json", {"preview": preview, "diff": diff})
-            # The stopped command would have written this after two seconds:
-            # its absence is the command gone from the executor, not only the
-            # build's task marked stopped.
-            time.sleep(2.1)
+            # The stopped command would have written this five seconds after it
+            # started: its absence is the command gone from the executor, not
+            # only the build's task marked stopped.
+            time.sleep(5.1)
             result = executor.call(
                 "invoke",
                 {

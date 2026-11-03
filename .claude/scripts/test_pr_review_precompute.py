@@ -3,17 +3,19 @@
 
     python3 .claude/scripts/test_pr_review_precompute.py
 
-Two of the cases reproduce real incidents: #4259 (deleted BulkUpdateRequest and left
-NotificationUpdate with a single reference) and #4268 x #4259 (a baseline guard that is
-green alone and red once the deletion lands beside it). Each has a mutant twin: the same
-assertion run against precompute.py with the check cut out, which must fail, or the case
-would pass for a tool that finds nothing.
+One case reproduces a real incident: #4259 (deleted BulkUpdateRequest and left
+NotificationUpdate with a single reference). It has a mutant twin: the same
+assertion run against precompute.py with the check cut out, which must fail, or
+the case would pass for a tool that finds nothing.
+
+prepare no longer runs tests: CI on GitHub runs them, the seat running the review
+runs whatever experiment a finding needs, and a subagent only reads. So the
+sections here are the symbol scan and the PR-body number recompute.
 """
 
 import importlib.util
-import json
+import shutil
 import subprocess
-import sys
 import tempfile
 import types
 import unittest
@@ -57,14 +59,6 @@ def commit(repo, files, msg):
 
 SCHEMAS = "class NotificationUpdate:\n    pass\n\nclass BulkUpdateRequest:\n    items: list[NotificationUpdate]\n"
 ROUTES = "from schemas import BulkUpdateRequest\n\ndef bulk(r: BulkUpdateRequest):\n    return r\n"
-GUARD = "_BASE" "LINE = set()\n" + '''import re, pathlib, sys
-root = pathlib.Path(__file__).resolve().parents[1] / "src"
-text = "\\n".join(p.read_text() for p in root.glob("*.py"))
-bad = [n for n in re.findall(r"^class (\\w+)", text, re.M)
-       if len(re.findall(rf"\\b{n}\\b", text)) < 2 and n not in _BASELINE]
-print("unreferenced:", bad)
-sys.exit(1 if bad else 0)
-'''
 
 
 class Precompute(unittest.TestCase):
@@ -92,6 +86,62 @@ class Precompute(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.assertIn("⚠ `NotificationUpdate`", out)
 
+    @unittest.skipUnless(shutil.which("rg"), "ripgrep is not installed here")
+    def test_orphan_found_through_the_tree_when_ripgrep_counts(self):
+        # The reviewer found this one: rg without --no-filename prints `path:NAME`,
+        # so every count came back 0 and the orphan scan always said 无. The test
+        # gives section_symbols the tree, which is the rg path prepare takes.
+        base = commit(self.repo, {"backend/app/schemas.py": SCHEMAS, "backend/app/routes.py": ROUTES}, "base")
+        head = commit(self.repo, {"backend/app/schemas.py": "class NotificationUpdate:\n    pass\n",
+                                  "backend/app/routes.py": "def bulk(r):\n    return r\n"}, "drop bulk")
+        out = "\n".join(load().section_symbols(self.repo, base, head, tree=self.repo))
+        self.assertIn("⚠ `NotificationUpdate`", out)
+        # The deliberate violation: drop --no-filename and the counts go back to 0,
+        # so the same call finds nothing. That is what this test is here to catch.
+        broken = mutant('"--no-filename", ', '')
+        out = "\n".join(broken.section_symbols(self.repo, base, head, tree=self.repo))
+        self.assertNotIn("⚠ `NotificationUpdate`", out)
+
+    def test_a_failed_git_grep_is_not_a_section_of_zeros(self):
+        # A scan that fails must not come back as all-zero counts: zero is the
+        # answer the orphan scan reads as "no other user", so a failure would
+        # report every orphan as not-an-orphan. No `tree` here on purpose — it
+        # takes the git grep branch, which is the one CI runs, where ripgrep is
+        # not installed. An unknown revision makes git grep exit 128.
+        # One load: each call makes a fresh module, so the exception class in a
+        # second load is a different object and assertRaises would not match it.
+        mod = load()
+        with self.assertRaises(mod.ScanFailed):
+            mod.count_refs(self.repo, "no-such-rev", ["helper"])
+        # `refs()` is what the orphan confirmation and the per-symbol rows read,
+        # so the same rule has to hold there: an empty list from a failed scan
+        # drops the orphan (len(now) != 1) and prints "0 处命中" as a fact.
+        with self.assertRaises(mod.ScanFailed):
+            mod.refs(self.repo, "no-such-rev", "helper")
+        # The deliberate violation: turn the exit-status check back off and the
+        # same call returns zeros instead of raising. The anchor names the git
+        # grep branch, so it stays unique whichever branch runs here.
+        broken = mutant('if p.returncode not in (0, 1):\n            raise ScanFailed(f"git grep',
+                        'if False:\n            raise ScanFailed(f"git grep')
+        self.assertEqual(broken.count_refs(self.repo, "no-such-rev", ["helper"]), {"helper": 0})
+
+    @unittest.skipUnless(shutil.which("rg"), "ripgrep is not installed here")
+    def test_a_failed_ripgrep_is_not_a_section_of_zeros(self):
+        # The same rule on the ripgrep branch: exit 2 (an unreadable tree) must
+        # raise, not read as "no matches". Skipped where rg is absent, because
+        # then this branch is not the one taken.
+        mod = load()
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "not-a-tree"
+            with self.assertRaises(mod.ScanFailed):
+                mod.count_refs(self.repo, "HEAD", ["helper"], tree=missing)
+        broken = mutant('raise ScanFailed(f"rg exited {p.returncode}',
+                        'return _match_counts(p.stdout, names)  # raise ScanFailed(f"rg exited {p.returncode}')
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "not-a-tree"
+            self.assertEqual(broken.count_refs(self.repo, "HEAD", ["helper"], tree=missing),
+                             {"helper": 0})
+
     def test_patch_points_listed(self):
         base = commit(self.repo, {"a.py": "def helper():\n    pass\n",
                                   "t.py": "def test(monkeypatch):\n    monkeypatch.setattr(a, 'helper', 1)\n"}, "b")
@@ -100,63 +150,11 @@ class Precompute(unittest.TestCase):
         self.assertIn("打桩点", out)
         self.assertIn("t.py", out)
 
-    # ---- #4268 x #4259: parallel baseline guard
-    def collision_case(self, mod):
-        commit(self.repo, {"src/a.py": "class Helper:\n    pass\n", "src/b.py": "from a import Helper\nx = Helper()\n"}, "main")
-        base = git(self.repo, "rev-parse", "HEAD")
-        git(self.repo, "checkout", "-qb", "x")
-        head = commit(self.repo, {"tests/test_guard.py": GUARD}, "add guard")
-        git(self.repo, "checkout", "-q", "main")
-        git(self.repo, "checkout", "-qb", "y", base)
-        commit(self.repo, {"src/b.py": "y = 1\n"}, "drop use")
-        git(self.repo, "checkout", "-q", "main")
-        return "\n".join(mod.section_trial(self.repo, base, head, 4268, "", "main", [("#4259", "y")],
-                                           f"{sys.executable} {{files}}"))
-
-    def test_parallel_guard_failure_written(self):
-        out = self.collision_case(load())
-        self.assertIn("最新 main + 本 PR：**通过**", out)
-        self.assertIn("最新 main + #4259 + 本 PR：**失败**", out)
-        self.assertIn("unreferenced: ['Helper']", out)
-
-    def test_trial_mutant_is_red(self):
-        out = self.collision_case(mutant('("通过" if code == 0 else "失败")', '"通过"'))
-        with self.assertRaises(AssertionError):
-            self.assertIn("#4259 + 本 PR：**失败**", out)
-
-    def test_no_trial_without_guard_or_mention(self):
-        base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
-        head = commit(self.repo, {"a.py": "x = 2\n"}, "c")
-        out = "\n".join(load().section_trial(self.repo, base, head, 1, "plain", "main", [], None))
-        self.assertIn("不做", out)
-
     def test_orphan_in_untouched_file(self):
         base = commit(self.repo, {"a.py": "def helper():\n    pass\n", "b.py": "from a import helper\nhelper()\n"}, "b")
         head = commit(self.repo, {"b.py": "y = 1\n"}, "drop use")
         out = "\n".join(load().section_symbols(self.repo, base, head))
         self.assertIn("⚠ `helper`（a.py）", out)
-
-    def test_missing_pytest_is_not_a_test_failure(self):
-        base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
-        head = commit(self.repo, {"tests/test_x.py": "_KNOWN = set()\n"}, "t")
-        out = "\n".join(load().section_trial(self.repo, base, head, 1, "", "main", [],
-                                               f"{sys.executable} -m pytest_not_installed {{files}}"))
-        self.assertIn("最新 main + 本 PR：**未跑**", out)
-        self.assertNotIn("**失败**", out)
-
-    def test_plain_word_in_test_is_not_a_guard(self):
-        base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
-        head = commit(self.repo, {"tests/test_x.py": "s = 'the BASELINE word'\n"}, "t")
-        out = "\n".join(load().section_trial(self.repo, base, head, 1, "", "main", [], None))
-        self.assertIn("不做", out)
-
-    def test_real_failure_mentioning_command_not_found_is_a_failure(self):
-        base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
-        head = commit(self.repo, {"tests/test_x.py": "_KNOWN = set()\n"}, "t")
-        script = Path(self.tmp.name) / "f.sh"
-        script.write_text("#!/bin/sh\necho 'AssertionError: boom'\necho 'sh: git: command not found'\nexit 1\n")
-        out = "\n".join(load().section_trial(self.repo, base, head, 1, "", "main", [], f"sh {script} {{files}}"))
-        self.assertIn("最新 main + 本 PR：**失败**", out)
 
     def test_orphan_found_beyond_three_hundred_public_names(self):
         many = "".join(f"def f{i}():\n    pass\n" for i in range(320))
@@ -181,8 +179,8 @@ class Precompute(unittest.TestCase):
         self.assertIn("⚠ `UserId`（a.py）", out)
         self.assertNotIn("⚠ `helper`", out)
 
-    # ---- whole run writes the file, helpers called
-    def test_main_writes_all_sections(self):
+    # ---- the whole run writes both sections, and runs no test
+    def test_main_writes_all_sections_and_runs_no_tests(self):
         base = commit(self.repo, {"a.py": "x = 1\n"}, "b")
         head = commit(self.repo, {"a.py": "x = 2\n"}, "c")
         scripts = Path(self.tmp.name) / "s"
@@ -193,10 +191,12 @@ class Precompute(unittest.TestCase):
         body.write_text("# t\n\n改了 1 个文件\n")
         out = Path(self.tmp.name) / "P.md"
         load().main(["--repo", str(self.repo), "--base", base, "--head", head, "--pr", "1", "--pr-body", str(body),
-                     "--scripts", str(scripts), "--main-ref", "main", "--out", str(out)])
+                     "--scripts", str(scripts), "--out", str(out)])
         text = out.read_text()
-        for needle in ("## 1.", "## 2.", "## 3.", "PROVE-STUB", "CLAIMS-STUB"):
+        for needle in ("## 1.", "## 2.", "CLAIMS-STUB"):
             self.assertIn(needle, text)
+        # Tests belong to CI and to the seat's own experiments, not to prepare.
+        self.assertNotIn("PROVE-STUB", text)
 
 
 if __name__ == "__main__":

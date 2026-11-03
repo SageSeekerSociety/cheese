@@ -2,7 +2,7 @@
 // 图、画完的那张合成图）。取数那一半（`../usePanelPreview.ts`）和拆开的几个子模块都读它，
 // 所以它单独放一处，而不是挂在组合根上。
 import type { PreviewQuestion } from '@/lib/previewQuestion'
-import type { ChatAttachment } from '../../cx_types'
+import type { ChatAttachment, ProjectMemberRow } from '../../cx_types'
 import type { FramePick, usePreviewFrames } from '../usePreviewFrames'
 
 export interface PanelPreviewProps {
@@ -18,6 +18,13 @@ export interface PanelPreviewProps {
    * 看这一份，房间的当前预览换成什么都和它无关。
    */
   path?: string | null
+  /** 项目名册：文件评论里作者的名字和头像从它来（同 `PanelDoc` 的 `members`）。
+   *  不给就只剩 handle 和色块——这是「没接线」的降级，不是一种画法。 */
+  members?: ProjectMemberRow[]
+  /** 这间房队友的 handle：评论里那个队友席位画的是谁。 */
+  agentHandle?: string | null
+  /** 这间房队友现在的名字（项目可以给它改名）：评论卡上写它、@ 候选里也用它。 */
+  agentName?: string
 }
 
 export interface PanelPreviewOptions {

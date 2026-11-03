@@ -69,6 +69,10 @@ class Delivery(UuidPk, Base):
         String(24), default="pending", server_default="pending"
     )
     attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    #: The latest attempt a person asked for (「重试」), as opposed to the
+    #: platform trying again on its own backoff. A person who asked hears how
+    #: their try went; the platform's own tries of one instruction say so once.
+    asked_attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -138,6 +142,16 @@ class NativeInput(UuidPk, Base):
     #: 未读结算掉，或者进程带着它走了），或者平台放弃了一条结果不明的输入。只有
     #: 没读过（`echoed_at` 为空）的输入会走到这里——读过的已经送达，什么都不用再记。
     terminated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 这条输入最后交给的那个会话进程：座位给它的 runner 发的登记号（worker
+    #: epoch）。登记时是座位当时的登记号，每次真正交出去（`hand_to`）和 runner
+    #: 报写进去（`InputWritten`）时改成那个进程的；只往大改。为空的是这一列之前
+    #: 的行，或者座位从没有登记过进程的 harness。
+    handed_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: 平台记下 ``handed_epoch`` 那个进程退出的时刻（数据库的时钟）。之后这条
+    #: 输入再也不会被读到；交给更新的进程时清空。
+    receiver_exited_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     #: 为什么不会被读到：`dropped`、`exited`、`orphaned`、`task_closed`，或者

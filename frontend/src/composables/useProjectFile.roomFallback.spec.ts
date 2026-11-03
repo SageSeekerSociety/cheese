@@ -42,8 +42,8 @@ const TEXT = {
   too_large: false,
 }
 
-function open() {
-  return useProjectFile({ projectId: () => 'p1', channelId: () => 'c1', path: () => 'gemm_bench.cu' })
+function open(path = 'gemm_bench.cu') {
+  return useProjectFile({ projectId: () => 'p1', channelId: () => 'c1', path: () => path })
 }
 
 describe('useProjectFile reads the channel’s own file when the project has none', () => {
@@ -67,6 +67,16 @@ describe('useProjectFile reads the channel’s own file when the project has non
     await vi.waitFor(() => expect(file.loading.value).toBe(false))
     expect(file.missing.value).toBe(false)
     expect(file.inRoom.value).toBe(true)
+  })
+
+  it('does not draw a channel .bmp as an image: the channel only serves it for download', async () => {
+    mocks.readFile.mockRejectedValue(new mocks.ApiError('not found', 404))
+    mocks.readPreviewFile.mockResolvedValue({ ...TEXT, path: 'shot.bmp', content: null, binary: true })
+    const file = open('shot.bmp')
+    await vi.waitFor(() => expect(file.loading.value).toBe(false))
+    expect(file.inRoom.value).toBe(true)
+    expect(file.isImage.value).toBe(false)
+    expect(file.binary.value).toBe(true)
   })
 
   it('still reports the project error when the channel does not have it either', async () => {

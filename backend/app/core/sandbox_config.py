@@ -30,7 +30,7 @@ class SandboxSettings(BaseModel):
     # the box so it can be cleaned up. Silently 404ing every `cheese` call would
     # look exactly like an agent that decided not to use its tools.
     sandbox_api_base: str = "http://host.docker.internal:8099"
-    # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
+    # Shared secret the sandbox `cheese` CLI sends (as its bearer credential) so the
     # cheese write-API isn't open on the bind address. Empty → derived from
     # `jwt_secret` (see `sandbox_signing_secret`); pin it to rotate the two
     # independently, or to share one secret across multiple backend hosts.

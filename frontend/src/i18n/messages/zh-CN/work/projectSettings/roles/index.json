@@ -1,6 +1,4 @@
 {
-  "intro": "每种角色能做什么。所有者拥有全部权限；团队所有者和团队管理员在项目里是管理员",
-  "readOnly": "只有管理员能修改",
   "locked": "为了让项目始终有人管理，这一项不能修改",
   "reset": "恢复默认",
   "role": {
@@ -31,19 +29,17 @@
     "comment": "评论",
     "configure_agents": "配置 AI 队友"
   },
-  "permHint": {
-    "manage_members": "邀请人加入项目，把人移出项目",
-    "change_roles": "把人设为成员或导师，只有所有者能设管理员",
-    "edit_settings": "地址、默认模型、环境、仓库和合并规则、项目网站、导入外部技能",
-    "export_project": "下载项目里的对话、文档和文件",
-    "create_channels": "新建公开或私密频道，把人拉进自己所在的频道",
-    "manage_channels": "不是频道管理员也能修改、归档和删除频道，能加入私密频道",
-    "speak": "发消息、回复",
-    "ask_agent": "让{agent}回答问题、写文档、做事",
-    "tasks": "把事情交给{agent}做成任务，审阅任务交回的结果",
-    "edit_content": "新建、修改、删除文档和文件，保存到资料库",
-    "share_documents": "生成和收回文档的只读链接，项目外的人凭链接也能阅读",
-    "comment": "在文档上评论",
-    "configure_agents": "新增和停用 AI 队友，管理技能、MCP 服务器和项目共享记忆"
-  }
+  "holders": "{n} 人",
+  "create": "新增角色",
+  "createSubmit": "新增",
+  "nameLabel": "角色名称",
+  "copyFrom": "权限复制自",
+  "template": "模板",
+  "rename": "重命名",
+  "renameSubmit": "保存",
+  "delete": "删除角色",
+  "deleteTitle": "删除角色「{name}」？",
+  "deleteSubmit": "删除",
+  "moveTo": "这个角色的 {n} 人改为",
+  "actions": "「{name}」的操作"
 }

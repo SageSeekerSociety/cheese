@@ -13,7 +13,7 @@ import (
 
 func TestSleepWorkReadIsDeviceAuthenticated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/connector/device/running-sessions" || r.Header.Get("X-Cheese-Session") != "device-token" {
+		if r.URL.Path != "/connector/device/running-sessions" || r.Header.Get("Authorization") != "Bearer device-token" {
 			w.WriteHeader(401)
 			return
 		}
@@ -37,7 +37,7 @@ func TestConnectorTracksWorkAndReloadsMachinePreference(t *testing.T) {
 	count.Store(1)
 	read := make(chan struct{}, 64)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Cheese-Session") != "token" {
+		if r.Header.Get("Authorization") != "Bearer token" {
 			w.WriteHeader(401)
 			return
 		}

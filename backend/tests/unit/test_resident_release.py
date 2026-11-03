@@ -178,6 +178,28 @@ def test_a_forwarded_view_whose_server_died_is_released_not_read_as_empty(
     assert calls == [["/bin/fusermount3", "-u", str(dead)]]
 
 
+def test_a_mount_whose_server_was_killed_reads_as_dead_too(tmp_path, monkeypatch):
+    """The error is EIO where the kernel has no connection to report.
+
+    A FUSE mount whose serving process was `SIGKILL`ed answers `Input/output
+    error` on this kernel (measured on 6.12), not ENOTCONN — and a caller that
+    read only the three connection errors as "dead" would treat it as an empty
+    directory, exactly the failure the ENOTCONN case is here to prevent.
+    """
+    dead = tmp_path / "forwarded-project"
+    dead.mkdir()
+    real_lstat = release.os.lstat
+
+    def lstat(path, *args, **kwargs):
+        if Path(path) == dead:
+            raise OSError(errno.EIO, "Input/output error")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(release.os, "lstat", lstat)
+
+    assert release.mount_state(dead) == release.MOUNT_DEAD
+
+
 def test_staged_release_unmounts_only_the_forwarded_view_before_replacement(
     tmp_path, monkeypatch
 ):

@@ -1,5 +1,7 @@
 {
   "contentMustBeString": "content must be a string",
+  "memoryChangeNotFound": "No such memory change",
+  "memoryChangeWasCreation": "{path} was created by this change; there is nothing from before it to restore",
   "memoryEntryIdInvalid": "Invalid memory entry ID",
   "memoryFileAlreadyExists": "it already exists (now at version {current})",
   "memoryFileDeleted": "it has been deleted",

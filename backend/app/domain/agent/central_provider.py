@@ -145,7 +145,9 @@ class CentralChannel(DeviceChannel):
         when it is named: what a restarted backend reads again."""
         factory = self._session_factory or async_session_factory
         async with factory() as db:
-            sessions = await AgentSessionService(db).placed_sessions()
+            sessions = await AgentSessionService(db).placed_sessions(
+                harness=harness, device_id=device_id
+            )
         return [
             Placed(
                 SessionRef(

@@ -19,7 +19,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import Uuid, any_, bindparam, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.topics_rows import CardRow
@@ -69,21 +70,30 @@ async def at_work(
 
     ``tasks`` names the page's tasks ({task: room}) when the caller also asks
     which of them are running — the sidebar's breathing green. It is read in
-    the same statement, so a page does not pay one more query for it: running
-    sessions are few, and the rows outside this page are filtered in memory."""
+    the same statement, so a page does not pay one more query for it. The
+    statement asks only for this page's conversations (its rooms, their 支线
+    and the named tasks), so it does not read every session running on the
+    platform to keep a few of them."""
     if not room_ids:
         return AtWork({}, {}, set())
     if threads is None:
         threads = await threads_of_rooms(db, room_ids)
     mine = set(room_ids)
     task_rooms = tasks or {}
+    conversations = [*mine, *threads, *task_rooms]
     rows = await db.execute(
         select(
             SessionState.conversation_id,
             SessionState.agent_handle,
             SessionState.changed_at,
         )
-        .where(SessionState.worker_status == RUNNING)
+        .where(
+            SessionState.worker_status == RUNNING,
+            SessionState.conversation_id
+            == any_(
+                bindparam(None, list(dict.fromkeys(conversations)), type_=ARRAY(Uuid))
+            ),
+        )
         .order_by(SessionState.agent_handle)
     )
     rooms: dict[uuid.UUID, list[dict]] = {}
@@ -100,6 +110,37 @@ async def at_work(
         if conversation in task_rooms:
             running_tasks.add(conversation)
     return AtWork(rooms, in_threads, running_tasks)
+
+
+async def answering(
+    db: AsyncSession, conversations: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, list[str]]:
+    """The seats at work in each of these conversations (支线, usually): whom
+    a message's line names as answering in it now.
+
+    The fact `at_work` reads — the runner's own word that a session is running
+    — and not the realtime process's broker, so a page read on any backend
+    process says the same. Only the conversations the caller draws are read:
+    a page with no 支线 under it asks nothing, and one with a few does not read
+    every session running on the platform."""
+    if not conversations:
+        return {}
+    rows = await db.execute(
+        select(SessionState.conversation_id, SessionState.agent_handle)
+        .where(
+            SessionState.worker_status == RUNNING,
+            SessionState.conversation_id
+            == any_(
+                bindparam(None, list(dict.fromkeys(conversations)), type_=ARRAY(Uuid))
+            ),
+        )
+        .order_by(SessionState.agent_handle)
+    )
+    seats: dict[uuid.UUID, list[str]] = {}
+    for conversation, seat in rows:
+        if seat not in seats.setdefault(conversation, []):
+            seats[conversation].append(seat)
+    return seats
 
 
 async def live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:

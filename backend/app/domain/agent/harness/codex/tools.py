@@ -135,7 +135,7 @@ class RemoteTools:
         # they print exists (`entry.py`).
         self.monitors: monitor.Monitors | None = None
         # How to ask the session's own thread to compact itself, for the one
-        # tool that does (`cheese_compact`): the runner's, set beside
+        # tool that does (`cheese_session(action=compact)`): the runner's, set beside
         # `monitors` (`entry.py`). A session without one refuses the call.
         self.compact: Callable[[], str] | None = None
         # The project's MCP servers the session opened with (`discover`).
@@ -551,11 +551,17 @@ class RemoteTools:
             if owed is not None and owed["id"] != self.answered:
                 # Reading the room is on the way to answering it, and answers
                 # nothing.
+                arguments = params.get("arguments")
+                action = (
+                    arguments.get("action") if isinstance(arguments, dict) else None
+                )
+                # A read is one verb of an object (`cheese_chat.list`).
+                key = f"{params['tool']}.{action}" if action else params["tool"]
                 if params["tool"] in owed["answers"]:
                     self.answered = owed["id"]
                     # And where the runner reads it, to know the turn may end.
                     Path(owed["answered"]).write_text(owed["id"])
-                elif params["tool"] not in owed["reads"]:
+                elif key not in owed["reads"]:
                     return {
                         "success": False,
                         "contentItems": [{"type": "inputText", "text": owed["reason"]}],

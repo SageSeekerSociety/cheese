@@ -40,8 +40,10 @@ const props = withDefaults(
     phone?: boolean
     /** 页签切换的那块内容区（`role="tabpanel"`）的 id，给每一格的 `aria-controls`。 */
     panelId?: string
+    /** 并排时右边那一格：页签下面一道虚线，看得出它也在屏幕上。 */
+    side?: string | null
   }>(),
-  { files: () => [], phone: false, panelId: undefined }
+  { files: () => [], phone: false, panelId: undefined, side: null }
 )
 
 const emit = defineEmits<{
@@ -59,6 +61,7 @@ function fileName(path: string): string {
 
 /** 页签上写什么：文件写文件名，资料库文档写它的标题。 */
 function tabName(f: OpenFileTab): string {
+  if (f.skill) return f.skill.title || t('work.room.workCard.skill')
   return f.document ? f.document.title || t('work.room.doc.untitled') : fileName(f.path)
 }
 
@@ -172,7 +175,11 @@ const inkStyle = computed(() =>
           type="button"
           role="tab"
           class="tabbar__tab"
-          :class="{ 'tabbar__tab--on': active === tab.key, 'tabbar__tab--empty': tab.empty }"
+          :class="{
+            'tabbar__tab--on': active === tab.key,
+            'tabbar__tab--side': side === tab.key,
+            'tabbar__tab--empty': tab.empty,
+          }"
           :aria-selected="active === tab.key"
           :aria-controls="panelId"
           :title="tab.title ?? tab.label"
@@ -210,14 +217,16 @@ const inkStyle = computed(() =>
             type="button"
             role="tab"
             class="tabbar__tab"
-            :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
+            :class="{ 'tabbar__tab--on': active === fileKey(f.path), 'tabbar__tab--side': side === fileKey(f.path) }"
             :aria-selected="active === fileKey(f.path)"
             :aria-controls="panelId"
             :title="f.pinned ? tabName(f) : t('work.room.tabs.pinHint', { path: tabName(f) })"
             @click="emit('select', fileKey(f.path))"
             @dblclick="emit('pin-file', f.path)"
           >
-            <v-icon size="16">{{ f.document ? 'mdi-file-document-edit-outline' : fileIcon(f.path) }}</v-icon>
+            <v-icon size="16">{{
+              f.skill ? 'mdi-book-open-variant' : f.document ? 'mdi-file-document-edit-outline' : fileIcon(f.path)
+            }}</v-icon>
             <span class="tabbar__name">{{ tabName(f) }}</span>
           </button>
           <button
@@ -318,6 +327,19 @@ const inkStyle = computed(() =>
    所以是真的长高。 */
 .tabbar--phone .tabbar__tab {
   min-height: 44px;
+}
+
+/* 并排时右边那一格：字和选中的一样深，下面一道虚线（实线是选中那一格的）。 */
+.tabbar__tab--side {
+  color: var(--ink);
+}
+.tabbar__tab--side::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  border-bottom: 2px dashed var(--line-2);
 }
 
 /* 这一格此刻没东西：字退到 --faint，但照样能点，点进去是它自己的「暂无」。 */

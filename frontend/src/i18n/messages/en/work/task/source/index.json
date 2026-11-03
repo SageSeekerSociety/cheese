@@ -1,5 +1,6 @@
 {
   "byAgent": "Created by {name}; which message it came from was not recorded",
+  "byAssistant": "Created by Cheese on behalf of {name}, not from a conversation",
   "byPerson": "Created by {name}, not from a conversation",
   "channel": "From a message in #{title}",
   "quote": "{name}: {text}",

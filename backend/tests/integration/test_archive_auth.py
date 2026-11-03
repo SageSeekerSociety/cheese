@@ -136,7 +136,7 @@ def test_scoped_agent_cannot_trigger_global_cleanup(client):
     token = mint_scoped_token(project_id="project", topic_id="room")
     assert (
         client.post(
-            "/sandbox/storage-sweep", headers={"X-Cheese-Token": token}
+            "/sandbox/storage-sweep", headers={"Authorization": f"Bearer {token}"}
         ).status_code
         == 401
     )

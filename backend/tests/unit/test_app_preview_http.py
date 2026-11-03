@@ -32,6 +32,13 @@ def _scope():
     }
 
 
+def _tunnel_scope() -> dict:
+    """A helper's dial, carrying its credential."""
+    return dict(
+        _scope(), type="websocket", headers=[(b"authorization", b"Bearer fixture")]
+    )
+
+
 class _TunnelSink:
     def __init__(self):
         self.machine = None
@@ -157,8 +164,8 @@ async def test_tunnel_ingress_overflow_closes_and_detaches_real_adapter(monkeypa
     async def send(message):
         sent.append(message)
 
-    websocket = WebSocket(dict(_scope(), type="websocket"), receive, send)
-    await asyncio.wait_for(app_preview.preview_tunnel(websocket, "fixture"), 1)
+    websocket = WebSocket(_tunnel_scope(), receive, send)
+    await asyncio.wait_for(app_preview.preview_tunnel(websocket), 1)
     assert any(m.get("code") == 1009 for m in sent)
     assert not hub.is_online(topic, "seat")
     assert hub.open_stream(topic, "seat") is None
@@ -242,8 +249,8 @@ async def test_failed_write_closes_idle_real_adapter_and_joins_route(monkeypatch
         elif message["type"] == "websocket.close":
             closed.append(message)
 
-    ws = WebSocket(dict(_scope(), type="websocket"), receive, send)
-    owner = asyncio.create_task(app_preview.preview_tunnel(ws, "fixture"))
+    ws = WebSocket(_tunnel_scope(), receive, send)
+    owner = asyncio.create_task(app_preview.preview_tunnel(ws))
     await accepted.wait()
     machine = hub.machine(topic, "seat")
     assert machine is not None

@@ -4,12 +4,13 @@
 // 就过不去了（见 .claude/rules/architecture.md）。屏幕上怎么画留在组件里；这里只认
 // 「笔画这份数据该怎么被改」，换算坐标用的几何由外面传进来。
 import type { Ref } from 'vue'
-import type { Point } from './designRegion'
+import type { ImageGeometry, Point } from './designRegion'
 import type { RedactStyle, SketchStroke, SketchTool } from './designSketch'
 import type { HandleRole } from './designSketchSelection'
 
 import { computed, nextTick, ref } from 'vue'
 
+import { imagePoint } from './designRegion'
 import { fontSize } from './designSketch'
 import { hitTest } from './designSketchHit'
 import {
@@ -24,7 +25,18 @@ import {
 } from './designSketchSelection'
 
 /** 显示像素 ↔ 原图像素的换算；组件由图元素量出来。 */
-export type SketchGeometry = { left: number; top: number; scale: number }
+export type SketchGeometry = ImageGeometry & { scale: number }
+
+/** 屏幕上的这一点，落在**没转没翻**的那张图上哪儿（原图像素）。 */
+function naturalAt(client: { clientX: number; clientY: number }, box: SketchGeometry): Point | null {
+  return imagePoint({ x: client.clientX, y: client.clientY }, box)
+}
+
+/** 同一点换成显示像素（原图像素 × 缩放）：笔画命中按它算。 */
+function displayAt(client: { clientX: number; clientY: number }, box: SketchGeometry): Point | null {
+  const natural = naturalAt(client, box)
+  return natural ? { x: natural.x * box.scale, y: natural.y * box.scale } : null
+}
 
 /** 一次按下开始的手势：拖动整笔，或拖某个把手缩放。松手时若动过才记一条历史。 */
 type Gesture = {
@@ -206,7 +218,7 @@ export function useSketchObjectEdit(options: {
       index,
       origin: stroke,
       before: strokes.value,
-      start: { x: (event.clientX - box.left) / box.scale, y: (event.clientY - box.top) / box.scale },
+      start: naturalAt(event, box) ?? { x: 0, y: 0 },
       client: { x: event.clientX, y: event.clientY },
       touch: event.pointerType === 'touch',
       started: false,
@@ -241,7 +253,8 @@ export function useSketchObjectEdit(options: {
     }
     const box = geometry()
     if (!box) return
-    const display = { x: event.clientX - box.left, y: event.clientY - box.top }
+    const display = displayAt(event, box)
+    if (!display) return
     const touch = event.pointerType === 'touch'
     const current = selectedShape.value
     const currentIndex = selectedStroke.value
@@ -278,7 +291,8 @@ export function useSketchObjectEdit(options: {
       if (moved < (active.touch ? 10 : 3)) return
       active.started = true
     }
-    const point = { x: (event.clientX - box.left) / box.scale, y: (event.clientY - box.top) / box.scale }
+    const point = naturalAt(event, box)
+    if (!point) return
     const next =
       active.kind === 'resize' && active.role
         ? applyResize(active.origin, active.role, point, event.shiftKey)
@@ -334,7 +348,8 @@ export function useSketchObjectEdit(options: {
     if (tool.value !== 'select') return
     const box = geometry()
     if (!box) return
-    const display = { x: event.clientX - box.left, y: event.clientY - box.top }
+    const display = displayAt(event, box)
+    if (!display) return
     const index = hitTest(strokes.value, display, { scale: box.scale, naturalWidth: natural.value.width })
     if (index === null) return
     if (strokes.value[index]?.tool !== 'text') return

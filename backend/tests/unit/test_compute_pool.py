@@ -184,9 +184,9 @@ class _FakeBackend:
 
 
 def test_a_pool_without_the_deployments_first_harness_is_refused():
-    """Platform work that names no harness lands on the deployment's first
-    preference; a pool that cannot run it would fail that work at the first
-    dream, so it is refused when it is built."""
+    """A deployment whose first preference the pool cannot run is a
+    misconfigured one, refused when the pool is built rather than at the first
+    turn that needs it."""
     with pytest.raises(ValueError):
         ComputePool([])
 
@@ -205,7 +205,6 @@ def test_one_backend_per_harness_whatever_machine_the_room_is_on():
     assert backend is not None
     assert backend.deferred_work is True
     assert pool.choose({})[1] is pool.select(harness=pool.choose({})[0])
-    assert pool.platform_work() is pool.default()
 
 
 def test_the_pool_runs_only_the_harnesses_the_registry_lists():

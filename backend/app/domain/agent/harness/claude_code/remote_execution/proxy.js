@@ -242,12 +242,14 @@ export function register(on) {
       const owed = await owedReply($);
       if (owed) {
         const name = tool.startsWith("mcp__native__") ? tool.slice("mcp__native__".length) : tool;
+        // A read is one verb of an object, by its key (`cheese_chat.list`).
+        const key = typeof args.action === "string" && args.action ? `${name}.${args.action}` : name;
         // Reading the room is on the way to answering it, and answers nothing.
         if (owed.answers.includes(name)) {
           answered = owed.id;
           // And where the runner reads it, to know the turn may end (`insist`).
           await $.fs.write(owed.answered, owed.id);
-        } else if (!owed.reads.includes(name)) {
+        } else if (!owed.reads.includes(key)) {
           return { deny: owed.reason };
         }
       }

@@ -1,9 +1,11 @@
 // 「导出项目」那一块。它是哑的：只从 props 画状态、只往外 emit `export`（发请求与
-// 状态在 composables/useProjectExport，另有一份 spec）。这里钉四件事：
+// 状态在 composables/useProjectExport，另有一份 spec）。这里钉三件事：
 //   1. 画出这一块的标题、说明和那颗按钮；
 //   2. 点下去把 `export` 抛给页面；
-//   3. busy 时按钮禁用（打包期间不许连点）；
-//   4. 有失败话术就画出来，没有就不画。
+//   3. busy 时按钮禁用（打包期间不许连点）。
+//
+// 失败不再画在这里：成没成由 `downloadFile` 那一层弹一句（`lib/download`），所以这一块
+// 没有可画的失败话术。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -14,9 +16,9 @@ import ProjectExportSection from './ProjectExportSection.vue'
 
 import { setLocale } from '@/i18n'
 
-function mountSection(props: { busy?: boolean; error?: string; onExport?: () => void } = {}) {
+function mountSection(props: { busy?: boolean; onExport?: () => void } = {}) {
   return render(ProjectExportSection, {
-    props: { busy: props.busy ?? false, error: props.error ?? '', onExport: props.onExport },
+    props: { busy: props.busy ?? false, onExport: props.onExport },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -59,14 +61,5 @@ describe('「导出项目」那一块', () => {
   it('busy 时按钮禁用', () => {
     mountSection({ busy: true })
     expect(exportButton().disabled).toBe(true)
-  })
-
-  it('有失败话术就画出来，没有就不画', () => {
-    const withError = mountSection({ error: '导出失败：网络' })
-    expect(withError.container.textContent).toContain('导出失败：网络')
-    withError.unmount()
-
-    const without = mountSection({ error: '' })
-    expect(without.container.querySelector('.v-alert')).toBeNull()
   })
 })

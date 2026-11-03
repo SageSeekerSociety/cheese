@@ -63,6 +63,56 @@ describe('和芝士的那一条对话', () => {
     expect(a.busy.value).toBe(false)
   })
 
+  it('words said mid-answer that the answer ended without hearing are asked on their own, not written twice', async () => {
+    const bodies: Record<string, unknown>[] = []
+    const answers = [
+      events(
+        ['delta', { text: '先读一遍。' }],
+        ['unheard', { said: [{ text: '只看第 3 份', files: [{ path: '报告/3.pdf', name: '3.pdf' }] }] }],
+        ['done', {}]
+      ),
+      events(['delta', { text: '好，只看第 3 份。' }], ['done', {}]),
+    ]
+    serve(() => answers.shift() as Response)
+    const fetched = globalThis.fetch
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/ask')) bodies.push(JSON.parse(String(init?.body)))
+      return fetched(url, init)
+    })
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('把报告打分', '答不上来')
+
+    expect(bodies.map((b) => [b.question, b.kept ?? false, b.files ?? []])).toEqual([
+      ['把报告打分', false, []],
+      ['只看第 3 份', true, [{ path: '报告/3.pdf', name: '3.pdf' }]],
+    ])
+    expect(a.messages.value.map((m) => [m.role, m.text])).toEqual([
+      ['user', '把报告打分'],
+      ['assistant', '先读一遍。'],
+      ['assistant', '好，只看第 3 份。'],
+    ])
+    expect(a.busy.value).toBe(false)
+  })
+
+  it('words said mid-answer are not asked again when the person stopped the answer', async () => {
+    const answers = [
+      events(
+        ['delta', { text: '先读一遍。' }],
+        ['unheard', { said: [{ text: '只看第 3 份' }] }],
+        ['done', { stopped: true }]
+      ),
+    ]
+    const asked = serve(() => answers.shift() ?? new Response('', { status: 500 }))
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('把报告打分', '答不上来')
+
+    expect(asked).toEqual(['把报告打分'])
+  })
+
   it("says the server's reason for a refused question and keeps nothing of it", async () => {
     serve(
       () =>
@@ -286,6 +336,57 @@ describe('芝士这一轮做了什么', () => {
     expect(steps[1].args).toBe('{"query":"Lab"}')
   })
 
+  it('calls made together each end when they come back, not when the next one starts', async () => {
+    serve(() =>
+      events(
+        ['tool', { name: 'cheese_read', call: 'c1', at: 0 }],
+        ['tool', { name: 'cheese_find', call: 'c2', at: 0 }],
+        ['tool_done', { call: 'c2' }],
+        ['tool_done', { call: 'c1' }],
+        ['delta', { text: '都读完了。', at: 0 }],
+        ['done', {}]
+      )
+    )
+    const ended: string[] = []
+    const a = createAssistant({ on: { toolEnded: (call) => ended.push(call) } })
+    await a.load()
+
+    await a.ask('看看待办', '答不上来')
+
+    expect(ended).toEqual(['c2', 'c1'])
+    expect(a.messages.value.at(-1)?.steps?.map((s) => s.at)).toEqual([0, 0])
+  })
+
+  it('keeps how the subagents it started stood when the answer ended', async () => {
+    const started = { id: 'branch-1', call: 'c1', description: '打分', status: 'running', steps: [] }
+    serve(() =>
+      events(
+        ['tool', { name: 'cheese_subagent_start', call: 'c1', at: 0 }],
+        ['tool_done', { call: 'c1' }],
+        ['subagents', { branches: [started] }],
+        ['subagents', { branches: [{ ...started, status: 'done' }] }],
+        ['delta', { text: '打完了。', at: 0 }],
+        ['done', {}]
+      )
+    )
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('打分', '答不上来')
+
+    expect(a.messages.value.at(-1)?.subagents?.map((s) => s.status)).toEqual(['done'])
+  })
+
+  it('an answer that did something and wrote nothing says so instead of standing empty', async () => {
+    serve(() => events(['tool', { name: 'cheese_inbox', call: 'c1' }], ['tool_done', { call: 'c1' }], ['done', {}]))
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('有什么待办？', '答不上来')
+
+    expect(a.messages.value.at(-1)).toMatchObject({ role: 'assistant', text: '', silent: true })
+  })
+
   it('a file 芝士 hands over stays with its answer, live and when the conversation is opened again', async () => {
     const file = { team: 9, path: '成绩分布.png', bytes: 84000 }
     serve(() => events(['tool', { call: 'g1', name: 'cheese_file_give' }], ['handed', file], ['done', {}]))
@@ -412,6 +513,60 @@ describe('芝士这一轮做了什么', () => {
     await a.older()
     expect(a.earlier.value.map((topic) => topic.title)).toEqual(['实验三从哪入手', '这周要交什么'])
     expect(a.earlier.value[0].messages[0].text).toBe('实验三从哪入手')
+    expect(a.hasOlder.value).toBe(false)
+  })
+
+  it('a topic that said more elsewhere is read again, keeping what was read back above it', async () => {
+    const line = (seq: number, text = `第 ${seq} 句`) => ({ seq, role: 'user', text, at: '2026-10-19T08:00:00Z' })
+    const TOPIC = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 3 }
+    let latest = [line(3), line(4)]
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [TOPIC], next: null })
+      if (url.endsWith('/assistant/conversations/c3'))
+        return envelope({ ...TOPIC, answering: null, messages: latest, earlier: true })
+      if (url.endsWith('/assistant/conversations/c3/messages?before=3'))
+        return envelope({ messages: [line(1), line(2)], earlier: false })
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    await a.older()
+
+    latest = [line(4), line(5, '例行事务的结果')]
+    await a.heard('c3')
+
+    expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(a.messages.value.at(-1)?.text).toBe('例行事务的结果')
+  })
+
+  it('reading back fills the topic at the top first, then reads older topics a page at a time', async () => {
+    const line = (seq: number) => ({ seq, role: 'user', text: `第 ${seq} 句`, at: '2026-10-19T08:00:00Z' })
+    const LATEST = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 3 }
+    const OLDEST = { id: 'c1', title: '最早的', lastActiveAt: '2026-10-19T08:00:00Z', questions: 1 }
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      asked.push(url)
+      if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [LATEST], next: 'p2' })
+      if (url.endsWith('/assistant/conversations?before=p2')) return envelope({ conversations: [OLDEST], next: null })
+      if (url.endsWith('/assistant/conversations/c3'))
+        return envelope({ ...LATEST, answering: null, messages: [line(3), line(4)], earlier: true })
+      if (url.endsWith('/assistant/conversations/c3/messages?before=3'))
+        return envelope({ messages: [line(1), line(2)], earlier: false })
+      if (url.endsWith('/assistant/conversations/c1'))
+        return envelope({ ...OLDEST, answering: null, messages: [line(1)], earlier: false })
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    expect(a.currentEarlier.value).toBe(true)
+
+    await a.older()
+    expect(a.messages.value.map((m) => m.text)).toEqual(['第 1 句', '第 2 句', '第 3 句', '第 4 句'])
+    expect(a.currentEarlier.value).toBe(false)
+    expect(a.hasOlder.value).toBe(true)
+
+    await a.older()
+    expect(a.earlier.value.map((topic) => topic.title)).toEqual(['最早的'])
     expect(a.hasOlder.value).toBe(false)
   })
 })

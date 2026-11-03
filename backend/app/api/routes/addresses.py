@@ -25,7 +25,7 @@ from app.api.doc_access import reach
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import _actor_in_place
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can, InProject
 from app.core.errors import (
     BaseError,
     ConflictError,
@@ -234,16 +234,17 @@ class SlugIn(BaseModel):
     slug: str
 
 
-@projects.put("/{project_id}/slug", dependencies=[ROUTE_DECIDES])
+@projects.put("/{project_id}/slug")
 async def set_project_slug(
-    project_id: uuid.UUID, body: SlugIn, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: SlugIn,
+    db: DbSession,
 ) -> dict:
     """Rename the project in addresses. Its managers' alone; the old name keeps
     leading here and no other project can take it."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require(project_id, actor, Permission.edit_settings)
-    project = await ProjectService(db).get_or_404(project_id)
+    project_id = at.project.id
+    await MemberService(db).require(project_id, at.actor, Permission.edit_settings)
+    project = at.project
     try:
         slug = await rename_slug(db, project, body.slug)
     except SlugError as error:

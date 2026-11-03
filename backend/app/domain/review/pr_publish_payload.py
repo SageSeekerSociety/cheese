@@ -155,7 +155,7 @@ async def _pr_text(
 ) -> tuple[str, str | None, str]:
     """The card's PR title, the owner's token to open it with, and a first
     body. The PR's own words come from the card's change summary
-    (`cheese_accept_request --subject/--body`).
+    (`cheese_card(action=request)`'s subject and body).
 
     Same builders the merge path uses (`review/pr_text.py`), on purpose: the
     PR a reviewer reads and the squash commit that lands on main must not be

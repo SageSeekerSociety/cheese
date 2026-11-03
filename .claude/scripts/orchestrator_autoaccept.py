@@ -71,6 +71,7 @@ PROD_DEPLOY = (
     ".github/workflows/deploy.yml",
     "deploy/deploy.sh",
     "deploy/deploy-docker.sh",
+    "deploy/registry-retry.sh",
     "deploy/docker-compose.prod.yml",
     "deploy/.env.prod.example",
     "deploy/compose/",

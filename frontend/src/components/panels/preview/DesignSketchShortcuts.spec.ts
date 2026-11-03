@@ -115,7 +115,7 @@ it('Esc 退出手里的画笔，回到默认的框选', async () => {
   expect(ui.getByRole('application', { name: '图片标注画布' })).toBeTruthy()
   await fireEvent.keyDown(window, { key: 'Escape' })
   expect(ui.queryByRole('application', { name: '图片标注画布' })).toBeNull()
-  expect(ui.getByRole('button', { name: '选择图片区域' }).getAttribute('aria-pressed')).toBe('true')
+  expect(ui.getByRole('button', { name: '标一处' }).getAttribute('aria-pressed')).toBe('true')
 })
 
 it('输入法组字中的那一次回车是选词，不算发送', async () => {

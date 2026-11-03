@@ -1,0 +1,17 @@
+{
+  "title": "Starter code",
+  "hint": "A .zip archive. When someone starts the task, it is unpacked into their project as the first commit of its code repository",
+  "pick": "Choose a .zip",
+  "replace": "Replace starter code",
+  "remove": "Remove starter code",
+  "uploading": "Uploading…",
+  "uploadingPercent": "Uploading {percent}%",
+  "uploadFailed": "Couldn't upload the starter code: {error}",
+  "removeFailed": "Couldn't remove the starter code: {error}",
+  "replaceShort": "Replace",
+  "removeShort": "Remove",
+  "processing": "Processing…",
+  "removeTitle": "Remove the starter code?",
+  "removeBody": "This takes effect now and records a new version of the task. People who start after this get no starter code in their repository; those who already started keep theirs.",
+  "hintWithLimit": "A .zip archive of up to {size}; a larger one can be uploaded on the edit page after publishing. When someone starts the task, it is unpacked into their project as the first commit of its code repository"
+}

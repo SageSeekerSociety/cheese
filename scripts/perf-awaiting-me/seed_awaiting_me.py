@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import random
+import urllib.parse
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -34,6 +35,31 @@ import asyncpg
 DSN = os.environ.get(
     "PERF_DATABASE_URL", "postgresql://cheesex:cheesex@127.0.0.1:5433/cheese_perf"
 )
+
+ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
+FORBIDDEN_DBS = {"cheesex", "cheese", "postgres", "template0", "template1", "dev", "prod", "production"}
+
+
+def assert_safe_perf_dsn(dsn: str) -> str:
+    """Refuse to connect or truncate unless DSN targets an isolated local perf/test DB."""
+    parsed = urllib.parse.urlsplit(dsn)
+    host = (parsed.hostname or "").lower()
+    dbname = parsed.path.lstrip("/")
+    if host not in ALLOWED_HOSTS:
+        raise RuntimeError(
+            f"Refusing to seed non-local database host {host!r} (allowed: {sorted(ALLOWED_HOSTS)})"
+        )
+    lower_db = dbname.lower()
+    if (
+        not lower_db
+        or lower_db in FORBIDDEN_DBS
+        or ("perf" not in lower_db and "test" not in lower_db)
+    ):
+        raise RuntimeError(
+            f"Refusing to truncate database {dbname!r}: name must contain 'perf' or 'test' "
+            f"and not be a business database"
+        )
+    return dbname
 
 #: The person the measurement asks for. Owns every project so ``list_visible_to``
 #: returns all of them, the way the tracker's account sees the whole platform.
@@ -83,9 +109,13 @@ def main() -> None:
 
 
 async def _main() -> None:
+    expected_db = assert_safe_perf_dsn(DSN)
     rng = random.Random(SEED)
     conn = await asyncpg.connect(DSN)
     try:
+        actual_db = await conn.fetchval("select current_database()")
+        if actual_db != expected_db or ("perf" not in actual_db.lower() and "test" not in actual_db.lower()):
+            raise RuntimeError(f"Refusing to truncate database {actual_db!r}")
         await _truncate(conn)
         team_id = await conn.fetchval("select nextval('team_seq')")
         await conn.execute(

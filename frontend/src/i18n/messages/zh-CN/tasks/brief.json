@@ -6,5 +6,6 @@
   "kindFile": "文件",
   "kindText": "文字",
   "rubric": "评分要点",
-  "rubricPrivate": "仅批改的人可见"
+  "rubricPrivate": "仅批改的人可见",
+  "stages": "阶段"
 }

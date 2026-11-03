@@ -306,71 +306,6 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
 
 
 @pytest.mark.anyio
-async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
-    business_db_factory, tmp_path, monkeypatch
-):
-    from app.domain.agent.realtime.broker import InProcessBroker
-    from app.domain.agent.runtime import AgentWorkRunner
-
-    factory = business_db_factory
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    svc = ChatService(
-        work_runner=runner,
-        session_factory=factory,
-        compute=stub_compute(InstantScreen()),
-        base_system_prompt="You are Cheese.",
-        workspace_root=str(tmp_path / "ws"),
-    )
-    async with factory() as session:
-        await registered(session, "u")
-        project = await project_service(session).create(name="P", owner_handle="u")
-        topic = await TopicService(session).create(
-            project_id=project.id, title="T", created_by="u"
-        )
-        topic_id = topic.id
-        await session.commit()
-    _payloads, original, original_ids, _ = await svc.human_messages.post_user_message(
-        topic_id,
-        author="u",
-        content="saved by the old backend",
-        turn_id=None,
-        reply_to=None,
-        attachments=[{"path": "room/a.png", "mime": "image/png"}],
-    )
-    async with factory() as session:
-        anchor = await BlockRepository(session).get(original)
-        assert anchor is not None
-        anchor.meta = {**(anchor.meta or {}), "client_id": "pre-upgrade-delivery"}
-        await session.commit()
-
-    submitted = []
-    monkeypatch.setattr(
-        runner,
-        "_receive_message",
-        lambda *args, **kwargs: submitted.append((args, kwargs)),
-    )
-    retried = await runner.receive_message(
-        svc,
-        topic_id,
-        author="u",
-        content="saved by the old backend",
-        attachments=[{"path": "room/a.png", "mime": "image/png"}],
-        client_id="pre-upgrade-delivery",
-    )
-
-    assert retried == original
-    assert submitted == []
-    async with factory() as session:
-        rows = [
-            block
-            for block in await BlockRepository(session).list_for_topic(topic_id)
-            if not looks_like_agent_handle(block.author)
-        ]
-    assert [block.id for block in rows] == original_ids
-
-
-@pytest.mark.anyio
 async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tmp_path):
     """收下一条消息，收件人是项目建出来时就有的那个芝士，不多长一个队友。
 
@@ -965,7 +900,7 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
     async with asyncio.timeout(HANG_S):
         while True:
             async with factory() as session:
-                kept = await read(session, topic_id)
+                kept = await read(session, topic_id, reader=None)
                 said = set(assistant_texts(kept.items))
             if expected <= said:
                 break
@@ -1003,7 +938,7 @@ async def test_execution_notes_are_retained_outside_public_replies(
     await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        kept = await read(session, tid)
+        kept = await read(session, tid, reader=None)
     replies = [
         b.content
         for b in rows
@@ -1073,7 +1008,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-        kept = await read(session, topic_id)
+        kept = await read(session, topic_id, reader=None)
     assert assistant_texts(kept.items) == ["done"]
     assert not [b for b in rows if looks_like_agent_handle(b.author)]
 

@@ -63,13 +63,13 @@ from app.domain.agent.harness.prompt import became_task_prompt, task_opening_pro
 from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
-from app.domain.conversation.services import room_of
 from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
 from app.domain.room_task.dispatch import (
     refuse_tasks_in_private,
     upgrade_block_to_place,
 )
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.schemas import TaskOut
 from app.domain.thread.adapters import root_block_of
 from app.domain.thread.services import open_thread
@@ -218,15 +218,15 @@ async def upgrade_block(
 
     这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block
     自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也
-    由凭据说，而且只能是一个人：AI 队友用自己的工具建任务（`cheese_task`）。
+    由凭据说，而且只能是一个人：AI 队友用自己的工具建任务（`cheese_task(action=open)`）。
     """
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    parent = await TopicService(db).get_or_404(await room_of(db, block.conversation_id))
+    parent = (await place_or_404(db, block.conversation_id)).room
     actor = await resolver.resolve(topic_id=parent.id, project_id=parent.project_id)
     await resolver.authorize_topic(
-        actor, project_id=parent.project_id, topic_id=parent.id
+        actor, project_id=parent.project_id, topic_id=parent.id, room=parent
     )
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))

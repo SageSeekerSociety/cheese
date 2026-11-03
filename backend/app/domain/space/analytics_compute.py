@@ -60,6 +60,10 @@ class _Context:
         default_factory=dict
     )
 
+    # When each claim started (its project was created, ``claims.started_at``);
+    # a claim not started yet has no entry.
+    started_at_by_membership_id: dict[int, datetime] = field(default_factory=dict)
+
     # Populated only when include_participant_details=True (participants endpoints).
     identities_by_user_id: dict[int, UserRealNameIdentity] = field(default_factory=dict)
     member_users_by_user_id: dict[int, User] = field(default_factory=dict)

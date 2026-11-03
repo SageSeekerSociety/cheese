@@ -41,7 +41,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, literal_column, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,6 +56,19 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 #: (idle, or given up with its host). Cleared by the first tool call that lands
 #: in a new one; until then the room's lease still names the machine it was on.
 LOST_KEY = "sandbox_lost"
+#: Set beside ``LOST_KEY`` when the host could say what was running in the
+#: sandbox it destroyed (``sandbox_home.destroy``): each process's command
+#: line, its executor and bare shells left out, secrets masked. Read with
+#: ``LOST_KEY`` into the notice the next tool call carries, and cleared with
+#: it. Absent when nothing was running, or the host could not read it — the
+#: copy is the same as before there were processes to name.
+LOST_PROCESSES_KEY = "sandbox_lost_processes"
+#: Set in a session's ``execution_request`` when its cloud sandbox was parked
+#: (``lifecycle._park``): its processes stopped, its home kept on the host.
+#: The value is what was running, as ``LOST_PROCESSES_KEY`` names it (an empty
+#: list when nothing was). The first tool call that lands in it again is told
+#: its files are all there and its processes are not, and clears it.
+PARKED_KEY = "sandbox_parked"
 #: Set in a session's ``execution_request`` when it asked for another cloud
 #: sandbox while it already had one — the spec it is on, asked again
 #: (``session_work.switch_environment``). The host it left is named here so its
@@ -63,6 +76,15 @@ LOST_KEY = "sandbox_lost"
 #: preference for the fullest host would otherwise do. Cleared by that
 #: placement (``HostPool._placed_off``).
 LEFT_HOST_KEY = "sandbox_left_host"
+#: Set in a session's ``execution_request`` when a tool call arrives for a
+#: frozen cloud sandbox: the resource id of that sandbox. The row's home is
+#: kept, its ``frozen_at`` is cleared under the pool lock and its ``active_at``
+#: moved to now, but its processes are still stopped, and neither the pool nor
+#: the executor may be asked anything until they run again. The actual thaw
+#: happens off the database locks, in ``session_work._install`` before the
+#: executor starts; it clears this. A stale value is harmless: the same home
+#: thawing twice is a no-op (`machine/services.py`, `sandbox_home.thaw`).
+THAW_KEY = "sandbox_thaw"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +113,12 @@ class SessionPlace:
     lease: dict | None
 
 
+#: The device a session's lease is on, as `ix_agent_sessions_lease_device`
+#: indexes it. The key is written as a literal, not bound, so the index serves
+#: a prepared statement's generic plan too (`LEASE_DEVICE`).
+LEASE_DEVICE_SQL = "(work_lease ->> 'device_id')"
+
+
 class AgentSession(UuidPk, Timestamps, Base):
     __tablename__ = "agent_sessions"
     # One session per agent per conversation.
@@ -102,6 +130,9 @@ class AgentSession(UuidPk, Timestamps, Base):
             "harness",
             unique=True,
         ),
+        # Which session holds a sandbox on a device: every request a sandbox
+        # makes through its device link asks it (`machine.caller.caller_of`).
+        Index("ix_agent_sessions_lease_device", text(LEASE_DEVICE_SQL)),
     )
 
     # The conversation this session is in: a room's or a task's id.
@@ -156,7 +187,8 @@ class AgentSession(UuidPk, Timestamps, Base):
     )
     # 这条对话最近一次被告知的项目现状，每一段一个摘要
     # （`harness.prompt.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
-    # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过：那一轮整份都说。
+    # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过，或者告诉过的已经
+    # 被一次上下文压缩换成了摘要（`forget_told`）：那一轮整份都说。
     told: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     # When the drain of this session's runner began: a runner another release
     # started, at work when this release took it over, is left to finish for
@@ -260,3 +292,7 @@ class AgentRead(Base):
     read_through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     read_through_block_id: Mapped[uuid.UUID] = mapped_column()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+#: ``AgentSession.work_lease["device_id"]`` spelled the way the index is.
+LEASE_DEVICE = literal_column("(agent_sessions.work_lease ->> 'device_id')", String)

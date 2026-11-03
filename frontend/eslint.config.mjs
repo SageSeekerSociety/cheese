@@ -8,6 +8,12 @@ import vueParser from 'vue-eslint-parser'
 import simpleImportSort from 'eslint-plugin-simple-import-sort'
 import a11y from 'eslint-plugin-vuejs-accessibility'
 
+const LEGACY_NETWORK = {
+  group: ['@/network', '@/network/*', '**/network/api', '**/network/api/*'],
+  message:
+    'The legacy network stack (src/network/) is gone. Reach the server through @/api — a domain module under src/api/, or the src/api.ts facade.',
+}
+
 export default [
   {
     languageOptions: {
@@ -140,6 +146,12 @@ export default [
     // old stack, it needs the `@/api` domain module instead.
     // docs/manual/dev/frontend.md#state-network
     //
+    // Notices go through `@/lib/toast`, not vuetify-sonner's `toast`: that is
+    // where a rule for every notice lives (once the page is outdated, the
+    // refresh notice is the only failure it shows), and a direct import is a
+    // notice the rule never sees. The next block exempts the two files that are
+    // that rule, and specs, which import the mocked package to read it.
+    //
     // It sits above the src/lib/docSchema block below on purpose: a later
     // matching config object replaces this rule wholesale for those files
     // rather than merging patterns, and docSchema's own `@/*` ban already
@@ -149,15 +161,23 @@ export default [
       'no-restricted-imports': [
         'error',
         {
-          patterns: [
+          patterns: [LEGACY_NETWORK],
+          paths: [
             {
-              group: ['@/network', '@/network/*', '**/network/api', '**/network/api/*'],
+              name: 'vuetify-sonner',
+              importNames: ['toast'],
               message:
-                'The legacy network stack (src/network/) is gone. Reach the server through @/api — a domain module under src/api/, or the src/api.ts facade.',
+                "Import `toast` from '@/lib/toast': it holds failure notices once the page is outdated (lib/apiGeneration.ts).",
             },
           ],
         },
       ],
+    },
+  },
+  {
+    files: ['src/lib/toast.ts', 'src/lib/apiGeneration.ts', 'src/**/*.spec.ts', 'src/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [LEGACY_NETWORK] }],
     },
   },
   {

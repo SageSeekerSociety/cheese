@@ -873,9 +873,9 @@ def test_another_tasks_session_cannot_redeliver_this_tasks_card(client):
     other = delivery_task(client, room_id, new=True)
     _put(client, mine, "out/别人的.pdf", "另一条任务塞进来的\n")
     other_session = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=str(other.project_id), topic_id=str(other.id)
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=str(other.project_id), topic_id=str(other.id))
+        }"
     }
 
     r = _redeliver(client, mine, other_session, deliver="out/别人的.pdf")

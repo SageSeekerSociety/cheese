@@ -47,22 +47,19 @@ class TaskInheritance:
     task_id: int
     #: 这道题挂在哪块板上。调用方拿它去问板上的资料清单。
     space_id: int
-    #: 机构给的资源包原文，例如 ``{"compute_credits": 100}``。空 dict = 没说。
+    #: 资源包原文：算力额度，例如 ``{"compute_credits": 100}``。空 dict = 没说。
     resource_pack: dict = field(default_factory=dict)
-    #: 题目包里的「手动加的一段 prompt」（`resource_pack["prompt"]`），建项目时并进
-    #: 默认队友的人设正文。None = 没说。与 `default_role` 同一份数据来源：都只带回
-    #: 原文，怎么落由建项目那条路做。
-    prompt: str | None = None
-    #: 题目包里指定的一组 skill 名字（`resource_pack["skills"]`），建项目时并进默认
-    #: 队友的技能。空列表 = 没说。
-    skills: list[str] = field(default_factory=list)
-    #: 四层合成后的教学指导（空间 → 项目集 → 题目 → 项目，最具体的赢）。
+    #: 合成后的教学指导（空间与题目两层同时生效，项目自己有就整份替换），连同
+    #: 项目里每个 AI 队友每一轮都带上的技能（``Teaching.skills``）。
     teaching: Teaching = field(default_factory=Teaching)
     #: 题目（更上层）指定的默认队友**类型名**（`protocol.default_role`），建项目时
     #: 落在这个项目的芝士身上（`project.services._accept_task_protocol`）。这里只带
     #: 名字，不带那个预设的人设与技能 —— 预设是 `app.domain.agent_type` 那一域的事，
     #: 由路由层去问（和资料同一条分工：这一域不 import 兄弟域）。
     default_role: str | None = None
+    #: 资源包里还带着的那段 prompt：建项目时加在默认队友的人设末尾
+    #: （`Protocol.pack_prompt`）。收尾迁移把它并进指导之后，这一格随那条路一起删。
+    pack_prompt: str | None = None
     #: 上面那份指导**来自哪一层** —— ``space`` / ``category`` / ``task`` /
     #: ``project``，或 None（四层都没说）。由 ``resolve`` 的同一个循环带出，界面
     #: 据此写「来自项目集」而不是只给一串合成结果。
@@ -89,9 +86,8 @@ async def for_task(
         task_id=task.id,
         space_id=task.space_id,
         resource_pack=dict(protocol.resource_pack),
-        prompt=protocol.prompt,
-        skills=list(protocol.skills),
         teaching=protocol.teaching,
         teaching_source=protocol.teaching_source,
         default_role=protocol.default_role,
+        pack_prompt=protocol.pack_prompt,
     )

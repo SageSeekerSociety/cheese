@@ -4,8 +4,9 @@ import asyncio
 import uuid
 
 from app.core.config import settings
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -190,8 +191,9 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
     from — which is why the index carries hooks rather than bodies, and why the
     agent has to open them itself with the tools it already has.
 
-    The private index is the speaker's only: an index is paid for every turn,
-    and a project is wider than the people in this room."""
+    Nobody's private index is in a shared room's turn, the speaker's
+    included: the room's session goes on to answer the next person who speaks,
+    and what it read for one would still be in reach (`turn_speakers`)."""
     project_id, topic_id = _create_project_and_thread(client)
 
     async def _seed() -> None:
@@ -207,6 +209,7 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
                     content=content,
                     updated_by="cheese",
                     expected_version=None,
+                    writer=MemoryWriter.panel,
                 )
 
             await put(
@@ -246,8 +249,10 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
     prompt = stub_hooks.told
     assert "索引里那句钩子" in prompt
     assert "正文里才有的那句话" not in prompt
-    assert "说话这个人的索引钩子" in prompt
+    assert prompt_path(f"private/user-1/{INDEX_NAME}") not in prompt
+    assert "说话这个人的索引钩子" not in prompt
     assert "没说话那个人的索引钩子" not in prompt
+    assert prompt_path(f"private/bob/{INDEX_NAME}") not in prompt
 
 
 def test_empty_content_rejected(client):

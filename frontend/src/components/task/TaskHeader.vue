@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 任务页的页头，和房间页头是同一条线：同样的高度和底线，手机上同样填进顶栏那一格。
 // 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
-// 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名归负责人和协作者，转交、
-// 关闭只归负责人）。
+// 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名、关闭归负责人和协作者，
+// 转交只归负责人；关了的任务，角色有「新建任务和审阅」的人都能重新打开）。
 import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
@@ -56,6 +56,8 @@ const props = withDefaults(
     panelOpen?: boolean
     /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
     copyLink?: () => void
+    /** 我的角色有「新建任务和审阅」：关了的任务我能重新打开。页面从项目的 `my_permissions` 读。 */
+    worksTasks?: boolean
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
   { connected: true }
@@ -104,6 +106,13 @@ const progressTitle = computed(() => {
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
 const collaborators = computed(() => props.task?.contributor_handles ?? [])
 const nameOf = (handle: string) => props.memberNames[handle] || handle
+const metaEl = ref<HTMLElement | null>(null)
+watch(
+  () => state.value?.line,
+  () => {
+    if (metaEl.value) metaEl.value.scrollLeft = 0
+  }
+)
 // 这个人自己挑过的头像。没挑过（`avatar_id` 是 null）给空串，交给 `UserAvatar` 画按
 // handle 派生的彩色首字母：`getAvatarUrl(undefined)` 回的是全站默认那张脸，所有没挑过
 // 头像的人共用同一张，认不出是谁。
@@ -223,10 +232,17 @@ const menuActions = computed<MenuCommand[]>(() =>
           close: () => (closeOpen.value = true),
           reopen: () => void props.reopen(),
         },
-        { me: ME, canHandOver: otherPeople.value.length > 0, copyLink: props.copyLink ?? null }
+        {
+          me: ME,
+          canHandOver: otherPeople.value.length > 0,
+          copyLink: props.copyLink ?? null,
+          worksTasks: props.worksTasks,
+        }
       )
     : []
 )
+// ⋯ 给参加这件活的人，和能重新打开这件关了的任务的人；只剩「复制链接」时不摆。
+const showsMenu = computed(() => takesPart.value || menuActions.value.some((action) => action.id === 'task.reopen'))
 // 两条既有用例按这两个 test id 找按钮：其余项不必有。
 function actionTestId(id: string): string | undefined {
   if (id === 'task.rename') return 'task-rename'
@@ -245,7 +261,7 @@ function actionTestId(id: string): string | undefined {
       <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
         task ? taskTitle(task) : ''
       }}</span>
-      <span class="task-header__meta">
+      <span ref="metaEl" class="task-header__meta">
         <TaskStateMark
           v-if="state"
           class="task-header__state"
@@ -439,7 +455,7 @@ function actionTestId(id: string): string | undefined {
     </v-menu>
 
     <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
-    <v-menu v-if="task && takesPart" location="bottom end">
+    <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <BaseButton
           v-bind="menuProps"
@@ -657,10 +673,10 @@ function actionTestId(id: string): string | undefined {
    负责人那颗照旧点开任务信息，⋯ 竖跨两行贴右。 */
 .task-header--bar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, auto) minmax(auto, 1fr) auto;
   grid-template-rows: auto auto;
   align-content: center;
-  column-gap: 16px;
+  column-gap: 8px;
   row-gap: 1px;
 }
 .task-header--bar .task-header__text {
@@ -674,6 +690,20 @@ function actionTestId(id: string): string | undefined {
 .task-header--bar .task-header__meta {
   grid-column: 1;
   grid-row: 2;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  gap: 6px;
+}
+.task-header--bar .task-header__meta::-webkit-scrollbar {
+  display: none;
+}
+.task-header--bar .task-header__note {
+  flex: none;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
 }
 .task-header--bar .task-header__state,
 .task-header--bar .task-header__owner {
@@ -690,17 +720,16 @@ function actionTestId(id: string): string | undefined {
   grid-row: 2;
   justify-self: start;
   gap: 4px;
-  min-width: 0;
-  max-width: 100%;
   height: auto;
   padding-block: 8px;
   margin-block: -8px;
 }
 .task-header--bar .task-header__owner-name {
+  max-width: 8em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.task-header--bar [data-testid='task-more'] {
+.task-header--bar :deep([data-testid='task-more']) {
   grid-column: 3;
   grid-row: 1 / 3;
   align-self: center;

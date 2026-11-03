@@ -3,13 +3,14 @@
 import asyncio
 import hashlib
 import json
+import logging
 import mimetypes
 import re
 import time
 import uuid
 from contextlib import aclosing
 from pathlib import PurePosixPath
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode
 
 import jwt
 from fastapi import FastAPI
@@ -21,17 +22,23 @@ from starlette.websockets import WebSocket, WebSocketState
 
 from app.api.auth import ActorResolver
 from app.api.preview_relay import relay_http, relay_ws
-from app.api.preview_runtime import RUNTIME_SCRIPT, inject_runtime_script
-from app.core import scoped_jwt
+from app.api.preview_runtime import HTML_MEDIA, RUNTIME_SCRIPT, inject_runtime_script
+from app.core import origins, scoped_jwt
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
+from app.domain.machine.preview_wake import (
+    PREVIEW_TOUCH_STEP_S,
+    touch_preview_activity,
+)
 from app.domain.remote_mcp import apps
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_origin
+
+logger = logging.getLogger("cheese.preview_host")
 
 AUTH_PATH = "/_cheese/session"
 # 房间文件在这个内容域上的地址。它和 `AUTH_PATH` 同住 `/_cheese/` 这个命名空间：
@@ -98,7 +105,11 @@ def mint_preview_token(
     purpose: str,
     ttl: int,
     resource: dict | None = None,
+    embedder: str | None = None,
 ) -> str:
+    """A grant (``preview-grant``) or the session it becomes
+    (``preview-session``). A session names ``embedder``, the platform origin
+    that exchanged the grant: the page the preview runtime answers."""
     now = int(time.time())
     return scoped_jwt.sign(
         {
@@ -106,6 +117,7 @@ def mint_preview_token(
             "topic": str(topic_id),
             "aud": preview_origin(topic_id, resource),
             **({"resource": resource} if resource else {}),
+            **({"embed": embedder} if embedder else {}),
             "type": purpose,
             "iat": now,
             "exp": now + ttl,
@@ -131,6 +143,7 @@ def _claims(
         or claims["type"] != purpose
         or not isinstance(claims["sub"], str)
         or not claims["sub"]
+        or (purpose == "preview-session" and not origins.is_ours(claims.get("embed")))
     ):
         return None
     if preview_origin(topic_id, claims.get("resource")) != (
@@ -165,8 +178,12 @@ async def require_preview_access(
     return place
 
 
+def _frame_ancestors() -> str:
+    """Every origin of the platform may embed a preview."""
+    return " ".join(("'self'", *origins.all_origins()))
+
+
 def _private(response: Response) -> Response:
-    platform = urlsplit(settings.frontend_url)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -183,7 +200,7 @@ def _private(response: Response) -> Response:
             "sandbox allow-scripts allow-same-origin allow-forms allow-downloads "
             "allow-popups allow-popups-to-escape-sandbox; "
             "worker-src 'none'; object-src 'none'; "
-            f"frame-ancestors 'self' {platform.scheme}://{platform.netloc}"
+            f"frame-ancestors {_frame_ancestors()}"
         )
     return response
 
@@ -208,7 +225,6 @@ def _mcp_app_csp(entry: dict) -> str:
 
     connect, resources = apps.declared_origins(entry)
     network = " ".join(dict.fromkeys((*resources, *connect)))
-    platform = urlsplit(settings.frontend_url)
     return "; ".join(
         [
             "sandbox allow-scripts allow-forms",
@@ -223,7 +239,7 @@ def _mcp_app_csp(entry: dict) -> str:
             "worker-src 'none'",
             "base-uri 'none'",
             "form-action 'none'",
-            f"frame-ancestors 'self' {platform.scheme}://{platform.netloc}",
+            f"frame-ancestors {_frame_ancestors()}",
         ]
     )
 
@@ -235,9 +251,6 @@ def _destination(path: str) -> bool:
         and "\\" not in path
         and not any(ord(char) < 32 for char in path)
     )
-
-
-HTML_MEDIA = {"text/html", "application/xhtml+xml"}
 
 
 def _served_body(data: bytes, media: str | None) -> bytes:
@@ -323,14 +336,12 @@ class PreviewHostMiddleware:
         content = content or preview_origin(topic_id)
         exchange = request.url.path == AUTH_PATH
         destination = "/"
+        embedder: str | None = None
         if exchange:
             if request.method != "POST":
                 return Response(status_code=405)
-            platform = urlsplit(settings.frontend_url)
-            if (
-                request.headers.get("origin")
-                != f"{platform.scheme}://{platform.netloc}"
-            ):
+            embedder = request.headers.get("origin")
+            if not origins.is_ours(embedder):
                 return Response(status_code=403)
             body = bytearray()
             async for chunk in request.stream():
@@ -395,10 +406,8 @@ class PreviewHostMiddleware:
             session = await anext(sessions)
             place = await require_preview_access(session, topic_id, claims["sub"])
             if request.url.path == "/_cheese/runtime.js" and not exchange:
-                platform = urlsplit(settings.frontend_url)
                 script = RUNTIME_SCRIPT.replace(
-                    "__PLATFORM_ORIGIN__",
-                    json.dumps(f"{platform.scheme}://{platform.netloc}"),
+                    "__PLATFORM_ORIGIN__", json.dumps(claims["embed"])
                 )
                 if request.method not in {"GET", "HEAD"}:
                     return Response(status_code=405)
@@ -425,6 +434,7 @@ class PreviewHostMiddleware:
                         purpose="preview-session",
                         ttl=SESSION_TTL,
                         resource=claims.get("resource"),
+                        embedder=embedder,
                     ),
                     max_age=SESSION_TTL,
                     path="/",
@@ -443,6 +453,20 @@ class PreviewHostMiddleware:
                 # A third party's View: fetched from its server here (the session
                 # is still open for that read) and served under its own policy.
                 return await self.mcp_app(session, place, request, resource)
+            if resource and resource["kind"] == "app":
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    resource["seat"],
+                    project_id=place.project_id,
+                )
+            elif artifact is not None and artifact.mime_type == APP_MIME:
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    artifact.author,
+                    project_id=place.project_id,
+                )
         if target is not None:
             if request.method not in {"GET", "HEAD"}:
                 return Response(status_code=405)
@@ -552,6 +576,24 @@ class PreviewHostMiddleware:
         response.headers["Content-Security-Policy"] = _mcp_app_csp(entry)
         return response
 
+    async def _keep_touching(self, conversation_id, seat, project_id) -> None:
+        """Touch the previewed sandbox every ``PREVIEW_TOUCH_STEP_S`` while a
+        live connection to it (a dev server's HMR socket) stays open: a page
+        that only holds that socket sends no request, and was taken for
+        nobody looking once the idle time passed."""
+        while True:
+            await asyncio.sleep(PREVIEW_TOUCH_STEP_S)
+            try:
+                async with self.sessions() as sessions:
+                    session = await anext(sessions)
+                    await touch_preview_activity(
+                        session, conversation_id, seat, project_id=project_id
+                    )
+            except Exception:
+                logger.warning(
+                    "keeping a previewed sandbox in use failed", exc_info=True
+                )
+
     async def websocket(
         self, websocket: WebSocket, topic_id: uuid.UUID, content: str | None = None
     ) -> None:
@@ -581,14 +623,29 @@ class PreviewHostMiddleware:
                     if artifact is None or artifact.mime_type != APP_MIME:
                         raise NotFoundError("Preview unavailable")
                     seat = artifact.author
-            # No DB session or read transaction lives for the HMR connection.
-            async with asyncio.timeout(max(0, claims["exp"] - time.time())):
-                await relay_ws(
-                    websocket,
-                    topic_id,
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
                     seat,
-                    **({"instance": resource["instance"]} if resource else {}),
+                    project_id=place.project_id,
                 )
+            # No DB session or read transaction lives for the HMR connection.
+            # While it is open the page is being looked at: the sandbox is kept
+            # in use as by its HTTP requests, each touch with a session of its
+            # own (`_keep_touching`).
+            keeping = asyncio.create_task(
+                self._keep_touching(place.conversation_id, seat, place.project_id)
+            )
+            try:
+                async with asyncio.timeout(max(0, claims["exp"] - time.time())):
+                    await relay_ws(
+                        websocket,
+                        topic_id,
+                        seat,
+                        **({"instance": resource["instance"]} if resource else {}),
+                    )
+            finally:
+                keeping.cancel()
         except (AppError, BaseError, TimeoutError):
             if websocket.application_state != WebSocketState.DISCONNECTED:
                 await websocket.close(code=1008)

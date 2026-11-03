@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import BY_ASSISTANT_META_KEY, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.event_about import EventAbout, landing
@@ -56,6 +56,7 @@ class DecisionLine:
         conversation_id: uuid.UUID,
         author: str,
         content: str,
+        by_assistant: bool = False,
     ) -> dict:
         block = await BlockRepository(self._session).add(
             project_id=project_id,
@@ -64,6 +65,7 @@ class DecisionLine:
             author_type=AuthorType.participant,
             content=content,
             kind=BlockKind.message,
+            meta={BY_ASSISTANT_META_KEY: True} if by_assistant else None,
         )
         return BlockOut.model_validate(block).model_dump(mode="json")
 

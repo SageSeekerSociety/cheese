@@ -23,6 +23,8 @@ from h2.config import H2Configuration
 from h2.connection import H2Connection
 from h2.events import DataReceived, RequestReceived, ResponseReceived, StreamEnded
 
+from reserved_port import reserve_port
+
 PROXY_SOURCE = Path(__file__).resolve().parents[1] / "metering-proxy"
 
 
@@ -283,9 +285,7 @@ def requestheaders(flow):
     billing._route(flow, Verdict(True, ""), is_messages=True,
                    project_id="project", bearer="", keep_haiku=False)
 """)
-            with socket.socket() as available:
-                available.bind(("127.0.0.1", 0))
-                port = available.getsockname()[1]
+            port = reserve_port()
             env = {
                 **os.environ,
                 "CHEESE_CLAUDE_CREDENTIAL": str(root / "credential"),

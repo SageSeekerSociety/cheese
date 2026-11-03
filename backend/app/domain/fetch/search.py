@@ -3,7 +3,7 @@
 Codex and pi have no search tool at all, and Claude Code's WebSearch is a tool
 the model provider executes, so on a model whose upstream does not run it the
 agent gets no results. Agents in those sessions were opening search engines'
-result pages with ``cheese_fetch`` instead — measured, 153 fetches of Bing,
+result pages with ``cheese_web(action=fetch)`` instead — measured, 153 fetches of Bing,
 Google, Baidu and Google Scholar result URLs in two weeks, the last of which
 answer a crawler with a block page.
 

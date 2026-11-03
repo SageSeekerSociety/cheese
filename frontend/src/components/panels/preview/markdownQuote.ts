@@ -62,6 +62,31 @@ function codePoints(text: string): string[] {
   return Array.from(text)
 }
 
+/** 正文里不参与「取原文/前后文」的东西挂这个属性。
+ *
+ *  正文是 `MarkdownView` 渲染出来的，标记和攒着的序号是我们从外面插进去的。挂了这个
+ *  属性的元素，取字那边（下面的 `rangeText`）跳过它，按字找位置那边（`markdownAnchors`
+ *  的 `collectText`）同样跳过。两边各管一头，缺哪一头都会让读者选中的原文或前后文里
+ *  多一个凭空的数字。 */
+export const ANCHOR_IGNORE_ATTR = 'data-anchor-ignore'
+
+/** 这一段范围里的文字，跳过我们自己插进去的东西（`[ANCHOR_IGNORE_ATTR]`）。
+ *
+ *  不用 `Range.toString()`：那是浏览器给的纯文字序列化，看不见 DOM，CSS 也管不着它。
+ *  攒着的序号那颗（`style.css` 的 `.pending-pin`）虽然 `user-select: none`——那只挡得住
+ *  `Selection.toString()`，读者选中一句正好跨过它时取出来的**前后文**里照样多一个数字，
+ *  之后按字找位置就难对上（`markdownAnchors` 的 `likeness`）。所以取克隆出来的那一份，
+ *  删掉这些节点再读字；正文本身一个字节都不动。 */
+function rangeText(root: HTMLElement, range: Range): string {
+  // 正文里根本没有我们自己插进去的东西时（一处批注都没攒时就是这样）不克隆：一份长
+  // 文档的前半篇克隆一遍是白花的，这一档 `Range.toString()` 和上面那段一样准。
+  if (!root.querySelector(`[${ANCHOR_IGNORE_ATTR}]`)) return range.toString()
+  const holder = document.createElement('div')
+  holder.append(range.cloneContents())
+  for (const ignored of Array.from(holder.querySelectorAll(`[${ANCHOR_IGNORE_ATTR}]`))) ignored.remove()
+  return holder.textContent ?? ''
+}
+
 /** 选区两侧的文字：`prefix` 取选区之前那一段的末尾，`suffix` 取之后的头一段。
  *
  *  正文和幻灯片共用这一条：两边都是「一块放得下选区、也放得下它前后文的元素」，
@@ -74,8 +99,12 @@ export function contextAround(root: HTMLElement, range: Range): { prefix: string
   after.selectNodeContents(root)
   after.setStart(range.endContainer, range.endOffset)
   return {
-    prefix: codePoints(normaliseText(before.toString())).slice(-CONTEXT_CHARS).join(''),
-    suffix: codePoints(normaliseText(after.toString())).slice(0, CONTEXT_CHARS).join(''),
+    prefix: codePoints(normaliseText(rangeText(root, before)))
+      .slice(-CONTEXT_CHARS)
+      .join(''),
+    suffix: codePoints(normaliseText(rangeText(root, after)))
+      .slice(0, CONTEXT_CHARS)
+      .join(''),
   }
 }
 
@@ -84,6 +113,9 @@ export function quoteFromSelection(root: HTMLElement | null, selection: Selectio
   if (!root || !selection || selection.rangeCount === 0 || selection.isCollapsed) return null
   const range = selection.getRangeAt(0)
   if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null
+  // 原文这一步留在 `Selection.toString()`：它在块与块之间补的那一道换行是有用的，读者选
+  // 了两段时交给芝士的就是两段；它挡得住 `user-select: none` 的序号。前后文那一侧是
+  // `Range.toString()`，挡不住，所以那边另走 `rangeText`（见上）。
   const text = normaliseText(selection.toString())
   // 一两个字的选中多半是双击落的词或误碰，指不了任何地方——和幻灯片那边同一道坎。
   if (text.length < 2) return null

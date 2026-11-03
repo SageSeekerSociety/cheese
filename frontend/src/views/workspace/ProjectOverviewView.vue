@@ -14,9 +14,10 @@ import type { ProjectSituation } from '@/api/projectProgress'
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { RoomTask } from '@/cx_types'
 import type { TaskState } from '@/lib/taskState'
+import type { TaskStage, TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import dayjs from 'dayjs'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
@@ -29,10 +30,26 @@ import SituationCard from '@/components/overview/SituationCard.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { revisionSummary, STARTER_FILE, TASK_FOLDER } from '@/lib/taskRevision'
 import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
 /** 从一道题领出来的项目截到哪一刻。 */
+/** 从一道分阶段的题领出来的项目：每个阶段，和这个项目在每个阶段上走到哪一步。 */
+export interface ChallengeStages {
+  stages: TaskStage[]
+  statuses: TaskStageStatus[]
+}
+
+export interface ProjectStarter {
+  /** 题目第几版的起始代码。 */
+  revision: number
+  /** 还在放进仓库、已经放好、没放成。 */
+  state: 'pending' | 'done' | 'failed'
+  /** 没放成的原因，已经按读的人的语言写好；别的时候是空的。 */
+  reason: string
+}
+
 export interface ChallengeDeadline {
   /** 截止那一刻（毫秒）。 */
   at: number
@@ -48,6 +65,12 @@ const props = defineProps<{
   /** 从一道题领出来的项目截到哪一刻：批准过的报名是它自己的截止（`mine`），否则是题目
    *  的截止；不是领题开的项目、或读不到，是 null（不写这一行）。 */
   challengeDeadline?: ChallengeDeadline | null
+  /** 题目分了阶段时，用阶段时间轴代替那一行截止时间；不分阶段是 null。 */
+  challengeStages?: ChallengeStages | null
+  /** 代码仓库从题目第几版的起始代码开始、放好了没有；没有起始代码、或读不到，是 null。 */
+  starter?: ProjectStarter | null
+  /** 「题目更新」那几行能不能点到题目的历史版本页：看的人看得到这道题的 `题目/` 才能。 */
+  taskLinked?: boolean
   /** 最近进展；还没读到是 null。 */
   progress: ProgressItem[] | null
   progressFailed: boolean
@@ -83,7 +106,15 @@ const emit = defineEmits<{
   'open-artifact': [artifactId: string]
   'all-tasks': []
   'retry-progress': []
+  /** 看题目的第几版：题目页上的历史版本。 */
+  'open-task-version': [version: number]
+  /** 打开项目资料库里的「题目」文件夹。 */
+  'open-task-folder': []
 }>()
+
+// Only a project from a staged task shows the timeline, so the overview loads it
+// only then: every other project's first paint does not wait on it.
+const TaskStageTimeline = defineAsyncComponent(() => import('@/components/tasks/TaskStageTimeline.vue'))
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
 
@@ -93,6 +124,15 @@ const deadlineText = computed(() => {
   if (!d) return ''
   const when = dayjs(d.at).format(t('tasks.roster.dateTimeFormat'))
   return d.mine ? t('work.overview.myDeadline', { when }) : t('work.overview.taskDeadline', { when })
+})
+
+// ---- 起始代码：在放、放好了、没放成，各一句 ----
+const starterText = computed(() => {
+  const s = props.starter
+  if (!s) return ''
+  if (s.state === 'pending') return t('work.overview.starterPending', { n: s.revision })
+  if (s.state === 'failed') return t('work.overview.starterFailed', { n: s.revision, reason: s.reason })
+  return t('work.overview.starterFrom', { n: s.revision })
 })
 
 // ---- 现状：写成过、或者正在写，才有这一块 ----
@@ -136,10 +176,17 @@ const progressDays = computed(() => {
 function progressTitle(item: ProgressItem): string {
   if (item.kind === 'version')
     return t('work.overview.versionOf', { name: item.artifactName, version: item.version ?? 0 })
+  if (item.kind === 'revised')
+    return t('work.overview.revisedOf', { version: item.version ?? 0, changes: revisionSummary(item.changes) })
   return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
+}
+/** 「题目更新」那一行，看的人点不到题目的历史版本页。 */
+function opensNothing(item: ProgressItem): boolean {
+  return item.kind === 'revised' && !props.taskLinked
 }
 function openProgress(item: ProgressItem) {
   if (item.kind === 'version' && item.artifactId) emit('open-artifact', item.artifactId)
+  else if (item.kind === 'revised' && item.version) emit('open-task-version', item.version)
   else if (item.taskId && item.roomId) emit('open-task', { taskId: item.taskId, roomId: item.roomId })
 }
 
@@ -201,7 +248,34 @@ function stateOf(task: RoomTask): TaskState {
               {{ t('work.overview.edit') }}
             </button>
           </div>
-          <p v-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">{{ deadlineText }}</p>
+          <TaskStageTimeline
+            v-if="challengeStages?.stages.length"
+            class="ov-stages"
+            :stages="challengeStages.stages"
+            :statuses="challengeStages.statuses"
+            data-testid="overview-stages"
+          />
+          <p v-else-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">
+            {{ deadlineText }}
+          </p>
+          <p v-if="starterText" class="ov-deadline t-body" data-testid="overview-starter">
+            {{ starterText }}
+          </p>
+          <p v-if="starter?.state === 'failed'" class="ov-deadline t-body c-muted" data-testid="overview-starter-next">
+            <i18n-t keypath="work.overview.starterFailedNext" tag="span">
+              <template #folder>
+                <button
+                  type="button"
+                  class="ov-inline-link"
+                  data-testid="overview-task-folder"
+                  @click="emit('open-task-folder')"
+                >
+                  {{ t('work.overview.starterFolder', { folder: TASK_FOLDER }) }}
+                </button>
+              </template>
+              <template #file>{{ STARTER_FILE }}</template>
+            </i18n-t>
+          </p>
           <template v-if="overviewText?.trim()">
             <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>
               <MarkdownView class="md-content" :source="overviewText" />
@@ -262,7 +336,14 @@ function stateOf(task: RoomTask): TaskState {
               <h3 class="ov-day__label t-meta c-faint">{{ group.day }}</h3>
               <ul class="ov-events">
                 <li v-for="item in group.items" :key="`${item.kind}:${item.taskId ?? item.artifactId}:${item.at}`">
-                  <button type="button" class="ov-event" @click="openProgress(item)">
+                  <!-- A 题目更新 row the reader cannot open is plain text, not a dead button. -->
+                  <component
+                    :is="opensNothing(item) ? 'div' : 'button'"
+                    :type="opensNothing(item) ? undefined : 'button'"
+                    class="ov-event"
+                    :class="{ 'ov-event--still': opensNothing(item) }"
+                    @click="opensNothing(item) || openProgress(item)"
+                  >
                     <span class="ov-event__kind" :class="`ov-event__kind--${item.kind}`">
                       {{ t(`work.overview.kind.${item.kind}`) }}
                     </span>
@@ -278,7 +359,7 @@ function stateOf(task: RoomTask): TaskState {
                       >
                     </span>
                     <span class="ov-event__when t-meta c-faint">{{ relTime(item.at) }}</span>
-                  </button>
+                  </component>
                 </li>
               </ul>
             </div>
@@ -428,6 +509,9 @@ function stateOf(task: RoomTask): TaskState {
   margin: 0 0 8px;
   color: var(--muted);
 }
+.ov-stages {
+  margin: 0 0 16px;
+}
 .ov-situation {
   margin-bottom: 32px;
 }
@@ -497,6 +581,25 @@ function stateOf(task: RoomTask): TaskState {
 }
 .ov-event:hover {
   background: var(--fill);
+}
+.ov-inline-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ov-inline-link:hover {
+  text-decoration: underline;
+}
+
+.ov-event--still {
+  cursor: default;
+}
+.ov-event--still:hover {
+  background: transparent;
 }
 .ov-event__kind {
   font-size: 13px;

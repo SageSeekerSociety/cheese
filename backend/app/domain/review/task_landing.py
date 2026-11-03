@@ -117,7 +117,7 @@ async def delivery_landed(
         await tell_agent(
             session,
             task,
-            task_summary_prompt(title=task.title, pr_number=pr_number),
+            task_summary_prompt(title=task.title),
             record_instruction=record_instruction,
             closes=True,
         )
@@ -201,7 +201,9 @@ async def _go_on_if_asked(
         task = await session.scalar(
             select(Task)
             .where(Task.id == task_id, Task.closing_since.is_not(None))
-            .with_for_update(skip_locked=True)
+            # FOR NO KEY UPDATE, after its numbering: the task lock order
+            # (`room_task.lock_order`).
+            .with_for_update(skip_locked=True, key_share=True)
         )
         if task is None:
             return False
@@ -422,7 +424,7 @@ def task_next_step_prompt(*, title: str, task_id) -> str:
         f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
         f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
-        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "对照实况文档接着做下一步，做完再用 cheese_card(action=request) 递一次交付；"
         "这一步做完任务目标就全部达成时 completes_task 填 true，"
         "还有没做完的就填 false，并在交付说明里写下一步做什么。"
     )
@@ -437,50 +439,25 @@ def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
         "但交付之后你又开始了新的工作，它不在这次合并里，所以任务没有关闭，接着开着。"
         f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
-        "再用 cheese_accept_request 把它作为下一步递交，"
+        "再用 cheese_card(action=request) 把它作为下一步递交，"
         "做完任务目标就全部达成时 completes_task 填 true。"
-        "新做的东西如果不需要交付，就用 cheese_close_task 关闭任务，结论里写明。"
+        "新做的东西如果不需要交付，就用 cheese_task(action=close) 关闭任务，结论里写明。"
     )
 
 
-def task_summary_prompt(*, title: str, pr_number: int | None = None) -> str:
+def task_summary_prompt(*, title: str) -> str:
     """What a task's agent is told when its last delivery lands: write the task
-    up, post the record of it on its own, then close it.
-
-    ``pr_number`` 是这次交付的 PR。有它，AI 队友自己去**这个项目实际用的托管平台**
-    读标题、合并时间和正文全文（这一段话是纯字符串，平台在这一轮取不到远端）；
-    没有 PR 的交付（文件或网址）换成交付物名字和交付说明原文。
-
-    两个命令名都给出来，是因为这一段话写不出项目用的是哪一种：仓库默认
-    `forge_kind=forgejo`，而 `forge_cli` 会**拒掉**在 Forgejo 项目上跑 `gh`
-    （「This project's repository uses fj; run fj instead」），所以只写 `gh`
-    的话，默认那一档上一次都读不到。"""
-    if pr_number is not None:
-        record = (
-            f"先读这次交付的 PR #{pr_number}，用这个项目实际用的那把 CLI："
-            f"GitHub 项目用 `gh pr view {pr_number} --json number,title,mergedAt,url,body`；"
-            "Forgejo 项目用 `fj`（命令和参数看 `fj --help`，别照抄 `gh` 那一串）。"
-            "顺序写：任务名、PR 号加链接、标题、合并时间（写成读它的人当地的时间）、"
-            "「正文：」后面原样贴 PR 正文全文，不概括、不改写。"
-            "读不到的那一项照实写没读到，不要编。"
-        )
-    else:
-        record = (
-            "这次交付没有 PR：顺序写任务名、交付物名字、交付说明原文，原样贴，不概括。"
-        )
+    up, then close it."""
     return (
         f"任务「{title}」的最后一次交付已经采纳并合并，写完总结就关闭任务。"
-        "只做四件事：\n"
-        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        "只做三件事：\n"
+        "1. 用 cheese_doc(action=get) 读实况文档，用 cheese_doc(action=edit) 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
         "没有就不写；过程中被推翻的计划删掉。\n"
         "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
         "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
         "写明是什么、没有交付。"
         "没什么可补的，只写一句结果。\n"
-        "3. 用 chat_send 再单独发一条【留痕记录】，和上一条总结分开、第一行就是"
-        "「【留痕记录】」。" + record + "负责人要把这一条整段抄进另一份表，"
-        "所以它要能直接圈选复制，不要并进总结、也不要分几条发。\n"
-        "4. 用 cheese_close_task 关闭任务，结论写一句结果。\n"
+        "3. 用 cheese_task(action=close) 关闭任务，结论写一句结果。\n"
         "不要改动文件，不要提交审阅。"
     )

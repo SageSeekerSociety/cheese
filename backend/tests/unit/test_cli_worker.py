@@ -1,9 +1,7 @@
-import array
 import hashlib
 import json
 import os
 import select
-import socket
 import subprocess
 import sys
 import time
@@ -49,200 +47,6 @@ def command(address, *args):
     return [sys.executable, str(CLIENT), *args], {
         **os.environ,
         "CHEESE_CLI_SOCKET": address,
-    }
-
-
-def mcp_call(address, tmp_path, request):
-    paths = [tmp_path / name for name in ("stdin", "stdout", "stderr")]
-    paths[0].write_text("")
-    with (
-        paths[0].open("rb") as stdin,
-        paths[1].open("wb") as stdout,
-        paths[2].open("wb") as stderr,
-        socket.socket(socket.AF_UNIX) as connection,
-    ):
-        connection.connect(address)
-        connection.sendmsg(
-            [b"\0"],
-            [
-                (
-                    socket.SOL_SOCKET,
-                    socket.SCM_RIGHTS,
-                    array.array(
-                        "i", [stdin.fileno(), stdout.fileno(), stderr.fileno()]
-                    ),
-                )
-            ],
-        )
-        connection.sendall(
-            json.dumps(
-                {
-                    "mcp": request,
-                    "cwd": str(tmp_path),
-                    "env": dict(os.environ),
-                    "stdio": [
-                        {"encoding": "utf-8", "errors": "strict"} for _ in range(3)
-                    ],
-                }
-            ).encode()
-            + b"\n"
-        )
-        receipt = json.loads(connection.makefile("rb").readline())
-    return receipt, paths[1].read_text(), paths[2].read_text()
-
-
-def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
-    """The tree holds what runs on the machine and nothing else: the platform's
-    own tools are the session-side table (结论 63), not leaves of this parser."""
-    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
-    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
-    assert set(tools) == {
-        "cheese_check",
-        "cheese_checkout",
-        "cheese_convert",
-        "cheese_library_get",
-        "cheese_pull",
-        "cheese_mail_attachment",
-        "cheese_push_fix",
-        "cheese_recalc",
-        "cheese_recover",
-        "cheese_serve",
-        "cheese_show",
-        "cheese_sync",
-        "cheese_template_list",
-        "cheese_template_new",
-        "cheese_transcript",
-        "cheese_worktree",
-    }
-    assert tools["cheese_worktree"]["inputSchema"]["required"] == ["task_id"]
-    assert tools["cheese_sync"]["inputSchema"]["properties"]["all"]["type"] == (
-        "boolean"
-    )
-    assert tools["cheese_serve"]["inputSchema"]["properties"]["port"]["type"] == (
-        "integer"
-    )
-
-
-def test_worker_tool_description_joins_ancestor_guidance_without_the_root(
-    worker, tmp_path
-):
-    worker[0].write_text(
-        "import argparse\n"
-        "def build_parser():\n"
-        " p=argparse.ArgumentParser(description='root when')\n"
-        " s=p.add_subparsers(dest='cmd', required=True)\n"
-        " m=s.add_parser('mid', description='mid when')\n"
-        " ms=m.add_subparsers(dest='midcmd', required=True)\n"
-        " q=ms.add_parser('leafy', description='leaf how')\n"
-        " q.add_argument('--x'); return p\n"
-        "if __name__ == '__main__':\n"
-        " build_parser().parse_args()\n"
-    )
-    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
-    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
-    description = tools["cheese_mid_leafy"]["description"]
-    assert description == "mid when\n\nleaf how"
-    assert "root when" not in description
-
-
-def test_worker_tool_description_joins_ancestors_when_leaf_is_silent(worker, tmp_path):
-    worker[0].write_text(
-        "import argparse\n"
-        "def build_parser():\n"
-        " p=argparse.ArgumentParser(description='root when')\n"
-        " s=p.add_subparsers(dest='cmd', required=True)\n"
-        " m=s.add_parser('mid', description='mid when')\n"
-        " ms=m.add_subparsers(dest='midcmd', required=True)\n"
-        " q=ms.add_parser('leafy')\n"
-        " q.add_argument('--x'); return p\n"
-        "if __name__ == '__main__':\n"
-        " build_parser().parse_args()\n"
-    )
-    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
-    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
-    description = tools["cheese_mid_leafy"]["description"]
-    assert description.startswith("mid when\n\nusage:")
-    assert "root when" not in description
-
-
-def test_worker_tool_description_keeps_leaf_when_ancestors_add_nothing(
-    worker, tmp_path
-):
-    worker[0].write_text(
-        "import argparse\n"
-        "def build_parser():\n"
-        " p=argparse.ArgumentParser()\n"
-        " s=p.add_subparsers(dest='cmd', required=True)\n"
-        " q=s.add_parser('leafy', description='leaf how')\n"
-        " q.add_argument('--x'); return p\n"
-        "if __name__ == '__main__':\n"
-        " build_parser().parse_args()\n"
-    )
-    receipt, _, _ = mcp_call(worker[1], tmp_path, {"method": "tools/list"})
-    tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
-    assert tools["cheese_leafy"]["description"] == "leaf how"
-
-
-def test_worker_translates_values_to_argv_without_shell_interpretation(
-    worker, tmp_path
-):
-    source = worker[0]
-    source.write_text(
-        "import argparse, json, pathlib, sys\n"
-        "def build_parser():\n"
-        " p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)\n"
-        " q=s.add_parser('write'); q.add_argument('path')\n"
-        " q.add_argument('--tag', action='append'); return p\n"
-        "if __name__ == '__main__':\n"
-        " a=build_parser().parse_args()\n"
-        " pathlib.Path(a.path).write_text(json.dumps(a.tag))\n"
-    )
-    target = tmp_path / "literal;$(touch escaped)"
-    receipt, _, stderr = mcp_call(
-        worker[1],
-        tmp_path,
-        {
-            "method": "tools/call",
-            "tool": "cheese_write",
-            "arguments": {"path": str(target), "tag": ["one", "two"]},
-        },
-    )
-    assert receipt["status"] == 0, stderr
-    assert json.loads(target.read_text()) == ["one", "two"]
-    assert not (tmp_path / "escaped").exists()
-
-
-def test_worker_preserves_dash_leading_structured_strings(worker, tmp_path):
-    source = worker[0]
-    source.write_text(
-        "import argparse, json\n"
-        "def build_parser():\n"
-        " p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)\n"
-        " q=s.add_parser('capture'); q.add_argument('text')\n"
-        " q.add_argument('--title'); q.add_argument('--tag', action='append')\n"
-        " return p\n"
-        "if __name__ == '__main__':\n"
-        " a=build_parser().parse_args(); print(json.dumps(vars(a)))\n"
-    )
-    receipt, stdout, stderr = mcp_call(
-        worker[1],
-        tmp_path,
-        {
-            "method": "tools/call",
-            "tool": "cheese_capture",
-            "arguments": {
-                "text": "--help",
-                "title": "--task",
-                "tag": ["--title=changed"],
-            },
-        },
-    )
-    assert receipt["status"] == 0, stderr
-    assert json.loads(stdout) == {
-        "cmd": "capture",
-        "text": "--help",
-        "title": "--task",
-        "tag": ["--title=changed"],
     }
 
 
@@ -298,8 +102,16 @@ def test_worker_calls_the_platform_with_current_credentials(worker, tmp_path):
 
     class API(BaseHTTPRequestHandler):
         def do_GET(self):
-            received.append((self.path, self.headers["X-Cheese-Token"]))
             body = "café".encode()
+            if self.path.startswith("/projects/project/library/link"):
+                # The platform call carries the credential; the bytes are
+                # fetched from the address it hands back, with none.
+                received.append(
+                    (self.path, self.headers["Authorization"].removeprefix("Bearer "))
+                )
+                body = json.dumps(
+                    {"data": {"url": "/blob", "path": "notes.txt", "bytes": len(body)}}
+                ).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -337,7 +149,7 @@ def test_worker_calls_the_platform_with_current_credentials(worker, tmp_path):
             "rotated-test-token",
         ]
         assert all(
-            row[0].startswith("/projects/project/library/raw") for row in received
+            row[0].startswith("/projects/project/library/link") for row in received
         )
     finally:
         server.shutdown()

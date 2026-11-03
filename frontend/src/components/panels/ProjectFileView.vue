@@ -39,7 +39,10 @@ const props = defineProps<{
   isImage: boolean
   isDocument: boolean
   documentType: FileKind | null
-  rawUrl: string
+  /** 图片的 object URL（带 Authorization 取回来的）；还没取到时是空串。 */
+  imageSrc: string
+  /** 图片取不到时的原因；空串就是没出错。 */
+  imageError: string
   docBytes: ArrayBuffer | null
   docLoading: boolean
   docError: string
@@ -100,8 +103,16 @@ const { mdAndUp } = useDisplay()
       <PreviewPages v-else-if="props.documentType?.view === 'pages'" :data="props.docBytes" />
       <PreviewSheet v-else :data="props.docBytes" :kind="props.documentType?.sheet ?? 'workbook'" />
     </div>
+    <div v-else-if="props.isImage && props.imageError" class="file-blob">
+      <v-icon size="30" class="c-faint mb-2">mdi-image-broken-variant</v-icon>
+      <div class="file-blob__title">{{ t('work.room.changes.cantDisplay') }}</div>
+      <div class="file-blob__note">{{ props.path }} · {{ props.imageError }}</div>
+      <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
+        {{ t('work.room.changes.downloadOriginal') }}
+      </BaseButton>
+    </div>
     <div v-else-if="props.isImage" class="project-file__image">
-      <img :src="props.rawUrl" :alt="props.path" />
+      <img v-if="props.imageSrc" :src="props.imageSrc" :alt="props.path" />
     </div>
     <div v-else-if="props.binary || props.tooLarge" class="file-blob">
       <v-icon size="30" class="c-faint mb-2">{{ props.tooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}</v-icon>

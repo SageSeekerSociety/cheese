@@ -37,6 +37,5 @@
   "planWindowLimitPositive": "时间窗口的额度必须是正数",
   "planWindowReset": "时间窗口只能按周或按月重置",
   "planWindowUnit": "时间窗口要么按小时，要么按周或按月",
-  "teamNotFound": "没有团队 {team}",
   "teamNotFoundById": "没有团队 {team_id}"
 }

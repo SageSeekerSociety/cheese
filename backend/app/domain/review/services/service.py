@@ -21,6 +21,7 @@ from app.domain.review import (
     notes,
     pr_signals,
 )
+from app.domain.review.archive import OPEN_CARD_STATUSES
 from app.domain.review.merge_state import MergeVerdict, Who
 from app.domain.review.models import (
     AcceptCard,
@@ -253,6 +254,28 @@ class AcceptService:
         """
         return await self._repo.latest_by_task(task_ids)
 
+    async def waiting_card(self, task_id: uuid.UUID) -> AcceptCard | None:
+        """这条活上还在等人决定的那张卡（一条活同时只有一张，`list_for_task`）；
+        没有就是 None。关任务会作废它，所以队友关不关得了任务看的是它。"""
+        return next(
+            (
+                card
+                for card in await self._repo.list_for_task(task_id)
+                if card.status in OPEN_CARD_STATUSES
+            ),
+            None,
+        )
+
+    async def held_pr_deliveries(self, project_id: uuid.UUID) -> list[dict]:
+        """这个项目里骑着 PR、还在等人决定的交付：PR 号、它的分支和要并进去的分支。
+        关掉这样的 PR，删掉、改名或清空它的分支，都是作废那份交付，所以队友经
+        forge 代理做不了（`agent.forge_requests`）。"""
+        rows = await self._repo.held_pr_deliveries(project_id, OPEN_CARD_STATUSES)
+        return [
+            {"number": number, "branch": branch, "base": base}
+            for number, branch, base in sorted(rows, key=lambda row: row[0])
+        ]
+
     async def reviewer_handles_for_cards(
         self, card_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, list[str]]:
@@ -380,6 +403,7 @@ class AcceptService:
         decided_by: str,
         head_sha: str | None = None,
         deliverable_revision: str | None = None,
+        by_assistant: bool = False,
     ) -> AcceptCard:
         return await _accept.accept(
             self,
@@ -387,6 +411,7 @@ class AcceptService:
             decided_by=decided_by,
             head_sha=head_sha,
             deliverable_revision=deliverable_revision,
+            by_assistant=by_assistant,
         )
 
     async def _accept_github(
@@ -481,10 +506,10 @@ class AcceptService:
             ref=ref,
         )
 
-    def _write_merge_mirror(
+    async def _write_merge_mirror(
         self, card: AcceptCard, verdict: MergeVerdict, who: Who, head_sha: str
     ) -> None:
-        return merge_queue._write_merge_mirror(
+        return await merge_queue._write_merge_mirror(
             self, card=card, verdict=verdict, who=who, head_sha=head_sha
         )
 
@@ -869,8 +894,12 @@ class AcceptService:
             self, card=card, topic=topic, reason=reason
         )
 
-    async def _stop_accept_conflict(self, card: AcceptCard, topic: Topic) -> NoReturn:
-        return await _accept._stop_accept_conflict(self, card=card, topic=topic)
+    async def _stop_accept_conflict(
+        self, card: AcceptCard, topic: Topic, status: PullRequestStatus
+    ) -> NoReturn:
+        return await _accept._stop_accept_conflict(
+            self, card=card, topic=topic, status=status
+        )
 
     async def _stop_accept_title_disagrees(
         self, card: AcceptCard, topic: Topic, pr_title: str
@@ -899,10 +928,19 @@ class AcceptService:
         return await merge_queue._cancel_queued_accept(self, card=card)
 
     async def reject(
-        self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        note: str = "",
+        by_assistant: bool = False,
     ) -> AcceptCard:
         return await decisions.reject(
-            self, card_id=card_id, decided_by=decided_by, note=note
+            self,
+            card_id=card_id,
+            decided_by=decided_by,
+            note=note,
+            by_assistant=by_assistant,
         )
 
     async def revoke(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:

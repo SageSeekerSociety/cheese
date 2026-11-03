@@ -5,7 +5,7 @@
 // it back — the Yjs state and the Markdown exported from it — a few seconds
 // after the typing stops. That store is the ONLY way a new version reaches the
 // backend, so a write that does not come from an editor (芝士's
-// `cheese_doc_set`, a restore) comes here too, through
+// `cheese_doc(action=set)`, a restore) comes here too, through
 // `/internal/documents/:name/replace` (the whole document) or
 // `/internal/documents/:name/edit` (passages of it, directly or as suggestions;
 // see ./edit.ts), and becomes a change to the live document. Written to the

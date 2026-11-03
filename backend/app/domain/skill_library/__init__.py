@@ -64,6 +64,7 @@ _SHIPPED_NATIVE_SKILLS = (
     "documents",
     "showcase",
     "wolfram",
+    "lean",
     "skill-creator",
     "mcp-builder",
 )

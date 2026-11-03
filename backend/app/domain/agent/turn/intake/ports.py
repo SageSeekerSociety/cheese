@@ -30,6 +30,8 @@ class HumanWriter(Protocol):
         client_id: str | None = None,
         quoted_context: dict | None = None,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
+        expects_agent: bool = False,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]: ...
 
 

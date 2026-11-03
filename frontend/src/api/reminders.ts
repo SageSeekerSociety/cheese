@@ -1,5 +1,5 @@
 // 「到点提醒我」：请平台在 `at` 那个时刻把 `content` 递给自己。收件人永远是调用者，
-// 由后端认出来，所以这里没有「发给谁」。AI 队友的 `cheese_deliver_at` 走的是同一个
+// 由后端认出来，所以这里没有「发给谁」。AI 队友的 `cheese_session(action=deliver_at)` 走的是同一个
 // 接口。
 import { request } from '../api'
 

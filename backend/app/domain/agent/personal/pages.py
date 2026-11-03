@@ -25,19 +25,21 @@ from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import task_roles as task_seats
 from app.core.errors import NotFoundError
-from app.core.storage import get_storage_backend
 from app.domain.agent.personal import billing, people
 from app.domain.agent.personal.prompt import task_brief
 from app.domain.assistant import refs
 from app.domain.block.queries import latest_messages
+from app.domain.library import records as library_records
+from app.domain.library.shelf import Shelf
 from app.domain.living_doc.services import Documents
 from app.domain.project import address
 from app.domain.project.services import ProjectService
-from app.domain.task import drafts
-from app.domain.task.attachment_service import TaskAttachmentService
+from app.domain.task import drafts, package
 from app.domain.task.claims import claim_of
 from app.domain.task.services import TaskService, ensure_task_readable
+from app.domain.team.services import team_service
 
 
 class PageAccess(Protocol):
@@ -50,6 +52,9 @@ class PageAccess(Protocol):
     async def document(self, document_id: uuid.UUID) -> None: ...
 
     async def project(self, project_id: uuid.UUID) -> None: ...
+
+    async def team(self, team_id: int) -> Any:
+        """A team the person is a member of: its ``Team``."""
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,8 @@ class Shown:
 
     text: str
     project: uuid.UUID | None = None
+    #: What the person calls it, for where a question was asked from.
+    label: str = ""
 
 
 @dataclass(frozen=True)
@@ -93,7 +100,7 @@ def _uuid(page_id: str) -> uuid.UUID:
         raise NotFoundError.for_resource("page", page_id) from exc
 
 
-def _access(reader: Reader) -> PageAccess:
+def judge(reader: Reader) -> PageAccess:
     if reader.access is None:
         raise NotFoundError.for_resource("page", "project")
     return reader.access
@@ -109,19 +116,18 @@ async def _task(reader: Reader, page_id: str) -> Shown:
     await ensure_task_readable(
         session=reader.session, task=task, user_id=reader.user_id
     )
-    files, _, readable = await TaskAttachmentService(
-        session=reader.session, storage=get_storage_backend()
-    ).list_for_task(task=task, user_id=reader.user_id)
+    files = await package.files(reader.session, task.id)
     return Shown(
         task_brief(
             task,
             claim=await claim_of(reader.session, task=task, user_id=reader.user_id),
             timezone=reader.timezone,
-            materials=[
-                (f.id, (f.meta or {}).get("filename") or str(f.id)) for f in files
-            ],
-            materials_readable=readable,
-        )
+            materials=[f.name for f in files],
+            materials_readable=await task_seats.TASK.may(
+                reader.session, task, reader.user_id, task_seats.Permission.download
+            ),
+        ),
+        label=f"题目「{task.name}」",
     )
 
 
@@ -130,7 +136,68 @@ async def _draft(reader: Reader, page_id: str) -> Shown:
     the whole draft, and what the space lets it choose from."""
     row = await drafts.mine(reader.session, reader.user_id, _number(page_id))
     return Shown(
-        await drafts.context(reader.session, reader.spaces, row, reader.timezone)
+        await drafts.context(reader.session, reader.spaces, row, reader.timezone),
+        label="发布题目",
+    )
+
+
+#: What 芝士 is told of a question asked from no page: whatever page it read
+#: before is not where the person is now.
+NO_PAGE = (
+    "<这一页>\n这一问用户没有附上页面（他把当前页面关掉了，或在一个你读不到的页面上）。"
+    "他说「这里」「这个」「这页」时，你不知道指哪：先问他指哪里，"
+    "不要拿之前读到的页面或你猜的地方来答。\n</这一页>"
+)
+
+#: How much of a text 芝士 has no tool to read goes with it.
+EXCERPT_CHARS = 6000
+#: How many of a library's files its page lists.
+LIBRARY_LISTED = 30
+
+
+def excerpt(text: str) -> str:
+    """The start of a text 芝士 cannot read by a ref, whole when it is short."""
+    cut = text[:EXCERPT_CHARS]
+    more = "\n……（后面还有，没有给你）" if len(text) > EXCERPT_CHARS else ""
+    return f"<正文>\n{cut}{more}\n</正文>"
+
+
+def size(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / 1024 / 1024:.1f} MB"
+
+
+async def _library(reader: Reader, page_id: str) -> Shown:
+    """A team's library: its newest files by name. The person's own is read
+    by ``library/<名字>``; another team's files are only named."""
+    team = await judge(reader).team(_number(page_id))
+    own = await team_service(reader.session).ensure_personal_team(reader.user_id)
+    rows = await library_records.newest(
+        reader.session, Shelf.of_team(team.id), LIBRARY_LISTED
+    )
+    files = [f"- {row.name}（{size(row.bytes)}）" for row in rows]
+    if team.id == own.id:
+        what = "用户自己的资料库：用户在看里面的文件。"
+        how = "- 读一份用 cheese_read library/<名字>，列出全部用 cheese_read library。"
+    else:
+        what = f"团队「{team.name}」的资料库：用户在看里面的文件。"
+        how = "- 你没有读团队资料库文件的工具；用户要你看哪一份，请他附上或引用它。"
+    return Shown(
+        "\n".join(
+            [
+                "<这一页>",
+                what,
+                how,
+                "</这一页>",
+                f"<最新的 {len(files)} 份>\n" + "\n".join(files) + "\n</最新>"
+                if files
+                else "<还没有文件>",
+            ]
+        ),
+        label="我的资料库" if team.id == own.id else f"团队「{team.name}」的资料库",
     )
 
 
@@ -147,7 +214,7 @@ async def _project_line(reader: Reader, project_id: uuid.UUID) -> str:
     return f"<项目「{project.name}」 编号 {project.slug}>"
 
 
-async def _ref_of(
+async def ref_of(
     reader: Reader, kind: address.Numbered, thing_id: uuid.UUID, project_id: uuid.UUID
 ) -> str:
     """The thing's ref (`assistant.refs`): what 芝士 reads it by."""
@@ -162,24 +229,30 @@ async def _ref_of(
     }[kind](slug, number)
 
 
+async def named_place(reader: Reader, place) -> tuple[str, str, str]:
+    """A channel, a task or a 支线 as 芝士 is told it, the ref it reads it by,
+    and its short name."""
+    if place.task is not None:
+        here = await ref_of(
+            reader, address.Numbered.task, place.task.id, place.project_id
+        )
+        label = f"任务「{place.task.title}」"
+        return f"{label}（{here}，在频道「{place.room.title}」里）", here, label
+    here = await ref_of(
+        reader, address.Numbered.channel, place.room.id, place.project_id
+    )
+    if place.thread is not None:
+        label = f"支线「{place.thread.title}」"
+        return f"{label}（在频道「{place.room.title}」（{here}）里）", here, label
+    label = f"频道「{place.room.title}」"
+    return f"{label}（{here}）", here, label
+
+
 async def _topic(reader: Reader, page_id: str) -> Shown:
     """A channel, a task or a 支线 of a project: what it is, and its latest
     messages; the rest is read by its ref."""
-    place = await _access(reader).topic(_uuid(page_id))
-    if place.task is not None:
-        here = await _ref_of(
-            reader, address.Numbered.task, place.task.id, place.project_id
-        )
-        what = f"任务「{place.task.title}」（{here}，在频道「{place.room.title}」里）"
-    else:
-        here = await _ref_of(
-            reader, address.Numbered.channel, place.room.id, place.project_id
-        )
-        what = (
-            f"支线「{place.thread.title}」（在频道「{place.room.title}」（{here}）里）"
-            if place.thread is not None
-            else f"频道「{place.room.title}」（{here}）"
-        )
+    place = await judge(reader).topic(_uuid(page_id))
+    what, here, label = await named_place(reader, place)
     latest = await latest_messages(reader.session, place.conversation_id, RECENT)
     named = await people.names(reader.session, ((b.author, b.content) for b in latest))
     lines = [
@@ -203,18 +276,36 @@ async def _topic(reader: Reader, page_id: str) -> Shown:
             ]
         ),
         project=place.project_id,
+        label=label,
     )
 
 
 async def _document(reader: Reader, page_id: str) -> Shown:
     """A document of a project: its title and ref; its text is read when it
-    is needed."""
+    is needed. A team's own document has no ref 芝士 reads by, so the start of
+    its text goes with it."""
     document_id = _uuid(page_id)
-    await _access(reader).document(document_id)
+    await judge(reader).document(document_id)
     doc = await Documents(reader.session).get(document_id)
-    if doc is None or doc.project_id is None:
+    if doc is None:
         raise NotFoundError.for_resource("document", page_id)
-    here = await _ref_of(reader, address.Numbered.document, doc.id, doc.project_id)
+    if doc.project_id is None:
+        team = await judge(reader).team(doc.team_id)
+        return Shown(
+            "\n".join(
+                [
+                    "<这一页>",
+                    f"团队「{team.name}」的文档《{doc.title or '未命名'}》：用户在看这份文档。",
+                    "- 用户说「这份」「文档」，指它。你没有读团队文档的工具，下面是它的正文"
+                    + ("开头" if len(doc.content) > EXCERPT_CHARS else "")
+                    + "。",
+                    "</这一页>",
+                    excerpt(doc.content),
+                ]
+            ),
+            label=f"《{doc.title or '未命名'}》",
+        )
+    here = await ref_of(reader, address.Numbered.document, doc.id, doc.project_id)
     return Shown(
         "\n".join(
             [
@@ -227,6 +318,7 @@ async def _document(reader: Reader, page_id: str) -> Shown:
             ]
         ),
         project=doc.project_id,
+        label=f"《{doc.title or '未命名'}》",
     )
 
 
@@ -234,7 +326,8 @@ async def _project(reader: Reader, page_id: str) -> Shown:
     """Any other page of a project (its overview, board, library, members):
     which project; what is in it is read by its ref."""
     project_id = _uuid(page_id)
-    await _access(reader).project(project_id)
+    await judge(reader).project(project_id)
+    project = await ProjectService(reader.session).get(project_id)
     return Shown(
         "\n".join(
             [
@@ -247,6 +340,7 @@ async def _project(reader: Reader, page_id: str) -> Shown:
             ]
         ),
         project=project_id,
+        label=f"项目「{project.name}」" if project is not None else "",
     )
 
 
@@ -257,12 +351,13 @@ PAGES: dict[str, Page] = {
     "topic": Page(_topic),
     "doc": Page(_document),
     "project": Page(_project),
+    "library": Page(_library),
 }
 
 #: The kinds a question may name, for the request's schema. Written out
 #: because a type is read before the table is built; a test holds it to
 #: ``PAGES``.
-PageKind = Literal["task", "draft", "topic", "doc", "project"]
+PageKind = Literal["task", "draft", "topic", "doc", "project", "library"]
 
 
 async def render(reader: Reader, kind: str, page_id: str) -> Shown:

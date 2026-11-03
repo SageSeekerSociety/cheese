@@ -12,8 +12,12 @@ from app.domain.feedback.models import FeedbackStatus
 #: The admin surface's tiers, in the order the admin tab bar draws them.
 ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
 
-#: The public tabs, in the order the tab bar draws them.
-PUBLIC_TABS: tuple[str, ...] = ("all", "hot", "active", "resolved")
+#: The public tabs, in the order the tab bar draws them. Three, not four:
+#: `active` went on 2026-10-28 because it is the same cut as the status pill of
+#: the same name (「处理中」), and the pills came later — two controls on one
+#: axis, and the tab's own 0 read as 「这一栏是空的」 rather than 「这一栏没人用」.
+#: Narrowing to one rung is the pills' job now. See `_tab_where`.
+PUBLIC_TABS: tuple[str, ...] = ("all", "hot", "resolved")
 
 #: The two orderings any list can be asked for. `new` is the default everywhere;
 #: `supports` is what the public `hot` tab implies and what the admin console's

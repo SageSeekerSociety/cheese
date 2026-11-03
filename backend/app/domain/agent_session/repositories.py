@@ -4,15 +4,18 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     and_,
     case,
+    cast,
     delete,
     exists,
     func,
+    literal,
     select,
     update,
 )
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentEnvironment, AgentRead, AgentSession
@@ -84,14 +87,63 @@ class AgentSessionRepository:
         )
 
     async def save_told(
-        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str, told: dict
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        told: dict,
+        was: dict | None,
     ) -> None:
-        """Record what project state this agent's conversation has been told."""
-        await self._upsert(
+        """Record what project state this agent's conversation has been told,
+        unless the record moved off ``was`` (what the turn read before choosing
+        what to tell) in the meantime.
+
+        It moves when a compaction ends between that read and this write
+        (``forget_told``): the turn told only what changed since ``was``, and
+        writing its digests over the cleared record would say the unchanged
+        sections are still in the window when the compaction just took them
+        out. Left cleared, the next input tells the whole state.
+        """
+        now = datetime.now(UTC)
+        stmt = insert(AgentSession).values(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
-            values={"told": told},
+            told=told,
+            updated_at=now,
+        )
+        # `told` is a JSON column, which has no equality operator; JSONB does.
+        unchanged = (
+            AgentSession.told.is_(None)
+            if was is None
+            else cast(AgentSession.told, JSONB) == cast(literal(was, JSON), JSONB)
+        )
+        await self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[
+                    AgentSession.conversation_id,
+                    AgentSession.agent_handle,
+                    AgentSession.harness,
+                ],
+                set_={"told": stmt.excluded.told, "updated_at": now},
+                where=unchanged,
+            )
+        )
+        await self._session.flush()
+
+    async def forget_told(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """Record that this conversation no longer holds what it was told."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(told=None, updated_at=datetime.now(UTC))
         )
 
     async def save_place(
@@ -375,7 +427,7 @@ class AgentSessionRepository:
         return {device_id: at for device_id, at in rows.all()}
 
     async def placed_everywhere(
-        self,
+        self, *, harness: str | None = None, device_id: str | None = None
     ) -> list[tuple[AgentSession, uuid.UUID, uuid.UUID]]:
         """Every placed session with its project and room, for a cold start.
 
@@ -392,14 +444,28 @@ class AgentSessionRepository:
         nothing clears the location of the one that stopped — and the harness
         each row names is handed on as it stands; recognising it is the
         runtime's, not the channel's, since one channel carries several of them.
+
+        ``harness`` and ``device_id`` narrow it to one harness's sessions, and
+        to those placed on one machine: a reconnecting device's recovery asks
+        once per harness, and reading every placed session on the platform for
+        each ask held the event loop a third of a second. No index serves the
+        machine's key in ``runtime_location``: the narrowing scans the sessions
+        in the database, and spares this process decoding the rest.
         """
         room = room_column(AgentSession.conversation_id)
-        result = await self._session.execute(
+        stmt = (
             select(AgentSession, Topic.project_id, room)
             .join(Topic, Topic.id == room)
             .where(AgentSession.runtime_location.is_not(None))
             .order_by(room, AgentSession.placed_at.desc(), AgentSession.id)
         )
+        if harness is not None:
+            stmt = stmt.where(AgentSession.harness == harness)
+        if device_id is not None:
+            stmt = stmt.where(
+                AgentSession.runtime_location["device_id"].as_string() == device_id
+            )
+        result = await self._session.execute(stmt)
         return [(row[0], row[1], row[2]) for row in result.all()]
 
     async def has_any(self, topic_id: uuid.UUID) -> bool:

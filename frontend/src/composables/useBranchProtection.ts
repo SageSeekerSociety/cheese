@@ -19,9 +19,11 @@ import type { ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
-import { getBranchProtection, listProjectMembers, setBranchProtection } from '@/api'
+import { getBranchProtection, setBranchProtection } from '@/api'
 import { t } from '@/i18n'
 import { parseApprovalsInput, parseCheckPaths } from '@/lib/branchProtection'
+import { queryClient } from '@/query/client'
+import { membersQuery } from '@/query/project'
 
 /** 这一块自己的四态：GET 可能慢到要单独显示加载中/失败。 */
 export type BranchProtectionLoadState = 'loading' | 'loaded' | 'error'
@@ -66,9 +68,10 @@ export function useBranchProtection(projectId: () => string) {
     bpLoadState.value = 'loading'
     bpLoadError.value = null
     try {
-      const [rules, membersP] = await Promise.all([getBranchProtection(projectId()), listProjectMembers(projectId())])
+      const id = projectId()
+      const [rules, members] = await Promise.all([getBranchProtection(id), queryClient.fetchQuery(membersQuery(id))])
       bp.value = rules
-      bpMembers.value = membersP.data
+      bpMembers.value = members
       approvalsDraft.value = String(rules.approvals_required)
       bpLoadState.value = 'loaded'
     } catch (e) {

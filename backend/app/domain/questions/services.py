@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.questions.lookup import ensure_question_exists
@@ -290,14 +290,10 @@ class QuestionsService:
         if exists is None:
             raise NotFoundError("Question not found", data={"id": question_id})
 
-    async def accept_answer(
-        self, *, question_id: int, answer_id: int, user_id: int
-    ) -> dict:
+    async def accept_answer(self, *, question_id: int, answer_id: int) -> dict:
         question = await self._repo.get_by_id(question_id)
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
-        if question.created_by_id != user_id:
-            raise ForbiddenError("Only the question owner can accept an answer")
         if self._answer_repo is None:
             raise BadRequestError("Answer repository not configured")
         answer = await self._answer_repo.get_by_id(answer_id)
@@ -315,12 +311,10 @@ class QuestionsService:
         dto["topicIds"] = topics.get(question_id, [])
         return dto
 
-    async def unaccept_answer(self, *, question_id: int, user_id: int) -> dict:
+    async def unaccept_answer(self, *, question_id: int) -> dict:
         question = await self._repo.get_by_id(question_id)
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
-        if question.created_by_id != user_id:
-            raise ForbiddenError("Only the question owner can unaccept an answer")
         updated = await self._repo.unaccept_answer(question_id=question_id)
         if updated is None:
             raise NotFoundError("Question not found", data={"id": question_id})
@@ -396,8 +390,6 @@ class QuestionsService:
         question = await self._repo.get_by_id(question_id)
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
-        if question.created_by_id != user_id:
-            raise ForbiddenError("Only the question owner can update this question")
         updated = await self._repo.update_question(
             question,
             title=title,
@@ -415,20 +407,16 @@ class QuestionsService:
         dto["topicIds"] = topics.get(question_id, [])
         return dto
 
-    async def delete_question(self, *, question_id: int, user_id: int) -> None:
+    async def delete_question(self, *, question_id: int) -> None:
         question = await self._repo.get_by_id(question_id)
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
-        if question.created_by_id != user_id:
-            raise ForbiddenError("Only the question owner can delete this question")
         await self._repo.soft_delete(question)
 
-    async def set_bounty(self, *, question_id: int, user_id: int, bounty: int) -> dict:
+    async def set_bounty(self, *, question_id: int, bounty: int) -> dict:
         question = await self._repo.get_by_id(question_id)
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
-        if question.created_by_id != user_id:
-            raise ForbiddenError("Only the question owner can set bounty")
         if bounty < 0 or bounty > 20:
             raise BadRequestError("Bounty must be between 0 and 20")
         current_bounty = question.bounty or 0
@@ -571,15 +559,13 @@ class QuestionInvitationService:
             )
         return dto
 
-    async def delete_invitation(
-        self, *, question_id: int, invitation_id: int, user_id: int
-    ) -> None:
+    async def delete_invitation(self, *, question_id: int, invitation_id: int) -> None:
         invitation = await self._invitation_in_question(
             question_id, invitation_id, missing_is_bad_request=True
         )
         question = await self._question_repo.get_by_id(invitation.question_id)
-        if question is None or question.created_by_id != user_id:
-            raise ForbiddenError("Only the question owner can delete invitations")
+        if question is None:
+            raise NotFoundError.for_resource("question", question_id)
         await self._repo.hard_delete(invitation)
 
     async def _invitation_in_question(

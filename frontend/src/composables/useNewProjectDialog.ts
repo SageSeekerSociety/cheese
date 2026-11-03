@@ -10,15 +10,15 @@ const open = ref(false)
 // The team to offer first: its id from a team's own page, or its handle when all
 // the caller has is the address it is standing on.
 const presetTeam = ref<number | string | null>(null)
-const sourceTask = ref<{ id: number; name: string } | null>(null)
 
+// A project from a task is not made here: starting the task makes it (the task
+// page's 开始做这道题), the one way in.
 export function useNewProjectDialog() {
-  function show(team: number | string | null = null, task: { id: number; name: string } | null = null) {
+  function show(team: number | string | null = null) {
     presetTeam.value = team
-    sourceTask.value = task
     open.value = true
   }
-  return { open, presetTeam, sourceTask, show }
+  return { open, presetTeam, show }
 }
 
 /**

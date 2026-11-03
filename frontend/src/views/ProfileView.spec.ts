@@ -21,6 +21,8 @@ import {
   setUserRemark,
 } from '@/api'
 import i18n, { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 const me = vi.hoisted(() => ({ handle: 'lin' }))
 
@@ -296,5 +298,36 @@ describe('opened from a project’s roster', () => {
     await fireEvent.click(view.getByTestId('profile-remark-clear'))
     await waitFor(() => expect(setUserRemark).toHaveBeenCalledWith('lin', ''))
     expect(await view.findByRole('heading', { name: '林知远' })).toBeTruthy()
+  })
+
+  it('in-project profile reuses cached agentsQuery without fetching /projects/:id/agents again', async () => {
+    queryClient.setQueryData(keys.projectAgents('p-cached'), [
+      {
+        id: 'a1',
+        project_id: 'p-cached',
+        handle: 'cheese',
+        seat_handle: 'cheese-seat',
+        display_name: '芝士',
+        name_source: 'default',
+        is_default: true,
+        is_active: true,
+        type_name: null,
+        configuration: { skills: ['cheese-docs'] },
+        version: 1,
+        created_at: '',
+        updated_at: '',
+      },
+    ])
+    vi.mocked(getUserProfile).mockResolvedValue(profileOf('cheese-seat'))
+    vi.mocked(getUserTopics).mockResolvedValue({ topics: [] })
+    vi.mocked(getMemberSummary).mockResolvedValue({
+      source: 'agent',
+      weekly_contributions: 1,
+      waiting_on_you: [],
+      topics_active: [],
+    } as never)
+    const view = await renderPage('cheese-seat', 'p-cached')
+    expect(await view.findByText('cheese-docs')).toBeTruthy()
+    expect(listProjectAgents).not.toHaveBeenCalled()
   })
 })

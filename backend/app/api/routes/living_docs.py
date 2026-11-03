@@ -3,7 +3,7 @@
 The document itself is edited live in the collaboration service. This module
 signs the ticket a browser opens it with, answers that service when it loads
 and stores a document, and turns the writes that do not come from an editor
-(an HTTP PUT — 芝士's ``cheese_doc_set`` among them — and a restore) into
+(an HTTP PUT — 芝士's ``cheese_doc(action=set)`` among them — and a restore) into
 changes the service applies to the live document. None of them writes the
 database directly: the service's store is the one place a version is recorded.
 """
@@ -53,7 +53,8 @@ from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
 from app.domain.conversation import services as conversations
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import collab
+from app.domain.library import service as library
+from app.domain.living_doc import collab, room_file_collab
 from app.domain.living_doc import links as doc_links
 from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.schemas import (
@@ -72,10 +73,11 @@ from app.domain.mentions import (
     dangling_refs,
     dangling_refs_warning,
 )
+from app.domain.preview import office
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
 from app.domain.project_permissions import Permission
-from app.domain.room_task.place import place_or_404
+from app.domain.room_task.place import PlaceResolver, place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
 from app.domain.topic.services import TopicService
@@ -91,12 +93,16 @@ async def conversation_document(
 ) -> dict:
     """Which document is this task's living document. It is made, empty, the
     first time anyone asks. Only a task has one."""
-    place = await place_or_404(db, topic_id)
+    place = await PlaceResolver(db).task_place(topic_id) or await place_or_404(
+        db, topic_id
+    )
     await _actor_in_place(resolver, place)
     if place.task is None:
         raise NotFoundError(say("channelHasNoDocument"))
+    had_doc = place.task.document_id is not None
     document_id = await TaskService(db).ensure_document(place.task)
-    await db.commit()
+    if not had_doc:
+        await db.commit()
     return ok({"id": str(document_id)})
 
 
@@ -108,7 +114,11 @@ async def project_overview_document(
     time anyone asks."""
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     await authorize_in_project(resolver, actor, project_id)
-    await ProjectService(db).get_or_404(project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    if project.overview_document_id is not None:
+        existing = await Documents(db).get(project.overview_document_id)
+        if existing is not None:
+            return ok({"id": str(existing.id)})
     doc = await overview_document(db, project_id)
     await db.commit()
     return ok({"id": str(doc.id)})
@@ -252,8 +262,10 @@ async def create_document(
             title = source.title or (task.title if task is not None else "")
     origin = _origin(resolver, actor)
     created_by, drafted_by = await _authors(db, project_id, actor, origin)
+    project = await ProjectService(db).get(project_id)
     doc = await Documents(db).create(
         project_id=project_id,
+        team_id=project.team_id if project is not None else None,
         title=title,
         author=actor.handle,
         created_by=created_by,
@@ -546,7 +558,7 @@ async def document_ticket(
         {
             "document": collab.document_name(reached.doc.id),
             "ticket": collab.sign_ticket(
-                document_id=reached.doc.id,
+                name=collab.document_name(reached.doc.id),
                 handle=reached.actor.handle,
                 agent=agent,
                 read_only=read_only,
@@ -773,7 +785,8 @@ async def edit_doc_passages(
             else None,
         )
     stored = result.get("stored") or {}
-    await db.refresh(doc)
+    if delegation is not None:
+        await db.refresh(doc)
     return await _with_ref_warnings(
         db,
         doc,
@@ -906,9 +919,26 @@ async def _document(db, name: str):
 @internal.get("/documents/{name}")
 async def load_document(name: str, db: DbSession, _: ServiceOnly) -> dict:
     """What the service builds a live document from: the stored Yjs state, or
-    — for a document never opened live — its Markdown, which the service
-    converts and stores back, with the text it exports, before anyone edits
-    it."""
+    — for one never opened live — its Markdown, which the service converts and
+    stores back, with the text it exports, before anyone edits it.
+
+    Two kinds of thing arrive under this one route, told apart by the name:
+    a living document (``doc:<id>``) and a room file being edited together
+    (``roomfile:<id>``). The service treats the name as opaque, so they share
+    a route; only here does the prefix mean anything.
+    """
+    if name.startswith(collab.ROOM_FILE_PREFIX + ":"):
+        row = await room_file_collab.room_file_collab_named(db, name)
+        if row is None:
+            raise NotFoundError(say("roomFileNotFound"))
+        return {
+            "state": base64.b64encode(row.state).decode() if row.state else None,
+            "content": row.content,
+            # Room files version by content hash, not a counter: the service
+            # only echoes this back on a refusal, and a stable handle to the
+            # text is what a reader compares against anyway.
+            "doc_version": 0,
+        }
     doc = await _document(db, name)
     state = await DocumentJournal(db).state(doc.id)
     return {
@@ -945,6 +975,31 @@ async def store_document(
     _: ServiceOnly,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
+    if name.startswith(collab.ROOM_FILE_PREFIX + ":"):
+        row = await room_file_collab.room_file_collab_named(db, name)
+        if row is None:
+            raise NotFoundError(say("roomFileNotFound"))
+        actors = body.actors or ["system"]
+        agent = await IdentityService(db).is_agent(actors[0])
+        answer = await room_file_collab.store(
+            db,
+            row,
+            state=base64.b64decode(body.state),
+            content=body.content,
+            actors=actors,
+            suggestions=body.suggestions,
+            author_kind="agent" if agent else "human",
+            warm_preview=office.prewarm,
+            file_store=library,
+        )
+        await db.commit()
+        # A store that moved the text on: tell the open editors, the same frame
+        # a living document's store sends. What refreshes on it is everything
+        # derived from the new version — the history, the comment anchors, the
+        # stored version other panes are reading.
+        if answer["seq"] is not None:
+            await collab.tell_named(name, {"type": "state", "resource": "doc"})
+        return answer
     doc = await _document(db, name)
     stored = await store(
         db,

@@ -1,15 +1,20 @@
 {
-  "ALREADY_PARTICIPATING": "你已经领取了这道题",
-  "MEMBER_ALREADY_PARTICIPATING": "团队里有人已经通过别的团队领了这道题",
+  "ALREADY_PARTICIPATING": "你已经申请过这道题",
+  "MEMBER_ALREADY_PARTICIPATING": "团队里有人已经通过别的团队申请过这道题",
   "MISSING_REAL_NAME": "这道题需要实名信息才能参与",
   "PARTICIPANT_LIMIT_REACHED": "这道题的名额已满",
-  "REGISTRATION_CLOSED": "报名已截止",
-  "REGISTRATION_NOT_STARTED": "还没到报名时间",
-  "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能领取",
+  "REGISTRATION_NOT_STARTED": "还没到申请时间",
+  "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能申请",
   "TEAM_MEMBER_MISSING_REAL_NAME": "团队中有成员尚未填写实名信息",
   "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH": "团队中有成员等级不够",
   "TEAM_TOO_LARGE": "团队人数超过这道题的上限",
   "TEAM_TOO_SMALL": "团队人数少于这道题的要求",
   "USER_RANK_NOT_HIGH_ENOUGH": "你的等级还不够参与这道题",
-  "unknown": "暂时无法参与这道题"
+  "unknown": "暂时无法参与这道题",
+  "direct": {
+    "ALREADY_PARTICIPATING": "你已经开始做这道题",
+    "MEMBER_ALREADY_PARTICIPATING": "团队里有人已经通过别的团队开始做这道题",
+    "REGISTRATION_NOT_STARTED": "这道题还没开放",
+    "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能开始"
+  }
 }

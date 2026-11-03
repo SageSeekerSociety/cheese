@@ -43,7 +43,7 @@ function isListing(value: unknown): value is NoticeListing {
 
 // Joined the way the reader's language joins a list. Chinese takes the narrow
 // style: the long one ends in 「和」, which the stored sentence never had.
-function joined(items: string[]): string {
+export function joined(items: string[]): string {
   const locale = String(i18n.global.locale.value)
   return new Intl.ListFormat(locale, {
     type: 'conjunction',
@@ -122,9 +122,15 @@ export function responseText(owner: object, field: string): string {
 // The notices whose sentence names someone the same event also woke: the AI
 // teammate a person handed the unread messages to (`pendingHandedTo`, a turn
 // starts for it) and the one reopened to fix checks that failed after a merge
-// (`mainChecksFailedReopened`, it is handed the work). Each maps to the
-// parameter that names it. Every other name in a notice told nobody.
-const WOKEN: Record<string, string> = { pendingHandedTo: 'seat', mainChecksFailedReopened: 'agent' }
+// (`mainChecksFailedReopened`, it is handed the work), and the one asked to
+// wake the app in the preview (`previewWakeRequested`, a turn starts for it).
+// Each maps to the parameter that names it. Every other name in a notice told
+// nobody.
+const WOKEN: Record<string, string> = {
+  pendingHandedTo: 'seat',
+  mainChecksFailedReopened: 'agent',
+  previewWakeRequested: 'seat',
+}
 
 /** Which `<@handle>` in `block`'s sentence was notified by the event it records. */
 export function noticeNotified(block: Block): (handle: string) => boolean {

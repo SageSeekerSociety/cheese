@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Uuid, column, select, table
+from sqlalchemy import DateTime, String, Uuid, and_, column, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.conversation.models import Conversation
@@ -22,6 +22,24 @@ _turns = table(
 )
 
 
+def _after_a_turn(turns, key: Key, *, forward: bool):
+    """The turns on the far side of `key`, ties broken the way the cursor orders them.
+
+    A pre-launch turn's cursor is `(started_at, "", turn id, 0)`, so two turns that
+    started in the same instant are still strictly ordered — by id. Comparing the
+    timestamps alone would drop the second one: paging forward past the first
+    would never reach it, and paging up past it would return it twice."""
+    at, source, seat, _sequence = key
+    if source != "":
+        # Not a turn's own cursor (a record's, or a platform line's): every turn at
+        # that instant sorts before it, so the comparison falls back to the moment.
+        return turns.c.started_at < at if not forward else turns.c.started_at > at
+    tied = turns.c.started_at == at
+    if forward:
+        return or_(turns.c.started_at > at, and_(tied, turns.c.id.cast(String) > seat))
+    return or_(turns.c.started_at < at, and_(tied, turns.c.id.cast(String) < seat))
+
+
 async def earlier_turns(
     db: AsyncSession,
     conversation_id: uuid.UUID,
@@ -29,7 +47,15 @@ async def earlier_turns(
     before: Key | None,
     author: str | None,
     limit: int,
+    after: Key | None = None,
 ) -> tuple[list[dict], bool, datetime]:
+    """The turns that ran before raw records began, newest first — or, with
+    `after`, the oldest ones still newer than that cursor.
+
+    `before` and `after` are the two directions a reader pages in: `before`
+    walks up into the past, `after` walks forward from a window already held.
+    Only one of them is ever given. The flag it returns says whether another
+    page exists in that same direction."""
     boundary = await db.scalar(
         select(Conversation.raw_records_started_at).where(
             Conversation.id == conversation_id
@@ -42,16 +68,19 @@ async def earlier_turns(
         ~select(SessionRecord.id).where(SessionRecord.turn_id == _turns.c.id).exists(),
     )
     if before is not None:
-        query = query.where(_turns.c.started_at < before[0])
+        query = query.where(_after_a_turn(_turns, before, forward=False))
+    if after is not None:
+        query = query.where(_after_a_turn(_turns, after, forward=True))
     if author is not None:
         query = query.where(_turns.c.agent_handle == author)
-    turns = list(
-        (
-            await db.execute(
-                query.order_by(_turns.c.started_at.desc()).limit(limit + 1)
-            )
-        ).all()
+    # 往回翻从最新的一头取，往前翻从最旧的一头取：两次都是「顺着读者去的方向」。
+    order = (
+        _turns.c.started_at.asc() if after is not None else _turns.c.started_at.desc()
     )
+    turns = list((await db.execute(query.order_by(order).limit(limit + 1))).all())
+    kept = turns[:limit]
+    if after is None:
+        kept = list(reversed(kept))
     return (
         [
             {
@@ -71,7 +100,7 @@ async def earlier_turns(
                     "cursor": encode_cursor((turn.started_at, "", str(turn.id), 0)),
                 },
             }
-            for turn in reversed(turns[:limit])
+            for turn in kept
         ],
         len(turns) > limit,
         boundary,

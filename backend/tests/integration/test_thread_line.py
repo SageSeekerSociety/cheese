@@ -145,7 +145,7 @@ def test_a_thread_whose_turn_failed_before_any_reply_still_has_a_line(client):
     listed = client.get(
         f"/topics/{tid}/threads", headers=session_auth_headers("alice")
     ).json()["data"]
-    rows = listed["data"] if isinstance(listed, dict) else listed
+    rows = _listed_threads(listed)
     assert [r["id"] for r in rows if r["failed"]] == [thread]
 
 
@@ -265,7 +265,7 @@ def test_a_listed_thread_says_whether_its_message_was_cut(client):
     listed = client.get(
         f"/topics/{tid}/threads", headers=session_auth_headers("alice")
     ).json()["data"]
-    rows = listed["data"] if isinstance(listed, dict) else listed
+    rows = _listed_threads(listed)
     roots = {r["root_block_id"]: r["root"] for r in rows}
 
     assert roots[short["id"]]["truncated"] is False
@@ -310,11 +310,22 @@ def _channel_with_threads(client, n):
     return tid
 
 
+def _listed_threads(listed) -> list[dict]:
+    """这一格画出来的那些支线。
+
+    `GET /topics/{id}/threads` 现在分两栏（`thread/reads.in_room`：开着的和收起来的），
+    这里要的是开着的那些；`data` 那一层是早先形状的回退，读同一个接口的老测试还在。
+    """
+    rows = listed["data"] if isinstance(listed, dict) and "data" in listed else listed
+    if isinstance(rows, dict):
+        return rows["open"]
+    return rows
+
+
 def _list_threads(client, tid):
     r = client.get(f"/topics/{tid}/threads", headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
-    listed = r.json()["data"]
-    return listed["data"] if isinstance(listed, dict) else listed
+    return _listed_threads(r.json()["data"])
 
 
 @pytest.mark.parametrize("n", [3, 12])

@@ -22,39 +22,11 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
   }
 })
 
-vi.mock('@/api', () => ({
-  getMarketPools: async () => ({
-    ai: [
-      {
-        kind: 'ai',
-        id: 'm1',
-        label: 'Model A',
-        tier: 'default',
-        price: '$0',
-        description: 'Default model',
-        available: true,
-        default: true,
-      },
-    ],
-    compute: [
-      {
-        kind: 'compute',
-        id: 'c1',
-        label: 'Box',
-        tier: 'byo',
-        price: '$0',
-        description: 'Your own machine',
-        available: false,
-        default: false,
-      },
-    ],
-  }),
+vi.mock('@/api', () => ({ listMyDevices: async () => ({ devices: [] }) }))
+vi.mock('@/api/machineSkills', () => ({
+  fetchSkillMarket: async () => ({ skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] }),
+  fetchMachineSkill: async () => ({}),
 }))
-
-vi.mock('@/components/NodeBoard.vue', async () => {
-  const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ name: 'NodeBoardStub', setup: () => () => h('div') }) }
-})
 
 import LeaveTeamDialog from './components/LeaveTeamDialog.vue'
 import PrivacyProtectionInfo from './components/PrivacyProtectionInfo.vue'
@@ -152,7 +124,7 @@ describe('task pages in English', () => {
       },
       global: { plugins: plugins() },
     })
-    expect(document.body.textContent).toContain('No activity since claiming')
+    expect(document.body.textContent).toContain(i18n.global.t('tasks.insights.stalled'))
     expect(cjkIn(pageText())).toEqual([])
   })
 
@@ -207,13 +179,13 @@ describe('task pages in English', () => {
       global: { plugins: plugins() },
     })
     expect(document.body.textContent).toContain('Real name required')
-    expect(document.body.textContent).toContain('Locked on approval')
+    expect(document.body.textContent).toContain('Locked once the team starts')
     expect(cjkIn(pageText())).toEqual([])
   })
 
   it('market page', async () => {
     render(MarketView, { global: { plugins: plugins() } })
-    expect(document.body.textContent).toContain('Challenge matching')
+    expect(document.body.textContent).toContain('Market')
     expect(cjkIn(pageText())).toEqual([])
   })
 })

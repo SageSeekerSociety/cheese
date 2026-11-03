@@ -11,6 +11,17 @@ from tests.integration.conftest import (
 )
 
 
+def _admit(api_client: TestClient, space_id: int, admin, *users) -> None:
+    """Put ``users`` in the space; only a space's members see and claim its problems."""
+    for user in users:
+        resp = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": user.user_id},
+            headers={"Authorization": f"Bearer {admin.token}"},
+        )
+        assert resp.status_code == 201, resp.text
+
+
 class TestTaskSubmissionIntegration:
     @pytest.fixture
     def setup_task_for_submission(
@@ -50,6 +61,7 @@ class TestTaskSubmissionIntegration:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant, participant2)
         category_id = space_data["defaultCategoryId"]
 
         return {
@@ -70,12 +82,14 @@ class TestTaskSubmissionIntegration:
         suffix: int,
         resubmittable: bool = True,
         editable: bool = True,
+        start_mode: str = "DIRECT",
     ) -> int:
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
         task_resp = api_client.post(
             "/tasks",
             json={
                 "name": f"Submission Test Task ({suffix})",
+                "startMode": start_mode,
                 "submitterType": "USER",
                 "deadline": deadline,
                 "resubmittable": resubmittable,
@@ -461,6 +475,7 @@ class TestTaskSubmissionIntegration:
             data["space_id"],
             data["category_id"],
             data["suffix"],
+            start_mode="APPLY",
         )
 
         join_resp = api_client.post(
@@ -890,7 +905,7 @@ class TestTaskSubmissionIntegration:
         )
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["task"]["submissionSchema"] == [
-            {"prompt": "Text Entry", "type": "TEXT"}
+            {"prompt": "Text Entry", "type": "TEXT", "stage": None}
         ]
 
     def test_list_reports_submission_schema_when_asked(
@@ -948,8 +963,12 @@ class TestTaskSubmissionIntegration:
         )
         assert patch_resp.status_code == 200, patch_resp.text
 
-        assert detail_schema_of(task_id) == [{"prompt": "Text Entry", "type": "TEXT"}]
-        assert detail_schema_of(other_id) == [{"prompt": "Other Entry", "type": "FILE"}]
+        assert detail_schema_of(task_id) == [
+            {"prompt": "Text Entry", "type": "TEXT", "stage": None}
+        ]
+        assert detail_schema_of(other_id) == [
+            {"prompt": "Other Entry", "type": "FILE", "stage": None}
+        ]
 
         # 不问就不给：这是既有行为，不改其它调用方的收包。
         assert listed_task(task_id)["submissionSchema"] == []
@@ -1186,6 +1205,7 @@ class TestTaskSubmissionIntegration:
         assert space_resp.status_code == 201
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, team_creator, team_member)
         category_id = space_data["defaultCategoryId"]
 
         team_resp = api_client.post(

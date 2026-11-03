@@ -210,6 +210,7 @@ it('an element pick from the current frame and session is handed to the host', a
     selection: false,
     selector: 'body > main > p:nth-of-type(2)',
     tag: 'p',
+    label: '  二、时间安排\n',
     text: '这一句说错了',
     prefix: '',
     suffix: '',
@@ -227,16 +228,20 @@ it('an element pick from the current frame and session is handed to the host', a
     selection: false,
     selector: 'body > main > p:nth-of-type(2)',
     tag: 'p',
+    // 给人读的名字收拢空白；帧没报（老页面）时是空串，由宿主按标签起名。
+    label: '二、时间安排',
     text: '这一句说错了',
     prefix: '',
     suffix: '',
     rect: { x: 1, y: 2, w: 3, h: 4 },
     viewport: { w: 800, h: 600 },
   })
+  dispatch({ ...pick, label: undefined })
+  expect(picked.mock.calls[1]![0].label).toBe('')
   // 认不出的位置（选择器空）、或者「选中的一段」却没报原文：都不当一处。
   dispatch({ ...pick, selector: '' })
   dispatch({ ...pick, selection: true, text: '' })
-  expect(picked).toHaveBeenCalledTimes(1)
+  expect(picked).toHaveBeenCalledTimes(2)
 })
 
 it('turning pick mode on is posted to the frame with the current session and origin', async () => {
@@ -253,4 +258,125 @@ it('turning pick mode on is posted to the frame with the current session and ori
   expect(last[1]).toBe('https://preview-fixed.example')
   host.setPickMode(false)
   expect(send.mock.calls.at(-1)![0].on).toBe(false)
+})
+
+it('the address the frame reports follows in-app navigation; back/forward fall back to our own trail', async () => {
+  const { host, frame, hello } = await setup()
+  const dispatch = (data: unknown) =>
+    window.dispatchEvent(
+      new MessageEvent('message', { origin: 'https://preview-fixed.example', source: frame.contentWindow, data })
+    )
+  // 别的会话报来的地址不算。
+  dispatch({ ...hello, sessionId: 'old', type: 'location', href: 'https://preview-fixed.example/x' })
+  expect(host.displayed.value?.href).toBeUndefined()
+  expect(host.displayed.value?.bridged).toBeFalsy()
+  // 帧说不出能不能后退（没有 Navigation API）：自己数。
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/signup', title: '报名' })
+  expect(host.displayed.value).toMatchObject({
+    href: 'https://preview-fixed.example/signup',
+    title: '报名',
+    bridged: true,
+    canBack: false,
+    canForward: false,
+  })
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/signup?step=2' })
+  expect(host.displayed.value).toMatchObject({ canBack: true, canForward: false })
+  // 退回上一格：能前进了。
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/signup' })
+  expect(host.displayed.value).toMatchObject({ canBack: false, canForward: true })
+  // 帧说得出（Navigation API）就照它。
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/faq', canBack: true, canForward: true })
+  expect(host.displayed.value).toMatchObject({ canBack: true, canForward: true })
+})
+
+it('history and navigation commands go to the current session only once the frame has a bridge', async () => {
+  const { host, frame, hello, send } = await setup()
+  // 还没证明有桥：不发，调用方退回整帧重来。
+  expect(host.stepHistory('reload')).toBe(false)
+  expect(host.goTo('/faq')).toBe(false)
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      origin: 'https://preview-fixed.example',
+      source: frame.contentWindow,
+      data: { ...hello, type: 'location', href: 'https://preview-fixed.example/' },
+    })
+  )
+  expect(host.stepHistory('back')).toBe(true)
+  expect(send.mock.calls.at(-1)![0]).toEqual({
+    channel: 'cheese-preview-runtime',
+    version: 1,
+    sessionId: hello.sessionId,
+    type: 'history',
+    action: 'back',
+  })
+  expect(send.mock.calls.at(-1)![1]).toBe('https://preview-fixed.example')
+  expect(host.goTo('/faq?x=1')).toBe(true)
+  expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'navigate', path: '/faq?x=1' })
+})
+
+it('a live frame is asked for a snapshot once it settles, and the snapshot is handed up', async () => {
+  vi.useFakeTimers()
+  try {
+    const onSnapshot = vi.fn()
+    const { frame, hello, send } = await setup({ onSnapshot })
+    const dispatch = (data: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent('message', { origin: 'https://preview-fixed.example', source: frame.contentWindow, data })
+      )
+    dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/' })
+    // 换了地址之后先等它安静两秒，再要一份。
+    expect(send.mock.calls.some((call) => call[0].type === 'snapshot')).toBe(false)
+    vi.advanceTimersByTime(2_000)
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'snapshot', sessionId: hello.sessionId })
+    dispatch({
+      ...hello,
+      type: 'snapshot',
+      html: '<!DOCTYPE html><p>hi</p>',
+      href: 'https://preview-fixed.example/',
+      title: 't',
+    })
+    expect(onSnapshot).toHaveBeenCalledTimes(1)
+    expect(onSnapshot.mock.calls[0]![1]).toEqual({
+      html: '<!DOCTYPE html><p>hi</p>',
+      href: 'https://preview-fixed.example/',
+      title: 't',
+      viewport: { w: 0, h: 0 },
+    })
+    // 空快照（页面太大、拍不了）不往上递。
+    dispatch({ ...hello, type: 'snapshot', html: '' })
+    expect(onSnapshot).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('keeps only the errors it can read, and never more than five', async () => {
+  const { host, frame, hello } = await setup()
+  const shown = host.displayed.value!
+  const errors = (items: unknown) =>
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: 'https://preview-fixed.example',
+        source: frame.contentWindow,
+        data: { ...hello, type: 'errors', items },
+      })
+    )
+  // 认得出形状的留下：位置和行号缺了就给默认值，没有 message 的丢掉。
+  errors([
+    { message: '签名炸了', source: 'signup.ts', line: 41 },
+    { message: '没有位置', source: '', line: 0 },
+    'not an object',
+    null,
+    { source: 'x.ts', line: 3 },
+  ])
+  expect(shown.pageErrors).toEqual([
+    { message: '签名炸了', source: 'signup.ts', line: 41 },
+    { message: '没有位置', source: '', line: 0 },
+  ])
+  // 整份 items 不是一个数组：不动，留着上一次的那几条。
+  errors('nope')
+  expect(shown.pageErrors).toHaveLength(2)
+  // 超过五条只留前五条。
+  errors(Array.from({ length: 9 }, (_, i) => ({ message: `e${i}`, source: '', line: i })))
+  expect(shown.pageErrors!.map((e) => e.message)).toEqual(['e0', 'e1', 'e2', 'e3', 'e4'])
 })

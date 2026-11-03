@@ -83,6 +83,13 @@ RELEASE_FILES = core.RELEASE_FILES
 CONTROL_INSPECT = commands.SHELL_INSPECT
 NATIVE_TOOLS = core.NATIVE_TOOLS
 COMMAND_ABANDONED_S = core.COMMAND_ABANDONED_S
+# How much longer than the sleep it asked for a wake-up may take before this
+# executor believes it was stopped meanwhile — a frozen sandbox's processes do
+# not run, so the freezer's sleep and every clock this executor reads while it
+# is stopped (``time.monotonic`` included) jump forward by however long it
+# slept. Four times the sleep plus this: ordinary wake-up lateness stays well
+# inside it, a freeze of seconds does not.
+THAW_JUMP = 2.0
 OUTPUT_KEPT_S = core.OUTPUT_KEPT_S
 EXECUTOR_IDLE_EXIT_S = core.EXECUTOR_IDLE_EXIT_S
 EXECUTOR_IDLE_CHECK_S = core.EXECUTOR_IDLE_CHECK_S
@@ -102,6 +109,7 @@ lock = core.lock
 resolve_program = core.resolve_program
 socket_path = core.socket_path
 socket_directory = core.socket_directory
+platform_socket_directory = core.platform_socket_directory
 connect = core.connect
 claude_shell = core.claude_shell
 native_path = core.native_path
@@ -109,6 +117,51 @@ gitignored = core.gitignored
 _unquote = core._unquote
 skill_paths = core.skill_paths
 request = core.request
+
+
+def _pipe_socket(src, dst):
+    try:
+        while True:
+            chunk = src.recv(65536)
+            if not chunk:
+                break
+            dst.sendall(chunk)
+    except OSError:
+        pass
+    finally:
+        with contextlib.suppress(OSError):
+            dst.shutdown(socket.SHUT_WR)
+
+
+def _start_forge_bridge(forge_sock: Path):
+    """Loopback TCP listener inside the sandbox that pipes to `forge.sock`."""
+
+    class _Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                upstream.connect(str(forge_sock))
+            except OSError:
+                return
+            with upstream:
+                t1 = threading.Thread(
+                    target=_pipe_socket, args=(self.request, upstream), daemon=True
+                )
+                t2 = threading.Thread(
+                    target=_pipe_socket, args=(upstream, self.request), daemon=True
+                )
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+
+    class _Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    server = _Server(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
 
 
 class Executor:
@@ -129,6 +182,32 @@ class Executor:
                 self.upgrading = pending["ready"]
         self.root = Path(self.config["workspace"]).resolve(strict=True)
         self.env = dict(os.environ, **self.config.get("env", {}))
+        self.forge_bridge = None
+        if sys.platform != "win32":
+            platform_dir = Path(platform_socket_directory(self.state))
+            forge_sock = platform_dir / "forge.sock"
+            ca_bundle = platform_dir / "ca-bundle.pem"
+            ca_pem = platform_dir / "ca.pem"
+            if forge_sock.exists() and ca_bundle.is_file():
+                self.forge_bridge = _start_forge_bridge(forge_sock)
+                proxy_url = f"http://127.0.0.1:{self.forge_bridge.server_address[1]}"
+                # Only names that can never be a forge: the site's name goes
+                # through the proxy too, which dials it over the machine's
+                # forward (`forge_proxy.ForgeProxyRuntime.dial`), since a
+                # project's forge may live on it and only the proxy holds the
+                # forge's credential.
+                no_proxy = "127.0.0.1,localhost,127.0.0.2,platform.cheese"
+                self.env.update(
+                    HTTPS_PROXY=proxy_url,
+                    https_proxy=proxy_url,
+                    NO_PROXY=no_proxy,
+                    no_proxy=no_proxy,
+                    SSL_CERT_FILE=str(ca_bundle),
+                    REQUESTS_CA_BUNDLE=str(ca_bundle),
+                    GIT_SSL_CAINFO=str(ca_bundle),
+                    CURL_CA_BUNDLE=str(ca_bundle),
+                    NODE_EXTRA_CA_CERTS=str(ca_pem),
+                )
         # Every command this executor runs is a process of its own, in its own
         # process group, with its output in files under `commands/`: whoever
         # asked for it — the central session's shell prefix, or a caller of
@@ -288,11 +367,36 @@ class Executor:
     def idle_stop(self, idle_s):
         return commands.idle_stop(self, idle_s)
 
+    def _woke(self, since, slept) -> bool:
+        """Whether this process was stopped between the sleep that started at
+        ``since`` and now: a wake-up much later than ``slept`` asked for means
+        a frozen sandbox ran again, and every clock moved with it. Asked in
+        each loop that measures how long something has gone untouched, so a
+        freeze is not read as an abandoned command or an idle executor."""
+        return time.monotonic() - since > slept * 4 + THAW_JUMP
+
+    def _thawed(self) -> None:
+        """Everything the loops measure their waits from is now: the executor
+        has just woken, and none of the time it slept counts as time nothing
+        used it."""
+        now = time.monotonic()
+        self.active_at = now
+        with self.command_lock:
+            for entry in self.running.values():
+                entry["read_at"] = now
+        self.log("service", "thawed", commands=len(self.running))
+
     def _reap(self):
         """Stop a watched command whose reader is gone for good, and forget a
         finished one nobody collected (`COMMAND_ABANDONED_S`)."""
         while True:
+            since = time.monotonic()
             time.sleep(30)
+            if self._woke(since, 30):
+                # Frozen meanwhile: the command nobody read did not wait, it
+                # slept with the sandbox, and its reader comes back to it.
+                self._thawed()
+                continue
             now = time.monotonic()
             with self.command_lock:
                 stale = [
@@ -545,7 +649,15 @@ def serve(state):
 
             def leave_when_idle():
                 while not executor.idle_stop(idle_s):
-                    time.sleep(min(EXECUTOR_IDLE_CHECK_S, idle_s / 4))
+                    slept = min(EXECUTOR_IDLE_CHECK_S, idle_s / 4)
+                    since = time.monotonic()
+                    time.sleep(slept)
+                    if executor._woke(since, slept):
+                        # The sandbox was frozen and has just woken. It did not
+                        # sit idle through that: nothing ran that could have
+                        # used it. The wake starts the idle clock again rather
+                        # than stopping the executor the moment it thaws.
+                        executor._thawed()
                     # Every look, so a group that emptied is forgotten before
                     # its number can be handed to a process of somebody else's.
                     executor.prune_groups()
@@ -583,6 +695,14 @@ def main():
         value = json.load(sys.stdin)
         print(json.dumps(request(state, value["method"], value.get("params"))))
     elif args.mode == "stop":
+        if sys.platform != "win32":
+            proxy_record = Path(platform_socket_directory(state)) / "forge-proxy.json"
+            if proxy_record.is_file():
+                with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+                    pid = int(json.loads(proxy_record.read_text())["pid"])
+                    os.kill(pid, signal.SIGTERM)
+                with contextlib.suppress(OSError):
+                    proxy_record.unlink()
         try:
             request(state, "shutdown")
         except (FileNotFoundError, ConnectionRefusedError):

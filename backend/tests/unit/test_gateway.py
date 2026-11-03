@@ -3,12 +3,18 @@
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import httpx
 import pytest
 
 from app.domain.agent import gateway as gw
+from app.domain.day_windows import utc_now
+
+# The days the fakes answer for are read from `utc_now()`, the moment the drain
+# reads too, held still for each test (`pinned_clock`): a run across UTC
+# midnight cannot split them.
+pytestmark = pytest.mark.usefixtures("pinned_clock")
 
 PID = uuid.uuid4()
 
@@ -308,7 +314,7 @@ async def test_drain_same_day_delta_is_exactly_once():
 @pytest.mark.anyio
 async def test_drain_day_rollover_finalizes_yesterday_per_model():
     today = gw.utc_today()
-    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
     # Yesterday ended at (50, 5) for m; the checkpoint had only seen (30, 5) —
     # 20 late-logged prompt tokens must still be billed, to m, not to a lump.
     # Today adds (7, 3) for mimo.
@@ -336,8 +342,8 @@ async def test_drain_day_rollover_finalizes_yesterday_per_model():
 @pytest.mark.anyio
 async def test_drain_includes_every_day_between_checkpoint_and_today():
     today = gw.utc_today()
-    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
-    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    two_days_ago = (utc_now() - timedelta(days=2)).strftime("%Y-%m-%d")
+    yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
     g = _StubGateway(
         {
             two_days_ago: {"m": (50, 5, 0.005)},
@@ -359,8 +365,8 @@ async def test_drain_includes_every_day_between_checkpoint_and_today():
 @pytest.mark.anyio
 async def test_pre_split_checkpoint_includes_intervening_day():
     today = gw.utc_today()
-    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
-    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    two_days_ago = (utc_now() - timedelta(days=2)).strftime("%Y-%m-%d")
+    yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
     g = _StubGateway(
         {
             two_days_ago: {"m": (50, 5, 0.005)},
@@ -380,8 +386,8 @@ async def test_pre_split_checkpoint_includes_intervening_day():
 
 @pytest.mark.anyio
 async def test_drain_does_not_advance_past_an_unreadable_intervening_day():
-    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
-    yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+    two_days_ago = (utc_now() - timedelta(days=2)).strftime("%Y-%m-%d")
+    yesterday = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     class MissingDay(_StubGateway):
         async def daily_spend_by_model(self, key, date):

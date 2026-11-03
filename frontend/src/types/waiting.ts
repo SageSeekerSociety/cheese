@@ -80,6 +80,8 @@ export interface WaitingAsk {
   role: 'MEMBER' | 'ADMIN' | 'OWNER' | 'member' | 'mentor' | null
   /** 邀请或申请时附的那句话；没写是空串。 */
   message: string
+  /** 邀请是发起人自己的芝士替他发的。 */
+  byAssistant?: boolean
   at: string
 }
 

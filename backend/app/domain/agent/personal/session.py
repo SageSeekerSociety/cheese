@@ -98,27 +98,35 @@ def effort(model: str) -> str | None:
 #: everything reads the same way by its ref (`assistant.refs`). What others see
 #: goes through its gate (`assistant.gate`). The page the person has open is
 #: said with each question (``prompt.page``); it never narrows the tools.
+#: Whether a person's 芝士 may hand parts of its work to subagents (分身). Kept
+#: only while the eval scores better with them than without
+#: (``evals/assistant``, ``--no-subagents``).
+BRANCHES = True
+
 TOOLS = (
     "cheese_inbox",
-    "cheese_inbox_respond",
     "cheese_read",
     "cheese_find",
     "cheese_help",
-    "cheese_message_send",
-    "cheese_task_open",
-    "cheese_review_decide",
-    "cheese_member_set",
-    "cheese_channel_create",
-    "cheese_settings_set",
+    "chat_send",
+    "cheese_task",
+    "cheese_card",
+    "cheese_room",
+    "cheese_people",
+    "cheese_space",
+    "cheese_settings",
     "cheese_routine",
-    "cheese_notify_me",
-    "cheese_memory",
-    "cheese_file_give",
-    "cheese_file_to_computer",
-    "cheese_web_fetch",
-    "cheese_web_search",
-    "cheese_problem_write",
-    "cheese_problem_publish",
+    "cheese_notify",
+    "cheese_todo",
+    # 记忆是用户的：记下、读、删掉。项目共享记忆是文档芝士读的。
+    "cheese_memory.save",
+    "cheese_memory.read",
+    "cheese_memory.forget",
+    # 资料：在电脑和用户的资料库之间交文件；读附件是文档芝士的。
+    "cheese_library.give",
+    "cheese_library.take",
+    "cheese_web",
+    "cheese_problem",
 )
 
 
@@ -160,6 +168,7 @@ def session(
         model=model_roles.model("assistant_model"),
         tools=TOOLS,
         works=machine is not None,
+        branches=BRANCHES,
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
         idle_exit_s=IDLE_EXIT_S,
         gone_after_s=GONE_AFTER_S,

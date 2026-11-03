@@ -19,9 +19,16 @@ const vuetify = createVuetify({ components, directives })
 
 afterEach(cleanup)
 
-function mount(bytes: ArrayBuffer | Uint8Array) {
+function mount(
+  bytes: ArrayBuffer | Uint8Array,
+  marks: { id: string; sheet: string; address: string }[] = [],
+  activeMark: string | null = null
+) {
   const data = bytes instanceof Uint8Array ? (bytes.buffer as ArrayBuffer) : bytes
-  return render(PreviewSheet, { props: { data, kind: 'csv' as const }, global: { plugins: [vuetify] } })
+  return render(PreviewSheet, {
+    props: { data, kind: 'csv' as const, marks, activeMark },
+    global: { plugins: [vuetify] },
+  })
 }
 
 function utf8(text: string): Uint8Array {
@@ -121,4 +128,184 @@ it('只有一张表的时候不画工作表标签', async () => {
 
   await waitFor(() => expect(grid(container).length).toBe(2))
   expect(container.querySelector('.ps__tabs')).toBeNull()
+})
+
+/** 一格上的评论标记：按地址找那一格里那颗点。 */
+function markAt(container: Element, address: string): Element | null {
+  const td = Array.from(container.querySelectorAll('tbody tr')).flatMap((tr) => Array.from(tr.querySelectorAll('td')))
+  const cell = td[gridIndex(container, address)]
+  return cell?.querySelector('.ps__cmt') ?? null
+}
+
+/** 地址（`B2`）换成那一格在 `td` 列表里的序号。 */
+function gridIndex(container: Element, address: string): number {
+  const match = /^([A-Z]+)(\d+)$/.exec(address)
+  if (!match) return -1
+  let col = 0
+  for (const ch of match[1]) col = col * 26 + (ch.charCodeAt(0) - 64)
+  const row = Number(match[2]) - 1
+  const width = container.querySelectorAll('tbody tr:first-child td').length
+  if (row < 0 || col < 1) return -1
+  return row * width + (col - 1)
+}
+
+it('评过的那一格上画一颗标记，别的格子不画', async () => {
+  // 地址是表格里唯一指得回的东西，所以标记就落在那一格上。
+  const { container } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B2' }])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  expect(markAt(container, 'B2')).toBeTruthy()
+  expect(markAt(container, 'A2')).toBeNull()
+})
+
+it('地址在这一版里落不到任何一格上（表短了）就不画，不猜它挪到哪去了', async () => {
+  const { container } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B99' }])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  expect(container.querySelectorAll('.ps__cmt')).toHaveLength(0)
+})
+
+it('点一颗标记，说的是被点的那一条', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'), [
+    { id: 'c1', sheet: '', address: 'A1' },
+    { id: 'c2', sheet: '', address: 'B2' },
+  ])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  await fireEvent.click(markAt(container, 'B2')!)
+  expect(emitted().mark).toEqual([['c2']])
+})
+
+it('点标记不开那一格的选中框，也不当成选了一格', async () => {
+  // 标记长在格子里面，而格子自己被点了就是「指着这一格」。不挡住的话，点评论会
+  // 顺手把这一格选上。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B2' }])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  await fireEvent.click(markAt(container, 'B2')!)
+  expect(emitted().cell).toBeUndefined()
+  expect(container.querySelector('.ps__cell--on')).toBeNull()
+})
+
+it('正打开的那一条画得显眼些', async () => {
+  const { container } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B2' }], 'c1')
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  expect(markAt(container, 'B2')!.classList.contains('is-active')).toBe(true)
+})
+
+/** 地址（`B2`）那一格本身。 */
+function cellAt(container: Element, address: string): Element | null {
+  const td = Array.from(container.querySelectorAll('tbody tr')).flatMap((tr) => Array.from(tr.querySelectorAll('td')))
+  return td[gridIndex(container, address)] ?? null
+}
+
+it('拖过一片格子：发的是两个角，加上这一片摊平的内容', async () => {
+  // 表格一直只能指单格；一片（比如「这一列的数」）以前得靠一句话说清是哪几格。地址
+  // 本来就在文件里，两个角就够指回来了。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B3')!)
+  await fireEvent.mouseUp(cellAt(container, 'B3')!)
+
+  expect(emitted().range).toEqual([[{ sheet: '', start: 'A1', end: 'B3', text: '姓名\t分数\n张三\t90\n李四\t85' }]])
+  // 单击那一格不能同时发出去。
+  expect(emitted().cell).toBeUndefined()
+})
+
+it('从右下往左上拖也一样：两个角摆回左上、右下', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'B3')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A1')!)
+  await fireEvent.mouseUp(cellAt(container, 'A1')!)
+
+  const [payload] = emitted().range![0] as [{ start: string; end: string }]
+  expect(payload.start).toBe('A1')
+  expect(payload.end).toBe('B3')
+})
+
+it('一片的内容太长就截在上限，两个角照旧指得回整片', async () => {
+  // 一格几千字跟着消息跑没有意义；截断只是不搬内容，地址还是整片的地址。
+  const { container, emitted } = mount(utf8(`说明\n${'字'.repeat(3000)}\n`))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A2')!)
+  await fireEvent.mouseUp(cellAt(container, 'A2')!)
+
+  const [payload] = emitted().range![0] as [{ start: string; end: string; text: string }]
+  expect(payload.start).toBe('A1')
+  expect(payload.end).toBe('A2')
+  expect(payload.text).toHaveLength(2000)
+})
+
+it('截在上限时不把一个 emoji 劈成半个', async () => {
+  // 按 UTF-16 下标切会把代理对切开，屏幕上那个字变成一个问号。
+  const { container, emitted } = mount(utf8(`表情\n${'😀'.repeat(2500)}\n`))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A2')!)
+  await fireEvent.mouseUp(cellAt(container, 'A2')!)
+
+  const [payload] = emitted().range![0] as [{ text: string }]
+  expect([...payload.text]).toHaveLength(2000)
+  expect(payload.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+})
+
+it('按在同一格上松开是单击，不是一片', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'B2')!)
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await fireEvent.click(cellAt(container, 'B2')!)
+
+  expect(emitted().range).toBeUndefined()
+  expect(emitted().cell).toEqual([[{ address: 'B2', value: '90', sheet: '' }]])
+})
+
+it('松开之后指针路过别的格子，画着的还是刚才发出去的那一片', async () => {
+  // 松开那一刻这一片就说定了；再跟着指针走，屏幕上画的就不是消息里写的那一片了。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B3')!)
+
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+  expect(emitted().range).toHaveLength(1)
+})
+
+it('在表外面松开也算数：拖到边上那一下不会白拖', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  // 行号那一列在表格里、但不是格子：拖到最后一列之后手常常落在这里。
+  await fireEvent.mouseUp(container.querySelector('tbody th')!)
+
+  expect(emitted().range).toHaveLength(1)
+  // 松开之后再来一下不会把同一片再发一次。
+  await fireEvent.mouseUp(container.querySelector('tbody th')!)
+  expect(emitted().range).toHaveLength(1)
+})
+
+it('拖的时候那一片有底色，松开之后留着；单击不留', async () => {
+  const { container } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
 })

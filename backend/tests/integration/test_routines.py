@@ -691,8 +691,8 @@ def test_a_run_that_has_not_settled_has_no_figure_yet(client):
 
 
 def _seed_runs(client, routine_id: str, statuses: list[str]) -> None:
-    """几次执行，一天一次，最早的在最前面 —— 记录的先后是有意义的，不用时钟凑。"""
-    base = datetime.now(UTC) - timedelta(days=len(statuses))
+    """几次执行，最早的在最前面 —— 记录的先后是有意义的，不用时钟凑。"""
+    base = datetime.now(UTC) - timedelta(minutes=len(statuses))
 
     async def go(session):
         for index, status in enumerate(statuses):
@@ -701,7 +701,7 @@ def _seed_runs(client, routine_id: str, statuses: list[str]) -> None:
                     routine_id=uuid.UUID(routine_id),
                     occurrence_key=f"seed-{index}",
                     status=status,
-                    created_at=base + timedelta(days=index),
+                    created_at=base + timedelta(minutes=index),
                 )
             )
 

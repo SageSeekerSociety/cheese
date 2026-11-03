@@ -264,10 +264,12 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   await detail.locator('.qdet__back').click();
   await expect(row.locator('.qrow__assignee .qrow__avalue')).toHaveText('alice');
 
-  // 用户侧的两栏跟着动：走完梯子的进「已完成」，不在「处理中」里。
+  // 用户侧跟着动：办完的条目仍然在「全部」里（2026-10-28 起「全部」真装全部，
+  // 办完的 Bug 不再沉底），也进「已完成」。以前这里点的是「处理中」那一栏 ——
+  // 那一栏已经删了（它和状态药丸里的「处理中」是同一个切口）。
   await page.goto('/feedback');
-  await page.getByRole('tab', { name: /处理中/ }).click();
-  await expect(page.locator('.fb-card', { hasText: title })).toBeHidden();
+  await page.getByRole('tab', { name: /全部/ }).click();
+  await expect(page.locator('.fb-card', { hasText: title })).toBeVisible();
   await page.getByRole('tab', { name: /已完成/ }).click();
   await expect(page.locator('.fb-card', { hasText: title })).toBeVisible();
 

@@ -18,9 +18,11 @@ export interface AskOption {
 }
 
 /** 答过这道题的一句话：点了它的一个选项（`option`），或者他自己说的（`note`）；
- *  `skipped` 是被问的人跳过了它，不带选项也不带话，`reply_id` 为 null。 */
+ *  `skipped` 是被问的人跳过了它，不带选项也不带话，`reply_id` 为 null。
+ *  `withdrawn` / `expired` 是提问方收起题的那一条（撤回 / 过了时效）：算题的状态，
+ *  不算回答，`by` 是提问方。 */
 export interface AskAnswerEntry {
-  kind: 'option' | 'note' | 'reject' | 'skipped'
+  kind: 'option' | 'note' | 'reject' | 'skipped' | 'withdrawn' | 'expired'
   option: string | null
   note: string | null
   by: string

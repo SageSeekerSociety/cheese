@@ -178,10 +178,19 @@ class TimedStream(httpx.AsyncByteStream):
         self.stream = stream
         self.timing = timing
         self.failure = failure or {}
+        self.first_body = False
 
     async def __aiter__(self):
         try:
             async for chunk in self.stream:
+                # The first byte the upstream sends: what a person waits for
+                # before any of the answer can be shown. Everything before it is
+                # connection, queueing and prefill; everything after is the rest
+                # of the generation. Measured once, so the split stays honest
+                # even when a stream is retried.
+                if not self.first_body:
+                    self.first_body = True
+                    self.timing.emit("first_body")
                 # Downstream holds may overlap upstream work; they are not CPU time.
                 started = time.monotonic()
                 self.timing.consumer_since = started

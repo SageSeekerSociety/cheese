@@ -22,7 +22,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.core.storage import generate_storage_key, get_storage_backend
 from app.db.session import get_db
 from app.domain.materials.repositories import MaterialRepository
@@ -64,7 +64,7 @@ async def upload_material(
     file_content = await file.read(settings.attachment_max_bytes + 1)
     if len(file_content) > settings.attachment_max_bytes:
         raise UnprocessableEntityError(
-            say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
+            say("fileTooLarge", size=size_text(settings.attachment_max_bytes))
         )
     file_name = file.filename or "unnamed"
     file_mime = file.content_type or "application/octet-stream"

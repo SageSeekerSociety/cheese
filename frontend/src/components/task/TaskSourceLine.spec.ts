@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest'
 
 import TaskSourceLine from './TaskSourceLine.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 setLocale('zh-CN')
 const vuetify = createVuetify({ components, directives })
@@ -73,6 +73,12 @@ describe('TaskSourceLine', () => {
     expect(line).toContain('Andy 新建的任务')
     expect(line).not.toContain('：')
     expect(view.queryByRole('button')).toBeNull()
+  })
+
+  it('says his own 芝士 created it for him when it did', () => {
+    const view = show(null, { andy: 'Andy' }, { ...task, created_by_assistant: true })
+
+    expect(view.getByTestId('task-source').textContent).toContain(t('work.task.source.byAssistant', { name: 'Andy' }))
   })
 
   it('says a teammate created it when the platform did not record what asked for it', () => {

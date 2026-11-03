@@ -19,7 +19,7 @@ import type { GroupAnswer } from '../../lib/askGroups'
 import { computed, ref } from 'vue'
 
 import { askHeader, askMultiSelect } from '../../lib/askGroups'
-import { askAnswers, askOptions } from '../../lib/blockDisplay'
+import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
 
 import { t } from '@/i18n'
@@ -63,6 +63,8 @@ const canAnswer = computed(() => {
 })
 
 function mayAnswer(block: Block): boolean {
+  // 提问方把这道题收回去了：这一组里它不再等人答（过期的那条还能答）。
+  if (askClosedByAsker(block) === 'withdrawn') return false
   const meta = (block.meta ?? {}) as { asked?: string[]; asked_all?: boolean }
   const asked = meta.asked ?? []
   return !!props.viewer && (asked.length === 0 || !!meta.asked_all || asked.includes(props.viewer))

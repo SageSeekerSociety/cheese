@@ -37,7 +37,7 @@ covers:
 | 随发版替换 | 常驻，单独发布 |
 |---|---|
 | 主 API、前端 nginx | 机器连接服务（`release-device-connection.yml`） |
-| 会话沙盒镜像（新开的会话用新镜像） | 模型隧道与主机入口 nginx（`deploy/llm-tunnel/up.sh`） |
+| 会话沙盒镜像（新开的会话用新镜像） | 模型隧道（`release-llm-tunnel.yml`）、主机入口 nginx（`deploy/llm-tunnel/up.sh`） |
 | 网页渲染、Office 渲染、文档协同（镜像内容变了才换） | 计量代理（`release-metering-proxy.yml`）、模型网关（`release-gateway.yml`） |
 | 事件中继（`deploy/forge-events/compose.yml`，它跑的代码变了才换） | |
 

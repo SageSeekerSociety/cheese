@@ -11,14 +11,13 @@
 // 写进 store，这一层自己不持有任何东西。
 import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 
-import { toast } from 'vuetify-sonner'
-
 import { SpacesApi } from '@/api/spaces'
 import { TagsApi } from '@/api/tags'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import { t } from '@/i18n'
 import { markTasksSeen, tasksSeenAt } from '@/lib/spaceTasksSeen'
+import { toast } from '@/lib/toast'
 import { useSpaceStore } from '@/stores/space'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
 

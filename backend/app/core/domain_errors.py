@@ -2,6 +2,7 @@ from app.core.errors import (
     BadRequestError,
     ForbiddenError,
 )
+from app.core.sentences import say
 
 
 class TeamSizeNotEnoughError(ForbiddenError):
@@ -23,7 +24,7 @@ class TeamSizeTooLargeError(BadRequestError):
 class TaskParticipantsReachedLimitError(ForbiddenError):
     def __init__(self, task_id: int, limit: int) -> None:
         super().__init__(
-            message=f"Task participants limit ({limit}) reached",
+            message=say("taskPlacesFull", limit=limit),
             data={"taskId": task_id, "limit": limit},
         )
 

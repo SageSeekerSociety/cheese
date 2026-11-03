@@ -7,7 +7,6 @@
   "current": "Current",
   "deliveredAt": "delivered {when}",
   "download": "Download",
-  "downloadError": "Download failed",
   "downloadVersion": "Download version {number}",
   "fallbackTitle": "Deliverable",
   "firstVersion": "This is the first version; there is no earlier one to compare with",

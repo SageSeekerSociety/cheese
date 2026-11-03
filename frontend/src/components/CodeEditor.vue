@@ -206,6 +206,11 @@ onMounted(async () => {
     tabSize: 2,
     padding: { top: 8, bottom: 8 },
     smoothScrolling: true,
+    // Monaco's default ambiguous-character table flags full-width ：，；（） as
+    // look-alikes of ASCII punctuation, so every Chinese comment is boxed in yellow.
+    // The zh tables leave those out (locales intersect) and still flag real
+    // look-alikes such as a Cyrillic 'а' in an identifier.
+    unicodeHighlight: { allowedLocales: { _os: true, _vscode: true, 'zh-hans': true, 'zh-hant': true } },
   })
   editor.onDidChangeModelContent(() => {
     if (!applying) emit('update:modelValue', editor!.getValue())

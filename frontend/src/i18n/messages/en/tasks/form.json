@@ -5,7 +5,7 @@
   "classify": "Category and tags",
   "completion": "Time to complete",
   "completionPrefix": "Within",
-  "completionSuffix": "days of taking it",
+  "completionSuffix": "days, counted from the day the application is approved",
   "content": "Content",
   "defaultDeadline": "Default completion deadline",
   "description": "Description",
@@ -25,14 +25,15 @@
     "summaryDomains": "Only {names}",
     "summaryNoRealName": "No real name",
     "summaryRealName": "Real name required",
-    "summaryTeachingDefault": "AI teammates follow the space's guidance",
-    "summaryTeachingOwn": "This task adds AI teammate guidance",
     "title": "More settings"
   },
+  "dueOn": "Deadline",
   "name": "Name",
   "namePlaceholder": "e.g. Reproduce an image classification baseline",
   "noCategories": "No categories",
   "noTopics": "No tags",
+  "opensNow": "Open now",
+  "opensOn": "Opens on",
   "participantLimit": "Participant limit",
   "participantType": "Participant type",
   "participation": "Participation",
@@ -59,7 +60,17 @@
     "verificationTitle": "Identity verification"
   },
   "rank": "Difficulty",
-  "registration": "Registration",
+  "start": {
+    "apply": "Apply first",
+    "applyHint": "Can be started once the publisher approves the application; the time limit counts from that day",
+    "direct": "Start directly",
+    "directHint": "Clicking “Start this task” starts it; with a deadline, everyone hands in by it",
+    "label": "How it starts",
+    "locked": "Someone has already applied for or started this task, so how it starts can no longer change"
+  },
+  "applyEnd": "Applications close",
+  "applyStart": "Applications open",
+  "registration": "Application period",
   "registrationEnd": "End date",
   "registrationStart": "Start date",
   "submitterType": "Taken by",
@@ -70,12 +81,14 @@
   "teamLimit": "Team limit",
   "teamLocking": {
     "free": "Allowed",
-    "freeHint": "Members can still be added or removed after approval",
+    "freeHint": "Members can still be added or removed after the application is approved",
+    "freeHintStart": "Members can still be added or removed after the team starts",
     "label": "Team changes",
-    "locked": "Locked on approval",
-    "lockedHint": "The roster at approval is final"
+    "locked": "Locked once the application is approved",
+    "lockedHint": "The roster at approval is final",
+    "lockedHintStart": "The roster when the team starts is final",
+    "lockedStart": "Locked once the team starts"
   },
-  "teamLockingPolicyLockOnApproval": "Locked on approval",
   "teamSize": "Team size",
   "teamSizeUnit": "people",
   "time": "Schedule",
@@ -91,9 +104,9 @@
     "teamSizeOrder": "The maximum cannot be below the minimum"
   },
   "mentor": {
-    "require": "Add mentors to the claimers' projects",
+    "require": "Add mentors to participants' projects",
     "label": "Mentors",
-    "hint": "Claimers must agree before claiming. Mentors see the project's public channels, documents and files"
+    "hint": "Students agree to them before starting. Mentors see the project's public channels, documents and files"
   },
   "grading": {
     "title": "Submission and grading",
@@ -118,6 +131,33 @@
     "addLine": "Add a line",
     "total": "{n} points in total",
     "nameRequired": "A line with a standard needs a criterion name",
-    "public": "Students can see the rubric"
-  }
+    "public": "Students can see the rubric",
+    "stageTitle": "Stage {n}: {name}",
+    "stageTotal": "{n} points this stage"
+  },
+  "stages": {
+    "title": "Stages",
+    "none": "Not split into stages",
+    "nameOf": "Name of stage {n}",
+    "namePlaceholder": "e.g. Requirements",
+    "due": "Due date",
+    "dueOf": "Due date of stage {n}",
+    "descriptionOf": "What stage {n} asks for",
+    "descriptionPlaceholder": "What this stage should achieve",
+    "moveUp": "Move stage {n} up",
+    "moveDown": "Move stage {n} down",
+    "remove": "Remove stage {n}",
+    "nameRequired": "Every stage needs a name",
+    "add": "Add stage",
+    "removeTitle": "Delete stage {n}?",
+    "removeConfirm": "Delete",
+    "removeBody": "This takes effect when you click Save changes"
+  },
+  "brief": "Brief",
+  "parts": {
+    "ai": "AI settings",
+    "aiHint": "For projects built from this task",
+    "publish": "Publishing"
+  },
+  "dueNone": "No deadline"
 }

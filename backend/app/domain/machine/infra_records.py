@@ -23,6 +23,16 @@ from app.domain.run_record.service import keep
 
 REFUSED = "cloud_refused"
 HOST_LOST = "cloud_host_lost"
+#: How long a platform sandbox took to get ready, step by step: placing it on
+#: a host, waiting for the host, thawing it, bringing its executor up; to be
+#: frozen; and to open a task's checkout in it, its dependencies installed.
+#: Kept for the admin machines page's percentiles (``admin.py``), in no
+#: conversation.
+PREPARED = "sandbox_prepared"
+FROZEN = "sandbox_frozen"
+CHECKED_OUT = "sandbox_checked_out"
+PARKED = "sandbox_parked"
+TIMED = (PREPARED, FROZEN, CHECKED_OUT, PARKED)
 
 #: A refused session asks again on every tool call; one record per session in
 #: this long says it was refused without counting each retry.
@@ -98,4 +108,127 @@ async def keep_host_lost(
             "lost": lost,
             "replaced": replaced,
         },
+    )
+
+
+def _rounded(stages: dict[str, float | None]) -> dict[str, float]:
+    return {
+        name: round(value, 2) for name, value in stages.items() if value is not None
+    }
+
+
+async def _keep_timed(
+    session: AsyncSession,
+    *,
+    kind: str,
+    key: str,
+    conversation_id: uuid.UUID | None,
+    session_id: uuid.UUID | None,
+    stages: dict[str, float | None],
+    total_s: float,
+) -> None:
+    project_id = (
+        await session.scalar(
+            select(Conversation.project_id).where(Conversation.id == conversation_id)
+        )
+        if conversation_id is not None
+        else None
+    )
+    await keep(
+        session,
+        project_id=project_id,
+        content=say(key, seconds=round(total_s, 1)),
+        meta={
+            "event_type": kind,
+            "severity": "info",
+            "session_id": str(session_id) if session_id else None,
+            "total_s": round(total_s, 2),
+            "stages": _rounded(stages),
+        },
+    )
+
+
+async def keep_prepared(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    session_id: uuid.UUID,
+    stages: dict[str, float | None],
+    total_s: float,
+    waited_s: float | None,
+) -> None:
+    """Keep how long a platform sandbox took to be ready for a session that
+    did not hold it ready: ``stages`` in seconds (a step that did not happen
+    is None and left out), ``waited_s`` the session's wait for a host coming
+    up, if it had one. Writes the caller's transaction."""
+    await _keep_timed(
+        session,
+        kind=PREPARED,
+        key="sandboxTimedPrepared",
+        conversation_id=conversation_id,
+        session_id=session_id,
+        stages={**stages, "host": waited_s},
+        total_s=max(total_s, waited_s or 0),
+    )
+
+
+async def keep_frozen(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID | None,
+    session_id: uuid.UUID | None,
+    stages: dict[str, float | None],
+    total_s: float,
+) -> None:
+    """Keep how long freezing an idle sandbox took: its checkpoint and its
+    host's freeze. Writes the caller's transaction."""
+    await _keep_timed(
+        session,
+        kind=FROZEN,
+        key="sandboxTimedFrozen",
+        conversation_id=conversation_id,
+        session_id=session_id,
+        stages=stages,
+        total_s=total_s,
+    )
+
+
+async def keep_checked_out(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    session_id: uuid.UUID | None,
+    total_s: float,
+) -> None:
+    """Keep how long opening a task's checkout in a platform sandbox took,
+    its dependencies installed when they had to be (``task_checkout``).
+    Writes the caller's transaction."""
+    await _keep_timed(
+        session,
+        kind=CHECKED_OUT,
+        key="sandboxTimedCheckedOut",
+        conversation_id=conversation_id,
+        session_id=session_id,
+        stages={"checkout": total_s},
+        total_s=total_s,
+    )
+
+
+async def keep_parked(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID | None,
+    session_id: uuid.UUID | None,
+    total_s: float,
+) -> None:
+    """Keep that a frozen sandbox was parked, and how long its host took to
+    stop it (``lifecycle._park``). Writes the caller's transaction."""
+    await _keep_timed(
+        session,
+        kind=PARKED,
+        key="sandboxTimedParked",
+        conversation_id=conversation_id,
+        session_id=session_id,
+        stages={"park": total_s},
+        total_s=total_s,
     )

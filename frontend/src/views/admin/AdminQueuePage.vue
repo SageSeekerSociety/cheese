@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { useAdminQueue } from '@/composables/useAdminQueue'
 
 import { rewardFeedback } from '@/api/creditOffers'
+import { toast } from '@/lib/toast'
 import { useFeedbackStore } from '@/stores/feedback'
 import AdminQueuePageView from '@/views/admin/AdminQueuePageView.vue'
 

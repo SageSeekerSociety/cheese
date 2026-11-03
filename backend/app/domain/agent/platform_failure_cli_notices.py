@@ -28,6 +28,7 @@ SUBSCRIPTION_ACCOUNTS_COOLING_CODE = "subscription_accounts_cooling"
 MODEL_LIMIT_REACHED_CODE = "model_limit_reached"
 RESPONSE_TRUNCATED_CODE = "response_truncated"
 TOOL_UNAVAILABLE_CODE = "tool_unavailable"
+CONTROL_PLANE_UNAVAILABLE_CODE = "control_plane_unavailable"
 
 #: 一条 CLI 提示最长能有多长。真实样本最长的一条 120 字符出头;留三倍余量,再长
 #: 就不是提示而是内容了。
@@ -42,6 +43,22 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"^API Error:.*\bsubscription egress is offline\b", re.I),
         SUBSCRIPTION_EGRESS_OFFLINE_CODE,
+    ),
+    # The metering proxy's own 503 while its admission check cannot answer
+    # (`deploy/metering-proxy/cheese_billing_core.py`, `billing_addon.py`): the
+    # platform could not say which project and work this call is billed to, so
+    # it made no model call and told the client to retry shortly. Not the
+    # provider being overloaded, and never the platform's account being empty —
+    # the second is what the word "billing" in it used to be read as, which
+    # also stopped the turn from resuming by itself (`resumable_failures`).
+    # Before the 502/503 pattern below, which it also matches.
+    (
+        re.compile(
+            r"^API Error:.*\b(task billing attribution is temporarily"
+            r" unavailable|control plane could not say where this request goes)\b",
+            re.I,
+        ),
+        CONTROL_PLANE_UNAVAILABLE_CODE,
     ),
     # The metering proxy's 429 when every Claude account of the subscription is
     # cooling down after hitting its own limit (`deploy/metering-proxy`,

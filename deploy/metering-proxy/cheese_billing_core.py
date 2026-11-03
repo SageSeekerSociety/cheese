@@ -95,20 +95,38 @@ def proxy_basic_password(header_value: str) -> str:
     return password if sep else ""
 
 
+def _b64url(part: str) -> bytes:
+    return base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+
+
 def verify_scoped_token(
     token: str, secret: str, now: float | None = None
 ) -> dict | None:
-    """The {p, t, exp} claims of a valid, unexpired scoped token, else None."""
-    if not token or not secret or "." not in token:
+    """The {p, t, exp} claims of a valid, unexpired session credential, else
+    None.
+
+    The backend's ``agent+jwt`` (``app.core.credentials``): an HS256 JWT signed
+    with the key it derives from ``secret`` (its SANDBOX_TOKEN) for that kind.
+    Checked here with the standard library alone, because this image carries
+    no JWT package; anything not of exactly that shape is refused."""
+    if not token or not secret or token.count(".") != 2:
         return None
-    body, sig = token.split(".", 1)
-    digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
-    want = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-    if not hmac.compare_digest(sig, want):
+    header_part, payload_part, signature = token.split(".")
+    try:
+        header = json.loads(_b64url(header_part))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(header, dict) or header.get("alg") != "HS256":
+        return None
+    if header.get("typ") != "agent+jwt":
+        return None
+    key = hmac.digest(secret.encode(), b"cheese:credential:agent", hashlib.sha256)
+    digest = hmac.new(key, f"{header_part}.{payload_part}".encode(), hashlib.sha256)
+    want = base64.urlsafe_b64encode(digest.digest()).decode().rstrip("=")
+    if not hmac.compare_digest(signature, want):
         return None
     try:
-        padded = body + "=" * (-len(body) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(padded))
+        claims = json.loads(_b64url(payload_part))
     except (ValueError, json.JSONDecodeError):
         return None
     if not isinstance(claims, dict):
@@ -439,12 +457,16 @@ def _post_admission(
     """One admission call. Raises on transport problems (caller decides policy).
 
     `bearer` is the session's scoped token: it names the room being admitted.
-    `credential` is this proxy's own (the backend's SANDBOX_TOKEN): the backend
-    hands a gateway project's key only to a caller presenting it, because a
-    session holds the same bearer and must never hold the key."""
-    headers = {"Authorization": f"Bearer {bearer}"}
+    `credential` is this proxy's own (the backend's SANDBOX_TOKEN): with it
+    the proxy asks as itself, naming the session in the body, and the backend
+    hands a gateway project's key only to it, because a session holds its own
+    token and must never hold the key. Without it the session's token asks
+    for itself."""
+    headers = {"Authorization": f"Bearer {credential or bearer}"}
+    data = b""
     if credential:
-        headers["X-Cheese-Token"] = credential
+        headers["Content-Type"] = "application/json"
+        data = json.dumps({"session": bearer}).encode()
     if subagent:
         headers["X-Cheese-Subagent"] = "1"
         if child_model:
@@ -454,7 +476,7 @@ def _post_admission(
             # 样）。准入拿它决定「绑它」还是「拒绝并列出可选」——不带就是沿用
             # 项目的分身默认。
             headers["X-Cheese-Requested-Model"] = requested_model
-    req = urllib.request.Request(url, method="POST", headers=headers, data=b"")
+    req = urllib.request.Request(url, method="POST", headers=headers, data=data)
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed scheme/URL from deployment config
         payload = json.loads(resp.read())
     data = payload.get("data") or {}

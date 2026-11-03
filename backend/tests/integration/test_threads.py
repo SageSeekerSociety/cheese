@@ -176,7 +176,7 @@ def test_new_replies_are_news_only_to_the_people_who_took_part(client):
     def unread_for(handle: str) -> bool:
         r = client.get(f"/topics/{room}/threads", headers=session_auth_headers(handle))
         assert r.status_code == 200, r.text
-        (row,) = r.json()["data"]
+        (row,) = r.json()["data"]["open"]
         assert row["reply_count"] == 1
         return row["unread"]
 

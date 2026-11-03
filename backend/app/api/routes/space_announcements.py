@@ -1,7 +1,7 @@
 """空间公告，一条一个地址。
 
-读：空间里的每个人（和空间本身同一道门，`_ensure_space_visible`）。
-写（发布、修改、置顶、删除）：这个空间的所有者与管理员（`is_space_admin`）。
+读：空间里的每个人（``SpacePermission.view``）。
+写（发布、修改、置顶、删除）：这个空间的所有者与管理员（``SpacePermission.announce``）。
 """
 
 from datetime import UTC, datetime
@@ -11,19 +11,19 @@ from fastapi import APIRouter, Depends, Path, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.response import ok
-from app.api.space_deps import _ensure_space_visible, require_reviewed_space
-from app.api.write_access import ROUTE_DECIDES
+from app.api.space_deps import require_reviewed_space
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import is_space_admin
-from app.core.errors import ForbiddenError
 from app.db.session import get_db
 from app.domain.delivery.ledger import amend, deliver, retract
+from app.domain.space import permissions as space_seats
 from app.domain.space.announcement_service import (
     TITLE_MAX_LENGTH,
     AnnouncementView,
     SpaceAnnouncementService,
 )
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.user.services import user_service
 
 router = APIRouter(
@@ -111,13 +111,11 @@ def _to_api(view: AnnouncementView, *, chosen_avatar_ids: dict[int, int]) -> dic
     }
 
 
-async def _ensure_space_manager(*, db, space_id: int, user_id: int) -> None:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=user_id)
-    if not await is_space_admin(session=db, space_id=space_id, user_id=user_id):
-        raise ForbiddenError("Only space admins can perform this action")
-
-
-@router.get("/{spaceId}/announcements", summary="List a space's announcements")
+@router.get(
+    "/{spaceId}/announcements",
+    summary="List a space's announcements",
+    dependencies=[Can(SpacePermission.view)],
+)
 async def list_announcements(
     space_id: SpaceId,
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -126,12 +124,9 @@ async def list_announcements(
     """``current`` (pinned first, then newest) and ``expired``, split by the
     server's clock. ``notifyCount`` is how many people a new announcement from
     the caller would notify — given to managers only, null for everyone else."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     service = _service(db)
     listed = await service.list_for_space(space_id)
-    manager = await is_space_admin(
-        session=db, space_id=space_id, user_id=auth_user.user_id
-    )
+    manager = await space_seats.runs(db, space_id, auth_user.user_id)
     notify_count = (
         await service.audience_size(space_id, author_id=auth_user.user_id)
         if manager
@@ -151,7 +146,7 @@ async def list_announcements(
     "/{spaceId}/announcements",
     summary="Publish an announcement",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(SpacePermission.announce)],
 )
 async def publish_announcement(
     space_id: SpaceId,
@@ -159,7 +154,6 @@ async def publish_announcement(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_manager(db=db, space_id=space_id, user_id=auth_user.user_id)
     view = await _service(db).publish(
         space_id=space_id,
         author_id=auth_user.user_id,
@@ -175,7 +169,7 @@ async def publish_announcement(
 @router.patch(
     "/{spaceId}/announcements/{announcementId}",
     summary="Update an announcement",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(SpacePermission.announce)],
 )
 async def patch_announcement(
     space_id: SpaceId,
@@ -184,7 +178,6 @@ async def patch_announcement(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_manager(db=db, space_id=space_id, user_id=auth_user.user_id)
     view = await _service(db).update(
         space_id=space_id,
         announcement_id=announcement_id,
@@ -202,7 +195,7 @@ async def patch_announcement(
     "/{spaceId}/announcements/{announcementId}",
     summary="Delete an announcement",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(SpacePermission.announce)],
 )
 async def delete_announcement(
     space_id: SpaceId,
@@ -210,6 +203,5 @@ async def delete_announcement(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> None:
-    await _ensure_space_manager(db=db, space_id=space_id, user_id=auth_user.user_id)
     await _service(db).delete(space_id=space_id, announcement_id=announcement_id)
     return None

@@ -9,6 +9,11 @@ mount the connector router at ``/connector`` so ``base = …/connector``):
 * ``poll(code)``                      → ``POST /connector/auth/device/poll``
 * ``verify_token``                    → the ``/connector/agent`` ws + hook auth
 
+The device's durable token exists once, in the hands of whoever holds the
+machine: ``issue_token`` mints it, keeps only its digest, and hands it out a
+single time — to the polling cli, or to the platform enrolling a machine of its
+own. A read of the database cannot act as a device.
+
 Two invariants (fusion-design §4):
   * **approve is behind a human login** — ``approve`` takes the logged-in
     ``owner_user_id`` (injected at the trust boundary) and binds the device to it. The
@@ -41,6 +46,7 @@ from app.domain.device.repository import (
     Supply,
 )
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.user.tokens import digest_token
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +106,8 @@ class DeviceService:
         name: str | None = None,
     ) -> Device:
         """Approve a pending flow on behalf of the logged-in ``owner_user_id``, binding
-        the device to that human as its owner and minting its durable token. The device
+        the device to that human as its owner. Its token is minted when the machine
+        takes it (``issue_token``), not here. The device
         is pure compute — it gets no agent identity (execution-architecture v3). The
         agent a screen runs as is resolved per project/topic at turn time.
 
@@ -128,7 +135,6 @@ class DeviceService:
         device = Device(
             device_id=uuid.uuid4().hex[:12],
             name=chosen,
-            token=secrets.token_urlsafe(24),
             owner_user_id=owner_user_id,
             team_id=team_id,
             created_at=self._now(),
@@ -142,26 +148,56 @@ class DeviceService:
 
     async def poll(self, code_value: str) -> dict[str, str | None]:
         """What the polling client reads. ``{status}`` until approved; then the
-        durable token + identity so the client can persist them."""
+        durable token + identity so the client can persist them. The token is
+        handed out on that one poll and the code is spent: a later poll with the
+        same code finds nothing, as an expired one does."""
         entry = await self._live_code(code_value)
         if entry.status != DeviceStatus.APPROVED or entry.device_id is None:
             return {"status": entry.status}
         device = await self._repo.get_device(entry.device_id)
         if device is None:
             return {"status": DeviceStatus.PENDING}
+        token = await self.issue_token(device.device_id)
+        if token is None:
+            raise NotFoundError(say("deviceCodeSpent"))
+        await self._repo.delete_code(entry.code)
         return {
             "status": DeviceStatus.APPROVED,
-            "token": device.token,
+            "token": token,
             "device_id": device.device_id,
             "device_name": device.name,
         }
 
+    async def issue_token(self, device_id: str) -> str | None:
+        """Mint the device's durable token and keep only its digest. None when
+        the device already has one: a token is issued once, to whoever holds the
+        machine, and never read back."""
+        token = secrets.token_urlsafe(24)
+        if not await self._repo.set_token_digest(device_id, digest_token(token)):
+            return None
+        return token
+
+    async def bootstrap_token(self, device_id: str) -> str:
+        """A fresh token for a machine the platform itself is about to bootstrap,
+        replacing any earlier one: each bootstrap attempt installs the token it
+        was given, and an attempt that failed left nothing holding the last.
+        Only the platform's own machines — a machine a person enrolled holds its
+        token, and replacing it would cut that machine off."""
+        device = await self._repo.get_device(device_id)
+        if device is None:
+            raise NotFoundError(say("deviceNotFound"))
+        if device.supply is not Supply.cloud:
+            raise ForbiddenError(say("deviceTokenNotReplaced"))
+        token = secrets.token_urlsafe(24)
+        await self._repo.replace_token_digest(device_id, digest_token(token))
+        return token
+
     async def verify_token(self, token: str) -> Device | None:
-        """Identify the device behind a token (``X-Cheese-Session`` / bearer). Never
+        """Identify the device behind a token (its connector's bearer). Never
         sufficient on its own — the caller authorizes the resolved actor."""
         if not token:
             return None
-        return await self._repo.get_device_by_token(token)
+        return await self._repo.get_device_by_token_digest(digest_token(token))
 
     async def get_device(self, device_id: str) -> Device | None:
         return await self._repo.get_device(device_id)
@@ -225,7 +261,7 @@ class DeviceService:
         return device
 
     async def may_manage(self, device: Device, actor_user_id: int) -> bool:
-        return await self._repo.is_team_admin(device.team_id, actor_user_id)
+        return await self._repo.may_manage_machines(device.team_id, actor_user_id)
 
     async def list_devices_for_team(self, team_id: int) -> list[Device]:
         return await self._repo.list_devices_by_team(team_id)

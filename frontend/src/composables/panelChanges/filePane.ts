@@ -14,6 +14,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 
 import { downloadFile, listFiles, readFile, RequestTimeoutError, workspaceFileRawUrl } from '../../api'
 import { parseDiffLines } from '../../lib/diff'
+import { useRawImage } from '../useRawImage'
 import { useTopicMemory } from '../useTopicMemory'
 
 import { usePanelFileSave } from './fileSave'
@@ -157,8 +158,8 @@ export function usePanelFilePane(deps: FilePaneDeps) {
   }
   const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
 
-  // Raw bytes of the open file: what <img> renders for an image, and what the
-  // download button hands over for anything else that can't be shown as text.
+  // Raw bytes of the open file: the image below is fetched from it, and the
+  // download button hands it over for anything else that can't be shown as text.
   const openRawUrl = computed(() =>
     openPath.value && props.projectId
       ? workspaceFileRawUrl(
@@ -170,13 +171,14 @@ export function usePanelFilePane(deps: FilePaneDeps) {
         )
       : ''
   )
+  // <img> cannot carry Authorization, and /file/raw answers an anonymous read with
+  // 404: the image is fetched with the header and shown from an object URL.
+  const openImage = useRawImage(() => (openIsImage.value ? openRawUrl.value : ''))
   async function downloadOpenFile() {
     if (!openRawUrl.value || !openPath.value) return
-    try {
-      await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.downloadFailed')
-    }
+    // 成功和失败各弹一句，都在 `downloadFile` 那一层（`lib/download`）。这里的
+    // `errorMsg` 还给读文件、切源那些事用，下载不再往它上面写。
+    await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
   }
 
   // 文件 state is per-source. openPath/fileDraft describe a file in the CURRENT
@@ -396,7 +398,8 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     openDiffLines,
     effectiveView,
     openIsImage,
-    openRawUrl,
+    openImageSrc: openImage.src,
+    openImageError: openImage.error,
     draftCount: computed(() => drafts.size),
     keepDraft,
     loadFiles,

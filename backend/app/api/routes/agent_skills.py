@@ -1,4 +1,4 @@
-"""skills_search / skills_read for AI teammates: find an installed skill, then
+"""cheese_skill(action=search) / cheese_skill(action=read) for AI teammates: find an installed skill, then
 read it whole (OpenClaw's Installed-skill discovery, over the platform).
 
 ``installed`` is what a session in this room can already load with nobody asked
@@ -12,7 +12,7 @@ read it whole (OpenClaw's Installed-skill discovery, over the platform).
   A row on the index is enough; the old adopt/un-adopt gate is gone.
 
 Search answers names and descriptions only — an index, not the library — so a
-big skill set costs no prompt tokens. ``skills_read`` is a separate call and is
+big skill set costs no prompt tokens. ``cheese_skill(action=read)`` is a separate call and is
 the only place a body comes back, and it grants reading alone: neither
 installing nor running anything.
 """
@@ -129,7 +129,7 @@ async def _installed(db: AsyncSession, place) -> dict[str, dict]:
 async def search_installed_skills(
     body: SkillsQuery, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """skills_search: the installed skills matching a query, names only."""
+    """cheese_skill(action=search): the installed skills matching a query, names only."""
     place = await _room(db, body.topic, resolver)
     terms = [word for word in body.query.split() if word]
     skills = []
@@ -152,7 +152,7 @@ async def search_installed_skills(
 async def read_installed_skill(
     body: SkillsName, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """skills_read: one installed skill's whole SKILL.md, or ``found: false``."""
+    """cheese_skill(action=read): one installed skill's whole SKILL.md, or ``found: false``."""
     place = await _room(db, body.topic, resolver)
     name = body.name.strip()
     skill = (await _installed(db, place)).get(name)

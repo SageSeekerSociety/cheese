@@ -168,7 +168,17 @@ else
       docs/manual/* | docs/site/* | backend/sandbox/cheese \
         | backend/app/core/config.py \
         | backend/app/core/sandbox_config.py \
-        | backend/app/core/machine_config.py)
+        | backend/app/core/machine_config.py \
+        | backend/app/core/db_config.py)
+        frontend=true
+        ;;
+    esac
+
+    # The web build bakes in the API generation it sends with every request
+    # (frontend/Dockerfile, the `api` context). A backend whose generation rose
+    # while the frontend image stayed would refuse every page, new ones too.
+    case "$changed_path" in
+      backend/api-generation)
         frontend=true
         ;;
     esac

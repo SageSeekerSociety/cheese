@@ -49,7 +49,7 @@ def test_the_raw_exit_sends_the_inert_pair(monkeypatch, tmp_path):
     stored = tmp_path / "report.html"
     stored.write_bytes(b"<script>alert(document.cookie)</script>")
 
-    async def attachment_file(_db, _project_id, _room_id, _clean):
+    async def attachment_file(_db, _project_id, _room_id, _clean, **_):
         return stored
 
     async def place_or_404(_db, _topic_id):
@@ -78,7 +78,7 @@ def test_the_raw_exit_sends_the_inert_pair(monkeypatch, tmp_path):
 def test_the_pdf_exit_sends_the_inert_pair(monkeypatch):
     """A converted deliverable is still bytes from this origin — same pair."""
 
-    async def source_bytes(_db, _project_id, _topic_id, _clean, _task, _source):
+    async def source_bytes(_db, _project_id, _topic_id, _clean, _task, _source, **_):
         return b"a docx, in principle"
 
     async def render_to_pdf(_data, _clean, _endpoint):
@@ -113,7 +113,7 @@ def test_the_html_preview_keeps_its_nosniff_alongside_its_own_policy(monkeypatch
     browser just becomes free to reinterpret it.
     """
 
-    async def source_bytes(_db, _project_id, _topic_id, _clean, _task, _source):
+    async def source_bytes(_db, _project_id, _topic_id, _clean, _task, _source, **_):
         return b"a docx, in principle"
 
     async def render_to_html(_data, _clean, _endpoint):

@@ -1,8 +1,8 @@
 """Opening a pull request is the platform's step, not the agent's.
 
 A task branch's first pushed commit gets its draft PR from the platform
-(`review/pr_publish.py`); `cheese_ready` marks it ready and
-`cheese_accept_request` hands it to a person, adopting that same PR. A PR an
+(`review/pr_publish.py`); `cheese_card(action=ready)` marks it ready and
+`cheese_card(action=request)` hands it to a person, adopting that same PR. A PR an
 agent opens with `gh pr create` has no card behind it, so nothing the platform
 watches on a card — checks failing or passing, a review, a conflict — comes
 back to the agent, and nobody is asked to accept it.
@@ -25,7 +25,7 @@ import sys
 REFUSAL = (
     "PR 由平台开：任务分支推上第一个提交后，平台自己开这条任务的 draft PR"
     "（编号用 `gh pr list --head <分支>` 或任务卡查）。"
-    "要评审用 cheese_ready，要人验收用 cheese_accept_request。"
+    "要评审用 cheese_card(action=ready)，要人验收用 cheese_card(action=request)。"
 )
 
 _SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n", ";;", "|&"}

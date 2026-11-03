@@ -41,6 +41,7 @@ def _make_task(**overrides):
         "deadline": None,
         "registration_start_at": None,
         "default_deadline": 30,
+        "start_mode": "APPLY",
         "resubmittable": False,
         "editable": True,
         "rank": None,
@@ -290,7 +291,7 @@ class TestCreateTaskEntityDomainResolution:
             # 这两个用例测的是 domain group 的解析，不是权限；发布收权那道门在这里
             # 直接放行，免得拿 AsyncMock 的 session 去撞它。
             patch(
-                "app.api.routes.tasks._common.may_publish_in_space",
+                "app.api.routes.tasks._common.space_seats.SPACE.allows",
                 new=AsyncMock(return_value=True),
             ),
             patch(
@@ -360,7 +361,7 @@ class TestCreateTaskEntityDomainResolution:
             ),
             # 与上一个用例同理：这里是解析逻辑的单元测试，不是权限测试。
             patch(
-                "app.api.routes.tasks._common.may_publish_in_space",
+                "app.api.routes.tasks._common.space_seats.SPACE.allows",
                 new=AsyncMock(return_value=True),
             ),
             patch(
@@ -550,10 +551,8 @@ class TestEnrichTaskModelsAccessDomainGroups:
             patch(
                 "app.api.task_serialization.UserProfileRepository",
                 return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={}),
-                    # Nobody here picked a face, so the mapping is empty and the
-                    # client draws the initial (see the repository method).
-                    chosen_avatar_ids=AsyncMock(return_value={}),
+                    # Nobody here picked a face: no profiles, no chosen avatars.
+                    profiles_and_chosen_avatars=AsyncMock(return_value=({}, {})),
                 ),
             ),
             patch(
@@ -623,8 +622,8 @@ class TestEnrichTaskModelsAccessDomainGroups:
             patch(
                 "app.api.task_serialization.UserProfileRepository",
                 return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={}),
-                    chosen_avatar_ids=AsyncMock(return_value={}),
+                    # Nobody here picked a face: no profiles, no chosen avatars.
+                    profiles_and_chosen_avatars=AsyncMock(return_value=({}, {})),
                 ),
             ),
             patch(
@@ -697,10 +696,8 @@ class TestEnrichTaskModelsAccessDomainGroups:
             patch(
                 "app.api.task_serialization.UserProfileRepository",
                 return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={}),
-                    # Nobody here picked a face, so the mapping is empty and the
-                    # client draws the initial (see the repository method).
-                    chosen_avatar_ids=AsyncMock(return_value={}),
+                    # Nobody here picked a face: no profiles, no chosen avatars.
+                    profiles_and_chosen_avatars=AsyncMock(return_value=({}, {})),
                 ),
             ),
             patch(
@@ -763,10 +760,8 @@ class TestEnrichTaskModelsAccessDomainGroups:
             patch(
                 "app.api.task_serialization.UserProfileRepository",
                 return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={}),
-                    # Nobody here picked a face, so the mapping is empty and the
-                    # client draws the initial (see the repository method).
-                    chosen_avatar_ids=AsyncMock(return_value={}),
+                    # Nobody here picked a face: no profiles, no chosen avatars.
+                    profiles_and_chosen_avatars=AsyncMock(return_value=({}, {})),
                 ),
             ),
             patch(

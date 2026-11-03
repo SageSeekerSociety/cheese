@@ -47,7 +47,9 @@ class AgentHost:
     def __init__(self, client, project, topic, seat):
         self.client = client
         self.environ = {"CHEESE_TOPIC": topic, "CHEESE_PROJECT": project}
-        self.headers = {"X-Cheese-Token": mint_session_token(project, topic, seat)}
+        self.headers = {
+            "Authorization": f"Bearer {mint_session_token(project, topic, seat)}"
+        }
         self.doc_versions: dict = {}
 
     def request(self, plan):

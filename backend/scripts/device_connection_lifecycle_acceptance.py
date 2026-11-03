@@ -90,7 +90,8 @@ async def connector(
         capture_output=True,
     )
     async with websockets.connect(
-        f"ws://127.0.0.1:{port}/connector/agent?token=acceptance"
+        f"ws://127.0.0.1:{port}/connector/agent",
+        additional_headers={"Authorization": "Bearer acceptance"},
     ) as socket:
         welcome = json.loads(await socket.recv())
         events.put({"event": "connected", "welcome": welcome})
@@ -273,8 +274,12 @@ def prepare_owner_image(image: str, docker, log) -> None:
 
 
 @contextmanager
-def image_owner(options, root: Path, *, start_runtime=True):
-    """Run the released owner and its packaged Go connector without code mounts."""
+def image_owner(options, root: Path, *, start_runtime=True, origin=None):
+    """Run the released owner and its packaged Go connector without code mounts.
+
+    ``origin`` is the business backend, on this host, that the owner relays a
+    sandbox's platform socket to, as a deployment's ``CONNECTOR_ORIGIN_URL``
+    names; without one the owner answers that socket 503."""
     if not options.owner_revision or "@sha256:" not in options.owner_image:
         raise ValueError("owner acceptance requires an image digest and revision")
     os.environ["SANDBOX_TOKEN"] = SECRET
@@ -338,6 +343,8 @@ def image_owner(options, root: Path, *, start_runtime=True):
         "DB_POOL_SIZE": "5",
         "DB_MAX_OVERFLOW": "5",
     }
+    if origin:
+        env["CONNECTOR_ORIGIN_URL"] = origin
     env_args = [arg for key, value in env.items() for arg in ("-e", f"{key}={value}")]
     with (
         log_path.open("x") as log,
@@ -537,6 +544,8 @@ VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-22222222
                 network,
                 "-p",
                 f"127.0.0.1:{options.port}:8082",
+                "--add-host",
+                "host.docker.internal:host-gateway",
                 *env_args,
                 options.owner_image,
                 "uvicorn",
@@ -590,7 +599,8 @@ VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-22222222
             async def reject_device():
                 try:
                     async with websockets.connect(
-                        f"ws://127.0.0.1:{options.port}/connector/agent?token=wrong"
+                        f"ws://127.0.0.1:{options.port}/connector/agent",
+                        additional_headers={"Authorization": "Bearer wrong"},
                     ):
                         raise AssertionError("owner accepted an invalid device token")
                 except websockets.exceptions.InvalidStatus as exc:
@@ -717,7 +727,7 @@ def refused_connection_acceptance(endpoint, token, work, log):
                 endpoint,
                 content=body,
                 headers={
-                    "X-Cheese-Token": self.headers["X-Cheese-Token"],
+                    "Authorization": self.headers["Authorization"],
                     "Content-Type": self.headers["Content-Type"],
                 },
                 timeout=30,
@@ -869,7 +879,9 @@ def image_acceptance(options, root: Path) -> int:
         assert httpx.post(endpoint, json=request).status_code == 401
         assert (
             httpx.post(
-                endpoint, json=request, headers={"X-Cheese-Token": wrong_project}
+                endpoint,
+                json=request,
+                headers={"Authorization": f"Bearer {wrong_project}"},
             ).status_code
             == 403
         )
@@ -880,7 +892,10 @@ def image_acceptance(options, root: Path) -> int:
         )
         try:
             response = httpx.post(
-                endpoint, json=request, headers={"X-Cheese-Token": token}, timeout=30
+                endpoint,
+                json=request,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30,
             )
         finally:
             docker(

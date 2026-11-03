@@ -54,6 +54,7 @@ import { registerPlugins } from '@/plugins'
 import { installAppRuntime } from '@/plugins/runtime'
 import vuetify from '@/plugins/vuetify'
 import { persistProjectList } from '@/query/persist'
+import { persistRooms } from '@/query/persistRooms'
 import AccountService from '@/services/account'
 import { watchForStaleBuild } from '@/services/staleBuild'
 
@@ -61,6 +62,8 @@ AccountService.init()
 
 // 上次的项目清单先放回缓存，左边栏冷打开时当场就有。
 persistProjectList()
+// 最近去过的房间（频道清单、成员、最新一页）从浏览器里放回来，打开频道当场就有。
+persistRooms()
 
 // In the desktop app the frame is not selectable text and has no browser menu.
 behaveAsDesktopApp()

@@ -17,6 +17,7 @@ export interface WorkPanelHandle {
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   openDocument?: (document: OpenedDocument, review?: DocReviewRequest) => Promise<void>
+  openSkill?: (skill: { id: string; title: string }) => Promise<void>
   previewShown?: () => void
   /** 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。 */
   activeTab: () => string
@@ -26,7 +27,6 @@ export interface WorkPanelHandle {
 export interface ChatColumnHandle {
   linkDown: boolean
   reloadFeedback: () => void
-  reloadSkills: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 }

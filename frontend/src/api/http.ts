@@ -6,6 +6,7 @@
 import type { ApiEnvelope } from '../cx_types'
 
 import { t } from '../i18n'
+import { apiGenerationHeaders, askToReload, CLIENT_OUTDATED } from '../lib/apiGeneration'
 import { storageGet } from '../lib/browserStorage'
 import { desktopAppHeaders } from '../lib/desktopApp'
 import { refusalText, refusalWords } from '../lib/noticeText'
@@ -29,9 +30,15 @@ export function authToken(): string {
   return storageGet('accessToken') ?? ''
 }
 
+// Every request this page sends says which API generation it was built for
+// (lib/apiGeneration.ts); the auth header rides the same calls.
 export function authHeaders(): Record<string, string> {
   const token = authToken()
-  return { ...desktopAppHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+  return {
+    ...desktopAppHeaders(),
+    ...apiGenerationHeaders(),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
 }
 
 // Retried on GET: the edge's own statuses. nginx answers 502–504 for an app it
@@ -88,7 +95,9 @@ export function refusalError(res: Response, body: unknown, path: string): ApiErr
   const serverSaid = refusalWords(body)
   const http = `HTTP ${res.status}`
   const said = serverSaid ? t('global.labelWithAside', { label: serverSaid, aside: http }) : `${http} for ${path}`
-  return new ApiError(res.status, said, (body as { error?: { name?: string } } | null)?.error?.name)
+  const name = (body as { error?: { name?: string } } | null)?.error?.name
+  if (name === CLIENT_OUTDATED) askToReload()
+  return new ApiError(res.status, said, name)
 }
 
 export class RequestTimeoutError extends Error {
@@ -302,6 +311,7 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
         message?: string
         error?: { name?: string; message?: string; retryable?: boolean; data?: unknown }
       }
+      if (details.error?.name === CLIENT_OUTDATED) askToReload()
       if (
         details.error?.retryable !== false &&
         attempt < GET_RETRY_DELAYS_MS.length &&
@@ -366,4 +376,29 @@ export function readSince<T extends object>(path: string, previous: T | undefine
     READ_BUDGET_MS,
     outer
   )
+}
+
+/** 取一次下载的字节。
+ *
+ *  说话的顺序和别处一样：服务器给了话就用它那句（它知道为什么拒绝），没有才退回
+ *  「下载失败（HTTP 403）」；请求根本没发出去时 fetch 抛的是浏览器自己那句英文
+ *  （"Failed to fetch"），换成平台那句话——那种串端给人看等于什么都没说。
+ *
+ *  放在这一层而不是 `lib/download.ts`：那一层管存盘和提示，组件会 import 它，而给
+ *  组件打分的 `frontend_grade.py` 把带 `fetch(` 的模块算作 API 层——组件引了它，独立
+ *  可挂载那一级就掉了（`pnpm run lint:scenes`）。取字节本来就属于 `api/**`。 */
+export async function downloadBytes(url: string, headers: Record<string, string>): Promise<Blob> {
+  let res: Response
+  try {
+    res = await fetch(url, { headers })
+  } catch {
+    throw new Error(t('global.request.downloadUnreachable'))
+  }
+  if (!res.ok) {
+    // `refusalWords` 认得出服务器那句话（含 `error.i18n`，会渲染成读者这一门语言）；
+    // 读不动正文（错误页、空体）不算错，那时退回平台那句。
+    const body = await res.json().catch(() => null)
+    throw new Error(refusalWords(body) || t('global.request.downloadFailed', { status: res.status }))
+  }
+  return res.blob()
 }

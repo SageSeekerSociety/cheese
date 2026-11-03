@@ -32,11 +32,17 @@ describe('previewOf', () => {
       submitterType: 'TEAM',
       categoryId: 3,
       topics: [9],
-      submissionSchema: [{ prompt: 'csim.c', type: 'FILE' }],
-      rubric: [{ item: '正确性', points: 60, criteria: '' }],
+      submissionSchema: [{ prompt: 'csim.c', type: 'FILE', stage: null }],
+      rubric: [{ item: '正确性', points: 60, criteria: '', stage: null }],
       participantLimit: null,
     })
     expect(shown.writing).toBe('participant_limit')
+  })
+
+  it('fills how the task starts in the form’s words, and only those', () => {
+    expect(previewOf({ start_mode: '直接开始' }, terms).fields).toEqual({ startMode: 'DIRECT' })
+    expect(previewOf({ start_mode: '申请制' }, terms).fields).toEqual({ startMode: 'APPLY' })
+    expect(previewOf({ start_mode: '直接' }, terms).fields).toEqual({})
   })
 
   it('leaves out what is not finished or not in the space', () => {
@@ -65,7 +71,7 @@ describe('previewOf：参与、时间和更多设置', () => {
       {
         draft: 41,
         mentors: ['王立', '@wangli', '不认识的人'],
-        team_locking: '报名通过后锁定',
+        team_locking: '开始做这道题后锁定',
         registration_start: '2026-11-01 08:00',
         access: ['本校邮箱'],
         ai_guidance: '先写需求说明',
@@ -87,6 +93,46 @@ describe('previewOf：参与、时间和更多设置', () => {
   it('空列表是全部成员能领，空指导回到空间默认', () => {
     const shown = previewOf({ access: [], ai_guidance: '' }, named)
     expect(shown.fields).toMatchObject({ accessControlEnabled: false, teaching: {}, teachingOwn: false })
+  })
+})
+
+describe('previewOf：AI 的设置', () => {
+  const named = {
+    categories: [],
+    topics: [],
+    materials: [{ id: 7, name: '第 6 周讲义.pdf' }],
+    teammates: [{ name: 'academic-research', title: '学术研究' }],
+    teaching: { mode: 'guide' as const, systemPrompt: '先问他试过什么' },
+  }
+
+  it('芝士写到的几格换上，没写的照草稿现在的样子；队友和资料按名字对上', () => {
+    const shown = previewOf(
+      {
+        draft: 41,
+        ai_teammate: '学术研究',
+        ai_private_guidance: '参考答案在第 12 页',
+        ai_goals: ['能自己写出 LRU'],
+        ai_materials: ['第 6 周讲义.pdf', '不在资料库里的'],
+        ai_skills: ['wolfram'],
+      },
+      named
+    )
+    expect(shown.fields).toMatchObject({
+      defaultRole: 'academic-research',
+      teaching: {
+        mode: 'guide',
+        systemPrompt: '先问他试过什么',
+        privatePrompt: '参考答案在第 12 页',
+        learningGoals: ['能自己写出 LRU'],
+        materialIds: [7],
+        skills: ['wolfram'],
+      },
+      teachingOwn: true,
+    })
+  })
+
+  it('不认识的队友先不填，等服务端那一份', () => {
+    expect(previewOf({ ai_teammate: '没有这位' }, named).fields.defaultRole).toBeUndefined()
   })
 })
 

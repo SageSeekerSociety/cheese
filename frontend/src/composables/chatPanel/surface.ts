@@ -127,6 +127,7 @@ export function usePanelSurface(parts: {
     hideBar: parts.rowActions.hideBar,
     bar: parts.rowActions.bar,
     barBlock: parts.rowActions.barBlock,
+    kbdNav: parts.rowActions.kbdNav,
     reactionPickerFor: parts.reactions.reactionPickerFor,
     touchOnly: parts.rowActions.touchOnly,
     timeShownId: parts.rowActions.timeShownId,

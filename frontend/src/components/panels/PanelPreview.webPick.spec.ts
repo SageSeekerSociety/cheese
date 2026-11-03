@@ -78,7 +78,6 @@ function baseProps(submitQuestion: SubmitPreviewQuestion | undefined, overrides:
     documentType: null,
     documentName: 'report.html',
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docIdentity: identity,
     docSnapshot: null,
@@ -131,8 +130,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('the toggle only appears for web previews and hands the switch to the frame', async () => {
+it('the toggle only appears in the note mode of a web preview and hands the switch to the frame', async () => {
   const ui = mount()
+  // 「看」是默认那一段：在读，不摆「标一处」。切到「批注」才摆出来。
+  expect(ui.queryByTestId('preview-pick')).toBeNull()
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
   const toggle = ui.getByTestId('preview-pick')
   expect(toggle.getAttribute('aria-pressed')).toBe('false')
   await fireEvent.click(toggle)
@@ -140,6 +142,11 @@ it('the toggle only appears for web previews and hands the switch to the frame',
   expect(toggle.getAttribute('aria-pressed')).toBe('true')
   await fireEvent.click(toggle)
   expect(ui.modes).toEqual([true, false])
+  // 开着圈选切回「看」：开关不摆了，帧里那一头也得收到「关」，不然还在描边、还在报。
+  await fireEvent.click(ui.getByTestId('preview-pick'))
+  await fireEvent.click(ui.getByTestId('preview-mode-view'))
+  expect(ui.queryByTestId('preview-pick')).toBeNull()
+  expect(ui.modes).toEqual([true, false, true, false])
 })
 
 it('an element pick from the frame becomes a structured web-element quote', async () => {
@@ -159,7 +166,7 @@ it('an element pick from the frame becomes a structured web-element quote', asyn
   expect(typeof ui.view()!.handlePick).toBe('function')
   ui.view()!.handlePick(pick)
   await nextTick()
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这里改一下')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这里改一下')
   await fireEvent.click(ui.getByText('发送'))
   expect(submit).toHaveBeenCalledTimes(1)
   expect(submit.mock.calls[0]![0].quotedContext).toEqual({
@@ -190,7 +197,7 @@ it('a selection from the frame stays a web-text quote with the words on either s
     viewport: { w: 800, h: 600 },
   })
   await nextTick()
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这句不对')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这句不对')
   await fireEvent.click(ui.getByText('发送'))
   expect(submit.mock.calls[0]![0].quotedContext).toMatchObject({
     kind: 'web-text',
@@ -219,8 +226,8 @@ it('an app without the bridge gets an overlay and quotes the boxed region by url
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 50, clientY: 50 })
   await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 150, clientY: 150 })
   await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 150, clientY: 150 })
-  await waitFor(() => expect(ui.queryByPlaceholderText('说明要改什么')).toBeTruthy())
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这块空白太大')
+  await waitFor(() => expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这块空白太大')
   await fireEvent.click(ui.getByText('发送'))
   expect(submit.mock.calls[0]![0].quotedContext).toEqual({
     kind: 'web-region',

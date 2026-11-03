@@ -13,8 +13,7 @@ import asyncio
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task import teaching as teaching_context
-from tests.conftest import seed_claim, seed_task_with_protocol
-from tests.integration.conftest import post_project
+from tests.conftest import seed_task_with_protocol, start_task_project
 
 OWNER = "owner-1"
 
@@ -25,10 +24,8 @@ TASK = {"system_prompt": "题目的"}
 PROJECT = {"mode": "example", "system_prompt": "项目的"}
 
 
-def _project(client, *, external_task_id: int) -> int:
-    seed_claim(client, external_task_id, handle=OWNER)
-    body = {"name": "团队", "external_task_id": external_task_id}
-    return post_project(client, json=body, owner=OWNER).json()["data"]["id"]
+def _project(client, *, external_task_id: int) -> str:
+    return start_task_project(client, external_task_id, handle=OWNER)
 
 
 def _set_project_teaching(client, *, project_id: int, teaching: dict) -> None:

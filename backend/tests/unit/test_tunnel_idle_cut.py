@@ -121,7 +121,9 @@ def test_backend_closes_a_tunnel_whose_meter_went_silent(silent_meter, monkeypat
     monkeypatch.setattr(llm_tunnel, "_IDLE_CHECK_S", 0.02)
     token = mint_scoped_token(project_id="7c9e6679-7425-40de-944b-e07fc1f90ae7")
     with TestClient(app) as client:
-        with client.websocket_connect(f"/llm/tunnel?token={token}") as ws:
+        with client.websocket_connect(
+            "/llm/tunnel", headers={"Authorization": f"Bearer {token}"}
+        ) as ws:
             ws.send_bytes(_CONNECT_HEAD)
             with pytest.raises(WebSocketDisconnect) as closed:
                 ws.receive_bytes()

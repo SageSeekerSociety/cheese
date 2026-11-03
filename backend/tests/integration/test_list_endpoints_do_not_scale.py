@@ -34,7 +34,11 @@ import time
 import pytest
 from sqlalchemy import text
 
-from tests.integration.conftest import create_approved_space, unique_int
+from tests.integration.conftest import (
+    create_approved_space,
+    join_task_space,
+    unique_int,
+)
 from tests.support.counting_session import (
     assert_does_not_scale,
     assert_growth_within,
@@ -264,6 +268,7 @@ def _task(client, headers: dict[str, str], space: int, category: int, name: str)
 
 
 def _participant(client, owner: dict, submitter: dict, task_id: int) -> int:
+    join_task_space(client, task_id, submitter, admin_headers=owner)
     r = client.post(f"/tasks/{task_id}/participations/user", json={}, headers=submitter)
     assert r.status_code == 200, r.text
     participant_id = r.json()["data"]["participant"]["id"]

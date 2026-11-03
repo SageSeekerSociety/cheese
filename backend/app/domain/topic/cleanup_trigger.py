@@ -10,7 +10,7 @@ def main() -> None:
     request = Request(
         "http://127.0.0.1:8081/sandbox/storage-sweep",
         data=b"",
-        headers={"X-Cheese-Token": SANDBOX_TOKEN},
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
         method="POST",
     )
     with urlopen(request, timeout=15) as response:

@@ -15,10 +15,11 @@ import type { BrowserSignInEntry } from '@/lib/desktopApp'
 import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { ENTRY_PAGE, keepAppChallenge } from './appSignIn'
+import { ENTRY_PAGE, keepAppChallenge, keepReturnOrigin } from './appSignIn'
 import AppSignInStartView from './AppSignInStartView.vue'
 import { inviteCodeFor } from './inviteCode'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { myId } from '@/me'
 
 const route = useRoute()
@@ -28,6 +29,14 @@ onMounted(() => {
   const challenge = route.query.challenge
   if (typeof challenge !== 'string' || !keepAppChallenge(challenge)) {
     router.replace({ name: 'SignIn' })
+    return
+  }
+  // Started on another origin of this deployment with a provider whose
+  // sign-in runs here: straight to the provider, then back there.
+  const { returnTo, provider } = route.query
+  if (typeof returnTo === 'string' && typeof provider === 'string') {
+    keepReturnOrigin(returnTo)
+    UserAuthApi.redirectToOAuthLogin(provider)
     return
   }
   if (myId()) {

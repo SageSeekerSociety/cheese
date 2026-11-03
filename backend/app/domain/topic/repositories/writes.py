@@ -33,6 +33,8 @@ async def add(
     number: int,
     environment: dict,
     title: str,
+    description: str | None = None,
+    members_only: bool = False,
     parent_id: uuid.UUID | None = None,
     kind: TopicKind = TopicKind.topic,
     created_by: str | None = None,
@@ -46,6 +48,8 @@ async def add(
         number=number,
         environment=environment,
         title=title,
+        description=description,
+        members_only=members_only,
         parent_id=parent_id,
         kind=kind,
         created_by=created_by,
@@ -53,7 +57,6 @@ async def add(
     )
     repo._session.add(topic)
     await repo._session.flush()
-    await repo._session.refresh(topic)
     return topic
 
 

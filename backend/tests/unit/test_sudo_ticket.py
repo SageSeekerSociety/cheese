@@ -22,7 +22,8 @@ from app.common.auth import (
     mint_sudo_ticket,
     verify_sudo_ticket,
 )
-from app.core.config import settings
+from app.core import credentials
+from app.core.credentials import Kind
 
 
 def test_a_minted_ticket_names_its_user_and_its_operation() -> None:
@@ -61,6 +62,7 @@ def test_a_ticket_from_another_signing_key_is_not_a_ticket() -> None:
         },
         "not-the-platform-secret",
         algorithm="HS256",
+        headers={"typ": "sudo+jwt"},
     )
     assert verify_sudo_ticket(forged) is None
 
@@ -68,16 +70,14 @@ def test_a_ticket_from_another_signing_key_is_not_a_ticket() -> None:
 def test_an_expired_ticket_is_not_a_ticket() -> None:
     """The window is what keeps "proved presence" from meaning "proved it at
     some point this month"."""
-    expired = jwt.encode(
+    expired = credentials.mint(
+        Kind.SUDO,
         {
             "sub": "77",
-            "type": "sudo",
             "purpose": SudoPurpose.TWO_FA_DISABLE.value,
             "jti": "0" * 32,
             "exp": int(time.time()) - 1,
         },
-        settings.jwt_secret,
-        algorithm="HS256",
     )
     assert verify_sudo_ticket(expired) is None
     assert 0 < SUDO_TICKET_TTL_S <= 15 * 60
@@ -86,29 +86,25 @@ def test_an_expired_ticket_is_not_a_ticket() -> None:
 def test_a_purpose_this_build_does_not_know_is_refused() -> None:
     """An unrecognised name cannot be matched against the entrance redeeming
     it, so treating it as a wildcard is the one reading that must not happen."""
-    unknown = jwt.encode(
+    unknown = credentials.mint(
+        Kind.SUDO,
         {
             "sub": "77",
-            "type": "sudo",
             "purpose": "billing:wire-transfer",
             "jti": "0" * 32,
             "exp": int(time.time()) + 300,
         },
-        settings.jwt_secret,
-        algorithm="HS256",
     )
     assert verify_sudo_ticket(unknown) is None
 
 
 def test_a_ticket_with_no_jti_cannot_be_spent_once_so_is_no_ticket() -> None:
-    no_jti = jwt.encode(
+    no_jti = credentials.mint(
+        Kind.SUDO,
         {
             "sub": "77",
-            "type": "sudo",
             "purpose": SudoPurpose.TWO_FA_DISABLE.value,
             "exp": int(time.time()) + 300,
         },
-        settings.jwt_secret,
-        algorithm="HS256",
     )
     assert verify_sudo_ticket(no_jti) is None

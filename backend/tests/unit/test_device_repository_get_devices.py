@@ -28,6 +28,7 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.repository import Device
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 
 NOW = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
 
@@ -55,7 +56,7 @@ async def device_engine():
                     DeviceRow(
                         device_id="device-1",
                         name="alpha",
-                        token="token-1",
+                        token_digest=digest_token("token-1"),
                         team_id=7,
                         owner_user_id=1,
                         created_at=NOW,
@@ -63,7 +64,7 @@ async def device_engine():
                     DeviceRow(
                         device_id="device-2",
                         name="beta",
-                        token="token-2",
+                        token_digest=digest_token("token-2"),
                         team_id=7,
                         owner_user_id=2,
                         created_at=NOW,
@@ -71,7 +72,7 @@ async def device_engine():
                     DeviceRow(
                         device_id="device-3",
                         name="gamma",
-                        token="token-3",
+                        token_digest=digest_token("token-3"),
                         team_id=7,
                         owner_user_id=1,
                         created_at=NOW,
@@ -109,7 +110,6 @@ def _comparable(device: Device) -> dict:
     return {
         "device_id": device.device_id,
         "name": device.name,
-        "token": device.token,
         "owner_user_id": device.owner_user_id,
         "created_at": device.created_at,
         "team_id": device.team_id,

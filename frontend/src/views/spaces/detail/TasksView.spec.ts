@@ -48,6 +48,10 @@ function show(more: Record<string, unknown> = {}) {
       refreshing: false,
       tasks: [task({ id: 1, name: '最短路径' })],
       total: 1,
+      mineTasks: [],
+      mineTotal: 0,
+      mineHasMore: false,
+      mineLoadingMore: false,
       closedTasks: [],
       closedTotal: 0,
       closedHasMore: false,
@@ -86,5 +90,24 @@ describe('题目列表的末尾', () => {
 
     view.getByText('上学期的期末项目')
     expect(view.getAllByText('没有更多了')).toHaveLength(1)
+  })
+})
+
+describe('「我参与的」那一组', () => {
+  it('在列表最上面，带着条数，不收起', () => {
+    const view = show({
+      mineTasks: [task({ id: 3, name: '我在做的题', joined: true, submittable: true })],
+      mineTotal: 1,
+    })
+
+    view.getByText('我参与的（1）')
+    view.getByText('我在做的题')
+    view.getByText('最短路径')
+  })
+
+  it('我手上一道都没有：不画这一组', () => {
+    const view = show()
+
+    expect(view.queryByText(/我参与的（/)).toBeNull()
   })
 })

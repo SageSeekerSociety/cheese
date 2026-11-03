@@ -34,6 +34,7 @@ def _task(**overrides):
         "published_at": None,
         "ended_at": None,
         "deadline": None,
+        "start_mode": "APPLY",
         # 真库里 0 表示不限；这一格是卡片上「N / 上限 人领取」要的数。
         "participant_limit": None,
     }
@@ -283,12 +284,15 @@ class TestBuildTaskItem:
         )
         assert result["failedParticipantCount"] == 1
 
-    def test_review_rejected(self):
+    def test_one_passed_stage_is_not_a_successful_participant(self):
+        """On a task in stages, a claim whose first stage was accepted and whose
+        second is not handed in yet has not passed: its latest review is a pass,
+        but the claim reads NOT_SUBMITTED."""
         svc = self._svc()
         task = _task(id=10)
         m = _membership(id=1, approved=0, completion_status="NOT_SUBMITTED")
         sub = _submission(id=50, membership_id=1)
-        rev = _review(id=60, submission_id=50, accepted=False)
+        rev = _review(id=60, submission_id=50, accepted=True)
 
         result = svc._build_task_item(
             task=task,
@@ -297,7 +301,9 @@ class TestBuildTaskItem:
             latest_submissions_by_membership_id={1: sub},
             reviews_by_submission_id={50: rev},
         )
-        assert result["failedParticipantCount"] == 1
+        assert result["successfulParticipantCount"] == 0
+        assert result["failedParticipantCount"] == 0
+        assert result["submittedParticipantCount"] == 1
 
 
 class TestVisibilityStatus:

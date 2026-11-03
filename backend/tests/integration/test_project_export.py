@@ -137,7 +137,7 @@ def exported_project(client, monkeypatch, tmp_path):
             db.add(card)
             await library_records.add(
                 db,
-                Shelf.of_project(pid),
+                Shelf.of_project(pid, with_task=False),
                 "资料/source data.csv",
                 b"a,b\n1,2\n",
                 "export-owner",

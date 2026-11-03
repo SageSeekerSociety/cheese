@@ -189,10 +189,6 @@ def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
     told = _told(client, task_id)
     assert "最后一次交付已经采纳并合并" in told
     assert "实况文档" in told and "chat_send" in told
-    # 留痕记录是单独一条，号码是平台给的、标题和正文它自己去 GitHub 读（#4693
-    # 那两次收尾一次贴了一次没贴，就是这一条从记忆挪进指令的原因）。
-    assert "再单独发一条【留痕记录】" in told
-    assert "gh pr view 7" in told
 
 
 def test_the_task_closes_when_its_teammate_closes_it_after_the_write_up(

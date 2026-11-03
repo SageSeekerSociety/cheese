@@ -56,7 +56,7 @@
   "teachersTitle": "Teach through projects",
   "teachersBody": "Post problems, review submissions, and tell the AI teammate where the class has got to. Each group's discussions, decisions and results stay in the project, so guidance rests on what actually happened.",
   "teachersStep1": "Post problems in a space",
-  "teachersStep2": "Approve students' claims",
+  "teachersStep2": "Approve students' applications",
   "teachersStep3": "Grade and give feedback",
   "companies": "Companies",
   "companiesTitle": "Reach universities through problems",
@@ -122,7 +122,7 @@
       "label": "Universities and institutions",
       "title": "Take the classroom into real projects",
       "body": "For schools, colleges and innovation centers that run practice projects around real problems. Teachers post problems and review the results, students work in teams, AI takes part throughout, and the process and results are kept in full.",
-      "include1": "Posting problems and approving claims",
+      "include1": "Posting problems and approving applications",
       "include2": "Submission review and grading",
       "include3": "Group project spaces",
       "include4": "Models and cloud resources",
@@ -185,9 +185,9 @@
       "label": "Teachers",
       "title": "Set challenges, approve participants and review their work in one space",
       "item1Title": "Publish a challenge",
-      "item1Body": "Write the brief, and set when sign-up closes and how many days participants get after claiming",
-      "item2Title": "Approve participants",
-      "item2Body": "When students claim a challenge, approve or decline them under Participants",
+      "item1Body": "Write the brief, and set when applications close and how many days each participant gets",
+      "item2Title": "Approve applications",
+      "item2Body": "When students apply to do a challenge, approve or decline them under Participants",
       "item3Title": "Review submissions",
       "item3Body": "Go through each one, mark it passed or not, and give a score and a comment",
       "item4Title": "Set how the AI teammate helps",
@@ -197,7 +197,7 @@
     "students": {
       "label": "Students",
       "title": "Get your assignments done with Cheese, your AI teammate",
-      "item1Title": "Claim a challenge",
+      "item1Title": "Apply to do a challenge",
       "item1Body": "Find it in your teacher's space and start once your teacher approves",
       "item2Title": "Work on it with Cheese",
       "item2Body": "You get a project of your own, where Cheese looks things up, writes code and drafts reports with you",
@@ -239,7 +239,7 @@
       "topic": "Task",
       "board": "Board",
       "assignment": "Week 3: Grade statistics",
-      "assignmentMeta": "Due 14 days after claiming · Multiple allowed",
+      "assignmentMeta": "14 days to finish · Multiple allowed",
       "wang": "Wang",
       "chen": "Chen",
       "zhou": "Zhou",
@@ -329,7 +329,9 @@
     "loadFailed": "Failed to load the document",
     "colophon": {
       "brand": "Cheese · where people and AI teammates work together",
-      "seats": "{name} has {n} invited seats left · Join with this link"
+      "by": "Written by {name} with their AI teammate in Cheese",
+      "byWithApp": "Interactive models and text built by {name} with Cheese",
+      "enter": "About Cheese"
     }
   }
 }

@@ -47,6 +47,10 @@ export interface AssistantRoutine {
   /** 暂停的原因：`person` 自己暂停，`credits` 额度用完，`away` 长时间未登录。 */
   paused: string
   nextRunAt: string | null
+  /** 只做一次：在建它的那段对话里做，做完就结束（「正在等的事」）。 */
+  once: boolean
+  /** 建它的那段对话。 */
+  conversationId: string | null
   lastRun: AssistantRoutineRun | null
   /** 近 7 天的运行花了多少点。 */
   weekCredits: number

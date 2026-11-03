@@ -15,7 +15,8 @@ The field names are the Go ``json`` tags verbatim: ``t`` (type), ``sid`` (screen
 ``data`` (base64 raw screen bytes), ``path`` (the state directory an
 ``execution.call`` names),
 and the exec set
-``cwd``/``stdin``/``timeout``/``stdout``/``stderr``/``exit``/``truncated``.
+``cwd``/``stdin``/``timeout``/``stream``/``stdout``/``stderr``/``exit``/``truncated``
+(``exec.output`` carries one ``stderr`` line of a streamed exec while it runs).
 
 本机目录授权 rides in ``value`` (``localfs.grants`` down with the grant set for the
 machine, ``localfs.op`` down with one read/write/list, and ``localfs.*.result`` up),
@@ -98,6 +99,20 @@ class LinkMsg:
 # omitted (not sent as null) to match the Go `omitempty` tags.
 
 
+def machine_data(stream_id: str, payload: bytes) -> dict[str, Any]:
+    """Bytes of the platform's answer on one machine stream."""
+    return {
+        "t": "machine.data",
+        "id": stream_id,
+        "data": base64.b64encode(payload).decode(),
+    }
+
+
+def machine_close(stream_id: str) -> dict[str, Any]:
+    """The platform answered a machine stream in full."""
+    return {"t": "machine.close", "id": stream_id}
+
+
 def welcome() -> dict[str, Any]:
     return {"t": "welcome", "v": PROTOCOL_VERSION}
 
@@ -155,7 +170,11 @@ def exec_cmd(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     stdin: str | None = None,
+    stream: bool = False,
 ) -> dict[str, Any]:
+    """``stream`` asks for each stderr line as the command writes it, one
+    ``exec.output`` frame per line ahead of ``exec.result``. A connector built
+    before that frame ignores the field and sends the result alone."""
     msg: dict[str, Any] = {
         "t": "exec",
         "id": exec_id,
@@ -168,6 +187,8 @@ def exec_cmd(
         msg["env"] = env
     if stdin:
         msg["stdin"] = stdin
+    if stream:
+        msg["stream"] = True
     return msg
 
 

@@ -9,7 +9,7 @@ import type { FileContent } from '../../cx_types'
 
 import { computed, ref } from 'vue'
 
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf, videoMimeOf } from '../../lib/fileKind'
 
 /** 这一格现在摆的是哪一件，以及路上那一次属于哪一代。 */
 export function createPreviewState() {
@@ -21,6 +21,10 @@ export function createPreviewState() {
   const previewUrl = ref<string | null>(null)
   const previewAppNote = ref('')
   const previewTunnelUp = ref(false)
+  // 应用的端口有应答（后端给了地址）：连通链「应用」那一段。
+  const previewAppUp = ref(false)
+  // 摆着的是哪一件产物：快照记在它名下。
+  const previewArtifactId = ref<string | null>(null)
   const previewNamedPath = ref('')
   const previewError = ref<string | null>(null)
   const previewReadError = ref<string | null>(null)
@@ -34,6 +38,7 @@ export function createPreviewState() {
   const documentType = computed(() => DOCUMENT_TYPES[documentSuffix.value] ?? null)
   const documentName = computed(() => previewFile.value?.path.split('/').pop() ?? '')
   const isImageArtifact = computed(() => IMAGE_SUFFIXES.has(documentSuffix.value))
+  const isVideoArtifact = computed(() => !!videoMimeOf(previewFile.value?.path ?? '', previewMime.value))
 
   /** 开一次取数：报回它落在哪一代，落下来时拿这个数问还作不作数。 */
   function begin(): number {
@@ -57,6 +62,8 @@ export function createPreviewState() {
     previewUrl,
     previewAppNote,
     previewTunnelUp,
+    previewAppUp,
+    previewArtifactId,
     previewNamedPath,
     previewError,
     previewReadError,
@@ -65,6 +72,7 @@ export function createPreviewState() {
     documentType,
     documentName,
     isImageArtifact,
+    isVideoArtifact,
     begin,
     invalidate,
     stillCurrent,

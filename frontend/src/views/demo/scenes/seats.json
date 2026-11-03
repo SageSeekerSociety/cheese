@@ -34,8 +34,8 @@
           "do": "act",
           "who": "cheese",
           "turn": "t1",
-          "tool": "cheese_worktree",
-          "arg": "a17c · 登录页改版",
+          "tool": "Bash",
+          "arg": "cheese worktree a17c",
           "platform": true
         },
         {
@@ -159,7 +159,7 @@
           "do": "act",
           "who": "cheese",
           "turn": "t1",
-          "tool": "cheese_accept_request",
+          "tool": "cheese_card.request",
           "arg": "feat(signin): new sign-in page",
           "platform": true
         },

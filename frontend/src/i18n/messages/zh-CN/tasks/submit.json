@@ -31,5 +31,6 @@
   "uploadNext": "上传完成后将自动进行下一步",
   "uploadPlaceholder": "请上传{prompt}",
   "uploadingTitle": "正在上传提交内容",
-  "viewMine": "查看我的提交记录"
+  "viewMine": "查看我的提交记录",
+  "stagePastDue": "阶段「{name}」已过截止时间，不能再提交"
 }

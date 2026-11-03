@@ -14,6 +14,13 @@ person a question names has skipped it is it settled by the skips, and a
 question asked of everyone never is: the channel is not a fixed list of people
 who could all decline.
 
+Two entries are neither: the asking agent taking its own question back
+(``withdrawn``, `block.questions.withdraw_question`) and the clock running out
+on one nobody answered (``expired``, `block.questions.expire_question`). Both
+settle it — it stops waiting and leaves the 待你回答 lists — but neither is an
+answer, so ``answered`` is false for them and the question may still be
+answered afterwards (`expired` in particular: the card keeps its field).
+
 Who may respond to it at all — click an option, write an answer, skip it — is
 `may_answer`, one rule for all three: the people it names; anyone in the
 channel when it is asked of everyone; and anyone when it names nobody in
@@ -30,6 +37,14 @@ from app.domain.identity.handles import names_a_person
 
 #: The ``kind`` of the `answer_log` entry a skip leaves.
 SKIPPED = "skipped"
+#: The asking agent took its own question back before anyone answered it
+#: (`block.questions.withdraw_question`).
+WITHDRAWN = "withdrawn"
+#: Nobody answered it within its deadline (`block.questions.expire_question`).
+EXPIRED = "expired"
+#: The two kinds that settle a question without anybody answering it. They are
+#: not answers: ``answered`` stays false, and the card is free to take one.
+CLOSED_BY_THE_ASKER = (WITHDRAWN, EXPIRED)
 
 
 def asked_of(meta: dict | None) -> tuple[str, ...]:
@@ -70,13 +85,43 @@ def skipped_by(meta: dict | None) -> frozenset[str]:
     )
 
 
+def _said(meta: dict | None) -> list[dict]:
+    """The `answer_log` entries that are somebody's response to the question."""
+    return [
+        entry
+        for entry in ((meta or {}).get("answer_log") or [])
+        if (entry or {}).get("kind") not in CLOSED_BY_THE_ASKER
+    ]
+
+
 def answered(meta: dict | None) -> bool:
     """Whether anyone has answered it: an entry that is not a skip, or the
     `answered` key a person's historical question still carries (the
-    migration `e5a1c7d3b284` left those rows alone)."""
+    migration `e5a1c7d3b284` left those rows alone).
+
+    Taking the question back and letting it expire are not answers, so a
+    question the asker closed has ``answered`` false."""
     meta = meta or {}
     return bool(meta.get("answered")) or any(
-        (entry or {}).get("kind") != SKIPPED for entry in meta.get("answer_log") or []
+        (entry or {}).get("kind") != SKIPPED for entry in _said(meta)
+    )
+
+
+def closed_by_the_asker(meta: dict | None) -> bool:
+    """Whether the question stopped waiting for a reason other than an answer:
+    the asking agent took it back, or its deadline passed."""
+    return any(
+        (entry or {}).get("kind") in CLOSED_BY_THE_ASKER
+        for entry in ((meta or {}).get("answer_log") or [])
+    )
+
+
+def withdrawn_by_the_asker(meta: dict | None) -> bool:
+    """Whether the asking agent took it back — as opposed to its clock simply
+    running out. Only the first is a reason to refuse a late answer."""
+    return any(
+        (entry or {}).get("kind") == WITHDRAWN
+        for entry in ((meta or {}).get("answer_log") or [])
     )
 
 
@@ -89,8 +134,21 @@ def skipped_by_all(meta: dict | None) -> bool:
 
 
 def settled(meta: dict | None) -> bool:
-    """Whether the question no longer waits on anybody."""
-    return answered(meta) or skipped_by_all(meta)
+    """Whether the question no longer waits on anybody — so it leaves the 待你
+    回答 lists and stops lighting the channel's yellow light."""
+    return answered(meta) or skipped_by_all(meta) or closed_by_the_asker(meta)
+
+
+def answerable(meta: dict | None) -> bool:
+    """Whether a person may still answer it.
+
+    The same as ``settled`` except for one case: a question whose deadline
+    passed may still be answered (the card keeps its field), so an expired one
+    is settled without being closed to answers. A question the asker took back
+    is closed, and one that has been answered takes no second answer."""
+    if answered(meta) or skipped_by_all(meta) or withdrawn_by_the_asker(meta):
+        return False
+    return True
 
 
 @dataclass(frozen=True)

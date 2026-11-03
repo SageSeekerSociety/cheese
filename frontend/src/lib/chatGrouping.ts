@@ -15,6 +15,7 @@ import type { Block } from '../cx_types'
 
 import i18n, { t } from '../i18n'
 
+import { byAssistant } from './authorship'
 import { docLineInTurn } from './docEditLine'
 
 /** 一天有多少毫秒。算「隔了几天」用整天的边界，不是按 24 小时除。 */
@@ -77,9 +78,10 @@ export function dayLabelsFor(rows: readonly GroupableRow[]): Map<string, string>
   return out
 }
 
-/** 同一个人（同一种身份）说的：按 handle 判，头像和名字都不参与。 */
+/** 同一个人（同一种身份）说的：按 handle 判，头像和名字都不参与。他自己说的和他的芝士替他
+ *  说的不接成一段：后一种要在名字旁边标出来，接在他自己那段下面就没有名字那一行可标。 */
 export function sameSpeaker(a: Block, b: Block): boolean {
-  return a.author === b.author && a.author_type === b.author_type
+  return a.author === b.author && a.author_type === b.author_type && byAssistant(a) === byAssistant(b)
 }
 
 /**
@@ -95,15 +97,19 @@ export function runEdgeBetween(prev: Block | undefined, cur: Block, opts: { brok
 }
 
 /**
- * 队友在一轮里调工具改了文档，留下的那一行（lib/docEditLine）是这一轮的一部分：它和
- * 同一位队友这一轮说的话接成一段，像一次工具调用夹在一轮回答里，不另起头像和名字。
- * 别的事件行照旧和消息断开。
+ * 一位队友一次工作的结果（改了什么）和它交出来的东西（`shown_as` 为 result / card）是
+ * 那次工作的一部分：它们和同一次工作里说的话接成一段，不另起头像和名字。别的事件行照旧
+ * 和消息断开。一次工作只属于一位队友，所以同一个轮次号就够认；平台替它写下的那几行
+ * 署名是平台，不和它的名字比。
  */
+function ofTheWork(b: Block): boolean {
+  return b.shown_as === 'result' || b.shown_as === 'card' || docLineInTurn(b)
+}
 function sameTurn(prev: Block, cur: Block): boolean {
-  const part = (b: Block) => docLineInTurn(b) || b.kind === 'message' || b.kind === 'attachment'
-  if (!docLineInTurn(prev) && !docLineInTurn(cur)) return false
+  const part = (b: Block) => ofTheWork(b) || b.kind === 'message' || b.kind === 'attachment'
+  if (!ofTheWork(prev) && !ofTheWork(cur)) return false
   if (!part(prev) || !part(cur)) return false
-  if (!prev.turn_id || prev.turn_id !== cur.turn_id || prev.author !== cur.author) return false
+  if (!prev.turn_id || prev.turn_id !== cur.turn_id) return false
   return dayKey(prev.created_at) === dayKey(cur.created_at)
 }
 

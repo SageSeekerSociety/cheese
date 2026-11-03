@@ -114,15 +114,19 @@ def read_task_default_role(task: Task) -> str | None:
 
 
 def apply_task_default_role(task: Task, role: str | None) -> None:
-    """整份替换这道题覆盖里的 `default_role` 那一格，其它覆盖键原样保留。
+    """Set or clear this 题目's own `default_role` override; the other override
+    keys are kept as they are.
 
-    `None` 是「这一格没被写」—— 直接不写（省掉这个字段 = 这道题沿用项目集那份）。
-    空串**是一次写**：这道题明说「我不要默认队友」，于是它盖住项目集那份 —— 这正是
-    `resolve` 的整键替换语义（`"" or None` 落成 None，但它已经赢了那一层）。
+    `None` is "this field was not written" — nothing changes. `""` clears the
+    题目's own, so the level above (the 项目集's default) is in force again: the
+    page's and 芝士's 沿用上层设置 both mean that. There is no "no
+    teammate" value: a 题目 either names a preset or inherits.
     """
     if role is None:
         return
-    task.protocol_override = {
-        **(task.protocol_override or {}),
-        "default_role": role,
-    }
+    override = dict(task.protocol_override or {})
+    if role.strip():
+        override["default_role"] = role.strip()
+    else:
+        override.pop("default_role", None)
+    task.protocol_override = override

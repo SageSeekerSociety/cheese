@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 
-import { useJoinSpace } from '@/composables/useJoinSpace'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { useWaitingList } from '@/composables/useWaitingList'
 
@@ -11,7 +10,6 @@ import WaitingList from '@/components/common/Notification/WaitingList.vue'
 import { t } from '@/i18n'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
 import { useWorkspaceStore } from '@/stores/workspace'
-import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
 import NotificationFeed from '@/views/home/NotificationFeed.vue'
 
 // 「待办」：首页那一格点开就是这一页（手机上是底栏的一格）。
@@ -35,14 +33,12 @@ onMounted(() => {
 const noProjects = computed(() => store.projectsSettled && store.projects.length === 0)
 const projectTerm = termParams(DEFAULT_SHELL)
 const { show: showNewProjectDialog } = useNewProjectDialog()
-// 加入空间这件事和首页目录里那一行共用一份判断（见 `useJoinSpace`）：成了直接进那个空间。
-const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = useJoinSpace()
 </script>
 
 <template>
   <AppPage :title="t('navigation.inbox')">
     <!-- 一个项目都没有的人：新账号登录时已经有了自己的第一个项目（`landingForMember`），
-         走到这里的是后来退出或删光了项目的人。三条起步路并列，每条一句话说清进去能
+         走到这里的是后来退出或删光了项目的人。两条起步路并列，每条一句话说清进去能
          得到什么。 -->
     <section v-if="noProjects" class="inbox__start">
       <p class="t-title">{{ t('work.emptyTitle', projectTerm) }}</p>
@@ -57,17 +53,6 @@ const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = us
           </div>
           <BaseButton kind="primary" size="sm" @click="showNewProjectDialog()">
             {{ t('navigation.newProject', projectTerm) }}
-          </BaseButton>
-        </li>
-
-        <li class="inbox__path">
-          <v-icon icon="mdi-ticket-confirmation-outline" size="20" class="inbox__path-icon" />
-          <div class="inbox__path-text">
-            <span class="inbox__path-title">{{ t('work.startPaths.invite.title') }}</span>
-            <span class="inbox__path-body">{{ t('work.startPaths.invite.body') }}</span>
-          </div>
-          <BaseButton kind="secondary" size="sm" @click="joinOpen = true">
-            {{ t('work.startPaths.invite.action') }}
           </BaseButton>
         </li>
 
@@ -103,7 +88,6 @@ const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = us
       @allow="waiting.allow"
     />
     <NotificationFeed />
-    <JoinSpaceDialog v-model="joinOpen" :busy="joinBusy" :error="joinError" @submit="joinSpace" />
   </AppPage>
 </template>
 

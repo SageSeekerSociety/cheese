@@ -3,6 +3,7 @@ import type { Block } from '@/cx_types'
 import { describe, expect, it } from 'vitest'
 
 import {
+  capAround,
   capWindow,
   joinNewest,
   LOAD_OLDER_THRESHOLD,
@@ -94,6 +95,54 @@ describe('capWindow', () => {
     // The overflow is the NEWEST end: the reader is paging up, so what must not
     // move is what sits above them, not what sits below the viewport.
     expect(capped.dropped.map((x) => x.id)).toEqual([`m${MAX_WINDOW}`, `m${MAX_WINDOW + 1}`, `m${MAX_WINDOW + 2}`])
+  })
+})
+
+describe('capAround', () => {
+  it('fits under the cap: nothing to do', () => {
+    expect(capAround(blocks('m1', 'm2'))).toBeNull()
+    expect(capAround(Array.from({ length: MAX_WINDOW }, (_, i) => b(`m${i}`)))).toBeNull()
+  })
+
+  it('a reader at the newest end keeps the newest: the older end goes', () => {
+    const all = Array.from({ length: MAX_WINDOW + 3 }, (_, i) => b(`m${i}`))
+
+    const capped = capAround(all, MAX_WINDOW, 'newest')!
+
+    expect(capped.droppedOlder).toBe(3)
+    expect(capped.droppedNewer).toBe(0)
+    expect(capped.keep[0].id).toBe('m3')
+    expect(capped.keep.at(-1)?.id).toBe(`m${MAX_WINDOW + 2}`)
+  })
+
+  it('a reader in the middle keeps what they are reading, and both ends go', () => {
+    const all = Array.from({ length: MAX_WINDOW + 400 }, (_, i) => b(`m${i}`))
+    const at = 500
+
+    const capped = capAround(all, MAX_WINDOW, at)!
+
+    expect(capped.keep, '半窗在读者上面').toHaveLength(MAX_WINDOW)
+    expect(capped.keep[0].id, '上下各留半窗').toBe(`m${at - 300}`)
+    expect(capped.keep.at(-1)?.id).toBe(`m${at + 299}`)
+    expect(capped.droppedOlder + capped.droppedNewer).toBe(400)
+  })
+
+  it('a reader near an end keeps a whole window rather than hanging off it', () => {
+    const all = Array.from({ length: MAX_WINDOW + 40 }, (_, i) => b(`m${i}`))
+
+    // 顶上那 10 条：上面留不出半窗，就整窗留在他下面，裁的全在下面那一头。
+    expect(capAround(all, MAX_WINDOW, 10)!.keep.at(-1)?.id).toBe(`m${MAX_WINDOW - 1}`)
+    // 底下那几条：下面留不够半窗，就整窗留在他上面，裁的全在上面那一头。
+    expect(capAround(all, MAX_WINDOW, all.length - 5)!.keep[0].id).toBe('m40')
+  })
+
+  it('an unknown reader keeps the oldest, the way the chat window pages up', () => {
+    const all = Array.from({ length: MAX_WINDOW + 3 }, (_, i) => b(`m${i}`))
+
+    const capped = capAround(all, MAX_WINDOW, 'oldest')!
+
+    expect(capped.droppedOlder).toBe(0)
+    expect(capped.droppedNewer).toBe(3)
   })
 })
 

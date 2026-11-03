@@ -4,7 +4,8 @@
  *
  * 五块，自上而下：需要确认（几类勾选，和自己添加的条目），无需确认（自己添加的条目），
  * 记忆（芝士记得的关于你的事：开关、逐条改和删、全部清除），
- * 例行事务（芝士自己定时或在某件事发生时做的事：何时运行、最近一次怎样、暂停恢复删除），
+ * 自动化（芝士到时间或在某件事发生时自己做的事，一个列表：什么时候、做什么、现在怎样；
+ * 只做一次的做完就不列了，记录留在对话里），
  * 最近的操作（做了的、请人确认过的，请人确认的写原因）。
  */
 import type {
@@ -29,7 +30,6 @@ const props = defineProps<{
   rules: AssistantRules | null
   memory: AssistantMemory | null
   routines: AssistantRoutine[]
-  routineLimit: number
   recent: AssistantActivityItem[]
   loading: boolean
   failed: boolean
@@ -84,8 +84,12 @@ function confirmClear() {
 
 /** 要删除的那条例行事务：先确认。 */
 const deleting = ref<AssistantRoutine | null>(null)
-// A one-off that has run no longer counts toward the limit.
-const counted = computed(() => props.routines.filter((r) => r.state !== 'done').length)
+// One that fires once leaves the list once it has run: what it did is in its conversation.
+// Those still waiting come first.
+const listed = computed(() => [
+  ...props.routines.filter((r) => r.once && r.state !== 'done'),
+  ...props.routines.filter((r) => !r.once),
+])
 
 function confirmDelete() {
   if (deleting.value) emit('routine', deleting.value.id, 'delete')
@@ -102,7 +106,7 @@ function when(at: string): string {
 }
 
 function state(r: AssistantRoutine): string {
-  if (r.state === 'done') return t('account.assistant.routines.ran')
+  if (r.once && r.state === 'active') return t('account.assistant.routines.waiting')
   if (r.state === 'paused') return t(`account.assistant.routines.paused.${r.paused || 'person'}`)
   return r.nextRunAt ? t('account.assistant.routines.next', { time: when(r.nextRunAt) }) : ''
 }
@@ -267,17 +271,14 @@ function last(r: AssistantRoutine): string {
       <section class="settings-card">
         <h2 class="settings-card__title ast__title-row">
           <span>{{ t('account.assistant.routines.title') }}</span>
-          <span v-if="routines.length" class="ast__count t-num">{{
-            t('account.assistant.routines.count', { n: counted, max: routineLimit })
-          }}</span>
         </h2>
         <p class="settings-card__desc">{{ t('account.assistant.routines.desc') }}</p>
-        <p v-if="!routines.length" class="ast__none">{{ t('account.assistant.routines.empty') }}</p>
+        <p v-if="!listed.length" class="ast__none">{{ t('account.assistant.routines.empty') }}</p>
         <ul v-else class="ast__recent">
-          <li v-for="r in routines" :key="r.id" class="ast__routine">
+          <li v-for="r in listed" :key="r.id" class="ast__routine">
             <div class="ast__body">
-              <p class="ast__summary">{{ r.title }}</p>
-              <p class="ast__reason">{{ r.when }}</p>
+              <p class="ast__summary ast__when">{{ r.when }}</p>
+              <p class="ast__note">{{ r.note || r.title }}</p>
               <p class="ast__meta">
                 <span v-if="state(r)" :class="{ ast__paused: r.state === 'paused' }">{{ state(r) }}</span>
                 <span v-if="last(r)">{{ last(r) }}</span>
@@ -288,15 +289,15 @@ function last(r: AssistantRoutine): string {
             </div>
             <div class="ast__actions">
               <BaseButton
-                v-if="r.lastRun?.conversationId"
+                v-if="(r.once ? r.conversationId : r.lastRun?.conversationId) ?? null"
                 kind="ghost"
                 size="sm"
-                @click="emit('openConversation', r.lastRun?.conversationId ?? '')"
+                @click="emit('openConversation', (r.once ? r.conversationId : r.lastRun?.conversationId) ?? '')"
               >
                 {{ t('account.assistant.routines.view') }}
               </BaseButton>
               <BaseButton
-                v-if="r.state !== 'done'"
+                v-if="r.state === 'paused' || !r.once"
                 kind="ghost"
                 size="sm"
                 :disabled="saving"
@@ -306,7 +307,16 @@ function last(r: AssistantRoutine): string {
                   r.state === 'paused' ? t('account.assistant.routines.resume') : t('account.assistant.routines.pause')
                 }}
               </BaseButton>
-              <BaseButton kind="ghost" size="sm" :disabled="saving" @click="deleting = r">
+              <BaseButton
+                v-if="r.once"
+                kind="ghost"
+                size="sm"
+                :disabled="saving"
+                @click="emit('routine', r.id, 'delete')"
+              >
+                {{ t('account.assistant.routines.cancel') }}
+              </BaseButton>
+              <BaseButton v-else kind="ghost" size="sm" :disabled="saving" @click="deleting = r">
                 {{ t('account.assistant.routines.delete') }}
               </BaseButton>
             </div>
@@ -589,6 +599,17 @@ function last(r: AssistantRoutine): string {
   color: var(--ink);
   white-space: pre-line;
   overflow-wrap: anywhere;
+}
+
+.ast__when {
+  font-weight: 600;
+}
+
+.ast__note {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
 }
 
 .ast__reason {

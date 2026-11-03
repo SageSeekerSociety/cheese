@@ -38,6 +38,10 @@ class PullRequestStatus:
     #: name, which is what the personal-token lane always used.
     head_ref: str = ""
     base_ref: str = ""
+    #: The commit the base branch is at as the forge answers (`base.sha`).
+    #: With `head_sha` it names the pair a test merge is about
+    #: (`merge_check`); a push to either side is a new pair.
+    base_sha: str = ""
     #: GitHub's `mergeable`. **Three-valued on purpose**: True = git can merge
     #: it, False = it conflicts with the base, and None = GitHub has not
     #: finished computing it yet (it does that asynchronously on the first
@@ -150,6 +154,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
         head_sha=data["head"]["sha"],
         head_ref=str(data["head"].get("ref") or ""),
         base_ref=str((data.get("base") or {}).get("ref") or ""),
+        base_sha=str((data.get("base") or {}).get("sha") or ""),
         state=str(data.get("state") or ""),
         merged=merged,
         # Anything that isn't a real bool stays None — "GitHub hasn't said

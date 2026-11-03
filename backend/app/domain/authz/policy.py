@@ -103,9 +103,7 @@ async def refuse_management_action(
     questions of two different things, and neither subsumes the other:
 
     - the CREDENTIAL. A scoped credential (``via="cheese"``) is a per-request
-      capability handed to something running unattended — a device screen's
-      ``X-Cheese-Screen`` token resolves on any path, including one with no
-      topic in it. Whoever holds it is not sitting in their own session, so it
+      capability handed to something running unattended. Whoever holds it is not sitting in their own session, so it
       cannot carry a management action whatever the handle turns out to be.
       This is a SCOPE question, which is the credential's own business (see the
       module docstring): it does not type the participant, and a handle with no

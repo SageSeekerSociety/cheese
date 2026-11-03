@@ -21,6 +21,7 @@ from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.prompt import (
+    REPEATED_FAILURE,
     SHARED_CHECKOUT,
     STEP_TITLES,
     SUBAGENT_TODO_WRITE,
@@ -102,3 +103,7 @@ def test_agents_and_workflow_agents_are_given_the_rule(tmp_path, contract):
         # So does the step checklist: its work is what moves the list.
         todo = json.dumps(SUBAGENT_TODO_WRITE, ensure_ascii=False)[1:-1]
         assert todo in _opening(own[0]), _opening(own[0])[:2000]
+        # And the rule about a repeated failure: a subagent is the one running
+        # the commands and the builds, so it is where the wall gets hit.
+        repeated = json.dumps(REPEATED_FAILURE, ensure_ascii=False)[1:-1]
+        assert repeated in _opening(own[0]), _opening(own[0])[:2000]

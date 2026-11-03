@@ -24,6 +24,7 @@ from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
 from app.domain.usage.model_access import overseas_approved as _overseas_approved
+from app.domain.usage.models import TaskGatewayAccount
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -50,6 +51,53 @@ class UsageService:
         """
         payer = await ledger.payer_for_project(self._session, project_id)
         return (await self._summaries({project_id: payer}))[project_id]
+
+    async def project_status_credits(self, project_id: uuid.UUID) -> dict:
+        """``GET /topics/{id}/status`` 的算力快照：一次读完方案账本与项目预算上限。"""
+        payer = await ledger.payer_for_project(self._session, project_id)
+        balance = await ledger.Ledger(self._session).balance(payer)
+        cap_row = (await CreditBudgets(self._session).project_caps([project_id])).get(
+            project_id
+        )
+        cap = cap_row[0] if cap_row is not None else None
+        cap_remaining = None if cap_row is None else max(0.0, cap_row[0] - cap_row[1])
+        plan_remaining = None if balance.unlimited else balance.credits_remaining
+        if cap_remaining is None:
+            unlimited = balance.unlimited
+            remaining = balance.credits_remaining
+        elif balance.unlimited:
+            unlimited = False
+            remaining = cap_remaining
+        else:
+            unlimited = False
+            remaining = min(cap_remaining, max(0.0, balance.credits_remaining))
+        by_budget = cap_remaining is not None and (
+            plan_remaining is None or cap_remaining <= plan_remaining
+        )
+        total = None
+        reset = None
+        if by_budget:
+            total = cap
+        elif plan_remaining is not None:
+            total = balance.credits_total
+            reset = balance.resets_at
+            if reset is None and balance.windows:
+                reset = min(balance.windows, key=lambda use: use.room).resets_at
+        return {
+            "unlimited": unlimited,
+            "credits_remaining": remaining,
+            "total": total,
+            "resets_at_dt": reset,
+            "project_remaining": cap_remaining,
+            "layer": "project_budget" if by_budget else "plan",
+        }
+
+    async def task_gateway_account(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> TaskGatewayAccount | None:
+        """The task's gateway account for ``owner_handle``, or None; read with
+        the spend `task_gateway_budget` asks next."""
+        return await self._repo.task_gateway_account(project_id, task_id, owner_handle)
 
     async def task_gateway_budget(
         self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
@@ -121,8 +169,11 @@ class UsageService:
 
     async def _summaries(self, payers: dict) -> dict[uuid.UUID, dict]:
         balances = await ledger.Ledger(self._session).balances(payers)
+        # Caps first: their statement brings the gateway spend with it.
+        caps = await CreditBudgets(self._session).project_caps(
+            list(payers), with_gateway_spend=True
+        )
         spent = await self._repo.gateway_spend(list(payers))
-        caps = await CreditBudgets(self._session).project_caps(list(payers))
         out = {}
         for key, balance in balances.items():
             summary = balance.summary()

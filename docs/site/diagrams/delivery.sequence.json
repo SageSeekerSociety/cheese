@@ -104,7 +104,7 @@
    "from": "agent",
    "to": "api",
    "y": 284,
-   "label": "cheese_ready / 递验收卡"
+   "label": "cheese_card(action=ready) / 递验收卡"
   },
   {
    "from": "api",

@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.db_config import DatabaseSettings
 from app.core.machine_config import MachineSettings
 from app.core.sandbox_config import SandboxSettings
 
@@ -61,10 +62,11 @@ def parse_data_encryption_keys(value: str) -> tuple[bytes, ...]:
     return tuple(keys)
 
 
-class Settings(BaseSettings, SandboxSettings, MachineSettings):
+class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings):
     # The base classes above are the sandbox's own settings and the package
-    # mirrors a room fetches through (`core/sandbox_config`), and the machines a
-    # sandbox runs on (`core/machine_config`); they are base classes rather than
+    # mirrors a room fetches through (`core/sandbox_config`), the machines a
+    # sandbox runs on (`core/machine_config`), and the database connection and
+    # its pool (`core/db_config`); they are base classes rather than
     # sections below because this module is at the size cap it is held to and
     # those sections stand alone.
     # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
@@ -82,78 +84,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         validate_by_name=True,
     )
 
-    # --- Database ---
-    # The dev database the repo-root docker-compose.yml publishes on :5432. The
-    # test server is a SEPARATE container on :5433 (tests/conftest.py's
-    # TEST_PG_BASE), so running the suite never disturbs your dev data.
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cheese"
-    db_echo: bool = False
-    # How many database connections one backend process may hold. SQLAlchemy's
-    # own defaults (5 + 10) size a pool for a thread-per-request server; this is
-    # one asyncio process where every in-flight request holds a connection at
-    # the same time, so the ceiling is 「同时在飞的请求数」, not 「worker 数」. A
-    # single page load fans out dozens of them, and a request that cannot get a
-    # connection within `db_pool_timeout_s` raises TimeoutError — a 500 on a
-    # perfectly healthy database.
-    #
-    # The number below the pool must also fit is the SERVER's, which nothing in
-    # this process can see. THREE pools share it during an ordinary release: the
-    # outgoing backend, the incoming one the rollout brings up beside it, and the
-    # separately released connection owner. At 20+30 each that is 150 against a
-    # `max_connections` of 100, and on 2026-09-16 it landed exactly as the
-    # arithmetic predicts — 19 seconds after a new backend answered /healthz,
-    # PostgreSQL refused 83 connections in one minute with `sorry, too many
-    # clients already`, and every request in flight failed with it. Users read
-    # that as the rooms mysteriously 401-ing and recovering, several times a day,
-    # once per deploy.
-    #
-    # So the ceiling is per-process but the budget is shared: the two backends
-    # at (size + overflow) each, plus the connection owner's own pool, have to
-    # leave room for the migration the deploy runs and for anyone holding a
-    # psql. The owner registers devices and answers bindings; it never fans out
-    # the way a page load does, so the compose file hands it DB_POOL_SIZE=5 and
-    # DB_MAX_OVERFLOW=5 and the backends take the rest. Each backend also holds
-    # one connection outside its pool for the owner lock (`core.ownership`):
-    # 2 x (35 + 1) + 10 + 10 = 92 of the 97 a default PostgreSQL offers once its
-    # superuser reserve is taken out (tests/unit/test_db_pool_fits_the_server.py
-    # holds this arithmetic). A
-    # box whose server is configured larger can raise these; a box that adds a
-    # fourth pool has to lower them. dev's server was raised to 200 on
-    # 2026-09-18 (conf.d/10-connections.conf on cheese-dev-env1-postgresql).
-    db_pool_size: int = 20
-    db_max_overflow: int = 15
-    db_pool_timeout_s: float = 30.0
-    # How many uvicorn worker processes this container runs. The two numbers
-    # above are the CONTAINER's budget and the workers share it; the image
-    # passes this same variable to uvicorn's `--workers` (see the split below).
-    backend_workers: int = 1
-    # Hand out a connection only after checking it is still alive: a pooled
-    # asyncpg connection that the database (or anything in between) closed while
-    # idle otherwise fails the first statement of whoever checks it out next.
-    db_pool_pre_ping: bool = True
-
-    def db_connections_per_worker(self) -> tuple[int, int]:
-        """One worker's share of this container's pool budget: (size, overflow).
-
-        Together the workers hold what one process held before — the owner-lock
-        connection each of them keeps outside its pool (`core.ownership`)
-        included — so the arithmetic in
-        `tests/unit/test_db_pool_fits_the_server.py` still describes the
-        container. At 1 it is exactly `db_pool_size` and `db_max_overflow`.
-        """
-        # The budget holds up to (db_pool_size + db_max_overflow + 1) // 2
-        # workers — 18 at the defaults, a share down to one pooled connection
-        # plus the lock. Past that the box has to raise `db_pool_size`.
-        workers = max(1, self.backend_workers)
-        budget = max(0, (self.db_pool_size + self.db_max_overflow + 1) // workers - 1)
-        pool_size = max(1, min(self.db_pool_size // workers, budget))
-        return pool_size, max(0, budget - pool_size)
-
     # --- Migration timeouts (#356) ---
     # Bound how long a migration waits on a lock / runs, applied by alembic's
     # env.py to the single connection every `upgrade head` uses. A migration
-    # whose ALTER cannot grab its ACCESS EXCLUSIVE lock within this window fails
-    # fast — the deploy goes red and retries — instead of blocking behind a live
+    # whose ALTER cannot grab its ACCESS EXCLUSIVE lock within this window rolls
+    # back and runs again after a pause (alembic/env.py) instead of blocking behind a live
     # backend's open transaction until the deploy's 30-minute budget is spent,
     # which starved cheese-dev's only runner slot and browned out the whole box
     # in #356. lock_timeout is the actual fix; keep it short (a few seconds).
@@ -186,24 +121,31 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
     # A team's own library (a person's is their personal team's): how much it
-    # holds in all, the versions a file was replaced from included, and how
-    # large one file in it may be. A file's ceiling is the attachment one, so
-    # what a person attaches to 芝士 can always land in their library.
-    team_library_bytes: int = 1024 * 1024 * 1024
+    # holds in all, the versions a file was replaced from included. Unset, it
+    # follows where new files are kept (`library.records.capacity`): 1 GB on
+    # this server's disk, 20 GB in the files bucket. Set, it is the total for
+    # every team whatever the store. No team has a capacity of its own.
+    team_library_bytes: int | None = None
+    # A task's starter code (`app/domain/project/starter.py`): how many files
+    # and how many bytes it may unpack to, and how many times larger than the
+    # zip itself it may unpack (past 64 MiB); more is refused as a zip bomb.
+    starter_max_files: int = 20_000
+    starter_max_bytes: int = 2 * 1024 * 1024 * 1024
+    starter_max_ratio: int = 200
     redis_url: str = "redis://localhost:6379/0"
-    # Per-client request limits (`app/core/request_limits.py`). Measured on the
-    # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
-    # and 111/min — a page fans out one request per project — so these sit
-    # above that and below what one runaway page did to the whole process.
+    # Per-client request limits (`app/core/request_limits.py`; the numbers and
+    # why they are these: docs/api-conventions.md). `request_ip_*` are an
+    # address's, `request_limit_exempt_handles` the accounts not limited (dev's).
     request_rate_per_s: float = Field(default=20.0, gt=0)
     request_rate_burst: int = Field(default=100, ge=1)
     request_concurrency: int = Field(default=16, ge=1)
+    request_ip_rate_per_s: float = Field(default=200.0, gt=0)
+    request_ip_rate_burst: int = Field(default=2000, ge=1)
+    request_ip_concurrency: int = Field(default=128, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
-    # How long a rate check, or the closed-account check
-    # (``app.core.deleted_accounts``), may wait on Redis before the request goes
-    # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
+    request_limit_exempt_handles: str = ""
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
     # tests; deployed business backends point at the stable compose service.
@@ -212,8 +154,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # which is what a developer's machine and every test wants.
     feishu_alert_webhook: str = ""
     # Where each new feedback report is announced (`feedback/announce.py`): the
-    # team group's Feishu custom-bot webhook URL. Empty sends nothing, which is
-    # the default until a deployment names the group that works the queue.
+    # team group's Feishu custom-bot webhook URL. Empty sends nothing; on a
+    # deployment the health report names that as a failure (`feedback_announce`).
     feishu_feedback_webhook: str = ""
 
     # Coordinated ingress cutover is a separate release. No implicit fallback.
@@ -241,6 +183,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         return self.device_connection_secret or self.jwt_secret
 
     environment: str = "development"
+    # A transaction asking for a conversation's numbering lock after it holds
+    # others (`conversation.numbering`): raised when True, logged as an error
+    # otherwise. The tests raise, so a writer that reaches a second
+    # conversation late cannot pass CI; a deployment logs, so a writer the
+    # tests do not reach keeps working as it did, and the error's message
+    # carries the conversations held and asked for and the stack that asked,
+    # down from the async caller that awaited the flush or `run_sync`.
+    strict_numbering_order: bool = False
     # "This process was started by the deploy compose file" — a fact that does NOT
     # travel through the box's env file (#439). It is a literal in the compose
     # `environment:` block, beside STORAGE_LOCAL_PATH and HOME, so it survives the
@@ -250,6 +200,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    #: The other origins this deployment is served under, `frontend_url` being
+    #: the canonical one: a JSON list, FRONTEND_ALIASES='["https://example.cn"]'.
+    #: A request that arrives on one of them is answered for that origin
+    #: (`app.core.origins`).
+    frontend_aliases: list[str] = []
     #: A person's mail server may resolve to a private or loopback address, and
     #: may be spoken to without TLS. Only for a local test mail server: on a
     #: deployment it would let anyone make the backend dial its own network.
@@ -322,14 +277,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # session needs: a turn that would start one waits until the host has that
     # much available.
     agent_session_memory_max_mb: int = 3072
-    private_chat_executor_image: str = "cheese-private-executor:2.1.299"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.316"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
     # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
     # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
     claude_code_max_subagent_spawn_depth: int = 1
-    # 每个会话多一样工具 `cheese_compact`：agent 可以请平台压缩自己这个会话的
+    # 每个会话多一样工具 `cheese_session(action=compact)`：agent 可以请平台压缩自己这个会话的
     # 上下文。默认关着——打开它只是给 agent 一个开口，怎么用要看它怎么用；v1 只在
     # dev 上开着观察。开了就是写进会话环境的那一句（CHEESE_COMPACT_TOOL），所以
     # 「没开开关的座位看不到它」由 `sandbox/cheese` 一处决定。
@@ -459,7 +414,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The platform names tasks itself, off the agent's turn: a small model
     # through the gateway, on a virtual key of its own capped at this budget
     # per 30 days. Unset gateway admin credentials = an unnamed task's own
-    # session is reminded to name it with `cheese_title`.
+    # session is reminded to name it with `cheese_room(action=rename)`.
     # Fallback of the platform model role of the same name: read only while
     # no administrator has pointed the role (app.core.model_roles).
     topic_naming_model: str = "deepseek-flash"
@@ -471,6 +426,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # What a conversation's sandboxes may spend a day on models, per budget
+    # holder (`gateway_usage.MachineGatewayKey`): their calls go out on a key
+    # of their own with this cap on the gateway, so a machine whose owner
+    # relays its platform socket spends no more. The session's own calls are
+    # not counted against it. A first value, not yet measured against a day of
+    # real reviews.
+    machine_model_daily_budget_usd: float = 10.0
     # --- Voice input (app/domain/voice) ---
     # The composer's microphone: a speech model through the gateway, then a
     # small model that tidies the transcript into a message. Recorded per
@@ -547,8 +509,19 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # name: `FEEDBACK_ADMIN_HANDLES` above is the OLD spelling of the PLATFORM
     # roster, which is why this one is not called that.
     feedback_triage_handles: list[str] = []
+    # Where the platform's built-in feedback triage rule runs and who it answers
+    # to (`app/domain/routine/builtin_triage.py`): the room (a topic id in a
+    # project working on the platform itself), the person the results go to (one
+    # of `feedback_triage_handles`, a member of that room), and the AI teammate
+    # seat in that room that does the work. The rule is installed at startup
+    # once all three name something valid; its schedule and batch size ship
+    # with the product. On a deployment, an unset or invalid one is a named
+    # failure in the health report (`feedback_triage`), not a quiet absence.
+    feedback_triage_topic_id: str = ""
+    feedback_triage_owner_handle: str = ""
+    feedback_triage_agent_handle: str = ""
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
-    # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
+    # for the agent path (`cheese_feedback(action=propose)`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
     # afternoon and a topic nobody can read. Proposal cards are the one kind of
     # "the next step is on a person" that nobody is waiting on, so unlike a
@@ -632,6 +605,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
+    # How long a session at work may produce nothing at all — no output, no
+    # tool call, nothing running on it — before the runner calls it stuck and
+    # reports its ending itself. The other two clocks both need something to
+    # go on (something said recently, an input still unread); a process that
+    # is alive but whose build stopped answering has neither, and without this
+    # clock nothing ever reports that it stopped. A tool in flight does not
+    # count as silence: that is a long command working, not a build dying.
+    agent_stuck_silence_s: float = 1800.0
     # How long a Claude Code runner another release started may go on with the
     # work it was doing when this release took it over (`RUNNER_DRAIN_S`),
     # counted from when the drain began (`agent_sessions.drain_started_at`). It
@@ -806,6 +787,20 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # ledger, saying on the alert webhook when one crosses 80% or reaches it
     # (`app.domain.agent.spend_cap_alerts`). 0 turns it off.
     model_spend_cap_alert_interval_s: float = 300.0
+    # Seconds between passes over the three credit caps (team plan, project
+    # budget, member cap), telling the people a nearly spent one will stop
+    # (`usage.alerts`, #:credit-warning). A crossing is said once by the
+    # delivery ledger's dedup key, so a frequent pass costs reads and no
+    # repetition. 0 turns it off.
+    credit_warning_interval_s: float = 300.0
+    # The DeepSeek key whose balance `relay_balance` reads. Empty turns that
+    # clock off; a deployment that does not pay DeepSeek directly has none.
+    deepseek_api_key: str = ""
+    # CNY below which the relay balance is called nearly gone. A floor, not a
+    # share: the balance is topped up by hand.
+    deepseek_balance_alert_cny: float = 50.0
+    # Seconds between reads of that balance. 0 turns it off.
+    deepseek_balance_check_interval_s: float = 1800.0
     # Seconds between looks, on the process holding the sessions, for work
     # still running in a task that has closed (`stop_work_in_closed_tasks`).
     # One indexed read of the tasks its working seats are in, and none when no
@@ -816,6 +811,15 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (`app.periodic_jobs.periodic_jobs`). One indexed read of the few waiting
     # messages per run (`ix_blocks_queued_messages`), owner process only.
     queued_message_sweep_interval_s: int = 10
+    # How often the clock takes back questions nobody answered: one indexed read
+    # of the open questions near their deadline per run (`app.periodic_jobs`).
+    # The deadline itself is 72 hours, so the minute a sweep lands on is not
+    # something a reader notices.
+    question_expiry_sweep_interval_s: int = 300
+    # How long until a dead 支线 is recycled (`thread/recycle.py`). The bound it
+    # measures is three days, so this only decides how late the sweep may be;
+    # an hour costs one scan of the open 支线 with a failure in them per run.
+    thread_recycle_interval_s: int = 3600
     # How long a backend on its way out waits for the prompts it is still
     # sending, and the receipts it is still expecting, before it hands its
     # sessions to the next backend anyway (`app.core.ownership`). It has to fit
@@ -913,8 +917,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     accept_pr_snapshot_floor_s: int = 60
     # How long one card read waits for those refreshes (one per card, side by
     # side); each is a few GitHub calls, and in sequence they once held
-    # `GET /topics/{id}/accept-card` for 40 s.
-    accept_pr_snapshot_read_wait_s: float = 2.0
+    # `GET /topics/{id}/accept-card` for 40 s. Short, because the card is part
+    # of opening a task page (one GitHub refresh measured 0.7-1.5 s): what is
+    # not done by then is written back and read by the card's next 15 s poll,
+    # and accepting re-checks mergeability itself.
+    accept_pr_snapshot_read_wait_s: float = 0.3
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
@@ -983,8 +990,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
-    # The private bucket, for task snapshot bundles (room_task/snapshots.py)
-    # and the cloud sandbox home archives kept for a while
+    # The private bucket, for the cloud sandbox home archives kept for a while
     # (machine/retained_archives.py); the public upload bucket is never used
     # for them. The name is the bucket's first use: it also
     # holds the transcript objects `raw_transcripts` indexes.
@@ -1001,6 +1007,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (the bucket below). A file's record says where its own bytes are, so
     # changing this moves nothing that is already stored.
     files_store: Literal["local", "bucket"] = "local"
+    # How large one file kept in the files bucket may be: a library file, and
+    # a task's material. A dataset can be several GB, and its bytes never pass
+    # through this server (they go to the bucket in parts, straight from the
+    # browser or machine, and come back the same way). Files kept on this
+    # server's disk keep the smaller ceilings in `app.domain.library.service`.
+    files_bucket_file_max_bytes: int = 20 * 1024**3
     # A bucket of its own, with a key that reaches only it: these are private
     # files, and the key is not the one the public and transcript buckets use.
     # A browser puts an upload straight into it, so its CORS rules must let the
@@ -1090,9 +1102,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         """
         return bool(self.vapid_public_key and self.vapid_private_key)
 
-    enforce_task_participant_limit_check: bool = Field(
-        default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"
-    )
     rank_check_enforced: bool = Field(
         default=False, alias="APPLICATION_RANK_CHECK_ENFORCED"
     )
@@ -1305,6 +1314,38 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         )
 
     @model_validator(mode="after")
+    def _frontend_aliases_are_origins(self) -> "Settings":
+        """Each alias is a browser origin, written as browsers do, and none is
+        the canonical one: a request's origin is found by comparing its Host
+        with these, and the Origin header of a grant or a passkey with them."""
+        canonical = browser_origin(self.frontend_url)
+        aliases: list[str] = []
+        for value in self.frontend_aliases:
+            parts = urlsplit(value.strip().lower())
+            host = parts.hostname or ""
+            local = host == "localhost" or host.endswith(".localhost")
+            if (
+                parts.scheme not in ("https", "http")
+                or (parts.scheme == "http" and not local)
+                or not host
+                or parts.path not in ("", "/")
+                or parts.query
+                or parts.fragment
+                or parts.username
+            ):
+                # i18n-exempt: refuses the boot; read by an operator in the log
+                raise RuntimeError(
+                    f"FRONTEND_ALIASES entry {value!r} is not an https origin. "
+                    "Write the scheme and host only, e.g. https://example.cn "
+                    "(http is accepted for *.localhost)."
+                )
+            origin = browser_origin(value)
+            if origin != canonical and origin not in aliases:
+                aliases.append(origin)
+        self.frontend_aliases = aliases
+        return self
+
+    @model_validator(mode="after")
     def _docs_origin_is_an_origin(self) -> "Settings":
         """``docs_origin`` is a browser origin of its own, written as browsers do.
 
@@ -1337,7 +1378,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
                 "Write the scheme and host only, e.g. https://docs.okcheese.com "
                 "(http is accepted for *.localhost)."
             )
-        if host == (urlsplit(self.frontend_url.strip().lower()).hostname or ""):
+        if host in {
+            urlsplit(origin).hostname
+            for origin in (self.frontend_url.strip().lower(), *self.frontend_aliases)
+        }:
             raise RuntimeError(
                 f"DOCS_ORIGIN={self.docs_origin!r} is the platform's own host "
                 f"(FRONTEND_URL={self.frontend_url!r}). The docs need a host of "

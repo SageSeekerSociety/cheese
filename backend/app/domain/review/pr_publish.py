@@ -121,6 +121,7 @@ from app.domain.review.ready_rebase import (
     rebase_behind_before_ready,
 )
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import Topic
@@ -625,7 +626,7 @@ async def retarget_completed_dependencies(
                 # below simply sets it again next time.
                 await client.update_pr(seen[2], base=base)
             async with session_factory() as session:
-                task = await session.get(Task, task_id, with_for_update=True)
+                task = await lock_task_for_change(session, task_id)
                 if (
                     task is None
                     or task.status != TaskStatus.open

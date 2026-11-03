@@ -21,6 +21,7 @@ import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
 import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
+import { proposalPage } from '@/lib/proposalNavigation'
 import { refRoute } from '@/lib/refDirectory'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -211,7 +212,10 @@ function openRow(row: ConversationFile) {
   else openFile(row.id)
 }
 function openResource(resource: string, _turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
-  if (resource === 'doc' && document) void openThreadDocument(router, props.projectId, document, review)
+  if (resource === 'doc' && document) return void openThreadDocument(router, props.projectId, document, review)
+  // 私聊旁没有右侧面板：提议的技能、例行事务去它在项目里的那一页。
+  const page = document ? proposalPage(resource, props.projectId, document.id) : null
+  if (page) void router.push(page)
 }
 function onTurnDone() {
   noteChatNews()
@@ -239,7 +243,7 @@ function onTurnDone() {
     @toggle-focus="toggleFocus"
     @close-panel="closePanel"
     @start-drag="startPaneDrag"
-    @reset-split="store.setChatPct(50)"
+    @reset-split="store.resetChatPct()"
     @freeze-chat="freezeChatWidth"
   >
     <template v-if="topic" #chat>

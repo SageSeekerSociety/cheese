@@ -192,7 +192,12 @@
       "respond": "Answer an inbox item",
       "member": "Manage members",
       "channel": "Create a channel",
-      "fetch": "Read a web page"
+      "fetch": "Read a web page",
+      "settings": "Change settings",
+      "announce": "Announce",
+      "category": "Manage categories",
+      "invite_code": "Manage invite codes",
+      "problem_review": "Review problems"
     }
   }
 }

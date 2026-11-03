@@ -10,7 +10,6 @@ The provider's administrative credentials never leave the backend.
 
 import asyncio
 import base64
-import binascii
 import uuid
 from urllib.parse import quote, urlsplit
 
@@ -24,12 +23,14 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import require_seated_agent
-from app.api.response import ok
+from app.api.auth import PresentedCredential, require_seated_agent
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.api.ws_pipe import _pump_tcp_to_ws, _pump_ws_to_tcp
+from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -40,6 +41,7 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
 from app.domain.project.forgejo_tokens import ForgejoTokenError, credential_is_leased
 from app.domain.project.github_app import GitHubAppError
+from app.domain.review.services import AcceptService
 from app.domain.room_task.place import session_keeps_work
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
@@ -49,7 +51,7 @@ router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 async def forge_tunnel(
     project_id: uuid.UUID,
     websocket: WebSocket,
-    token: str = "",
+    token: PresentedCredential,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Carry native GitHub HTTPS through the deployment without terminating TLS."""
@@ -130,18 +132,6 @@ async def forge_tunnel(
             pass
 
 
-def _forge_credential(authorization: str) -> str:
-    scheme, _, value = authorization.partition(" ")
-    if scheme.lower() in ("token", "bearer"):
-        return value.strip()
-    if scheme.lower() == "basic":
-        try:
-            return base64.b64decode(value, validate=True).decode().partition(":")[2]
-        except (ValueError, UnicodeError, binascii.Error):
-            return ""
-    return ""
-
-
 @router.api_route(
     "/forge/{project_id}/{path:path}",
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -158,8 +148,7 @@ async def forge_transport(
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, tokens_for_project
 
-    authorization = request.headers.get("authorization", "")
-    credential = _forge_credential(authorization)
+    credential = credentials.presented(request.headers)
     # Native Git first discovers whether the server requires HTTP Basic auth.
     denied = Response(
         status_code=401,
@@ -223,6 +212,8 @@ async def forge_transport(
             return denied
         base = binding.api_url.removesuffix("/api/v1").rstrip("/")
         upstream_url = base + "/" + quote(path, safe="/")
+        # The leased Forgejo credential itself, as the caller presented it.
+        authorization = request.headers.get("authorization", "")
     else:
         return denied
     if any(part in (".", "..") for part in path.split("/")):
@@ -296,22 +287,28 @@ async def _seated(db: AsyncSession, token: str, project_id: uuid.UUID) -> bool:
     The git relay and tunnel answer protocol errors, not JSON, so the refusal
     ``require_seated_agent`` raises is turned into a yes/no here."""
     try:
-        await require_seated_agent(db, token, project_id=project_id, topic_id=None)
+        await require_seated_agent(
+            db, token, project_id=project_id, topic_id=None, allow_machine=True
+        )
     except (AuthenticationRequiredError, ForbiddenError):
         return False
     return True
 
 
-def _caller_token(request: Request) -> str:
-    """The scoped token, however the caller presents it: the cheese CLI sends
-    X-Cheese-Token; a bearer header also works."""
-    direct = request.headers.get("x-cheese-token", "").strip()
-    if direct:
-        return direct
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return ""
+async def _seated_project(
+    request: Request, db: AsyncSession
+) -> tuple[str, dict, uuid.UUID]:
+    """The scoped credential a sandbox presents, its claims and the project it
+    names, once the agent it names is still seated there."""
+    token = credentials.presented(request.headers)
+    claims = scoped_token_claims(token) if token else None
+    if not token or not claims or not claims.get("p"):
+        raise AuthenticationRequiredError("A scoped cheese token is required")
+    project_id = uuid.UUID(claims["p"])
+    await require_seated_agent(
+        db, token, project_id=project_id, topic_id=None, allow_machine=True
+    )
+    return token, claims, project_id
 
 
 @router.get("/forge-token")
@@ -321,18 +318,39 @@ async def sandbox_forge_token(
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, tokens_for_project
 
-    token = _caller_token(request)
-    claims = scoped_token_claims(token) if token else None
-    if not claims or not claims.get("p"):
-        raise AuthenticationRequiredError("A scoped cheese token is required")
-    project_id = uuid.UUID(claims["p"])
-    await require_seated_agent(db, token, project_id=project_id, topic_id=None)
+    _token, claims, project_id = await _seated_project(request, db)
     # A 支线 keeps nothing it does
     # (`Place.keeps_work`): its token reads the repository, its issues and pull
     # requests, and the forge refuses its pushes and its writes. On GitHub it
     # may also rerun or cancel CI (`GitHubAppTokens.read_permissions`).
     kept = await session_keeps_work(db, claims.get("session"))
     binding = await binding_for_project(project_id, db)
+    if binding is not None and getattr(request.state, "from_machine_sandbox", False):
+        # A sandbox asking on its platform socket without the host-side proxy
+        # proof receives only repository metadata and a placeholder token; the
+        # real single-repository token is handed only to the proxy outside the
+        # sandbox (#4896).
+        response.headers["Cache-Control"] = "no-store"
+        return ok(
+            {
+                "kind": binding.kind,
+                "project_id": str(project_id),
+                "token": "placeholder",
+                "expires_at": None,
+                "expiry_enforcement": "platform"
+                if not kept and binding.kind == "forgejo"
+                else "provider",
+                "read_only": not kept,
+                "repo": binding.repo,
+                "url": binding.url,
+                "default_branch": binding.default_branch,
+                "api_url": binding.api_url,
+                "username": "x-access-token"
+                if binding.kind == "github_app"
+                else binding.repo.split("/", 1)[0],
+                "permissions": "",
+            }
+        )
     minter = await tokens_for_project(project_id, db)
     if binding is None or minter is None:
         raise GatewayUnavailableError(say("forgeCredentialMissing"))
@@ -369,3 +387,29 @@ async def sandbox_forge_token(
             ),
         }
     )
+
+
+class HeldPullRequest(BaseModel):
+    """A pull request that is a delivery waiting on a person."""
+
+    number: int
+    branch: str | None
+    base: str | None
+
+
+class HeldDeliveries(BaseModel):
+    prs: list[HeldPullRequest]
+
+
+@router.get("/forge-held", **typed_response(HeldDeliveries))
+async def sandbox_forge_held(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """The project's pull requests that are deliveries waiting on a person,
+    their branches and bases: the forge proxy outside the sandbox refuses an
+    agent closing one of them, or deleting or emptying its branch
+    (`forge_requests.read`),
+    because that would void the delivery, which is the person's decision. Asked
+    on every such request, so a delivery filed a moment ago counts."""
+    _token, _claims, project_id = await _seated_project(request, db)
+    return ok({"prs": await AcceptService(db).held_pr_deliveries(project_id)})

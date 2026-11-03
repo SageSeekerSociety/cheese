@@ -83,9 +83,9 @@ def test_agent_scoped_token_cannot_invite_or_remove(client):
     pid = new_project(client, owner="alice")["id"]
     add_external_member(client, pid, "bob", by="alice")
     scoped = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=pid, agent_handle="unprivileged-agent"
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=pid, agent_handle='unprivileged-agent')
+        }"
     }
 
     assert _invite(client, pid, "carol", headers=scoped).status_code == 403

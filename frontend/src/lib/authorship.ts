@@ -33,6 +33,11 @@ export function isAgentBlock(b: Pick<Block, 'author_type' | 'author'>): boolean 
   return !isPlatformBlock(b) && isAgentHandle(b.author)
 }
 
+/** 这条是作者自己的芝士替他写的（`meta.by_assistant`）：署名是他，写的是他的芝士。 */
+export function byAssistant(b: Pick<Block, 'meta'>): boolean {
+  return b.meta?.by_assistant === true
+}
+
 /** 这条是一个人说的话。 */
 export function isPersonBlock(b: Pick<Block, 'author_type' | 'author'>): boolean {
   return !isPlatformBlock(b) && !isAgentHandle(b.author)

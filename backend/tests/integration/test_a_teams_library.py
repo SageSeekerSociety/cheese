@@ -135,6 +135,26 @@ def test_it_holds_so_much_and_says_so(client, monkeypatch):
     assert _names(client, base, alice) == ["a.txt"]
 
 
+def test_a_full_library_says_how_large_the_file_is_and_how_much_room_is_left(
+    client, monkeypatch
+):
+    """The refusal names the file's size, what is left and the whole: a
+    reader can tell whether deleting one file would be enough."""
+    monkeypatch.setattr(settings, "team_library_bytes", 10)
+    alice = _as(client, "alice")
+    base = f"/teams/{_personal_team(client, 'alice')}/library"
+    library_uploads.put_into(client, base, "a.txt", b"123456", headers=alice)
+
+    full = library_uploads.put_into(client, base, "b.txt", b"1234567", headers=alice)
+
+    assert full.status_code == 422
+    said = full.json()["error"]
+    assert said["i18n"]["params"] == {"size": "7 B", "free": "4 B", "total": "10 B"}
+    assert said["message"] == (
+        "无法放进资料库：这份文件 7 B，资料库还剩 4 B（共 10 B）。删除部分文件后重试"
+    )
+
+
 def test_a_persons_own_library_takes_a_file_a_project_would_not(client):
     """A person's library takes what they can attach to 芝士, past a project
     library's ceiling."""

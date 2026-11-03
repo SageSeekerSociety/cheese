@@ -29,6 +29,7 @@ from sqlalchemy import select, update
 
 from app.api.routes import admin_stats
 from app.core.config import settings
+from app.domain.day_windows import utc_now
 from app.domain.device.models import DeviceRow
 from app.domain.device.wiring import sql_device_service
 from app.domain.feedback.models import Feedback, FeedbackStatus, FeedbackTimeline
@@ -38,6 +39,7 @@ from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.usage.models import ResourceUsage
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.conftest import seed_user
 from tests.integration.conftest import a_team, post_project, session_auth_headers
 from tests.support.devices import enrollment_team
@@ -68,9 +70,14 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
 # --- 时间：独立算一遍，不复用生产代码 -----------------------------------------
 
 
+# Rows are dated from `utc_now()`, the moment the routes read too, held still
+# for each test (`pinned_clock`): a run across UTC midnight cannot split them.
+pytestmark = pytest.mark.usefixtures("pinned_clock")
+
+
 def _today() -> datetime:
     """今天（UTC）的午夜 —— 和窗口的起点、series 的键同一把尺子。"""
-    return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _days_ago(days: int) -> datetime:
@@ -200,7 +207,7 @@ def _seed_machine_stock(client, owner_handle: str) -> None:
                     team_id=await enrollment_team(sql_device_service(session), owner),
                     device_id="stats-device-1",
                     name="一台设备",
-                    token="stats-token-1",
+                    token_digest=digest_token("stats-token-1"),
                     owner_user_id=owner,
                     created_at=datetime.now(UTC),
                 )
@@ -984,3 +991,31 @@ def test_personal_credits_stay_out_of_the_project_credit_board(
     credits = _stats(client, as_admin, "usage", days=DAYS)["credits"]
     assert credits["exhausted"] == [] and credits["low"] == []
     assert credits["burn"]["credits_in_window"] == 0
+
+
+def test_performance_counts_the_heap_only_when_asked(client, as_admin):
+    """The census holds the loop as long as a full collection does, so a plain
+    read does not run it; asked for, it names what the collector walks."""
+
+    class HeldByTheProcess:
+        pass
+
+    held = [HeldByTheProcess() for _ in range(3000)]
+    for each in held:
+        each.me = each  # a cycle, so the collector tracks and walks it
+
+    plain = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    )
+    asked = client.get(
+        "/admin/stats/performance",
+        params={"heap": "true"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    assert plain.status_code == 200 and "heap" not in plain.json()["data"]
+    heap = asked.json()["data"]["heap"]
+    counts = {row["type"]: row["count"] for row in heap["top"]}
+    name = f"{__name__}.{HeldByTheProcess.__qualname__}"
+    assert counts.get(name, 0) >= 3000, heap["top"][:5]
+    assert heap["tracked"] >= 3000 and heap["frozen"] >= 0

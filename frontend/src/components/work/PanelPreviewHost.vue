@@ -10,6 +10,7 @@
 // 外壳只能待在这儿：`components/panels/**` 底下每个 SFC 都是场景，包括外壳自己，所以它
 // 得站在场景之外；`components/**` 又不许直接连接口层（`pnpm run lint:boundary`），
 // 所以取数走 `composables/`。同一条理由见 `components/work/PanelDocHost.vue`。
+import type { ProjectMemberRow } from '../../cx_types'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { ref, useId } from 'vue'
@@ -21,6 +22,8 @@ const props = withDefaults(
   defineProps<{
     topicId: string | null
     submitQuestion?: SubmitPreviewQuestion
+    /** 私下问个人芝士：页面递下来的能力（同 `submitQuestion`）。 */
+    askPersonal?: (message: string) => void
     projectId: string | null
     // This tab is the one on screen. Loads happen on the rising edge.
     active?: boolean
@@ -30,8 +33,21 @@ const props = withDefaults(
     path?: string | null
     /** 这间房的队友叫什么，见 `PreviewViewProps`。 */
     agentName?: string
+    /** 项目名册：文件评论里作者的名字和头像从它来（同 `PanelDocHost` 的 `members`）。 */
+    members?: ProjectMemberRow[]
+    /** 这间房队友的 handle：评论里那个队友席位画的是谁。 */
+    agentHandle?: string | null
   }>(),
-  { active: false, refreshTick: 0, path: null, submitQuestion: undefined, agentName: undefined }
+  {
+    active: false,
+    refreshTick: 0,
+    path: null,
+    submitQuestion: undefined,
+    askPersonal: undefined,
+    agentName: undefined,
+    members: () => [],
+    agentHandle: null,
+  }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -67,6 +83,7 @@ const preview = usePanelPreview(props, {
     ref="panelRef"
     :topic-id="props.topicId"
     :submit-question="props.submitQuestion"
+    :ask-personal="props.askPersonal"
     :project-id="props.projectId"
     :active="props.active"
     :refresh-tick="props.refreshTick"

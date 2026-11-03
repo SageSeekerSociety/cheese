@@ -503,7 +503,7 @@ def test_nested_and_workflow_agents_are_read_from_their_own_files(screen, contra
 def test_an_interrupt_is_the_failure_of_the_work_it_ends(screen, contract):
     work = str(uuid.uuid4())
     sent = screen.send(
-        contract.do("Bash", command="sleep 60; echo LATE", description="long"),
+        contract.do("Bash", command="env sleep 60; echo LATE", description="long"),
         work_id=work,
     )
     screen.wait(_is("system", "task_started"))
@@ -993,7 +993,11 @@ def _delta(index: int, **delta) -> dict:
 _WRITING = [
     [{"type": "system", "subtype": "init", "session_id": "s", "model": "m"}],
     [
-        _streamed({"type": "message_start", "message": {"id": "msg_1"}}),
+        {
+            "type": "stream_event",
+            "ttft_ms": 1234,
+            "event": {"type": "message_start", "message": {"id": "msg_1"}},
+        },
         _streamed(
             {
                 "type": "content_block_start",
@@ -1140,6 +1144,55 @@ async def test_the_block_being_written_is_shown_as_it_grows_and_never_journaled(
         ("assistant", None),
         ("result", "success"),
     ]
+
+
+@pytest.mark.anyio
+async def test_how_long_a_call_waited_to_start_is_kept_with_what_it_wrote(
+    monkeypatch, tmp_path
+):
+    """The wait before the first token is what a person sits through before
+    any of the answer can be shown. The build reports it once per API call, on
+    the `message_start` of the stream it prints; the deltas are shown and
+    never journaled, so the number is carried on the record the call writes —
+    the finished block that shares its message id."""
+    build = tmp_path / "build.py"
+    build.write_text(
+        "import json, sys\n"
+        f"for step in {_WRITING!r}:\n"
+        "    for record in step:\n"
+        "        print(json.dumps(record), flush=True)\n"
+        "    sys.stdin.readline()\n"
+        "sys.stdin.read()\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    runner = Runner(tmp_path / "state")
+    await runner.start(
+        command=shlex.join([sys.executable, str(build)]),
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "config")},
+        resume=None,
+        agent_handle=AGENT,
+    )
+    assert runner.process is not None and runner.process.stdin is not None
+    stdin = runner.process.stdin
+    try:
+        async with asyncio.timeout(30):
+            for _ in range(len(_WRITING)):
+                stdin.write(b"\n")
+                await stdin.drain()
+            while True:
+                records = [e["record"] for e in runner.journal.read(0)]
+                if any(_is("result")(r) for r in records):
+                    break
+                await asyncio.sleep(0.05)
+    finally:
+        await runner.close()
+
+    waits = [
+        r["cheese"]["first_token_ms"]
+        for r in records
+        if r.get("type") == "assistant" and "first_token_ms" in r.get("cheese", {})
+    ]
+    assert waits == [1234], "the call's wait is not on the record it wrote"
 
 
 # --- a session that dies on its way up says why --------------------------------
@@ -1331,7 +1384,7 @@ def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
 
 
 def test_an_idle_session_compacts_itself_when_asked(screen, contract):
-    """`cheese_compact` reaches this runner as `compact`, and the runner writes
+    """`cheese_session(action=compact)` reaches this runner as `compact`, and the runner writes
     `/compact` — the same door `/reload-skills` goes through. An idle session
     has no turn to wait for, so it goes at once, and the build reports the
     compaction the way the room already reads it (`system/status`)."""
@@ -1391,3 +1444,27 @@ def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract
         lambda r: r.get("compact_result") is not None, after=started["sequence"]
     )
     assert ended["record"]["compact_result"] == "success"
+
+
+@pytest.mark.anyio
+async def test_a_bash_call_says_how_much_of_its_wait_was_the_command(
+    monkeypatch, tmp_path
+):
+    """A tool call's wall clock is the command's own run plus whatever the
+    platform spent carrying it there. The executor times the command; the
+    shell prefix on this host leaves that where the runner looks, keyed by the
+    call the build named, so the record that brings the result back says what
+    the command itself took."""
+    monkeypatch.chdir(tmp_path)
+    runner = Runner(tmp_path / "state")
+    target = tmp_path / "session/execution.json"
+    target.parent.mkdir()
+    target.write_text("{}")
+    runner.execution = str(target)
+    timings = target.parent / "command-timings"
+    timings.mkdir()
+
+    (timings / "toolu_9.json").write_text('{"ran_ms": 250}')
+    assert runner.command_ran("toolu_9") == 250
+    # A call the executor never timed says nothing, rather than zero.
+    assert runner.command_ran("toolu_none") is None

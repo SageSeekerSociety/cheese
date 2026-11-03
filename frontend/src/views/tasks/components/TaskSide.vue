@@ -8,14 +8,22 @@
           <strong>{{
             identity.type === 'TEAM' ? identity.teamName || t('tasks.side.unnamedTeam') : t('tasks.side.individual')
           }}</strong>
-          <span v-if="remaining" class="t-meta-read t-num">{{ remaining }}</span>
           <AdaptiveMenu v-if="identity.approved === 'APPROVED'" :actions="mineActions">
             <template #activator="{ props: menu }">
               <BaseButton v-bind="menu" icon="mdi-dots-horizontal" size="sm" :aria-label="t('tasks.side.more')" />
             </template>
           </AdaptiveMenu>
         </div>
-        <p class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
+        <!-- A staged task is graded stage by stage, so it says where each stage stands. -->
+        <ol v-if="stageRows.length" class="ts__stages" data-testid="my-stages">
+          <li v-for="row in stageRows" :key="row.index">
+            <span class="ts__stage-name" data-user-content>{{ row.name }}</span>
+            <span class="ts__status" :class="`ts__status--${row.tone}`">{{ row.label }}</span>
+          </li>
+        </ol>
+        <p v-else class="ts__status" :class="`ts__status--${status.tone}`" data-testid="my-status">
+          {{ status.label }}
+        </p>
         <p v-if="myDeadlineText" class="ts__deadline t-meta-read" data-testid="my-deadline">{{ myDeadlineText }}</p>
 
         <template v-if="identity.approved === 'APPROVED'">
@@ -27,17 +35,6 @@
             <v-icon size="14">mdi-folder-outline</v-icon>
             <span>{{ p.name }}</span>
           </router-link>
-          <!-- 先列已有的项目再给「新建」：直接给一颗会默默再建一个的按钮，人会建出第二个、第三个同样的项目。 -->
-          <BaseButton
-            v-if="!projectsLoading && !projectsFailed"
-            kind="ghost"
-            size="sm"
-            prepend-icon="mdi-plus"
-            class="ts__new"
-            @click="createProject"
-          >
-            {{ t('tasks.side.newProject') }}
-          </BaseButton>
         </template>
       </div>
     </section>
@@ -50,7 +47,8 @@
           <dd>{{ formText }}</dd>
         </div>
         <div>
-          <dt>{{ t('tasks.side.deadline') }}</dt>
+          <!-- On an applied-for task the task's deadline closes applying only (申请截止). -->
+          <dt>{{ task.startMode === 'DIRECT' ? t('tasks.side.deadline') : t('tasks.side.deadlineApply') }}</dt>
           <dd>{{ deadlineText }}</dd>
         </div>
         <div v-if="defaultDeadline">
@@ -94,7 +92,7 @@
 <script setup lang="ts">
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
-import type { Task, TaskSubmissionReview } from '@/types'
+import type { Task, TaskProgress, TaskSubmissionReview } from '@/types'
 import type { TaskParticipationIdentity } from '@/types/taskBoard'
 
 import { computed, ref, watch } from 'vue'
@@ -103,8 +101,6 @@ import dayjs from 'dayjs'
 
 import { deadlineState } from '@/utils/tasks'
 
-import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
-
 import { useTaskInheritance } from '../composables/useTaskInheritance'
 
 import TaskInheritance from './TaskInheritance.vue'
@@ -112,6 +108,7 @@ import TaskInheritance from './TaskInheritance.vue'
 import { listProjectsForTask } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { STAGE_TONE } from '@/lib/taskStages'
 
 const props = defineProps<{
   task: Task
@@ -119,12 +116,14 @@ const props = defineProps<{
   identity: TaskParticipationIdentity | null
   /** 我最新那一版提交；还没交是 null。 */
   latest: { version: number; review?: TaskSubmissionReview } | null
+  /** 每个阶段上的进度；读不到是 null。 */
+  progress?: TaskProgress | null
 }>()
 
 const emit = defineEmits<{ leave: [] }>()
 
-// 「会继承什么」常驻在这里 (#944)：建项目之后，同一份说明还看得到 —— 从这道题
-// 新建项目就在下面这颗按钮上，两份说明放一起，人不必回头找。
+// 「会继承什么」常驻在这里 (#944)：开始做之后，同一份说明还看得到。用这道题新建项目
+// 只有一条路：页头的「开始做这道题」。
 const { inheritance, loading: inheritanceLoading } = useTaskInheritance(() => props.task.id)
 
 const mineActions = computed<MenuAction[]>(() => [
@@ -135,17 +134,40 @@ const { t } = useI18n()
 
 const DAY_MS = 86_400_000
 
-/** 我这一份的状态：从报名审核和最新一版提交的评审结果算，不看 `completion_status`（那一列服务端自己都说不准）。 */
+/** 我这一份的状态（Zhifei 2026-10-26：这一栏说我自己，题目名旁边说题目）：从报名审核、最新一版提交
+ *  的评审结果和我自己的截止算，不看 `completion_status`（那一列服务端自己都说不准）。判过通过、交了在
+ *  等批改的，截止过了也照旧这么说；别的过了我的截止就是「已过期」，题目结束了是「已结束」。还没交的，
+ *  没开始是「可以开始」，开始了（有项目）是「进行中」。 */
 const status = computed(() => {
   if (props.identity?.approved === 'NONE') return { label: t('tasks.page.claim.pending'), tone: 'muted' }
   const latest = props.latest
-  if (!latest) return { label: t('tasks.side.noSubmission'), tone: 'muted' }
-  const n = latest.version
+  const n = latest?.version ?? 0
   // 还没判的那一版，接口回的是 `{ reviewed: false }` 而不是空：判没判只看 `reviewed`。
-  if (!latest.review?.reviewed) return { label: t('tasks.side.versionPending', { n }), tone: 'warn' }
-  return latest.review.detail.accepted
-    ? { label: t('tasks.side.versionPassed', { n }), tone: 'ok' }
-    : { label: t('tasks.side.versionFailed', { n }), tone: 'danger' }
+  if (latest && !latest.review?.reviewed) return { label: t('tasks.side.versionPending', { n }), tone: 'warn' }
+  if (latest?.review?.reviewed && latest.review.detail.accepted)
+    return { label: t('tasks.side.versionPassed', { n }), tone: 'ok' }
+  if (props.task.endedAt != null) return { label: t('tasks.side.ended'), tone: 'muted' }
+  if (deadlineState(myDeadline.value)?.passed) return { label: t('tasks.side.expired'), tone: 'danger' }
+  if (latest) return { label: t('tasks.side.versionFailed', { n }), tone: 'danger' }
+  return props.task.myProject
+    ? { label: t('tasks.page.mine.doing'), tone: 'ok' }
+    : { label: t('tasks.side.canStart'), tone: 'muted' }
+})
+
+/** 分了阶段的题：我在每个阶段上走到哪一步。不分阶段、或还没领到，是空的。 */
+const stageRows = computed(() => {
+  const stages = props.task.stages ?? []
+  const mine = props.progress?.mine?.stages
+  if (!stages.length || !mine) return []
+  return stages.map((stage, index) => {
+    const state = mine[index] ?? 'NOT_SUBMITTED'
+    return {
+      index,
+      name: t('tasks.stages.numbered', { n: index + 1, name: stage.name }),
+      label: t(`tasks.stages.status.${state}`),
+      tone: STAGE_TONE[state],
+    }
+  })
 })
 
 /** 我自己的截止：出题人批准时给每人单设的那一个，不是题目的截止。读的是这一栏画着的
@@ -155,11 +177,17 @@ const myDeadline = computed(() => {
   return props.identity.deadline ?? props.task.userDeadline ?? null
 })
 
-/** 截到哪一刻，按看的人自己的钟点写出来 —— 和问芝士、项目总览说的是同一个时刻。 */
+/** 截到哪一刻，按看的人自己的钟点写出来 —— 和问芝士、项目总览说的是同一个时刻；后面接着还剩几天
+ *  或过了几天：「提交截止 10月31日 20:41 · 还剩 5 天」。 */
 const myDeadlineText = computed(() =>
   myDeadline.value == null
     ? ''
-    : t('tasks.side.myDeadline', { when: dayjs(myDeadline.value).format(t('tasks.roster.dateTimeFormat')) })
+    : [
+        t('tasks.side.myDeadline', { when: dayjs(myDeadline.value).format(t('tasks.roster.dateTimeFormat')) }),
+        remaining.value,
+      ]
+        .filter(Boolean)
+        .join(' · ')
 )
 
 /** 过没过、隔几天都由 `deadlineState` 说，交作业表单的「已截止」读的也是它。 */
@@ -190,16 +218,18 @@ const deadlineText = computed(() => {
   return state.days === 0 ? t('tasks.side.dueToday') : t('tasks.side.dueIn', { n: state.days })
 })
 
-/** 领取之后给每人的提交期限（天）。发题表单存的是天数，老数据里存的是毫秒（14 天存成
- *  1209600000），两种都换成天；0 或没有就不画这一行。 */
+/** 申请通过之后给每人的提交期限（天）。发题表单存的是天数，老数据里存的是毫秒（14 天存成
+ *  1209600000），两种都换成天；0 或没有就不画这一行。直接开始的题所有人按截止日期交，
+ *  没有这一行。 */
 const defaultDeadline = computed(() => {
+  if (props.task.startMode === 'DIRECT') return 0
   const raw = props.task.defaultDeadline ?? 0
   return raw >= DAY_MS ? Math.round(raw / DAY_MS) : raw
 })
 
-/** 领取人数是接口给的 `participants.total`；`participantLimit` 的 0 是「不限」。 */
+/** 参与人数是接口给的 `participants.approved`（还在等批准的不算）；`participantLimit` 的 0 是「不限」。 */
 const claimedText = computed(() => {
-  const n = props.task.participants.total
+  const n = props.task.participants.approved
   const limit = props.task.participantLimit
   const teams = props.task.submitterType === 'TEAM'
   if (limit > 0) return t(teams ? 'tasks.side.claimedTeamsOf' : 'tasks.side.claimedPeopleOf', { n, limit })
@@ -209,27 +239,16 @@ const claimedText = computed(() => {
 // ── 从这道题开出来的项目 ─────────────────────────────────────────────────────────
 
 const projects = ref<Project[]>([])
-const projectsLoading = ref(false)
 const projectsFailed = ref(false)
-const { show: showNewProjectDialog } = useNewProjectDialog()
 
 async function loadProjects() {
-  projectsLoading.value = true
   projectsFailed.value = false
   try {
     projects.value = (await listProjectsForTask(props.task.id)).data
   } catch {
     projects.value = []
     projectsFailed.value = true
-  } finally {
-    projectsLoading.value = false
   }
-}
-
-/** 用团队领的，新项目就挂在那个团队下；个人领的让人在对话框里选。 */
-function createProject() {
-  const teamId = props.identity?.type === 'TEAM' ? props.identity.memberId : null
-  showNewProjectDialog(teamId, { id: props.task.id, name: props.task.name })
 }
 
 watch(
@@ -290,6 +309,30 @@ watch(
   line-height: var(--lh-13);
 }
 
+.ts__stages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts__stages li {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.ts__stage-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .ts__status--muted {
   color: var(--muted);
 }
@@ -324,12 +367,6 @@ watch(
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.ts__new {
-  align-self: flex-start;
-  margin: 4px 0 0 -8px;
-  color: var(--muted);
 }
 
 .ts__note {

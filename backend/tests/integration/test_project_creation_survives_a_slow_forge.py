@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.project import forge
-from app.domain.project.forge import provision_repository as real_provision
+from app.domain.project.forge import prepare_repository as real_prepare
 from app.domain.project.models import Project
 from tests.integration.conftest import post_project
 
@@ -88,11 +88,15 @@ def fake_forge(client, monkeypatch) -> FakeForge:
     monkeypatch.setattr(settings, "forgejo_api_url", API)
     monkeypatch.setattr(settings, "forgejo_admin_token", "admin-token")
     monkeypatch.setattr(settings, "forge_webhook_url", "")
-    monkeypatch.setattr(
-        forge,
-        "provision_repository",
-        functools.partial(real_provision, transport=transport),
-    )
+
+    fake_transport = transport
+
+    async def prepare_repository(project_id, *, initialize=True, transport=None):
+        return await real_prepare(
+            project_id, initialize=initialize, transport=fake_transport
+        )
+
+    monkeypatch.setattr(forge, "prepare_repository", prepare_repository)
     fake.transport = transport  # type: ignore[attr-defined]
     return fake
 

@@ -22,6 +22,7 @@ from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import private_owners
 from app.domain.memory.models import MemoryDreamRunStatus
+from app.domain.memory.writers import MemoryWriter
 from app.domain.usage.repositories import UsageRepository
 from tests.integration.conftest import project_service, registered
 
@@ -246,6 +247,7 @@ async def test_private_owners_lists_everyone_with_a_private_tree(
                 content="- 一条",
                 updated_by=owner,
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
         await store.write(
             project_id=other.id,
@@ -255,6 +257,7 @@ async def test_private_owners_lists_everyone_with_a_private_tree(
             content="- 别人的项目",
             updated_by="carol",
             expected_version=None,
+            writer=MemoryWriter.panel,
         )
         await session.commit()
 

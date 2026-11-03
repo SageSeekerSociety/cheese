@@ -72,7 +72,7 @@ the same prefix and tags, is all it takes.
 
 import asyncio
 import uuid
-from typing import Protocol
+from typing import Annotated, Protocol
 
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
@@ -83,7 +83,7 @@ from app.api.auth import ActorResolverDep
 from app.api.member_settings import say_agent_changes
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.core.errors import ConflictError
 from app.core.sentences import say
 from app.domain.agent.model_catalog import model_choices
@@ -177,15 +177,15 @@ async def _may_configure(
 
     Or they **manage the project**.
     """
+    if await MemberService(db).manages(
+        project_id, actor.handle, Permission.configure_agents
+    ):
+        return True
     own = await owned_instance(db, instance.id)
     if own is not None and own.owner_user_id == actor.user_id:
         return True
-    if await TopicMemberService(db).on_project(
+    return await TopicMemberService(db).on_project(
         project_id, actor.handle, team=project_team
-    ):
-        return True
-    return await MemberService(db).manages(
-        project_id, actor.handle, Permission.configure_agents
     )
 
 
@@ -198,6 +198,7 @@ async def list_project_agents(
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
+    await service.list_team(project_id)
     await service.for_project(project)
     rows = await service.list_team(project_id)
     # Who is editing what, in one round of reads against Valkey (one per agent;
@@ -216,19 +217,14 @@ async def list_project_agents(
     return ok(page(items, len(items)))
 
 
-@router.post("/{project_id}/agents", dependencies=[ROUTE_DECIDES])
+@router.post("/{project_id}/agents")
 async def create_project_agent(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     body: AgentInstanceCreate,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Add an agent to this project. It starts with an empty memory pool."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.configure_agents
-    )
-    await ProjectService(db).get_or_404(project_id)
+    project_id = at.project.id
     service = AgentInstanceService(db, models=model_choices)
     instance = await service.create(
         project_id=project_id,
@@ -245,13 +241,12 @@ async def create_project_agent(
     )
 
 
-@router.put("/{project_id}/agents/{agent_id}", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/agents/{agent_id}")
 async def update_project_agent(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     agent_id: uuid.UUID,
     body: AgentInstanceUpdate,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Edit one agent's name and saved configuration.
 
@@ -261,11 +256,8 @@ async def update_project_agent(
     it; a change to what every turn costs or can do (its thinking effort,
     context compaction and skills) is said in the project's 综合.
     """
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.configure_agents
-    )
-    project = await ProjectService(db).get_or_404(project_id)
+    project_id = at.project.id
+    project = at.project
     service = AgentInstanceService(db, models=model_choices)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     fields = body.model_fields_set
@@ -277,7 +269,7 @@ async def update_project_agent(
             instance, body.configuration, expected_version=body.expected_version
         )
         await say_agent_changes(
-            db, project, instance.id, saved, body.configuration, by=actor.handle
+            db, project, instance.id, saved, body.configuration, by=at.actor.handle
         )
     await db.flush()
     return ok(
@@ -357,12 +349,11 @@ async def set_agent_editing(
     return ok({"editing": {"handle": actor.handle, "seconds": editing.LEASE_SECONDS}})
 
 
-@router.delete("/{project_id}/agents/{agent_id}", dependencies=[ROUTE_DECIDES])
+@router.delete("/{project_id}/agents/{agent_id}")
 async def deactivate_project_agent(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     agent_id: uuid.UUID,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Retire an agent — not a delete.
 
@@ -371,30 +362,24 @@ async def deactivate_project_agent(
     that is the shape a DELETE returns everywhere here, not because a row went
     away.
     """
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.configure_agents
-    )
-    project = await ProjectService(db).get_or_404(project_id)
+    project_id = at.project.id
+    project = at.project
     service = AgentInstanceService(db)
+    await service.list_team(project_id)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     await service.deactivate(project, instance)
     return ok({"deleted": True})
 
 
-@router.put("/{project_id}/default-agent", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/default-agent")
 async def set_project_default_agent(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     body: ProjectDefaultAgentIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Select the existing agent that new rooms start with."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.configure_agents
-    )
-    project = await ProjectService(db).get_or_404(project_id)
+    project_id = at.project.id
+    project = at.project
     service = AgentInstanceService(db)
     instance = await service.get_in_project(
         project_id=project_id, instance_id=body.instance_id

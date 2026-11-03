@@ -143,7 +143,7 @@ def test_agent_comment_is_attributed_but_does_not_wake_itself(client, sessions):
     r = client.post(
         f"/documents/{doc}/comments",
         json={"content": "I already handled this."},
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert r.status_code == 200

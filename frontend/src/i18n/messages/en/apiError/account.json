@@ -21,7 +21,7 @@
   "signInForTask": "Sign in to view this task",
   "signInForTeam": "Sign in to view this team",
   "signInUnavailable": "Signing in can't be completed right now. Try again later",
-  "taskCredentialOtherConversation": "An AI teammate in a task reads and writes only in that task's conversation. To see what another task in this channel said, search the whole channel (`cheese_chat_search` with `channel`); to work in that task, let the teammate seated there do it",
+  "taskCredentialOtherConversation": "An AI teammate in a task reads and writes only in that task's conversation. To see what another task in this channel said, search the whole channel (`cheese_chat(action=search)` with `channel`); to work in that task, let the teammate seated there do it",
   "teamMemberOnly": "Only members of this team can view it",
   "termsUpdatedRefresh": "The terms have been updated. Refresh the page and read them again",
   "tokenOtherProject": "This token belongs to another project and can't be used here",

@@ -54,9 +54,11 @@ def _sandbox(project_id: str, topic_id: str, seat: str) -> dict[str, str]:
     """The headers an agent's sandbox sends: its per-turn scoped token, naming
     the agent it acts as."""
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=topic_id, agent_handle=seat
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project_id, topic_id=topic_id, agent_handle=seat
+            )
+        }"
     }
 
 

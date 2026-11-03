@@ -7,6 +7,7 @@ forward and is given nothing, so its sessions resolve the site as before.
 """
 
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.machine_address import CLOUD_LOOPBACK_BASE
 from app.domain.machine import session_work
 
@@ -15,7 +16,7 @@ def _env(api: str) -> dict:
     return session_work._executor_env(
         {},
         api=api,
-        token="t",
+        token=mint_scoped_token(project_id="p", topic_id="t"),
         project_id="p",
         topic_id="t",
         author="cheese",

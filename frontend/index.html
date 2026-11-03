@@ -20,6 +20,15 @@
     <!-- Updated at runtime by src/theme.ts when the theme changes; this value
          is the light one, matching META_THEME_COLOR in that file. -->
     <meta name="theme-color" content="#F57F17" />
+    <!-- The oldest build an open page may keep running. A page whose own value is
+         below the one the server now serves asks to be refreshed (src/pwa.ts,
+         promptIfBelowMinBuild); ordinary releases leave it alone and swap in at the
+         next navigation. A pull request that fixes a severe bug raises it to one more
+         than the highest value main has ever carried (`git log -p -S cx-min-build
+         -- frontend/index.html`), not one more than the current value: a revert can
+         lower it, and a build that carried the reverted number must still read as
+         older than the next fix. -->
+    <meta name="cx-min-build" content="1" />
     <!-- What a search engine and a link preview read before any script runs (Baidu's
          spider runs none). The title is the landing page's own one too
          (publicSite.documentTitle); the app retitles every other page at runtime. -->
@@ -202,7 +211,11 @@
           // is wide enough (useWorkspaceLayout PANEL_OPEN_MIN).
           var pane = window.innerWidth - 64 - side
           var panel = typeof layout.panelOpen === 'boolean' ? layout.panelOpen : pane >= 1000
-          if (panel) html.style.setProperty('--sx-chat-w', (Number(layout.chatPct) || 50) + '%')
+          if (panel)
+            html.style.setProperty(
+              '--sx-chat-w',
+              (Number(layout.chatPct) || (window.innerWidth >= 1440 ? 45 : 50)) + '%'
+            )
         } catch (e) {
           // Whatever went wrong, the generic frame is never wrong for long.
         }

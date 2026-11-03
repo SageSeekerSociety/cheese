@@ -46,7 +46,55 @@ import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
 import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
 import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
-import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue'
+import ProjectRoleDetail from '@/components/settings/ProjectRoleDetail.vue'
+import ProjectRoleList from '@/components/settings/ProjectRoleList.vue'
+import RoleCreateDialog from '@/components/settings/RoleCreateDialog.vue'
+import RoleDeleteDialog from '@/components/settings/RoleDeleteDialog.vue'
+
+// i18n-data: role names a demo project chose; the catalog shows them as user data
+const DEMO_TESTER = '内测用户'
+const ALL_BUT_PEOPLE = [
+  'edit_settings',
+  'export_project',
+  'create_channels',
+  'manage_channels',
+  'speak',
+  'ask_agent',
+  'tasks',
+  'edit_content',
+  'share_documents',
+  'comment',
+  'configure_agents',
+]
+const DEMO_ROLES = [
+  {
+    key: 'admin',
+    name: null,
+    builtin: 'admin' as const,
+    template: null,
+    permissions: ['manage_members', 'change_roles', ...ALL_BUT_PEOPLE],
+    defaults: ['manage_members', 'change_roles', ...ALL_BUT_PEOPLE],
+    holders: 2,
+  },
+  {
+    key: 'member',
+    name: null,
+    builtin: 'member' as const,
+    template: null,
+    permissions: ALL_BUT_PEOPLE.filter((p) => p !== 'edit_settings' && p !== 'manage_channels'),
+    defaults: ALL_BUT_PEOPLE.filter((p) => p !== 'edit_settings' && p !== 'manage_channels'),
+    holders: 4,
+  },
+  {
+    key: '5b0d6c1e-0000-4000-8000-000000000001',
+    name: DEMO_TESTER,
+    builtin: null,
+    template: null,
+    permissions: ['speak', 'ask_agent', 'comment'],
+    defaults: null,
+    holders: 12,
+  },
+]
 
 /** 五件都吃 vuetify。`ProjectMcpSettings` 多一样 i18n：它用 `<i18n-t>`，那一个由插件
  *  全局注册，不装就解析不了、挂起来会警告。 */
@@ -474,90 +522,82 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'project-roles-settings',
-    title: 'ProjectRolesSettings',
-    about: '项目设置里的「角色和权限」：一张角色乘权限的表，所有人都看得到，只有管理员能勾选；管人和改角色两行锁定。',
-    file: 'src/components/settings/ProjectRolesSettings.vue',
-    component: ProjectRolesSettings,
+    id: 'project-role-list',
+    title: 'ProjectRoleList',
+    about: '项目设置里「角色和权限」的角色清单：管理员、成员在上，项目自己的角色在一道缝下面，每行写着几个人。',
+    file: 'src/components/settings/ProjectRoleList.vue',
+    component: ProjectRoleList,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '有自己的角色',
+        note: '项目自己的角色排在一道缝下面；每行的人数是拿着这个角色的人，所有者不算。',
+        props: { roles: DEMO_ROLES },
+        expect: '内测用户',
+      },
+      {
+        name: '只有内置的两个',
+        note: '没有自己的角色时不画那道缝。',
+        props: { roles: DEMO_ROLES.slice(0, 2) },
+        expect: '成员',
+      },
+    ],
+  },
+  {
+    id: 'project-role-detail',
+    title: 'ProjectRoleDetail',
+    about: '一个角色自己那一页：按组排的权限开关，管人和改角色两项锁定。',
+    file: 'src/components/settings/ProjectRoleDetail.vue',
+    component: ProjectRoleDetail,
     needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '管理员看到的',
-        note: '默认值，能勾选；和默认一样所以没有「恢复默认」。',
-        props: {
-          grants: {
-            admin: [
-              'manage_members',
-              'change_roles',
-              'edit_settings',
-              'export_project',
-              'create_channels',
-              'manage_channels',
-              'speak',
-              'ask_agent',
-              'tasks',
-              'edit_content',
-              'share_documents',
-              'comment',
-              'configure_agents',
-            ],
-            member: [
-              'export_project',
-              'create_channels',
-              'speak',
-              'ask_agent',
-              'tasks',
-              'edit_content',
-              'share_documents',
-              'comment',
-              'configure_agents',
-            ],
-            mentor: ['speak', 'ask_agent', 'comment'],
-          },
-          editable: true,
-          agentName: '芝士',
-          isDefault: true,
-        },
+        note: '能拨；管人和改角色两项带锁、拨不动。',
+        props: { role: DEMO_ROLES[2], editable: true, agentName: '芝士' },
         expect: '修改项目设置',
       },
       {
-        name: '成员看到的',
-        note: '只能看，底下说只有管理员能修改。',
-        props: {
-          grants: {
-            admin: [
-              'manage_members',
-              'change_roles',
-              'edit_settings',
-              'export_project',
-              'create_channels',
-              'manage_channels',
-              'speak',
-              'ask_agent',
-              'tasks',
-              'edit_content',
-              'share_documents',
-              'comment',
-              'configure_agents',
-            ],
-            member: [
-              'export_project',
-              'create_channels',
-              'speak',
-              'ask_agent',
-              'tasks',
-              'edit_content',
-              'share_documents',
-              'comment',
-              'configure_agents',
-            ],
-            mentor: ['speak', 'ask_agent', 'comment'],
-          },
-          editable: false,
-          agentName: '芝士',
-          isDefault: true,
-        },
-        expect: '只有管理员能修改',
+        name: '只能看',
+        note: '不能修改角色的人看到的：每个开关都是灰的。',
+        props: { role: DEMO_ROLES[1], editable: false, agentName: '芝士' },
+        expect: '在频道发言',
+      },
+    ],
+  },
+  {
+    id: 'role-create-dialog',
+    title: 'RoleCreateDialog',
+    about: '新增角色：起名字，权限从现有角色复制；项目还没有导师角色时，可以从导师模板开始。',
+    file: 'src/components/settings/RoleCreateDialog.vue',
+    component: RoleCreateDialog,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    args: { modelValue: true, roles: DEMO_ROLES, saving: false, error: null },
+    states: [
+      {
+        name: '打开',
+        note: '名字没起时「新增」是灰的；从导师模板开始可以不起名。',
+        props: {},
+        expect: '权限复制自',
+      },
+    ],
+  },
+  {
+    id: 'role-delete-dialog',
+    title: 'RoleDeleteDialog',
+    about: '删除还有人在用的角色：先选他们改为什么角色。',
+    file: 'src/components/settings/RoleDeleteDialog.vue',
+    component: RoleDeleteDialog,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    args: { modelValue: true, role: DEMO_ROLES[2], roles: DEMO_ROLES, makesAdmins: true, saving: false, error: null },
+    states: [
+      {
+        name: '还有 12 人',
+        note: '先选这些人改为什么角色，选的角色随删除一起交出去。',
+        props: {},
+        expect: '这个角色的 12 人改为',
       },
     ],
   },

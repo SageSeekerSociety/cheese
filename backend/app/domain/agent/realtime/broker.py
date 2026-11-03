@@ -3,11 +3,15 @@
 import contextlib
 import logging
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterable
 from functools import lru_cache
+from typing import cast
 
+from app.core.process_role import is_api_pool
 from app.domain.agent.realtime.activity import LIVE_ONLY, RoomActivity
+from app.domain.agent.realtime.relay import RelayBroker
 from app.domain.agent.realtime.subscriber_queue import (
     MAX_SUBSCRIBER_BYTES,
     Frame,
@@ -50,9 +54,14 @@ class InProcessBroker:
         # 输出，思考、跑一条长命令的那几十分钟里一帧都没有，可读会话的那一路每
         # `READ_WAIT_S`（25 秒）就收到 runner 的一声应答。见 `note_alive`。
         self._last_alive_at: dict[str, float] = {}
-        # Every turn end this process relayed, numbered in order: what `adopt`
-        # checks a database read against (`books_read`).
-        self._ends = 0
+        # Every frame this process published, numbered in order: where a
+        # database read stands against what was relayed (`books_read`). `adopt`
+        # checks turn ends against it; a run record carries its number, and a
+        # room's state says the number it was read at.
+        self._at = 0
+        #: Names this process's numbering: a number from another process (one
+        #: a page heard before the backend restarted) is not comparable.
+        self.stream = uuid.uuid4().hex
         self._ended: OrderedDict[tuple[str, str], int] = OrderedDict()
         self._replay_size = replay_size
         self._max_subscriber_bytes = max_subscriber_bytes
@@ -77,9 +86,11 @@ class InProcessBroker:
         self._ended.clear()
 
     def books_read(self) -> int:
-        """Take before reading a channel's open turns from the database, and
-        hand to `adopt` with what the read returned."""
-        return self._ends
+        """Take before reading a channel's state from the database: its open
+        turns (hand it to `adopt` with what the read returned), its owed
+        resumes (the room's state carries it, `room_state`). Whatever was
+        published at or before it was committed before the read began."""
+        return self._at
 
     def adopt(
         self,
@@ -121,6 +132,12 @@ class InProcessBroker:
 
     async def publish(self, channel: str, frame: Frame) -> None:
         kind = frame.get("type")
+        self._at += 1
+        at = self._at
+        if kind == "run_record":
+            # A replay delivers it after a newer read of the room's state; its
+            # number says it is older (`useRunRecords.resumesNow`).
+            frame = {**frame, "at": at, "stream": self.stream}
         # Standalone facts, not turn progress: fanned out live, never buffered. A
         # reconnect reads each back whole (reactions from GET /blocks, session state
         # from GET /topics/{id}/agent/control, member activity from the snapshot on
@@ -165,8 +182,7 @@ class InProcessBroker:
 
         if kind == "turn_finished":
             turn_id = str(frame.get("turn_id") or "")
-            self._ends += 1
-            self._ended[(channel, turn_id)] = self._ends
+            self._ended[(channel, turn_id)] = at
             self._ended.move_to_end((channel, turn_id))
             if len(self._ended) > ENDS_KEPT:
                 self._ended.popitem(last=False)
@@ -312,5 +328,11 @@ class InProcessBroker:
 def get_broker() -> InProcessBroker:
     """Process-wide singleton — defined here (not app.api.deps) so domain code
     that needs to publish outside a request/route (background watchers, retry
-    loops) can reach the SAME broker instance without importing the api layer."""
+    loops) can reach the SAME broker instance without importing the api layer.
+
+    An api pool process has no broker of its own: what it publishes is relayed
+    to the realtime process's (`relay.RelayBroker`), which is typed here as the
+    broker it stands in for — the calls a pool process may make are the same."""
+    if is_api_pool():
+        return cast(InProcessBroker, RelayBroker())
     return InProcessBroker()

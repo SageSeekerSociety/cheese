@@ -34,10 +34,11 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 import httpx
 
+from app.domain.day_windows import utc_now
 from app.domain.usage.pricing import declared_free
 
 logger = logging.getLogger(__name__)
@@ -268,7 +269,11 @@ class LlmGateway:
         return out
 
     async def mint_project_key(
-        self, project_id: uuid.UUID, *, purpose: str | None = None
+        self,
+        project_id: uuid.UUID,
+        *,
+        purpose: str | None = None,
+        daily_budget_usd: float | None = None,
     ) -> str | None:
         """Create a project-scoped virtual key (no expiry; attributed via
         ``user_id``). The caller persists it in project.settings — minting is
@@ -276,8 +281,16 @@ class LlmGateway:
 
         ``purpose`` names a second key of the same project (``dream``, its
         memory consolidation), whose spend has to be read apart from the
-        rooms'."""
+        rooms'.
+
+        ``daily_budget_usd`` caps what the key spends a day; the gateway
+        refuses calls past it until the day turns."""
         alias = f"project-{project_id}" + (f"-{purpose}" if purpose else "")
+        budget = (
+            {"max_budget": daily_budget_usd, "budget_duration": "1d"}
+            if daily_budget_usd is not None
+            else {}
+        )
         metadata = {"cheesex_project": str(project_id)}
         if purpose:
             metadata["purpose"] = purpose
@@ -290,6 +303,7 @@ class LlmGateway:
                         "key_alias": alias,
                         "user_id": project_user_id(project_id),
                         "metadata": metadata,
+                        **budget,
                     },
                 )
                 r.raise_for_status()
@@ -469,7 +483,7 @@ def _add_row(by: dict[str, ModelSpend], row: dict) -> None:
 
 
 def utc_today() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    return utc_now().strftime("%Y-%m-%d")
 
 
 def _prior_days(checkpoint_date: str, today: str) -> list[str] | None:

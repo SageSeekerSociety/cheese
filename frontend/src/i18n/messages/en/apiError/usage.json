@@ -37,6 +37,5 @@
   "planWindowLimitPositive": "A time window's allowance must be positive",
   "planWindowReset": "A time window can only reset weekly or monthly",
   "planWindowUnit": "A time window is either in hours, or by week or month",
-  "teamNotFound": "Team {team} doesn't exist",
   "teamNotFoundById": "There is no team {team_id}"
 }

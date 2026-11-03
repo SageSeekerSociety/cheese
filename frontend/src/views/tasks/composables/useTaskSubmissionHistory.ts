@@ -2,11 +2,11 @@ import type { PostTaskSubmissionReviewRequestData } from '@/types/taskBoard'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { usePaging } from '@/utils/paging'
 
 import { TaskBoardApi } from '@/api/taskBoard'
+import { toast } from '@/lib/toast'
 
 /**
  * 一版提交历史的取数与评审写入。
@@ -16,10 +16,11 @@ import { TaskBoardApi } from '@/api/taskBoard'
  * 只发 `changed`。谁渲染它、判完之后谁要重读，由外面决定。
  *
  * `ids` 传 getter 而不是数字：切题/切领取者时（`props.taskId` 变了）取数要跟着换，
- * `usePaging` 的取数函数每次调用现取一次。
+ * `usePaging` 的取数函数每次调用现取一次。`stage` 给了就只取这个阶段的提交：分了阶段的题
+ * 每个阶段单独批改，「最新那一版」是这个阶段的。
  */
 export function useTaskSubmissionHistory(
-  ids: { taskId: () => number; participantId: () => number },
+  ids: { taskId: () => number; participantId: () => number; stage?: () => string | null },
   onChanged: () => void = () => undefined
 ) {
   const { t } = useI18n()
@@ -40,6 +41,7 @@ export function useTaskSubmissionHistory(
       pageStart: pageStart,
       pageSize: 10,
       queryReview: true,
+      stage: ids.stage?.() ?? undefined,
     })
     return { data: submissions, page }
   })

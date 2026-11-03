@@ -28,11 +28,12 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.session_record_rows import no_platform_reminders
 from app.api.topics_deps import _actor_in_place
-from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.api.write_access import Can, InChannel
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.core.work_context import current_work_id
 from app.domain.conversation.services import rooms_of_inner
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.session_record import service
 from app.domain.session_record.views import lines
@@ -70,7 +71,7 @@ async def session_records(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     if channel:
         conversations = await rooms_of_inner(db, [place.room_id])
         result = await _channel_page(
@@ -83,6 +84,7 @@ async def session_records(
             search=q,
             turn_id=turn_id,
             limit=limit,
+            reader=actor.handle,
         )
         return JSONResponse(ok(_shaped(result["items"], result["next"], lines)))
     cursor = end = None
@@ -102,6 +104,7 @@ async def session_records(
         author=author,
         search=q,
         limit=limit,
+        reader=actor.handle,
     )
     # Rendered by the json module rather than the response model: a record
     # is whatever the harness wrote, and pydantic gives up on one nested
@@ -135,7 +138,7 @@ def _rows(items: list[dict]) -> list[dict]:
 
 
 async def _channel_page(
-    db, conversations, *, after, before, newest, author, search, turn_id, limit
+    db, conversations, *, after, before, newest, author, search, turn_id, limit, reader
 ):
     def position(token):
         if token is None:
@@ -174,6 +177,7 @@ async def _channel_page(
             search=search,
             turn_id=turn_id,
             limit=limit + 1,
+            reader=reader,
         )
         for item in page.items:
             item["conversation_id"] = str(conversation)
@@ -209,13 +213,17 @@ async def session_record(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     try:
         at, harness, agent, sequence = service.decode_cursor(cursor)
     except ValueError:
         raise NotFoundError(say("cursorEventNotFound")) from None
     result = await service.read(
-        db, place.conversation_id, after=(at, harness, agent, sequence - 1), limit=1
+        db,
+        place.conversation_id,
+        after=(at, harness, agent, sequence - 1),
+        limit=1,
+        reader=actor.handle,
     )
     if not result.items or (
         result.items[0]["at"],
@@ -242,14 +250,12 @@ class MachineRecordOut(BaseModel):
 
 @router.post(
     "/{topic_id}/session-records",
-    dependencies=[CHEESE_ONLY_IN_ROOM],
     **typed_response(MachineRecordOut),
 )
 async def note_machine_record(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.record_machine_status, at="topic_id")],
     body: MachineRecordIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Let the machine put one line in 现场, in its own voice.
 
@@ -262,10 +268,9 @@ async def note_machine_record(
     turn) 现场 draws it as a platform line of its own. A sibling task's branch
     may be what failed, and the text names it.
     """
-    place = await place_or_404(db, topic_id)
+    place, actor = at.place, at.actor
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    actor = await _actor_in_place(resolver, place)
     await service.note(
         db,
         place.conversation_id,

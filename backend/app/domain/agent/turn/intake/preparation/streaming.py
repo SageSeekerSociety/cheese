@@ -66,7 +66,7 @@ async def converse(
         turn_id=turn_id,
         user_block_id=user_block_id,
         platform_turn=platform_turn,
-        # 周期任务那一轮从这一笔投递上认主人（`turn_speakers`）。
+        # 周期任务那一轮从这一笔投递上认出来（`turn_speakers.is_routine_run`）。
         delivery_id=delivery_id,
         recipient_instance_id=recipient_instance_id,
     )
@@ -142,6 +142,8 @@ async def converse(
         overview_doc=overview_doc_text,
         overview_doc_id=prepared.overview_doc_id,
         teaching=teaching,
+        stages=prepared.stages,
+        package=prepared.task_package,
         environment=_session_opening_lines(
             unconnected_mcp=(
                 await unconnected_mcp(
