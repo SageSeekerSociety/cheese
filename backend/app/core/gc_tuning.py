@@ -39,7 +39,10 @@ import gc
 import os
 import threading
 
-SERVING = "CHEESE_SERVING"
+# The entry point's mark, from the module that already owns it: a copy here
+# would drift from `app/startup_freeze`'s without any test noticing, and the
+# tuning would stop reaching production with nothing failing.
+from app.core.startup_freeze import SERVING
 
 #: Generation 1's allocation threshold; 0 and 2 keep whatever this interpreter
 #: started with. Only this number is ours to set: generation 0's default is
