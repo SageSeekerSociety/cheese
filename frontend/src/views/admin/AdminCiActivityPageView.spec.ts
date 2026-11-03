@@ -5,7 +5,7 @@
  *   would read as a queue that took no time);
  * - while the sweep is still backfilling, the page says how far back the data
  *   reaches, and quotes why the last sweep stopped;
- * - the page says when the board's figures were computed;
+ * - the page says when the board's figures were computed, in the viewer's local time;
  * - picking a runner asks for that runner's jobs, and picking it again lets go;
  * - opening a job shows its steps.
  */
@@ -29,6 +29,7 @@ vi.mock('vue-i18n', async () => {
 
 import AdminCiActivityPageView from './AdminCiActivityPageView.vue'
 
+import { absDateTime, clockTime } from '@/lib/dateText'
 import { CRV_CI_BOARD, CRV_CI_JOBS, CRV_CI_STEPS } from '@/views/demo/catalogViewAdminFixtures'
 
 function mount(props: Record<string, unknown>) {
@@ -56,7 +57,8 @@ describe('AdminCiActivityPageView', () => {
     const board: CiBoard = { ...CRV_CI_BOARD, generated_at: '2026-10-17T22:41:09+00:00' }
     const { getByText } = mount({ board, jobs: CRV_CI_JOBS })
 
-    getByText('ciActivity.computedAt {"at":"22:41Z"}')
+    // The viewer's local time, whatever zone the test runs in.
+    getByText(`ciActivity.computedAt {"at":"${clockTime(Date.parse(board.generated_at))}"}`)
   })
 
   it('says how far back a backfilling sweep reaches and why it stopped', () => {
@@ -72,7 +74,11 @@ describe('AdminCiActivityPageView', () => {
     }
     const { getByText } = mount({ board, jobs: CRV_CI_JOBS })
 
-    getByText((text) => text.includes('ciActivity.sweep.backfilling') && text.includes('2026-10-12 04:00Z'))
+    getByText(
+      (text) =>
+        text.includes('ciActivity.sweep.backfilling') &&
+        text.includes(absDateTime(Date.parse('2026-10-12T04:00:00+00:00')))
+    )
     getByText((text) => text.includes('GitHub quota spent (HTTP 403)'))
   })
 
@@ -100,7 +106,7 @@ describe('AdminCiActivityPageView', () => {
     getByText(
       (text) =>
         text.includes('ciActivity.note.roundsIncomplete') &&
-        text.includes('2026-10-10 00:00Z') &&
+        text.includes(absDateTime(Date.parse('2026-10-10T00:00:00Z'))) &&
         text.includes('"n":"2"')
     )
   })

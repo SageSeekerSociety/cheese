@@ -23,7 +23,7 @@
     "error": "最近一次扫描没读完：{error}"
   },
   "computedAt": "{at} 统计",
-  "computedAtHint": "看板上的数字统计于 {at}（UTC），最多每分钟重算一次",
+  "computedAtHint": "看板上的数字统计于 {at}，最多每分钟重算一次",
   "kpi": {
     "queue": "合并队列耗时 p50",
     "waitHosted": "等机器 p50（GitHub 托管）",
