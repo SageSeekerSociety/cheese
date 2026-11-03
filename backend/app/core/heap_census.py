@@ -7,8 +7,9 @@ a process seventeen minutes old. The startup heap is frozen at import
 (`main.py`), so what is walked is what the running process accumulated, and
 which types those are says where to look.
 
-Counting takes about as long as a full collection does, with the loop held
-just the same, so it runs only when an admin asks for it
+Counting holds the loop a little longer than a full collection does (2 million
+objects: 270 ms against 160 ms on the dev box), so it runs only when an
+admin asks for it
 (`/admin/stats/performance?heap=true`), never on a timer.
 """
 
@@ -24,14 +25,18 @@ def heap_census(top: int = TOP) -> dict:
     how many are frozen, and the ``top`` types by count."""
     started = time.perf_counter()
     objects = gc.get_objects()
-    counts = Counter(
-        f"{type(obj).__module__}.{type(obj).__qualname__}" for obj in objects
-    )
+    # Counted by the type object in C (`map`, `Counter`'s own loop), named
+    # only for the few hundred distinct types: naming each object as it went
+    # took five times as long as a full collection.
+    by_type = Counter(map(type, objects))
     tracked = len(objects)
     del objects
     return {
         "tracked": tracked,
         "frozen": gc.get_freeze_count(),
         "took_ms": round((time.perf_counter() - started) * 1000, 1),
-        "top": [{"type": name, "count": n} for name, n in counts.most_common(top)],
+        "top": [
+            {"type": f"{kind.__module__}.{kind.__qualname__}", "count": n}
+            for kind, n in by_type.most_common(top)
+        ],
     }
