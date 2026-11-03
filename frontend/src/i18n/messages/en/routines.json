@@ -28,7 +28,7 @@
     "paused": "Paused",
     "queued": "Queued, starting now",
     "missed": "Last run didn't go",
-    "filling": "芝士 is filling it in"
+    "filling": "Cheese is filling it in"
   },
   "line": {
     "chip": "Routine · {title}",

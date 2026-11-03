@@ -37,5 +37,5 @@
   "assistantRoutineLimit": "You can keep at most {max} one-off automations and as many repeating ones. Delete one you no longer use first.",
   "assistantRoutineInRun": "An automation cannot create or change automations while it runs",
   "assistantRoutineWhichTask": "Name the task (task), or use mine for the tasks the person asked for",
-  "assistantRoutineGoalRequired": "Fill in the goal — it is what 芝士 works from."
+  "assistantRoutineGoalRequired": "Fill in the goal — it is what Cheese works from."
 }

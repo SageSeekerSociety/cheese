@@ -124,8 +124,6 @@ QUOTE_CHARS = 300
 #: not waiting on something of the person's, it is waiting on 芝士 to fill the
 #: blank. Nothing runs while it is in this state.
 FILLING = "filling"
-#: Why a filling rule stopped being filled: 芝士 never said what it decided.
-FILL_GAVE_UP = "芝士没有补上，也没说补不上"
 #: How long a rule may sit ``filling`` before it is given up on. Long enough
 #: for a slow turn on a busy machine, short enough that a dead one is seen.
 FILL_AFTER = timedelta(minutes=20)

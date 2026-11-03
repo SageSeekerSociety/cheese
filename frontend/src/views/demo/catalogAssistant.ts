@@ -690,7 +690,7 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
           memory: { enabled: false, items: [] },
           rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] },
         },
-        expect: '暂无自动化',
+        expect: '还没有例行事务',
       },
     ],
   },

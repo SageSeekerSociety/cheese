@@ -118,7 +118,7 @@ function submitForm() {
   const now = form.value
   if (!now) return
   if (!draft.value.note.trim()) {
-    formError.value = t('apiError.routine.assistantRoutineGoalRequired')
+    formError.value = t('account.assistant.routines.form.goalRequired')
     return
   }
   formError.value = ''
@@ -357,7 +357,7 @@ function last(r: AssistantRoutine): string {
             <span>{{ t('account.assistant.routines.form.note') }} *</span>
             <textarea v-model="draft.note" rows="3" maxlength="4000" autocomplete="off" />
           </label>
-          <div class="ast__switch" role="radiogroup" :aria-label="t('account.assistant.routines.form.when')">
+          <div class="ast__switch" role="radiogroup" :aria-label="t('account.assistant.routines.form.whenLabel')">
             <label>
               <input type="radio" name="ast-when" :checked="draft.onTime" @change="pickTime" />
               {{ t('account.assistant.routines.form.onTime') }}

@@ -36,7 +36,7 @@
   },
   "routines": {
     "title": "Routines",
-    "desc": "What 芝士 does on its own, on a clock or when something happens. It tells you how it went.",
+    "desc": "What Cheese does on its own, on a clock or when something happens. It tells you how it went.",
     "empty": "No routines yet",
     "next": "Next run: {time}",
     "paused": {
@@ -65,7 +65,7 @@
     "cancel": "Cancel",
     "waiting": "Waiting",
     "actionNew": "+ New",
-    "filling": "芝士 is filling it in: still needs {missing}",
+    "filling": "Cheese is filling it in: still needs {missing}, then it starts",
     "form": {
       "title": "Title",
       "note": "Goal",
@@ -79,14 +79,16 @@
       "monthly": "Monthly",
       "blankHint": "Anything left blank is filled in from the goal, then it starts.",
       "when": {
-        "mention": "Someone @-mentions me or replies in my thread",
+        "mention": "Someone {'@'}-mentions me or replies in my thread",
         "review": "A review is waiting on me",
         "filed": "A task I asked for goes to review",
         "accepted": "A task is accepted",
         "rejected": "A task is returned",
         "due": "A challenge is close to due",
         "invite": "An invitation arrives"
-      }
+      },
+      "whenLabel": "When",
+      "goalRequired": "Fill in the goal — it is what Cheese works from."
     }
   },
   "recent": {
