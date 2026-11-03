@@ -86,9 +86,10 @@ async function decide(item: SpaceApplication, approved: boolean) {
   saving.value = true
   writeError.value = ''
   try {
-    // 一页里有两种申请：新建的空间按空间审，设为开放空间的按那条申请自己的 id 审。
-    if (item.kind === 'open' && item.requestId != null) {
-      await SpacesApi.reviewOpenRequest(item.requestId, approved, reason.value.trim())
+    // 两种申请都按空间审：一个空间同时至多有一件待审的事（新建，或设为开放空间）。
+    // 开放申请带上这一行显示的范围：所有者可能在那之后改过，那时服务端拒绝，刷新再审。
+    if (item.kind === 'open') {
+      await SpacesApi.review(item.id, approved, reason.value.trim(), item.openScope ?? [])
     } else {
       await SpacesApi.review(item.id, approved, reason.value.trim())
     }

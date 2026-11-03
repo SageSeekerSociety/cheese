@@ -6,13 +6,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const reviews = vi.fn()
 const review = vi.fn()
-const reviewOpenRequest = vi.fn()
 vi.mock('@/api/spaces', () => ({
-  SpacesApi: {
-    reviews: (...args: unknown[]) => reviews(...args),
-    review: (...args: unknown[]) => review(...args),
-    reviewOpenRequest: (...args: unknown[]) => reviewOpenRequest(...args),
-  },
+  SpacesApi: { reviews: (...args: unknown[]) => reviews(...args), review: (...args: unknown[]) => review(...args) },
 }))
 // 只换掉 `useI18n`（键名透传，断言直接写键名），`createI18n` 留着 —— `relTime`
 // 一路 import 到 i18n 的 barrel，整块换掉 vue-i18n 会让那一层在收集阶段就崩。
@@ -79,7 +74,6 @@ beforeAll(() => {
 beforeEach(() => {
   reviews.mockReset().mockResolvedValue({ items: [application()] })
   review.mockReset().mockResolvedValue({})
-  reviewOpenRequest.mockReset().mockResolvedValue({})
 })
 afterEach(cleanup)
 
@@ -105,15 +99,12 @@ describe('space review queue', () => {
     await waitFor(() => expect(review).toHaveBeenCalledWith(42, false, 'Please describe the course'))
   })
 
-  it('approving a request to open a space decides that request, not the space', async () => {
-    reviews.mockResolvedValue({
-      items: [application({ kind: 'open', requestId: 7, openScope: ['ruc.edu.cn'] })],
-    })
+  it('approving a request to open a space names the scope the row showed', async () => {
+    reviews.mockResolvedValue({ items: [application({ kind: 'open', requestId: 7, openScope: ['ruc.edu.cn'] })] })
     const page = mountPage()
     await page.findByText('Programming course')
     await fireEvent.click(page.getByRole('button', { name: 'spaces.review.approve' }))
-    await waitFor(() => expect(reviewOpenRequest).toHaveBeenCalledWith(7, true, ''))
-    expect(review).not.toHaveBeenCalled()
+    await waitFor(() => expect(review).toHaveBeenCalledWith(42, true, '', ['ruc.edu.cn']))
   })
 
   it('shows a failed queue request instead of an empty queue', async () => {

@@ -124,21 +124,38 @@ class SpaceAccessService:
         await self._session.flush()
         return space
 
-    async def review(
-        self, request_id: int, *, approved: bool, reason: str, reviewer: str
-    ) -> tuple[SpaceOpenRequest, Space]:
-        """A platform admin's decision. Approving opens the space to the
-        request's scope; rejecting needs a reason the owner will read."""
+    async def review_pending(
+        self,
+        space: Space,
+        *,
+        approved: bool,
+        reason: str,
+        reviewer: str,
+        shown_scope: Sequence[str] | None,
+    ) -> SpaceOpenRequest | None:
+        """A platform admin's decision on the space's pending request, or
+        ``None`` when nothing is pending. Approving opens the space to the
+        request's scope; rejecting needs a reason the owner will read. The
+        caller holds the space's row lock.
+
+        The owner may rewrite a waiting request (``open``), so the decision
+        names the scope the reviewer was shown, and one that does not match
+        the request as it now reads decides nothing: approval must never apply
+        a scope nobody reviewed."""
         request = await self._session.scalar(
             select(SpaceOpenRequest)
-            .where(SpaceOpenRequest.id == request_id)
+            .where(
+                SpaceOpenRequest.space_id == space.id,
+                SpaceOpenRequest.status == SpaceOpenRequestStatus.PENDING.value,
+            )
             .with_for_update()
         )
         if request is None:
-            raise NotFoundError.for_resource("spaceOpenRequest", request_id)
-        if request.status != SpaceOpenRequestStatus.PENDING.value:
-            raise ConflictError("This request has already been reviewed")
-        space = await self._locked_space(request.space_id)
+            return None
+        if shown_scope is None or list(shown_scope) != list(request.scope):
+            raise ConflictError(
+                "The request changed after it was shown; reload and review it again"
+            )
         if not approved and not reason.strip():
             raise BadRequestError("A rejection reason is required")
         now = datetime.now(UTC)
@@ -155,7 +172,7 @@ class SpaceAccessService:
             space.open_scope = list(request.scope)
             space.updated_at = now
         await self._session.flush()
-        return request, space
+        return request
 
     async def list_requests(
         self, *, status: str, limit: int

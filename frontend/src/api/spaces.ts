@@ -55,15 +55,10 @@ export const SpacesApi = {
       { url: '/admin/spaces', method: 'GET', params: { status, offset, limit } },
       true
     ),
-  review: (id: number, approved: boolean, reason = '') =>
+  /** `openScope`：审开放申请时带上页面显示的范围；申请在那之后被改过，服务端回 409。 */
+  review: (id: number, approved: boolean, reason = '', openScope?: string[]) =>
     axiosRequest<{ application: SpaceApplication }>(
-      { url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason } },
-      true
-    ),
-  /** 审一条「设为开放空间」的申请；参数是申请自己的 id（`requestId`），不是空间的。 */
-  reviewOpenRequest: (requestId: number, approved: boolean, reason = '') =>
-    axiosRequest<{ application: SpaceApplication }>(
-      { url: `/admin/spaces/open-requests/${requestId}/review`, method: 'POST', data: { approved, reason } },
+      { url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason, openScope } },
       true
     ),
   create: (data: PostSpaceRequestData) =>

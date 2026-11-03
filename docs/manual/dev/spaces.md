@@ -37,7 +37,7 @@ covers:
 
 - `SpaceMember` 一行是「这块板子归我看」。移除一个成员**什么都不带走**——不带走他的题目、提交和项目。
 - `SpaceAdminRelation` 一行（`OWNER = 0` / `ADMIN = 1`）是「我可以管理它」。创建者和管理员不写 `SpaceMember` 行也照样看得见。
-- **开放空间**：`Space.open_scope` 是一组注册邮箱后缀（如 `["ruc.edu.cn"]`），`NULL` 是只对成员开放（默认）。注册邮箱的域名等于其中一个、或以「`.` + 其中一个」结尾的登录用户，坐的是 `Seat.in_scope`，权限和成员一样（看、出题），领题按题目自己的判据走。他们**不写 `SpaceMember` 行**——看、领题、出题都不写；开放空间里的 `SpaceMember` 行只是管理员点名加进来的范围外的人。题目自己的邮箱域名限制（`access_control_enabled`）在开放空间里照样生效。
+- **开放空间**：`Space.open_scope` 是一组注册邮箱后缀（如 `["ruc.edu.cn"]`），`NULL` 是只对成员开放（默认）。注册邮箱的域名等于其中一个、或以「`.` + 其中一个」结尾的登录用户，坐的是 `Seat.in_scope`，权限和成员一样（看、出题），领题按题目自己的判据走。他们**不写 `SpaceMember` 行**——看、领题、出题都不写；开放空间里的 `SpaceMember` 行只是管理员点名加进来的范围外的人，成员名单（`GET /spaces/{id}/members`，每行带着进来时用的邀请码）只给管理员看。题目自己的邮箱域名限制（`access_control_enabled`）在开放空间里照样生效。
 
 开放空间的设置在 `access_service.py`，路由是 `PUT /spaces/{id}/access`（`edit_settings`）。改回只对成员开放、或把范围收窄（新范围的每个后缀都被现在的范围覆盖），保存即生效；设为开放或扩大范围则写一条 `SpaceOpenRequest`（`space_open_request` 表，每块板最多一条 `PENDING`），平台审核通过才把范围写进 `open_scope`，在那之前空间保持原样（见[审批](#review)）。
 
@@ -57,7 +57,7 @@ covers:
 
 `Space.review_status` 默认 `APPROVED`（为了既有数据），而**公开的创建路由把新建的置为 `PENDING`**（`api/routes/spaces.py`）。所以新建的空间要等平台审核：默认值服务历史数据，创建那条路写死未审批。`SpaceReviewService`（`review_service.py`）管状态迁移，裁定人与时间写回 `Space.reviewed_by` / `reviewed_at`；`review_reason` 是驳回时给人看的那句话。
 
-设为开放空间（或扩大范围）也要平台审核，和新建空间走同一个后台队列 `/admin/spaces`：`SpaceReviewService.list_reviews` 把两种申请按最近改动合在一页里，每条用 `kind` 区分（`create` / `open`）。开放申请按它自己的 id 审（`POST /admin/spaces/open-requests/{id}/review`），驳回同样要一句理由，空间的设置页读得到这条申请的状态和理由（`openRequest`，只给管理员）。
+设为开放空间（或扩大范围）也要平台审核，和新建空间走同一个后台队列 `/admin/spaces`：`SpaceReviewService.list_reviews` 把两种申请按最近改动合在一页里，每条用 `kind` 区分（`create` / `open`）。两种都走 `POST /admin/spaces/{id}/review`：一个空间同时至多有一件待审的事，因为只有已通过的空间能申请开放。审开放申请时请求里带上审核人看到的范围（`openScope`），所有者在那之后改过申请就回 409，不会通过一个没人审过的范围。驳回同样要一句理由，空间的设置页读得到这条申请的状态和理由（`openRequest`，只给管理员）。
 
 ## 管理员看板 {#analytics}
 

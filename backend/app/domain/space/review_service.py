@@ -171,11 +171,29 @@ class SpaceReviewService:
         return row
 
     async def review(
-        self, space_id: int, *, approved: bool, reason: str, reviewer: str
+        self,
+        space_id: int,
+        *,
+        approved: bool,
+        reason: str,
+        reviewer: str,
+        shown_scope: list[str] | None = None,
     ) -> dict:
+        """Decide what of this space waits for review: the space itself while
+        it is new, otherwise its pending request to open. A space has at most
+        one of the two, because only an approved space can ask to open."""
         row = await self.locked_space(space_id)
         if row.review_status != "PENDING":
-            raise ConflictError("This application has already been reviewed")
+            request = await SpaceAccessService(self.session).review_pending(
+                row,
+                approved=approved,
+                reason=reason,
+                reviewer=reviewer,
+                shown_scope=shown_scope,
+            )
+            if request is None:
+                raise ConflictError("This application has already been reviewed")
+            return open_request_view(request, row)
         if not approved and not reason.strip():
             raise BadRequestError("A rejection reason is required")
         row.review_status = "APPROVED" if approved else "REJECTED"

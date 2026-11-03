@@ -1,21 +1,26 @@
 from typing import Literal
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.domain.space.access_service import SpaceAccessService
-from app.domain.space.review_service import SpaceReviewService, open_request_view
+from app.domain.space.review_service import SpaceReviewService
 
 router = APIRouter(prefix="/admin/spaces", tags=["admin"], dependencies=[ROUTE_DECIDES])
 
 
 class ReviewSpaceRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     approved: bool
     reason: str = ""
+    #: For a request to open a space: the scope the reviewer was shown. The
+    #: owner can rewrite a waiting request, so a decision on a scope other
+    #: than the one it now holds is refused (409).
+    open_scope: list[str] | None = Field(default=None, alias="openScope")
 
 
 @router.get("")
@@ -37,26 +42,16 @@ async def review_space(
     space_id: int, body: ReviewSpaceRequest, db: DbSession, handle: PlatformAdminDep
 ) -> dict:
     item = await SpaceReviewService(db).review(
-        space_id, approved=body.approved, reason=body.reason, reviewer=handle
+        space_id,
+        approved=body.approved,
+        reason=body.reason,
+        reviewer=handle,
+        shown_scope=body.open_scope,
     )
     # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
     # runs after the response has gone out, so a client told "approved" could
     # publish into the space on its next request and still find it PENDING
     # ("Space must be approved before creating tasks"). Same reason as the
     # commit in ``create_space``.
-    await db.commit()
-    return ok({"application": item})
-
-
-@router.post("/open-requests/{request_id}/review")
-async def review_space_open_request(
-    request_id: int, body: ReviewSpaceRequest, db: DbSession, handle: PlatformAdminDep
-) -> dict:
-    request, space = await SpaceAccessService(db).review(
-        request_id, approved=body.approved, reason=body.reason, reviewer=handle
-    )
-    item = open_request_view(request, space)
-    # Commit before answering, as ``review_space`` does: an owner told the
-    # space is open sends people to it on the next request.
     await db.commit()
     return ok({"application": item})

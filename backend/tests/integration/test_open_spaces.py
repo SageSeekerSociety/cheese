@@ -102,33 +102,45 @@ def _set_access(
     return resp.json()["data"]["space"]
 
 
-def _pending_request_id(api_client: TestClient, reviewer: dict, space: dict) -> int:
+def _queued_open_scope(
+    api_client: TestClient, reviewer: dict, space: dict
+) -> list[str] | None:
+    """The scope the reviewers' queue shows this space asking to open to."""
     resp = api_client.get(
         "/admin/spaces", params={"status": "PENDING"}, headers=reviewer
     )
     assert resp.status_code == 200, resp.text
     return next(
-        item["requestId"]
-        for item in resp.json()["data"]["items"]
-        if item["kind"] == "open" and item["id"] == space["space_id"]
+        (
+            item["openScope"]
+            for item in resp.json()["data"]["items"]
+            if item["kind"] == "open" and item["id"] == space["space_id"]
+        ),
+        None,
     )
 
 
 def _review(
-    api_client: TestClient, reviewer: dict, request_id: int, approved: bool, reason=""
+    api_client: TestClient,
+    reviewer: dict,
+    space: dict,
+    approved: bool,
+    reason: str = "",
+    scope: list[str] | None = None,
 ):
+    """A platform admin's decision, naming the scope the queue showed them, as
+    the review page does."""
     return api_client.post(
-        f"/admin/spaces/open-requests/{request_id}/review",
-        json={"approved": approved, "reason": reason},
+        f"/admin/spaces/{space['space_id']}/review",
+        json={"approved": approved, "reason": reason, "openScope": scope},
         headers=reviewer,
     )
 
 
 def _open(api_client: TestClient, reviewer: dict, space: dict, scope: list[str]):
     _set_access(api_client, space, "open", scope)
-    resp = _review(
-        api_client, reviewer, _pending_request_id(api_client, reviewer, space), True
-    )
+    shown = _queued_open_scope(api_client, reviewer, space)
+    resp = _review(api_client, reviewer, space, True, scope=shown)
     assert resp.status_code == 200, resp.text
 
 
@@ -214,6 +226,40 @@ def test_someone_outside_the_scope_gets_404_in_an_open_space(
         assert refused.status_code == 404, refused.text
 
 
+def test_approval_applies_only_the_scope_the_reviewer_was_shown(
+    api_client: TestClient, user_client: UserCreator, reviewer: dict
+):
+    space = _space(api_client, user_client)
+    _, stranger = _person(api_client, user_client, "gmail.com")
+    _set_access(api_client, space, "open", ["ruc.edu.cn"])
+    shown = _queued_open_scope(api_client, reviewer, space)
+    # The owner rewrites the waiting request after the reviewer looked at it.
+    _set_access(api_client, space, "open", ["gmail.com"])
+
+    stale = _review(api_client, reviewer, space, True, scope=shown)
+    assert stale.status_code == 409, stale.text
+    assert _reads(api_client, stranger, space) == EVERY_PAGE_HIDDEN
+    seen = api_client.get(f"/spaces/{space['space_id']}", headers=_auth(space["owner"]))
+    assert seen.json()["data"]["space"]["openScope"] is None
+
+    # A decision that names nothing it was shown decides nothing.
+    blind = _review(api_client, reviewer, space, True)
+    assert blind.status_code == 409, blind.text
+    assert _reads(api_client, stranger, space) == EVERY_PAGE_HIDDEN
+
+
+def test_an_open_space_shows_its_member_list_only_to_its_admins(
+    api_client: TestClient, user_client: UserCreator, reviewer: dict
+):
+    space = _space(api_client, user_client)
+    _, student = _person(api_client, user_client, "ruc.edu.cn")
+    _open(api_client, reviewer, space, ["ruc.edu.cn"])
+
+    roster = f"/spaces/{space['space_id']}/members"
+    assert api_client.get(roster, headers=_auth(student)).status_code == 403
+    assert api_client.get(roster, headers=_auth(space["owner"])).status_code == 200
+
+
 def test_an_outsider_an_admin_names_reads_the_open_space(
     api_client: TestClient, user_client: UserCreator, reviewer: dict
 ):
@@ -254,22 +300,24 @@ def test_opening_a_space_waits_for_the_platform_review(
     assert shown["openRequest"]["scope"] == ["ruc.edu.cn"]
     assert _reads(api_client, student, space) == EVERY_PAGE_HIDDEN
 
-    request_id = _pending_request_id(api_client, reviewer, space)
-    owner_tries = _review(api_client, {**_auth(space["owner"])}, request_id, True)
+    assert _queued_open_scope(api_client, reviewer, space) == ["ruc.edu.cn"]
+    shown = ["ruc.edu.cn"]
+    owner_tries = _review(api_client, _auth(space["owner"]), space, True, scope=shown)
     assert owner_tries.status_code == 403
-    assert _review(api_client, reviewer, request_id, False, " ").status_code == 400
-    rejected = _review(api_client, reviewer, request_id, False, "说明这个空间给谁用")
+    no_reason = _review(api_client, reviewer, space, False, " ", scope=shown)
+    assert no_reason.status_code == 400
+    rejected = _review(
+        api_client, reviewer, space, False, "说明这个空间给谁用", scope=shown
+    )
     assert rejected.status_code == 200, rejected.text
     assert _reads(api_client, student, space) == EVERY_PAGE_HIDDEN
     seen = api_client.get(f"/spaces/{space['space_id']}", headers=_auth(space["owner"]))
     assert seen.json()["data"]["space"]["openRequest"]["status"] == "REJECTED"
     assert seen.json()["data"]["space"]["openRequest"]["reason"] == "说明这个空间给谁用"
-    assert _review(api_client, reviewer, request_id, True).status_code == 409
+    assert _review(api_client, reviewer, space, True, scope=shown).status_code == 409
 
     _set_access(api_client, space, "open", ["ruc.edu.cn"])
-    approved = _review(
-        api_client, reviewer, _pending_request_id(api_client, reviewer, space), True
-    )
+    approved = _review(api_client, reviewer, space, True, scope=shown)
     assert approved.status_code == 200, approved.text
     assert _reads(api_client, student, space) == EVERY_PAGE_READS
 
