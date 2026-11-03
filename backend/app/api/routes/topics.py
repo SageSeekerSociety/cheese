@@ -1312,6 +1312,7 @@ async def summon_agent(
             conversation_id=place.conversation_id,
             chat=chat,
             runner=runner,
+            asked=True,
         ):
             return ok({"started": True})
         return ok({"started": False, "reason": "nothing_pending"})
