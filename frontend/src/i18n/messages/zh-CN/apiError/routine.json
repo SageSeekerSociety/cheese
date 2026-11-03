@@ -36,5 +36,6 @@
   "assistantRoutineAlreadyRan": "这条只做一次的自动化已经运行过了。要再运行，改一个新的时间",
   "assistantRoutineLimit": "只做一次的和反复做的自动化各最多 {max} 条，删掉不用的再新建",
   "assistantRoutineInRun": "自动化运行时不能新建或修改自动化",
-  "assistantRoutineWhichTask": "要给出是哪个任务（task），或用 mine 表示用户提的任务"
+  "assistantRoutineWhichTask": "要给出是哪个任务（task），或用 mine 表示用户提的任务",
+  "assistantRoutineGoalRequired": "「目标」要填：芝士照它开工。"
 }

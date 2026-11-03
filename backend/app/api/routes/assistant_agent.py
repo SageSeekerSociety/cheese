@@ -76,6 +76,7 @@ from app.domain.project.services import ProjectService
 from app.domain.project_permissions import TEMPLATE_GRANTS, Template
 from app.domain.review.services import deliverable_revision
 from app.domain.room_task.awaiting import WaitingItem
+from app.domain.assistant.models import AssistantRoutine, AssistantRun
 from app.domain.routine import personal as routine_personal
 from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService
@@ -1139,7 +1140,18 @@ async def agent_routine(
                 + "\n".join(_routine_line(r, me.timezone) for r in rows)
             }
         )
-    if await _unattended(questions, claims.work) or not claims.conversation:
+    # A run may not make or change rules — nobody asked it to — with one
+    # exception: a run the platform started *to* fill a rule's blanks may fill
+    # that rule, and nothing else.
+    unattended = await _unattended(questions, claims.work)
+    if not claims.conversation:
+        raise BadRequestError(say("assistantRoutineInRun"))
+    fills = (
+        await session_record_scoped_routine(db, claims.conversation, claims.work)
+        if unattended
+        else None
+    )
+    if unattended and (fills is None or body.action not in ("change", "list")):
         raise BadRequestError(say("assistantRoutineInRun"))
     conversation = uuid.UUID(claims.conversation)
     if body.action == "create":
@@ -1163,6 +1175,9 @@ async def agent_routine(
     row = await routine_personal.one(db, me.user_id, routine_id)
     if row is None:
         raise NotFoundError.for_resource("routine", body.routine)
+    # A fill run reaches exactly the one rule it was started for.
+    if fills is not None and row.id != fills:
+        raise BadRequestError(say("assistantRoutineInRun"))
     if body.action == "delete":
         title = row.title
         await db.delete(row)
@@ -1190,6 +1205,30 @@ async def agent_routine(
     await db.commit()
     await tell_rule(questions, claims, routine_personal.card(row))
     return ok({"text": "自动化现在是：\n" + _routine_line(row, me.timezone)})
+
+
+async def session_record_scoped_routine(
+    db, conversation: str, work: str
+) -> uuid.UUID | None:
+    """The rule a fill run was started for, or none.
+
+    A fill run's conversation is one the platform opened for that rule, and
+    the run's payload names it. Both have to agree: the rule the run is for is
+    the one this turn may change.
+    """
+    run = await db.get(AssistantRun, uuid.UUID(work))
+    if run is None or (run.shown or {}).get("filling") is None:
+        return None
+    try:
+        routine_id = uuid.UUID(str(run.shown["filling"]))
+    except (KeyError, ValueError):
+        return None
+    row = await db.get(AssistantRoutine, routine_id)
+    if row is None or row.state != "filling":
+        return None
+    if str(run.conversation_id) != conversation:
+        return None
+    return routine_id
 
 
 class NotifyMeIn(BaseModel):

@@ -152,7 +152,7 @@ def _make_routine(client, gw, me: dict, said: str, **args) -> AssistantRoutine:
     """The person asks for a routine; 芝士 makes it with ``args``."""
     conversation = _start(client, me)
     gw.script = [
-        ("tool", "cheese_routine", {"action": "create", **args}),
+        ("tool", "cheese_automation", {"action": "create", **args}),
         ("text", "已建好。"),
     ]
     r = _ask(client, conversation, said, me)
@@ -878,3 +878,110 @@ def test_a_one_off_routine_that_ran_is_done_frees_its_place_and_is_cleared_later
     assert routine.id not in {r.id for r in left}
     assert len(left) == personal.MAX_ROUTINES
     assert run_id not in {r.id for r in _runs(client, routine.user_id)}
+
+
+# --- a rule saved from the form, with a blank in it ---------------------------
+
+
+def test_a_rule_saved_with_no_moment_waits_for_cheese_to_fill_it(client, gateway):
+    """The form saves a rule with a goal and nothing else. It is not active —
+    it is «filling», the row says what is missing, and the sweep spends one
+    run on deciding it: the platform opens a conversation for it and 芝士
+    writes the moment back. Then it runs like any other."""
+    me = _auth(client, "asker")
+    user_id = _ledger_user(client, "asker")[0]
+    r = client.post(
+        "/assistant/routines",
+        json={"note": "把每天要审的东西列成三条"},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    [listed] = r.json()["data"]["routines"]
+    assert listed["state"] == "filling"
+    assert listed["title"] == ""
+    assert listed["missing"] == ["名字", "什么时候跑"]
+    assert listed["nextRunAt"] is None
+
+    gateway.script = [
+        ("tool", "cheese_automation", {
+            "action": "change",
+            "routine": listed["id"],
+            "title": "每日待审清单",
+            "trigger": "schedule",
+            "freq": "daily",
+            "time": "08:00",
+        }),
+        ("text", "定好了。"),
+    ]
+    _tick(client, gateway)
+    [run] = _ended(client, user_id)
+
+    [filled] = _routines(client, user_id)
+    assert filled.state == "active", (filled.state, filled.paused)
+    assert filled.title == "每日待审清单"
+    assert filled.next_run_at is not None
+    # The fill run happened in a conversation of its own, where the platform's
+    # question and 芝士's answer are kept.
+    assert run.conversation_id is not None
+    said = client.get(f"/assistant/conversations/{run.conversation_id}", headers=me)
+    assert said.status_code == 200, said.text
+    roles = [m["role"] for m in said.json()["data"]["messages"]]
+    assert roles[0] == "platform" and "platform" in roles
+    [notice] = _notices(client, user_id)
+    assert "已经定好了" in notice["content"], notice
+
+
+def test_a_rule_cheese_never_filled_is_plainly_stopped_and_says_so(client, gateway):
+    """芝士 runs, says something, and writes nothing back. The rule must not
+    sit there pretending to be generating: it is stopped, and the person is
+    told what is still missing."""
+    me = _auth(client, "asker")
+    user_id = _ledger_user(client, "asker")[0]
+    r = client.post(
+        "/assistant/routines", json={"note": "把每天要审的东西列成三条"}, headers=me
+    )
+    [listed] = r.json()["data"]["routines"]
+
+    gateway.script = [("text", "嗯。")]
+    _tick(client, gateway)
+    _ended(client, user_id)
+
+    [kept] = _routines(client, user_id)
+    assert kept.state == "paused" and kept.paused == "unfilled", (kept.state, kept.paused)
+    assert kept.next_run_at is None
+    [notice] = _notices(client, user_id)
+    assert "还差" in notice["content"], notice
+    assert listed["id"] == str(kept.id)
+
+
+def test_filling_a_rule_in_by_hand_starts_it(client, gateway):
+    """«修改» with the moment filled in ends the wait: nothing is left for 芝士
+    to decide, so it runs from the next moment."""
+    me = _auth(client, "asker")
+    r = client.post(
+        "/assistant/routines", json={"note": "把每天要审的东西列成三条"}, headers=me
+    )
+    [listed] = r.json()["data"]["routines"]
+
+    r = client.put(
+        f"/assistant/routines/{listed['id']}",
+        json={
+            "note": "把每天要审的东西列成三条",
+            "title": "每日待审清单",
+            "trigger": "schedule",
+            "freq": "daily",
+            "time": "08:00",
+        },
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    kept = client.get("/assistant/routines", headers=me).json()["data"]["routines"][0]
+    assert kept["state"] == "active"
+    assert kept["nextRunAt"] is not None
+    assert kept["missing"] == []
+
+
+def test_a_rule_saved_with_no_goal_is_refused(client):
+    me = _auth(client, "asker")
+    r = client.post("/assistant/routines", json={"note": "  "}, headers=me)
+    assert r.status_code == 422, r.text

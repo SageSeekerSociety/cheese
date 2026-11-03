@@ -1,7 +1,7 @@
 """A person's 芝士 at work on its own: routines.
 
 A routine is a rule a person's 芝士 made when they asked for it in a
-conversation (``cheese_routine``): on a clock, or when something happens —
+conversation (``cheese_automation``): on a clock, or when something happens —
 someone @-mentions the person or replies in their 支线, a review waits on
 them, a 题目 is about to be due, an invitation arrives, a task goes to review
 or its review is decided. What happens is said where it happens
@@ -120,6 +120,16 @@ ONCE_AHEAD = timedelta(days=366)
 #: How much of what a run's answer said goes into its notification.
 QUOTE_CHARS = 300
 
+#: A rule the form saved with a blank left in it (no name, no moment): it is
+#: not waiting on something of the person's, it is waiting on 芝士 to fill the
+#: blank. Nothing runs while it is in this state.
+FILLING = "filling"
+#: Why a filling rule stopped being filled: 芝士 never said what it decided.
+FILL_GAVE_UP = "芝士没有补上，也没说补不上"
+#: How long a rule may sit ``filling`` before it is given up on. Long enough
+#: for a slow turn on a busy machine, short enough that a dead one is seen.
+FILL_AFTER = timedelta(minutes=20)
+
 #: Why a run did not run.
 STILL_RUNNING = "the routine's last run is still running"
 OVER_LIMIT = "the routine fired more than EVENT_RUNS_PER_HOUR times this hour"
@@ -140,7 +150,13 @@ def _now() -> datetime:
 
 
 def _spec(trigger: str, spec: dict, tz: str, now: datetime) -> dict:
-    """The rule's spec as kept: a schedule's moment, or the events' scope."""
+    """The rule's spec as kept: a schedule's moment, or the events' scope.
+
+    A rule saved with no moment keeps none either: 芝士 decides one, and the
+    spec arrives with that decision.
+    """
+    if not trigger:
+        return {}
     if trigger == "schedule":
         if spec.get("freq") == "once":
             raw = str(spec.get("at") or "")
@@ -184,6 +200,22 @@ def once(routine: AssistantRoutine) -> bool:
     return routine.spec.get("freq") == "once" or bool(routine.spec.get("once"))
 
 
+def filling(routine: AssistantRoutine) -> bool:
+    """Whether 芝士 still owes this rule a blank: the form was saved with no
+    name, no moment, or both."""
+    return routine.state == FILLING
+
+
+def missing(routine: AssistantRoutine) -> list[str]:
+    """What a filling rule is still short of, in the words the list shows."""
+    out: list[str] = []
+    if not routine.title.strip():
+        out.append("名字")
+    if not routine.trigger:
+        out.append("什么时候跑")
+    return out
+
+
 def _first_run(routine: AssistantRoutine, now: datetime) -> datetime | None:
     if routine.trigger != "schedule":
         return None
@@ -195,6 +227,11 @@ def _first_run(routine: AssistantRoutine, now: datetime) -> datetime | None:
 
 def describe(routine: AssistantRoutine) -> str:
     """When the rule runs, in a line."""
+    if not routine.trigger:
+        # A blank 芝士 still owes: the line says what is missing, not a moment
+        # nobody has decided.
+        short = "、".join(missing(routine))
+        return f"还没定：等芝士补上{short}"
     if routine.trigger in EVENTS:
         said = _event_said(routine.trigger, routine.spec)
         if not once(routine):
@@ -274,21 +311,30 @@ async def create(
     session: AsyncSession,
     *,
     user_id: int,
-    conversation_id: uuid.UUID,
+    conversation_id: uuid.UUID | None,
     title: str,
     note: str,
     trigger: str,
     spec: dict,
 ) -> AssistantRoutine:
-    """A new rule, made in the conversation the person asked for it in; the
-    caller commits."""
+    """A new rule; the caller commits.
+
+    ``conversation_id`` is the conversation it was asked for in, when it was
+    asked for in one (芝士 building it as the person speaks). A rule saved
+    from the settings form has none, and none of its later runs run *in* that
+    conversation — each opens one of its own.
+
+    A rule may be saved with blanks: no name, no moment. It is then ``filling``
+    rather than ``active``, and 芝士 fills them from the goal before anything
+    runs.
+    """
     tz = (await timezones_by_ids(session, [user_id])).get(user_id) or DEFAULT_TIMEZONE
     now = _now()
     row = AssistantRoutine(
         user_id=user_id,
         title=title.strip()[:120],
         note=note.strip(),
-        words=await words_of(session, conversation_id),
+        words=(await words_of(session, conversation_id)) if conversation_id else "",
         trigger=trigger,
         spec=_spec(trigger, spec, tz, now),
         timezone=tz,
@@ -296,7 +342,9 @@ async def create(
         paused="",
         conversation_id=conversation_id,
     )
-    row.next_run_at = _first_run(row, now)
+    if not row.title.strip() or not row.trigger:
+        row.state = FILLING
+    row.next_run_at = _first_run(row, now) if row.state == "active" else None
     # Rules that fire once and rules that repeat are kept apart, each up to
     # ``MAX_ROUTINES``: waiting for one thing takes no repeating rule's place.
     kept = [r for r in await mine(session, user_id) if r.state != "done"]
@@ -311,14 +359,18 @@ async def change(
     session: AsyncSession,
     routine: AssistantRoutine,
     *,
-    conversation_id: uuid.UUID,
+    conversation_id: uuid.UUID | None,
     title: str | None = None,
     note: str | None = None,
     trigger: str | None = None,
     spec: dict | None = None,
 ) -> AssistantRoutine:
-    """Change a rule from a conversation: what the person said there is added
-    to its words, so what they asked for now counts as theirs."""
+    """Change a rule; the caller commits.
+
+    From a conversation: what the person said there is added to its words, so
+    what they asked for now counts as theirs. From the settings form there is
+    no conversation to read — the words it already has stay its own.
+    """
     now = _now()
     if title is not None:
         routine.title = title.strip()[:120]
@@ -334,24 +386,41 @@ async def change(
             routine.state = "active"
         if routine.state == "active":
             routine.next_run_at = _first_run(routine, now)
-    said = await words_of(session, conversation_id)
-    if conversation_id == routine.conversation_id:
-        routine.words = said
-    elif said and said not in routine.words:
-        routine.words = f"{routine.words}\n{said}".strip()
+    if conversation_id is not None:
+        said = await words_of(session, conversation_id)
+        if conversation_id == routine.conversation_id:
+            routine.words = said
+        elif said and said not in routine.words:
+            routine.words = f"{routine.words}\n{said}".strip()
+    # A blank filled in by hand ends the wait for 芝士 — including one that was
+    # still filling. A blank left in it starts one.
+    if routine.state == FILLING and not missing(routine):
+        routine.state, routine.paused = "active", ""
+        routine.next_run_at = _first_run(routine, now)
+    elif routine.state in ("active", "paused") and missing(routine):
+        routine.state, routine.paused, routine.next_run_at = FILLING, "", None
     await session.flush()
     return routine
 
 
 def pause(routine: AssistantRoutine, why: str = "person") -> None:
     _not_done(routine)
+    # Pausing a rule that was being filled in stops the filling too: nobody
+    # asked for it while the person has it off.
     routine.state, routine.paused, routine.next_run_at = "paused", why, None
 
 
 def resume(routine: AssistantRoutine) -> None:
-    """Running again from now: what it missed while paused is not made up."""
+    """Running again from now; what it missed while paused is not made up.
+
+    One that was paused while short of a blank is not running: it goes back to
+    waiting for 芝士 to fill it, and the sweep fills it again."""
     _not_done(routine)
     now = _now()
+    if missing(routine):
+        routine.state, routine.paused, routine.next_run_at = FILLING, "", None
+        routine.updated_at = now
+        return
     routine.state, routine.paused = "active", ""
     routine.next_run_at = _first_run(routine, now)
 
@@ -431,11 +500,13 @@ async def tick(
         counts["cleared"] = await _clear(session, now)
         # Before the away pause: a wait that is over is over, away or not.
         counts["given_up"] = await _given_up(session, now)
+        counts["unfilled"] = await _fill_given_up(session, now)
         counts["away"] = await _away(session, now)
         await session.commit()
     async with sessions() as session:
         counts["resumed"] = await _credits_back(session, people, sessions, now)
     async with sessions() as session:
+        counts["fill"] = await _fill(session, now)
         counts["due"] = await _due(session, now)
         await session.commit()
     counts.update(await react(sessions, people, consumptions, redis))
@@ -609,8 +680,40 @@ async def _run(
     return result.scalar_one_or_none() is not None
 
 
+async def _fill(session: AsyncSession, now: datetime) -> int:
+    """Rules a form saved with a blank in them, and the runs that fill it.
+
+    A filling rule gets one run whose whole work is the blanks: the platform
+    opens its conversation, 芝士 fills them in there with
+    ``cheese_automation(action=change)``, and the run ends in a notification
+    the person gets either way. One attempt per edit — the occurrence carries
+    the moment the rule last changed, so a rule the person edits and leaves
+    blank again is filled again rather than never."""
+    rows = list(
+        await session.scalars(
+            select(AssistantRoutine)
+            .where(AssistantRoutine.state == FILLING)
+            .with_for_update(skip_locked=True)
+        )
+    )
+    busy = await _open_routines(session, [r.id for r in rows])
+    fired = 0
+    for routine in rows:
+        if routine.id in busy:
+            continue
+        if await _run(
+            session,
+            user_id=routine.user_id,
+            routine_id=routine.id,
+            occurrence=f"fill:{routine.id}:{routine.updated_at.isoformat()}",
+            detail="这条例行事务有几项空着，等你补上：" + "、".join(missing(routine)),
+        ):
+            fired += 1
+    return fired
+
+
 async def _due(session: AsyncSession, now: datetime) -> int:
-    """The scheduled routines whose moment has come: one run each, then on to
+    """The scheduled rules whose moment has come: one run each, then on to
     the next moment. One whose last run is still going skips this moment."""
     rows = list(
         await session.scalars(
@@ -787,6 +890,38 @@ def _shown(happening: Happening) -> dict | None:
     return {"task": str(happening.payload.get("title") or ""), "event": outcome}
 
 
+async def _fill_given_up(session: AsyncSession, now: datetime) -> int:
+    """Rules left ``filling`` for ``FILL_AFTER``: 芝士 never wrote back. They
+    stop pretending to be generating — the person is told why, and the row
+    goes back to being plainly stopped."""
+    rows = list(
+        await session.scalars(
+            select(AssistantRoutine)
+            .where(
+                AssistantRoutine.state == FILLING,
+                AssistantRoutine.updated_at < now - FILL_AFTER,
+            )
+            .with_for_update(skip_locked=True)
+        )
+    )
+    for routine in rows:
+        routine.state, routine.paused, routine.next_run_at = "paused", "unfilled", None
+        await _tell(
+            session,
+            routine.user_id,
+            event=f"unfilled:{routine.id}",
+            content=say(
+                "assistantRoutineUnfilled",
+                routine=routine.title or "（没填标题）",
+                missing="、".join(missing(routine)),
+            ),
+            kind="unfilled",
+            at=now,
+            conversation_id=routine.conversation_id,
+        )
+    return len(rows)
+
+
 async def _given_up(session: AsyncSession, now: datetime) -> int:
     """Rules waiting once for something that has not happened in
     ``WAITS_FOR``: done, and the person told in the conversation they were
@@ -822,6 +957,32 @@ async def _given_up(session: AsyncSession, now: datetime) -> int:
 
 
 # --- running ------------------------------------------------------------------
+
+
+def _fill_message(routine: AssistantRoutine, now: datetime, tz: str) -> str:
+    """What the platform says when the work is a rule's blanks, not the rule's
+    own job. The person saved the form and walked away; nothing runs until
+    this is settled, so the one thing to do is decide it."""
+    clock = local_time(now, tz)
+    asks = []
+    if not routine.title.strip():
+        asks.append("- 名字：照目标起一个短的")
+    if not routine.trigger:
+        asks.append("- trigger 和 spec：到点跑还是等哪件事发生，并给出时间或范围")
+    return "\n".join(
+        [
+            "<平台>",
+            f"用户刚在设置页建了一条例行事务，有几项空着：「{'、'.join(missing(routine))}」。",
+            f"要做的事（用户写的目标）：{routine.note or routine.title}",
+            "照这个目标把空着的补上，用 cheese_automation(action=change, routine="
+            f'"{routine.id}", ...) 写回：',
+            *asks,
+            "补完这一条就开始跑。补完只写回规则，不要在对话里再说一遍你定了什么——"
+            "平台会把结果通知用户。",
+            "</平台>",
+            f"（现在是 {clock:%Y-%m-%d %H:%M}）",
+        ]
+    )
 
 
 def _first_message(
@@ -947,11 +1108,23 @@ async def _start_one(
             run.user_id
         ) or DEFAULT_TIMEZONE
         run.status, run.started_at = "running", now
-        question = _first_message(routine, run, now, tz)
+        blank = filling(routine)
+        # The run's own row says what it is for: a fill run is read back here
+        # when it ends, to decide whether the rule was made runnable.
+        run.shown = {"filling": str(routine.id)} if blank else run.shown
+        question = (
+            _fill_message(routine, now, tz)
+            if blank
+            else _first_message(routine, run, now, tz)
+        )
         shown = (
-            {"wait": routine.title, **(run.shown or {})}
-            if once(routine)
-            else {"routine": routine.title}
+            {"filling": str(routine.id)}
+            if blank
+            else (
+                {"wait": routine.title, **(run.shown or {})}
+                if once(routine)
+                else {"routine": routine.title}
+            )
         )
         user_id = run.user_id
         await session.commit()
@@ -1049,6 +1222,13 @@ async def ended(
             run.error = answer.error or "the answer failed"
         routine = await session.get(AssistantRoutine, run.routine_id)
         title = routine.title if routine is not None else ""
+        # A run that only asked 芝士 to fill blanks is not the rule's own work:
+        # it never makes a one-off «done», and what it says is whether the
+        # blanks are gone.
+        if (run.shown or {}).get("filling") is not None:
+            await _end_fill(session, run, routine, failed, stopped, now)
+            await session.commit()
+            return
         if routine is not None and routine.state == "active" and once(routine):
             routine.state, routine.next_run_at = "done", None
         # One that fires once ran in the conversation it was asked for in,
@@ -1085,6 +1265,44 @@ async def ended(
                 quote=answer.text.strip()[:QUOTE_CHARS] if not failed else "",
             )
         await session.commit()
+
+
+async def _end_fill(
+    session: AsyncSession,
+    run: AssistantRun,
+    routine: AssistantRoutine | None,
+    failed: bool,
+    stopped: bool,
+    now: datetime,
+) -> None:
+    """A fill run is over. Whether it worked is read off the rule, not off the
+    answer: 芝士 wrote the blanks back or it did not. The person is told once
+    either way, and a rule still full of blanks is plainly stopped — it does
+    not sit there pretending 芝士 is still on it."""
+    if routine is None:
+        return
+    if (failed and not stopped) or missing(routine):
+        routine.state, routine.paused, routine.next_run_at = "paused", "unfilled", None
+        content = say(
+            "assistantRoutineUnfilled",
+            routine=routine.title or "（没填标题）",
+            missing="、".join(missing(routine)) or "还没定的那几项",
+        )
+    else:
+        content = say(
+            "assistantRoutineFilled",
+            routine=routine.title,
+            when=describe(routine),
+        )
+    await _tell(
+        session,
+        run.user_id,
+        event=f"run:{run.id}",
+        content=content,
+        kind="run",
+        at=now,
+        conversation_id=run.conversation_id,
+    )
 
 
 async def notify_me(

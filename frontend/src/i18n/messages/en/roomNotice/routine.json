@@ -36,5 +36,7 @@
   "assistantRoutinesNoCredits": "You are out of credits, so your automations are paused",
   "assistantRoutinesAway": "You have not signed in for {days} days, so your automations are paused",
   "assistantWaitFailed": "“{routine}” could not finish",
-  "assistantWaitGivenUp": "Stopped waiting for “{routine}”: it did not happen within {days} days"
+  "assistantWaitGivenUp": "Stopped waiting for “{routine}”: it did not happen within {days} days",
+  "assistantRoutineFilled": "Routine “{routine}” is set up: {when}",
+  "assistantRoutineUnfilled": "“{routine}” is still missing {missing} — fill it in under Edit"
 }

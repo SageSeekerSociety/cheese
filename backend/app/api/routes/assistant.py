@@ -1086,15 +1086,24 @@ class RoutineOut(BaseModel):
     note: str
     #: When it runs, in a line.
     when: str
+    #: ``filling``: saved with a blank in it, 芝士 is deciding it right now.
     #: ``done``: a one-off that has run; it is cleared once its cards expire.
-    state: Literal["active", "paused", "done"]
-    #: Why a paused one stopped: ``person``, ``credits`` or ``away``.
+    state: Literal["active", "paused", "filling", "done"]
+    #: Why a paused one stopped: ``person``, ``credits``, ``away`` or
+    #: ``unfilled`` (芝士 never finished filling it in).
     paused: str
     nextRunAt: str | None = None
     #: Fires once, and runs in the conversation it was asked for in.
     once: bool
-    #: The conversation it was asked for in.
+    #: The conversation it was asked for in; none when the form made it.
     conversationId: str | None = None
+    #: What a ``filling`` one is still short of, in the words the row shows.
+    missing: list[str] = []
+    #: What it was saved with: so «修改» can open the form on it. ``note`` is
+    #: the form's 「目标」.
+    trigger: str = ""
+    spec: dict = {}
+    timezone: str = ""
     lastRun: RoutineRunOut | None = None
     #: What its runs cost over the last seven days, in credits.
     weekCredits: float
@@ -1125,6 +1134,10 @@ async def _routines_out(db, user_id: int) -> dict:
                 else None,
                 "once": routine_personal.once(r),
                 "conversationId": str(r.conversation_id) if r.conversation_id else None,
+                "missing": routine_personal.missing(r),
+                "trigger": r.trigger,
+                "spec": r.spec,
+                "timezone": r.timezone,
                 "lastRun": None
                 if r.id not in last
                 else {
@@ -1145,6 +1158,94 @@ async def _routines_out(db, user_id: int) -> dict:
 @router.get("/routines", **typed_response(RoutinesOut))
 async def list_routines(db: DbSession, auth: AuthUser) -> dict:
     """The person's routines, oldest first."""
+    return ok(await _routines_out(db, auth.user_id))
+
+
+class RoutineFormIn(BaseModel):
+    """What the settings form holds. Every field but the target may be left
+    out: 芝士 fills the blanks before anything runs (``personal.FILLING``)."""
+
+    title: str = Field(default="", max_length=120)
+    #: 「目标」 — what a run does, in the person's own words. The one field the
+    #: form will not save empty.
+    note: str = Field(default="", max_length=4000)
+    #: ``schedule`` or one of the events ``personal.EVENTS``; empty means «let
+    #: 芝士 decide».
+    trigger: str = ""
+    #: A schedule, when the trigger is one: ``freq`` and its moment.
+    freq: str = ""
+    time: str = ""
+    minute: int | None = None
+    weekdays: list[int] | None = None
+    day: int | None = None
+    at: str = ""
+    timezone: str = ""
+
+    def kept_spec(self) -> dict:
+        return {
+            k: v
+            for k, v in {
+                "freq": self.freq,
+                "time": self.time,
+                "minute": self.minute,
+                "weekdays": self.weekdays,
+                "day": self.day,
+                "at": self.at,
+            }.items()
+            if v not in ("", None)
+        }
+
+
+@router.post("/routines", dependencies=[ROUTE_DECIDES], **typed_response(RoutinesOut))
+async def create_routine(body: RoutineFormIn, db: DbSession, auth: AuthUser) -> dict:
+    """A rule saved from the settings page: no conversation behind it.
+
+    The target is the one thing a rule must say; a name and a moment may be
+    left to 芝士, which fills them before the first run.
+    """
+    target = body.note.strip()
+    if not target:
+        raise ValidationError(say("assistantRoutineGoalRequired"))
+    await routine_personal.create(
+        db,
+        user_id=auth.user_id,
+        conversation_id=None,
+        title=body.title,
+        note=target,
+        trigger=body.trigger,
+        spec=body.kept_spec(),
+    )
+    await db.commit()
+    return ok(await _routines_out(db, auth.user_id))
+
+
+@router.put(
+    "/routines/{routineId}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutinesOut),
+)
+async def update_routine(
+    routine_id: Annotated[uuid.UUID, Path(alias="routineId")],
+    body: RoutineFormIn,
+    db: DbSession,
+    auth: AuthUser,
+) -> dict:
+    """Change a rule from the settings page. Filling in the blanks it was
+    waiting on starts it; taking the goal away is refused."""
+    row = await _routine(db, auth.user_id, routine_id)
+    target = body.note.strip()
+    if not target:
+        raise ValidationError(say("assistantRoutineGoalRequired"))
+    await routine_personal.change(
+        db,
+        row,
+        conversation_id=None,
+        title=body.title,
+        note=target,
+        trigger=body.trigger or None,
+        spec=body.kept_spec() if body.trigger else None,
+    )
+    await db.commit()
     return ok(await _routines_out(db, auth.user_id))
 
 
