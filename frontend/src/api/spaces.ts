@@ -26,6 +26,7 @@ import type {
   PostSpaceJoinRequestData,
   PostSpaceMemberRequestData,
   PostSpaceRequestData,
+  PutSpaceAccessRequestData,
   SpaceAnnouncementList,
   SpaceApplication,
 } from '@/types/apiSpaces'
@@ -54,9 +55,10 @@ export const SpacesApi = {
       { url: '/admin/spaces', method: 'GET', params: { status, offset, limit } },
       true
     ),
-  review: (id: number, approved: boolean, reason = '') =>
+  /** `openScope`：审开放申请时带上页面显示的范围；申请在那之后被改过，服务端回 409。 */
+  review: (id: number, approved: boolean, reason = '', openScope?: string[]) =>
     axiosRequest<{ application: SpaceApplication }>(
-      { url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason } },
+      { url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason, openScope } },
       true
     ),
   create: (data: PostSpaceRequestData) =>
@@ -138,6 +140,9 @@ export const SpacesApi = {
     ).data,
   update: (spaceId: number, data: PatchSpaceRequestData) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}`, method: 'PATCH', data }, true),
+  /** 只对成员开放，或开放给一组邮箱后缀。扩大范围要等平台审核，回来的空间带着那条申请。 */
+  setAccess: (spaceId: number, data: PutSpaceAccessRequestData) =>
+    axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}/access`, method: 'PUT', data }, true),
   del: (spaceId: number) => changesSpaces(axiosMutation({ url: `/spaces/${spaceId}`, method: 'DELETE' }, true)),
   detail: (spaceId: number, params: { queryClassificationTopics?: boolean; queryMyRank?: boolean } = {}) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}`, method: 'GET', params }, true),

@@ -22,6 +22,7 @@
     "topics": "Tags"
   },
   "tabs": {
+    "access": "Access",
     "basic": "Basics",
     "categories": "Categories and tags",
     "domainGroups": "Email domain groups",

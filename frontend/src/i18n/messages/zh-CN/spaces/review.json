@@ -10,6 +10,7 @@
   "empty": "暂无申请。",
   "loadFailed": "空间申请加载失败",
   "next": "下一页",
+  "openScope": "申请设为开放空间：{scope}",
   "previous": "上一页",
   "reason": "驳回原因",
   "refresh": "刷新",
