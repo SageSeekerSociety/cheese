@@ -1,7 +1,12 @@
+// @vitest-environment-options { "settings": { "disableIframePageLoading": true } }
 // What a reader sees of a mini-app block while it starts, and when it does not:
-// it says it is loading until the app has drawn; an app that cannot be loaded
-// says so and can be tried again; an app that starts and never draws is the
-// app's own failure, which its writer can be asked to fix.
+// it says it is loading until the app has drawn, however long the shell takes
+// to arrive over a slow link; an app that cannot be loaded says so and can be
+// tried again; an app that starts and never draws is the app's own failure,
+// which its writer can be asked to fix.
+//
+// happy-dom leaves frames unloaded (the option above): a shell's frame loads
+// once all of it has arrived, and each test says when that is.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { answerDocAppsWith, type DocAppSource, type DocAppVersion } from '../../../../lib/docApps'
@@ -89,6 +94,32 @@ describe('a mini-app block while it starts', () => {
     frameSays(dom, { type: 'height', h: 240 })
     expect(dom.textContent).not.toContain(say('loadFailed'))
     expect(dom.querySelector('iframe')).not.toBeNull()
+  })
+
+  it('keeps saying it is loading while a slow link is still bringing the shell', async () => {
+    serve(async () => VERSION)
+    const dom = open()
+    await vi.advanceTimersByTimeAsync(0)
+    frameSays(dom, { type: 'arriving' })
+    // Measured on a slow link: the shell took 17–23 s to arrive.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(dom.textContent).not.toContain(say('loadFailed'))
+    expect(dom.textContent).toContain(say('loading'))
+    frameSays(dom, { type: 'ready' })
+    frameSays(dom, { type: 'height', h: 240 })
+    expect(dom.textContent).not.toContain(say('loading'))
+    expect(dom.querySelector('iframe')).not.toBeNull()
+  })
+
+  it('says a shell that arrived whole and never became ready did not load', async () => {
+    serve(async () => VERSION)
+    const dom = open()
+    await vi.advanceTimersByTimeAsync(0)
+    frameSays(dom, { type: 'arriving' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    dom.querySelector('iframe')!.dispatchEvent(new Event('load'))
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(dom.textContent).toContain(say('loadFailed'))
   })
 
   it('reports an app that starts and never draws as its own failure, for its writer to fix', async () => {

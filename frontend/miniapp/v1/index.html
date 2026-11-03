@@ -9,6 +9,13 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'"
     />
+    <!-- Before everything else the file holds: the document's page waits for
+         this to know the shell is arriving, and then for the frame to finish
+         loading, rather than for a fixed time (appView.ts). The rest of the
+         file is over a megabyte. -->
+    <script>
+      if (window.parent !== window) window.parent.postMessage({ ch: 'cheese-app', type: 'arriving' }, '*')
+    </script>
   </head>
   <body>
     <div id="cheese-app"></div>
