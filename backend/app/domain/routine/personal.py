@@ -401,6 +401,33 @@ async def change(
     return routine
 
 
+async def filling_run_of(
+    session: AsyncSession, conversation: str, work: str
+) -> uuid.UUID | None:
+    """The rule a fill run was started for, or none.
+
+    A fill run's conversation is one the platform opened for that rule, and
+    the run's payload names it. Both have to agree: the rule the run is for is
+    the one that turn may change.
+    """
+    try:
+        run = await session.get(AssistantRun, uuid.UUID(work))
+    except ValueError:
+        return None
+    if run is None or (run.shown or {}).get("filling") is None:
+        return None
+    try:
+        routine_id = uuid.UUID(str(run.shown["filling"]))
+    except (KeyError, ValueError):
+        return None
+    row = await session.get(AssistantRoutine, routine_id)
+    if row is None or row.state != FILLING:
+        return None
+    if str(run.conversation_id) != conversation:
+        return None
+    return routine_id
+
+
 def pause(routine: AssistantRoutine, why: str = "person") -> None:
     _not_done(routine)
     # Pausing a rule that was being filled in stops the filling too: nobody

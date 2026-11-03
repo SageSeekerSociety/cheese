@@ -662,6 +662,7 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     trigger: 'schedule',
     missing: [],
     spec: {},
+    timezone: 'Asia/Shanghai',
   },
 
   {
@@ -679,6 +680,7 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     trigger: 'schedule',
     missing: [],
     spec: {},
+    timezone: 'Asia/Shanghai',
   },
 
   {
@@ -696,6 +698,7 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     trigger: '',
     missing: [],
     spec: {},
+    timezone: 'Asia/Shanghai',
   },
 
   {
@@ -713,6 +716,7 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     trigger: 'schedule',
     missing: [],
     spec: {},
+    timezone: 'Asia/Shanghai',
   },
 
   {
@@ -730,6 +734,7 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     trigger: 'schedule',
     missing: [],
     spec: {},
+    timezone: 'Asia/Shanghai',
   },
 
   {
@@ -747,6 +752,7 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     trigger: 'schedule',
     missing: [],
     spec: {},
+    timezone: 'Asia/Shanghai',
   },
 ]
 

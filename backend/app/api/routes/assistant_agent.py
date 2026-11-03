@@ -63,7 +63,6 @@ from app.domain.agent.personal import project_desk, reading, rosters, space_desk
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, proposals, refs
 from app.domain.assistant import memory as assistant_memory
-from app.domain.assistant.models import AssistantRoutine, AssistantRun
 from app.domain.day_windows import utc_now
 from app.domain.fetch.preapproved import preapproved
 from app.domain.library import listing as library_listing
@@ -1147,7 +1146,7 @@ async def agent_routine(
     if not claims.conversation:
         raise BadRequestError(say("assistantRoutineInRun"))
     fills = (
-        await session_record_scoped_routine(db, claims.conversation, claims.work)
+        await routine_personal.filling_run_of(db, claims.conversation, claims.work)
         if unattended
         else None
     )
@@ -1205,30 +1204,6 @@ async def agent_routine(
     await db.commit()
     await tell_rule(questions, claims, routine_personal.card(row))
     return ok({"text": "自动化现在是：\n" + _routine_line(row, me.timezone)})
-
-
-async def session_record_scoped_routine(
-    db, conversation: str, work: str
-) -> uuid.UUID | None:
-    """The rule a fill run was started for, or none.
-
-    A fill run's conversation is one the platform opened for that rule, and
-    the run's payload names it. Both have to agree: the rule the run is for is
-    the one this turn may change.
-    """
-    run = await db.get(AssistantRun, uuid.UUID(work))
-    if run is None or (run.shown or {}).get("filling") is None:
-        return None
-    try:
-        routine_id = uuid.UUID(str(run.shown["filling"]))
-    except (KeyError, ValueError):
-        return None
-    row = await db.get(AssistantRoutine, routine_id)
-    if row is None or row.state != "filling":
-        return None
-    if str(run.conversation_id) != conversation:
-        return None
-    return routine_id
 
 
 class NotifyMeIn(BaseModel):
