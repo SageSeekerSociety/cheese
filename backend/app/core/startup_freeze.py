@@ -11,21 +11,30 @@ walked by every full collection with the event loop held.
 
 Freezing in the lifespan is what `main.py` warns against: a process that
 enters it more than once freezes whatever each entry left alive, test engines
-and connections among them. So this runs only where the server runs its loop,
-on the process's main thread (a test client runs the app on a thread of its
-own), and only once, after the warm-ups and before the first request.
+and connections among them, and tests do enter it, on the main thread too. So
+this runs only in a process the server's entry point started (`app/serve.py`
+sets `CHEESE_SERVING`), on its main thread, and only once, after the warm-ups
+and before the first request.
 """
 
 import gc
+import os
 import threading
+
+SERVING = "CHEESE_SERVING"
 
 _done = False
 
 
 def freeze_after_startup() -> bool:
-    """Collect and freeze once, on the main thread only. Whether it froze."""
+    """Collect and freeze once, in a serving process's main thread only.
+    Whether it froze."""
     global _done
-    if _done or threading.current_thread() is not threading.main_thread():
+    if (
+        _done
+        or os.environ.get(SERVING) != "1"
+        or threading.current_thread() is not threading.main_thread()
+    ):
         return False
     gc.collect()
     gc.freeze()

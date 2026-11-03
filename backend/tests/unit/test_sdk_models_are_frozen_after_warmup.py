@@ -32,6 +32,7 @@ def test_the_servers_startup_freezes_what_the_sdk_loaded(monkeypatch):
     monkeypatch.setattr(settings, "s3_secret_key", "secret")
     startup_freeze = _freeze()
     monkeypatch.setattr(startup_freeze, "_done", False)
+    monkeypatch.setenv("CHEESE_SERVING", "1")
 
     async def start() -> tuple[int, bool]:
         async with storage.reuse_s3_connections():
@@ -59,6 +60,7 @@ def test_an_app_run_off_the_main_thread_freezes_nothing(monkeypatch):
     lifespan once per test: freezing there would pin each test's engines."""
     startup_freeze = _freeze()
     monkeypatch.setattr(startup_freeze, "_done", False)
+    monkeypatch.setenv("CHEESE_SERVING", "1")
     seen = {}
     thread = threading.Thread(
         target=lambda: seen.update(froze=startup_freeze.freeze_after_startup())
@@ -67,3 +69,35 @@ def test_an_app_run_off_the_main_thread_freezes_nothing(monkeypatch):
     thread.join()
     assert seen == {"froze": False}
     assert startup_freeze._done is False
+
+
+def test_a_process_the_server_did_not_start_freezes_nothing(monkeypatch):
+    """Tests enter the lifespan on the main thread too
+    (`test_backend_handover_signal.py`): only the serving entry point's
+    processes freeze."""
+    startup_freeze = _freeze()
+    monkeypatch.setattr(startup_freeze, "_done", False)
+    monkeypatch.delenv("CHEESE_SERVING", raising=False)
+    frozen = gc.get_freeze_count()
+    assert startup_freeze.freeze_after_startup() is False
+    assert gc.get_freeze_count() == frozen
+
+
+def test_the_serving_entry_point_marks_its_processes(monkeypatch):
+    import pytest
+
+    from app import serve
+
+    class Execed(Exception):
+        pass
+
+    def execvp(*_args):
+        raise Execed  # exec replaces the process; nothing after it runs
+
+    monkeypatch.delenv("CHEESE_SERVING", raising=False)
+    monkeypatch.setattr(serve.os, "execvp", execvp)
+    monkeypatch.setenv("API_POOL_WORKERS", "0")
+    with pytest.raises(Execed):
+        serve.main()
+    assert serve.os.environ.get("CHEESE_SERVING") == "1"
+    assert serve.SERVING == _freeze().SERVING
