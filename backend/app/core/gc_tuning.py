@@ -5,8 +5,8 @@ held, and its cost is the size of the whole tracked heap, not the garbage it
 finds. Production's records (`core/loop_stalls`) show what that costs at the
 app's size: over 2.6 hours, 30 full passes in 6.3 s at about 208 ms each
 (worst 397 ms), freeing about 6,300 objects per pass — 2.4% of the 260,000
-objects they walked. Of the ten worst stalls the board kept in that window,
-nine have the collector's own time (`gc_ms`) at least four fifths of the stall.
+objects they walked. All ten of the worst stalls the board kept in that window
+have the collector's own time (`gc_ms`) at least as long as the stall itself.
 
 CPython 3.13 decides that frequency in two steps (`Python/gc.c`,
 `gc_select_generation`). Generation 0's count passes its threshold, its
