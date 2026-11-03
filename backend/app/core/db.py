@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session, SessionTransaction
 from sqlalchemy.pool import NullPool, QueuePool
 
+from app.core import statement_attributes
 from app.core.config import settings
 from app.core.sentences import say
 
@@ -77,6 +78,11 @@ def _json_dumps_utf8(obj: Any) -> str:
     # what ends up stored anyway.
     return json.dumps(obj, ensure_ascii=False)
 
+
+# Before the first connection prepares anything: a statement's column
+# descriptions are kept once, not once per cached statement
+# (`core/statement_attributes.py`).
+statement_attributes.install()
 
 engine = create_async_engine(
     _db_url,
