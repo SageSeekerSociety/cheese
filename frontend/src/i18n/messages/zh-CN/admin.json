@@ -198,6 +198,10 @@
         "host": "等主机",
         "thaw": "解冻",
         "executor": "装执行器",
+        "release": "放发布包",
+        "claude": "取 Claude Code",
+        "sandbox": "起沙箱",
+        "ready": "等执行器应答",
         "checkpoint": "推送检查点",
         "freeze": "主机冻结",
         "checkout": "检出",
@@ -244,6 +248,7 @@
       "sandboxFiles": "文件 {used} / {cap}",
       "sandboxRead": "内存读数 {memory} · 磁盘读数 {disk}",
       "sandboxSwap": "交换 {used} GiB",
+      "sandboxSwapCap": "交换 {used} / {cap} GiB",
       "oomKilled": "被 OOM 杀过 {n} 次",
       "pressure": "内存压力（1 分钟 / 5 分钟）：some {some}，full {full}",
       "foot": "用量（含每个沙箱的磁盘）每 {check}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"

@@ -161,6 +161,7 @@ async def record(
                 anon_bytes=group.get("anon"),
                 file_bytes=group.get("file"),
                 swap_bytes=group.get("swap"),
+                swap_max_bytes=group.get("swap_max"),
                 oom_kills=group.get("oom_kill"),
                 memory_read_at=now,
             )
@@ -351,6 +352,7 @@ async def sandboxes_now(
             "anon_bytes": row.anon_bytes,
             "file_bytes": row.file_bytes,
             "swap_bytes": row.swap_bytes,
+            "swap_max_bytes": row.swap_max_bytes,
             "oom_kills": row.oom_kills,
             "memory_read_at": _iso(row.memory_read_at),
             "disk_bytes": row.disk_bytes,

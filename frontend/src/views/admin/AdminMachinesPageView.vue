@@ -302,8 +302,13 @@ function sandboxUse(s: MachineSandbox): { text: string; near: boolean }[] {
       near: u.disk_inodes >= c.near_cap * c.sandbox_inode_budget,
     })
   }
-  // 沙箱自己不许换出（`memory.swap.max` 为 0），用到交换文件就是要说的事。
-  if (u.swap_bytes) {
+  // 运行中的沙箱可换出到 `memory.swap.max`；读到上限就和它比，到线标红。
+  if (u.swap_max_bytes) {
+    parts.push({
+      text: t('admin.machines.usage.sandboxSwapCap', { used: gib(u.swap_bytes ?? 0), cap: gib(u.swap_max_bytes) }),
+      near: (u.swap_bytes ?? 0) >= c.near_cap * u.swap_max_bytes,
+    })
+  } else if (u.swap_bytes) {
     parts.push({ text: t('admin.machines.usage.sandboxSwap', { used: gib(u.swap_bytes) }), near: false })
   }
   // 被 OOM 杀掉过：这个沙箱以后还会再撞上同一个上限。

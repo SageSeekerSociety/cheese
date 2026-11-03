@@ -89,6 +89,11 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
     try:
         info = json.loads(launch().stdout)
         assert info["workspace"] == str(work)
+        # How long its own steps took, for the platform's preparation record;
+        # no sandbox here, so no sandbox step.
+        assert {"release", "claude", "ready"} <= info["timings"].keys()
+        assert "sandbox" not in info["timings"]
+        assert all(seconds >= 0 for seconds in info["timings"].values())
         deadline = time.monotonic() + 15
         while True:
             try:

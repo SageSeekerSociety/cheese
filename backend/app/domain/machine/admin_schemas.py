@@ -10,6 +10,7 @@ class SandboxUsageOut(BaseModel):
     anon_bytes: int | None
     file_bytes: int | None
     swap_bytes: int | None
+    swap_max_bytes: int | None
     oom_kills: int | None
     memory_read_at: str | None
     disk_bytes: int | None

@@ -272,6 +272,10 @@ async def withdraw_own_question(
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
+    # Numbering first, then the question read again, as `_answer_group` does: an
+    # answer recorded meanwhile is refused on, not written over.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
     await withdraw_question_by_asker(
         db, block=question, room_id=room_id, handle=actor.handle
     )
@@ -396,6 +400,11 @@ async def _respond(block_id, db, resolver, broker, chat, runner, *, act) -> dict
     # to take back: refuse it as what it is rather than as the wrong person.
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
+    # Numbering first, then the question read again, as `_answer_group` does:
+    # ``act`` writes the question's whole meta back, so it must start from what
+    # an answer recorded meanwhile left there.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
     await act(
         db,
         block=question,

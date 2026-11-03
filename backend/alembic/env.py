@@ -22,10 +22,12 @@ if config.config_file_name is not None:
 # autogenerate would see an empty metadata and drop all tables.
 from migration_helpers import CI_POSTGRES_MAJOR  # noqa: E402
 
+import app.core.migration_impl  # noqa: E402  (registers alembic's postgresql impl)
 import app.models  # noqa: E402, F401
 from app.core.config import settings  # noqa: E402
 from app.core.db import (  # noqa: E402
     Base,
+    LockRaceRetries,
     MigrationProgress,
     apply_migration_timeouts,
     run_migrations_retrying_lock_contention,
@@ -107,6 +109,9 @@ def do_run_migrations(connection: Connection) -> None:
     # upgrade inside it, which is what transaction_per_migration turns off.
     connection.commit()
     progress = MigrationProgress(connection)
+    # One allowance for the whole upgrade, spent by whole migrations rolled
+    # back and rerun and by CONCURRENTLY statements rerun in place.
+    retries = LockRaceRetries()
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -115,13 +120,14 @@ def do_run_migrations(connection: Connection) -> None:
         # held until the last migration of the deploy finishes.
         transaction_per_migration=True,
         on_version_apply=progress.version_applied,
+        lock_race_retries=retries,
     )
 
     def upgrade() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
-    run_migrations_retrying_lock_contention(connection, progress, upgrade)
+    run_migrations_retrying_lock_contention(connection, progress, upgrade, retries)
 
 
 async def run_async_migrations() -> None:
