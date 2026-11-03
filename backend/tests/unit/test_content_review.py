@@ -21,7 +21,6 @@ from app.core.content_review import (
 from app.core.errors import UnprocessableEntityError, UpstreamUnavailableError
 from tests.support.content_review import Green
 
-
 KINDS = [TextKind.NAME, TextKind.PUBLIC_TEXT]
 
 
