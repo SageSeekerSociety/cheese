@@ -5,10 +5,15 @@ message admitting it (``actor``), or the turn a platform wake-up starts
 (``platform_turn=True``, whose author is ``system`` — a question asked inside it
 waits on nobody in particular). ``question_row`` persists a question without
 any turn. Neither proves an external native process executed a tool.
+
+``while_held`` races a write to a question against an answer given meanwhile.
 """
 
+import asyncio
 import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 from app.api.deps import get_chat_service, get_work_runner
@@ -154,3 +159,34 @@ def question_row(client, topic, *, seat=None, author=None, **extra):
             return result
 
     return client.portal.call(persist)
+
+
+def while_held(monkeypatch, module, name, write, meanwhile, *, read=None, wait_s=1.0):
+    """Run ``write`` until its first call of ``module.name`` and hold it there;
+    run ``meanwhile`` beside it, wait ``wait_s``, ``read()`` if given, then let
+    ``write`` go on. Returns what ``read()`` saw while it was held (None without
+    one), and both results.
+
+    ``module.name`` is the step that writes the question, so ``write`` is held
+    after whatever it read first: a ``meanwhile`` that lands during the hold
+    shows in that ``read()``, and one that waits for ``write`` does not."""
+    reached, release = threading.Event(), threading.Event()
+    original = getattr(module, name)
+
+    async def held(*args, **kwargs):
+        if not reached.is_set():
+            reached.set()
+            await asyncio.to_thread(release.wait, 20)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, held)
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(write)
+        try:
+            assert reached.wait(10), "the write never reached the step it is held at"
+            second = pool.submit(meanwhile)
+            time.sleep(wait_s)
+            seen = read() if read is not None else None
+        finally:
+            release.set()
+        return seen, first.result(20), second.result(20)
