@@ -174,6 +174,7 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
             "anon": 700 * 2**20,
             "file": 300 * 2**20,
             "swap": 0,
+            "swap_max": GIB,
             "oom_kill": 0,
         }
     ]
@@ -229,6 +230,7 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
     assert on_it["usage"]["anon_bytes"] == 700 * 2**20
     assert on_it["usage"]["file_bytes"] == 300 * 2**20
     assert on_it["usage"]["swap_bytes"] == 0
+    assert on_it["usage"]["swap_max_bytes"] == GIB
     assert on_it["usage"]["oom_kills"] == 0
     # What its home holds, as its quota counts it.
     assert on_it["usage"]["disk_bytes"] == 3 * GIB

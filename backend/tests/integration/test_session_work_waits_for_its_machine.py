@@ -123,6 +123,15 @@ def cloud_rooms(client, monkeypatch):
                     "state": f"/{device}/state",
                     "workspace": f"/{device}/work",
                     "mcp_servers": [],
+                    # The install's own step times; one it does not name
+                    # is not kept.
+                    "timings": {
+                        "release": 0.2,
+                        "claude": 0.1,
+                        "sandbox": 0.4,
+                        "ready": 1.5,
+                        "elsewhere": 9,
+                    },
                 }
             ),
         }
@@ -249,6 +258,10 @@ def test_a_new_rooms_first_command_waits_for_its_own_machine(cloud_rooms, monkey
     for one in kept:
         assert {"place", "executor", "host"} <= one["stages"].keys()
         assert "thaw" not in one["stages"]
+        # What the install timed of itself, as parts of the executor's step.
+        assert one["stages"]["ready"] == 1.5
+        assert {"release", "claude", "sandbox"} <= one["stages"].keys()
+        assert "elsewhere" not in one["stages"]
         assert one["total_s"] >= one["stages"]["host"] > 0
 
 

@@ -24,8 +24,10 @@ export interface SandboxUsage {
   /** 其中进程自己的（匿名）和页缓存各多少。 */
   anon_bytes: number | null
   file_bytes: number | null
-  /** 用了宿主机多少交换文件：`memory.swap.max` 为 0 时一直是 0。 */
+  /** 用了宿主机多少交换文件。 */
   swap_bytes: number | null
+  /** 最多可用多少（`memory.swap.max`）；不限或没读到为 null。 */
+  swap_max_bytes: number | null
   /** 起来以来被内核因内存不足杀掉几次。 */
   oom_kills: number | null
   memory_read_at: string | null

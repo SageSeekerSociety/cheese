@@ -293,8 +293,8 @@ def machine() -> dict:
 def sandboxes() -> list:
     """Each sandbox the helper gave a cgroup: its home's name; the memory it
     holds now and has held at most since it started, and how much of that is
-    anonymous and page cache; how much of the host's swap it uses (none at
-    `memory.swap.max` 0); and how many times the kernel has had to kill one
+    anonymous and page cache; how much of the host's swap it uses and may use
+    (`memory.swap.max`); and how many times the kernel has had to kill one
     of its processes for running out of memory."""
     found = []
     groups = sorted(SANDBOX_CGROUPS.iterdir()) if SANDBOX_CGROUPS.is_dir() else []
@@ -309,6 +309,9 @@ def sandboxes() -> list:
                 "memory": memory,
                 "memory_peak": _number(group / "memory.peak"),
                 "swap": _number(group / "memory.swap.current"),
+                # None where unlimited ("max"): a frozen sandbox may swap out
+                # all it holds.
+                "swap_max": _number(group / "memory.swap.max"),
                 "anon": stats.get("anon"),
                 "file": stats.get("file"),
                 "oom_kill": _fields(group / "memory.events", "oom_kill").get(
