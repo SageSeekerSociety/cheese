@@ -112,8 +112,17 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
 
     SQLAlchemy runs a statement's result handling (rows, JSON decoding) in a
     greenlet of its own, whose frames end at the greenlet: the stack carries
-    on in the greenlet that switched to it, where the backend's frames are."""
+    on in the greenlet that switched to it, where the backend's frames are.
+
+    When the loop is held inside a library that has no backend frame of its own
+    anywhere below the innermost one — a socket read in `ssl`, a signal handled
+    while `socket.recv` waits — every frame is a library frame. Keeping only the
+    innermost then left a one-frame stack that named the library and not the
+    caller: production's stalls in `ssl.py read` could not say which of the
+    backend's calls was waiting. Those frames are kept, folded into one entry,
+    until the first backend frame is reached."""
     out: list[str] = []
+    library: list[str] = []
     glet = getcurrent() if getcurrent is not None else None
     while len(out) < DEPTH:
         if frame is None:
@@ -125,14 +134,19 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
         code = frame.f_code
         path = code.co_filename
         if path.startswith(_APP):
-            short = "app/" + path[len(_APP) :]
+            if library:
+                # One entry for the library calls between two backend frames:
+                # the innermost names the call holding the loop, the rest say
+                # how deep it sits.
+                out.append(" <- ".join(library))
+                library.clear()
+            out.append(f"app/{path[len(_APP) :]}:{frame.f_lineno} {code.co_name}")
         elif not out:
             short = path.rsplit("site-packages/", 1)[-1].rsplit("/lib/python", 1)[-1]
-        else:
-            frame = frame.f_back
-            continue
-        out.append(f"{short}:{frame.f_lineno} {code.co_name}")
+            library.append(f"{short}:{frame.f_lineno} {code.co_name}")
         frame = frame.f_back
+    if library and len(out) < DEPTH:
+        out.append(" <- ".join(library))
     return tuple(out)
 
 
