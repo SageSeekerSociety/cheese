@@ -56,7 +56,7 @@ describe('AdminCiActivityPageView', () => {
     const board: CiBoard = { ...CRV_CI_BOARD, generated_at: '2026-10-17T22:41:09+00:00' }
     const { getByText } = mount({ board, jobs: CRV_CI_JOBS })
 
-    getByText((text) => text.includes('ciActivity.computedAt') && text.includes('2026-10-17 22:41Z'))
+    getByText('ciActivity.computedAt {"at":"22:41Z"}')
   })
 
   it('says how far back a backfilling sweep reaches and why it stopped', () => {
