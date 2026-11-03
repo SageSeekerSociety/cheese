@@ -79,6 +79,10 @@ def stall_status() -> dict:
         "count": _count,
         "worst": list(_worst),
         "recent": list(reversed(_recent)),
+        # What decides how often the middle generation is promoted: the same
+        # number the server sets at startup (`core/gc_tuning`). Beside the
+        # pass counts above it says whether the tuning reached this process.
+        "thresholds": list(gc.get_threshold()),
         "gc": [
             {
                 "generation": generation,
