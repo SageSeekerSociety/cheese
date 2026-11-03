@@ -112,6 +112,7 @@ def test_a_migration_that_committed_part_of_itself_is_not_run_again():
     """Work an ``autocommit_block`` committed cannot be rolled back, so the
     migration that did it is not repeated; the deploy fails as before."""
     from app.core.db import (
+        LockRaceRetries,
         MigrationProgress,
         run_migrations_retrying_lock_contention,
     )
@@ -138,7 +139,7 @@ def test_a_migration_that_committed_part_of_itself_is_not_run_again():
                 connection.execute(text("ALTER TABLE agent_turns ADD COLUMN x int"))
 
             run_migrations_retrying_lock_contention(
-                connection, progress, upgrade, sleep=lambda _s: None
+                connection, progress, upgrade, LockRaceRetries(sleep=lambda _s: None)
             )
 
         async def go() -> None:
@@ -162,6 +163,7 @@ def _migrate_against_a_held_table(db, upgrade, **retrying) -> None:
     """Run ``upgrade`` under the retrying runner while a live request reads
     ``agent_turns`` for longer than the whole run."""
     from app.core.db import (
+        LockRaceRetries,
         MigrationProgress,
         run_migrations_retrying_lock_contention,
     )
@@ -180,8 +182,7 @@ def _migrate_against_a_held_table(db, upgrade, **retrying) -> None:
             connection,
             progress,
             lambda: upgrade(connection),
-            sleep=lambda _s: None,
-            **retrying,
+            LockRaceRetries(sleep=lambda _s: None, **retrying),
         )
 
     async def go() -> None:
