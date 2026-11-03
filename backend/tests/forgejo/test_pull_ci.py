@@ -421,7 +421,9 @@ fi
     def test_a_timeout_with_the_needed_behaviours_runs_the_pull_whatever_it_is(self):
         # #5118: a timeout that forwards TERM, kills after the grace and exits
         # 124/137 runs the pull, whichever implementation it reports.
-        result, calls = self.run_start([(0, " forgejo Pulled\n")], timeout_variant="renamed")
+        result, calls = self.run_start(
+            [(0, " forgejo Pulled\n")], timeout_variant="renamed"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             self.docker_actions(calls, "pull"), [["pull", "--policy", "missing"]]
@@ -437,9 +439,7 @@ fi
             ("wrong-status", "exits 124 on timeout and 137 after KILL"),
         ):
             with self.subTest(variant=variant):
-                result, calls = self.run_start(
-                    [(0, "")], timeout_variant=variant
-                )
+                result, calls = self.run_start([(0, "")], timeout_variant=variant)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(named, result.stderr)
                 self.assertEqual(self.docker_actions(calls, "pull"), [], calls)
