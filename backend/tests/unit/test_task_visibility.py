@@ -63,7 +63,7 @@ def _visibility_svc(session=None, user_repo=None, admin_repo=None, member=True):
     session = session or _mock_session()
     svc = TaskVisibilityService(session=session)
     svc._space_repo = AsyncMock()
-    svc._space_repo.is_member.return_value = member
+    svc._space_repo.is_reader.return_value = member
     if user_repo:
         svc._user_repo = user_repo
     if admin_repo:

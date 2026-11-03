@@ -78,7 +78,9 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
     return {
         "owner": owner,
         "space_id": space_id,
-        "invite_code": data["inviteCode"]["code"],
+        "link": api_client.get(
+            f"/spaces/{space_id}/join-link", headers=_auth(owner.token)
+        ).json()["data"]["token"],
         "marker": marker,
         "category_id": category_id,
     }
@@ -125,16 +127,14 @@ class TestALearningFilterBarIsInvisibleUntilYouAreIn:
         options = {p["name"]: p["categoryId"] for p in data["knowledgePoints"]}
         assert options.get(board["marker"]) == board["category_id"], data
 
-    def test_someone_who_redeemed_the_code_reads_them_too(
+    def test_someone_who_joined_through_the_link_reads_them_too(
         self, board: dict, user_client: UserCreator, api_client: TestClient
     ):
         """门是「是不是成员」，不是「是不是创建者」—— 和本文件其它空间路由一致。"""
         joiner = user_client.create_user()
         joiner.token = user_client.login(api_client, joiner.username, joiner.password)
         joined = api_client.post(
-            "/spaces/join",
-            json={"code": board["invite_code"]},
-            headers=_auth(joiner.token),
+            f"/space-invites/{board['link']}/join", headers=_auth(joiner.token)
         )
         assert joined.status_code == 200, joined.text
 

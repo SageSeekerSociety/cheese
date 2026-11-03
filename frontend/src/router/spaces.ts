@@ -267,6 +267,12 @@ export default {
           component: () => import('@/views/spaces/detail/settings/BasicInfo.vue'),
         },
         {
+          // 只对成员开放，还是开放给一组邮箱后缀（开放要等平台审核）。
+          path: 'access',
+          name: 'SpacesDetailSettingsAccess',
+          component: () => import('@/views/spaces/detail/settings/Access.vue'),
+        },
+        {
           // 分类与话题是两页现成的管理页，并排画在这一栏里：设置页给话题留了一个具名出口。
           path: 'categories',
           name: 'SpacesDetailSettingsCategories',
@@ -279,11 +285,6 @@ export default {
           path: 'templates',
           name: 'SpacesDetailSettingsTemplates',
           component: () => import('@/views/spaces/detail/ManageTemplates.vue'),
-        },
-        {
-          path: 'invite-codes',
-          name: 'SpacesDetailSettingsInviteCodes',
-          component: () => import('@/views/spaces/detail/InviteCodes.vue'),
         },
         {
           path: 'domain-groups',

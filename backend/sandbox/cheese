@@ -2143,19 +2143,16 @@ DELEGATED_TOOLS = ToolTable(
                     },
                     ["where"],
                 ),
-                "code": _verb(
-                    "管空间的邀请码：不给 ref 时新建一个（max_uses 可用次数、days 几天后过期、"
-                    "note 写这张码给谁用）；ref 给邀请码编号时改这几项，remove 为 true 时停用它"
-                    "（停用后这张码不能再用）。",
+                "link": _verb(
+                    "管空间的加入链接：approval 为 true 时持链接的人要经管理员批准才能加入，"
+                    "false 时直接加入；reset 为 true 时换一条新链接，旧链接立即失效，已加入的人不受影响。"
+                    "链接本身在空间的成员管理页复制。",
                     {
                         "where": _text(
                             "spaces/空间 id；不知道 id 先用 cheese_read 读 spaces"
                         ),
-                        "ref": _text("邀请码编号，见 spaces/4/manage"),
-                        "max_uses": {"type": "integer"},
-                        "days": {"type": "integer"},
-                        "note": _text("这张码给谁用"),
-                        "remove": {"type": "boolean"},
+                        "approval": {"type": "boolean"},
+                        "reset": {"type": "boolean"},
                         "confirm": _CONFIRM,
                     },
                     ["where"],
@@ -2428,7 +2425,7 @@ DELEGATED_TOOLS = ToolTable(
         "cheese_space.set": REACHES_OTHERS,
         "cheese_space.announce": REACHES_OTHERS,
         "cheese_space.category": REACHES_OTHERS,
-        "cheese_space.code": REACHES_OTHERS,
+        "cheese_space.link": REACHES_OTHERS,
         "cheese_space.review": REACHES_OTHERS,
         "cheese_settings": CHANGES,
         "cheese_routine": CHANGES,
@@ -4969,15 +4966,7 @@ _ACTIONS = {
         "archived",
         "remove",
     ),
-    "cheese_space.code": (
-        "invite_code",
-        "where",
-        "ref",
-        "max_uses",
-        "days",
-        "note:text",
-        "remove",
-    ),
+    "cheese_space.link": ("join_link", "where", "approval", "reset"),
     "cheese_space.review": ("problem_review", "ref", "choice", "reason:text"),
     "cheese_web.fetch": ("fetch", "url", "prompt"),
 }
@@ -5133,7 +5122,7 @@ _DELEGATED_STEPS = {
     "cheese_space.set": _carried("cheese_space.set"),
     "cheese_space.announce": _carried("cheese_space.announce"),
     "cheese_space.category": _carried("cheese_space.category"),
-    "cheese_space.code": _carried("cheese_space.code"),
+    "cheese_space.link": _carried("cheese_space.link"),
     "cheese_space.review": _carried("cheese_space.review"),
     # 个人芝士读网页经平台写出的那次调用；房间的读网页直接打 /fetch。
     "cheese_web.fetch": _web_fetch,

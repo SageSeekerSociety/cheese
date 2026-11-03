@@ -95,8 +95,8 @@ class Outcome:
     memories: list[str] = field(default_factory=list)
     #: The asker's rules after the task: (trigger, what the person said, spec).
     routines: list[tuple[str, str, dict]] = field(default_factory=list)
-    #: Her course space after the task: its name, live categories, live invite
-    #: codes as (max uses, note), and announcement titles.
+    #: Her course space after the task: its name, live categories, whether
+    #: joining through its link waits for approval, and announcement titles.
     space: dict = field(default_factory=dict)
     #: Each team's people after the task: team name → {handle: role}.
     teams: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -331,14 +331,11 @@ async def read_outcome(
                     i=sid,
                 )
             ],
-            "codes": [
-                (int(m), str(n or ""))
-                for m, n in await q(
-                    "select max_uses, note from space_invite_code where space_id = :i "
-                    "and deleted_at is null",
-                    i=sid,
-                )
-            ],
+            "join_approval": bool(
+                (
+                    await q("select join_approval from space where id = :i", i=sid)
+                ).scalar()
+            ),
             "announcements": [
                 str(t)
                 for (t,) in await q(
