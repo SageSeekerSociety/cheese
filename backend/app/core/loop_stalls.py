@@ -55,11 +55,11 @@ _worst: list[dict] = []
 _recent: deque[dict] = deque(maxlen=KEEP)
 _count = 0
 _samples: Counter[tuple[str, ...]] = Counter()
-# The collector's passes, per generation: how many, and how long in all and at
-# worst. A stall whose stack is only a weakref callback (`weakref.py remove`)
+# The collector's passes, per generation: how many, how long in all and at
+# worst, and how many objects they freed in all and in the slowest pass. A stall whose stack is only a weakref callback (`weakref.py remove`)
 # is the collector freeing what died, and `gc_ms` on the stall says how much
 # of it the collector took.
-_gc_runs = [[0, 0.0, 0.0] for _ in range(3)]
+_gc_runs = [[0, 0.0, 0.0, 0, 0] for _ in range(3)]
 # When the pass in flight began; None between passes, so a "stop" whose
 # "start" this callback never saw is not charged.
 _gc_started: float | None = None
@@ -85,8 +85,18 @@ def stall_status() -> dict:
                 "collections": runs,
                 "total_ms": round(total * 1000, 1),
                 "worst_ms": round(worst * 1000, 1),
+                # A full pass's time is the walk and the freeing both: with
+                # how many it freed beside it, the two can be told apart.
+                "collected": collected,
+                "worst_collected": worst_collected,
             }
-            for generation, (runs, total, worst) in enumerate(_gc_runs)
+            for generation, (
+                runs,
+                total,
+                worst,
+                collected,
+                worst_collected,
+            ) in enumerate(_gc_runs)
         ],
     }
 
@@ -133,9 +143,13 @@ def _on_gc(phase: str, info: dict) -> None:
     _gc_started = None
     _gc_since_beat += took
     runs = _gc_runs[min(info.get("generation", 2), 2)]
+    freed = info.get("collected", 0)
     runs[0] += 1
     runs[1] += took
-    runs[2] = max(runs[2], took)
+    runs[3] += freed
+    if took >= runs[2]:
+        runs[2] = took
+        runs[4] = freed
 
 
 def _on_alarm(signum: int, frame: FrameType | None) -> None:

@@ -141,3 +141,13 @@ def test_a_collection_whose_start_was_not_seen_is_not_charged():
     before = [dict(g) for g in loop_stalls.stall_status()["gc"]]
     loop_stalls._on_gc("stop", {"generation": 2})
     assert loop_stalls.stall_status()["gc"] == before
+
+
+def test_the_collectors_passes_say_how_much_they_freed():
+    loop_stalls = _stalls()
+    before = loop_stalls.stall_status()["gc"][2]["collected"]
+    loop_stalls._on_gc("start", {"generation": 2})
+    loop_stalls._on_gc("stop", {"generation": 2, "collected": 1234})
+    gen2 = loop_stalls.stall_status()["gc"][2]
+    assert gen2["collected"] == before + 1234
+    assert "worst_collected" in gen2
