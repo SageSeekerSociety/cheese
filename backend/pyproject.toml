@@ -55,6 +55,15 @@ dependencies = [
     # sent it; the image the app runs must have it.
     "pillow>=13.0.0",
     "cachetools==7.2.3",
+    # Content Moderation (app/core/content_review.py). The SDK's 3.x line needs
+    # alibabacloud-credentials>=1.0, which caps aiofiles below 25, so it cannot
+    # install beside this project; 2.20.4 resolves with credentials 0.3.6.
+    # tea-openapi stays at 0.3.13: 0.3.14 and later read
+    # `CredentialModel.provider_name`, which credentials 0.3.6 does not have,
+    # and every call then fails with AttributeError before it leaves.
+    "alibabacloud-green20220302==2.20.4",
+    "alibabacloud-tea-openapi==0.3.13",
+    "oss2==2.19.1",
 ]
 
 [dependency-groups]

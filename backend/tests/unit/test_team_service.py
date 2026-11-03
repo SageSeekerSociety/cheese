@@ -44,6 +44,8 @@ def _make_team(**overrides):
         "description": "desc",
         "avatar_id": 10,
         "personal_owner_user_id": None,
+        "visibility": "public",
+        "open_to_all": True,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,

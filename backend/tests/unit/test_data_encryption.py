@@ -102,6 +102,9 @@ def _deployment(**overrides: object) -> Settings:
         _env_file=None,
         jwt_secret=_REAL_SECRET,
         platform_admin_handles=["ops"],
+        # A deployment also needs its content review key (test_content_review.py).
+        aliyun_green_access_key_id="key-id",
+        aliyun_green_access_key_secret="key-secret",
         **overrides,
     )
 
