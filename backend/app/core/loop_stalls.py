@@ -48,6 +48,9 @@ STALL_S = 0.1
 KEEP = 10
 # Frames kept per stack, innermost first.
 DEPTH = 14
+# Library frames kept inside one folded entry (see `_where`): enough to name
+# the call and the layer it sits in, not the whole chain.
+LIBRARY_DEPTH = 4
 # The backend's own package: frames under it are the ones a stall names.
 _APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
 
@@ -120,9 +123,16 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
     innermost then left a one-frame stack that named the library and not the
     caller: production's stalls in `ssl.py read` could not say which of the
     backend's calls was waiting. Those frames are kept, folded into one entry,
-    until the first backend frame is reached."""
+    until the first backend frame is reached.
+
+    The fold is bounded like the stack: `LIBRARY_DEPTH` innermost frames and a
+    count of the rest. This runs in the signal handler, once per sample for as
+    long as the stall lasts, and the result is kept as a key and in the board;
+    a synchronous library chain can be tens of frames deep, and following it to
+    the end would cost work the constant says it will not."""
     out: list[str] = []
     library: list[str] = []
+    dropped = 0
     glet = getcurrent() if getcurrent is not None else None
     while len(out) < DEPTH:
         if frame is None:
@@ -138,16 +148,27 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
                 # One entry for the library calls between two backend frames:
                 # the innermost names the call holding the loop, the rest say
                 # how deep it sits.
-                out.append(" <- ".join(library))
-                library.clear()
+                out.append(_folded(library, dropped))
+                library, dropped = [], 0
             out.append(f"app/{path[len(_APP) :]}:{frame.f_lineno} {code.co_name}")
         elif not out:
-            short = path.rsplit("site-packages/", 1)[-1].rsplit("/lib/python", 1)[-1]
-            library.append(f"{short}:{frame.f_lineno} {code.co_name}")
+            if len(library) < LIBRARY_DEPTH:
+                short = path.rsplit("site-packages/", 1)[-1]
+                short = short.rsplit("/lib/python", 1)[-1]
+                library.append(f"{short}:{frame.f_lineno} {code.co_name}")
+            else:
+                dropped += 1
         frame = frame.f_back
     if library and len(out) < DEPTH:
-        out.append(" <- ".join(library))
+        out.append(_folded(library, dropped))
     return tuple(out)
+
+
+def _folded(library: list[str], dropped: int) -> str:
+    """One stack entry for a run of library frames, saying how many deeper
+    ones it left out."""
+    folded = " <- ".join(library)
+    return f"{folded} (+{dropped} deeper)" if dropped else folded
 
 
 def _on_gc(phase: str, info: dict) -> None:

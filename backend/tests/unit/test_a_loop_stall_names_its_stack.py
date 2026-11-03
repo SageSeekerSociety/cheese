@@ -177,3 +177,24 @@ def test_a_stall_inside_a_library_names_the_backend_call_that_waits(monkeypatch)
     # for it is still in the stack, which is the whole point.
     assert stack[0].count(" <- ") >= 1, stack
     assert "backend_waits" in joined, stack
+
+
+def test_a_deep_library_chain_is_folded_into_a_bounded_entry(monkeypatch):
+    # The fold runs inside the signal handler, once per sample, for as long as
+    # the stall lasts. It has to stay the size the constants promise, even when
+    # the chain below it has no backend frame at all.
+    import sys
+
+    loop_stalls = _stalls()
+    monkeypatch.setattr(loop_stalls, "_APP", "/nonexistent-backend-prefix/")
+
+    def descend(depth):
+        if depth == 0:
+            return loop_stalls._where(sys._getframe())
+        return descend(depth - 1)
+
+    stack = descend(60)
+    assert len(stack) == 1, stack
+    entry = stack[0]
+    assert entry.count(" <- ") == loop_stalls.LIBRARY_DEPTH - 1, entry
+    assert "deeper)" in entry, entry
