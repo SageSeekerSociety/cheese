@@ -13,6 +13,7 @@ import type {
   AssistantMemory,
   AssistantMemoryItem,
   AssistantRoutine,
+  AssistantRoutineForm,
   AssistantRules,
 } from '@/api'
 
@@ -49,6 +50,8 @@ const emit = defineEmits<{
   memoryDelete: [name: string]
   memoryClear: []
   openConversation: [id: string]
+  /** 存下一条：`null` 是新建；回来的那句是失败原因，空串是成功。 */
+  saveRoutine: [id: string | null, body: AssistantRoutineForm]
 }>()
 
 const { t, locale } = useI18n()
@@ -84,6 +87,73 @@ function confirmClear() {
 
 /** 要删除的那条例行事务：先确认。 */
 const deleting = ref<AssistantRoutine | null>(null)
+
+/** 正在填的那张表：`null` 是没开，`{routine: null}` 是新建。 */
+const form = ref<{ routine: AssistantRoutine | null } | null>(null)
+
+/** The blank events a person's own rule may wait for, in the order the form
+    lists them. The channel's rules are a different, shorter list. */
+const CONDITION_TRIGGERS = ['mention', 'review', 'filed', 'accepted', 'rejected', 'due', 'invite'] as const
+
+/** The form's six blanks, as the person left them. */
+const draft = ref({ title: '', note: '', onTime: false, freq: 'daily', time: '08:00', condition: '' })
+/** Said after a save the backend refused (the target is the one required
+ *  field): shown in the form, not as a toast somewhere else. */
+const formError = ref('')
+
+function openForm(routine: AssistantRoutine | null) {
+  formError.value = ''
+  draft.value = {
+    title: routine?.title ?? '',
+    note: routine?.note ?? '',
+    onTime: routine ? routine.trigger === 'schedule' : false,
+    freq: (routine?.spec?.freq as string) ?? 'daily',
+    time: (routine?.spec?.time as string) ?? '08:00',
+    condition: routine && routine.trigger !== 'schedule' ? routine.trigger : '',
+  }
+  form.value = { routine }
+}
+
+function submitForm() {
+  const now = form.value
+  if (!now) return
+  if (!draft.value.note.trim()) {
+    formError.value = t('apiError.routine.assistantRoutineGoalRequired')
+    return
+  }
+  formError.value = ''
+  emit('saveRoutine', now.routine?.id ?? null, {
+    title: draft.value.title.trim(),
+    note: draft.value.note.trim(),
+    trigger: draft.value.onTime ? 'schedule' : draft.value.condition,
+    freq: draft.value.onTime ? draft.value.freq : '',
+    time: draft.value.onTime ? draft.value.time : '',
+    minute: null,
+    weekdays: null,
+    day: null,
+    at: '',
+    timezone: '',
+  })
+  form.value = null
+}
+
+function pickCondition(trigger: string) {
+  draft.value.onTime = false
+  draft.value.condition = draft.value.condition === trigger ? '' : trigger
+}
+
+function pickTime() {
+  draft.value.onTime = true
+  draft.value.condition = ''
+}
+
+/** 「只有一次」 and「生成中」 and「没补上」 each read their own way. */
+function stateText(r: AssistantRoutine): string {
+  if (r.state === 'filling') {
+    return t('account.assistant.routines.filling', { missing: r.missing.join('、') })
+  }
+  return state(r)
+}
 // One that fires once leaves the list once it has run: what it did is in its conversation.
 // Those still waiting come first.
 const listed = computed(() => [
@@ -271,16 +341,84 @@ function last(r: AssistantRoutine): string {
       <section class="settings-card">
         <h2 class="settings-card__title ast__title-row">
           <span>{{ t('account.assistant.routines.title') }}</span>
+          <BaseButton v-if="!form" kind="primary" size="sm" @click="openForm(null)">
+            {{ t('account.assistant.routines.actionNew') }}
+          </BaseButton>
         </h2>
         <p class="settings-card__desc">{{ t('account.assistant.routines.desc') }}</p>
-        <p v-if="!listed.length" class="ast__none">{{ t('account.assistant.routines.empty') }}</p>
-        <ul v-else class="ast__recent">
+
+        <!-- 那一张表：新建、修改共用。只有「目标」必填，其余留空由芝士补。 -->
+        <form v-if="form" class="ast__form" @submit.prevent="submitForm">
+          <label class="ast__field">
+            <span>{{ t('account.assistant.routines.form.title') }}</span>
+            <input v-model="draft.title" maxlength="120" autocomplete="off" />
+          </label>
+          <label class="ast__field">
+            <span>{{ t('account.assistant.routines.form.note') }} *</span>
+            <textarea v-model="draft.note" rows="3" maxlength="4000" autocomplete="off" />
+          </label>
+          <div class="ast__switch" role="radiogroup" :aria-label="t('account.assistant.routines.form.when')">
+            <label>
+              <input type="radio" name="ast-when" :checked="draft.onTime" @change="pickTime" />
+              {{ t('account.assistant.routines.form.onTime') }}
+            </label>
+            <label>
+              <input type="radio" name="ast-when" :checked="!draft.onTime" @change="draft.onTime = false" />
+              {{ t('account.assistant.routines.form.onCondition') }}
+            </label>
+          </div>
+          <div v-if="draft.onTime" class="ast__row3">
+            <label class="ast__field">
+              <span>{{ t('account.assistant.routines.form.freq') }}</span>
+              <select v-model="draft.freq">
+                <option value="hourly">{{ t('account.assistant.routines.form.hourly') }}</option>
+                <option value="daily">{{ t('account.assistant.routines.form.daily') }}</option>
+                <option value="weekly">{{ t('account.assistant.routines.form.weekly') }}</option>
+                <option value="monthly">{{ t('account.assistant.routines.form.monthly') }}</option>
+              </select>
+            </label>
+            <label class="ast__field">
+              <span>{{ t('account.assistant.routines.form.time') }}</span>
+              <input v-model="draft.time" type="time" autocomplete="off" />
+            </label>
+          </div>
+          <div v-else class="ast__when-list">
+            <button
+              v-for="trigger in CONDITION_TRIGGERS"
+              :key="trigger"
+              type="button"
+              class="ast__when"
+              :class="{ 'ast__when--on': draft.condition === trigger }"
+              :aria-pressed="draft.condition === trigger"
+              @click="pickCondition(trigger)"
+            >
+              {{ t(`account.assistant.routines.form.when.${trigger}`) }}
+            </button>
+          </div>
+          <p class="ast__hint">{{ t('account.assistant.routines.form.blankHint') }}</p>
+          <p v-if="formError" role="alert" class="ast__reason c-danger">{{ formError }}</p>
+          <div class="ast__actions">
+            <BaseButton kind="ghost" size="sm" type="button" @click="form = null">
+              {{ t('account.assistant.routines.cancel') }}
+            </BaseButton>
+            <BaseButton kind="primary" size="sm" type="submit" :disabled="saving">
+              {{ t('account.assistant.routines.save') }}
+            </BaseButton>
+          </div>
+        </form>
+
+        <p v-if="!form && !listed.length" class="ast__none">{{ t('account.assistant.routines.empty') }}</p>
+        <ul v-else-if="!form" class="ast__recent">
           <li v-for="r in listed" :key="r.id" class="ast__routine">
             <div class="ast__body">
               <p class="ast__summary ast__when">{{ r.when }}</p>
               <p class="ast__note">{{ r.note || r.title }}</p>
               <p class="ast__meta">
-                <span v-if="state(r)" :class="{ ast__paused: r.state === 'paused' }">{{ state(r) }}</span>
+                <span
+                  v-if="stateText(r)"
+                  :class="{ ast__paused: r.state === 'paused', ast__filling: r.state === 'filling' }"
+                  >{{ stateText(r) }}</span
+                >
                 <span v-if="last(r)">{{ last(r) }}</span>
                 <span v-if="r.weekCredits > 0" class="t-num">{{
                   t('account.assistant.routines.cost', { n: fmtPoints(r.weekCredits, locale) })
@@ -296,8 +434,13 @@ function last(r: AssistantRoutine): string {
               >
                 {{ t('account.assistant.routines.view') }}
               </BaseButton>
+              <BaseButton kind="ghost" size="sm" :disabled="saving" @click="openForm(r)">
+                {{ t('account.assistant.routines.edit') }}
+              </BaseButton>
+              <!-- A rule that fires once is either waiting or done: nothing to
+                   pause. A filling one is stopped only by 芝士 giving up. -->
               <BaseButton
-                v-if="r.state === 'paused' || !r.once"
+                v-if="r.state === 'paused' || (r.state === 'active' && !r.once)"
                 kind="ghost"
                 size="sm"
                 :disabled="saving"
@@ -471,6 +614,13 @@ function last(r: AssistantRoutine): string {
   display: flex;
   gap: 8px;
   align-items: baseline;
+  /* 标题右侧那颗「＋ 新建」推到边上 */
+  justify-content: space-between;
+  padding-right: 24px;
+}
+
+.ast__title-row > span:first-child {
+  margin-right: auto;
 }
 
 .ast__count {
@@ -569,6 +719,98 @@ function last(r: AssistantRoutine): string {
   color: var(--text);
 }
 
+/* 芝士还在补它：这一行说的是「差什么」，不是「停了」。 */
+.ast__filling {
+  color: var(--accent-ink);
+}
+
+/* 新建 / 修改那一张表：只有「目标」必填，其余留空由芝士补。 */
+.ast__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 24px 16px;
+}
+
+.ast__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.ast__field input,
+.ast__field textarea,
+.ast__field select {
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: var(--lh-14);
+}
+
+.ast__field textarea {
+  resize: vertical;
+}
+
+.ast__switch {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--ink);
+}
+
+.ast__switch label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ast__row3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.ast__when-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ast__when {
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ast__when--on {
+  border-color: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-primary));
+  font-weight: 600;
+}
+
+.ast__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+
 .ast__chip {
   justify-self: start;
   padding: 1px 8px;
@@ -644,6 +886,10 @@ function last(r: AssistantRoutine): string {
 
   .ast__routine {
     flex-direction: column;
+  }
+
+  .ast__form {
+    padding-inline: 16px;
   }
 
   .ast__actions {

@@ -42,15 +42,27 @@ export interface AssistantRoutine {
   note: string
   /** 什么时候运行，后端写好的一句。 */
   when: string
-  /** `done`：只运行一次的，已经运行过；3 天后自动删除。 */
-  state: 'active' | 'paused' | 'done'
-  /** 暂停的原因：`person` 自己暂停，`credits` 额度用完，`away` 长时间未登录。 */
+  /**
+   * `filling`：建的时候留了空，芝士正在补（补完变成 active）。
+   * `done`：只运行一次的，已经运行过；3 天后自动删除。
+   */
+  state: 'active' | 'paused' | 'filling' | 'done'
+  /**
+   * 暂停的原因：`person` 自己暂停，`credits` 额度用完，`away` 长时间未登录，
+   * `unfilled` 芝士没补上。
+   */
   paused: string
   nextRunAt: string | null
   /** 只做一次：在建它的那段对话里做，做完就结束（「正在等的事」）。 */
   once: boolean
-  /** 建它的那段对话。 */
+  /** 建它的那段对话；在设置页填表建的没有。 */
   conversationId: string | null
+  /** `filling` 时还差哪几项，写给人看的词（「名字」「什么时候跑」）。 */
+  missing: string[]
+  /** 填表时选的那一样：`schedule` 或七种事件之一；空着是让芝士定。 */
+  trigger: string
+  spec: Record<string, unknown>
+  timezone: string
   lastRun: AssistantRoutineRun | null
   /** 近 7 天的运行花了多少点。 */
   weekCredits: number
@@ -83,6 +95,32 @@ export function setAssistantRoutine(id: string, action: 'pause' | 'resume' | 'de
   return action === 'delete'
     ? request<AssistantRoutines>(`/assistant/routines/${id}`, { method: 'DELETE' })
     : request<AssistantRoutines>(`/assistant/routines/${id}/${action}`, { method: 'POST' })
+}
+
+/** 设置页那张表填的东西。除了「目标」，每一项都可以留空，芝士先补上再跑。 */
+export interface AssistantRoutineForm {
+  title: string
+  /** 「目标」：这一条要做的事，必填。 */
+  note: string
+  trigger: string
+  freq: string
+  time: string
+  minute: number | null
+  weekdays: number[] | null
+  day: number | null
+  at: string
+  timezone: string
+}
+
+export function createAssistantRoutine(body: AssistantRoutineForm): Promise<AssistantRoutines> {
+  return request<AssistantRoutines>('/assistant/routines', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function updateAssistantRoutine(id: string, body: AssistantRoutineForm): Promise<AssistantRoutines> {
+  return request<AssistantRoutines>(`/assistant/routines/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
 }
 
 /** 芝士记得的一件事：一句描述（列在每段新对话开头）和正文。 */
