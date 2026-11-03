@@ -42,10 +42,10 @@ import threading
 SERVING = "CHEESE_SERVING"
 
 #: Generation 1's allocation threshold; 0 and 2 keep whatever this interpreter
-#: started with. Only this number is ours to set: generation 0's default has
-#: already moved between builds of 3.13 (700, then 2000), and pinning it here
-#: would silently make the young generation collect more often than the build
-#: we run chose to.
+#: started with. Only this number is ours to set: generation 0's default is
+#: not a constant across CPython versions (700 up to 3.12, 2000 from 3.13),
+#: and pinning it here would silently make the young generation collect more
+#: often than the build we run chose to.
 GEN1_THRESHOLD = 100
 
 _done = False
