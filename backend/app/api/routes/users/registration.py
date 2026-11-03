@@ -28,6 +28,7 @@ from app.api.users_deps import (
 from app.api.write_access import ROUTE_DECIDES
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.content_review import TextKind, review_text
 from app.core.email import EMAIL_FORMAT
 from app.core.errors import (
     BadRequestError,
@@ -178,6 +179,9 @@ async def register_user(
         raise UnprocessableEntityError(say("usernameReserved"))
 
     nickname = normalize_nickname(nickname)
+    # Before the email code is spent: a nickname refused here is changed and
+    # sent again with the same code.
+    await review_text(TextKind.NAME, [nickname])
 
     require_new_password(password)
 

@@ -55,6 +55,8 @@ dependencies = [
     # sent it; the image the app runs must have it.
     "pillow>=13.0.0",
     "cachetools==7.2.3",
+    "alibabacloud-green20220302>=2.20.4",
+    "oss2>=2.19.1",
 ]
 
 [dependency-groups]

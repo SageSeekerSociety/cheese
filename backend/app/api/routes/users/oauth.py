@@ -55,6 +55,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core import origins, single_use_state
 from app.core.config import settings
+from app.core.content_review import TextKind, review_text
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -62,6 +63,7 @@ from app.core.errors import (
     ConflictError,
     NotFoundError,
     UnprocessableEntityError,
+    UpstreamUnavailableError,
 )
 from app.core.single_use_state import SingleUseUnavailableError
 from app.db.session import get_db
@@ -1045,8 +1047,11 @@ async def oauth_create_user(
         )
     try:
         nickname = normalize_nickname(nickname)
+        await review_text(TextKind.NAME, [nickname])
     except UnprocessableEntityError as exc:
         return _oauth_error_redirect(request, "INVALID_NICKNAME", str(exc))
+    except UpstreamUnavailableError as exc:
+        return _oauth_error_redirect(request, "REVIEW_UNAVAILABLE", str(exc))
     if passwordMode not in ("none", "password"):
         return _oauth_error_redirect(request, "INVALID_AUTH_MODE", "Invalid auth mode")
     consent = {

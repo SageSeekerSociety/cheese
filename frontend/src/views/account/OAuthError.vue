@@ -63,6 +63,8 @@ const errorDescription = computed(() => {
       return t('account.rule.username')
     case 'INVITE_CODE_REQUIRED':
       return t('account.oauth.error.inviteCodeRequired')
+    case 'REVIEW_UNAVAILABLE':
+      return t('account.oauth.error.reviewUnavailable')
     case 'SESSION_EXPIRED':
     case 'TOKEN_EXPIRED':
       return t('account.oauth.error.sessionExpired')

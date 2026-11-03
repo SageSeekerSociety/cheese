@@ -157,6 +157,19 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     # team group's Feishu custom-bot webhook URL. Empty sends nothing; on a
     # deployment the health report names that as a failure (`feedback_announce`).
     feishu_feedback_webhook: str = ""
+    # The RAM AccessKey the backend checks publicly visible text and pictures
+    # with, at Alibaba Cloud Content Moderation (`app.core.content_review`).
+    # Empty on a developer's machine and in the test suite, which then publish
+    # without the check; a deployment refuses to boot without both
+    # (`_require_content_review_key_on_deployment`).
+    aliyun_green_access_key_id: str = ""
+    aliyun_green_access_key_secret: str = ""
+
+    @property
+    def content_review_configured(self) -> bool:
+        return bool(
+            self.aliyun_green_access_key_id and self.aliyun_green_access_key_secret
+        )
 
     # Coordinated ingress cutover is a separate release. No implicit fallback.
     preview_connection_mode: Literal["legacy", "owner"] = "legacy"
@@ -1431,6 +1444,38 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
             "the backend env file and keep it with the database backups, "
             f"because nothing encrypted under it can be read without it. "
             f"Generate one with: {generate}"
+        )
+
+    @model_validator(mode="after")
+    def _require_content_review_key_on_deployment(self) -> "Settings":
+        """Refuse to boot a deployment that cannot check what it publishes.
+
+        Text and pictures everyone signed in can see are checked by Content
+        Moderation before they are written (`app.core.content_review`); without
+        the key there is nothing to check them with. A deployment that booted
+        anyway would either publish them unchecked or refuse every such write,
+        and both would surface only when someone edits a nickname. Same two
+        signals as the JWT_SECRET guard, for the same reason (#439), and a
+        RuntimeError for the same reason.
+        """
+        if self.content_review_configured:
+            return self
+        if not self.deployed_via_compose and self.environment in (
+            "development",
+            "test",
+        ):
+            return self
+        raise RuntimeError(
+            "ALIYUN_GREEN_ACCESS_KEY_ID and ALIYUN_GREEN_ACCESS_KEY_SECRET must "
+            f"both be set on a deployment (ENVIRONMENT reads '{self.environment}'"
+            + (
+                ", started by the deploy compose file"
+                if self.deployed_via_compose
+                else ""
+            )
+            + "). Publicly visible text and pictures are checked with Alibaba "
+            "Cloud Content Moderation before they are written, and this is its "
+            "RAM AccessKey; set both in the backend env file."
         )
 
 

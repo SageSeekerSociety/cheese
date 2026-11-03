@@ -16,6 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, review_text
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -378,6 +379,11 @@ class TeamService:
                 data={"field": "name", "value": name.strip()},
             )
 
+        # A new team is discoverable (``Team.visibility`` defaults to public),
+        # so its name and introduction are published as it is made.
+        await review_text(TextKind.NAME, [name.strip()])
+        await review_text(TextKind.PUBLIC_TEXT, [intro, description])
+
         now = datetime.now(UTC)
         # Without a chosen handle the team gets ``team-<id>``, the same
         # placeholder every team had before handles existed, for its owner to
@@ -422,6 +428,13 @@ class TeamService:
         handle: str | None = None,
     ) -> Team:
         team = await self._get_team_or_error(team_id)
+        await self._review_what_it_publishes(
+            team,
+            name=name.strip() if isinstance(name, str) else None,
+            intro=intro,
+            description=description,
+            visibility=visibility,
+        )
         if name is not None:
             if not isinstance(name, str):
                 raise BadRequestError("Team name must be string")
@@ -456,6 +469,39 @@ class TeamService:
         team.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
         return team
+
+    @staticmethod
+    async def _review_what_it_publishes(
+        team: Team,
+        *,
+        name: str | None,
+        intro: str | None,
+        description: str | None,
+        visibility: TeamVisibility | None,
+    ) -> None:
+        """Review the name, introduction and description a stranger will read
+        once this change is made: what changes on a discoverable team, and all
+        of it on a team becoming discoverable. A team only its members see
+        publishes nothing."""
+        becomes_public = (
+            team.personal_owner_user_id is None
+            and (visibility.value if visibility is not None else team.visibility)
+            == TeamVisibility.PUBLIC.value
+        )
+        if not becomes_public:
+            return
+        was_public = team.open_to_all
+
+        def published(new: str | None, old: str) -> str | None:
+            if new is None:
+                return None if was_public else old
+            return None if was_public and new == old else new
+
+        await review_text(TextKind.NAME, [published(name, team.name)])
+        await review_text(
+            TextKind.PUBLIC_TEXT,
+            [published(intro, team.intro), published(description, team.description)],
+        )
 
     async def delete_team(self, *, team_id: int, has_live_projects: bool) -> None:
         """``has_live_projects``: the team still owns projects that are not
