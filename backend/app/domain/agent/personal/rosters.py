@@ -111,6 +111,16 @@ async def space(session: AsyncSession, user_id: int, space_id: int) -> Read:
         raise NotFoundError.for_resource("space", str(space_id))
     label = (await SpaceLabels(session).describe([space_id])).get(space_id)
     managers = sorted(await space_seats.managers(session, space_id))
+    found = await spaces.get_space(space_id)
+    if not runs and found is not None and found.open_scope is not None:
+        # An open space shows its member list to its admins only, as
+        # ``GET /spaces/{id}/members`` does: its rows are the outsiders the
+        # admins named, not a roster of who takes part.
+        named = await _named(session, managers)
+        name = label.name if label is not None else str(space_id)
+        lines = [f"空间「{name}」（spaces/{space_id}），开放空间，不列成员"]
+        lines.append("管理员：" + "、".join(named.get(i, str(i)) for i in managers))
+        return Read(f"空间「{name}」的管理员", "\n".join(lines))
     members = [m.user_id for m in await spaces.list_members(space_id)]
     named = await _named(session, managers + members[:LISTED])
     name = label.name if label is not None else str(space_id)

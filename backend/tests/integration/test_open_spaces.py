@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from app.core.sandbox_auth import mint_delegated_credential
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
@@ -252,12 +253,37 @@ def test_an_open_space_shows_its_member_list_only_to_its_admins(
     api_client: TestClient, user_client: UserCreator, reviewer: dict
 ):
     space = _space(api_client, user_client)
-    _, student = _person(api_client, user_client, "ruc.edu.cn")
+    student = user_client.create_user(email=f"p-{uuid.uuid4().hex[:12]}@ruc.edu.cn")
+    token = user_client.login(api_client, student.username, student.password)
+    named = user_client.create_user(email=f"p-{uuid.uuid4().hex[:12]}@partner.org")
     _open(api_client, reviewer, space, ["ruc.edu.cn"])
+    added = api_client.post(
+        f"/spaces/{space['space_id']}/members",
+        json={"userId": named.user_id},
+        headers=_auth(space["owner"]),
+    )
+    assert added.status_code == 201, added.text
 
     roster = f"/spaces/{space['space_id']}/members"
-    assert api_client.get(roster, headers=_auth(student)).status_code == 403
+    assert api_client.get(roster, headers=_auth(token)).status_code == 403
     assert api_client.get(roster, headers=_auth(space["owner"])).status_code == 200
+
+    # Their personal agent reads the space for them and names no member either.
+    agent = mint_delegated_credential(
+        user_id=student.user_id,
+        handle=student.username,
+        work=str(uuid.uuid4()),
+        project_id=None,
+        ttl_s=300,
+        read_only=False,
+    )
+    read = api_client.post(
+        "/assistant/agent/read",
+        json={"ref": f"spaces/{space['space_id']}/people", "page": 1},
+        headers=_auth(agent),
+    )
+    assert read.status_code == 200, read.text
+    assert named.username not in read.text
 
 
 def test_an_outsider_an_admin_names_reads_the_open_space(
