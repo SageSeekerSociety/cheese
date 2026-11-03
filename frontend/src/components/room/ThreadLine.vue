@@ -9,6 +9,7 @@ import { computed } from 'vue'
 
 import { isAgentHandle } from '../../lib/authorship'
 import { replyBlock, replySnippet } from '../../lib/blockDisplay'
+import { responseText } from '../../lib/noticeText'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '../../lib/routePrefetch'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import UserAvatar from '../common/UserAvatar.vue'
@@ -48,12 +49,12 @@ const faces = computed(() => {
 })
 // 一轮出错、还没有任何回复的支线：那句为什么没回答在支线里，这一行是去看它的入口。
 const failed = computed(() => !props.replying && !!props.summary?.failed)
-// 额度用完不是「回复失败」：重试没有用，主线上直接说额度用完了。
-const failedText = computed(() =>
-  props.summary?.failed_code === 'credits_exhausted'
-    ? t('work.room.thread.failedCredits')
-    : t('work.room.thread.failed')
-)
+// 主线上说的就是支线里落下的那一句（「这次没做完：…」「额度已用完，这次没有运行」……），
+// 不另写一句：两处读同一条提示，说法和原因都一致。长的那几句收成两行，全文在支线里。
+const failedText = computed(() => {
+  const said = props.summary?.failed_notice
+  return said ? responseText(said, 'content') : ''
+})
 
 // 点开之前先把支线取回来：页头那条消息和里面的回复，点下去就在（`query/room` 的
 // `prefetchThread`）。指针停住、键盘移到这一行上才算想点；按下去就不再等。触屏上也在
@@ -131,7 +132,13 @@ const last = computed(() => {
 
 <style scoped>
 .thread-line__failed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-width: 0;
   color: var(--danger-ink);
+  overflow-wrap: anywhere;
 }
 .thread-line {
   display: flex;

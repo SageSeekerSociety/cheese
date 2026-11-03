@@ -29,6 +29,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
+from app.core.sentences import I18N_META_KEY
 from app.domain.block.indexed_rows import FAILED_TURN_ROWS
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -204,10 +205,11 @@ def _checklist(block: Block) -> dict | bool | None:
 
 async def _failed(
     session: AsyncSession, threads: list[Thread]
-) -> dict[uuid.UUID, str | None]:
+) -> dict[uuid.UUID, dict]:
     """The 支线 whose last turn ended in an error after its last reply, each
-    with the code of that failure (``credits_exhausted`` when the credits
-    refused it), so the line under its message can say why.
+    with the line that failure wrote into the 支线 (its stored text and the
+    sentence key it was said with), so the line under its message says the
+    same thing the 支线 does.
 
     Only people's and AI teammates' messages count as replies, so a 支线 where
     the AI teammate's turn failed before it said anything has no reply and no
@@ -216,7 +218,12 @@ async def _failed(
     if not threads:
         return {}
     rows = await session.execute(
-        select(Block.conversation_id, Block.created_at, Block.meta["code"].as_string())
+        select(
+            Block.conversation_id,
+            Block.created_at,
+            Block.content,
+            Block.meta[I18N_META_KEY]["content"],
+        )
         .where(
             Block.conversation_id == _among([t.id for t in threads]),
             Block.kind == BlockKind.event,
@@ -225,11 +232,14 @@ async def _failed(
         .order_by(Block.created_at)
     )
     by_id = {t.id: t for t in threads}
-    failed: dict[uuid.UUID, str | None] = {}
-    for thread_id, at, code in rows:
+    failed: dict[uuid.UUID, dict] = {}
+    for thread_id, at, content, sentence in rows:
         last_reply = by_id[thread_id].last_reply_at
         if last_reply is None or at > last_reply:
-            failed[thread_id] = code
+            failed[thread_id] = {
+                "content": content,
+                **({I18N_META_KEY: {"content": sentence}} if sentence else {}),
+            }
     return failed
 
 
@@ -482,7 +492,9 @@ async def _describe(
                 "root": _reply(root),
                 "participants": people,
                 "failed": thread.id in failed,
-                "failed_code": failed.get(thread.id),
+                # The failure's own line, rendered by the screen the way the
+                # 支线 renders it (`responseText`), so both say one sentence.
+                "failed_notice": failed.get(thread.id),
                 # The tasks made from the message or its 支线, oldest first.
                 "tasks": [
                     {"id": str(task.id), "title": task.title, "status": task.status}

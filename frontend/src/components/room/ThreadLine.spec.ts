@@ -1,5 +1,5 @@
-// 主线上那一行：支线里的一轮没回答就出错了，说出错；是额度用完拦下的，说额度用完——
-// 那不是重试能解决的「回复失败」。
+// 主线上那一行：支线里的一轮没回答就出错了，主线上说的就是支线里落下的那一句——
+// 同一个说法、同一个原因，按读者的语言说。
 import type { ThreadSummary } from '@/types/threads'
 
 import { createVuetify } from 'vuetify'
@@ -42,15 +42,40 @@ function show(s: ThreadSummary) {
 beforeEach(() => setLocale('zh-CN'))
 
 describe('支线出错时主线上那一行', () => {
-  it('额度用完拦下的一轮说额度已用完，不说回复失败', () => {
-    const view = show(summary({ failed: true, failed_code: 'credits_exhausted' }))
-    expect(view.getByText('额度已用完')).toBeTruthy()
-    expect(view.queryByText('没能回复，点开看原因')).toBeNull()
+  it('说的是支线里那句失败提示，不另起一句', () => {
+    const view = show(
+      summary({
+        failed: true,
+        failed_notice: { content: '这次没做完：调用的模型出错了', i18n: { content: { key: 'turnFailedModelError' } } },
+      })
+    )
+    expect(view.getByText('这次没做完：调用的模型出错了')).toBeTruthy()
   })
 
-  it('别的原因出错还是回复失败', () => {
-    const view = show(summary({ failed: true, failed_code: null }))
-    expect(view.getByText('没能回复，点开看原因')).toBeTruthy()
+  it('额度用完拦下的一轮，说的也是支线里那句', () => {
+    const view = show(
+      summary({
+        failed: true,
+        failed_notice: { content: '额度已用完，这次没有运行', i18n: { content: { key: 'creditsExhausted' } } },
+      })
+    )
+    expect(view.getByText('额度已用完，这次没有运行')).toBeTruthy()
+  })
+
+  it('英文界面说那句提示的英文', () => {
+    setLocale('en')
+    const view = show(
+      summary({
+        failed: true,
+        failed_notice: { content: '这次没做完：调用的模型出错了', i18n: { content: { key: 'turnFailedModelError' } } },
+      })
+    )
+    expect(view.getByText('Stopped before finishing: the call to the model failed')).toBeTruthy()
+  })
+
+  it('没有句子键的旧提示照存下的原句说', () => {
+    const view = show(summary({ failed: true, failed_notice: { content: '本轮未完成：这条会话的机器尚未连接' } }))
+    expect(view.getByText('本轮未完成：这条会话的机器尚未连接')).toBeTruthy()
   })
 })
 

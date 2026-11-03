@@ -46,20 +46,13 @@ def refused_for_credits(text: str | None) -> bool:
     return bool(text) and any(marker in text for marker in _CREDIT_REFUSALS)
 
 
-#: The ``code`` of a turn the credits refused, which the line under its
-#: message in the channel reads to say so rather than a bare failure.
-CREDITS_EXHAUSTED_CODE = "credits_exhausted"
-
-CREDITS_EXHAUSTED_META = {
-    **notice(
-        EVENT_TURN_FAILED,
-        severity=SEVERITY_ERROR,
-        who=WHO_HUMAN,
-        detail=say("creditsExhaustedDetail"),
-        detail_label=say("labelNextStep"),
-    ),
-    "code": CREDITS_EXHAUSTED_CODE,
-}
+CREDITS_EXHAUSTED_META = notice(
+    EVENT_TURN_FAILED,
+    severity=SEVERITY_ERROR,
+    who=WHO_HUMAN,
+    detail=say("creditsExhaustedDetail"),
+    detail_label=say("labelNextStep"),
+)
 
 
 def spend_to_credits(cost_usd: float) -> float:

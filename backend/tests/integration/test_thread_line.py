@@ -6,8 +6,8 @@ main line is told without opening it.
   now with an owner, and what is said there goes on counting;
 - a message whose 支线 has nothing in it yet and nobody answering has no line;
 - a 支线 where the AI teammate's turn failed before anyone replied still has a
-  line, saying the reply failed: the reason is in the 支线, and without the line
-  nobody could find it;
+  line, saying what the failure's own line in the 支线 says: without the line
+  nobody could find the reason;
 - a page of 支线 reads the messages they hang under once, however many there
   are: who took part comes from the same rows as what the message said;
 - a room's header asks three questions about its 支线 — the page's own list,
@@ -20,6 +20,7 @@ import uuid
 import pytest
 from sqlalchemy import event
 
+from app.core.sentences import with_keys
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.thread import reads as thread_reads
@@ -122,8 +123,13 @@ def _turn_failed(client, thread_id, content=None, meta=None):
                     kind=BlockKind.event,
                     author_type=AuthorType.platform,
                     author="system",
-                    content=content or "本轮未完成：这条会话的机器尚未配置或未连接",
-                    meta=meta or {"event_type": "turn_failed", "severity": "error"},
+                    content=str(
+                        content or "本轮未完成：这条会话的机器尚未配置或未连接"
+                    ),
+                    meta=with_keys(
+                        meta or {"event_type": "turn_failed", "severity": "error"},
+                        content=content or "",
+                    ),
                 )
             )
             await s.commit()
@@ -192,9 +198,10 @@ def test_a_checklist_posted_in_a_thread_tells_the_channel(client, monkeypatch):
     assert _line_under(client, tid, root["id"])["reply_count"] == 2
 
 
-def test_a_thread_the_credits_refused_says_so_on_the_main_line(client):
-    """Spent credits are not a failure anyone can retry: the line under the
-    message carries why, so the channel can say the credits ran out."""
+def test_the_main_line_says_what_the_failure_said_in_the_thread(client):
+    """The line under the message carries the failure's own sentence — its
+    stored text and its key — so the channel says what the 支线 says, in the
+    reader's language, and not a sentence of its own."""
     tid = _channel(client)
     root = post_message(client, tid, "alice", {"content": "把周报改一版"})
     thread = _thread(client, root["id"], "alice")
@@ -208,7 +215,11 @@ def test_a_thread_the_credits_refused_says_so_on_the_main_line(client):
     line = _line_under(client, tid, root["id"])
 
     assert line["failed"] is True
-    assert line["failed_code"] == "credits_exhausted"
+    said = credits_event("本月额度已用完，11月1日重置。")
+    assert line["failed_notice"] == {
+        "content": str(said),
+        "i18n": {"content": said.descriptor()},
+    }
 
 
 def _said(client, thread_id, author, content, meta):
