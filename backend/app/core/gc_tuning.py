@@ -3,7 +3,7 @@
 A full collection (generation 2) runs on the event loop's thread with the loop
 held, and its cost is the size of the whole tracked heap, not the garbage it
 finds. Production's records (`core/loop_stalls`) show what that costs at the
-app's size: over 2.6 hours, 30 full passes in 6.3 s at about 208 ms each
+app's size: over 2.6 hours, 30 full passes in 6252 ms at about 208 ms each
 (worst 397 ms), freeing about 6,300 objects per pass — 2.4% of the 260,000
 objects they walked. All ten of the worst stalls the board kept in that window
 have the collector's own time (`gc_ms`) at least as long as the stall itself.
