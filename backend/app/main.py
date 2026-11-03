@@ -46,6 +46,7 @@ from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
+from app.core.gc_tuning import tune_after_startup
 from app.core.health import set_domain_checks, set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
@@ -595,6 +596,10 @@ async def lifespan(application: FastAPI):
         # import-time freeze; freeze them too, once, before serving
         # (`core/startup_freeze.py`).
         freeze_after_startup()
+        # And let the middle generation fill before it is promoted, so full
+        # collections — which walk the whole live heap with the loop held — run
+        # less often (`core/gc_tuning.py` says how much, and why).
+        tune_after_startup()
         try:
             yield
         finally:
