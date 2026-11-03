@@ -28,6 +28,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import (
     BadRequestError,
     ConflictError,
+    ForbiddenError,
     NotFoundError,
 )
 from app.core.sentences import say
