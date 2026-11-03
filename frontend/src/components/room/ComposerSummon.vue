@@ -327,6 +327,11 @@ const rows = computed(() =>
 }
 .summon__btn:not(.summon__btn--on) :deep(.cheese-avatar__eye) {
   fill: var(--faint);
+}
+/* 闭眼只给闲着的那位。它正在这里跑一轮（busy）时画的是 CheeseAvatar 的「在想」：眼睛睁着
+   往右上看、冒泡；这里再把眼睛压扁、停掉动画，画出来就成了闭着眼往右上挪。
+   写成两个 :not 而不是 :not(a, b)：测试里的 jsdom 把选择器列表那种写法匹配错。 */
+.summon__btn:not(.summon__btn--on):not(.summon__btn--busy) :deep(.cheese-avatar__eye) {
   transform: scaleY(0.16);
   animation: none;
   transition:
