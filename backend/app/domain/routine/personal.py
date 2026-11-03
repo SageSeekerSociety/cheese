@@ -414,10 +414,13 @@ async def filling_run_of(
         run = await session.get(AssistantRun, uuid.UUID(work))
     except ValueError:
         return None
-    if run is None or (run.shown or {}).get("filling") is None:
+    if run is None:
+        return None
+    shown = run.shown
+    if shown is None or shown.get("filling") is None:
         return None
     try:
-        routine_id = uuid.UUID(str(run.shown["filling"]))
+        routine_id = uuid.UUID(str(shown["filling"]))
     except (KeyError, ValueError):
         return None
     row = await session.get(AssistantRoutine, routine_id)

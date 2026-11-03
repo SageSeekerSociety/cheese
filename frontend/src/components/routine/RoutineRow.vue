@@ -101,6 +101,12 @@ const running = computed(() => props.routine.state === 'active')
  *  没定触发方式的（补全中）按了也没用 —— 它没有「下一次」可以恢复。 */
 const toggleable = computed(() => props.routine.state === 'paused' || (running.value && !!props.routine.trigger))
 const busyOn = (action: string) => props.busy === action
+/** 按下去做什么：两支分开写，`emit` 才认得出是哪一个事件。 */
+function toggle() {
+  if (running.value) emit('pause')
+  else emit('resume')
+}
+
 /** 按下去会发生什么，读屏和悬停都说这一句。 */
 const toggleLabel = computed(() => (running.value ? t('routines.action.pause') : t('routines.action.resume')))
 
@@ -174,7 +180,7 @@ const actions = computed<MenuAction[]>(() =>
         :aria-label="toggleLabel"
         :title="toggleLabel"
         :disabled="busyOn('pause') || busyOn('resume')"
-        @click="emit(running ? 'pause' : 'resume')"
+        @click="toggle()"
       >
         <v-icon :icon="routineStateIcon(kind)" size="16" aria-hidden="true" />
         <v-progress-circular
