@@ -9,10 +9,15 @@ census found most of its 25,000 OrderedDicts there."""
 import asyncio
 import collections
 import gc
+import importlib
 import threading
 
-from app.core import startup_freeze, storage
+from app.core import storage
 from app.core.config import settings
+
+
+def _freeze():
+    return importlib.import_module("app.core.startup_freeze")
 
 
 def _tracked_ordered_dicts() -> int:
@@ -25,6 +30,7 @@ def test_the_servers_startup_freezes_what_the_sdk_loaded(monkeypatch):
     monkeypatch.setattr(settings, "s3_endpoint_url", "http://127.0.0.1:9")
     monkeypatch.setattr(settings, "s3_access_key", "key")
     monkeypatch.setattr(settings, "s3_secret_key", "secret")
+    startup_freeze = _freeze()
     monkeypatch.setattr(startup_freeze, "_done", False)
 
     async def start() -> tuple[int, bool]:
@@ -41,6 +47,7 @@ def test_the_servers_startup_freezes_what_the_sdk_loaded(monkeypatch):
 
 
 def test_it_freezes_once():
+    startup_freeze = _freeze()
     startup_freeze._done = True
     frozen = gc.get_freeze_count()
     assert startup_freeze.freeze_after_startup() is False
@@ -50,6 +57,7 @@ def test_it_freezes_once():
 def test_an_app_run_off_the_main_thread_freezes_nothing(monkeypatch):
     """A test client runs the app on a thread of its own, and enters its
     lifespan once per test: freezing there would pin each test's engines."""
+    startup_freeze = _freeze()
     monkeypatch.setattr(startup_freeze, "_done", False)
     seen = {}
     thread = threading.Thread(
