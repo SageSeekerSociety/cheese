@@ -3,9 +3,10 @@
 A full collection (generation 2) runs on the event loop's thread with the loop
 held, and its cost is the size of the whole tracked heap, not the garbage it
 finds. Production's records (`core/loop_stalls`) show what that costs at the
-app's size: 16 full passes in 82 minutes at about 167 ms each, freeing about
-5,700 objects per pass — 2.4% of the 244,000 objects they walked. Those passes
-were 13 of the 21 event-loop stalls over 100 ms in that window.
+app's size: over 2.6 hours, 30 full passes in 6.3 s at about 208 ms each
+(worst 397 ms), freeing about 6,300 objects per pass — 2.4% of the 260,000
+objects they walked. Of the ten worst stalls the board kept in that window,
+nine have the collector's own time (`gc_ms`) at least four fifths of the stall.
 
 CPython 3.13 decides that frequency in two steps (`Python/gc.c`,
 `gc_select_generation`). Generation 0's count passes its threshold, its
