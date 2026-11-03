@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.space.material_service import member_readable_material_ids
 from app.domain.space.member_repositories import APPROVED, REJECTED
 from app.domain.space.models import (
@@ -691,7 +692,7 @@ class SpaceService:
         """
         space = await self._require_join_repo().space_by_token(token)
         if space is None or space.review_status != "APPROVED":
-            raise NotFoundError("Join link is invalid or has been reset")
+            raise NotFoundError(say("spaceJoinLinkInvalid"))
         return space
 
     async def join_status(self, *, space_id: int, user_id: int) -> str:
@@ -739,7 +740,7 @@ class SpaceService:
         )
         if request is None:
             raise NotFoundError(
-                "Join request not found",
+                say("spaceJoinRequestNotFound"),
                 data={"spaceId": space_id, "requestId": request_id},
             )
         if approve:

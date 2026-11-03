@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.domain.space.services import SpaceService
@@ -265,6 +266,17 @@ def _admin_to_api_model(
     if user_info is not None:
         result["user"] = user_info
     return result
+
+
+async def people_by_ids(
+    user_ids: Sequence[int], *, db: AsyncSession
+) -> dict[int, dict]:
+    """``_hydrate_people`` for a route that holds only the session."""
+    return await _hydrate_people(
+        user_ids,
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
 
 
 async def _hydrate_people(

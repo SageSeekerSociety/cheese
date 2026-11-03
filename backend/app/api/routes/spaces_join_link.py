@@ -20,14 +20,13 @@ from sqlalchemy.orm import Mapped
 
 from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service, require_reviewed_space
-from app.api.space_payloads import _hydrate_people
+from app.api.space_payloads import people_by_ids
 from app.api.write_access import HOLDS_LINK, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
 from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.services import SpaceService
-from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
@@ -151,11 +150,7 @@ async def list_space_join_requests(
     db=Depends(get_db),
 ) -> dict:
     requests = await service.list_join_requests(space_id=space_id)
-    people = await _hydrate_people(
-        [r.user_id for r in requests],
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
+    people = await people_by_ids([r.user_id for r in requests], db=db)
     return ok(
         {
             "requests": [
