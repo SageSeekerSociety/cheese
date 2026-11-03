@@ -8,7 +8,7 @@ slug: solve-a-challenge
 以老师发布的作业「B 树的插入与删除」为例，加入老师的空间并申请做这道题。之后在题目的项目里和 AI 队友芝士一起完成，再提交作业。
 
 :::before
-需要老师提供的空间邀请码。
+需要老师发来的空间加入链接。
 :::
 
 ## 加入空间 {#join}
@@ -16,45 +16,25 @@ slug: solve-a-challenge
 空间是老师发布题目的地方，一门课通常对应一个空间。
 
 :::walk
-1. 在「待办」页点「用邀请码加入」一栏的「填邀请码」。首页左侧栏「空间」下的「用邀请码加入」也通向同一处。
-2. 在「邀请码」中填写老师提供的邀请码，点「加入」。
+1. 打开老师发来的加入链接。没有登录时先进入登录页，登录后回到这条链接。
+2. 页面显示空间的名称和简介，点「加入空间」。
 3. 页面进入这个空间的「全部题目」，列出老师发布的题目。
 
 ```demo-panel
-title: 用邀请码加入空间
+title: 用加入链接加入空间
 walk: true
 align: top
 parts:
   - kind: head
-    title: 待办
-    until: 1
-  - kind: line
-    text: 用邀请码加入
-    button: 填邀请码
-    press: 1
-    until: 1
-  - kind: head
     title: 加入空间
-    at: 1
     until: 3
   - kind: line
-    text: 邀请码由空间的创建者提供
-    at: 1
-    until: 3
-  - kind: field
-    label: 邀请码
-    at: 1
-    until: 2
-  - kind: field
-    label: 邀请码
-    value: RABD2TX652
-    at: 2
+    text: 加入后可以看到这个空间的题目
     until: 3
   - kind: buttons
-    actions: 取消 | 加入
-    pressing: 加入
+    actions: 加入空间
+    pressing: 加入空间
     press: 3
-    at: 1
     until: 3
   - kind: head
     title: 题目
@@ -68,6 +48,8 @@ parts:
     at: 3
 ```
 :::
+
+老师打开了「加入需要批准」时，按钮是「申请加入」。点后页面显示「申请已提交，待空间管理员批准」；老师批准后，这个空间出现在首页左侧栏的「空间」下。链接已被老师重置时，页面显示「加入链接已失效或已重置，向空间管理员索取新链接」。
 
 加入之后，这个空间列在首页左侧栏的「空间」下。
 

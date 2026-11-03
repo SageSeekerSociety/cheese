@@ -32,13 +32,11 @@ vi.mock('@/api/teams', () => ({
 const createAvatar = vi.fn()
 vi.mock('@/api/avatars', () => ({ createAvatar: (...args: unknown[]) => createAvatar(...args) }))
 const spaceList = vi.fn()
-const spaceJoin = vi.fn()
 const spaceApplications = vi.fn()
 const spaceCreate = vi.fn()
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     list: (...args: unknown[]) => spaceList(...args),
-    join: (...args: unknown[]) => spaceJoin(...args),
     applications: (...args: unknown[]) => spaceApplications(...args),
     create: (...args: unknown[]) => spaceCreate(...args),
   },
@@ -151,7 +149,6 @@ beforeEach(() => {
     update,
     createAvatar,
     spaceList,
-    spaceJoin,
     spaceApplications,
     spaceCreate,
     confirm,
@@ -420,35 +417,6 @@ describe('手机上', () => {
   })
 })
 
-describe('用邀请码加入空间', () => {
-  async function openJoin() {
-    await mount()
-    await fireEvent.click(await screen.findByText('用邀请码加入'))
-    return screen.findByLabelText('邀请码')
-  }
-
-  it('成了就进那个空间，空间名单跟着重读', async () => {
-    spaceJoin.mockResolvedValue({ space: { id: 9 } })
-    const code = await openJoin()
-    await fireEvent.update(code, 'abc123')
-    await fireEvent.click(screen.getByRole('button', { name: '加入' }))
-
-    await waitFor(() => expect(spaceJoin).toHaveBeenCalledWith({ code: 'abc123' }))
-    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/spaces/9/tasks'))
-    expect(spaceList).toHaveBeenCalledTimes(2)
-  })
-
-  it('没加进去的理由留在弹窗里，人还在原处', async () => {
-    spaceJoin.mockRejectedValue(new Error('bad code'))
-    const code = await openJoin()
-    await fireEvent.update(code, 'nope')
-    await fireEvent.click(screen.getByRole('button', { name: '加入' }))
-
-    expect(await screen.findByText('邀请码无效、已过期或已达使用上限')).toBeTruthy()
-    expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox')
-  })
-})
-
 describe('我建的空间还没过审', () => {
   const application = (id: number, name: string, reviewStatus: string) => ({ id, name, intro: '', reviewStatus })
 
@@ -483,7 +451,7 @@ describe('我建的空间还没过审', () => {
 
 describe('新建空间', () => {
   it('提交以后落到这份申请上', async () => {
-    spaceCreate.mockResolvedValue({ space: { id: 12 }, inviteCode: null })
+    spaceCreate.mockResolvedValue({ space: { id: 12 } })
     await mount()
     await fireEvent.click(await screen.findByText('新建空间'))
     await fireEvent.update(await screen.findByLabelText('空间名称'), '  编译原理 2026 秋 ')

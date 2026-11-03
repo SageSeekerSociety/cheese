@@ -29,12 +29,11 @@ const catalogTargets = [
   { path: '/home', name: 'HomeHub', component: blank },
   { path: '/account/signin', name: 'SignIn', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
-  // 空间设置那一层的七条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
+  // 空间设置那一层的六条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
   // `router/spaces.ts` 的 `manage/settings` 子树）。目录左边的链接按这些名字指路。
   { path: '/spaces/:spaceId/manage/settings/basic', name: 'SpacesDetailSettingsBasic', component: blank },
   { path: '/spaces/:spaceId/manage/settings/categories', name: 'SpacesDetailSettingsCategories', component: blank },
   { path: '/spaces/:spaceId/manage/settings/templates', name: 'SpacesDetailSettingsTemplates', component: blank },
-  { path: '/spaces/:spaceId/manage/settings/invite-codes', name: 'SpacesDetailSettingsInviteCodes', component: blank },
   {
     path: '/spaces/:spaceId/manage/settings/domain-groups',
     name: 'SpacesDetailSettingsDomainGroups',

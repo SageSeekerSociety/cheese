@@ -121,7 +121,7 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_space.set': 'toolLabels.cheeseSettingsSet',
   'cheese_space.announce': 'toolLabels.cheeseSpaceAnnounce',
   'cheese_space.category': 'toolLabels.cheeseSpaceCategory',
-  'cheese_space.code': 'toolLabels.cheeseSpaceCode',
+  'cheese_space.link': 'toolLabels.cheeseSpaceLink',
   'cheese_space.review': 'toolLabels.cheeseSpaceReview',
   cheese_settings: 'toolLabels.cheeseSettingsSet',
   cheese_routine: 'toolLabels.cheeseRoutine',

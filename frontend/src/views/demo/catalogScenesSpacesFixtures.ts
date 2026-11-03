@@ -2,16 +2,15 @@
  * 预览站「题目板拆出来的那半张画面」那一组（`catalogScenesSpaces.ts` 的条目）读的数据。
  *
  * 全是产品里真会出现的形状，照着 `@/types` 里那几个类型和各自的 `.spec.ts` 造：分类、
- * 题目模板、域名组、邀请码都照 `types/spaces.ts`，待审核的题目照 `types/tasks.ts` 的
+ * 题目模板、域名组都照 `types/spaces.ts`，待审核的题目照 `types/tasks.ts` 的
  * `Task`（`AuditTask.spec.ts` 里那份假回包就是这个形状），话题就是 `types/commons.ts`
  * 的 `Topic`。
  *
  * 这里只出数据（外加几个把参数拼成 props 的小函数），不引运行时要装的东西：哪一份配
  * 哪个组件、每一格看什么，在 `catalogScenesSpaces.ts`。
  */
-import type { UserRefTarget } from '@/lib/userRef'
 import type { Topic } from '@/types'
-import type { DomainGroup, SpaceCategory, SpaceInviteCode, SpaceTaskTemplate } from '@/types/spaces'
+import type { DomainGroup, SpaceCategory, SpaceTaskTemplate } from '@/types/spaces'
 import type { Task } from '@/types/tasks'
 
 // ---- 分类（ManageCategoriesView）-------------------------------------------
@@ -61,29 +60,6 @@ export function domainGroup(over: Partial<DomainGroup> = {}): DomainGroup {
     updatedAt: 1757000000000,
     ...over,
   }
-}
-
-// ---- 邀请码（InviteCodesView）----------------------------------------------
-
-/** 一张邀请码：`types/spaces.ts` 的 `SpaceInviteCode`。 */
-export function inviteCode(over: Partial<SpaceInviteCode> = {}): SpaceInviteCode {
-  return {
-    id: 1,
-    spaceId: 8,
-    code: 'K7PM3QXW',
-    maxUses: 50,
-    useCount: 12,
-    expiresAt: null,
-    createdAt: 1757000000000,
-    note: '十月这批同学',
-    createdBy: { id: 1, username: 'cheese', nickname: '芝士', avatarId: null, intro: '' },
-    ...over,
-  }
-}
-
-/** 「谁建的码」那一颗的去处：容器按 handle 算好，画面只负责画。 */
-export function inviteRefTo(item: SpaceInviteCode): UserRefTarget | null {
-  return item.createdBy ? { path: `/spaces/8/members/${item.createdBy.username}` } : null
 }
 
 // ---- 话题（ManageTopicsView / TopicSelectorView）---------------------------

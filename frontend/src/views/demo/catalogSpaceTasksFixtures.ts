@@ -103,12 +103,6 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
         icon: 'mdi-file-document-outline',
       },
       {
-        key: 'SpacesDetailSettingsInviteCodes',
-        label: t('spaces.settings.tabs.inviteCodes'),
-        to: { name: 'SpacesDetailSettingsInviteCodes', params: { spaceId: '7' } },
-        icon: 'mdi-ticket-outline',
-      },
-      {
         key: 'SpacesDetailSettingsDomainGroups',
         label: t('spaces.settings.tabs.domainGroups'),
         to: { name: 'SpacesDetailSettingsDomainGroups', params: { spaceId: '7' } },

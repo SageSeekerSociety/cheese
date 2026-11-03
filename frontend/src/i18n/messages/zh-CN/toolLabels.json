@@ -154,6 +154,6 @@
   "writeFile": "写入文件",
   "cheeseSpaceAnnounce": "发公告",
   "cheeseSpaceCategory": "管理分类",
-  "cheeseSpaceCode": "管理邀请码",
+  "cheeseSpaceLink": "管理空间的加入链接",
   "cheeseSpaceReview": "审核题目"
 }

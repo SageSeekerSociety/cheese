@@ -281,11 +281,6 @@ export default {
           component: () => import('@/views/spaces/detail/ManageTemplates.vue'),
         },
         {
-          path: 'invite-codes',
-          name: 'SpacesDetailSettingsInviteCodes',
-          component: () => import('@/views/spaces/detail/InviteCodes.vue'),
-        },
-        {
           path: 'domain-groups',
           name: 'SpacesDetailSettingsDomainGroups',
           component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),

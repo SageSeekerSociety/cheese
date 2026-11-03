@@ -44,7 +44,6 @@ const SECTIONS = [
   { name: 'SpacesDetailSettingsBasic', label: 'spaces.settings.tabs.basic', icon: 'mdi-information-outline' },
   { name: 'SpacesDetailSettingsCategories', label: 'spaces.settings.tabs.categories', icon: 'mdi-shape-outline' },
   { name: 'SpacesDetailSettingsTemplates', label: 'spaces.settings.tabs.templates', icon: 'mdi-file-document-outline' },
-  { name: 'SpacesDetailSettingsInviteCodes', label: 'spaces.settings.tabs.inviteCodes', icon: 'mdi-ticket-outline' },
   { name: 'SpacesDetailSettingsDomainGroups', label: 'spaces.settings.tabs.domainGroups', icon: 'mdi-email-outline' },
   { name: 'SpacesDetailSettingsGuidance', label: 'spaces.settings.tabs.guidance', icon: 'mdi-robot-outline' },
 ]
