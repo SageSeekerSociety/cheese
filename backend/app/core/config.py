@@ -1465,6 +1465,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
             "test",
         ):
             return self
+        # i18n-exempt: refuses the boot; read by an operator in the log
         raise RuntimeError(
             "ALIYUN_GREEN_ACCESS_KEY_ID and ALIYUN_GREEN_ACCESS_KEY_SECRET must "
             f"both be set on a deployment (ENVIRONMENT reads '{self.environment}'"

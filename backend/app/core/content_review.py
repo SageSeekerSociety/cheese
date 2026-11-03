@@ -159,9 +159,11 @@ async def _text_risk(client: Client, service: str, content: str) -> str | None:
             request, RuntimeOptions()
         )
     except Exception as exc:
+        # i18n-exempt: never shown; becomes contentReviewUnavailable, read in the log
         raise ContentReviewFailed(f"{type(exc).__name__}: {exc}") from exc
     body = response.body
     if body is None or body.code != 200 or body.data is None:
+        # i18n-exempt: never shown; becomes contentReviewUnavailable, read in the log
         raise ContentReviewFailed(
             f"answered code {getattr(body, 'code', None)}: "
             f"{getattr(body, 'message', None)}"
@@ -236,6 +238,7 @@ async def _image_risk(client: Client, content: bytes) -> str | None:
         # uploaded rarely, and a cached token is state to keep right.
         token = (await client.describe_upload_token_async()).body
         if token is None or token.code != 200 or token.data is None:
+            # i18n-exempt: never shown; becomes contentReviewUnavailable, read in the log
             raise ContentReviewFailed(
                 f"upload token answered code {getattr(token, 'code', None)}"
             )
@@ -256,9 +259,11 @@ async def _image_risk(client: Client, content: bytes) -> str | None:
     except ContentReviewFailed:
         raise
     except Exception as exc:
+        # i18n-exempt: never shown; becomes contentReviewUnavailable, read in the log
         raise ContentReviewFailed(f"{type(exc).__name__}: {exc}") from exc
     body = response.body
     if body is None or body.code != 200 or body.data is None:
+        # i18n-exempt: never shown; becomes contentReviewUnavailable, read in the log
         raise ContentReviewFailed(
             f"answered code {getattr(body, 'code', None)}: {getattr(body, 'msg', None)}"
         )
