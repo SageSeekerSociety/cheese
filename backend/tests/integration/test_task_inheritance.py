@@ -49,7 +49,6 @@ def _join_board(client: TestClient, *, space_id: int, handle: str) -> int:
                 SpaceMember(
                     space_id=space_id,
                     user_id=user_id,
-                    invite_code_id=None,
                     created_at=now,
                     updated_at=now,
                     deleted_at=None,

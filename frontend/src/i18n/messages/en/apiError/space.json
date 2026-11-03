@@ -1,4 +1,6 @@
 {
+  "spaceJoinLinkInvalid": "This join link is invalid or has been reset",
+  "spaceJoinRequestNotFound": "This join request does not exist or has already been answered",
   "openRequestChanged": "This request changed after you opened it; refresh and review it again",
   "openRequestReasonRequired": "A rejection needs a reason",
   "openSpaceMembersAdminsOnly": "Only the admins of an open space see its members",

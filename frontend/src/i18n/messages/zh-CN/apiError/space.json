@@ -1,4 +1,6 @@
 {
+  "spaceJoinLinkInvalid": "加入链接已失效或已重置",
+  "spaceJoinRequestNotFound": "这条加入申请不存在或已处理",
   "openRequestChanged": "这条申请在你打开之后被改过，刷新后重新审核",
   "openRequestReasonRequired": "驳回要写原因",
   "openSpaceMembersAdminsOnly": "开放空间的成员名单只有管理员能看",

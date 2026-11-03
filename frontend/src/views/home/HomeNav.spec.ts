@@ -47,7 +47,6 @@ function props(overrides: Record<string, unknown> = {}) {
     disbanding: null,
     transferring: null,
     transferCandidates: [] as TeamMember[],
-    joinOpen: false,
     ...overrides,
   }
 }
@@ -246,15 +245,9 @@ describe('首页目录的画面', () => {
     await mount({ awaiting: 128 })
     expect(await screen.findByText('99+')).toBeTruthy()
   })
-
-  it('点「用邀请码加入」那一行：这件事由外面开', async () => {
-    const { view } = await mount()
-    await fireEvent.click(await screen.findByText('用邀请码加入'))
-    await waitFor(() => expect(view.emitted('update:joinOpen')).toEqual([[true]]))
-  })
 })
 
-describe('目录带的四个弹窗', () => {
+describe('目录带的三个弹窗', () => {
   let view: ReturnType<typeof render>
 
   it('解散：要把团队名打一遍才报得上去', async () => {
@@ -296,12 +289,5 @@ describe('目录带的四个弹窗', () => {
     const crew = team('crew', '知是开发组', 'OWNER')
     await mount({ teams: [crew], transferring: crew, transferCandidates: [], transferLoading: true })
     expect(screen.queryByText('团队里还没有别的成员可以接手。')).toBeNull()
-  })
-
-  it('加入空间：弹窗开着时填好邀请码，按「加入」把码报上去', async () => {
-    view = (await mount({ joinOpen: true })).view
-    await fireEvent.update(await screen.findByLabelText('邀请码'), ' abc123 ')
-    await fireEvent.click(screen.getByRole('button', { name: '加入' }))
-    await waitFor(() => expect(view.emitted('join')).toEqual([['abc123']]))
   })
 })

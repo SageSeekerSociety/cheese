@@ -3041,7 +3041,6 @@ def seed_problem_reader(client, *, task_id: int, user_id: int) -> None:
                 SpaceMember(
                     space_id=task.space_id,
                     user_id=user_id,
-                    invite_code_id=None,
                     created_at=now,
                     updated_at=now,
                     deleted_at=None,

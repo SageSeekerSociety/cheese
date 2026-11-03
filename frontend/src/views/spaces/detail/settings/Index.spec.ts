@@ -51,7 +51,6 @@ async function mountAt(name: string, width = 1280, params: Record<string, string
           { path: 'basic', name: 'SpacesDetailSettingsBasic', component: Blank },
           { path: 'categories', name: 'SpacesDetailSettingsCategories', component: Blank },
           { path: 'templates', name: 'SpacesDetailSettingsTemplates', component: Blank },
-          { path: 'invite-codes', name: 'SpacesDetailSettingsInviteCodes', component: Blank },
           { path: 'domain-groups', name: 'SpacesDetailSettingsDomainGroups', component: Blank },
           { path: 'guidance', name: 'SpacesDetailSettingsGuidance', component: Blank },
           { path: 'materials', name: 'SpacesDetailSettingsMaterials', component: Blank },
@@ -82,9 +81,9 @@ describe('空间设置的目录', () => {
     document.body.innerHTML = ''
   })
 
-  it('打开「邀请码」时只有它是选中的', async () => {
-    await mountAt('SpacesDetailSettingsInviteCodes')
-    await waitFor(() => expect(current()).toEqual(['邀请码']))
+  it('打开「邮箱域名组」时只有它是选中的', async () => {
+    await mountAt('SpacesDetailSettingsDomainGroups')
+    await waitFor(() => expect(current()).toEqual(['邮箱域名组']))
   })
 
   it('编辑一个模板时选中的是「题目模板」', async () => {

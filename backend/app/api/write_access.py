@@ -16,6 +16,10 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   What only an AI teammate does there — the write surface the ``cheese`` CLI
   alone calls — is a permission no person's role holds
   (``project_permissions.AGENT_ONLY``).
+- ``HOLDS_LINK``: the credential is a join link's token in the path, so there
+  is no object id for ``Can`` to judge before the token is read. Any signed-in
+  person reaches the handler; nobody signed in is refused here. The handler
+  resolves the token and answers 404 when it names nothing the link may open.
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
   itself (``ActorResolver`` and friends). The routes written before ``Can``
   judged every caller still declare it and move onto ``Can`` a batch at a
@@ -75,7 +79,7 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class WriteAccess:
     """One declaration: which callers reach the handler."""
 
-    kind: Literal["route_decides", "can"]
+    kind: Literal["route_decides", "can", "holds_link"]
 
     @property
     def name(self) -> str:
@@ -314,6 +318,21 @@ def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
 
 
 ROUTE_DECIDES = Depends(WriteAccess("route_decides"))
+
+
+@dataclass(frozen=True, eq=False)
+class _HoldsLink(WriteAccess):
+    kind: Literal["holds_link"] = "holds_link"
+
+    async def __call__(  # type: ignore[override]
+        self, person: Annotated[AuthUserInfo, Depends(get_auth_user)]
+    ) -> None:
+        if person.user_id == 0:
+            raise AuthenticationRequiredError(say("signInRequired"))
+
+
+#: A route opened by a join link's token: see ``HOLDS_LINK`` above.
+HOLDS_LINK = Depends(_HoldsLink())
 
 
 @dataclass(frozen=True)

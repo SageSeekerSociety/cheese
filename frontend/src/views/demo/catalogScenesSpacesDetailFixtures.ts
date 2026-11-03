@@ -6,7 +6,7 @@
  * 只出数据，不引运行时要装的东西：哪一份配哪个组件、每一格看什么，在
  * `catalogScenesSpacesDetail.ts`。
  */
-import type { SpaceAnnouncement, SpaceMyPublishedTask, Task } from '@/types'
+import type { SpaceAnnouncement, SpaceJoinRequest, SpaceMyPublishedTask, Task } from '@/types'
 import type {
   AnalyticsDistribution,
   SpaceAnalyticsOverview,
@@ -21,7 +21,7 @@ import { blankTemplate } from '@/views/spaces/detail/templateDraft'
 
 // ---- 成员（MembersView）----------------------------------------------------
 
-/** 成员表里的一行：`MembersView.vue` 导出的 `Row`。`viaCode` 为空就是「没记录」。 */
+/** 成员表里的一行：`MembersView.vue` 导出的 `Row`。 */
 export function memberRow(over: Partial<Row> = {}): Row {
   return {
     userId: 11,
@@ -29,10 +29,23 @@ export function memberRow(over: Partial<Row> = {}): Row {
     name: '阿达',
     avatarId: 101,
     role: 'MEMBER',
-    viaCode: 'K7PM3QXW',
     ...over,
   }
 }
+
+/** 一份待批准的加入申请：`types/spaces.ts` 的 `SpaceJoinRequest`。 */
+export function joinRequest(over: Partial<SpaceJoinRequest> = {}): SpaceJoinRequest {
+  return {
+    id: 31,
+    userId: 21,
+    user: { id: 21, username: 'lin', nickname: '林同学', avatarId: null },
+    createdAt: 1757000000000,
+    ...over,
+  }
+}
+
+/** 一条加入链接：`types/spaces.ts` 的 `SpaceJoinLink`。 */
+export const JOIN_LINK = { token: 'kJ3f9a21Xw', approval: false }
 
 // ---- 公告（AnnouncementsView）----------------------------------------------
 

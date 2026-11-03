@@ -1,0 +1,16 @@
+{
+  "apply": "Ask to join",
+  "applyHint": "Joining needs approval from the space's admins",
+  "enter": "Open space",
+  "eyebrow": "Space",
+  "failed": "Couldn't join. Try again later",
+  "invalid": "This join link has expired or been reset. Ask the space's admins for a new one",
+  "join": "Join space",
+  "joinHint": "Once you join, you can see this space's challenges",
+  "loadFailed": "Couldn't read this join link",
+  "loading": "Loading",
+  "member": "You're already a member of this space",
+  "pending": "Request sent. Waiting for the space's admins to approve",
+  "retry": "Retry",
+  "title": "Join a space"
+}

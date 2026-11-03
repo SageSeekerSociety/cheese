@@ -8,7 +8,7 @@
 // 右边就打开哪样，侧栏不动。个人团队只有你一个人，所以没有「成员」这一样，也没有
 // 「邀请成员」。空间不展开：空间自己有一整套目录，点进去就是那个空间。
 //
-// **这一件只吃 props 出事件**（A 档）：名单、待办数、现在是哪个团队、四个弹窗的开合与
+// **这一件只吃 props 出事件**（A 档）：名单、待办数、现在是哪个团队、三个弹窗的开合与
 // 它们的进行中/出错，都是外面给的；取数、写回、跳地址在 `composables/useTeamNav.ts`。
 // 于是它能单独摆在组件预览站里看（`views/demo/catalogHome.ts`），不用起假后端。
 //
@@ -24,7 +24,6 @@ import { getAvatarUrl } from '@/utils/materials'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import CreateSpaceDialog from './CreateSpaceDialog.vue'
-import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -56,9 +55,6 @@ const props = defineProps<{
   transferLoading?: boolean
   transferBusy?: boolean
   transferError?: string | null
-  joinOpen: boolean
-  joinBusy?: boolean
-  joinError?: string
   createOpen: boolean
   createBusy?: boolean
   createError?: string
@@ -75,9 +71,6 @@ const emit = defineEmits<{
   confirmTransfer: [userId: number]
   /** 点了「退出团队」：确认那一下和退本身都由外面做。 */
   leave: [team: Team]
-  'update:joinOpen': [open: boolean]
-  /** 「加入」按下去了：邀请码在里面输好了。 */
-  join: [code: string]
   'update:createOpen': [open: boolean]
   /** 「提交审核」按下去了：payload 是弹窗里填的那三样。 */
   createSpace: [payload: { name: string; intro: string; avatarFile?: File }]
@@ -188,7 +181,6 @@ const rowMenu = useRowMenu<number>()
 
 // 弹窗自己那一格开合：外面给的是「在编辑哪个团队」，这里翻成 `v-model` 要的布尔。
 // 关掉（点了取消、按了 Esc）就是把那一格交回空。
-const joinModel = computed({ get: () => props.joinOpen, set: (value: boolean) => emit('update:joinOpen', value) })
 const createModel = computed({
   get: () => props.createOpen,
   set: (value: boolean) => emit('update:createOpen', value),
@@ -326,13 +318,6 @@ const transferModel = computed({
     <v-list-item
       rounded="lg"
       class="home-nav__action"
-      prepend-icon="mdi-ticket-confirmation-outline"
-      :title="t('work.joinAction')"
-      @click="emit('update:joinOpen', true)"
-    />
-    <v-list-item
-      rounded="lg"
-      class="home-nav__action"
       prepend-icon="mdi-plus"
       :title="t('spaces.create.open')"
       @click="emit('update:createOpen', true)"
@@ -349,7 +334,6 @@ const transferModel = computed({
     />
   </v-list>
 
-  <JoinSpaceDialog v-model="joinModel" :busy="joinBusy" :error="joinError" @submit="(code) => emit('join', code)" />
   <CreateSpaceDialog
     v-model="createModel"
     :busy="createBusy"

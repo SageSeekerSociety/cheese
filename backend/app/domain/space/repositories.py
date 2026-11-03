@@ -26,7 +26,7 @@ from app.domain.space.group_repositories import (
     SpaceDomainGroupRepository,
 )
 from app.domain.space.member_repositories import (
-    SpaceInviteCodeRepository,
+    SpaceJoinRepository,
     SpaceMemberRepository,
 )
 from app.domain.space.models import (
@@ -47,7 +47,7 @@ __all__ = [
     "SpaceClassificationTopicsRepository",
     "SpaceDomainGroupDomainRepository",
     "SpaceDomainGroupRepository",
-    "SpaceInviteCodeRepository",
+    "SpaceJoinRepository",
     "SpaceMemberRepository",
     "SpaceRepository",
     "SpaceUserRankRepository",

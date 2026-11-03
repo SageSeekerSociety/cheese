@@ -2,7 +2,7 @@
 
 Before 芝士 changes a space for the person who runs it, it reads what is there:
 the space's name, intro and how many problems each publisher may show, its
-categories, its invite codes, its announcements, and the problems waiting for
+categories, how people join it, its announcements, and the problems waiting for
 review — each with the id that acts on it. The names here also go into what
 the gate reads (`api.assistant_acts`), so an action names the thing it
 changes the way the person would.
@@ -12,8 +12,6 @@ there.
 """
 
 from __future__ import annotations
-
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +23,6 @@ from app.domain.space.models import (
     Space,
     SpaceAnnouncement,
     SpaceCategory,
-    SpaceInviteCode,
 )
 from app.domain.task.models import Task
 from app.domain.user.services import usernames_by_ids
@@ -58,13 +55,6 @@ async def category_name(session: AsyncSession, space_id: int, id: int) -> str:
     return row.name
 
 
-async def code_text(session: AsyncSession, space_id: int, id: int) -> str:
-    row = await session.get(SpaceInviteCode, id)
-    if row is None or row.space_id != space_id:
-        raise NotFoundError.for_resource("invite_code", str(id))
-    return row.code + (f"（{row.note}）" if row.note else "")
-
-
 async def problem(session: AsyncSession, space_id: int, id: int) -> tuple[str, str]:
     """A problem waiting for review on this space: its name, and who set it."""
     task = await session.get(Task, id)
@@ -72,10 +62,6 @@ async def problem(session: AsyncSession, space_id: int, id: int) -> tuple[str, s
         raise NotFoundError.for_resource("task", str(id))
     setter = (await usernames_by_ids(session, [task.creator_id])).get(task.creator_id)
     return task.name, setter or str(task.creator_id)
-
-
-def _date(moment: datetime | None) -> str:
-    return moment.strftime("%Y-%m-%d") if moment else "不过期"
 
 
 async def desk(session: AsyncSession, user_id: int, space_id: int) -> Read:
@@ -101,20 +87,11 @@ async def desk(session: AsyncSession, user_id: int, space_id: int) -> Read:
         f"- {c.name}（编号 {c.id}）" + ("，已归档" if c.archived_at else "")
         for c in categories
     ] or ["（无）"]
-    codes = list(
-        await session.scalars(
-            select(SpaceInviteCode)
-            .where(SpaceInviteCode.space_id == space_id)
-            .order_by(SpaceInviteCode.id.desc())
-            .limit(LISTED)
-        )
+    lines.append(
+        "加入方式：持加入链接的人"
+        + ("申请，经管理员批准后加入" if space.join_approval else "直接加入")
+        + "；链接在空间的成员管理页复制或重置"
     )
-    lines.append("邀请码：")
-    lines += [
-        f"- {c.code}（编号 {c.id}），已用 {c.use_count}/{c.max_uses}，"
-        f"有效期至 {_date(c.expires_at)}" + (f"，说明：{c.note}" if c.note else "")
-        for c in codes
-    ] or ["（无）"]
     announcements = list(
         await session.scalars(
             select(SpaceAnnouncement)

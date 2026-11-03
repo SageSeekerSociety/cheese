@@ -43,7 +43,7 @@ covers:
 
 `SpaceMember` 上有一条必须留意的索引：`uq_space_member_active` 是 `(space_id, user_id)` 在 `deleted_at IS NULL` 上的部分唯一索引。没有它，两个请求同时读到「还不是成员」就都会写，之后每个 `get_member` 都抛 `MultipleResultsFound`——一次文档里写着「重复点等于没点」的操作变成一个 500。部分索引的另一个用处：软删掉的行是「移除」的记录，**重新加入是复活它而不是加第二行**，那些行在索引之外，所以移除不会挡住随后的加入。另有一条非部分索引 `ix_space_member_space_user` 服务「连删除行一起按对读」的那个读法（那正是它存在的理由）。
 
-`SpaceInviteCode` 是入板用的码：一块板子建出来时**就带着一个**，因为一块谁都进不去的板子没什么用。它和平台注册用的 `invite_code` **故意不是同一张表**——形状像，别的一点关系没有。码有 `max_uses` / `use_count` / `expires_at` / `created_by` / `note`（「十月这批同学」这种，制造者自己的话），吊销是软删，所以码指过的那一行之后仍然读得出来。`SpaceMember.invite_code_id` 记这个人是从哪个码进来的，值为 `NULL` 时**有两种情况而这一列分不出**：这列存在之前写下的行（迁移故意不回填——给老成员编一个码就是发明历史），以及所有者直接加的人（真相是「没有码」）。两者都读作「未知」，而「未知」和「没有码」不是同一句话。
+成员进来有两条路：所有者或管理员直接加人（`POST /spaces/{id}/members`），或者持空间的**加入链接**加入。加入链接和团队的是同一个形状：`Space.join_token` 是链接里的令牌（`/space-invites/<token>`），第一次被管理员读到时生成，此后一直有效，直到所有者或管理员重置，重置后旧链接和不存在的空间一样答 404，已经加入的人不受影响；`Space.join_approval` 决定持链接的人是直接成为成员，还是先在 `SpaceJoinRequest`（`space_join_request` 表）里留一条待批准的申请。空间默认不要批准（课程成员不动用机器和额度），团队默认要。同一个人在同一个空间同时只有一条待处理的申请，由 `uq_space_join_request_pending` 部分唯一索引保证；批准和拒绝是一条带 `status = 'PENDING'` 条件的 UPDATE，两个管理员同时处理时只有一个生效。链接指向已删除或未通过审核的空间时也答 404。路由在 `api/routes/spaces_join_link.py`。
 
 ## 公告 {#announcements}
 
@@ -70,6 +70,5 @@ covers:
 ## 边界与坑 {#traps}
 
 - **`docs/spec.md` 的空间/分类两级定义是旧的**。代码这边 `Space` = 一门课、`SpaceCategory` = 课里的一个分组；协议与壳模块里还写着「项目集」的地方，指的都是 `SpaceCategory`。
-- **`SpaceMember` 的 `NULL` invite_code 不等于「没有码」**，下游不要替它下结论。
 - **协议字段不许直接读列**。`resource_pack` / `conditions` / `default_role` 要经过 `task.protocol.resolve` 才拿到题目继承与整键覆盖后的结果。
 - **`visible_task_limit` 不是权限**。它是对成员露出前几道的截断，admin 与创建者不受它影响；真正的授权在 `build_reader_predicate` 的三个分支上。

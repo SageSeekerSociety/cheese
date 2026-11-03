@@ -34,32 +34,8 @@ export type PutSpaceAccessRequestData = {
   scope: string[]
 }
 
-export type PostSpaceJoinRequestData = {
-  code: string
-}
-
 export type PostSpaceMemberRequestData = {
   userId: number
-}
-
-export type PostSpaceInviteCodeRequestData = {
-  maxUses?: number
-  /** Epoch milliseconds; omit for a code that never expires. */
-  expiresAt?: number | null
-  /** 说明 —— 这张码给谁、干什么用. Omitted or blank stores no note. */
-  note?: string | null
-}
-
-export type PatchSpaceInviteCodeRequestData = {
-  maxUses?: number
-  /** Absent leaves the date alone; an explicit null makes the code never expire. */
-  expiresAt?: number | null
-  /**
-   * Absent leaves the 说明 alone; null (or a blank string) clears it. The two
-   * are deliberately different requests — correcting a note must not be the
-   * same thing as deleting it.
-   */
-  note?: string | null
 }
 
 export type PatchSpaceRequestData = {
