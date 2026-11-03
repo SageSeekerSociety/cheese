@@ -406,6 +406,25 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
 NO_EXIT_STATUS = -1
 
 
+#: The steps of an install the machine times (`bootstrap.configure_idle`):
+#: staging the release, finding the pinned Claude Code, starting the sandbox,
+#: and waiting for the executor's first answer. Parts of ``executor``.
+INSTALL_STEPS = ("release", "claude", "sandbox", "ready")
+
+
+def _install_steps(info: dict) -> dict[str, float]:
+    """The install's own step times from what it answered; an executor that
+    was only prepared, or a release that does not time them, answers none."""
+    timings = info.get("timings")
+    if not isinstance(timings, dict):
+        return {}
+    return {
+        step: float(timings[step])
+        for step in INSTALL_STEPS
+        if isinstance(timings.get(step), int | float)
+    }
+
+
 async def _start_executor(
     hub,
     lease,
@@ -1331,6 +1350,7 @@ async def _install(
         )
         started = time.monotonic()
         thaw_s = None
+        install_steps: dict[str, float] = {}
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
                 thawed = await thaw_if_asked(
@@ -1356,6 +1376,7 @@ async def _install(
                         on_stderr=heard,
                     )
                 executor_s = time.monotonic() - executor_from
+                install_steps = _install_steps(info)
                 target = {
                     **reservation,
                     "status": "ready",
@@ -1515,6 +1536,7 @@ async def _install(
                         "place": placed_s,
                         "thaw": thaw_s,
                         "executor": executor_s,
+                        **install_steps,
                     },
                     total_s=time.monotonic() - started + (placed_s or 0),
                     waited_s=await HostPool(db, hub=hub).waited_s(session_id),

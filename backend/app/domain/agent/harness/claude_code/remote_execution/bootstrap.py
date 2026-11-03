@@ -1152,7 +1152,19 @@ def start_sandbox(
 
 
 @contextlib.contextmanager
-def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, disk=None):
+def prepared(
+    payload,
+    owner,
+    *,
+    refresh_runtime=False,
+    fetch_toolchain=True,
+    disk=None,
+    timings=None,
+):
+    """Lay out a room's home on this machine and yield it with its config.
+    ``timings``, where given, is filled with how long staging the release and
+    finding the pinned Claude Code took, in seconds."""
+    timings = {} if timings is None else timings
     payload.pop("proxy_proof", None)
     if sys.platform != "win32":  # Before every path below: its room holds none (docs).
         payload["env"]["CHEESE_TOKEN"] = ""
@@ -1203,6 +1215,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
             plant_native_skills(home, payload.get("skills") or {})
 
         spared(disk, home, skills)
+        began = time.monotonic()
         try:
             release, contents = stage_release(
                 release_store(owner), platform_dir, payload
@@ -1213,6 +1226,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
             raise UpgradeDeferred(
                 kept_on_full_disk(owner, home, payload, anchors, error)
             ) from None
+        timings["release"] = round(time.monotonic() - began, 3)
         stop_previous_root(home, release)
         # Where this room's package downloads come from, as a variable set for
         # the mirrors that answer this machine right now (`package_mirrors`).
@@ -1288,9 +1302,12 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
             # Python's own Path.home() among them, read USERPROFILE instead. The
             # room's home has to be the answer to both.
             env["USERPROFILE"] = scoped_env["USERPROFILE"] = str(home)
+        began = time.monotonic()
+        claude = binary(owner, env["CHEESE_API"], release)
+        timings["claude"] = round(time.monotonic() - began, 3)
         config = {
             "workspace": str(work),
-            "claude": binary(owner, env["CHEESE_API"], release),
+            "claude": claude,
             "env": scoped_env,
             # What the environment above may have taken away, and what it would
             # have put there: a room holding anything else keeps it (`runtime`).
@@ -1499,7 +1516,12 @@ def configure_idle(payload):
     if payload.get("sandbox") and not platform_machine:
         bwrap = sandbox_tools(None, platform_machine=False)
     disk = {}
-    with prepared(payload, Path.home(), refresh_runtime=True, disk=disk) as (
+    # How long each step of bringing the executor up took, in seconds: what
+    # the platform keeps of a slow preparation (`infra_records.keep_prepared`).
+    timings = {}
+    with prepared(
+        payload, Path.home(), refresh_runtime=True, disk=disk, timings=timings
+    ) as (
         home,
         config,
         state,
@@ -1539,6 +1561,7 @@ def configure_idle(payload):
                             **info,
                             "mcp_servers": process_servers(config),
                             "state": str(recorded),
+                            "timings": timings,
                             **disk,
                         }
                     )
@@ -1603,6 +1626,7 @@ def configure_idle(payload):
                     **options,
                 )
                 record_sandbox_process(Path.home(), home, network["first"])
+                timings["sandbox"] = round(time.monotonic() - started, 3)
                 if platform_machine:
                     output.write(
                         f"sandbox {network['link']} {network['address']} up in "
@@ -1633,7 +1657,8 @@ def configure_idle(payload):
                     process = subprocess.Popen(
                         argv, start_new_session=True, env=env, **options
                     )
-        deadline = time.monotonic() + 600
+        waiting = time.monotonic()
+        deadline = waiting + 600
         while True:
             if process.poll() is not None:
                 if payload.get("environment"):
@@ -1654,6 +1679,9 @@ def configure_idle(payload):
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Executor readiness timed out") from None
                 time.sleep(0.1)
+        # From starting it to its first answer, which waits on whatever the
+        # project's environment runs before the executor serves (`run`).
+        timings["ready"] = round(time.monotonic() - waiting, 3)
         # The caller records this rather than deriving it: the process that
         # reaches the executor later is released separately from the one that
         # installs it, so a directory named in both is a directory two builds
@@ -1665,6 +1693,7 @@ def configure_idle(payload):
                     "workspace": str(work),
                     "mcp_servers": process_servers(config),
                     "state": str(recorded),
+                    "timings": timings,
                     **disk,
                 }
             )
