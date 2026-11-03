@@ -198,9 +198,7 @@ class SpaceRepository:
             .where(User.id == user_id, User.deleted_at.is_(None))
             .scalar_subquery()
         )
-        suffix = func.jsonb_array_elements_text(Space.open_scope).table_valued(
-            "value"
-        )
+        suffix = func.jsonb_array_elements_text(Space.open_scope).table_valued("value")
         return and_(
             Space.open_scope.is_not(None),
             exists(

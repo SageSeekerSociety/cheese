@@ -79,8 +79,11 @@ async def my_spaces(session: AsyncSession, user_id: int) -> Read:
     spaces = SpaceService.for_routes(session)
     lines: list[str] = []
     for found in await spaces.list_spaces(limit=LISTED, member_user_id=user_id):
+        # Every listed space seats the person: the list and the seat read the
+        # same predicate (``SpaceRepository.build_reader_predicate``).
         seat = await space_seats.seat_of(session, found.id, user_id)
-        lines.append(f"- 空间「{found.name}」（spaces/{found.id}），" + _SEAT.get(seat, ""))
+        where = _SEAT[seat] if seat is not None else ""
+        lines.append(f"- 空间「{found.name}」（spaces/{found.id}），{where}")
     return Read("你加入的空间", "\n".join(lines) if lines else "你不在任何空间里。")
 
 

@@ -315,9 +315,10 @@ def test_a_problem_narrowed_to_other_domains_stays_hidden_in_an_open_space(
     )
     assert resp.status_code == 200, resp.text
 
-    assert api_client.get(
-        f"/tasks/{space['task_id']}", headers=_auth(student)
-    ).status_code == 404
+    assert (
+        api_client.get(f"/tasks/{space['task_id']}", headers=_auth(student)).status_code
+        == 404
+    )
     assert _task_ids(api_client, student, space) == set()
 
 
