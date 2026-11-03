@@ -16,6 +16,7 @@ from app.api.task_teaching import (
     coerce_teaching,
     validate_task_teaching,
 )
+from app.core.content_review import TextKind, readable_text, review_text
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -414,6 +415,14 @@ async def _create_task_entity(
 
     # 指导里的引用先查再建：拒了就不该留下半道题（同 项目集 PATCH 的顺序）。
     await validate_task_teaching(db, teaching=teaching, actor_user_id=creator_user_id)
+
+    # An open space is read by everyone in its scope, so what a problem says
+    # there is published (``app.core.content_review``); in a members-only space
+    # it is not, and is not reviewed.
+    if space.open_scope is not None:
+        await review_text(
+            TextKind.PUBLIC_TEXT, [name, intro, readable_text(description)]
+        )
 
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await validate_and_get_category_id(

@@ -1,7 +1,14 @@
 import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
+  /** `create`：新建空间待审；`open`：已有空间申请设为开放空间。 */
+  kind: 'create' | 'open'
+  /** 空间的 id（两种申请都是，审核也按它）。 */
   id: number
+  /** `open` 申请自己的 id；同一个空间可以有好几条已审过的开放申请。 */
+  requestId?: number
+  /** `open` 申请要开放给的邮箱后缀。 */
+  openScope?: string[]
   avatarId?: number | null
   name: string
   intro: string
@@ -22,32 +29,13 @@ export type PostSpaceRequestData = {
   visibleTaskLimit?: number | null
 }
 
-export type PostSpaceJoinRequestData = {
-  code: string
+export type PutSpaceAccessRequestData = {
+  mode: 'members' | 'open'
+  scope: string[]
 }
 
 export type PostSpaceMemberRequestData = {
   userId: number
-}
-
-export type PostSpaceInviteCodeRequestData = {
-  maxUses?: number
-  /** Epoch milliseconds; omit for a code that never expires. */
-  expiresAt?: number | null
-  /** 说明 —— 这张码给谁、干什么用. Omitted or blank stores no note. */
-  note?: string | null
-}
-
-export type PatchSpaceInviteCodeRequestData = {
-  maxUses?: number
-  /** Absent leaves the date alone; an explicit null makes the code never expire. */
-  expiresAt?: number | null
-  /**
-   * Absent leaves the 说明 alone; null (or a blank string) clears it. The two
-   * are deliberately different requests — correcting a note must not be the
-   * same thing as deleting it.
-   */
-  note?: string | null
 }
 
 export type PatchSpaceRequestData = {

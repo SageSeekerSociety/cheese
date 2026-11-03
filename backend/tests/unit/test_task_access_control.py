@@ -82,7 +82,10 @@ def _create_payload(**overrides):
 def _mock_space_repo(session=None):
     async def get_by_id(space_id):
         return SimpleNamespace(
-            id=space_id, default_category_id=5, review_status="APPROVED"
+            id=space_id,
+            default_category_id=5,
+            review_status="APPROVED",
+            open_scope=None,
         )
 
     return SimpleNamespace(get_by_id=get_by_id)

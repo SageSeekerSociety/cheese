@@ -1,0 +1,21 @@
+{
+  "current": "Now",
+  "intro": "Who can see this space's challenges, categories, announcements and materials. Opening a space needs platform review, and the current setting stays until it is approved; going back to members only takes effect at once.",
+  "members": "Members only",
+  "membersHint": "Only admins and members can see this space",
+  "mode": "Access",
+  "nowMembers": "Members only",
+  "nowOpen": "Open space: {scope}",
+  "open": "Open space",
+  "openHint": "Signed-in users whose registered email is in scope can see it, claim and publish challenges without joining; admins add people outside the scope on the Members page",
+  "pending": "Open request under review: {scope}. The space keeps its current setting until it is approved",
+  "rejected": "Open request rejected: {reason}",
+  "save": "Save",
+  "saveFailed": "Save failed",
+  "saveSuccess": "Saved",
+  "scope": "Email suffixes",
+  "scopeHint": "One per line",
+  "scopePlaceholder": "ruc.edu.cn",
+  "scopeRequired": "Enter at least one email suffix",
+  "submitted": "Submitted for platform review"
+}

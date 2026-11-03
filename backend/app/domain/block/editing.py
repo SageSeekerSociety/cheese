@@ -40,6 +40,7 @@ from app.domain.block.schemas import BlockOut, reply_preview
 # `room_task` imports this domain, so reaching its service from here closes a
 # C3 cycle.
 from app.domain.block.task_rows import _tasks
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import is_task
 from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.event_about import EventAbout, landing
@@ -120,6 +121,12 @@ async def edit_message[Sent: EditedText](
     assert block is not None
     if block.author != editor:
         raise ForbiddenError("Only the author can edit this message")
+    # The edit writes the message's whole meta back. Its conversation's
+    # numbering first, then the message read again: a question's answer is
+    # recorded on its meta under that numbering (`conversation.numbering`), so
+    # one recorded meanwhile is kept rather than written over.
+    await lock_conversations(session, [block.conversation_id])
+    await session.refresh(block)
     text = content.strip()
     if not text:
         raise ValidationError("content must not be blank")

@@ -23,9 +23,10 @@ Real HTTP, PostgreSQL and the room's runner; the session is the scripted stub.
 
 import asyncio
 import uuid
+from functools import partial
 
 from app.api.routes import blocks as block_routes
-from tests.ask_fixtures import active_ask, wait_turn_idle
+from tests.ask_fixtures import active_ask, wait_turn_idle, while_held
 from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
@@ -343,6 +344,74 @@ def test_an_answer_recorded_while_someone_submits_the_form_is_not_erased(
         assert entry in final, (
             f"{entry['by']} 的回答已经记在题上，随后提交的表单把它抹掉了：{final}"
         )
+
+
+def _bob_answers_by_reply(client, room, question_id):
+    return client.post(
+        f"/topics/{room}/messages",
+        json={
+            "request_id": str(uuid.uuid4()),
+            "content": "按部门",
+            "reply_to": question_id,
+        },
+        headers=session_auth_headers("bob"),
+    )
+
+
+def test_an_answer_given_while_someone_skips_is_not_erased(
+    client, stub_hooks, monkeypatch
+):
+    """Alice skips a question asked of her and bob while bob answers it. Her
+    skip takes it off her list only, so both land: bob's answer and her skip."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
+
+    _, skipped, answered = while_held(
+        monkeypatch,
+        block_routes,
+        "skip",
+        partial(
+            client.post,
+            f"/blocks/{question['id']}/skip",
+            headers=session_auth_headers("alice"),
+        ),
+        partial(_bob_answers_by_reply, client, room, question["id"]),
+    )
+    wait_turn_idle(client, room)
+
+    assert skipped.status_code == 200, skipped.text
+    assert answered.status_code == 200, answered.text
+    assert sorted(_answer_log(client, room, question["id"])) == [
+        ("option", "bob"),
+        ("skipped", "alice"),
+    ]
+
+
+def test_an_answer_given_while_someone_takes_back_a_skip_is_not_erased(
+    client, stub_hooks, monkeypatch
+):
+    """Alice takes back her skip while bob answers. Taking it back removes her
+    own entry only; bob's answer stays."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
+    _skip(client, question["id"], by="alice")
+
+    _, undone, answered = while_held(
+        monkeypatch,
+        block_routes,
+        "withdraw",
+        partial(
+            client.delete,
+            f"/blocks/{question['id']}/answer",
+            headers=session_auth_headers("alice"),
+        ),
+        partial(_bob_answers_by_reply, client, room, question["id"]),
+    )
+    wait_turn_idle(client, room)
+
+    assert undone.status_code == 200, undone.text
+    assert answered.status_code == 200, answered.text
+    assert _answer_log(client, room, question["id"]) == [("option", "bob")]
 
 
 def test_skipping_a_question_asked_of_several_takes_it_off_only_your_list(

@@ -33,14 +33,17 @@ covers:
 
 ## 谁能看见，谁能管理 {#membership}
 
-「谁能看见这块题目版」这个问题，答案**只有成员资格一个来源，没有可见性档位**（模型注释里写得很直白：there is no visibility tier）。两件事要分开：
+「谁能看见这块题目版」只有一条判据：`SpaceRepository.build_reader_predicate`。列表按它过滤，单块板的席位（`permissions.seat_of`）和 `is_reader` 也按它的分支判，所以「列表里没有」和「直接打开是 404」是同一个答案。它有三个分支：
 
-- `SpaceMember` 一行是「这块板子归我看」。成员资格本身就是可见性，所以移除一个成员**什么都不带走**——不带走他的题目、提交和项目。
+- `SpaceMember` 一行是「这块板子归我看」。移除一个成员**什么都不带走**——不带走他的题目、提交和项目。
 - `SpaceAdminRelation` 一行（`OWNER = 0` / `ADMIN = 1`）是「我可以管理它」。创建者和管理员不写 `SpaceMember` 行也照样看得见。
+- **开放空间**：`Space.open_scope` 是一组注册邮箱后缀（如 `["ruc.edu.cn"]`），`NULL` 是只对成员开放（默认）。注册邮箱的域名等于其中一个、或以「`.` + 其中一个」结尾的登录用户，坐的是 `Seat.in_scope`，权限和成员一样（看、出题），领题按题目自己的判据走。他们**不写 `SpaceMember` 行**——看、领题、出题都不写；开放空间里的 `SpaceMember` 行只是管理员点名加进来的范围外的人，成员名单（`GET /spaces/{id}/members`，每行带着进来时用的邀请码）只给管理员看。题目自己的邮箱域名限制（`access_control_enabled`）在开放空间里照样生效。
+
+开放空间的设置在 `access_service.py`，路由是 `PUT /spaces/{id}/access`（`edit_settings`）。改回只对成员开放、或把范围收窄（新范围的每个后缀都被现在的范围覆盖），保存即生效；设为开放或扩大范围则写一条 `SpaceOpenRequest`（`space_open_request` 表，每块板最多一条 `PENDING`），平台审核通过才把范围写进 `open_scope`，在那之前空间保持原样（见[审批](#review)）。
 
 `SpaceMember` 上有一条必须留意的索引：`uq_space_member_active` 是 `(space_id, user_id)` 在 `deleted_at IS NULL` 上的部分唯一索引。没有它，两个请求同时读到「还不是成员」就都会写，之后每个 `get_member` 都抛 `MultipleResultsFound`——一次文档里写着「重复点等于没点」的操作变成一个 500。部分索引的另一个用处：软删掉的行是「移除」的记录，**重新加入是复活它而不是加第二行**，那些行在索引之外，所以移除不会挡住随后的加入。另有一条非部分索引 `ix_space_member_space_user` 服务「连删除行一起按对读」的那个读法（那正是它存在的理由）。
 
-`SpaceInviteCode` 是入板用的码：一块板子建出来时**就带着一个**，因为一块谁都进不去的板子没什么用。它和平台注册用的 `invite_code` **故意不是同一张表**——形状像，别的一点关系没有。码有 `max_uses` / `use_count` / `expires_at` / `created_by` / `note`（「十月这批同学」这种，制造者自己的话），吊销是软删，所以码指过的那一行之后仍然读得出来。`SpaceMember.invite_code_id` 记这个人是从哪个码进来的，值为 `NULL` 时**有两种情况而这一列分不出**：这列存在之前写下的行（迁移故意不回填——给老成员编一个码就是发明历史），以及所有者直接加的人（真相是「没有码」）。两者都读作「未知」，而「未知」和「没有码」不是同一句话。
+成员进来有两条路：所有者或管理员直接加人（`POST /spaces/{id}/members`），或者持空间的**加入链接**加入。加入链接和团队的是同一个形状：`Space.join_token` 是链接里的令牌（`/space-invites/<token>`），第一次被管理员读到时生成，此后一直有效，直到所有者或管理员重置，重置后旧链接和不存在的空间一样答 404，已经加入的人不受影响；`Space.join_approval` 决定持链接的人是直接成为成员，还是先在 `SpaceJoinRequest`（`space_join_request` 表）里留一条待批准的申请。空间默认不要批准（课程成员不动用机器和额度），团队默认要。同一个人在同一个空间同时只有一条待处理的申请，由 `uq_space_join_request_pending` 部分唯一索引保证；批准和拒绝是一条带 `status = 'PENDING'` 条件的 UPDATE，两个管理员同时处理时只有一个生效。链接指向已删除或未通过审核的空间时也答 404。路由在 `api/routes/spaces_join_link.py`。
 
 ## 公告 {#announcements}
 
@@ -54,6 +57,8 @@ covers:
 
 `Space.review_status` 默认 `APPROVED`（为了既有数据），而**公开的创建路由把新建的置为 `PENDING`**（`api/routes/spaces.py`）。所以新建的空间要等平台审核：默认值服务历史数据，创建那条路写死未审批。`SpaceReviewService`（`review_service.py`）管状态迁移，裁定人与时间写回 `Space.reviewed_by` / `reviewed_at`；`review_reason` 是驳回时给人看的那句话。
 
+设为开放空间（或扩大范围）也要平台审核，和新建空间走同一个后台队列 `/admin/spaces`：`SpaceReviewService.list_reviews` 把两种申请按最近改动合在一页里，每条用 `kind` 区分（`create` / `open`）。两种都走 `POST /admin/spaces/{id}/review`：一个空间同时至多有一件待审的事，因为只有已通过的空间能申请开放。审开放申请时请求里带上审核人看到的范围（`openScope`），所有者在那之后改过申请就回 409，不会通过一个没人审过的范围。驳回同样要一句理由，空间的设置页读得到这条申请的状态和理由（`openRequest`，只给管理员）。
+
 ## 管理员看板 {#analytics}
 
 `space/` 下另外几个服务是老师与管理员那一侧：`analytics_service` / `analytics_view_service`（纯计算与 CSV 导出分在 `analytics_compute` / `analytics_participant_compute`；视图服务本身只剩门面，读数据、参数解析、告警计数、报告组装分在 `analytics_view_queries` / `analytics_view_params` / `analytics_view_alerts` / `analytics_view_reports`，子模块一律回调 `service._x(...)`，所以补丁点依然打在 service 上）、`learning_service`（学习维度：成员怎么与 AI 协作、卡在哪，issue #945）、`member_publishing_service`（题目列表「我发布的」那一格，含还没过审的题）、`rank_service`、`tags_service`。
@@ -65,6 +70,5 @@ covers:
 ## 边界与坑 {#traps}
 
 - **`docs/spec.md` 的空间/分类两级定义是旧的**。代码这边 `Space` = 一门课、`SpaceCategory` = 课里的一个分组；协议与壳模块里还写着「项目集」的地方，指的都是 `SpaceCategory`。
-- **`SpaceMember` 的 `NULL` invite_code 不等于「没有码」**，下游不要替它下结论。
 - **协议字段不许直接读列**。`resource_pack` / `conditions` / `default_role` 要经过 `task.protocol.resolve` 才拿到题目继承与整键覆盖后的结果。
-- **`visible_task_limit` 不是权限**。它是对成员露出前几道的截断，admin 与创建者不受它影响；真正的授权在成员资格与 `SpaceAdminRelation` 上。
+- **`visible_task_limit` 不是权限**。它是对成员露出前几道的截断，admin 与创建者不受它影响；真正的授权在 `build_reader_predicate` 的三个分支上。

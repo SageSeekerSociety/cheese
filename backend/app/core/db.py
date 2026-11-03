@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session, SessionTransaction
 from sqlalchemy.pool import NullPool, QueuePool
 
+from app.core import statement_attributes
 from app.core.config import settings
 from app.core.sentences import say
 
@@ -77,6 +78,11 @@ def _json_dumps_utf8(obj: Any) -> str:
     # what ends up stored anyway.
     return json.dumps(obj, ensure_ascii=False)
 
+
+# Before the first connection prepares anything: a statement's column
+# descriptions are kept once, not once per cached statement
+# (`core/statement_attributes.py`).
+statement_attributes.install()
 
 engine = create_async_engine(
     _db_url,
@@ -300,15 +306,57 @@ def _given_up_by_a_retry_loop(exc: DBAPIError) -> bool:
 MIGRATION_RETRY_BUDGET_S = 600.0
 
 
+class LockRaceRetries:
+    """How many more lock races one ``alembic upgrade`` may lose before it
+    fails: ``attempts`` tries in all, waiting 1, 2, 4, 8, 16 and then 30 s
+    before each retry, and no retry started more than ``budget_s`` after the
+    upgrade began.
+
+    One allowance serves both retry layers: a whole migration rolled back and
+    run again (:func:`run_migrations_retrying_lock_contention`), and a single
+    ``CONCURRENTLY`` statement run again inside an ``autocommit_block``
+    (``app.core.migration_impl``). Either way the deploy waits at most
+    ``budget_s`` for live traffic to let go.
+    """
+
+    def __init__(
+        self,
+        *,
+        attempts: int = 10,
+        budget_s: float = MIGRATION_RETRY_BUDGET_S,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.attempts = attempts
+        self.budget_s = budget_s
+        self.sleep = sleep
+        self.clock = clock
+        self.started = clock()
+        self.tried = 1  # the try now running counts
+
+    def wait_before_retry(self, exc: DBAPIError) -> float | None:
+        """The pause before trying again after ``exc``, spending one attempt;
+        ``None`` when ``exc`` is not a lost lock race, or is one a
+        ``with_lock_retries`` loop already gave up on, or the allowance is
+        spent."""
+        contention = getattr(exc.orig, "sqlstate", None) in _LOCK_CONTENTION
+        wait = min(2.0 ** (self.tried - 1), 30.0)
+        if (
+            not contention
+            or _given_up_by_a_retry_loop(exc)
+            or self.tried >= self.attempts
+            or self.clock() + wait - self.started > self.budget_s
+        ):
+            return None
+        self.tried += 1
+        return wait
+
+
 def run_migrations_retrying_lock_contention(
     connection: Connection,
     progress: MigrationProgress,
     run: Callable[[], None],
-    *,
-    attempts: int = 10,
-    budget_s: float = MIGRATION_RETRY_BUDGET_S,
-    sleep: Callable[[float], None] = time.sleep,
-    clock: Callable[[], float] = time.monotonic,
+    retries: LockRaceRetries,
 ) -> None:
     """Run ``run`` (the upgrade), and when a migration loses a lock race with
     the backend still serving, roll that migration back and run it again.
@@ -327,28 +375,23 @@ def run_migrations_retrying_lock_contention(
     There is one retry layer per lock. A ``with_lock_retries`` loop already
     retries its own ``LOCK TABLE`` for about 320 s; when it gives up, the tables
     have stayed busy that long and the migration fails rather than running that
-    loop again. Retries stop being started ``budget_s`` after the first attempt.
+    loop again. Retries are drawn from ``retries``.
 
     Migrations already committed stay committed: alembic resumes from the
     stamped revision. A migration that committed part of itself (an
     ``autocommit_block``) is not retried, since running it again would repeat
-    work a rollback cannot take back.
+    work a rollback cannot take back; its ``CONCURRENTLY`` statements retry
+    themselves instead (``app.core.migration_impl``).
     """
-    started = clock()
-    for attempt in range(1, attempts + 1):
+    while True:
         try:
             run()
             return
         except DBAPIError as exc:
-            contention = getattr(exc.orig, "sqlstate", None) in _LOCK_CONTENTION
-            wait = min(2.0 ** (attempt - 1), 30.0)
-            if (
-                not contention
-                or _given_up_by_a_retry_loop(exc)
-                or progress.committed_partway
-                or attempt == attempts
-                or clock() + wait - started > budget_s
-            ):
+            wait = (
+                None if progress.committed_partway else retries.wait_before_retry(exc)
+            )
+            if wait is None:
                 raise
             connection.rollback()
             logger.warning(
@@ -356,10 +399,10 @@ def run_migrations_retrying_lock_contention(
                 "retrying in %.0fs (attempt %d of %d)",
                 exc.orig,
                 wait,
-                attempt + 1,
-                attempts,
+                retries.tried,
+                retries.attempts,
             )
-            sleep(wait)
+            retries.sleep(wait)
 
 
 def _set_request_lock_timeout(

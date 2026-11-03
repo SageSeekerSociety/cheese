@@ -141,40 +141,6 @@ SpaceMember:
     user:
       $ref: '../user/schemas.yaml#/User'
 
-SpaceInviteCode:
-  type: object
-  description: |
-    A space's own invite code. Not the platform's registration `invite_code`:
-    redeeming this one puts you in the space, it does not create an account.
-  properties:
-    id:
-      type: integer
-      format: int64
-    spaceId:
-      type: integer
-      format: int64
-    code:
-      type: string
-    maxUses:
-      type: integer
-    useCount:
-      type: integer
-    expiresAt:
-      type: integer
-      format: int64
-      nullable: true
-    createdAt:
-      type: integer
-      format: int64
-
-JoinSpaceRequest:
-  type: object
-  properties:
-    code:
-      type: string
-  required:
-    - code
-
 AddSpaceMemberRequest:
   type: object
   properties:
@@ -184,17 +150,14 @@ AddSpaceMemberRequest:
   required:
     - userId
 
-CreateSpaceInviteCodeRequest:
+SpaceJoinLinkSettings:
   type: object
   properties:
-    maxUses:
-      type: integer
-      description: How many times the code may be redeemed. Defaults to 50.
-    expiresAt:
-      type: integer
-      format: int64
-      nullable: true
-      description: Epoch milliseconds; omit for a code that never expires.
+    approval:
+      type: boolean
+      description: Whether joining through the link waits for an owner or admin.
+  required:
+    - approval
 
 SpaceAnnouncement:
   type: object

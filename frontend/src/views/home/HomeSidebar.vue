@@ -16,10 +16,6 @@ const {
   spaces,
   awaiting,
   currentHandle,
-  joinOpen,
-  joinBusy,
-  joinError,
-  joinSpace,
   createOpen,
   createBusy,
   createError,
@@ -44,7 +40,6 @@ const {
   <HomeSidebarView
     v-model:disbanding="disbanding"
     v-model:transferring="transferring"
-    v-model:join-open="joinOpen"
     v-model:create-open="createOpen"
     :md-and-up="mdAndUp"
     :teams="teams"
@@ -57,8 +52,6 @@ const {
     :transfer-loading="transferLoading"
     :transfer-busy="transferBusy"
     :transfer-error="transferError"
-    :join-busy="joinBusy"
-    :join-error="joinError"
     :create-busy="createBusy"
     :create-error="createError"
     @open-disband="openDisband"
@@ -66,7 +59,6 @@ const {
     @open-transfer="openTransfer"
     @confirm-transfer="confirmTransfer"
     @leave="leaveTeam"
-    @join="joinSpace"
     @create-space="createSpace"
   />
 </template>

@@ -12,7 +12,7 @@ import LegalRoutes from './legal'
 import { carryLoginRedirect, leaveAppForPagesItHasNot } from './loginRedirect'
 import QuestionRoutes from './question'
 import SharedRoutes from './shared'
-import SpacesRoutes from './spaces'
+import SpacesRoutes, { spaceSignInGuard } from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
@@ -46,6 +46,16 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/TeamInviteView.vue'),
     props: true,
     meta: { titleKey: 'work.teamProfile.joinTitle', isFullPage: true },
+  },
+  {
+    // 空间的加入链接：先登录（`spaceSignInGuard` 带着这条地址去登录页，登录完回来），
+    // 再看到是哪个空间、怎么加入，按下确认才加入。
+    name: 'space-join',
+    path: '/space-invites/:token',
+    component: () => import('@/views/SpaceInviteView.vue'),
+    props: true,
+    beforeEnter: spaceSignInGuard,
+    meta: { titleKey: 'spaces.join.title', isFullPage: true },
   },
   AccountRoutes,
   ...LegalRoutes,

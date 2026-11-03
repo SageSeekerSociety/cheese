@@ -110,7 +110,6 @@ describe('空间设置的地址', () => {
     ['basic', 'SpacesDetailSettingsBasic'],
     ['categories', 'SpacesDetailSettingsCategories'],
     ['templates', 'SpacesDetailSettingsTemplates'],
-    ['invite-codes', 'SpacesDetailSettingsInviteCodes'],
     ['domain-groups', 'SpacesDetailSettingsDomainGroups'],
     ['templates/create', 'SpacesDetailCreateTemplate'],
     ['templates/2/edit', 'SpacesDetailEditTemplate'],
@@ -147,7 +146,7 @@ describe('管理那一段的门', () => {
     ['manage/members'],
     ['manage/analytics'],
     ['manage/settings'],
-    ['manage/settings/invite-codes'],
+    ['manage/settings/domain-groups'],
   ])('成员打开 %s：被挡到无权限页', async (path) => {
     signedInAs(MEMBER_ID, [owner()])
     const r = router()

@@ -2,8 +2,9 @@
 
 A space has one owner, admins (a course's teachers) and members. The owner and
 admins are rows in ``space_admin_relation``; a member is a ``space_member`` row.
-Each seat holds a fixed set of the permissions below; the owner holds all of
-them. ``seat_of`` says where a person sits and :data:`SPACE` whether that seat
+An open space (``Space.open_scope``) also seats everyone signed in whose email
+is in its scope, without a row: they hold what a member holds. Each seat holds
+a fixed set of the permissions below; the owner holds all of them. ``seat_of`` says where a person sits and :data:`SPACE` whether that seat
 holds a permission; a route declares what it needs and ``app.auth.can`` asks
 these. The space's services keep only the space's own rules.
 
@@ -34,6 +35,8 @@ class Seat(enum.StrEnum):
     owner = "owner"
     admin = "admin"
     member = "member"
+    #: Signed in with an email in an open space's scope, and not a member.
+    in_scope = "in_scope"
 
 
 class Permission(enum.StrEnum):
@@ -48,7 +51,8 @@ class Permission(enum.StrEnum):
     #: setter does for theirs (``app.auth.task_roles``).
     teach = "teach"
     #: The space's name, intro and limits, its categories, topics and email
-    #: domain groups.
+    #: domain groups, and whether it is members-only or open (opening it waits
+    #: for the platform's review).
     edit_settings = "edit_settings"
     #: Add and remove members, and manage the invite codes that let people in.
     manage_members = "manage_members"
@@ -75,6 +79,7 @@ GRANTS: dict[Seat, frozenset[Permission]] = {
     Seat.owner: frozenset(Permission),
     Seat.admin: _ADMIN,
     Seat.member: frozenset({Permission.view, Permission.publish}),
+    Seat.in_scope: frozenset({Permission.view, Permission.publish}),
 }
 
 
@@ -105,12 +110,16 @@ async def seat_of(session: AsyncSession, space_id: int, user_id: int) -> Seat | 
         )
     ):
         seat = Seat.member
+    elif await SpaceRepository(session).in_open_scope(
+        space_id=space_id, user_id=user_id
+    ):
+        seat = Seat.in_scope
     if cacheable:
         remember(
             session,
             key,
             seat,
-            tables=frozenset({"space_admin_relation", "space_member"}),
+            tables=frozenset({"space_admin_relation", "space_member", "space", "user"}),
         )
     return seat
 
