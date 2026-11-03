@@ -319,4 +319,36 @@ describe('退回时写下的理由', () => {
     expect(said.textContent).toContain('退回了改动')
     expect(said.textContent).toContain('登录失败的提示也要改')
   })
+
+  it('头像用审阅的人自己挑过的那张，和他别处的消息一致', () => {
+    const rejected = {
+      id: 'r2',
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content: '<@lin> 退回了改动，正在修改',
+      turn_id: null,
+      created_at: '2026-10-31T08:00:00Z',
+      shown_as: 'person',
+      meta: { event_type: 'card_rejected', by: 'lin', detail: '登录失败的提示也要改' },
+    } as unknown as Block
+    const [row] = collapseNotices([rejected])
+    const view = render(RoomNotice as Component, {
+      props: {
+        block: row.block,
+        notice: row.notice!,
+        run: row.run,
+        agent: null,
+        time: '16:05',
+        agentName: '芝士',
+        refs: { mentionNames: { lin: '林晓' }, topicTitles: {} },
+        avatarOf: (handle: string) => (handle === 'lin' ? '/api/avatars/42?v=2' : null),
+      },
+      global: { plugins: [vuetify] },
+    })
+    const said = view.getByTestId('person-said')
+    const img = said.querySelector('.v-avatar img')
+    expect(img?.getAttribute('src')).toBe('/api/avatars/42?v=2')
+  })
 })

@@ -68,6 +68,9 @@ watch(
         user_handle: m.user.username,
         name: m.user.nickname,
         name_source: 'human',
+        // 团队接口回的就是**自己挑过**的那张（没挑过是 null）。带上它，评论串和作者行
+        // 上的人头像才和他在别处一样；漏了这一格，全员都退成首字母。
+        avatar_id: m.user.avatarId ?? null,
       }))
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)

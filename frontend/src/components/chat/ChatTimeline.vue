@@ -600,6 +600,7 @@ const rowLabels = computed(() =>
               :time="fmtTime(m.created_at)"
               :agent-name="agentName"
               :refs="refs"
+              :avatar-of="avatarOf"
               :can-retry="i === retryIndex"
               :retrying="retryBusy"
               :project-id="topic?.project_id ?? null"
