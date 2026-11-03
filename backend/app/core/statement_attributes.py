@@ -19,17 +19,16 @@ from asyncpg import prepared_stmt
 from asyncpg.types import Attribute, Type
 
 _types: dict[Type, Type] = {}
-_attributes: dict[tuple[str, Type], Attribute] = {}
+_attributes: dict[Attribute, Attribute] = {}
 _described = prepared_stmt.PreparedStatement.get_attributes
 
 
 def _shared(attribute: Attribute) -> Attribute:
     kind = _types.setdefault(attribute.type, attribute.type)
-    key = (attribute.name, kind)
-    found = _attributes.get(key)
-    if found is None:
-        found = _attributes[key] = Attribute(attribute.name, kind)
-    return found
+    # The same attribute with the shared type, whatever other fields a later
+    # asyncpg gives it.
+    same = attribute._replace(type=kind)
+    return _attributes.setdefault(same, same)
 
 
 def get_attributes(self) -> tuple[Attribute, ...]:
