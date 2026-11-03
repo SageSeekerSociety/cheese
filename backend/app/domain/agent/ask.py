@@ -39,6 +39,7 @@ from app.domain.block.questions import (
     withdraw_question,
 )
 from app.domain.block.schemas import BlockOut
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.delivery.agent import now, record_agent
 from app.domain.delivery.ledger import settle, settle_for
 from app.domain.delivery_events import DeliveryEvent
@@ -272,19 +273,23 @@ async def expire_due_questions(session, *, now: datetime | None = None) -> int:
             Block.created_at >= at - timedelta(hours=MAX_QUESTION_LIFETIME_HOURS),
         )
     )
+    due = [block for block in rows if _due(block.meta or {}, at)]
+    if not due:
+        return 0
+    # Their conversations' numbering in one batch, then the questions read
+    # again: an answer recorded after the scan took that numbering before it
+    # wrote the question, so it is read here (the question no longer due)
+    # rather than written over.
+    await lock_conversations(session, {block.conversation_id for block in due})
+    rows = await session.scalars(
+        select(Block)
+        .where(Block.id.in_([block.id for block in due]))
+        .order_by(Block.created_at, Block.id)
+        .execution_options(populate_existing=True)
+    )
     taken = 0
     for block in rows:
-        meta = block.meta or {}
-        deadline = meta.get("deadline")
-        if settled(meta) or deadline is None:
-            continue
-        try:
-            due = datetime.fromisoformat(str(deadline))
-        except ValueError:
-            continue
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=UTC)
-        if due > at:
+        if not _due(block.meta or {}, at):
             continue
         question = await expire_question(session, question=block, at=at)
         for notice in await notices_now_answered(session, [question]):
@@ -292,6 +297,20 @@ async def expire_due_questions(session, *, now: datetime | None = None) -> int:
         await _publish_question(question)
         taken += 1
     return taken
+
+
+def _due(meta: dict, at: datetime) -> bool:
+    """Not settled, and its ``meta.deadline`` is at or before ``at``."""
+    deadline = meta.get("deadline")
+    if settled(meta) or deadline is None:
+        return False
+    try:
+        due = datetime.fromisoformat(str(deadline))
+    except ValueError:
+        return False
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=UTC)
+    return due <= at
 
 
 async def _publish_question(question: Block) -> None:
