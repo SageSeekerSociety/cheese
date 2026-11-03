@@ -575,6 +575,7 @@ const rowLabels = computed(() =>
               :creator="createdTasks[i]!.creator"
               :creator-name="(nameOf ?? String)(createdTasks[i]!.creator ?? '')"
               :owner-name="ownerName(createdTasks[i]!)"
+              :owner-avatar="createdTasks[i]!.owner ? avatarOf(createdTasks[i]!.owner) : undefined"
               :avatar="avatarOf(createdTasks[i]!.creator ?? '')"
               :time="fmtTime(m.created_at)"
               :cont="createdCont[i]"
