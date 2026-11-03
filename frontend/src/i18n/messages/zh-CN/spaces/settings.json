@@ -22,6 +22,7 @@
     "topics": "标签"
   },
   "tabs": {
+    "access": "访问范围",
     "basic": "基本信息",
     "categories": "分类与标签",
     "domainGroups": "邮箱域名组",

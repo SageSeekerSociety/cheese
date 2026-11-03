@@ -1,4 +1,12 @@
 {
   "spaceJoinLinkInvalid": "加入链接已失效或已重置",
-  "spaceJoinRequestNotFound": "这条加入申请不存在或已处理"
+  "spaceJoinRequestNotFound": "这条加入申请不存在或已处理",
+  "openRequestChanged": "这条申请在你打开之后被改过，刷新后重新审核",
+  "openRequestReasonRequired": "驳回要写原因",
+  "openSpaceMembersAdminsOnly": "开放空间的成员名单只有管理员能看",
+  "openSpaceMembersNoScope": "只对成员开放时不填邮箱后缀",
+  "openSpaceScopeRequired": "开放空间至少要填一个邮箱后缀",
+  "openSpaceScopeTooLong": "邮箱后缀最多 {max} 个",
+  "openSpaceSuffixInvalid": "邮箱后缀格式不对：{suffix}",
+  "openSpaceUnderReview": "空间还在审核中，不能设为开放空间"
 }

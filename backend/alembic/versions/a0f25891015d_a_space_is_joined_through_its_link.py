@@ -16,7 +16,7 @@ The new columns are nullable or carry a server default, and the new table is
 unknown to the previous release, so it keeps serving while this runs.
 
 Revision ID: a0f25891015d
-Revises: f3b9d1c7a5e2
+Revises: 64de28adf082
 """
 
 from collections.abc import Sequence
@@ -27,7 +27,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "a0f25891015d"
-down_revision: str | Sequence[str] | None = "f3b9d1c7a5e2"
+down_revision: str | Sequence[str] | None = "64de28adf082"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

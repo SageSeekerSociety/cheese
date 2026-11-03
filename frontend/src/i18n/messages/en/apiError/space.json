@@ -1,4 +1,12 @@
 {
   "spaceJoinLinkInvalid": "This join link is invalid or has been reset",
-  "spaceJoinRequestNotFound": "This join request does not exist or has already been answered"
+  "spaceJoinRequestNotFound": "This join request does not exist or has already been answered",
+  "openRequestChanged": "This request changed after you opened it; refresh and review it again",
+  "openRequestReasonRequired": "A rejection needs a reason",
+  "openSpaceMembersAdminsOnly": "Only the admins of an open space see its members",
+  "openSpaceMembersNoScope": "A members-only space takes no email suffix",
+  "openSpaceScopeRequired": "An open space needs at least one email suffix",
+  "openSpaceScopeTooLong": "At most {max} email suffixes",
+  "openSpaceSuffixInvalid": "Not a valid email suffix: {suffix}",
+  "openSpaceUnderReview": "A space under review cannot be opened"
 }

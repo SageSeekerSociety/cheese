@@ -30,6 +30,7 @@ from app.core.errors import (
     ConflictError,
     NotFoundError,
 )
+from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.space import permissions as space_seats
 from app.domain.space.analytics_service import SpaceAnalyticsService
@@ -407,6 +408,17 @@ async def list_space_members(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
+    # An open space has no member list to show its readers: its member rows
+    # are the outsiders its admins named, and each row carries the invite
+    # code it came in on, which a reader could hand to someone outside the
+    # scope. Its admins still manage them here.
+    space = await service.get_space(space_id=space_id)
+    if (
+        space is not None
+        and space.open_scope is not None
+        and not await space_seats.runs(db, space_id, auth_user.user_id)
+    ):
+        raise ForbiddenError(say("openSpaceMembersAdminsOnly"))
     members = await service.list_members(space_id)
     items = await _hydrate_members(
         members,

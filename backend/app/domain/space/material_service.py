@@ -194,7 +194,7 @@ class SpaceMaterialService:
         self, *, space_id: int, user_id: int, link: SpaceMaterial
     ) -> bool:
         if link.visibility == SpaceMaterialVisibility.MEMBERS.value:
-            return await self._spaces.is_member(space_id=space_id, user_id=user_id)
+            return await self._spaces.is_reader(space_id=space_id, user_id=user_id)
         return await space_seats.runs(self._session, space_id, user_id)
 
     async def may_read_outside_space(self, *, material_id: int, user_id: int) -> bool:

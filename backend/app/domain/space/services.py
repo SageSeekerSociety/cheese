@@ -220,7 +220,7 @@ class SpaceService:
     @classmethod
     def for_visibility(cls, session: "AsyncSession") -> "SpaceService":
         """Wired for the two plain reads a visibility gate needs — the board
-        (``get_space``) and one person's membership (``is_member``).
+        (``get_space``) and whether one person reads it (``is_reader``).
 
         ``require_reviewed_space`` runs on every board request, so this build
         stays small: the full constructor's other repositories are not needed to
@@ -300,8 +300,8 @@ class SpaceService:
             return None
         return await self._rank_repo.get_rank(space_id=space_id, user_id=user_id)
 
-    async def is_member(self, *, space_id: int, user_id: int) -> bool:
-        return await self._repo.is_member(space_id=space_id, user_id=user_id)
+    async def is_reader(self, *, space_id: int, user_id: int) -> bool:
+        return await self._repo.is_reader(space_id=space_id, user_id=user_id)
 
     @staticmethod
     def admin_role_name(role: int) -> str:

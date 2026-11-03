@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background import spawn
 from app.core.db import after_own_commit
-from app.core.redis import get_redis_client
+from app.core.redis import SOCKET_TIMEOUT_S, get_redis_client
 from app.domain.happenings.models import Happening
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,9 @@ KINDS = frozenset({NOTIFIED, TASK_FILED, TASK_DECIDED})
 
 #: The Valkey list a commit that said something pushes to.
 WAKE_KEY = "cheese:happenings:wake"
+#: The longest one BLPOP blocks: under the client's read deadline, which would
+#: otherwise cut off the reply of a block longer than itself.
+BLOCK_S = SOCKET_TIMEOUT_S - 1
 
 
 async def happened(
@@ -104,18 +107,17 @@ def waiter(redis: Callable[[], Redis | None]) -> Callable[[float], Awaitable[boo
 
     async def wait(seconds: float) -> bool:
         client = redis()
-        if client is None or seconds < 1:
-            await asyncio.sleep(max(0.0, seconds))
-            return False
-        try:
-            popped = await client.blpop([WAKE_KEY], timeout=int(seconds))
-            if popped is None:
-                return False
-            await client.delete(WAKE_KEY)
-        except Exception:  # Valkey away: the clock still comes round
-            logger.warning("waiting for a happening failed", exc_info=True)
-            await asyncio.sleep(seconds)
-            return False
-        return True
+        loop = asyncio.get_running_loop()
+        until = loop.time() + seconds
+        if client is not None:
+            try:
+                while (left := int(until - loop.time())) >= 1:
+                    if await client.blpop([WAKE_KEY], timeout=min(left, BLOCK_S)):
+                        await client.delete(WAKE_KEY)
+                        return True
+            except Exception:  # Valkey away: the clock still comes round
+                logger.warning("waiting for a happening failed", exc_info=True)
+        await asyncio.sleep(max(0.0, until - loop.time()))
+        return False
 
     return wait
