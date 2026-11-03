@@ -12,11 +12,11 @@ CPython 3.13 decides that frequency in two steps (`Python/gc.c`,
 `gc_select_generation`). Generation 0's count passes its threshold, its
 survivors are merged into generation 1; generation 1's count passes its
 threshold, its survivors merge into generation 2 and, only if they make up a
-quarter of generation 2, a full pass runs. At the defaults (700, 10, 10) the
-middle generation fills after ten gen-0 passes and promotes far more often than
-that quarter allows, so a full pass runs most times the middle one fills. Most
-of what fills it is short-lived: a request's rows and the traceback of a caught
-exception, which only the collector can free. The heap those objects are
+quarter of generation 2, a full pass runs. At the generation-1 default of 10
+the middle generation fills after ten gen-0 passes and promotes far more often
+than that quarter allows, so a full pass runs most times the middle one fills.
+Most of what fills it is short-lived: a request's rows and the traceback of a
+caught exception, which only the collector can free. The heap those objects are
 promoted into is the long-lived one — statement caches, compiled trees — and
 that is what the pass then walks.
 
