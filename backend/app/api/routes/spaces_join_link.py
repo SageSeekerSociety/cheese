@@ -21,7 +21,7 @@ from sqlalchemy.orm import Mapped
 from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service, require_reviewed_space
 from app.api.space_payloads import _hydrate_people
-from app.api.write_access import ROUTE_DECIDES, Can
+from app.api.write_access import HOLDS_LINK, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -252,7 +252,7 @@ async def get_space_by_join_link(
     "/{token}/join",
     summary="Join Space Through Its Join Link",
     **typed_response(SpaceInvite),
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[HOLDS_LINK],
 )
 async def join_space_by_join_link(
     token: str,
