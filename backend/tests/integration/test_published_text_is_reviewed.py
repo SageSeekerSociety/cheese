@@ -163,7 +163,11 @@ def test_a_refused_recruitment_post_is_not_posted_or_changed(
     _, token = _signed_in(api_client, user_client)
     team_id = _team(api_client, token)
 
-    for body in ({"title": BANNED, "content": "x"}, {"title": "x", "content": BANNED}):
+    for body in (
+        {"title": BANNED, "content": "x"},
+        {"title": "x", "content": BANNED},
+        {"title": "x", "content": "x", "contact": f"{BANNED} 微信"},
+    ):
         resp = api_client.post(
             f"/teams/{team_id}/recruitment", json=body, headers=_auth(token)
         )

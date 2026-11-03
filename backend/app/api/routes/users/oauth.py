@@ -1047,11 +1047,8 @@ async def oauth_create_user(
         )
     try:
         nickname = normalize_nickname(nickname)
-        await review_text(TextKind.NAME, [nickname])
     except UnprocessableEntityError as exc:
         return _oauth_error_redirect(request, "INVALID_NICKNAME", str(exc))
-    except UpstreamUnavailableError as exc:
-        return _oauth_error_redirect(request, "REVIEW_UNAVAILABLE", str(exc))
     if passwordMode not in ("none", "password"):
         return _oauth_error_redirect(request, "INVALID_AUTH_MODE", "Invalid auth mode")
     consent = {
@@ -1097,6 +1094,14 @@ async def oauth_create_user(
         )
     if not await _redeem_oauth_state_token(jti):
         return _oauth_error_redirect(request, "TOKEN_EXPIRED", "Session expired")
+    # After the state token is spent, not before: each review is a billed call,
+    # and an unspent token could be replayed with one nickname after another.
+    try:
+        await review_text(TextKind.NAME, [nickname])
+    except UnprocessableEntityError as exc:
+        return _oauth_error_redirect(request, "INVALID_NICKNAME", str(exc))
+    except UpstreamUnavailableError as exc:
+        return _oauth_error_redirect(request, "REVIEW_UNAVAILABLE", str(exc))
     # Before the account is created, not after: a second stateToken for an
     # identity linked meanwhile would otherwise leave an account behind with
     # nothing linked to it.

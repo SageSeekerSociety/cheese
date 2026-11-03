@@ -106,6 +106,19 @@ async def test_a_rich_text_document_is_read_as_the_words_it_shows() -> None:
 
 
 @pytest.mark.parametrize(
+    "shown_as_written",
+    ['["BANNED"]', '{"x": "BANNED"}', '{"type": "p", "x": "BANNED"}'],
+)
+async def test_json_that_is_not_an_editor_document_is_read_as_written(
+    green: Green, shown_as_written: str
+) -> None:
+    # The page shows any other JSON verbatim, so every word of it is published.
+    green.risk["BANNED"] = "high"
+    with pytest.raises(UnprocessableEntityError):
+        await review_text(TextKind.PUBLIC_TEXT, [readable_text(shown_as_written)])
+
+
+@pytest.mark.parametrize(
     ("level", "key"), [("high", "contentRejected"), ("medium", "contentNeedsRevision")]
 )
 async def test_a_risky_picture_is_refused(green: Green, level: str, key: str) -> None:

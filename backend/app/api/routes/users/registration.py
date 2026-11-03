@@ -179,9 +179,6 @@ async def register_user(
         raise UnprocessableEntityError(say("usernameReserved"))
 
     nickname = normalize_nickname(nickname)
-    # Before the email code is spent: a nickname refused here is changed and
-    # sent again with the same code.
-    await review_text(TextKind.NAME, [nickname])
 
     require_new_password(password)
 
@@ -203,6 +200,10 @@ async def register_user(
         await client_budget.refund(client)
     finally:
         await redis.aclose()
+    # After the email code, not before: each review is a billed call, and only
+    # someone holding a code mailed to them gets this far. A nickname refused
+    # here costs its author a new code.
+    await review_text(TextKind.NAME, [nickname])
 
     try:
         user, profile = await auth_service.register_with_password(

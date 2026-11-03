@@ -61,6 +61,9 @@ PROTOCOL = "https"
 #: The text PLUS services accept at most 600 characters a call.
 TEXT_CHUNK = 600
 
+#: How many pieces of one write are asked about at the same time.
+PIECES_AT_ONCE = 8
+
 #: Milliseconds, as the SDK takes them; the values of the service's own sample.
 CONNECT_TIMEOUT_MS = 3000
 READ_TIMEOUT_MS = 6000
@@ -121,7 +124,9 @@ def readable_text(raw: str) -> str:
         document = json.loads(raw)
     except ValueError:
         document = None
-    if isinstance(document, dict | list):
+    # Only a document the editor wrote is shown as one; any other JSON is
+    # shown as the text it is, and is reviewed as that.
+    if isinstance(document, dict) and document.get("type") == "doc":
         words: list[str] = []
 
         def walk(node: object) -> None:
@@ -187,10 +192,16 @@ async def review_text(kind: TextKind, texts: Iterable[str | None]) -> None:
     if not pieces or not settings.content_review_configured:
         return
     client = _client()
+    # A long problem statement is many pieces; asking about all of them at once
+    # would run into the service's 100 calls a second.
+    gate = asyncio.Semaphore(PIECES_AT_ONCE)
+
+    async def risk_of(piece: str) -> str | None:
+        async with gate:
+            return await _text_risk(client, kind.value, piece)
+
     try:
-        risks = await asyncio.gather(
-            *(_text_risk(client, kind.value, piece) for piece in pieces)
-        )
+        risks = await asyncio.gather(*(risk_of(piece) for piece in pieces))
     except ContentReviewFailed as exc:
         raise _unavailable(kind.name, exc) from exc
     _raise_for(max((_verdict(risk) for risk in risks), key=lambda v: v.value))

@@ -61,10 +61,8 @@ class RecruitmentService:
         # them, and a group that takes people is a shared team.
         if team.personal_owner_user_id is not None:
             raise BadRequestError(say("personalTeamTakesNoRecruits"))
-        # The plaza is read by everyone signed in. The contact line is left
-        # out on purpose: it is a WeChat id or an address by design, which is
-        # exactly what the service flags as 引流.
-        await review_text(TextKind.PUBLIC_TEXT, [title, content])
+        # The plaza is read by everyone signed in, the contact line included.
+        await review_text(TextKind.PUBLIC_TEXT, [title, content, contact])
         return await self._repo.create(
             team_id=team_id,
             title=title,
@@ -132,6 +130,9 @@ class RecruitmentService:
             [
                 title if title != post.title else None,
                 content if content != post.content else None,
+                contact
+                if isinstance(contact, str) and contact != post.contact
+                else None,
             ],
         )
         return await self._repo.update(
