@@ -313,7 +313,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/9a/7d/b22cb9a0d4f396ee0
 
 [[package]]
 name = "alibabacloud-tea-openapi"
-version = "0.3.14"
+version = "0.3.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alibabacloud-credentials" },
@@ -322,7 +322,7 @@ dependencies = [
     { name = "alibabacloud-tea-util" },
     { name = "alibabacloud-tea-xml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/f5/c7823490a1574d1e3c27c9641aa395710e89d0c15c5a436c96e999e6e2fe/alibabacloud_tea_openapi-0.3.14.tar.gz", hash = "sha256:1e0a67ab3450cf09e26ccc0fb5b0622a6b58fdde25dc3ccb99b45e167c5db717", size = 12993, upload-time = "2025-04-15T12:20:03.363Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/02/f5a6519efee96141a6e5af4e79b768bdae77dd62992bca02a710e06c36b1/alibabacloud_tea_openapi-0.3.13.tar.gz", hash = "sha256:77034911dbed41de440e9b6de38cb24646723aa1d0059cefeb3906f8c0a4523e", size = 12918, upload-time = "2025-02-26T10:09:34.599Z" }
 
 [[package]]
 name = "alibabacloud-tea-util"
@@ -778,6 +778,7 @@ dependencies = [
     { name = "aiosmtplib" },
     { name = "alembic" },
     { name = "alibabacloud-green20220302" },
+    { name = "alibabacloud-tea-openapi" },
     { name = "asyncpg" },
     { name = "bcrypt" },
     { name = "cachetools" },
@@ -832,7 +833,8 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "aiosmtplib", specifier = ">=5.1.0" },
     { name = "alembic", specifier = ">=1.18.4" },
-    { name = "alibabacloud-green20220302", specifier = ">=2.20.4" },
+    { name = "alibabacloud-green20220302", specifier = "==2.20.4" },
+    { name = "alibabacloud-tea-openapi", specifier = "==0.3.13" },
     { name = "asyncpg", specifier = ">=0.32.0" },
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "cachetools", specifier = "==7.2.3" },
@@ -842,7 +844,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lxml", specifier = ">=5.3.0" },
     { name = "markdownify", specifier = ">=0.13" },
-    { name = "oss2", specifier = ">=2.19.1" },
+    { name = "oss2", specifier = "==2.19.1" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "py-spy", specifier = ">=0.4.2" },
     { name = "pydantic", specifier = ">=2.13.4" },

@@ -55,6 +55,8 @@ logger = logging.getLogger(__name__)
 
 ENDPOINT = "green-cip.cn-shanghai.aliyuncs.com"
 REGION = "cn-shanghai"
+#: A test points the client at a local stand-in that speaks plain HTTP.
+PROTOCOL = "https"
 
 #: The text PLUS services accept at most 600 characters a call.
 TEXT_CHUNK = 600
@@ -103,6 +105,7 @@ def _client() -> Client:
             access_key_secret=settings.aliyun_green_access_key_secret,
             endpoint=ENDPOINT,
             region_id=REGION,
+            protocol=PROTOCOL,
             connect_timeout=CONNECT_TIMEOUT_MS,
             read_timeout=READ_TIMEOUT_MS,
         )
