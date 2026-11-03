@@ -65,6 +65,7 @@ from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
 from app.core.route_index import index_routes
 from app.core.route_mounting import FAILED_ROUTE_MODULES
+from app.core.startup_freeze import freeze_after_startup
 from app.core.storage import reuse_s3_connections
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
@@ -590,6 +591,10 @@ async def lifespan(application: FastAPI):
         reuse_s3_connections(),
         reuse_forge_connections(),
     ):
+        # The warm-ups above loaded the object store's SDK models after the
+        # import-time freeze; freeze them too, once, before serving
+        # (`core/startup_freeze.py`).
+        freeze_after_startup()
         try:
             yield
         finally:

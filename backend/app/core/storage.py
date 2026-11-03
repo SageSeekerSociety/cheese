@@ -1,5 +1,4 @@
 import asyncio
-import gc
 import hashlib
 import io
 import logging
@@ -36,29 +35,6 @@ class _S3Connections:
 
 
 _s3_connections: _S3Connections | None = None
-# Whether this process has frozen the SDK's models (`_freeze_loaded_models`).
-_models_frozen = False
-
-
-def _freeze_loaded_models() -> None:
-    """Move what loading the SDK left alive out of the collector's scan set,
-    once per process.
-
-    The startup heap is frozen at import (`main.py`); botocore's S3 model is
-    loaded after that, here, and is a large tree of OrderedDicts, lists and
-    dicts that lives as long as the client. Production's heap census
-    (`core/heap_census`, owners) found most of its 25,000 OrderedDicts held
-    by it, walked by every full collection with the event loop held. This
-    runs before the process serves a request, so what it freezes besides the
-    models is startup's own. Once: a process that enters its lifespan again
-    (the test suite does, per `client` test) freezes nothing more.
-    """
-    global _models_frozen
-    if _models_frozen:
-        return
-    _models_frozen = True
-    gc.collect()
-    gc.freeze()
 
 
 def _retry_incomplete_s3_upload(response, attempts: int, **_) -> float | None:
@@ -99,7 +75,6 @@ async def reuse_s3_connections():
                 )
                 async with backend._get_client():
                     pass
-                _freeze_loaded_models()
             yield
     finally:
         _s3_connections = previous
