@@ -384,12 +384,21 @@ jobs:
       # deploy. It lives in this file rather than a repo variable so that
       # widening it is a reviewed change. See `feedback_triage_handles` in
       # backend/app/core/config.py.
+      #
+      # The built-in feedback triage rule's room, owner and AI teammate are
+      # written the same way (whole truth, reviewed here): the room is 「反馈」
+      # in 「cheese 自建」, its owner must be on the feedback roster above and
+      # seated in that room, and the teammate is that room's 芝士 seat. See
+      # `routine/builtin_triage.py` and docs/manual/dev/feedback.md#triage-config.
       - name: Configure platform and feedback administrators
         if: steps.release.outputs.skip != 'true'
         env:
           NEW_PLATFORM_ADMIN_HANDLES: ${{ vars.PLATFORM_ADMIN_HANDLES }}
           OLD_FEEDBACK_ADMIN_HANDLES: ${{ vars.FEEDBACK_ADMIN_HANDLES }}
-          FEEDBACK_TRIAGE_HANDLES: '["andy"]'
+          FEEDBACK_TRIAGE_HANDLES: '["andy", "andylizf"]'
+          FEEDBACK_TRIAGE_TOPIC_ID: baf9a0a7-95c7-4f17-b775-b675e9d3aa13
+          FEEDBACK_TRIAGE_OWNER_HANDLE: andylizf
+          FEEDBACK_TRIAGE_AGENT_HANDLE: cheese-c82aeb40555a
         run: |
           python3 - <<'PY'
           import json
@@ -451,6 +460,12 @@ jobs:
           updates["FEEDBACK_TRIAGE_HANDLES"] = json.dumps(
               handle_list(os.environ["FEEDBACK_TRIAGE_HANDLES"], "FEEDBACK_TRIAGE_HANDLES")
           )
+          for key in (
+              "FEEDBACK_TRIAGE_TOPIC_ID",
+              "FEEDBACK_TRIAGE_OWNER_HANDLE",
+              "FEEDBACK_TRIAGE_AGENT_HANDLE",
+          ):
+              updates[key] = os.environ[key].strip()
           save = runpy.run_path("deploy/bootstrap-forgejo.py")["save_environment"]
           save(path, updates, remove=["FEEDBACK_ADMIN_HANDLES"] if handles else [])
           PY
