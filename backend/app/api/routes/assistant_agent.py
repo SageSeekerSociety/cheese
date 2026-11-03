@@ -63,6 +63,7 @@ from app.domain.agent.personal import project_desk, reading, rosters, space_desk
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, proposals, refs
 from app.domain.assistant import memory as assistant_memory
+from app.domain.assistant.models import AssistantRoutine, AssistantRun
 from app.domain.day_windows import utc_now
 from app.domain.fetch.preapproved import preapproved
 from app.domain.library import listing as library_listing
@@ -76,7 +77,6 @@ from app.domain.project.services import ProjectService
 from app.domain.project_permissions import TEMPLATE_GRANTS, Template
 from app.domain.review.services import deliverable_revision
 from app.domain.room_task.awaiting import WaitingItem
-from app.domain.assistant.models import AssistantRoutine, AssistantRun
 from app.domain.routine import personal as routine_personal
 from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService

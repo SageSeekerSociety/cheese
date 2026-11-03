@@ -903,14 +903,18 @@ def test_a_rule_saved_with_no_moment_waits_for_cheese_to_fill_it(client, gateway
     assert listed["nextRunAt"] is None
 
     gateway.script = [
-        ("tool", "cheese_automation", {
-            "action": "change",
-            "routine": listed["id"],
-            "title": "每日待审清单",
-            "trigger": "schedule",
-            "freq": "daily",
-            "time": "08:00",
-        }),
+        (
+            "tool",
+            "cheese_automation",
+            {
+                "action": "change",
+                "routine": listed["id"],
+                "title": "每日待审清单",
+                "trigger": "schedule",
+                "freq": "daily",
+                "time": "08:00",
+            },
+        ),
         ("text", "定好了。"),
     ]
     _tick(client, gateway)
@@ -947,7 +951,10 @@ def test_a_rule_cheese_never_filled_is_plainly_stopped_and_says_so(client, gatew
     _ended(client, user_id)
 
     [kept] = _routines(client, user_id)
-    assert kept.state == "paused" and kept.paused == "unfilled", (kept.state, kept.paused)
+    assert kept.state == "paused" and kept.paused == "unfilled", (
+        kept.state,
+        kept.paused,
+    )
     assert kept.next_run_at is None
     [notice] = _notices(client, user_id)
     assert "还差" in notice["content"], notice
