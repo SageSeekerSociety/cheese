@@ -270,8 +270,12 @@ async def record_task_instruction(
     )
 
 
-async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
-    """Claim committed intent; expired sending attempts require reconciliation."""
+async def dispatch_pending(
+    sessions, *, chat, runner, limit=100, delivery_ids=None, asked=False
+):
+    """Claim committed intent; expired sending attempts require reconciliation.
+
+    ``asked`` marks the attempts this claims as a person's (`asked_attempt_id`)."""
     stamp = now()
     claimed = []
     async with sessions() as session:
@@ -347,6 +351,8 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     continue
             row.state = "claimed"
             row.attempt_id = uuid.uuid4()
+            if asked:
+                row.asked_attempt_id = row.attempt_id
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
             row.attempts += 1
             content = row.payload["content"]
@@ -390,6 +396,7 @@ async def redispatch_undelivered(
     chat,
     runner,
     recipient_handle: str | None = None,
+    asked: bool = False,
 ) -> int:
     """Send this conversation, now, the inputs the platform still owes it.
 
@@ -412,6 +419,9 @@ async def redispatch_undelivered(
     The other caller is a seat whose work just ended (``recipient_handle``
     names it): an attempt refused because that seat was still holding the
     earlier work was waiting for exactly this, not for its backoff.
+
+    ``asked`` says a person pressed for it, so the attempts it starts are
+    theirs (`dispatch_pending`).
     """
     stamp = now()
     async with sessions() as session:
@@ -443,7 +453,9 @@ async def redispatch_undelivered(
             update(Delivery).where(Delivery.id.in_(owed)).values(retry_at=None)
         )
         await session.commit()
-    return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
+    return await dispatch_pending(
+        sessions, chat=chat, runner=runner, delivery_ids=owed, asked=asked
+    )
 
 
 async def run_attempt(sessions, delivery_id, attempt_id, work):

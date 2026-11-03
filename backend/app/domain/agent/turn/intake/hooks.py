@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core import alerting
@@ -67,6 +67,7 @@ from app.domain.agent.turn_inputs import mark_session_for_turn
 from app.domain.agent_instance.own.naming import connection_name
 from app.domain.block.models import Block
 from app.domain.delivery.agent import instance_for_seat
+from app.domain.delivery.models import Delivery
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.notice_meta import (
     EVENT_TURN_TIMEOUT,
@@ -84,16 +85,55 @@ from app.domain.usage.credits import (
 logger = logging.getLogger(__name__)
 
 
+async def _delivery_attempted(
+    sessions: async_sessionmaker, turn_id: uuid.UUID
+) -> tuple[uuid.UUID, bool] | None:
+    """The instruction this turn was an attempt to deliver, if it was one, and
+    whether a person asked for this attempt.
+
+    Each attempt at a delivery runs as a turn of its own, whose id is the
+    attempt's (`delivery.agent.dispatch_pending`)."""
+    async with sessions() as session:
+        row = (
+            await session.execute(
+                select(Delivery.id, Delivery.asked_attempt_id).where(
+                    Delivery.attempt_id == turn_id, Delivery.sent_at.is_(None)
+                )
+            )
+        ).first()
+    return None if row is None else (row.id, row.asked_attempt_id == turn_id)
+
+
 async def _turn_ended_noticed(
-    sessions: async_sessionmaker, turn_id: uuid.UUID, meta: dict
+    sessions: async_sessionmaker,
+    turn_id: uuid.UUID,
+    meta: dict,
+    *,
+    conversation_id: uuid.UUID,
+    asked: bool = False,
 ) -> bool:
-    """Whether this turn's ending already has its line of this kind."""
+    """Whether this ending already has its line of this kind: this turn's, or,
+    for an attempt at a delivery the platform made on its own, the line an
+    earlier attempt at the same delivery left. The platform tries an
+    instruction that could not start again on its own backoff, each try a new
+    turn; what failed, for the people reading, is still the one instruction.
+    An attempt a person asked for (``asked``) gets its own line: they pressed
+    「重试」 and are waiting to see how it went."""
+    said_by = Block.turn_id == turn_id
+    if (delivery := meta.get("delivery_id")) and not asked:
+        said_by = or_(
+            said_by,
+            and_(
+                Block.conversation_id == conversation_id,
+                Block.meta["delivery_id"].as_string() == delivery,
+            ),
+        )
     async with sessions() as session:
         return (
             await session.scalar(
                 select(Block.id)
                 .where(
-                    Block.turn_id == turn_id,
+                    said_by,
                     Block.meta["event_type"].as_string() == meta.get("event_type"),
                 )
                 .limit(1)
@@ -456,8 +496,17 @@ class HookEvents:
                 # Every failed turn the platform does not try again says so in
                 # its conversation, once: a report delivered again finds the
                 # line it already left.
+                attempted = (
+                    None if recovering else await _delivery_attempted(sessions, turn_id)
+                )
+                if attempted is not None:
+                    meta = {**meta, "delivery_id": str(attempted[0])}
                 if not recovering and not await _turn_ended_noticed(
-                    sessions, turn_id, meta
+                    sessions,
+                    turn_id,
+                    meta,
+                    conversation_id=conversation_id,
+                    asked=attempted is not None and attempted[1],
                 ):
                     room_meta = dict(meta)
                     if "error" in room_meta:
