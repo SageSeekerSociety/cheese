@@ -9,6 +9,31 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# A `timeout` named as another implementation, built on the real one, that
+# lacks the behaviour TIMEOUT_VARIANT names: "no-forward" drops TERM sent to
+# it, "no-kill" ignores --kill-after, "wrong-status" exits 1 where the real one
+# exits 124 or 137, and "renamed" lacks nothing.
+VARIANT_TIMEOUT = r"""#!/usr/bin/env bash
+if [[ "$1" == --version ]]; then
+  printf 'timeout (uutils coreutils) 0.10.0\n'
+  exit 0
+fi
+if [[ "$TIMEOUT_VARIANT" == no-kill && "$1" == --kill-after=* ]]; then shift; fi
+if [[ "$TIMEOUT_VARIANT" == no-forward ]]; then
+  trap ':' TERM
+else
+  trap 'kill -TERM "$child" 2>/dev/null' TERM
+fi
+"$REAL_TIMEOUT" "$@" <&0 &
+child=$!
+while wait "$child" 2>/dev/null; kill -0 "$child" 2>/dev/null; do :; done
+wait "$child"
+status=$?
+if [[ "$TIMEOUT_VARIANT" == wrong-status ]] && (( status == 124 || status == 137 )); then
+  exit 1
+fi
+exit "$status"
+"""
 HTTP_503 = (
     " snapshots Pulling \n"
     " forgejo Pulling \n"
@@ -39,6 +64,7 @@ class PullCITest(unittest.TestCase):
         signal_stage="pull",
         real_timeout=False,
         ignore_term=False,
+        timeout_variant=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             case = Path(directory)
@@ -86,11 +112,8 @@ done
 exit "${FAKE_UP_EXIT:-0}"
 """,
                 "timeout": r"""#!/usr/bin/env bash
-if [[ "$1" == --version ]]; then
-  if [[ "$FAKE_REAL_TIMEOUT" == 1 ]]; then exec "$REAL_TIMEOUT" "$@"; fi
-  printf 'timeout (GNU coreutils) 9.5\n'
-  exit 0
-fi
+# Only the pull is substituted; anything else runs the real timeout.
+if [[ " $* " != *" pull "* ]]; then exec "$REAL_TIMEOUT" "$@"; fi
 printf 'timeout' >> "$CALLS"
 printf '\t%s' "$@" >> "$CALLS"
 printf '\n' >> "$CALLS"
@@ -131,6 +154,8 @@ fi
 """,
                 "curl": "#!/usr/bin/env bash\nexit 0\n",
             }
+            if timeout_variant:
+                scripts["timeout"] = VARIANT_TIMEOUT
             for name, content in scripts.items():
                 command = commands / name
                 command.write_text(content, newline="\n")
@@ -164,6 +189,7 @@ fi
                 FAKE_SIGNAL_STAGE=signal_stage,
                 FAKE_REAL_TIMEOUT="1" if real_timeout else "0",
                 FAKE_IGNORE_TERM="1" if ignore_term else "0",
+                TIMEOUT_VARIANT=timeout_variant or "",
             )
             for key, value in (overrides or {}).items():
                 if value is None:
@@ -390,6 +416,33 @@ fi
                 self.assert_prompt_cancel(calls, grace=5)
                 self.assertIn(["owned-client", "exited"], calls)
                 self.assertNotIn(["lifecycle", "docker", "completed"], calls)
+                self.assert_no_start(calls)
+
+    def test_a_timeout_with_the_needed_behaviours_runs_the_pull_whatever_it_is(self):
+        # #5118: a timeout that forwards TERM, kills after the grace and exits
+        # 124/137 runs the pull, whichever implementation it reports.
+        result, calls = self.run_start([(0, " forgejo Pulled\n")], timeout_variant="renamed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.docker_actions(calls, "pull"), [["pull", "--policy", "missing"]]
+        )
+        self.assertEqual(
+            self.docker_actions(calls, "up"), [["up", "-d", "--pull", "never"]]
+        )
+
+    def test_a_timeout_lacking_a_needed_behaviour_stops_before_pulling_naming_it(self):
+        for variant, named in (
+            ("no-forward", "forwards TERM to its command"),
+            ("no-kill", "sends KILL after the --kill-after grace"),
+            ("wrong-status", "exits 124 on timeout and 137 after KILL"),
+        ):
+            with self.subTest(variant=variant):
+                result, calls = self.run_start(
+                    [(0, "")], timeout_variant=variant
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(named, result.stderr)
+                self.assertEqual(self.docker_actions(calls, "pull"), [], calls)
                 self.assert_no_start(calls)
 
     def test_cached_images_still_use_missing_policy_and_never_pull_on_start(self):
