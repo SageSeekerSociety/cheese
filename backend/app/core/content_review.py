@@ -176,7 +176,7 @@ def _raise_for(verdict: _Verdict) -> None:
         raise UnprocessableEntityError(say("contentNeedsRevision"))
 
 
-def _unavailable(what: str, exc: ContentReviewFailed) -> UpstreamUnavailableError:
+def _unavailable(what: str, exc: Exception) -> UpstreamUnavailableError:
     # An error, not a warning: every write it refuses is a person who could not
     # publish, and an account that lapsed (code 408) refuses them all.
     logger.error("content review of %s failed: %s", what, exc)
@@ -200,10 +200,14 @@ async def review_text(kind: TextKind, texts: Iterable[str | None]) -> None:
         async with gate:
             return await _text_risk(client, kind.value, piece)
 
+    # A task group, not gather: once one piece fails the write is refused, and
+    # the pieces still waiting for the gate are cancelled rather than billed.
     try:
-        risks = await asyncio.gather(*(risk_of(piece) for piece in pieces))
-    except ContentReviewFailed as exc:
-        raise _unavailable(kind.name, exc) from exc
+        async with asyncio.TaskGroup() as group:
+            asked = [group.create_task(risk_of(piece)) for piece in pieces]
+    except* ContentReviewFailed as failed:
+        raise _unavailable(kind.name, failed.exceptions[0]) from None
+    risks = [task.result() for task in asked]
     _raise_for(max((_verdict(risk) for risk in risks), key=lambda v: v.value))
 
 
