@@ -192,7 +192,7 @@ function submitForm() {
     mine: Boolean(event) && !draft.value.task.trim(),
     task: event ? draft.value.task.trim() : '',
     outcome: event && draft.value.condition === 'decided' ? draft.value.outcome : '',
-    once: event && draft.value.once,
+    once: Boolean(event) && draft.value.once,
   })
   form.value = null
 }
