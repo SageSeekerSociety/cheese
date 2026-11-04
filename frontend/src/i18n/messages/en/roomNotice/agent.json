@@ -156,6 +156,7 @@
   "turnFailedRequestRefusedHint": "The model service rejected this request as invalid, most likely because the conversation holds something it does not accept, such as an image it cannot decode. Retrying sends the same conversation again and fails the same way; an administrator needs to look at it.",
   "turnFailedContextFull": "Stopped before finishing: the conversation is larger than the model can take, and summarising it failed",
   "turnFailedContextFullHint": "To go on in this conversation it has to be summarised first, and that summarising failed: it is a model call of its own, and that call was refused (the service's words are below). Until it is fixed a retry takes the same road and fails the same way; the platform's administrators have been told. The files already changed are still there.",
+  "turnFailedContextFullOwnHint": "To go on in this conversation it has to be summarised first, and that summarising failed: it is a model call of its own, and that call was refused (the service's words are below). It runs on the AI service you connected, so the platform does not handle this for you — check why that service refused the call, or switch to another. A retry takes the same road until then. The files already changed are still there.",
   "turnFailedRetryLater": "Files already changed are still there. You can retry later.",
   "turnFailedService": "Stopped before finishing",
   "turnFailedModelError": "Stopped before finishing: the call to the model failed",

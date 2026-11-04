@@ -97,7 +97,7 @@ def model_error_notice(text: str | None) -> tuple[str, dict]:
     }
 
 
-def context_full_notice(text: str | None) -> tuple[str, dict]:
+def context_full_notice(text: str | None, *, own: bool = False) -> tuple[str, dict]:
     """The room's line for a conversation that outgrew its window and could not
     be compacted.
 
@@ -106,21 +106,25 @@ def context_full_notice(text: str | None) -> tuple[str, dict]:
     again to be refused the same way. The reader is told what is true — the
     conversation does not fit, summarising it failed, the files are still
     there — and the retry is not offered, so nobody presses it all afternoon.
-    The service's own words stay behind the detail."""
+    The service's own words stay behind the detail.
+
+    ``own``: the turn ran on a model connection the project's own people added
+    (``gateway_usage.OWN_ROUTE``). The platform carries no part of that call, so
+    it does not alert its operators about it and must not tell the room it did
+    — the connection's owners are the ones who can put it back."""
     said = scrub_secrets((text or "").strip())
+    hint = say(
+        "turnFailedContextFullOwnHint" if own else "turnFailedContextFullHint"
+    )
     return say("turnFailedContextFull"), {
         **notice(
             EVENT_TURN_FAILED,
             severity=SEVERITY_ERROR,
             who=WHO_HUMAN,
             detail=(
-                say(
-                    "hintAndServiceWords",
-                    hint=say("turnFailedContextFullHint"),
-                    said=said,
-                )
+                say("hintAndServiceWords", hint=hint, said=said)
                 if said
-                else say("turnFailedContextFullHint")
+                else hint
             ),
             detail_label=say("labelDetails"),
             retryable=False,
@@ -201,7 +205,7 @@ def _turn_failure_notice(
         # («Failed to authenticate») is worded like a failed model call, and
         # telling the reader to retry is the one piece of advice that is wrong
         # here — every retry re-sends the same over-long conversation.
-        return context_full_notice(detail)
+        return context_full_notice(detail, own=own)
     out_of_credit = is_provider_out_of_credit(detail)
     if out_of_credit and own:
         # The turn ran on the team's or member's own model connection

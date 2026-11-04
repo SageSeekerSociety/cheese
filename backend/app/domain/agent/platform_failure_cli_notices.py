@@ -153,17 +153,26 @@ def classify_cli_notice(text: str) -> str | None:
 #: A compaction that was refused for size, in the words the build puts on the
 #: turn's ending: `Prompt is too long · automatic compaction failed: …`.
 #:
-#: Both halves are required. `Prompt is too long` alone is NOT this failure:
-#: the build also says it for an input it found too long for another reason,
-#: and for a turn stopped while its conversation was being compacted — states
-#: a retry does get past (its own release notes name both as fixes). Only the
-#: compound sentence means the summarising call itself could not be made.
+#: Anchored at the start, like every other line this module reads: a failure
+#: whose text merely mentions the phrase — a log, a quoted message — is not
+#: this failure, and matching it anywhere would take its conversation's retry
+#: and its resume away for nothing.
+#:
+#: `Prompt is too long` alone is NOT this failure either: the build says it for
+#: an input too long for another reason, and for a turn stopped while its
+#: conversation was being compacted — states a retry does get past (its own
+#: release notes name both as fixes). Only `automatic compaction failed`, at
+#: the start, means the summarising call itself could not be made.
 #:
 #: Never through ``classify_cli_notice``: that one reads a line the build wrote
 #: INSTEAD of answering, and this is a sentence about a different call.
 _COMPACT_REFUSED = re.compile(
-    r"Prompt is too long\b.*\bautomatic compaction failed\b|\bautomatic compaction failed\b",
-    re.I | re.S,
+    # The build's own composition: `Prompt is too long · automatic compaction
+    # failed: <why>`. Kept to one line — the prefix and the phrase are the same
+    # sentence, and a whole log is not.
+    r"^(?:Prompt is too long\b[^\n]*?\bautomatic compaction failed\b"
+    r"|automatic compaction failed\b)",
+    re.I,
 )
 
 

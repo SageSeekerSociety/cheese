@@ -294,6 +294,12 @@ def test_a_conversation_too_long_to_compact_is_recognised_as_its_own_failure():
     # Nor is an ordinary failed model call.
     assert not is_compaction_refused("API Error: 429 rate limited")
     assert not is_compaction_refused("")
+    # Nor a failure whose text merely mentions it: the line is matched from its
+    # start, like every other one this module reads. Matching it anywhere would
+    # take this conversation's retry and its resume away for a log's sake.
+    assert not is_compaction_refused(
+        "Some other failure; the log says automatic compaction failed earlier"
+    )
 
 
 def test_a_conversation_too_long_to_compact_offers_no_retry_and_says_why():
@@ -315,6 +321,26 @@ def test_a_conversation_too_long_to_compact_offers_no_retry_and_says_why():
     assert "retryable" not in meta
     assert say("turnFailedContextFullHint") in meta["detail"]
     assert REFUSED_BY_A_FULL_CONVERSATION in meta["detail"]
+
+
+def test_on_the_projects_own_connection_the_room_is_not_told_admins_were_alerted():
+    """`platform_side_cause(own=True)` is None: the platform sends no alert for a
+    call it does not carry. A hint claiming 「已经报给平台管理员」 there would be
+    a sentence nobody acted on, so the own route gets its own."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        _turn_failure_notice,
+        platform_side_cause,
+    )
+
+    line, meta = _turn_failure_notice(
+        REFUSED_BY_A_FULL_CONVERSATION, None, own=True
+    )
+    assert say("turnFailedContextFullOwnHint") in meta["detail"]
+    assert say("turnFailedContextFullHint") not in meta["detail"]
+    # And nothing goes to the platform's operators about it.
+    assert platform_side_cause(REFUSED_BY_A_FULL_CONVERSATION, own=True) is None
+    assert platform_side_cause(REFUSED_BY_A_FULL_CONVERSATION) is not None
 
 
 def test_the_platform_does_not_start_that_turn_again_by_itself():
