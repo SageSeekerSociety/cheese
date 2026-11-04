@@ -125,7 +125,9 @@ export function useFloatingPanelSpot(key: string, el: Ref<HTMLElement | null>) {
    * 文字由顶部那一条的 `user-select: none` 挡住，触屏的滚动由 `touch-action: none` 挡住。
    */
   function startDrag(event: PointerEvent) {
-    if (event.button !== 0) return
+    // 一只手指拖到一半，另一只又按下来：这一下不算新的一拖，否则松手时拿走的是第二根手指的
+    // 捕获，面板跟着先按下的那只手停住，而且看不出为什么。
+    if (event.button !== 0 || from) return
     const node = el.value
     if (!node) return
     const box = node.getBoundingClientRect()

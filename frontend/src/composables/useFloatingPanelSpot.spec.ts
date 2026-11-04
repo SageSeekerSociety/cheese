@@ -141,3 +141,23 @@ it('存着的值读不懂就当没记过', () => {
   localStorage.setItem(KEY, 'wide')
   expect(useFloatingPanelSpot(KEY, panelIn()).style.value).toBeUndefined()
 })
+
+it('一只手指拖到一半，另一只手指按下来不算新的一拖', () => {
+  const spot = useFloatingPanelSpot(KEY, panelIn())
+  spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 700, clientY: 200 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 650, clientY: 180 }))
+
+  // 第二根手指从别处按下来：不改变这一拖的起点。
+  spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 2, clientX: 200, clientY: 100 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 600, clientY: 160 }))
+  expect(spot.style.value).toMatchObject({ left: '484px', top: '128px' })
+
+  // 第一根手指抬起：拖结束，位置记下来。
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }))
+  expect(spot.dragging.value).toBe(false)
+  expect(localStorage.getItem(KEY)).not.toBeNull()
+
+  // 之后第二根手指再动，面板不动。
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 2, buttons: 1, clientX: 300, clientY: 60 }))
+  expect(spot.style.value).toMatchObject({ left: '484px', top: '128px' })
+})
