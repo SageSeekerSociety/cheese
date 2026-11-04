@@ -80,15 +80,22 @@ export function useFloatingPanelSpot(key: string, el: Ref<HTMLElement | null>) {
     captor: HTMLElement
   } | null = null
 
+  /** 只认开始那一拖的那根指头：别的指头（多指触屏）动了、抬了，都不算这一拖结束了。 */
+  function ended(event: PointerEvent) {
+    if (from && event.pointerId !== from.pointerId) return
+    stop()
+  }
+
   function move(event: PointerEvent) {
     const start = from
     if (!start) return
     // 另一个指头（多指触屏）的移动不算这一拖。
     if (event.pointerId !== start.pointerId) return
     // 松手发生在窗口外、或者浏览器把这一串事件丢了：`pointerup` 收不到，`from` 还留着。
-    // 没有按键还跟着指头走，就当作已经松手，把它收掉，别让面板漂到别处再记住。
+    // 没有按键还跟着**开始那一拖的那根**指头走，就当作已经松手，把它收掉，别让面板漂到别处
+    // 再记住，也别让下一次按下被 `from` 挡住。
     if (event.buttons === 0) {
-      stop()
+      ended(event)
       return
     }
     const dx = event.clientX - start.x
@@ -109,8 +116,8 @@ export function useFloatingPanelSpot(key: string, el: Ref<HTMLElement | null>) {
       // 浏览器已经自己收回了：不用管。
     }
     window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', stop)
-    window.removeEventListener('pointercancel', stop)
+    window.removeEventListener('pointerup', ended)
+    window.removeEventListener('pointercancel', ended)
     if (dragging.value) save(spot.value)
     dragging.value = false
   }
@@ -154,9 +161,9 @@ export function useFloatingPanelSpot(key: string, el: Ref<HTMLElement | null>) {
       captor,
     }
     window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointerup', ended)
     // 触摸被打断、窗口失焦时不会有 pointerup：取消也算松手，否则监听一直挂着。
-    window.addEventListener('pointercancel', stop)
+    window.addEventListener('pointercancel', ended)
   }
 
   /**

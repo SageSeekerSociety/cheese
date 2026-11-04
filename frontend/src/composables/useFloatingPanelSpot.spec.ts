@@ -161,3 +161,23 @@ it('一只手指拖到一半，另一只手指按下来不算新的一拖', () =
   window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 2, buttons: 1, clientX: 300, clientY: 60 }))
   expect(spot.style.value).toMatchObject({ left: '484px', top: '128px' })
 })
+
+it('第二根手指抬起，结束不了第一根手指在拖的那一次', () => {
+  const spot = useFloatingPanelSpot(KEY, panelIn())
+  spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 700, clientY: 200 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 650, clientY: 180 }))
+
+  // 第二根手指按下来又抬起：这一拖还在继续。
+  spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 2, clientX: 200, clientY: 100 }))
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2 }))
+  expect(spot.dragging.value).toBe(true)
+  expect(localStorage.getItem(KEY)).toBeNull()
+
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 600, clientY: 160 }))
+  expect(spot.style.value).toMatchObject({ left: '484px', top: '128px' })
+
+  // 第一根手指抬起才算完。
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }))
+  expect(spot.dragging.value).toBe(false)
+  expect(localStorage.getItem(KEY)).not.toBeNull()
+})
