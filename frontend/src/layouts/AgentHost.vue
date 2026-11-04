@@ -13,15 +13,26 @@
     >
       <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
     </v-navigation-drawer>
-    <!-- Desktop, floating: a card at the bottom right, over the page, which keeps its width. -->
+    <!-- Desktop, floating: a card over the page, which keeps its width. It opens in the bottom right
+         corner and the person can drag it anywhere by its header; where they left it is remembered
+         per browser, and a double-click on the header puts it back in the corner. -->
     <Transition name="agent-host">
       <div
         v-if="mdAndUp && agentOpen && !docked"
+        ref="floatEl"
         class="agent-host__float"
+        :class="{ 'agent-host__float--dragging': floatDragging }"
+        :style="floatStyle"
         data-testid="agent-host"
         data-agent-select="off"
       >
-        <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
+        <AssistantPanel
+          draggable
+          v-bind="panelProps"
+          v-on="panelEvents"
+          @drag-start="startFloatDrag"
+          @recenter="resetFloat"
+        />
       </div>
     </Transition>
     <!-- Phone: a sheet from the bottom; the page stays visible above it. -->
@@ -62,13 +73,14 @@
 import type { AssistantHanded } from '@/stores/agentThread'
 import type { Citable } from '@/types/citable'
 
-import { computed, onBeforeUnmount, provide, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { useAgentCiting } from '@/composables/useAgentCiting'
 import { useAgentPointer } from '@/composables/useAgentPointer'
 import { useAgentRules } from '@/composables/useAgentRules'
+import { useFloatingPanelSpot } from '@/composables/useFloatingPanelSpot'
 
 import { downloadFile, hearAssistantVoice, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
@@ -113,6 +125,25 @@ const { mdAndUp } = useDisplay()
 const route = useRoute()
 const router = useRouter()
 const docked = agentDocked
+
+/** 浮层上一次被拖到哪：和「固定 / 取消固定」一样记在这台浏览器里。 */
+const FLOAT_SPOT_KEY = 'cheesex.agentFloatSpot'
+
+// 取消固定之后那块浮层停在哪：拖过就记着，没拖过由样式停在右下角（`useFloatingPanelSpot`）。
+const floatEl = ref<HTMLElement | null>(null)
+const {
+  style: floatStyle,
+  dragging: floatDragging,
+  startDrag: startFloatDrag,
+  settle: settleFloat,
+  reset: resetFloat,
+} = useFloatingPanelSpot(FLOAT_SPOT_KEY, floatEl)
+
+// 浮层刚画出来、或者窗口小到换了摆法时量不到它的尺寸，收一次要等它排完版。
+watch(
+  () => [agentOpen.value, docked.value, mdAndUp.value] as const,
+  () => void nextTick(settleFloat)
+)
 
 const available = computed(() => AccountService._loggedIn.value)
 // 退出登录：上一个人的对话不留给下一个人。
@@ -305,6 +336,8 @@ const panelEvents = {
   flex-direction: column;
 }
 
+/* 没拖过时停在右下角（这里的 `right` / `bottom`）；拖过之后由内联样式给出 `left` / `top`，
+   并把这两个设成 auto。`max-height` 而不是固定高度：窗口矮的时候它跟着缩。 */
 .agent-host__float {
   position: fixed;
   right: 16px;
@@ -318,6 +351,11 @@ const panelEvents = {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
+}
+
+/* 拖着的时候不要文字被顺手选中，也不让面板自己在指针底下动（位置只跟指针走）。 */
+.agent-host__float--dragging {
+  user-select: none;
 }
 
 .agent-host-enter-active,

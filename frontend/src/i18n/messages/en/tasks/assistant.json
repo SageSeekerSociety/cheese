@@ -115,6 +115,7 @@
   },
   "dock": "Pin to the right",
   "undock": "Unpin",
+  "dragHint": "Drag to move; double-click to put it back in the corner",
   "anywhere": {
     "greeting": "Ask a question, or tell me what to do.",
     "placeholder": "Ask or describe a task",

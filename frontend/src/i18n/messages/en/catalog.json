@@ -1632,7 +1632,7 @@
     },
     "s5": {
       "name": "Earlier topics",
-      "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned."
+      "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned; unpinned it is a card the person drags by its header, and double-clicking the header puts it back in the corner."
     },
     "s6": {
       "name": "Drafting in a project",
