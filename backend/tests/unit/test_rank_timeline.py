@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core import rank
+from app.core.errors import UnprocessableEntityError
 
 EARLY = datetime(2026, 1, 1, 8, 0, tzinfo=UTC)
 LATE = EARLY + timedelta(hours=3)
@@ -51,7 +52,7 @@ def test_reading_a_cursor_the_wrong_way_round_gives_a_different_moment():
 
 
 def test_a_cursor_that_is_not_one_is_refused():
-    with pytest.raises(Exception):
+    with pytest.raises(UnprocessableEntityError):
         rank.read_timeline("", descending=True)
 
 

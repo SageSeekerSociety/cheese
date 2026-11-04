@@ -37,8 +37,8 @@ export interface LibraryView {
   dir: string
   q: string
   kind: Kind
-  /** 排序框那一档；`off` 是这一页原本的顺序。 */
-  sort: LibrarySort
+  /** 排序框那一档；不给就是 `off`（这一页原本的顺序）。团队资料库那一页还没有这个框。 */
+  sort?: LibrarySort
 }
 
 type Item = LibraryEntry | (ListedDocument & { type: 'doc' })

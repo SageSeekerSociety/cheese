@@ -167,25 +167,35 @@ def test_ascending_puts_folders_on_the_same_timeline(client):
     project_id = _project(client)
     url = f"/projects/{project_id}/library"
     _put_in(client, project_id, "一.md")
-    _put_in(client, project_id, "夹/二.md")  # 夹 里最近一份，比 一.md 新
+    _put_in(client, project_id, "二.md", "夹")  # 夹 里最近一份，比 一.md 新
     _put_in(client, project_id, "三.md")
 
     rows = [row for page in _pages(client, url, sort="asc") for row in page]
     labels = [_label(row) for row in rows]
-    assert labels == ["file:一.md", "folder:夹", "file:三.md", "file:夹/二.md"]
+    # 这一层只列这一层的东西：`夹/二.md` 在文件夹里，这里只算「夹」那一行。
+    # 一.md 最早，然后是它放进来的 夹，最后是最新的 三.md。
+    assert labels == ["file:一.md", "folder:夹", "file:三.md"]
     # 位置单调递增，正是这条时间线
     assert [row["rank"] for row in rows] == sorted(row["rank"] for row in rows)
+
+    # 比起「关」那一档：文件夹不再被整拨提到最前
+    off = [_label(row) for page in _pages(client, url, sort="off") for row in page]
+    assert off == ["folder:夹", "file:三.md", "file:一.md"]
 
 
 def test_descending_is_the_same_timeline_the_other_way(client):
     project_id = _project(client)
     url = f"/projects/{project_id}/library"
     _put_in(client, project_id, "一.md")
-    _put_in(client, project_id, "夹/二.md")
+    _put_in(client, project_id, "二.md", "夹")
     _put_in(client, project_id, "三.md")
 
-    ascending = [_label(row) for page in _pages(client, url, sort="asc") for row in page]
-    descending = [_label(row) for page in _pages(client, url, sort="desc") for row in page]
+    ascending = [
+        _label(row) for page in _pages(client, url, sort="asc") for row in page
+    ]
+    descending = [
+        _label(row) for page in _pages(client, url, sort="desc") for row in page
+    ]
     assert descending == list(reversed(ascending))
 
 
@@ -201,13 +211,19 @@ def test_the_timeline_pages_without_repeating_or_losing_a_row(client):
     url = f"/projects/{project_id}/library"
     for name in ("a.md", "b.md", "c.md", "d.md"):
         _put_in(client, project_id, name)
-    _put_in(client, project_id, "夹/x.md")
+    _put_in(client, project_id, "x.md", "夹")
 
     for sort in ("asc", "desc"):
         paged = [
-            row["path"] for page in _pages(client, url, sort=sort, limit=2) for row in page
+            row["path"]
+            for page in _pages(client, url, sort=sort, limit=2)
+            for row in page
         ]
-        whole = [row["path"] for page in _pages(client, url, sort=sort, limit=200) for row in page]
+        whole = [
+            row["path"]
+            for page in _pages(client, url, sort=sort, limit=200)
+            for row in page
+        ]
         assert paged == whole
 
 
@@ -217,23 +233,31 @@ def test_documents_join_the_same_timeline(client):
     _put_in(client, project_id, "a.md")
     r = client.post(f"/projects/{project_id}/documents", json={"title": "文档甲"})
     assert r.status_code == 200, r.text
-    _put_in(client, project_id, "夹/b.md")
+    _put_in(client, project_id, "b.md", "夹")
 
     for sort in ("asc", "desc"):
         library = [
             row
-            for page in _pages(client, f"/projects/{project_id}/library", sort=sort, limit=1)
+            for page in _pages(
+                client, f"/projects/{project_id}/library", sort=sort, limit=1
+            )
             for row in page
         ]
         documents = [
             row
-            for page in _pages(client, f"/projects/{project_id}/documents", sort=sort, limit=1)
+            for page in _pages(
+                client, f"/projects/{project_id}/documents", sort=sort, limit=1
+            )
             for row in page
         ]
-        merged = [_label(row) for row in sorted(library + documents, key=lambda r: r["rank"])]
+        merged = [
+            _label(row) for row in sorted(library + documents, key=lambda r: r["rank"])
+        ]
         whole = [
             _label(row)
-            for page in _pages(client, f"/projects/{project_id}/library", sort=sort, limit=200)
+            for page in _pages(
+                client, f"/projects/{project_id}/library", sort=sort, limit=200
+            )
             for row in page
         ]
         # 资料库这一串里没有文档；并起来之后文档落在它按时间该在的位置上

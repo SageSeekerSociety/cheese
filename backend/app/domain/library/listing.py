@@ -355,18 +355,29 @@ async def _timeline(
     by_name = _by_name()
     if spot is not None:
         beyond = (
-            or_(Row.created_at < spot.at, and_(Row.created_at == spot.at, by_name > spot.tie))
+            or_(
+                Row.created_at < spot.at,
+                and_(Row.created_at == spot.at, by_name > spot.tie),
+            )
             if descending
-            else or_(Row.created_at > spot.at, and_(Row.created_at == spot.at, by_name > spot.tie))
+            else or_(
+                Row.created_at > spot.at,
+                and_(Row.created_at == spot.at, by_name > spot.tie),
+            )
         )
         where = [*where, beyond]
-    order = (Row.created_at.desc(), by_name) if descending else (Row.created_at, by_name)
+    order = (
+        (Row.created_at.desc(), by_name) if descending else (Row.created_at, by_name)
+    )
     rows = list(
         await session.scalars(select(Row).where(*where).order_by(*order).limit(limit))
     )
     entries = await _describe(session, shelf, rooms, rows)
     return [
-        {**entry, "rank": rank.timeline(row.created_at, row.name, descending=descending)}
+        {
+            **entry,
+            "rank": rank.timeline(row.created_at, row.name, descending=descending),
+        }
         for row, entry in zip(rows, entries, strict=True)
     ]
 

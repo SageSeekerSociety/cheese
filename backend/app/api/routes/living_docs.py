@@ -248,7 +248,9 @@ async def project_documents(
             }
             for doc in docs[:limit]
         ]
-        return ok({"data": rows, "next": rows[-1]["rank"] if len(docs) > limit else None})
+        return ok(
+            {"data": rows, "next": rows[-1]["rank"] if len(docs) > limit else None}
+        )
     after = rank.decode(cursor) if cursor else None
     docs = await Documents(db).of_project(
         project_id,
