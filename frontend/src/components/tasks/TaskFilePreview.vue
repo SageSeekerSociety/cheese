@@ -42,9 +42,14 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
         >
           {{ t('tasks.attachments.download') }}
         </BaseButton>
-        <BaseButton size="sm" prepend-icon="mdi-close" @click="emit('close')">
-          {{ t('work.library.close') }}
-        </BaseButton>
+        <!-- 关在这只弹窗的右上角（标题在最左、下载挨着它），不排在下载右边当第二颗动作。 -->
+        <BaseButton
+          icon="mdi-close"
+          size="sm"
+          :title="t('work.library.close')"
+          :aria-label="t('work.library.close')"
+          @click="emit('close')"
+        />
       </header>
       <div class="tfp__body">
         <p v-if="tooLarge" class="tfp__large t-body c-muted">
