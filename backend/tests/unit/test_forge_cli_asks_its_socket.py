@@ -88,6 +88,11 @@ def test_the_forge_proxy_refuses_pr_merges_and_injects_the_token():
         "/graphql",
         b'{"query": "mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }"}',
     )
+    # The platform's Forgejo merges with POST and lives under its own base path.
+    assert forge_proxy.is_pr_merge_request(
+        "POST", "/forge/api/v1/repos/org/repo/pulls/12/merge"
+    )
+    assert forge_proxy.is_pr_merge_request("PUT", "//repos/org//repo/pulls/12/merge/")
     assert not forge_proxy.is_pr_merge_request(
         "GET", "/repos/SageSeekerSociety/cheese/pulls/4896"
     )

@@ -28,6 +28,8 @@ const props = withDefaults(
   defineProps<{
     topicId: string | null
     submitQuestion?: SubmitPreviewQuestion
+    /** 私下问个人芝士：页面递下来的能力，面板自己不碰那个全局 store。 */
+    askPersonal?: (message: string) => void
     projectId: string | null
     // This tab is the one on screen. Loads happen on the rising edge.
     active?: boolean
@@ -43,7 +45,14 @@ const props = withDefaults(
     /** 这间房的队友叫什么，见 `PreviewViewProps`。 */
     agentName?: string
   }>(),
-  { active: false, refreshTick: 0, path: null, submitQuestion: undefined, agentName: undefined }
+  {
+    active: false,
+    refreshTick: 0,
+    path: null,
+    submitQuestion: undefined,
+    askPersonal: undefined,
+    agentName: undefined,
+  }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -72,6 +81,7 @@ const {
   previewUrl,
   previewAppNote,
   previewTunnelUp,
+  previewAppUp,
   previewNamedPath,
   autoReloaded,
   previewError,
@@ -80,11 +90,11 @@ const {
   documentType,
   documentName,
   isImageArtifact,
-  downloadError,
   docBytes,
   docIdentity,
   docSnapshot,
   slideContext,
+  slideNotes,
   docLoading,
   docError,
   docRendererMissing,
@@ -110,6 +120,12 @@ const {
   toggleDocPage,
   setDocNarrow,
   setPickMode,
+  stepHistory,
+  goTo,
+  appSnapshot,
+  wakeSteps,
+  wakeError,
+  wakeApp,
 } = props.preview
 
 // 帧里的 ESC 要在展示组件里处理（标注条和全屏都是它那一格的状态），所以这里留一个
@@ -127,6 +143,11 @@ defineExpose({
 function refresh() {
   void load({ silent: true, reload: true })
 }
+
+// 小浏览器的后退、前进、重载交给帧里的桥；没有桥（或桥没接住）时重载退回整帧重来。
+function history(action: 'back' | 'forward' | 'reload') {
+  if (!stepHistory(action) && action === 'reload') refresh()
+}
 </script>
 
 <template>
@@ -136,6 +157,7 @@ function refresh() {
     ref="previewView"
     :topic-id="props.topicId"
     :submit-question="props.submitQuestion"
+    :ask-personal="props.askPersonal"
     :upload-annotation="uploadAnnotation"
     :active="props.active"
     :project-id="props.projectId"
@@ -154,6 +176,10 @@ function refresh() {
     :preview-url="previewUrl"
     :preview-app-note="previewAppNote"
     :preview-tunnel-up="previewTunnelUp"
+    :preview-app-up="previewAppUp"
+    :app-snapshot="appSnapshot"
+    :wake-steps="wakeSteps"
+    :wake-error="wakeError"
     :preview-named-path="previewNamedPath"
     :auto-reloaded="autoReloaded"
     :preview-error="previewError"
@@ -162,11 +188,11 @@ function refresh() {
     :document-type="documentType"
     :document-name="documentName"
     :is-image-artifact="isImageArtifact"
-    :download-error="downloadError"
     :doc-bytes="docBytes"
     :doc-identity="docIdentity"
     :doc-snapshot="docSnapshot"
     :slide-context="slideContext"
+    :slide-notes="slideNotes"
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"
@@ -186,6 +212,9 @@ function refresh() {
     @pick-mode="setPickMode"
     @refresh="refresh"
     @download="downloadArtifact"
+    @history="history"
+    @navigate="goTo"
+    @wake="wakeApp"
     @document-changed="refreshDocument"
     @locate="emit('locate', $event)"
     @open-file="emit('open-file', $event)"

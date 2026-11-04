@@ -130,9 +130,12 @@ async def project_team(
     default_instance_id = (
         project.default_agent_instance_id if project is not None else None
     )
-    owners = await _own_owners(session, project_id)
+    instances = await AgentInstanceService(session).list_for_project(project_id)
+    if not instances:
+        return []
+    owners = await _own_owners(session, project_id, instances=instances)
     seats: list[TeammateSeat] = []
-    for instance in await AgentInstanceService(session).list_for_project(project_id):
+    for instance in instances:
         own = owners.get(instance.id)
         if own is not None and not instance.is_active:
             continue
@@ -151,11 +154,14 @@ async def project_team(
 
 
 async def _own_owners(
-    session: AsyncSession, project_id: uuid.UUID
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    instances: list | None = None,
 ) -> dict[uuid.UUID, str]:
     """这个项目里哪些队友是成员自己的：归谁（按 handle）。"""
 
-    owned = await owned_in_project(session, project_id)
+    owned = await owned_in_project(session, project_id, instances=instances)
     if not owned:
         return {}
     rows = await session.execute(

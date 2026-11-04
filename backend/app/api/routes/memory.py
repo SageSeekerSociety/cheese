@@ -36,6 +36,7 @@ from app.domain.memory.files import (
     parse_memory_file,
 )
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -167,5 +168,6 @@ async def delete_memory(
         owner_handle=entry.owner_handle,
         paths=[entry.path],
         updated_by=actor.handle,
+        writer=MemoryWriter.panel,
     )
     return ok({"deleted": entry_id})

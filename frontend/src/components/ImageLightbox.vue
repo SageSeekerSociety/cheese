@@ -25,6 +25,7 @@ import { useZoomPan } from './lightbox/useZoomPan'
 import { t } from '@/i18n'
 import { ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 import { CHAT_IMAGE_ACTIONS } from '@/lib/chatImages'
+import { announceDownload, saveBlob, saveUrl } from '@/lib/download'
 import {
   carryCrop,
   cssClip,
@@ -200,26 +201,19 @@ async function edited(): Promise<File | null> {
   }
 }
 
-function save(url: string, name: string) {
-  const link = document.createElement('a')
-  link.href = url
-  link.download = name
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-}
-
 /** 下载：改过就下改过的那张，没改就是原图。 */
 async function download() {
   if (!isEdited(adjust.value)) {
-    if (gallery.current.value) save(gallery.current.value, gallery.name.value)
+    if (!gallery.current.value) return
+    // 这一张的字节已经在这条 object URL 后面，不再去网络上取一次，所以只补一句成功。
+    saveUrl(gallery.current.value, gallery.name.value)
+    announceDownload()
     return
   }
   const file = await edited()
   if (!file) return
-  const url = URL.createObjectURL(file)
-  save(url, file.name)
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  saveBlob(file, file.name)
+  announceDownload()
 }
 
 async function attach() {

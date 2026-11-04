@@ -22,6 +22,14 @@ from app.domain.user.services import names_by_handles, usernames_by_ids
 
 #: A team role, by the int the team domain stores.
 _TEAM_ROLE = {0: "所有者", 1: "管理员", 2: "成员"}
+# Where the person sits in a space they read (``space_seats.seat_of``); an open
+# space they read because their email is in its scope has no member row.
+_SEAT = {
+    space_seats.Seat.owner: "你是管理员",
+    space_seats.Seat.admin: "你是管理员",
+    space_seats.Seat.member: "你是成员",
+    space_seats.Seat.in_scope: "开放空间，你的邮箱在它的范围内",
+}
 #: The most people one read lists; it says how many more there are.
 LISTED = 100
 
@@ -67,15 +75,15 @@ async def my_teams(session: AsyncSession, user_id: int) -> Read:
 
 
 async def my_spaces(session: AsyncSession, user_id: int) -> Read:
-    """The spaces the person is in or runs, and whether they run each."""
+    """The spaces the person reads, and where they sit in each."""
     spaces = SpaceService.for_routes(session)
     lines: list[str] = []
     for found in await spaces.list_spaces(limit=LISTED, member_user_id=user_id):
-        runs = await space_seats.runs(session, found.id, user_id)
-        lines.append(
-            f"- 空间「{found.name}」（spaces/{found.id}），"
-            + ("你是管理员" if runs else "你是成员")
-        )
+        # Every listed space seats the person: the list and the seat read the
+        # same predicate (``SpaceRepository.build_reader_predicate``).
+        seat = await space_seats.seat_of(session, found.id, user_id)
+        where = _SEAT[seat] if seat is not None else ""
+        lines.append(f"- 空间「{found.name}」（spaces/{found.id}），{where}")
     return Read("你加入的空间", "\n".join(lines) if lines else "你不在任何空间里。")
 
 
@@ -99,10 +107,20 @@ async def space(session: AsyncSession, user_id: int, space_id: int) -> Read:
     """A space the person is in or runs: its managers and its members."""
     runs = await space_seats.runs(session, space_id, user_id)
     spaces = SpaceService.for_routes(session)
-    if not runs and not await spaces.is_member(space_id=space_id, user_id=user_id):
+    if not runs and not await spaces.is_reader(space_id=space_id, user_id=user_id):
         raise NotFoundError.for_resource("space", str(space_id))
     label = (await SpaceLabels(session).describe([space_id])).get(space_id)
     managers = sorted(await space_seats.managers(session, space_id))
+    found = await spaces.get_space(space_id)
+    if not runs and found is not None and found.open_scope is not None:
+        # An open space shows its member list to its admins only, as
+        # ``GET /spaces/{id}/members`` does: its rows are the outsiders the
+        # admins named, not a roster of who takes part.
+        named = await _named(session, managers)
+        name = label.name if label is not None else str(space_id)
+        lines = [f"空间「{name}」（spaces/{space_id}），开放空间，不列成员"]
+        lines.append("管理员：" + "、".join(named.get(i, str(i)) for i in managers))
+        return Read(f"空间「{name}」的管理员", "\n".join(lines))
     members = [m.user_id for m in await spaces.list_members(space_id)]
     named = await _named(session, managers + members[:LISTED])
     name = label.name if label is not None else str(space_id)

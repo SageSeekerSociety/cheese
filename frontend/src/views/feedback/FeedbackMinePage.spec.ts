@@ -88,7 +88,7 @@ beforeEach(() => {
   getFeedbackCounts.mockReset()
   markFeedbackRead.mockReset()
   markFeedbackRead.mockResolvedValue(undefined)
-  getFeedbackCounts.mockResolvedValue({ all: 1, hot: 0, active: 0, resolved: 0, unread: 0 })
+  getFeedbackCounts.mockResolvedValue({ all: 1, hot: 0, resolved: 0, unread: 0 })
 })
 
 describe('我的反馈', () => {
@@ -156,7 +156,6 @@ describe('我的反馈', () => {
     useFeedbackStore().counts = {
       all: 1,
       hot: 0,
-      active: 0,
       resolved: 0,
       deployed: 0,
       unread: 5,

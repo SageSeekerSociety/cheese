@@ -63,13 +63,13 @@ from app.domain.agent.harness.prompt import became_task_prompt, task_opening_pro
 from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
-from app.domain.conversation.services import room_of
 from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
 from app.domain.room_task.dispatch import (
     refuse_tasks_in_private,
     upgrade_block_to_place,
 )
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.schemas import TaskOut
 from app.domain.thread.adapters import root_block_of
 from app.domain.thread.services import open_thread
@@ -223,10 +223,10 @@ async def upgrade_block(
     block = await BlockRepository(db).get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    parent = await TopicService(db).get_or_404(await room_of(db, block.conversation_id))
+    parent = (await place_or_404(db, block.conversation_id)).room
     actor = await resolver.resolve(topic_id=parent.id, project_id=parent.project_id)
     await resolver.authorize_topic(
-        actor, project_id=parent.project_id, topic_id=parent.id
+        actor, project_id=parent.project_id, topic_id=parent.id, room=parent
     )
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))

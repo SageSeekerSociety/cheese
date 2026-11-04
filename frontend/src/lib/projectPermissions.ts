@@ -1,10 +1,15 @@
-// 项目的角色和权限（#3830）。所有者在最上面，拥有全部权限，不进这张表；下面三种角色各是
-// 一组权限，项目可以在「角色和权限」里改，锁定的两项不能改。这里只有权限的名字、分组和
-// 排列顺序，与后端 `project_permissions.py` 同名；谁有哪一项、默认是什么由后端说。
+// 项目的角色和权限（#3830、#4795）。所有者在最上面，拥有全部权限，不算角色；管理员、成员
+// 两个角色是内置的，名字固定；别的角色是项目自己的，名字和权限都由项目定，导师是其中照模板
+// 建的一种。这里只有权限的名字、分组和排列顺序，与后端 `project_permissions.py` 同名；谁有
+// 哪一项、默认是什么由后端说。
+import { t } from '@/i18n'
 
-export type ProjectRole = 'admin' | 'member' | 'mentor'
-
-export const PROJECT_ROLES: ProjectRole[] = ['admin', 'member', 'mentor']
+/** 角色叫什么：内置角色和没改过名的模板角色用界面上的固定名字，别的用项目起的名字。 */
+export function roleName(role: { name: string | null; builtin: string | null; template: string | null }): string {
+  if (role.name) return role.name
+  const fixed = role.builtin ?? role.template
+  return fixed ? t(`work.projectSettings.roles.role.${fixed}`) : ''
+}
 
 export type PermissionGroup = 'people' | 'project' | 'channels' | 'conversation' | 'content' | 'agents'
 

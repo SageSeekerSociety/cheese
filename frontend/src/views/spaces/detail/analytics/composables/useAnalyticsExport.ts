@@ -3,10 +3,10 @@ import type { AnalyticsExportSection, SpaceAnalyticsQueryState } from '../utils'
 
 import { ref, toValue } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { buildAnalyticsExportUrl } from '../utils'
 
+import { toast } from '@/lib/toast'
 import accountService from '@/services/account'
 
 /**

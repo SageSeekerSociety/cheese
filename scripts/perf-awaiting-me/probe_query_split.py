@@ -28,7 +28,7 @@ from sqlalchemy import event  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 import app.models  # noqa: E402,F401
-from app.api.routes.awaiting import waiting_items  # noqa: E402
+from app.api.awaiting_deps import waiting_items  # noqa: E402
 
 DB_URL = os.environ.get(
     "PERF_DB_URL", "postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433/cheese_perf"
@@ -52,9 +52,6 @@ def group_of(statement: str) -> str:
 async def main() -> None:
     engine = create_async_engine(DB_URL)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    from types import SimpleNamespace
-
-    chat = SimpleNamespace(live=SimpleNamespace(active_turn_ids={}))
 
     db_wall: dict[str, float] = defaultdict(float)
     db_calls: dict[str, int] = defaultdict(int)
@@ -90,7 +87,7 @@ async def main() -> None:
     async def once() -> float:
         start = time.process_time()
         async with factory() as db:
-            await waiting_items(db, chat, handle=VIEWER, user_id=None)
+            await waiting_items(db, handle=VIEWER, user_id=None)
         return time.process_time() - start
 
     await once()  # warm

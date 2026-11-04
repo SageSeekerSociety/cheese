@@ -17,6 +17,7 @@ rest of what the two ends share.
 import asyncio
 import re
 import uuid
+from collections.abc import AsyncIterator, Callable
 from http.cookies import CookieError, SimpleCookie
 
 import anyio
@@ -30,6 +31,7 @@ from app.api.preview_interstitial import (
     is_document_navigation,
     preview_unavailable_response,
 )
+from app.api.preview_runtime import HTML_MEDIA, inject_runtime_script
 from app.core.config import settings
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import (
@@ -112,9 +114,11 @@ def _app_cookies(value: str) -> list[str]:
 
 
 class _PreviewStreamingResponse(StreamingResponse):
-    def __init__(self, upstream):
+    def __init__(self, upstream, body: AsyncIterator[bytes] | None = None):
         self.upstream = upstream
-        super().__init__(upstream.iter_bytes(), status_code=upstream.status)
+        super().__init__(
+            upstream.iter_bytes() if body is None else body, status_code=upstream.status
+        )
 
     async def __call__(self, scope, receive, send):
         try:
@@ -139,6 +143,39 @@ def _response_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
         if name.lower() == "connection":
             dropped.update(part.strip().lower() for part in value.split(","))
     return [(k, v) for k, v in headers if k.lower() not in dropped]
+
+
+# 应用的网页和房间文件一样装上运行时桥：右栏的小浏览器靠它读出页面此刻的地址、替读者
+# 后退前进、在应用睡着之前留一份静态快照。脚本只插在文档开头那一段里（见
+# `inject_runtime_script`），所以只缓住前 64 KiB 找插入点，其余照旧边收边发——一份边渲
+# 染边吐的页面不会因此等到整页收完。
+_INJECT_PREFIX_BYTES = 64 * 1024
+
+
+def _injects(method: str, status: int, headers: list[tuple[str, str]]) -> bool:
+    """这一个应答是不是一份要装运行时的网页文档。
+
+    只认 GET 拿到的 200 HTML；被压缩过的不动——按字节插进一段 gzip 只会把它弄坏。
+    平台转发时已经拿掉了 accept-encoding，应用照理不会压缩，这一条是防它自作主张。
+    """
+    if method != "GET" or status != 200:
+        return False
+    fields = {k.lower(): v for k, v in headers}
+    media = fields.get("content-type", "").split(";", 1)[0].strip().lower()
+    encoding = fields.get("content-encoding", "identity").strip().lower()
+    return media in HTML_MEDIA and encoding in {"", "identity"}
+
+
+async def _with_runtime(chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    head = bytearray()
+    async for chunk in chunks:
+        head.extend(chunk)
+        if len(head) >= _INJECT_PREFIX_BYTES:
+            yield inject_runtime_script(bytes(head))
+            async for rest in chunks:
+                yield rest
+            return
+    yield inject_runtime_script(bytes(head))
 
 
 async def relay_http(
@@ -210,9 +247,15 @@ async def relay_http(
             )
         kept = _response_headers(upstream.headers)
         media_type = next((v for k, v in kept if k.lower() == "content-type"), None)
-        response = _PreviewStreamingResponse(upstream)
+        inject = _injects(request.method, upstream.status, kept)
+        response = _PreviewStreamingResponse(
+            upstream, _with_runtime(upstream.iter_bytes()) if inject else None
+        )
         # Keep app sessions without allowing an app to replace preview auth.
         for name, value in kept:
+            if inject and name.lower() == "content-length":
+                # 插进去的那一行改了长度；不写长度，交给分块传输。
+                continue
             if name.lower() == "set-cookie":
                 for cookie in _app_cookies(value):
                     response.headers.append("set-cookie", cookie)
@@ -233,10 +276,31 @@ async def relay_http(
                 await upstream.aclose()
 
 
+#: A message from the page shorter than this that names a ping or heartbeat
+#: is the page's own keep-alive (Next.js pings its dev server every few
+#: seconds), sent whether or not anybody is there.
+KEEPALIVE_MOST = 128
+
+
+def is_keepalive(text: str | None, data: bytes | None) -> bool:
+    """Whether a message from the page is only its socket's keep-alive."""
+    if data is not None:
+        return False
+    said = (text or "").lower()
+    return len(said) < KEEPALIVE_MOST and ("ping" in said or "heartbeat" in said)
+
+
 async def relay_ws(
-    websocket: WebSocket, topic_id: uuid.UUID, seat: str, *, instance: str | None = None
+    websocket: WebSocket,
+    topic_id: uuid.UUID,
+    seat: str,
+    *,
+    instance: str | None = None,
+    on_use: Callable[[], None] | None = None,
 ) -> None:
-    """Pump the authorized preview's HMR socket without holding a DB session."""
+    """Pump the authorized preview's HMR socket without holding a DB session.
+    ``on_use`` is called for each message the page sends that is not a
+    keep-alive: someone is using the app, not only holding it open."""
     hub = connection_hub(websocket)
     stream = hub.open_stream(topic_id, seat)
     if stream is None:
@@ -267,7 +331,7 @@ async def relay_ws(
         meta, _ = wire.decode_meta(payload)
         subprotocol = str(meta.get("subprotocol") or "") or None
         await websocket.accept(subprotocol=subprotocol)
-        await _pump(websocket, stream)
+        await _pump(websocket, stream, on_use)
     except (TimeoutError, ValueError, OSError, RuntimeError, WebSocketDisconnect):
         pass
     finally:
@@ -279,7 +343,11 @@ async def relay_ws(
                 pass
 
 
-async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
+async def _pump(
+    browser: WebSocket,
+    stream: PreviewStream,
+    on_use: Callable[[], None] | None = None,
+) -> None:
     """Run both directions until either side closes, then tear the other down."""
 
     async def browser_to_app() -> None:
@@ -311,6 +379,8 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
                     await browser.close(code=1009, reason="preview message too large")
                     return
                 if payload:
+                    if on_use is not None and not is_keepalive(text, data):
+                        on_use()
                     await stream.send(wire.OP_WS_MSG, payload)
         except (WebSocketDisconnect, OSError, RuntimeError):
             return

@@ -23,7 +23,7 @@ import { useEventListener } from '@vueuse/core'
 
 import { useErrorFade } from '../../components/room/composables/useErrorFade'
 import { useRoomSocket } from '../../components/room/composables/useRoomSocket'
-import { runRecordOf, threadStatusOf } from '../../components/room/composables/useRunRecords'
+import { runRecordOf, streamAt, threadStatusOf } from '../../components/room/composables/useRunRecords'
 import { renderNoticeMessage } from '../../lib/noticeText'
 import { ANNOUNCED, SNAPSHOT_RESOURCES } from '../chatPanelContract'
 import { applyRoomState } from '../useRoomResync'
@@ -202,7 +202,7 @@ export function usePanelSocket(deps: {
     // 平台运行中记下的一件事：不进对话，现场和状态行读它。
     const recorded = runRecordOf(frame)
     if (recorded) {
-      deps.runRecords.receive(recorded)
+      deps.runRecords.receive(recorded, streamAt(frame))
       toSite(recorded)
     }
     const told = threadStatusOf(frame)

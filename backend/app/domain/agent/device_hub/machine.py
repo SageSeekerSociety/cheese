@@ -33,8 +33,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("app.domain.agent.device_hub")
 
-#: A request bigger than this is refused: 512 MiB, the task backup bundle limit
-#: (`routes/git_http.py`), plus its HTTP head.
+#: A request bigger than this is refused. The largest body a sandbox sends
+#: through this socket is a Git push relayed to the forge (`forge_token.py`),
+#: so the ceiling leaves room for a repository object rather than the small
+#: JSON calls the CLI usually makes; the extra 64 KiB covers the HTTP head.
 MAX_REQUEST_BYTES = 512 * 1024 * 1024 + 64 * 1024
 #: Bodies past this size stream to the handler as frames arrive instead of
 #: waiting in memory for the end of the request.

@@ -523,8 +523,7 @@ class PlatformHost:
         on_the_machine(self.invoke, "true", f"{self.call_id}-wait", timeout_ms=60000)
 
     def sync_task(self, task_id):
-        # Pushing can include uploading a backup bundle; the CLI's own ceiling for
-        # that upload is two minutes, the Bash tool's is ten.
+        # A push to the forge can be slow; the Bash tool's ceiling is ten minutes.
         on_the_machine(
             self.invoke,
             "cheese sync --task " + shlex.quote(str(uuid.UUID(task_id))),

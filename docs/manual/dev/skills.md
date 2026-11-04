@@ -40,7 +40,7 @@ covers:
 
 仓库自己的 `AGENTS.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
 
-`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md`、`doc_blocks.md`、`doc_live.md` 生成）和 `miniapp`（由 `miniapp.md`、`doc_apps.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
+`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "lean", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md`、`doc_blocks.md`、`doc_live.md` 生成）和 `miniapp`（由 `miniapp.md`、`doc_apps.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
 
 技能的数量少、条件都要能判准，所以「读线上页面」（`cheese_web(action=fetch)` 工具）与「读 Figma 稿」（`showcase/scripts/figma.py`）不各立一颗，而是合进 `showcase`：它们本来也只在这一件事里用得上（把一个东西摆给人看）。技能池子（`_platform_catalog()`）按目录里有 `SKILL.md` 自动收，加内容不加名字，池子里的颗数不变。反过来，一整件事、别处用不上的才单立一颗：`mcp-builder`（要把某个外部 API 接给 AI、写一台 MCP server 时加载）与那几颗不重叠，就自成一颗，它的 `scripts/smoke.py` 是「接进项目之前必须绿」的那条自检。
 
@@ -63,7 +63,7 @@ covers:
 
 芝士用两个平台工具提：`cheese_skill(action=propose)` 起草新的一份，`cheese_skill(action=update)` 提议改已有的一份。什么时候该提写在系统提示词的「项目技能」一节，和记忆说明并列：单条规则进记忆，同一类事攒成一整套才打包成项目技能；五个条件写在 `cheese_skill(action=propose)` 的工具说明里。
 
-- **依据跟着草稿走。** 起草时带上 `taught`（用户为这类事教过哪几处）、`accepted`（这次怎么算做成的）、`related`（和最接近的已有技能比过没有；芝士写成技能 id 的，存的时候换成那份技能的名称）、`absorbs`（这项技能吸收掉的 team 记忆）；改的时候带 `reason`。它们存在行上的 `proposal` 里，提出它的那段对话底部那张提议卡（`SkillProposalCard`，数据在 `useSkillProposals`）把它们摆给人看，人在卡上点「保存」或「不保存」。保存或人改过之后 `proposal` 清空。
+- **依据跟着草稿走。** 起草时带上 `taught`（用户为这类事教过哪几处）、`accepted`（这次怎么算做成的）、`related`（和最接近的已有技能比过没有；芝士写成技能 id 的，存的时候换成那份技能的名称）、`absorbs`（这项技能吸收掉的 team 记忆）；改的时候带 `reason`。它们存在行上的 `proposal` 里。对话里那一行提议画成一张小卡片（`RoomNotice` 的 `WorkCard`），标「待确认」；点开在频道页右侧的面板里打开（`WorkPanel` 的 `#skill` 插槽，页面用 `SkillProposalCard` 画、数据在 `useSkillProposals`），人读完点「保存」或「不保存」。支线、私聊和手机上没有这块面板，点开去项目的技能页。保存或人改过之后 `proposal` 清空。
 - **门槛只管芝士，不管人**（`_admit_proposal`）：人拒绝过的同名技能不再提；一段对话同时只有一份提议在等人；项目里的技能到了 `PROPOSAL_LIMIT = 20` 项，芝士不再新建，改为提议合并或修改。人自己新建不受这几条限制。
 - **拒绝留痕。** `decline()` 把从没保存过的新提议记成 `declined`（列表里不出现，名字仍被它占着，人自己写同名的一份时把它替掉）；对已保存技能的改动退回保存的那一版。技能页上对芝士草稿点「不保存」走的也是这一步。
 - **保存时吸收记忆。** `confirm` 时，`proposal.absorbs` 列出的 team 记忆连同 `MEMORY.md` 里指向它们的那几行一起删掉（`MemoryFileStore.forget`），同一条规则不留两份。只收 team 下的记忆：项目技能是全项目共用的，个人偏好不并进去。

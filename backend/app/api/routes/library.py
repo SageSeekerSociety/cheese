@@ -152,8 +152,7 @@ async def library_file_link(
     await _reader(project_id, db, resolver)
     shelf = await shelf_for(db, project_id)
     name = _library_path(path.strip().removeprefix("library/"))
-    stored = await library_records.stored_file(db, shelf, name)
-    url = await library_records.download_url(db, shelf, name)
+    stored, url = await library_records.download_link(db, shelf, name)
     return ok({"url": url, "path": name, "bytes": stored.size})
 
 

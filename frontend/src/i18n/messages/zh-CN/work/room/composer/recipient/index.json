@@ -1,0 +1,5 @@
+{
+  "closedAsk": "任务已关闭，这条不会再自动交给{name}",
+  "closedAskAgent": "{'@'}{name}",
+  "closedAskPost": "仅发布讨论"
+}

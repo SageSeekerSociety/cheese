@@ -52,6 +52,8 @@
     "imageFailed": "Couldn't load the image (HTTP {status})",
     "fileReadFailed": "Couldn't read the file (HTTP {status})",
     "downloadFailed": "Download failed (HTTP {status})",
+    "downloadUnreachable": "Download failed — the network is unreachable. Check your connection and try again.",
+    "downloaded": "Downloaded to your browser's current download folder",
     "revisionFileName": "{name} (version {seq}){ext}"
   },
   "dialog": {

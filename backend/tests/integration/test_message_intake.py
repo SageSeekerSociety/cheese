@@ -172,7 +172,7 @@ async def test_disconnect_during_work_does_not_lose_output_or_leave_the_turn_ope
         await finish_turn(chat, topic)
         async with factory() as independent:
             history = await BlockRepository(independent).list_for_topic(topic)
-            output = await session_records.read(independent, topic)
+            output = await session_records.read(independent, topic, reader=None)
             turns = list(
                 await independent.scalars(
                     select(AgentTurn).where(AgentTurn.conversation_id == topic)

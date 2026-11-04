@@ -195,11 +195,15 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
 </script>
 
 <template>
-  <!-- data-agent-select: a project document has its own 芝士 on a selection (the document box), so the person's
-       问芝士 does not show there; a team's document has none, and selecting text in it offers 问芝士 -->
+  <!-- data-agent-select: a document whose editor offers its own 芝士 on a selection (the document box's
+       bubble, which appears exactly when there is an agent to ask) hides the person's 问芝士 there — two
+       buttons on one selection is what the reader complained about. A team's document has no doc 芝士
+       (`agent-handle` is null), so selecting text in it still offers 问芝士.
+       The condition is the agent, not `document.projectId`: a task's live document is opened by `taskId`
+       with no `document` prop at all, and it does have the box's 芝士 — that is this bug. -->
   <PanelDocView
     ref="viewRef"
-    :data-agent-select="props.document?.projectId ? 'off' : 'on'"
+    :data-agent-select="props.agentHandle ? 'off' : 'on'"
     :topic="props.topic"
     :document="props.document ? { ...props.document, title } : null"
     :deleted="doc.deleted.value"

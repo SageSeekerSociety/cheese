@@ -2,7 +2,6 @@
 import type { FeedbackProposal } from '@/cx_types'
 
 import { onMounted, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { useNavigation } from '@/composables/useNavigation'
 
@@ -14,6 +13,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
+import { toast } from '@/lib/toast'
 import { keys } from '@/query/keys'
 import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
 import { useFeedbackStore } from '@/stores/feedback'

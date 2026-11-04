@@ -5,6 +5,7 @@ import { computed } from 'vue'
 
 import { t } from '@/i18n'
 import { quoteSummary } from '@/lib/quoteSummary'
+import { webPickLabel } from '@/lib/webPickLabel'
 
 const props = defineProps<{ quote: QuotedContext }>()
 
@@ -24,10 +25,10 @@ const identityLine = computed(() => {
     t('work.room.preview.readVersion', { version: quote.version })
   )
 })
-/** 网页引用说明在哪：有选择器就说选择器，否则说网址。 */
+/** 网页引用说明在哪：圈中的一处说它的名字（标题或标签），应用上框的一块说网址。 */
 const webWhere = computed(() => {
   const quote = props.quote
-  if (quote.kind === 'web-element' || quote.kind === 'web-text') return quote.selector
+  if (quote.kind === 'web-element' || quote.kind === 'web-text') return webPickLabel(quote.label, quote.tag)
   if (quote.kind === 'web-region') return quote.url
   return ''
 })

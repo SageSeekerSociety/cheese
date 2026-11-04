@@ -10,14 +10,15 @@ ALICE = session_auth_headers("alice")
 
 
 def _grant_mentors(client, pid: str, *, edit_settings: bool) -> None:
-    grants = client.get(f"/projects/{pid}/roles", headers=ALICE).json()["data"][
-        "grants"
-    ]
-    mentor = [g for g in grants["mentor"] if g != "edit_settings"]
+    roles = client.get(f"/projects/{pid}/roles", headers=ALICE).json()["data"]["roles"]
+    role = next(r for r in roles if r["template"] == "mentor")
+    mentor = [g for g in role["permissions"] if g != "edit_settings"]
     if edit_settings:
         mentor.append("edit_settings")
-    changed = client.put(
-        f"/projects/{pid}/roles", json={"grants": {"mentor": mentor}}, headers=ALICE
+    changed = client.patch(
+        f"/projects/{pid}/roles/{role['key']}",
+        json={"permissions": mentor},
+        headers=ALICE,
     )
     assert changed.status_code == 200, changed.text
 

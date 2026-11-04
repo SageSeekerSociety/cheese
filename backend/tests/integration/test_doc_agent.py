@@ -38,6 +38,7 @@ from app.domain.agent.service import AgentMessage, AgentResult
 from app.domain.agent.session_host.contract import SessionRef, StartAbandoned
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from app.main import app
 from tests.integration.conftest import (
     post_message,
@@ -380,6 +381,7 @@ def test_the_team_memory_is_read_in_full(client, sessions):
                 content="部署走 CI，周五不发版。",
                 updated_by="alice",
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
             await db.commit()
 

@@ -23,6 +23,7 @@ from app.api.task_teaching import (
     validate_task_teaching,
 )
 from app.auth import task_roles as task_seats
+from app.core.content_review import TextKind, readable_text, review_text
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -135,6 +136,21 @@ async def update_task(
     # （`package.record`），提交内容或评分要点变了，领过这道题的人还会收到一条通知。
     # 发布页保存时整份带上这些，没改也一样，所以比的是内容，不是带没带。
     package_before = await _package_parts(service, task)
+
+    # What an open space's problem says is published; see ``_create_task_entity``.
+    space = await SpaceRepository(session=db).get_by_id(task.space_id)
+    if space is not None and space.open_scope is not None:
+        await review_text(
+            TextKind.PUBLIC_TEXT,
+            [
+                payload.name if payload.name != task.name else None,
+                payload.intro if payload.intro != task.intro else None,
+                readable_text(payload.description)
+                if payload.description is not None
+                and payload.description != task.description
+                else None,
+            ],
+        )
 
     # 基本字符串字段
     if payload.name is not None:

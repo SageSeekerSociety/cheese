@@ -305,6 +305,9 @@ def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
     rooms, machine_service, monkeypatch
 ):
     monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 256)
+    # No swap: with some, what does not fit is swapped out instead of killed,
+    # which is what the swap is for, and not what this asks.
+    monkeypatch.setattr(settings, "cloud_sandbox_swap_mb", 0)
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
 
     result = room.bash(
@@ -603,6 +606,114 @@ def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
     assert answer.returncode == 0, answer.stderr
     assert int((group / "memory.current").read_text()) < held - (200 << 20)
     assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_swap_and_freezing_are_refused_for_another_users_sandbox(
+    rooms, machine_service
+):
+    """One session may change the swap and the frozen state of its own sandbox
+    and no other's: both are asked for by name, and a name that is not the
+    caller's cgroup is refused."""
+    rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    # A sandbox `up` never made for this caller: the installed helper, run the
+    # way a session runs it, refuses the name before touching any cgroup.
+    other = str(uuid.uuid4())
+    for argv in (["swap", other, "0"], ["freeze", other], ["thaw", other]):
+        answer = subprocess.run(
+            ["sudo", "-n", bootstrap.SANDBOX_HOST, *argv],
+            capture_output=True,
+            text=True,
+        )
+        assert answer.returncode == 2, answer.stdout + answer.stderr
+        assert "not the caller's sandbox" in answer.stderr
+
+
+@with_sandbox_host
+def test_a_frozen_sandbox_runs_nothing_until_it_is_thawed(rooms, machine_service):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    name = str(room.resource)
+    # What freezing must keep: the sandbox's processes, all of them. Its
+    # memory is no measure — the kernel may reclaim a little cache meanwhile.
+    before = set((sandbox_host.CGROUP / name / "cgroup.procs").read_text().split())
+    assert before
+
+    for command, state in (("freeze", "1"), ("thaw", "0")):
+        answer = subprocess.run(
+            ["sudo", "-n", bootstrap.SANDBOX_HOST, command, name],
+            capture_output=True,
+            text=True,
+        )
+        assert answer.returncode == 0, answer.stderr
+        events = (sandbox_host.CGROUP / name / "cgroup.events").read_text()
+        assert f"frozen {state}" in events
+
+    after = set((sandbox_host.CGROUP / name / "cgroup.procs").read_text().split())
+    assert before <= after
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_a_sandbox_uses_the_swap_it_is_given_and_a_later_step_changes_it(
+    rooms, machine_service
+):
+    """A running sandbox starts with `cloud_sandbox_swap_mb` of the host's
+    swap; `swap` is how a later step (freezing, thawing) changes it, and the
+    kernel then reports it against that sandbox."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    group = sandbox_host.CGROUP / str(room.resource)
+    assert int((group / "memory.swap.max").read_text()) == (
+        settings.cloud_sandbox_swap_mb << 20
+    )
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "swap", str(room.resource), "64"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert json.loads(answer.stdout)["swap_max"] == 64 << 20
+    assert int((group / "memory.swap.max").read_text()) == 64 << 20
+
+
+@with_sandbox_host
+def test_a_sandbox_has_no_softer_limit_below_its_memory_limit(rooms, machine_service):
+    """Its memory limit is the one limit: no `memory.high` to throttle it
+    below, and the kernel kills one process at a time, not the group the
+    sandbox's executor is in."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    group = sandbox_host.CGROUP / str(room.resource)
+
+    assert int((group / "memory.max").read_text()) == (
+        settings.cloud_sandbox_memory_mb << 20
+    )
+    assert (group / "memory.high").read_text().strip() == "max"
+    assert (group / "memory.oom.group").read_text().strip() == "0"
+
+
+@with_sandbox_host
+def test_reclaiming_a_running_sandbox_drops_cache_and_leaves_its_swap_as_it_was(
+    rooms, machine_service
+):
+    """The idle reclaim shuts a running sandbox's swap only while it runs:
+    what its processes hold stays in memory, and the swap it had is back
+    after."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    name = str(room.resource)
+    group = sandbox_host.CGROUP / name
+    before = (group / "memory.swap.max").read_text()
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "reclaim", name],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert name in json.loads(answer.stdout)["reclaimed"]
+    assert (group / "memory.swap.max").read_text() == before
+    assert int((group / "memory.swap.current").read_text()) == 0
 
 
 @pytest.mark.parametrize(("total_gib", "kept_gib"), [(4, 1), (8, 2), (16, 4), (2, 1)])
@@ -911,6 +1022,12 @@ def test_a_sandboxed_rooms_terminal_marker_ends_no_terminal(tmp_path, monkeypatc
         ["down", "*"],
         ["exec", str(uuid.uuid4())],
         ["up", str(uuid.uuid4()), "100", "--site", "70000"],
+        ["swap", str(uuid.uuid4()), str((1 << 20) + 1)],
+        ["swap", str(uuid.uuid4()), "-1"],
+        ["swap", str(uuid.uuid4()), "1G"],
+        ["swap", "../etc", "0"],
+        ["freeze", "*"],
+        ["thaw", str(uuid.uuid4()) + ";id"],
     ],
 )
 def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
@@ -918,6 +1035,33 @@ def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
         [sys.executable, str(HELPER), *argv], capture_output=True, text=True
     )
     assert result.returncode == 2, result.stderr
+
+
+def test_the_sandbox_helper_parses_swap_and_freezing_before_it_runs_anything():
+    """The three commands the freezing step will use are read the same way as
+    the ones the lifecycle runs today: by name and number, refusing anything
+    else, before root touches a cgroup."""
+    name, other = str(uuid.uuid4()), str(uuid.uuid4())
+
+    assert sandbox_host.parse(["swap", name, "0"]) == ("swap", {"name": name, "mib": 0})
+    assert sandbox_host.parse(["swap", name, str(1 << 20)]) == (
+        "swap",
+        {"name": name, "mib": 1 << 20},
+    )
+    assert sandbox_host.parse(["freeze", name, other]) == (
+        "freeze",
+        {"names": [name, other]},
+    )
+    assert sandbox_host.parse(["thaw", name]) == ("thaw", {"names": [name]})
+    for argv in (
+        ["swap", name],
+        ["swap", name, "-1"],
+        ["swap", name, str((1 << 20) + 1)],
+        ["freeze"],
+        ["thaw", ""],
+    ):
+        with pytest.raises(sandbox_host.Refused):
+            sandbox_host.parse(argv)
 
 
 def test_the_sandbox_helper_takes_only_the_home_of_the_sandbox_it_starts():

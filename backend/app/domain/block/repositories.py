@@ -39,6 +39,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant
@@ -67,6 +68,7 @@ from app.domain.block.paging import BlockPage, PagingQueries  # noqa: F401
 from app.domain.block.reactions import Reactions
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
+from app.domain.notice_meta import shaped
 
 
 class BlockRepository(
@@ -134,6 +136,11 @@ class BlockRepository(
             and not (looks_like_agent_handle(author) and turn_id is not None)
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
+        # A platform line nobody needs to read is kept out of the room as it is
+        # written (`notice_meta.shown_as`), so the conversation's pages hold
+        # only lines that are drawn.
+        if kind == BlockKind.event:
+            meta = shaped(meta, in_turn=turn_id is not None)
         # A platform sentence carries its key; the reader's screen renders it
         # in the reader's language (`app/core/sentences.py`).
         meta = with_keys(meta, content=content)
@@ -178,10 +185,31 @@ class BlockRepository(
         # (`seq`, from `FetchedValue`) on the row at flush, and `created_at` /
         # `updated_at` are Python-side defaults. Re-reading the row here bought
         # nothing and cost a whole-row SELECT on every block written.
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("block_row", block.id),
+                block,
+                tables=frozenset({"blocks"}),
+            )
         return block
 
     async def get(self, block_id: uuid.UUID) -> Block | None:
-        return await self._session.get(Block, block_id)
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("block_row", block_id))
+            if found:
+                return cached
+        block = await self._session.get(Block, block_id)
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("block_row", block_id),
+                block,
+                tables=frozenset({"blocks"}),
+            )
+        return block
 
     async def many(self, block_ids: Collection[uuid.UUID]) -> list[Block]:
         """These blocks, those that exist, in no particular order."""

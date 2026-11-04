@@ -44,8 +44,9 @@ from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import room_column
 from app.domain.identity.handles import agent_handle_column
-from app.domain.project.models import Project, ProjectRole
+from app.domain.project.models import Project, ProjectRole, ProjectRoleDef
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import Template
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.topic.models import Topic, not_a_private_chat
@@ -255,11 +256,14 @@ class SpaceLearningService:
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
+                # A mentor's own words are not a student's question: the role
+                # is known by its template mark, whatever the project calls it.
                 ~select(ProjectRole.id)
+                .join(ProjectRoleDef, ProjectRoleDef.id == ProjectRole.role_id)
                 .where(
                     ProjectRole.project_id == Block.project_id,
                     ProjectRole.user_handle == Block.author,
-                    ProjectRole.role == "mentor",
+                    ProjectRoleDef.template == Template.mentor.value,
                 )
                 .exists(),
                 # 私聊和私密频道都不属于管理员看板：说话的人只给在场的人看。

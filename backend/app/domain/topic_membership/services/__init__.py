@@ -100,6 +100,7 @@ class TopicMemberService:
         """Does ``actor`` manage this channel: its creator, or someone who
         manages the project? A team always has an owner, so every channel has
         someone who can."""
+        await self._repo.list_for_topic(topic.id)
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
         if topic.members_only and member is None:
             # Nobody manages a private channel they cannot see.
@@ -170,13 +171,15 @@ class TopicMemberService:
         batch: whoever manages the project manages all of them."""
         if not topics:
             return set()
+        owned = await self._repo.topic_ids_for_member(
+            [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
+        )
+        if len(owned) == len({t.id for t in topics}):
+            return owned
         if await may(
             self._session, topics[0].project_id, actor, Permission.manage_channels
         ):
             return {t.id for t in topics}
-        owned = await self._repo.topic_ids_for_member(
-            [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
-        )
         if not self._is_agent_handle(actor):
             candidates = [
                 t
@@ -211,7 +214,9 @@ class TopicMemberService:
     ) -> dict[uuid.UUID, int]:
         """How many people and AI teammates are in each of these channels:
         their seats, and for 综合 everyone in the project."""
-        counts = await self._repo.counts_for_topics([t.id for t in topics])
+        counts = await self._repo.counts_for_topics(
+            [t.id for t in topics if t.kind != TopicKind.root]
+        )
         roots = [t for t in topics if t.kind == TopicKind.root]
         if roots:
             # deferred-import: cycle membership.roster -> topic_membership.services
@@ -239,13 +244,9 @@ class TopicMemberService:
         """Everyone in the project who is a person: whom a channel's work may be
         handed to."""
         # deferred-import: cycle membership.roster -> topic_membership.services
-        from app.domain.membership.roster import roster
+        from app.domain.membership.roster import people_in_project
 
-        return [
-            m.handle
-            for m in await roster(self._session, project_id, team=team)
-            if not m.agent
-        ]
+        return await people_in_project(self._session, project_id=project_id, team=team)
 
     async def joined_topic_ids(
         self, topics: list[Topic], handle: str, *, team: ProjectTeam
@@ -482,6 +483,7 @@ class TopicMemberService:
         """May ``actor`` archive this channel or name who manages it without
         being in it: its owner, or whoever manages the project. Seeing what is
         said in a private channel still takes a seat (:meth:`manages`)."""
+        await self._repo.list_for_topic(topic.id)
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
         if (
             member is not None and member.role == TopicRole.owner
@@ -520,16 +522,21 @@ class TopicMemberService:
         topic = await self.require_administrator(topic_id, actor)
         if topic.kind == TopicKind.root:
             raise ValidationError(say("channelGeneralNoManager"))
-        if self._is_agent_handle(handle) or await IdentityService(
-            self._session
-        ).is_agent(handle):
+        is_agent = self._is_agent_handle(handle)
+        if not is_agent and not await self._on_project(
+            topic.project_id, handle, team=team
+        ):
+            if not await IdentityService(self._session).is_agent(handle):
+                raise ValidationError(say("topicAddProjectMembersOnly"))
+            is_agent = True
+        if is_agent or await IdentityService(self._session).is_agent(handle):
             raise ValidationError(say("channelManagerPersonOnly"))
-        if not await self._on_project(topic.project_id, handle, team=team):
-            raise ValidationError(say("topicAddProjectMembersOnly"))
+        seat: TopicMembership | None = None
         for member in await self._repo.list_for_topic(topic_id):
-            if member.role == TopicRole.owner and member.member_handle != handle:
+            if member.member_handle == handle:
+                seat = member
+            elif member.role == TopicRole.owner:
                 member.role = TopicRole.member
-        seat = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if seat is None:
             await self._repo.add(
                 topic_id=topic_id, member_handle=handle, role=TopicRole.owner

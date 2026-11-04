@@ -79,8 +79,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.1 对话与召唤 @芝士  ✅
 
-- **行为**：输入栏发消息，默认**不** @芝士（人与人对话）；**正文里 @ 了它**它才回复——发送键旁的队友头像和 ⌘/Ctrl+Enter 是把那个 @ 写进正文的两个入口（右键或长按头像换一位队友），不是另一个开关。所有消息都会进库；**未 @ 的消息芝士下次被召唤时也会看到**，每条带 `[发言人]:` 标签（多人频道里芝士能分清谁说的，Batch I）。回复一条消息并 @ 它，被回复的那条原文跟着这次回复一起给它：那条往往已经被前一轮读过，不在待读里。
-- **实现**：发消息是 `POST /api/topics/{id}/messages`（`backend/app/api/routes/topics_messages.py`），人和 AI 队友走同一条路由，按发送者在这个房间里的席位决定它是人说的话还是队友的发言；房间里落下的东西经 WebSocket `/api/rooms/live`（`backend/app/api/routes/chat.py`）推给所有在看的人：一个页面一条连接，看着的每个房间在上面订阅、退订，这条 socket 不写任何东西。一轮失败之后的「重试」是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把没读到的消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
+- **行为**：输入栏发消息，默认**不** @芝士（人与人对话）；**正文里 @ 了它**它才回复——发送键旁的队友头像和 ⌘/Ctrl+Enter 是把那个 @ 写进正文的两个入口（右键或长按头像换一位队友），不是另一个开关。所有消息都会进库；**未 @ 的消息芝士下次被召唤时也会看到**，每条带 `[发言人]:` 标签（多人频道里芝士能分清谁说的，Batch I）。回复一条消息并 @ 它，被回复的那条原文跟着这次回复一起给它：那条往往已经被前一轮读过，不在待读里。发送键旁那颗头像画的是后端对这份草稿的判定（睁眼交给、闭眼不交给），不是浏览器另算的一份；头像旁不写字，交给谁由正文里的 @ 标签说，交给过芝士的支线里输入框空着时写「回复芝士…」；一条谁也没交给的消息，在发的人看起来在等芝士时（频道里只有他，或者他在这里的上一条是交给芝士的），芝士在它下面对发的人一个人说「这条没有交给我，我不会回复。要交给我吗？」（「仅你可见」，`EphemeralNotice`）；打字时任务被关闭，草稿留着，第一次发送就地问「@芝士」还是「仅发布讨论」。
+- **实现**：发消息是 `POST /api/topics/{id}/messages`（`backend/app/api/routes/topics_messages.py`），人和 AI 队友走同一条路由，按发送者在这个房间里的席位决定它是人说的话还是队友的发言；房间里落下的东西经 WebSocket `/api/rooms/live`（`backend/app/api/routes/chat.py`）推给所有在看的人：一个页面一条连接，看着的每个房间在上面订阅、退订，这条 socket 不写任何东西。头像问「交给谁」用的是 `POST /api/topics/{id}/messages/addressing`：它照发送时的同一套读法（`agent.turn.intake.human.preview_addressing`）回答会为哪位队友开一轮、按哪条规矩，以及 @ 到了哪些人，不写任何东西。发送时带 `expects_agent` 的一条，此刻读来已经不交给任何队友，就不落库、回 409 `AddressingChanged`，带着此刻的回答；落了库、谁也没交给（没 @ 队友也没 @ 人）的一条，频道里只有发的人（「综合」算整个项目的人）时回答里带 `unasked: "alone"`，发的人在这段对话里的上一条是交给队友的时带 `unasked: "after_agent"`（`agent.mentions.unasked`），只在这次回答里，不落库。一轮失败之后的「重试」是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把没读到的消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
   帧：`user_block` → `delta`*（流式 token）→ `tool`*（工具调用：原生 Bash/Write/Edit/Read + cheese Skill）→ `assistant_block` → `done`（或 `error`）。
   编排：`converse`（`backend/app/domain/agent/turn/intake/preparation/streaming.py`）：存用户块+拼带标签的上下文+加载记忆 → 流式（不持事务）→ 存芝士消息 + token 用量；工具调用不再写成事件块，只留在会话原始记录里（`docs/manual/dev/session-records.md`）。每个座位一条跨进程租约串行（`admission.Lease`，见[串行只在座位内](/dev/turn#seats-serial)）。
 
@@ -171,12 +171,12 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.12 反馈（Feedback）  ✅ 主干 / 🟡 附件
 
 - **行为**：平台自带反馈系统，人和芝士都走同一条链路。
-  - **人提反馈**：反馈中心（`/feedback`）按 Tab 筛选（全部 / 我的 / 待处理…），提交时选类型（bug / 建议 / 其他…）和可见性；每条有个人类可读编号 `display_no`（如 `FB-7`，由 PG 序列 `feedback_seq` 生成）。
+  - **人提反馈**：反馈中心（`/feedback`）按 Tab 筛选（全部 / 热门 / 已完成；另有「我的反馈」一页），提交时选类型（bug / 建议 / 其他…）和可见性；每条有个人类可读编号 `display_no`（如 `FB-7`，由 PG 序列 `feedback_seq` 生成）。
   - **芝士主动提**：芝士在频道里干完活，可以直接把一条反馈**作为提案卡**发进对话流（`cheese_feedback(action=propose)`）。卡上最显眼的是**「你当时说的」**（引用用户原话；用户没就此说过话时提案带 `user_said_absent`，卡上不出这个标题，只写一行「用户没有就此说过话（芝士主动发现）」），下面才是判断依据 / 发生了什么 / 复现 / 证据；用户点**采纳**才真的建出反馈（提交者=点的人，作者=卡上的芝士），点**不用**按**指纹**记一条 dismissal，同一指纹不再出现。每频道每天限 2 条（`settings.feedback_proposals_per_topic_per_day`），超了回 412 并说明是三道限流里的哪一道。
   - **可见性**：`public` / `private`。私密条目只有提交者本人、平台管理员、以及「提出它时在那个房间里、且今天还读得到那个房间」的人看得到（结论 47 的三档；房间来源只有发送提案卡那条路留得下，`topic_id` 不是请求体字段），列表对别人不显示（对无权者与不存在是同一个 404），且没有支持按钮、只挂一个中性的「私密」标签。平台管理员白名单是 `settings.platform_admin_handles`（环境变量 `PLATFORM_ADMIN_HANDLES`，旧名 `FEEDBACK_ADMIN_HANDLES` 仍认；部署必填，见 `AdminService`）。
   - **互动**：评论（可删自己的）、支持（一人一次，可取消）。
   - **管理端**（`/admin/feedback`）：改状态 / 优先级、指派负责人、标安全（`security` 是 `private` 之下的**读时收窄**——公开条目一旦标上，读路径也按私密鉴权）、加备注（只增不改）。管理端**没有**「转为公开」按钮：可见性由提交者定，管理员不能替他把私密的东西亮出来。
-  - **默认筛选**：已解决的 **bug** 沉底不展示，其他类型的已解决项照常显示。
+  - **默认筛选**：没有。2026-10-28 起「全部」装所有公开反馈（不论类型、不论是否办完）——此前「已解决的 bug 沉底」那条已撤销，因为它让「全部」比「已完成」还少，而屏幕上没有一句话解释少掉的那些去哪了。状态筛选只列当前栏位里真能出现的状态。
 - **实现**：`backend/app/domain/feedback/`（`models.py` / `repositories.py` / `services.py` / `schemas.py` / `proposals.py`）；路由 `api/routes/feedback.py`（`/api/feedback`）、`admin_feedback.py`（`/api/admin/feedback`）、`admin_members.py`（`/api/admin/admins`，成员管理）、`feedback_proposals.py`（`/api/topics/{id}/feedback-proposals`）；平台管理员那一域在 `backend/app/domain/admin/`。**提案卡就是一条 `kind=message` 的 `Block`**（`meta.feedback_proposal`），不另开表；「采纳」在该块上落锁并建反馈，作者从卡上取、提交者取调用者。前端 `views/feedback/`（中心 / 详情 / 管理端 / 设计图）、`components/feedback/`、`stores/feedback.ts`、`api.ts`；对话流里那张卡是 `components/feedback/AgentFeedbackCard.vue`（`TopicChatColumn` 挂载）。
 - 🟡 附件上传未接：表单里按钮是灰的并写明原因（等后端字段）。🟡 管理端指派是自由输入 handle（平台级页面拿不到项目成员名册）。
 

@@ -163,6 +163,10 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
   padding: 8px 0;
   font-size: 13px;
   color: var(--text);
+  /* 这一栏**不**挂「离屏跳过」（content-visibility）。它的重内容（命令输出、思考
+     正文）都收在 <details> 里，浏览器本来就不排版收起的那部分——线上量过，一页
+     254KB 正文只有 4.4KB 真被排版。加到行上没有可省的，反而让展开详情后滚动更慢
+     （布局 70ms → 280ms）。 */
 }
 /* 此刻才到的一行：淡入并从下面 4px 升到位（见 `arriving`），和对话栏的新消息同一个
    动作。只动透明度和位置——高度不变，底部那个「钉住」就看不见它，读者不会被推走。 */

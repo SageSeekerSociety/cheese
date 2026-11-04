@@ -245,7 +245,7 @@ async def test_a_large_body_streams_across_frames_without_waiting_for_the_end(
 
     backend = FastAPI()
 
-    @backend.put("/machine/api/projects/p/git/tasks/t/snapshots/s")
+    @backend.post("/machine/api/sandbox/forge/p/repo.git/git-receive-pack")
     async def upload(request: Request):
         async for chunk in request.stream():
             if chunk:
@@ -265,7 +265,7 @@ async def test_a_large_body_streams_across_frames_without_waiting_for_the_end(
             "dev", {"t": "machine.open", "id": "s1", "path": STATE}
         )
         head = (
-            b"PUT /api/projects/p/git/tasks/t/snapshots/s HTTP/1.1\r\n"
+            b"POST /api/sandbox/forge/p/repo.git/git-receive-pack HTTP/1.1\r\n"
             b"host: platform.cheese\r\n"
             b"content-length: 24\r\n\r\n"
         )

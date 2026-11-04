@@ -59,14 +59,13 @@ async def _count(repository: pkg.FeedbackRepository, where: Sequence[Any]) -> in
 
 
 async def public_counts(repository: pkg.FeedbackRepository) -> dict[str, int]:
-    """The four tab numbers, in one round trip each — returned together.
+    """The three tab numbers, in one round trip each — returned together.
 
-    Four separate requests would render a row of 0s and then jump, and the
-    thing that jumps is the first thing on the page.
+    Separate requests would render a row of 0s and then jump, and the thing
+    that jumps is the first thing on the page.
     """
     where = list(PUBLIC_ONLY)
     all_count = await repository._count([*where, *repository._tab_where("all")])
-    active_count = await repository._count([*where, *repository._tab_where("active")])
     resolved_count = await repository._count(
         [*where, *repository._tab_where("resolved")]
     )
@@ -99,7 +98,6 @@ async def public_counts(repository: pkg.FeedbackRepository) -> dict[str, int]:
     return {
         "all": all_count,
         "hot": hot_count,
-        "active": active_count,
         "resolved": resolved_count,
         "deployed": deployed_count,
     }
@@ -299,7 +297,7 @@ async def unassigned_count(repository: pkg.FeedbackRepository) -> int:
     spans the private and security queues too, and that is the number the
     分诊台 acts on. It is therefore an **admin-only** read — `FeedbackService.
     counts` is the only caller and it only asks when the caller is an admin,
-    because this count, unlike the four tabs, describes rows the caller may
+    because this count, unlike the public tabs, describes rows the caller may
     not be allowed to open.
     """
     stmt = select(func.count(Feedback.id)).where(
@@ -329,7 +327,7 @@ async def admin_counts(repository: pkg.FeedbackRepository) -> dict[str, dict[str
       not sum to `total`.
     * `status` — every rung of the ladder, full board. This is the only place
       the four rungs are shown side by side; `public_counts` only ever had
-      `active` / `resolved` (a filter, not a partition — see `_tab_where`).
+      `resolved` (a filter, not a partition — see `_tab_where`).
     * `total` — the one-number answers. `open` / `closed` use the same
       `CLOSED_STATUSES` as everywhere else, so a fifth rung lands here too.
 

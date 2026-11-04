@@ -434,6 +434,10 @@ def screen_env(
         "CHEESE_HOME": place.home,
         "CHEESE_WORK": place.workdir,
     }
+    if place.homes:
+        # Where the machine's rooms are: the session is kept to its own
+        # (`remote_execution/namespace._keep_only`).
+        env["CHEESE_HOMES"] = place.homes
     if place.store:
         # Absent rather than empty, for the reason spelled out below: a screen
         # with no project (a probe, a fixture) has no project store, and the
@@ -604,6 +608,18 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # a tmux-hosted agent runs from a fresh server with a cwd of its own.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
+# Where the machine's rooms are, as the platform says (`MachinePlace.homes`):
+# the session is kept to its own room among them
+# (`remote_execution/namespace._keep_only`), and only when its home is one of
+# them. A home outside it (a probe, a fixture) is kept apart from its room's
+# other seats only.
+unset CHEESE_HOMES_ROOT
+CHS="${{CHEESE_HOMES:-}}"
+case "$CHS" in "\$HOME"*) CHS="$REAL_HOME${{CHS#\$HOME}}";; esac
+if [ -n "$CHS" ] && [ -d "$CHS" ]; then
+  CHS="$(cd "$CHS" && pwd -P)"
+  case "$HOME/" in "$CHS"/*) export CHEESE_HOMES_ROOT="$CHS" ;; esac
+fi
 # The session's temporary files go where the system keeps those it keeps on
 # disk (`/var/tmp`), one directory per room that its cleanup removes with it.
 # The machine's `/tmp` is often a tmpfs: what a session leaves there is memory

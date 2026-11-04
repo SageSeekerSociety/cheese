@@ -28,3 +28,12 @@ tauri-plugin-autostart = "2.5.1"
 strip = true
 lto = true
 opt-level = "s"
+
+# tao 0.35.3 as published, with one change in
+# src/platform_impl/macos/util/async.rs: a style-mask write keeps the window's own
+# NSWindowStyleMaskFullScreen bit. Unpatched, the mask tao queues when the window
+# leaves fullscreen can land after the window is back in fullscreen and clear the
+# bit, which macOS 26 answers by aborting the app. Drop this table once the tao
+# release tauri depends on carries the same fix.
+[patch.crates-io]
+tao = { path = "patches/tao" }

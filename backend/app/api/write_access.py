@@ -16,6 +16,10 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   What only an AI teammate does there — the write surface the ``cheese`` CLI
   alone calls — is a permission no person's role holds
   (``project_permissions.AGENT_ONLY``).
+- ``HOLDS_LINK``: the credential is a join link's token in the path, so there
+  is no object id for ``Can`` to judge before the token is read. Any signed-in
+  person reaches the handler; nobody signed in is refused here. The handler
+  resolves the token and answers 404 when it names nothing the link may open.
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
   itself (``ActorResolver`` and friends). The routes written before ``Can``
   judged every caller still declare it and move onto ``Can`` a batch at a
@@ -60,11 +64,13 @@ from app.auth.project_roles import AGENT_PERMISSIONS, may
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.sentences import say
+from app.domain.agent_instance.facts import project_agents_ride_along
 from app.domain.identity.actor import Actor
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission as ProjectPermission
 from app.domain.room_task.place import Place, place_or_404
+from app.domain.topic_membership.services import TopicMemberService
 
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -73,7 +79,7 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class WriteAccess:
     """One declaration: which callers reach the handler."""
 
-    kind: Literal["route_decides", "can"]
+    kind: Literal["route_decides", "can", "holds_link"]
 
     @property
     def name(self) -> str:
@@ -257,12 +263,24 @@ class _CanInChannel(WriteAccess):
         self, *, topic_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
     ) -> InChannel:
         assert self.permission is not None
-        place = await place_or_404(db, topic_id)
+        # Read with the project's agents: what these routes do next (whom a
+        # message is for, who answers here) asks which of them sits here.
+        place = await place_or_404(
+            db, topic_id, ride_along=project_agents_ride_along(db)
+        )
+        # The room's roster, read once for the request: the door below asks the
+        # caller's seat in it, and what these routes do next (whom a message is
+        # for, who answers here) reads the same rows. Asked for the one seat
+        # first, the roster was read again right after.
+        await TopicMemberService(db).list_for_topic(place.room_id)
         actor = await resolver.resolve(
             topic_id=place.conversation_id, project_id=place.project_id
         )
         await resolver.authorize_topic(
-            actor, project_id=place.project_id, topic_id=place.room_id
+            actor,
+            project_id=place.project_id,
+            topic_id=place.room_id,
+            room=place.room,
         )
         if not await self._may(db, place, actor):
             raise ForbiddenError(say("projectPermissionDenied"))
@@ -300,6 +318,21 @@ def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
 
 
 ROUTE_DECIDES = Depends(WriteAccess("route_decides"))
+
+
+@dataclass(frozen=True, eq=False)
+class _HoldsLink(WriteAccess):
+    kind: Literal["holds_link"] = "holds_link"
+
+    async def __call__(  # type: ignore[override]
+        self, person: Annotated[AuthUserInfo, Depends(get_auth_user)]
+    ) -> None:
+        if person.user_id == 0:
+            raise AuthenticationRequiredError(say("signInRequired"))
+
+
+#: A route opened by a join link's token: see ``HOLDS_LINK`` above.
+HOLDS_LINK = Depends(_HoldsLink())
 
 
 @dataclass(frozen=True)

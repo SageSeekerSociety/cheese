@@ -25,6 +25,7 @@ from app.domain.space.analytics_compute import (
     _Context,
 )
 from app.domain.space.models import Space
+from app.domain.space.repositories import SpaceRepository
 from app.domain.task.claims import started_at, started_at_of
 from app.domain.task.models import (
     Task,
@@ -41,6 +42,11 @@ from app.domain.user.models import User, UserProfile, UserRealNameIdentity
 
 
 async def _ensure_space_exists(service, space_id: int) -> None:
+    # The route's own guard (`require_reviewed_space`) has just read the live
+    # row in this request; only a space it did not find is asked about again
+    # (a deleted one still counts as existing here).
+    if await SpaceRepository(service._session).get_by_id(space_id) is not None:
+        return
     result = await service._session.execute(
         select(Space.id).where(Space.id == space_id)
     )

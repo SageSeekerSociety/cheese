@@ -7,7 +7,6 @@ import type { AssistantEdit } from '@/stores/agentThread'
 import type { TaskDraftFields } from '@/types'
 
 import { computed, onScopeDispose, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { ApiError } from '@/api'
 import { t } from '@/i18n'
@@ -16,6 +15,7 @@ import { fieldLabel, panelMessages, resultView, writesView } from '@/lib/draftCh
 import { partialStringField } from '@/lib/partialJson'
 import { partialValue } from '@/lib/partialJson'
 import { AGENT_FIELDS, DRAFT_WRITE_PACE } from '@/lib/taskDraftAgent'
+import { toast } from '@/lib/toast'
 import { createTypist } from '@/lib/typist'
 import { agentThread, useAgentSurface } from '@/stores/agent'
 

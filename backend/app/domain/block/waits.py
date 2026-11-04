@@ -21,26 +21,29 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     DateTime,
-    String,
+    Text,
     Uuid,
     any_,
     bindparam,
     column,
     func,
-    or_,
     select,
     table,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.indexed_rows import (
     AGENT_CHECK_ROWS,
+    CONSUMED_TURN,
     FAILED_TURN_ROWS,
     LAST_SAID_ROWS,
     MACHINE_EVENT_ROWS,
+    PROMPTED_TURN,
     UNANSWERED_ROWS,
 )
 from app.domain.block.models import (
@@ -85,6 +88,10 @@ _INPUTS = table(
     column("conversation_id", Uuid),
     column("echoed_at", DateTime(timezone=True)),
 )
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
 
 
 def _among(column, values, item_type):
@@ -251,6 +258,19 @@ class MemberWaits:
                 .order_by(Block.created_at)
             )
         ).all()
+        if isinstance(self._session, AsyncSession):
+            by_conv: dict[uuid.UUID, list[tuple[uuid.UUID | None, datetime]]] = {
+                cid: [] for cid in conversations
+            }
+            for cid, turn, at in failures:
+                by_conv.setdefault(cid, []).append((turn, at))
+            for cid, items in by_conv.items():
+                remember(
+                    self._session,
+                    ("failed_turn_blocks", cid),
+                    tuple(items),
+                    tables=frozenset({"blocks"}),
+                )
         if not failures:
             return {}
         since = failures[0][2]
@@ -504,17 +524,37 @@ class MemberWaits:
         answering normally) ends it. The member is whoever the turn was: the
         agent that wrote in it, or the one the message that started it was
         handed to."""
-        stmt = (
-            select(Block.conversation_id, Block.turn_id, Block.created_at)
-            .where(
-                _among(Block.conversation_id, topic_ids, Uuid),
-                Block.created_at >= since,
-                ~participant_blocks(),
-                FAILED_TURN_ROWS,
+        failures: list[tuple[uuid.UUID, uuid.UUID | None, datetime]] = []
+        missing: list[uuid.UUID] = []
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            for tid in dict.fromkeys(topic_ids):
+                found_cache, cached = recall(self._session, ("failed_turn_blocks", tid))
+                if found_cache:
+                    for turn, at in cached:
+                        if at >= since:
+                            failures.append((tid, turn, at))
+                else:
+                    missing.append(tid)
+        else:
+            missing = list(topic_ids)
+        if missing:
+            stmt = (
+                select(Block.conversation_id, Block.turn_id, Block.created_at)
+                .where(
+                    _among(Block.conversation_id, missing, Uuid),
+                    Block.created_at >= since,
+                    ~participant_blocks(),
+                    FAILED_TURN_ROWS,
+                )
+                .order_by(Block.created_at)
             )
-            .order_by(Block.created_at)
-        )
-        failures = (await self._session.execute(stmt)).all()
+            failures.extend(
+                (cid, turn, at)
+                for cid, turn, at in (await self._session.execute(stmt)).all()
+            )
+            failures.sort(key=lambda row: row[2])
         owners = await self._turn_owners(
             topic_ids, since, {turn for _, turn, _ in failures if turn}
         )
@@ -538,17 +578,16 @@ class MemberWaits:
             of_rooms(Block.conversation_id, topic_ids),
             Block.created_at >= since,
             Block.kind == BlockKind.message,
-            or_(
-                _among(
-                    Block.meta[PROMPTED_TURN_META_KEY].as_string(),
-                    map(str, turns),
-                    String,
-                ),
-                _among(
-                    Block.meta[CONSUMED_TURN_META_KEY].as_string(),
-                    map(str, turns),
-                    String,
-                ),
+            # Written with the exact expressions `ix_blocks_prompted_turn` and
+            # `ix_blocks_consumed_turn` are built on (`indexed_rows`), so the
+            # planner can use them on the generic plan a cached statement
+            # switches to; `Block.meta[...].as_string()` binds the key and
+            # would not match.
+            text(
+                f"({PROMPTED_TURN.text} = ANY(:turns)"
+                f" OR {CONSUMED_TURN.text} = ANY(:turns))"
+            ).bindparams(
+                bindparam("turns", [str(t) for t in turns], type_=ARRAY(Text))
             ),
         )
         for (meta,) in (await self._session.execute(prompts)).all():

@@ -77,7 +77,7 @@ from app.domain.preview import office
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
 from app.domain.project_permissions import Permission
-from app.domain.room_task.place import place_or_404
+from app.domain.room_task.place import PlaceResolver, place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
 from app.domain.topic.services import TopicService
@@ -93,12 +93,16 @@ async def conversation_document(
 ) -> dict:
     """Which document is this task's living document. It is made, empty, the
     first time anyone asks. Only a task has one."""
-    place = await place_or_404(db, topic_id)
+    place = await PlaceResolver(db).task_place(topic_id) or await place_or_404(
+        db, topic_id
+    )
     await _actor_in_place(resolver, place)
     if place.task is None:
         raise NotFoundError(say("channelHasNoDocument"))
+    had_doc = place.task.document_id is not None
     document_id = await TaskService(db).ensure_document(place.task)
-    await db.commit()
+    if not had_doc:
+        await db.commit()
     return ok({"id": str(document_id)})
 
 
@@ -110,7 +114,11 @@ async def project_overview_document(
     time anyone asks."""
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     await authorize_in_project(resolver, actor, project_id)
-    await ProjectService(db).get_or_404(project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    if project.overview_document_id is not None:
+        existing = await Documents(db).get(project.overview_document_id)
+        if existing is not None:
+            return ok({"id": str(existing.id)})
     doc = await overview_document(db, project_id)
     await db.commit()
     return ok({"id": str(doc.id)})
@@ -254,8 +262,10 @@ async def create_document(
             title = source.title or (task.title if task is not None else "")
     origin = _origin(resolver, actor)
     created_by, drafted_by = await _authors(db, project_id, actor, origin)
+    project = await ProjectService(db).get(project_id)
     doc = await Documents(db).create(
         project_id=project_id,
+        team_id=project.team_id if project is not None else None,
         title=title,
         author=actor.handle,
         created_by=created_by,
@@ -775,7 +785,8 @@ async def edit_doc_passages(
             else None,
         )
     stored = result.get("stored") or {}
-    await db.refresh(doc)
+    if delegation is not None:
+        await db.refresh(doc)
     return await _with_ref_warnings(
         db,
         doc,

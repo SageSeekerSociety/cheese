@@ -1,6 +1,6 @@
 """A person's 芝士 runs the spaces and projects the person manages, as the
-person would on the settings pages: a space's name, its categories and invite
-codes, announcements to everyone in it, the problems waiting for review; a
+person would on the settings pages: a space's name, its categories and join
+link, announcements to everyone in it, the problems waiting for review; a
 project's naming and a channel's manager. What reaches everyone, and what is
 taken away, waits for the person by their default rules."""
 
@@ -81,36 +81,32 @@ def test_an_announcement_to_everyone_waits_for_the_person(client):
     assert listed["current"] == []
 
 
-def test_an_invite_code_is_made_and_stopping_it_waits_for_the_person(
+def test_the_join_link_is_switched_and_resetting_it_waits_for_the_person(
     client, monkeypatch
 ):
     space = _space(client, "alice")
     where = f"spaces/{space}"
-    before = client.get(
-        f"/spaces/{space}/invite-codes", headers=_bearer(client, "alice")
-    ).json()["data"]["inviteCodes"]
 
     _do(
         client,
         monkeypatch,
         "alice",
-        "给助教新建一个邀请码，用 3 次",
-        {"kind": "invite_code", "where": where, "max_uses": 3, "text": "助教"},
+        "以后加入这个空间要我批准",
+        {"kind": "join_link", "where": where, "approval": True},
     )
-    codes = client.get(
-        f"/spaces/{space}/invite-codes", headers=_bearer(client, "alice")
-    ).json()["data"]["inviteCodes"]
-    [made] = [c for c in codes if c["id"] not in {b["id"] for b in before}]
-    assert made["maxUses"] == 3 and made["note"] == "助教"
+    link = client.get(
+        f"/spaces/{space}/join-link", headers=_bearer(client, "alice")
+    ).json()["data"]
+    assert link["approval"] is True
 
-    stop = _act(
+    reset = _act(
         client,
         "alice",
-        "把给助教的那个邀请码停掉",
-        {"kind": "invite_code", "where": where, "ref": str(made["id"]), "remove": True},
+        "把这个空间的加入链接换一条",
+        {"kind": "join_link", "where": where, "reset": True},
     )
-    assert stop["allowed"] is False
-    assert "删除内容" in stop["reason"]
+    assert reset["allowed"] is False
+    assert "删除内容" in reset["reason"]
 
 
 def test_a_problem_waiting_for_review_is_passed_for_the_person(client, monkeypatch):

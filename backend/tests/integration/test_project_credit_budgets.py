@@ -291,6 +291,7 @@ def test_direct_proxy_requests_obey_member_limits_before_calling_the_provider(
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "test-key"
 
@@ -344,3 +345,27 @@ def test_budget_edits_are_partial_and_can_remove_a_member_cap(client, project):
     assert response.status_code == 200, response.text
     assert response.json()["data"]["credits_limit"] == 100
     assert response.json()["data"]["members"]["budget-owner"]["credits_limit"] is None
+
+
+def test_a_member_cap_under_an_unlimited_project_still_refuses_task_calls(
+    client, project
+):
+    """A member's own cap holds when the project itself has no limit: the
+    admission reads the member's cap in the statement that reads the
+    project's, which then has no project row to ride on."""
+    response = client.put(
+        f"/projects/{project['id']}/credit-budget",
+        json={"credits_limit": None, "member_limits": {"budget-owner": 10}},
+    )
+    assert response.status_code == 200, response.text
+    task_id, turn_id = _open_task(client, project)
+    _spend(client, project, 10, task_id=task_id, turn_id=turn_id)
+    token = mint_scoped_token(project_id=project["id"], topic_id=str(task_id))
+
+    refused = client.post(
+        "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert refused.status_code == 200, refused.text
+    assert refused.json()["data"]["allow"] is False, refused.text
+    assert "budget-owner" in refused.json()["data"]["reason"]

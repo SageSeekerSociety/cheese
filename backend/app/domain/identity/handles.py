@@ -59,6 +59,22 @@ def agent_instance_handle(instance_id: uuid.UUID | str) -> str:
     return f"{AGENT_HANDLE_PREFIX}{hexed[:_AGENT_HANDLE_HEX]}"
 
 
+def agent_instance_id_bounds(handle: str) -> tuple[uuid.UUID, uuid.UUID] | None:
+    """Inclusive UUID range matching ``agent_instance_handle(id) == handle``,
+    or None when ``handle`` does not have a seat handle's shape."""
+    if not handle or not handle.startswith(AGENT_HANDLE_PREFIX):
+        return None
+    hex_prefix = handle.removeprefix(AGENT_HANDLE_PREFIX)
+    if len(hex_prefix) != _AGENT_HANDLE_HEX:
+        return None
+    try:
+        low = uuid.UUID(f"{hex_prefix[:8]}-{hex_prefix[8:12]}-0000-0000-000000000000")
+        high = uuid.UUID(f"{hex_prefix[:8]}-{hex_prefix[8:12]}-ffff-ffff-ffffffffffff")
+    except ValueError:
+        return None
+    return low, high
+
+
 def recipient_seat(recipient: Mapping[str, object] | None) -> str | None:
     """The seat a block's ``meta.agent_recipient`` names, as ``how_it_arrives``
     reads it. Pure.

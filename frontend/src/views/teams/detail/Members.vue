@@ -17,7 +17,6 @@ import type { Team, TeamMember, TeamMembershipApplication, TeamVisibility } from
 
 import { computed, inject, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
 
 import { useAccountLookup } from '@/composables/useAccountLookup'
@@ -30,6 +29,7 @@ import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { onInboxChange } from '@/lib/inboxLive'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'

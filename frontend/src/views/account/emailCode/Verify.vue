@@ -22,7 +22,6 @@
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { attemptMessage, useAttemptWait } from '../attemptWait'
 import { rememberSignIn } from '../lastSignIn'
@@ -34,6 +33,7 @@ import VerifyView from './VerifyView.vue'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 

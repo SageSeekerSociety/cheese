@@ -27,7 +27,6 @@
 // where the person was headed.
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import AddEmailView from './AddEmailView.vue'
 import { emailCodeMessage } from './attemptWait'
@@ -37,6 +36,7 @@ import { UserAuthApi } from '@/api/userAuth'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
 import { storageSetJson } from '@/lib/browserStorage'
+import { toast } from '@/lib/toast'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 

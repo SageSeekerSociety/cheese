@@ -226,6 +226,8 @@ it does not, do it yourself and say in the summary that no subagent saw the
 PR's own words. A claim the code does not back is a candidate of kind `claim`,
 held to the same bar as step 3 and settled in step 4.
 
+Check that the PR body explicitly answers yes or no to the template's question about changes to existing API or push-message meaning, and that the answer fits the diff. A missing answer, a no contradicted by changes to existing field/status meanings, default behaviour or realtime/WebSocket message meaning, or a yes without raising `backend/api-generation` is a finding.
+
 ## 5b. The requirement contract
 
 When "This review" names a spec, give its text (in the requirement contract

@@ -471,12 +471,13 @@ def test_a_person_whose_role_does_not_speak_posts_no_checklist(client):
     """A project may take speaking away from a role; a checklist is speaking."""
     room = _shared_room(client)
     project = client.get(f"/topics/{room}").json()["data"]["project_id"]
-    grants = client.get(
+    roles = client.get(
         f"/projects/{project}/roles", headers=session_auth_headers("alice")
-    ).json()["data"]["grants"]
-    changed = client.put(
-        f"/projects/{project}/roles",
-        json={"grants": {"member": [g for g in grants["member"] if g != "speak"]}},
+    ).json()["data"]["roles"]
+    member = next(r for r in roles if r["key"] == "member")
+    changed = client.patch(
+        f"/projects/{project}/roles/member",
+        json={"permissions": [g for g in member["permissions"] if g != "speak"]},
         headers=session_auth_headers("alice"),
     )
     assert changed.status_code == 200, changed.text

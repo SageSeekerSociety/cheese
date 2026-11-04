@@ -212,6 +212,9 @@ const HEALTH_KEY: Record<string, string> = {
   event_loop: 'feedback.dashboard.health.event_loop',
   routes: 'feedback.dashboard.health.routes',
   alerting: 'feedback.dashboard.health.alerting',
+  periodic_jobs: 'feedback.dashboard.health.periodic_jobs',
+  feedback_announce: 'feedback.dashboard.health.feedback_announce',
+  feedback_triage: 'feedback.dashboard.health.feedback_triage',
 }
 
 const healthRows = computed(() => {
@@ -222,6 +225,9 @@ const healthRows = computed(() => {
     label: t(HEALTH_KEY[name] ?? name),
     status: body.status,
     tone: body.status === 'up' ? 'ok' : body.status === 'down' ? 'danger' : 'warn',
+    // 没好的那一项为什么没好（哪个定时任务、缺哪个配置）：只说 down 等于让人去翻日志。
+    // 好的那几项的 detail 是读数（如事件循环的毫秒），不是原因，不画。
+    reason: body.status !== 'up' && typeof body.detail === 'string' ? body.detail : '',
   }))
 })
 
@@ -277,6 +283,7 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
         <span class="ad__health-dot" :class="`ad__health-dot--${row.tone}`" aria-hidden="true" />
         <span class="ad__health-label t-eyebrow-read">{{ row.label }}</span>
         <span class="ad__health-status t-body">{{ row.status }}</span>
+        <span v-if="row.reason" class="ad__health-reason t-meta-read">{{ row.reason }}</span>
       </div>
     </div>
   </section>
@@ -461,6 +468,7 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
 
 .ad__health-cell {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   padding: 12px 16px;
@@ -500,6 +508,13 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ad__health-reason {
+  flex: 1 0 100%;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .ad__machines {

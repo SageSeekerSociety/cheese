@@ -30,6 +30,7 @@ from app.domain.memory.models import (
     user_scope_id,
 )
 from app.domain.memory.scopes import MemoryScope
+from app.domain.memory.writers import MemoryWriter
 from tests.integration.conftest import project_service, registered
 from tests.support.living_doc import write_overview
 
@@ -346,6 +347,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
             content="# pagination\n\n分页那一套。\n",
             updated_by="alice",
             expected_version=None,
+            writer=MemoryWriter.panel,
         )
         await store.write(
             project_id=project.id,
@@ -355,6 +357,7 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
             content="- [pagination](pagination.md) — 分页那一套\n",
             updated_by="alice",
             expected_version=None,
+            writer=MemoryWriter.panel,
         )
         agent = await _old(session, project, "发版前先跑一遍 make e2e")
         person = await _old(session, project, "他习惯用 vim", person="alice")
@@ -572,6 +575,7 @@ async def test_a_change_to_the_tree_between_yes_and_write_stops_the_whole_thing(
             content="# run-e2e-before-release\n\n另一个人写的一版。\n",
             updated_by="bob",
             expected_version=planned["version"],
+            writer=MemoryWriter.panel,
         )
         await session.commit()
 

@@ -68,7 +68,11 @@ async def cleanup_status(
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id, enforce=True
+        actor,
+        project_id=topic.project_id,
+        topic_id=topic_id,
+        room=topic,
+        enforce=True,
     )
     operation = await TopicService(db).cleanup_operation(topic)
     if operation is None:

@@ -27,7 +27,6 @@ import type { Latest } from './RosterView.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import RosterView from './RosterView.vue'
 
@@ -35,6 +34,7 @@ import { axiosErrorMessage } from '@/api/axiosHttp'
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
+import { toast } from '@/lib/toast'
 import { useEvents } from '@/views/tasks/events'
 
 const props = defineProps<{

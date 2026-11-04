@@ -2,8 +2,9 @@
 
 A space has one owner, admins (a course's teachers) and members. The owner and
 admins are rows in ``space_admin_relation``; a member is a ``space_member`` row.
-Each seat holds a fixed set of the permissions below; the owner holds all of
-them. ``seat_of`` says where a person sits and :data:`SPACE` whether that seat
+An open space (``Space.open_scope``) also seats everyone signed in whose email
+is in its scope, without a row: they hold what a member holds. Each seat holds
+a fixed set of the permissions below; the owner holds all of them. ``seat_of`` says where a person sits and :data:`SPACE` whether that seat
 holds a permission; a route declares what it needs and ``app.auth.can`` asks
 these. The space's services keep only the space's own rules.
 
@@ -17,11 +18,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.policy import SeatPolicy
+from app.core.request_facts import recall, remember
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
     SpaceAdminRole,
     SpaceMember,
+)
+from app.domain.space.repositories import (
+    SpaceAdminRelationRepository,
+    SpaceRepository,
 )
 
 
@@ -29,6 +35,8 @@ class Seat(enum.StrEnum):
     owner = "owner"
     admin = "admin"
     member = "member"
+    #: Signed in with an email in an open space's scope, and not a member.
+    in_scope = "in_scope"
 
 
 class Permission(enum.StrEnum):
@@ -43,7 +51,8 @@ class Permission(enum.StrEnum):
     #: setter does for theirs (``app.auth.task_roles``).
     teach = "teach"
     #: The space's name, intro and limits, its categories, topics and email
-    #: domain groups.
+    #: domain groups, and whether it is members-only or open (opening it waits
+    #: for the platform's review).
     edit_settings = "edit_settings"
     #: Add and remove members, and manage the invite codes that let people in.
     manage_members = "manage_members"
@@ -70,28 +79,49 @@ GRANTS: dict[Seat, frozenset[Permission]] = {
     Seat.owner: frozenset(Permission),
     Seat.admin: _ADMIN,
     Seat.member: frozenset({Permission.view, Permission.publish}),
+    Seat.in_scope: frozenset({Permission.view, Permission.publish}),
 }
 
 
 async def seat_of(session: AsyncSession, space_id: int, user_id: int) -> Seat | None:
-    """Where the person sits in the space; ``None`` when they have no seat."""
-    role = await session.scalar(
-        select(SpaceAdminRelation.role).where(
-            SpaceAdminRelation.space_id == space_id,
-            SpaceAdminRelation.user_id == user_id,
-            SpaceAdminRelation.deleted_at.is_(None),
-        )
+    """Where the person sits in the space; ``None`` when they have no seat.
+
+    A problem's page asks it from each check that needs it (seeing the
+    problem, teaching it, the payload's own flags), so a request answers it
+    once; the next request asks again, and an admin stepped down is refused
+    there."""
+    key = ("space_seat", space_id, user_id)
+    cacheable = isinstance(session, AsyncSession)
+    if cacheable:
+        found, cached = recall(session, key)
+        if found:
+            return cached
+    seat: Seat | None = None
+    relation = await SpaceAdminRelationRepository(session).get_relation(
+        space_id, user_id
     )
-    if role is not None:
-        return Seat.owner if role == SpaceAdminRole.OWNER.value else Seat.admin
-    member = await session.scalar(
+    if relation is not None:
+        seat = Seat.owner if relation.role == SpaceAdminRole.OWNER.value else Seat.admin
+    elif await session.scalar(
         select(SpaceMember.id).where(
             SpaceMember.space_id == space_id,
             SpaceMember.user_id == user_id,
             SpaceMember.deleted_at.is_(None),
         )
-    )
-    return Seat.member if member is not None else None
+    ):
+        seat = Seat.member
+    elif await SpaceRepository(session).in_open_scope(
+        space_id=space_id, user_id=user_id
+    ):
+        seat = Seat.in_scope
+    if cacheable:
+        remember(
+            session,
+            key,
+            seat,
+            tables=frozenset({"space_admin_relation", "space_member", "space", "user"}),
+        )
+    return seat
 
 
 class SpacePolicy(SeatPolicy[Space, Permission, Seat]):
@@ -103,8 +133,7 @@ class SpacePolicy(SeatPolicy[Space, Permission, Seat]):
     grants = GRANTS
 
     async def load(self, session: AsyncSession, id: int) -> Space | None:
-        space = await session.get(Space, id)
-        return None if space is None or space.deleted_at is not None else space
+        return await SpaceRepository(session).get_by_id(id)
 
     async def seat(
         self, session: AsyncSession, obj: Space, user_id: int

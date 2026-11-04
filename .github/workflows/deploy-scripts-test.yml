@@ -87,6 +87,8 @@ jobs:
           python3 deploy/tests/test_reserved_port.py
           python3 deploy/tests/test_ingress_lifecycle.py
           python3 deploy/tests/test_front_door_tls.py
+          # The frontend image's own nginx, with the mainland redirect in it.
+          python3 deploy/tests/test_mainland_redirect.py
           python3 deploy/llm-tunnel/verify-sites.py
 
   # Everything else: 120 s here, led by the gateway group (72 s) and the failover
@@ -117,6 +119,12 @@ jobs:
       - name: Automatic release ordering
         run: python3 deploy/tests/test_auto_deploy.py
 
+      - name: Database backup cadence, retention, and freshness
+        run: python3 deploy/tests/test_r2_backups.py
+
+      - name: The dev deploy's fetches wait out reset connections
+        run: bash deploy/tests/test-git-fetch.sh
+
       - name: PR watcher follows the deploy that releases a merge
         run: python3 deploy/tests/test_pr_watch_deploy.py
 
@@ -142,6 +150,15 @@ jobs:
             -v "$GITHUB_WORKSPACE:/work:ro" -w /work \
             mitmproxy/mitmproxy:12.1.2@sha256:0d7b2a14b4a71a908cd6f31b8f50e29bbc5c8720fe6caa706acf782da558e5c7 \
             deploy/tests/test_claude_retry.py
+
+      # compose.yml's own mitmdump command, started five times with TLS
+      # clients already dialling both listeners, as a release meets them.
+      - name: Metering proxy survives TLS clients during startup
+        run: |
+          docker run --rm --network none --memory 512m --entrypoint python \
+            -v "$GITHUB_WORKSPACE:/work:ro" -w /work \
+            mitmproxy/mitmproxy:12.1.2@sha256:0d7b2a14b4a71a908cd6f31b8f50e29bbc5c8720fe6caa706acf782da558e5c7 \
+            deploy/tests/test_metering_startup.py
 
       - name: Render browser reaches public addresses only
         run: python3 deploy/tests/test_browser_render_egress.py

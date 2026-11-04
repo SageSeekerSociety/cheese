@@ -142,5 +142,5 @@ export function usePreviewImageRegion(props: ImagePreviewProps, onRetire: () => 
     { flush: 'sync' }
   )
   onBeforeUnmount(release)
-  return { imageSrc, imageIdentity, selectionEnabled, target, capture, message, clear }
+  return { imageSrc, imageIdentity, selectionEnabled, target, capture, message, clear, snapshot: displayed }
 }

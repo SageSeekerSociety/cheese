@@ -128,7 +128,7 @@ export function useOutbox(options: {
   }
 
   /** 排一条，立刻交出去。返回它的 `client_id`（也是这次发送的 `request_id`）。 */
-  function enqueue(message: Pick<Outgoing, 'content' | 'replyTo' | 'atts' | 'quotedContext'>): string {
+  function enqueue(message: Pick<Outgoing, 'content' | 'replyTo' | 'atts' | 'quotedContext' | 'expectsAgent'>): string {
     const clientId = crypto.randomUUID()
     outbox.value.push({ clientId, ...message, state: 'queued' })
     void flush()

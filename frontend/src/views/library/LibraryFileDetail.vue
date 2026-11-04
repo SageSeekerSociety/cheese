@@ -5,7 +5,7 @@
 // 字节怎么读由页面给（`read`）：这一栏只摆，不知道服务端在哪。
 import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
 
-import { computed, ref } from 'vue'
+import { computed, ref, useId } from 'vue'
 
 import { usePaneWidth } from '@/composables/usePaneWidth'
 
@@ -35,6 +35,11 @@ const props = defineProps<{
 const emit = defineEmits<{ download: []; replace: []; close: [] }>()
 
 const tooLarge = computed(() => tooLargeToPreview(props.file.bytes))
+/** 「评论」那一行开着没有。资料库里的原件挂不了评论、也标不了一处（这一栏没有对话可交），
+ *  点开说清楚评论在哪：从某个任务存进来的，在那个任务里；别的要先放进一个任务。 */
+const commentsOpen = ref(false)
+const noteId = `library-comments-${useId()}`
+const fromRoom = computed(() => (props.file.room && typeof props.shelf === 'string' ? props.file.room : null))
 
 // 桌面上这一栏可以往左拖宽，记在这台浏览器上（项目和空间的资料库共用这一份）。
 const root = ref<HTMLElement | null>(null)
@@ -84,6 +89,16 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
         >
           {{ t('work.library.replace') }}
         </BaseButton>
+        <BaseButton
+          size="sm"
+          prepend-icon="mdi-comment-text-outline"
+          :aria-expanded="commentsOpen"
+          :aria-controls="commentsOpen ? noteId : undefined"
+          data-testid="library-comments"
+          @click="commentsOpen = !commentsOpen"
+        >
+          {{ t('work.library.comments') }}
+        </BaseButton>
         <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="emit('close')">
           {{ t('work.library.close') }}
         </BaseButton>
@@ -101,13 +116,49 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
         :read="props.read"
       />
     </div>
+    <!-- One note for both layouts; CSS order puts it under the header on desktop and right above the bar on a phone. -->
+    <p v-if="commentsOpen" :id="noteId" class="t-meta c-muted library-detail__comments" role="note">
+      <template v-if="fromRoom && typeof props.shelf === 'string'">
+        {{ t('work.library.commentsInRoom') }}
+        <NavLink :to="{ name: 'workspace-topic', params: { projectId: props.shelf, topicId: fromRoom.id } }">{{
+          t('work.library.commentsGo', { title: topicTitle(fromRoom) })
+        }}</NavLink>
+      </template>
+      <template v-else>{{ t('work.library.commentsNone') }}</template>
+    </p>
     <div v-if="!props.wide" class="library-detail__bar">
       <BaseButton kind="primary" block @click="emit('download')">{{ t('work.library.download') }}</BaseButton>
+      <BaseButton
+        block
+        prepend-icon="mdi-comment-text-outline"
+        :aria-expanded="commentsOpen"
+        :aria-controls="commentsOpen ? noteId : undefined"
+        data-testid="library-comments-phone"
+        @click="commentsOpen = !commentsOpen"
+      >
+        {{ t('work.library.comments') }}
+      </BaseButton>
     </div>
   </section>
 </template>
 
 <style scoped>
+.library-detail__comments {
+  order: 1;
+  margin: 0;
+  padding: 0 16px 8px;
+}
+.library-detail__preview {
+  order: 2;
+}
+.library-detail--phone .library-detail__comments {
+  order: 3;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+}
+.library-detail__bar {
+  order: 4;
+}
 .library-detail {
   position: relative;
   display: flex;
@@ -173,6 +224,9 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
 }
 
 .library-detail__bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   flex: none;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);

@@ -21,6 +21,12 @@ vi.mock('../../api', async (importOriginal) => {
     roomFileRevisions: vi.fn(async () => ({ data: [], total: 0, path: '', version: null })),
   }
 })
+// 演示稿会单独问一次演讲者备注（它们不在幻灯片上，见 `api/roomFiles`）：这一格渲染的是
+// deck.pptx，所以这一条也得打桩。
+vi.mock('../../api/roomFiles', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/roomFiles')>()),
+  previewSlideNotes: vi.fn(async () => ({ notes: [], readable: true, version: '' })),
+}))
 // 分页文档现在也会读这一份的评论串（页上要画已有的评论标记），所以这一条也得打桩。
 vi.mock('@/api/fileThreads', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/fileThreads')>()),

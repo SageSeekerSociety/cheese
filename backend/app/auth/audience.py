@@ -59,19 +59,25 @@ async def rooms_its_audience_may_read(
     origin = rooms.get(answer_room) or await TopicRepository(session).get(answer_room)
     if origin is None:
         return set()
-    public_ok = not await outsiders_reading(
-        session, project_id=project_id, room_id=answer_room
-    )
-    audience = (
-        await _people_seated(session, answer_room) if seats_only(origin) else None
-    )
+    # Each of the answer room's two facts is read only when a room other than
+    # the answer room asks it: an agent reading the room it answers in, the
+    # usual case, pays for neither (four statements for the public one).
+    public_ok: bool | None = None
+    audience: set[str] | None = None
     allowed: set[uuid.UUID] = set()
     for rid, room in rooms.items():
         if rid == answer_room:
             allowed.add(rid)
         elif not seats_only(room):
+            if public_ok is None:
+                public_ok = not await outsiders_reading(
+                    session, project_id=project_id, room_id=answer_room
+                )
             if public_ok:
                 allowed.add(rid)
-        elif audience is not None and audience <= await _people_seated(session, rid):
-            allowed.add(rid)
+        elif seats_only(origin):
+            if audience is None:
+                audience = await _people_seated(session, answer_room)
+            if audience <= await _people_seated(session, rid):
+                allowed.add(rid)
     return allowed

@@ -23,7 +23,7 @@ from app.domain.agent.harness.claude_code.remote_execution.runtime import Execut
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.models import Project
 from app.domain.review.pr_publish import _draft_pr_for_one_task
-from app.domain.room_task.models import Task
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -142,9 +142,7 @@ async def main():
             await _draft_pr_for_one_task(session, task_id)
             await session.commit()
         async with async_session_factory() as session:
-            row = await session.scalar(
-                select(Task).where(Task.id == task_id).with_for_update()
-            )
+            row = await lock_task_for_change(session, task_id)
             assert row is not None and row.pr_number is not None, task_id
     (state / "config.json").write_text(
         json.dumps({"workspace": str(home), "env": {"HOME": str(home)}})

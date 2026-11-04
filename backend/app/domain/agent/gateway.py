@@ -34,10 +34,11 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 import httpx
 
+from app.domain.day_windows import utc_now
 from app.domain.usage.pricing import declared_free
 
 logger = logging.getLogger(__name__)
@@ -482,7 +483,7 @@ def _add_row(by: dict[str, ModelSpend], row: dict) -> None:
 
 
 def utc_today() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    return utc_now().strftime("%Y-%m-%d")
 
 
 def _prior_days(checkpoint_date: str, today: str) -> list[str] | None:

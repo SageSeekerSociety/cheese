@@ -2,7 +2,7 @@
 import type { LocatorAnchor } from './locatorAnchor'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
-import { onClickOutside } from '@vueuse/core'
+import { onClickOutside, useEventListener } from '@vueuse/core'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -13,17 +13,24 @@ const props = withDefaults(
     note: string
     /** 待发批注篮里已攒的条数：一次指认多处后合并成一条消息发给芝士。 */
     queuedCount?: number
-    /** 这一处指认能不能先加入待发（钉在页上的一处要当场带截图发，不进纯文本待发篮）。 */
+    /** 待发篮在别处列着（话题页输入框上方）：本格不再自己画那条 sticky 条，
+     *  同一批批注画两处读者会以为进了两个地方。 */
+    pendingElsewhere?: boolean
+    /** 这一处指认能不能先加入待发。页上钉的一点、图上框的一块进篮时只带位置，截图只在单独发时带。 */
     canQueue?: boolean
     /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
     busy?: boolean
     /** 这一份文件能不能挂评论：资料库原件和消息附件不能。不能时只给「发送」一条出口。 */
     canComment?: boolean
+    /** 能不能私下问个人芝士：那条是全站一条对话，登录了才有。没有时这一项不列出来
+     *  （摆着一条按下去没反应的项比不摆更糟）。 */
+    canAskPersonal?: boolean
     /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
     commentError?: string
     /** 指的那一处在面板里的位置（面板内容坐标）。有就把框弹在它旁边；没有（键盘选中、
      *  那一处滚出了视野、面板太窄）就退回贴在可见区底边。 */
     anchor?: LocatorAnchor | null
+    maxHeight?: number
     /** 这一处是拖选出来的一段字。选字常常只是在读、在复制，不一定要写什么：这时先在
      *  选区下面浮一颗「添加批注」，点了才展开整张卡，不把刚选中的那段盖住。点一格、
      *  钉一点这类动作本身就是在指，直接出卡。 */
@@ -31,11 +38,14 @@ const props = withDefaults(
   }>(),
   {
     queuedCount: 0,
+    pendingElsewhere: false,
     canQueue: true,
     busy: false,
     canComment: false,
+    canAskPersonal: false,
     commentError: undefined,
     anchor: null,
+    maxHeight: undefined,
     armFirst: false,
   }
 )
@@ -50,16 +60,26 @@ const emit = defineEmits<{
   clearQueued: []
   /** 把这句话连同这一处挂成一条评论，而不是发进对话。 */
   comment: []
+  /** 私下问个人芝士：这句话和这一处只进自己和芝士那一条对话，不进这间房。 */
+  personal: []
   cancel: []
 }>()
 
 // ---- 去处 ----
-type Recipient = 'agent' | 'comment'
+type Recipient = 'agent' | 'personal' | 'comment'
 const recipient = ref<Recipient>('agent')
+// 这一项用不了时把它切回「发给芝士」：这一份换成了挂不了评论的文件、或者这一格换到了
+// 没有项目的那几处，停在一个做不了的去处上会让发送键按下去悄没声。
 watch(
   () => props.canComment,
   (allowed) => {
-    if (!allowed) recipient.value = 'agent'
+    if (!allowed && recipient.value === 'comment') recipient.value = 'agent'
+  }
+)
+watch(
+  () => props.canAskPersonal,
+  (allowed) => {
+    if (!allowed && recipient.value === 'personal') recipient.value = 'agent'
   }
 )
 const RECIPIENTS: readonly { value: Recipient; icon: string; label: string; hint: string }[] = [
@@ -70,13 +90,48 @@ const RECIPIENTS: readonly { value: Recipient; icon: string; label: string; hint
     hint: 'work.room.preview.recipientAgentHint',
   },
   {
+    value: 'personal',
+    icon: 'mdi-chat-processing-outline',
+    label: 'work.room.preview.recipientPersonal',
+    hint: 'work.room.preview.recipientPersonalHint',
+  },
+  {
     value: 'comment',
     icon: 'mdi-comment-outline',
     label: 'work.room.preview.recipientComment',
     hint: 'work.room.preview.recipientCommentHint',
   },
 ]
+/** 这一份能选的那几项：挂不了评论、或问不了个人芝士时，那两项不列出来（原型里三项
+ *  齐全，是因为原型那一份两种情况都成立）。 */
+const offered = computed(() =>
+  RECIPIENTS.filter(
+    (item) => (item.value !== 'comment' || props.canComment) && (item.value !== 'personal' || props.canAskPersonal)
+  )
+)
 const current = computed(() => RECIPIENTS.find((r) => r.value === recipient.value) ?? RECIPIENTS[0])
+
+/** 主按钮写什么。切到评论时它也叫「评论」，而面板上还有一颗开评论栏的「评论」——下面
+ *  那颗按钮的 aria-label 就是为这一对写的。 */
+const sendLabel = computed(() => {
+  if (props.canComment && recipient.value === 'comment') return 'work.room.comments.comment'
+  // 「全部发送（N+1）」只在去处是「发给芝士」时说得通：那一下确实把篮里的一起发了。
+  // 私下问个人芝士只发当前这一处、篮里那几条原地不动，这时还写「全部发送（3）」就是骗人。
+  if (props.canQueue && recipient.value === 'agent' && props.queuedCount) {
+    return 'work.room.preview.sendQueued'
+  }
+  return 'work.room.preview.send'
+})
+
+/** 主按钮上的计数参数：只有「全部发送」那一句带它。 */
+const sendCount = computed(() => props.queuedCount + 1)
+
+/** 底下那行提示：这一下按下去会发生什么。 */
+const hintLabel = computed(() => {
+  if (recipient.value === 'personal') return 'work.room.preview.locatorHintPersonal'
+  if (props.canQueue && recipient.value === 'agent') return 'work.room.preview.locatorHintQueue'
+  return 'work.room.preview.locatorHintSend'
+})
 const menuOpen = ref(false)
 const picker = ref<HTMLElement | null>(null)
 const trigger = ref<HTMLButtonElement | null>(null)
@@ -89,7 +144,7 @@ async function openMenu() {
   if (props.busy) return
   menuOpen.value = true
   await nextTick()
-  const at = RECIPIENTS.findIndex((r) => r.value === recipient.value)
+  const at = offered.value.findIndex((r) => r.value === recipient.value)
   options.value[Math.max(at, 0)]?.focus()
 }
 function closeMenu() {
@@ -123,6 +178,7 @@ watch(
   }
 )
 const armed = computed(() => !!props.target && !expanded.value)
+
 const field = ref<HTMLTextAreaElement | null>(null)
 async function expand() {
   expanded.value = true
@@ -131,10 +187,55 @@ async function expand() {
   field.value?.focus()
 }
 
+// ---- 点别处就把这颗小按钮收掉 ----
+// 选一段字常常只是「刚才在读、在复制」，不一定是要写什么。读者接着点在本页别处——换一处
+// 指、或者只想把选中撤掉——那颗浮在字上的按钮还挂着，就挡着正文，而且按下去写的还是
+// 他刚刚已经不要的那一段。
+//
+// 判据用「浏览器把选区收掉了」：那就是他在说「不指这一处了」，不必逐个点按去猜。只看
+// 小按钮那一段（`armed`）：卡展开之后点输入框同样会把选区收掉，那一下不是取消，是在写
+// 这句话。
+useEventListener(typeof document === 'undefined' ? null : document, 'selectionchange', () => {
+  if (!armed.value) return
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed) return
+  emit('cancel')
+})
+
 // ---- 弹在哪 ----
 // 弹在指的那一处旁边：先放在它下面，下面放不下就翻到上面；左右夹在面板里。高度要等
 // 框画出来才量得到，量到之前先按一个常见的高度放，免得第一帧跳一下。
 const card = ref<HTMLElement | null>(null)
+
+/** 卡关掉时把焦点还给打开它的那一处。
+ *
+ *  卡自己不抢焦点（见 `send` 上面那段：一抢，页面上的选区就没了），所以「打开它的那一处」
+ *  是读者按下去那一刻拿着焦点的元素——图上那颗「选择图片区域」、表格里那一格、正文里那一段。
+ *  不还的话焦点掉到 body，键盘读者要按很多下 Tab 才能回到刚才的位置。
+ *
+ *  只在这一刻焦点**还在卡里**时才还：读者点去别处把卡关掉的那一下，焦点该留在他点的地方，
+ *  把他拽回来比不还更烦人。这一条是从图片那一档原来的自造卡里搬过来的，判据就是它原来的。
+ *
+ *  放在共用卡里而不是各档自己接：这段行为本来就该一样，而图片那档以前是自己接的（并进来
+ *  时差点丢掉；焦点看不见，掉了没人报错）。 */
+const returnFocus = ref<HTMLElement | null>(null)
+watch(
+  () => props.target,
+  (target, before) => {
+    if (target && !before) {
+      const active = document.activeElement
+      returnFocus.value = active instanceof HTMLElement && active !== document.body ? active : null
+      return
+    }
+    if (!target && before) {
+      const el = returnFocus.value
+      returnFocus.value = null
+      const active = document.activeElement
+      if (!el?.isConnected || !active || !card.value?.contains(active)) return
+      void nextTick(() => el.focus?.())
+    }
+  }
+)
 const height = ref(190)
 const GAP = 8
 const EDGE = 12
@@ -156,11 +257,13 @@ const placement = computed(() => {
   return { left, top, width, side: fitsBelow ? 'below' : 'above' }
 })
 const style = computed(() => {
-  if (!floating.value || !placement.value) return undefined
+  const bounds = props.maxHeight === undefined ? {} : { maxHeight: `${Math.max(0, props.maxHeight - EDGE * 2)}px` }
+  if (!floating.value || !placement.value) return bounds
   const { left, top, width } = placement.value
   const at = { left: `${left}px`, top: `${top}px` }
-  return armed.value ? at : { ...at, width: `${width}px` }
+  return armed.value ? at : { ...bounds, ...at, width: `${width}px` }
 })
+const scrolling = computed(() => props.maxHeight !== undefined && height.value >= props.maxHeight - EDGE * 2)
 // 框画出来以后量一次真实高度：量到之前先按一个常见的高度放，免得第一帧跳一下。
 function measureCard() {
   if (!armed.value && card.value?.offsetHeight) height.value = card.value.offsetHeight
@@ -220,6 +323,10 @@ function send(event: KeyboardEvent | MouseEvent) {
     emit('comment')
     return
   }
+  if (props.canAskPersonal && recipient.value === 'personal') {
+    emit('personal')
+    return
+  }
   emit('send')
 }
 </script>
@@ -246,20 +353,31 @@ function send(event: KeyboardEvent | MouseEvent) {
       ref="card"
       class="locator"
       data-locator-ui
-      :class="{ 'locator--floating': floating }"
+      :class="{ 'locator--floating': floating, 'locator--scrolling': scrolling }"
       :data-side="placement?.side"
       :style="style"
     >
+      <!-- 攒着的那几处在这一格底下留一条：计数加一句「还能接着指」，读者在原地就知道
+           自己攒到哪了。待发篮在话题页列着时，那几条例子和两个按钮都在那儿（输入框
+           上方），这里只留计数的提示——同一批批注画两遍按钮，读者会以为有两处。
+           原型里这两条是同时在的（面板底下这一条 + 输入框上方那一篮）。 -->
       <div v-if="queuedCount && !target" class="locator__queue">
         <span class="locator__queue-badge t-meta">{{
-          t('work.room.preview.queuedCount', { count: queuedCount })
+          pendingElsewhere
+            ? t('work.room.preview.pendingCount', { count: queuedCount })
+            : t('work.room.preview.queuedCount', { count: queuedCount })
         }}</span>
-        <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('clearQueued')">
-          {{ t('work.room.preview.clearQueued') }}
-        </BaseButton>
-        <BaseButton kind="primary" size="sm" :disabled="busy" @click="emit('sendQueued')">
-          {{ t('work.room.preview.sendQueued', { count: queuedCount }) }}
-        </BaseButton>
+        <span v-if="pendingElsewhere" class="locator__queue-why t-meta">{{
+          t('work.room.preview.pendingKeepGoing')
+        }}</span>
+        <template v-else>
+          <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('clearQueued')">
+            {{ t('work.room.preview.clearQueued') }}
+          </BaseButton>
+          <BaseButton kind="primary" size="sm" :disabled="busy" @click="emit('sendQueued')">
+            {{ t('work.room.preview.sendQueued', { count: queuedCount }) }}
+          </BaseButton>
+        </template>
       </div>
       <template v-if="target">
         <div class="locator__head">
@@ -288,9 +406,10 @@ function send(event: KeyboardEvent | MouseEvent) {
           @keydown.esc.prevent="emit('cancel')"
         />
         <div class="locator__foot">
-          <!-- 去处：发给芝士让它改，还是只挂成这一处的评论给人看。每一项带一句说清会发生
-               什么。挂不了评论的文件（资料库原件、消息附件）没有这个选择，按钮不出现。 -->
-          <div v-show="canComment" ref="picker" class="locator__picker">
+          <!-- 去处：发给芝士让它改、私下问个人芝士、还是只挂成这一处的评论给人看。每一项带
+               一句说清会发生什么。这一份挂不了评论、或者没登录问不了个人芝士时，那一项
+               不列出来；做得成的事只剩一件时整个下拉都不出现。 -->
+          <div v-show="offered.length > 1" ref="picker" class="locator__picker">
             <button
               ref="trigger"
               type="button"
@@ -319,7 +438,7 @@ function send(event: KeyboardEvent | MouseEvent) {
               @keydown.up="moveFocus($event, -1)"
             >
               <li
-                v-for="item in RECIPIENTS"
+                v-for="item in offered"
                 :key="item.value"
                 ref="options"
                 role="option"
@@ -361,21 +480,11 @@ function send(event: KeyboardEvent | MouseEvent) {
             :disabled="!note.trim() || busy"
             @click="send"
           >
-            {{
-              canComment && recipient === 'comment'
-                ? t('work.room.comments.comment')
-                : canQueue && queuedCount
-                  ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
-                  : t('work.room.preview.send')
-            }}
+            {{ t(sendLabel, { count: sendCount }) }}
           </BaseButton>
         </div>
         <p class="locator__hint">
-          {{
-            canQueue && recipient === 'agent'
-              ? t('work.room.preview.locatorHintQueue')
-              : t('work.room.preview.locatorHintSend')
-          }}
+          {{ t(hintLabel) }}
         </p>
       </template>
       <p v-if="commentError" class="locator__error" role="alert">{{ commentError }}</p>
@@ -392,7 +501,8 @@ function send(event: KeyboardEvent | MouseEvent) {
 .locator {
   position: sticky;
   bottom: 12px;
-  z-index: var(--z-raised);
+  /* Keep note controls above image inspection tools (4), below image editing overlays (6). */
+  z-index: var(--z-raised-5);
   flex: none;
   margin: 0 12px 12px;
   display: flex;
@@ -403,6 +513,18 @@ function send(event: KeyboardEvent | MouseEvent) {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
+}
+.locator > * {
+  flex-shrink: 0;
+}
+.locator--scrolling {
+  overflow: auto;
+}
+/* Keep an expanded recipient menu in the card's scrollable content. */
+.locator--scrolling .locator__menu {
+  position: static;
+  max-width: 100%;
+  margin-top: 6px;
 }
 .locator--floating {
   position: absolute;
@@ -548,7 +670,9 @@ button.locator__recipient:focus-visible {
   bottom: calc(100% + 6px);
   left: 0;
   z-index: var(--z-raised-2);
-  width: 260px;
+  /* 够一行放下最长的那句说明（「带当前位置私下问你的个人芝士，不发到群里」）：窄了
+     三项的说明都折成两行，菜单比原型高出一截（原型 276×172；260 宽时 260×229）。 */
+  width: 292px;
   margin: 0;
   padding: 4px;
   list-style: none;

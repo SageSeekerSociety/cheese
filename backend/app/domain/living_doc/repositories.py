@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rank import Rank
+from app.core.request_facts import recall
 from app.domain.living_doc.models import Document, DocumentNode
 
 # Which documents a task or a project points at. Bare tables: ``room_task`` and
@@ -127,10 +128,17 @@ class DocumentRepository:
         points at (which goes by the task's title), one written in the
         conversation ``room_id`` and kept there, or — with no project — one of
         the team ``team_id``'s own. A project's document is its team's too."""
-        if project_id is not None:
-            team_id = await self._session.scalar(
-                select(PROJECTS.c.team_id).where(PROJECTS.c.id == project_id)
-            )
+        if project_id is not None and team_id is None:
+            if isinstance(self._session, AsyncSession):
+                found_proj, cached_proj = recall(
+                    self._session, ("project_by_id", project_id)
+                )
+                if found_proj and cached_proj is not None:
+                    team_id = cached_proj.team_id
+            if team_id is None:
+                team_id = await self._session.scalar(
+                    select(PROJECTS.c.team_id).where(PROJECTS.c.id == project_id)
+                )
         if team_id is None:
             # i18n-exempt: an invariant, never shown to a person
             raise ValueError("A document belongs to a team")
@@ -164,10 +172,11 @@ class DocumentRepository:
         The check is the WHERE clause, not an `if` above the write: two writers
         that read the same version would both pass a comparison made here.
         """
+        now = datetime.now(UTC)
         values: dict = {
             "content": content,
             "version": Document.version + 1,
-            "updated_at": datetime.now(UTC),
+            "updated_at": now,
         }
         if author is not None:
             values["author"] = author
@@ -179,7 +188,11 @@ class DocumentRepository:
         )
         if written is None:
             return None
-        await self._session.refresh(doc)
+        doc.content = content
+        doc.version = expected_version + 1
+        doc.updated_at = now
+        if author is not None:
+            doc.author = author
         return doc
 
     async def nodes(self, document_id: uuid.UUID) -> list[DocumentNode]:

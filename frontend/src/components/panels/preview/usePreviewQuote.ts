@@ -103,11 +103,13 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
   /** 网页预览里圈选的一处：点中一个元素，或者选中一段文字。位置（选择器、标签）和当时
    *  量出来的几何都在帧报上来的 `payload` 里，发的时候再配上这一版文件的身份。 */
   function web(payload: FramePick) {
+    const label = payload.label ? { label: payload.label } : {}
     if (payload.selection) {
       pick.value = {
         kind: 'web-text',
         selector: payload.selector,
         tag: payload.tag,
+        ...label,
         text: payload.text,
         prefix: payload.prefix,
         suffix: payload.suffix,
@@ -119,6 +121,7 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
         kind: 'web-element',
         selector: payload.selector,
         tag: payload.tag,
+        ...label,
         text: payload.text,
         rect: payload.rect,
         viewport: payload.viewport,

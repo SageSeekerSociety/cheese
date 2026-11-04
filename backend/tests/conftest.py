@@ -29,6 +29,7 @@ import time
 import uuid
 import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -109,6 +110,9 @@ _PG_BASE = os.environ.get(
     "TEST_PG_BASE", "postgresql+asyncpg://postgres:postgres@localhost:5433"
 )
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
+# A writer that reaches a second conversation's numbering late fails here
+# rather than only logging (`conversation.numbering`).
+settings.strict_numbering_order = True
 # Redis needs the same per-worker split as Postgres. Its keys are scoped by
 # user id (the #357 attempt budgets and lockouts), and user ids
 # restart from 1 in every worker's own database — so on ONE shared Redis, gw0's
@@ -150,6 +154,7 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 from app.domain.agent.harness.driven import lifecycle  # noqa: E402
+from tests.support.clock import PinnedClock  # noqa: E402
 from tests.support.machine_path import resolved  # noqa: E402
 
 # NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
@@ -169,6 +174,8 @@ from tests.support.machine_path import resolved  # noqa: E402
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
+from tests.support.content_review import Green  # noqa: E402
+from tests.support.content_review import install as install_green  # noqa: E402
 from tests.support.seat_channel import EPOCHS, SeatChannel  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
@@ -203,7 +210,10 @@ settings.model_spend_cap_alert_interval_s = 0
 # shipped numbers back.
 settings.request_rate_per_s = 1_000_000.0
 settings.request_rate_burst = 1_000_000_000
+settings.request_ip_rate_burst = 1_000_000_000
 settings.request_concurrency = 1_000_000
+settings.request_ip_rate_per_s = 1_000_000.0
+settings.request_ip_concurrency = 1_000_000
 
 
 #: Compiled SQL shared by the engines tests build. SQLAlchemy keys a compiled
@@ -356,6 +366,12 @@ class ScriptedSession(Runner):
             "owner", json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent})
         )
         self.written: list[dict] = []
+
+    def memory_root(self) -> Path:
+        """This seat's own memory tree, beside its state: a real runner is
+        told its seat's directory by its launch (`runner.memory_root`), and
+        the seats here share one process and its environment."""
+        return self.state.parent / "memory"
 
     async def _write(self, message: dict) -> None:
         self.written.append(message)
@@ -1033,6 +1049,27 @@ def fast_timings(monkeypatch) -> FastTimings:
     is deliberately left out and why.
     """
     return FastTimings(monkeypatch).apply()
+
+
+@pytest.fixture
+def green(monkeypatch) -> Green:
+    """Content Moderation configured and answering as ``tests/support/
+    content_review.py`` says; request it in a test about what is published."""
+    return install_green(monkeypatch)
+
+
+@pytest.fixture
+def pinned_clock(monkeypatch) -> PinnedClock:
+    """The product's UTC "now" (`day_windows.utc_now`) held still for the test.
+
+    Request it in any test that dates rows "today" or "N days ago" and then reads
+    them back through a day window or the gateway's day: without it, a run that
+    crosses UTC midnight between the seed and the read finds the rows on the
+    wrong side of the window. Date the rows from `utc_now()`, not from
+    `datetime.now`, so both sides read the pinned moment;
+    ``pinned_clock.move_to(at)`` moves it. See ``tests/support/clock.py``.
+    """
+    return PinnedClock(monkeypatch, datetime.now(UTC))
 
 
 #: The machine's own git configuration, neutralized. `os.devnull` rather than the
@@ -3013,7 +3050,6 @@ def seed_problem_reader(client, *, task_id: int, user_id: int) -> None:
                 SpaceMember(
                     space_id=task.space_id,
                     user_id=user_id,
-                    invite_code_id=None,
                     created_at=now,
                     updated_at=now,
                     deleted_at=None,

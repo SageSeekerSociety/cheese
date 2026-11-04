@@ -18,7 +18,7 @@
   "comparing": "正在比对…",
   "exitCompare": "退出对比",
   "hint": "本版共修改 {count} 处（对比第 {base} 版）",
-  "hintCells": "本版改了 {count} 格（对比第 {base} 版）",
+  "hintCells": "本版共修改 {count} 格（对比第 {base} 版）",
   "label": "第 {seq} 版",
   "lastSeen": "你上次看到这",
   "latest": "最新",

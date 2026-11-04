@@ -12,8 +12,9 @@
 import type { FeedbackKind, FeedbackVisibility } from '@/cx_types'
 
 /** 公开列表的栏位。服务端 `PUBLIC_TABS` 是**同一个集合**：加一个栏位是后端改
- *  一处、前端跟着改一处类型的事。 */
-export type FeedbackTab = 'all' | 'hot' | 'active' | 'resolved'
+ *  一处、前端跟着改一处类型的事。`active` 已删（2026-10-28）：它和状态药丸里的
+ *  「处理中」是同一个切口，两处控件管一个轴。 */
+export type FeedbackTab = 'all' | 'hot' | 'resolved'
 /** 管理端的栏位。同上，服务端 `ADMIN_TABS`。 */
 export type AdminTab = 'public' | 'private' | 'agent' | 'security'
 /** 列表的排序。服务端 `SORTS` —— `new` 按时间倒序，`supports` 按支持数。

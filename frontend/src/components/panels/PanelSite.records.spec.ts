@@ -212,7 +212,15 @@ describe('raw records and overview share one timeline', () => {
       .mockResolvedValue({ data: [tool('3', 'only A', 'cheese-a')], has_more: false })
     const view = open()
     await fireEvent.click(await view.findByRole('tab', { name: 'A' }))
-    await waitFor(() => expect(api.getTranscript).toHaveBeenCalledWith('room', { limit: 120, author: 'cheese-a' }))
+    // 换视角 = 重新开这一格：和打开一样，先问数据库里已有的那一版（`resident`），
+    // 少了归档部分再整页补齐。
+    await waitFor(() =>
+      expect(api.getTranscript).toHaveBeenCalledWith('room', {
+        limit: 120,
+        author: 'cheese-a',
+        resident: true,
+      })
+    )
     expect((await view.findAllByText('only A')).length).toBeGreaterThan(0)
     expect(view.queryByText('two')).toBeNull()
   })

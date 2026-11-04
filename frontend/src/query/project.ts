@@ -2,30 +2,37 @@
 //
 // 每一份的读法只写在这里。别处变了由项目推送叫它们重读（`query/projectFeed`），写操作
 // 和推送通过下面这几个函数改缓存，不各存副本。
-import type { TopicNotifySetting, TopicUnread } from '@/api'
+import type { ProjectRoleRow, TopicNotifySetting, TopicUnread } from '@/api'
 import type { ProjectSituation } from '@/api/projectProgress'
 import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, reactive, type Ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, reactive, type Ref, ref } from 'vue'
 import { queryOptions, useQuery } from '@tanstack/vue-query'
 
 import {
   getPrivateUnread,
   getProject,
+  getProjectArtifact,
   getTopic,
   getTopicNotifyLevels,
   getTopicUnread,
   listProjectAgents,
   listProjectMembers,
+  listProjectRoles,
   listTopics,
 } from '@/api'
-import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
+import { listChannels } from '@/api/channels'
+import { getDocumentText, getProjectOverview, listProjectDocuments } from '@/api/projectDocuments'
 import { getProjectSituation, listProjectProgress } from '@/api/projectProgress'
+import { listProjectSkills } from '@/api/projectSkills'
 import { projectRefusal, rememberNumbered, rememberProjects } from '@/lib/addresses'
+import { listProjectLibrary } from '@/lib/libraryApi'
 import { cachedWindow, prefetchNewestBlocks } from '@/query/blocks'
 import { patchQuery, queryClient, settled } from '@/query/client'
 import { keys } from '@/query/keys'
+import { readEarly } from '@/query/snapshot'
+import { openProjectTasksQuery } from '@/query/tasks'
 
 // 最近有动静的在前，不可调：侧栏用位置本身说这个顺序。
 const TOPIC_SORT = { sort: 'last_activity_at', order: 'desc' } as const
@@ -48,6 +55,14 @@ export function projectQuery(projectId: string) {
   })
 }
 const STARTER_POLL_MS = 20_000
+
+/** 项目的角色（#4795）：频道设置里选「谁能发言」读它。 */
+export function projectRolesQuery(projectId: string) {
+  return queryOptions({
+    queryKey: keys.projectRoles(projectId),
+    queryFn: async (): Promise<ProjectRoleRow[]> => (await listProjectRoles(projectId)).roles,
+  })
+}
 
 /** 项目的 AI 队友（含停用的）：私聊的地址和标题、成员页那一段、设置里那一节都读它。 */
 export function agentsQuery(projectId: string) {
@@ -142,6 +157,53 @@ export function prefetchProjectTopics(projectId: string): void {
   void queryClient.prefetchQuery(topicsQuery(projectId)).catch(() => {})
 }
 
+/**
+ * 项目子页（成员、资料库、技能、任务、全部频道、产物）自己的首屏数据，趁该页代码块
+ * 还在下载时和外框并行出发，免得代码块下完才发出第一波接口请求。
+ */
+export function prefetchProjectSubpage(
+  routeName: string | symbol | null | undefined,
+  projectId: string,
+  params: Record<string, string>,
+  query: Record<string, unknown>
+): void {
+  if (!projectId || projectRefusal(projectId) || typeof routeName !== 'string') return
+  switch (routeName) {
+    case 'project-members':
+      void queryClient.prefetchQuery(membersQuery(projectId)).catch(() => {})
+      break
+    case 'project-library': {
+      if (typeof query.doc === 'string') break
+      const dir = typeof query.dir === 'string' ? query.dir : ''
+      readEarly(keys.projectLibraryRoot(projectId, dir), () =>
+        listProjectLibrary(projectId, { dir, cursor: null, limit: 50 })
+      )
+      if (!dir) {
+        readEarly(keys.projectDocumentsRoot(projectId), () => listProjectDocuments(projectId, null, 50))
+      }
+      break
+    }
+    case 'project-skills':
+      readEarly(keys.projectSkills(projectId), () => listProjectSkills(projectId))
+      break
+    case 'project-tasks':
+      if (query.status !== 'closed') {
+        void queryClient.prefetchQuery(openProjectTasksQuery(projectId)).catch(() => {})
+      }
+      break
+    case 'project-channels':
+      readEarly(keys.projectChannels(projectId), () => listChannels(projectId))
+      break
+    case 'project-artifact':
+      if (params.artifactId) {
+        readEarly(keys.projectArtifact(projectId, params.artifactId), () =>
+          getProjectArtifact(projectId, params.artifactId)
+        )
+      }
+      break
+  }
+}
+
 /** 项目总览是哪一份文档、现在写着什么。读不到就按「还没写」：那一块的入口（写一份）仍然在。 */
 export function overviewQuery(projectId: string) {
   return queryOptions({
@@ -182,6 +244,31 @@ export function roomRowQuery(roomId: string) {
     queryKey: keys.roomRow(roomId),
     queryFn: (): Promise<Topic> => getTopic(roomId),
   })
+}
+
+function cachedProjectTopic(projectId: string | null | undefined, roomId: string): Topic | null {
+  if (!projectId || !roomId) return null
+  return (
+    queryClient
+      .getQueryData<ListPayload<Topic>>(keys.projectTopics(projectId))
+      ?.data.find((topic) => topic.id === roomId) ?? null
+  )
+}
+
+/**
+ * 读这个项目里的一个房间：清单已在缓存里（或正在路上）且里面有它时直接用清单那一行，
+ * 不再单独发一次 `GET /topics/:id`；清单里没有它时才单独取。
+ */
+export async function readProjectTopic(projectId: string, roomId: string): Promise<Topic> {
+  const cached = cachedProjectTopic(projectId, roomId)
+  if (cached) return cached
+  const inFlight = queryClient.getQueryCache().find({ queryKey: keys.projectTopics(projectId), exact: true })
+  if (inFlight && inFlight.state.fetchStatus === 'fetching') {
+    await settled(inFlight)
+    const after = cachedProjectTopic(projectId, roomId)
+    if (after) return after
+  }
+  return queryClient.fetchQuery(roomRowQuery(roomId))
 }
 
 /** 清单里的这几行换成 `change` 给的样子。 */
@@ -241,10 +328,43 @@ export async function refreshTopicRow(projectId: string, roomId: string): Promis
  * 问完」，和「问完了，没有这个房间」分开 —— 分不开，深链接进来的第一帧会闪一下「这个
  * 话题不存在」。
  */
-export function usePlace(projectId: Ref<string | null>, roomId: Ref<string>, listed: Ref<Topic[]>) {
-  const inList = computed(() => listed.value.find((topic) => topic.id === roomId.value) ?? null)
+export function usePlace(
+  projectId: Ref<string | null>,
+  roomId: Ref<string>,
+  listed: Ref<Topic[]>,
+  loadingList?: Ref<boolean>
+) {
+  const cacheTick = ref(0)
+  if (getCurrentScope()) {
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      const pid = projectId.value
+      if (!pid) return
+      const target = keys.projectTopics(pid)
+      const key = event.query.queryKey
+      if (key.length === target.length && target.every((part, i) => key[i] === part)) {
+        cacheTick.value++
+      }
+    })
+    onScopeDispose(unsubscribe)
+  }
+
+  const inList = computed(() => {
+    void cacheTick.value
+    return listed.value.find((topic) => topic.id === roomId.value) ?? cachedProjectTopic(projectId.value, roomId.value)
+  })
+  const listPending = computed(() => {
+    void cacheTick.value
+    if (loadingList?.value) return true
+    const pid = projectId.value
+    if (!pid) return false
+    const inFlight = queryClient.getQueryCache().find({ queryKey: keys.projectTopics(pid), exact: true })
+    return inFlight?.state.fetchStatus === 'fetching'
+  })
   const row = useQuery(
-    computed(() => ({ ...roomRowQuery(roomId.value), enabled: !!roomId.value && !inList.value })),
+    computed(() => ({
+      ...roomRowQuery(roomId.value),
+      enabled: !!roomId.value && !inList.value && !listPending.value,
+    })),
     queryClient
   )
   const place = computed<Topic | null>(() => {
@@ -252,6 +372,6 @@ export function usePlace(projectId: Ref<string | null>, roomId: Ref<string>, lis
     const fetched = row.data.value
     return fetched && fetched.id === roomId.value && fetched.project_id === projectId.value ? fetched : null
   })
-  const resolving = computed(() => !inList.value && row.isFetching.value)
+  const resolving = computed(() => !inList.value && (listPending.value || row.isFetching.value))
   return { place, resolving }
 }

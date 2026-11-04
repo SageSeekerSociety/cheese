@@ -9,5 +9,6 @@
   "roomArchivedWithParent": "频道「{room}」随上级频道「{parent}」一同归档",
   "roomUnarchived": "{actor} 取消归档，频道「{room}」恢复活跃",
   "taskCreated": "{actor} 创建了任务「{title}」，由 {owner} 负责",
-  "threadArchivedWithRoom": "随所在频道「{room}」一同归档"
+  "threadArchivedWithRoom": "随所在频道「{room}」一同归档",
+  "previewWakeRequested": "{actor} 请 {seat} 唤醒并重启预览里的应用"
 }

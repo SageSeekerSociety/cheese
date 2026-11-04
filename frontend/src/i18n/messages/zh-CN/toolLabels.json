@@ -85,7 +85,6 @@
   "cheeseRead": "读取",
   "cheeseReady": "标记可审阅",
   "cheeseRecalc": "重算表格公式",
-  "cheeseRecover": "恢复任务备份",
   "cheeseRedeliver": "更换审阅中的交付物",
   "cheeseReopenTask": "重新打开任务",
   "cheeseReviewDecide": "处理审阅",
@@ -155,6 +154,6 @@
   "writeFile": "写入文件",
   "cheeseSpaceAnnounce": "发公告",
   "cheeseSpaceCategory": "管理分类",
-  "cheeseSpaceCode": "管理邀请码",
+  "cheeseSpaceLink": "管理空间的加入链接",
   "cheeseSpaceReview": "审核题目"
 }

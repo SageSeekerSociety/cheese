@@ -103,8 +103,16 @@ watch(pdf.revision, async () => {
   await nextTick()
   if (family.value === 'doc' && cover.value) {
     void pdf.paint(1, cover.value, { width: 72, height: 96 })
-    const text = (await pdf.pageText(1)) ?? ''
-    snippet.value = text.replace(/\s+/g, ' ').trim().slice(0, 140)
+    // 摘要取不到就是没有摘要，和版本一样是「能读到才说」：卡片照常能打开、能下载。
+    // 这一步在 watch 回调里，抛出去会被时间线的 ErrorBoundary 接走——整段对话换成
+    // 「无法显示这块内容」，只为了两行可读可不读的字。取文字失败的原因（内核缺某个
+    // 接口、这一页的字体读不出来、内存不够）都不归这张卡片管。
+    try {
+      const text = (await pdf.pageText(1)) ?? ''
+      snippet.value = text.replace(/\s+/g, ' ').trim().slice(0, 140)
+    } catch {
+      snippet.value = ''
+    }
   }
   if (family.value === 'slides')
     strip.value.forEach((host, i) => void pdf.paint(i + 1, host, { width: 120, height: 68 }))
@@ -195,6 +203,19 @@ const badgeHint = computed(() =>
       @sheets="sheetNames = $event"
     />
 
+    <!-- Inline expand belongs to documents, so it sits under the snippet: every file card keeps the
+         same two buttons at the bottom (open on the right, download). -->
+    <button
+      v-if="family === 'doc' && pdf.count.value"
+      type="button"
+      class="fcard__expand"
+      :aria-expanded="expanded"
+      @click="toggleExpand"
+    >
+      <v-icon size="14">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+      {{ expanded ? t('work.room.fileCard.collapse') : t('work.room.fileCard.expand') }}
+    </button>
+
     <div v-if="expanded" class="fcard__inline" data-testid="file-card-inline">
       <span
         v-for="n in inlineCount"
@@ -210,15 +231,6 @@ const badgeHint = computed(() =>
     <div class="fcard__actions">
       <BaseButton kind="secondary" size="sm" prepend-icon="mdi-dock-right" @click="emit('open')">
         {{ t('work.room.message.openInPanel') }}
-      </BaseButton>
-      <BaseButton
-        v-if="family === 'doc' && pdf.count.value"
-        size="sm"
-        :prepend-icon="expanded ? 'mdi-chevron-up' : 'mdi-text-box-outline'"
-        :aria-expanded="expanded"
-        @click="toggleExpand"
-      >
-        {{ expanded ? t('work.room.fileCard.collapse') : t('work.room.fileCard.expand') }}
       </BaseButton>
       <BaseButton
         v-if="downloadable"
@@ -399,6 +411,23 @@ const badgeHint = computed(() =>
   background: none;
   border: 0;
   cursor: pointer;
+}
+.fcard__expand {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 2px;
+  margin: 0 12px 8px;
+  padding: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.fcard__expand:hover {
+  color: var(--ink);
 }
 .fcard__actions {
   display: flex;

@@ -710,8 +710,8 @@ def end_holders(paths: list[Path]) -> None:
 def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
     """Remove the checkouts of these closed tasks.
 
-    The platform names the tasks. A closed task's work went to its branch and
-    snapshot at each turn's checkpoint, so nothing here waits on publication;
+    The platform names the tasks. A closed task's work is what it pushed to its
+    branch; nothing here waits on publication, and what it never pushed goes;
     only a checkout something still has open stays, and comes back with the
     reason. A checkout that is not there is already done, so the same list can
     be sent again and again.

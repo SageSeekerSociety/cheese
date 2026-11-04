@@ -367,6 +367,59 @@ reloading the persistent ingress once. That migration can reconnect existing
 devices; subsequent business releases do not reload their ingress. A box without
 `ACTIVE_BACKEND_DIR` still recreates application containers in place.
 
+### The api pool beside each backend
+
+One Python process uses one core, so a backend that is a single process
+serves every request in one queue. Each backend slot can run an api pool
+beside its realtime process (`backend/app/serve.py`,
+`backend/app/core/process_role.py`):
+
+- The realtime process on :8081 is the backend as it always was: the owner
+  lock, turns, sessions, room sockets, the broker and every write.
+- The pool on :8085 runs `API_POOL_WORKERS` uvicorn workers with
+  `BACKEND_ROLE=api`. They answer plain reads: every `GET` that is not a
+  WebSocket and not in `REALTIME_GET_PATTERNS`. They never take the owner lock.
+  What they publish reaches the room sockets through Valkey
+  (`cheesex:broker-relay`, `realtime/relay.py`).
+- app-router splits the traffic (`deploy/llm-tunnel/app-router.conf`,
+  `backend-pool.conf` written by `deploy-docker.sh`). The realtime process is
+  the pool's backup, so a pool that does not answer costs nothing but its
+  speed.
+- `API_POOL_WORKERS` defaults to 0: no pool, no pool port, every request to the
+  realtime process. dev's release workflow sets 8 (its box has 16 cores) and layers
+  `docker-compose.api-pool.yml` (pool ports 18091 and 18092 for the two slots).
+  To turn it off on dev, set it to 0 in `deploy-dev.yml` and release.
+- The pool's database budget is its own (`API_POOL_DB_POOL_SIZE`,
+  `API_POOL_DB_MAX_OVERFLOW`, 4 and 2 per worker by default), divided between
+  its workers as the backend's is. dev sets 24 and 8: 32 per slot, 64 while a
+  rollout runs both slots' pools, on dev's 200.
+- At three workers dev saturated at about 30 requests a second
+  (2026-11-01, the exempt account, 20 to 100 clients: median 0.65 s at 20,
+  3.4 s at 100) with 4 of its 16 cores busy, which is why it runs eight.
+  With eight (same test, 2026-11-01): 56 requests a second and a median of
+  0.26 s at 20 clients, 72 and 0.6 s at 50, 67 and 1.1 s at 100, no errors.
+  Past about 70 a second the time each request computes is the limit again;
+  the topic list is the heaviest read.
+- What it bought on dev (2026-10-31/11-01, one account, 30 s per level, the
+  reads a person opening a channel makes): at 20 concurrent clients the median
+  request went from 2.4 s to 0.36 s and a light read beside them from 1.2 s to
+  0.07 s. A write (marking a room read) kept 55 ms with 10 clients reading and
+  83 ms with 20, against 55 ms with none: reads no longer queue in front of the
+  realtime process. Above 10 clients one account meets its own request-rate
+  limit (about 22 a second), so the limit of the pool itself was not reached.
+- Production runs without it, and turning it on there takes two steps, not
+  dev's one. `API_POOL_WORKERS` in the environment of the step in
+  `deploy-prod.yml` that runs `deploy-docker.sh` layers
+  `docker-compose.api-pool.yml` and starts the pool, but nothing sends it a
+  read: app-router's `backend_pool_active` upstream is what does that, and prod
+  has no app-router (`ACTIVE_BACKEND_DIR` unset there; its release is the
+  in-place recreate of one backend). Install the standing data plane first
+  (`deploy/llm-tunnel/up.sh`, then `ACTIVE_BACKEND_DIR` in the box's
+  `deploy.env`). A release then runs the two slots, so check that the
+  database's `max_connections` covers both slots' pools during a rollout (the
+  arithmetic above; prod's server is still the default 100, so it may not),
+  and that the pool ports (18091 and 18092) are free on that host.
+
 ### dev — continuous deploy
 
 Merge to `main` → `deploy-dev.yml` runs on the **self-hosted runner on the dev
@@ -782,7 +835,14 @@ Changing backend env (e.g. enabling an OAuth provider):
 
 1. Edit the env file — dev: `/home/nictheboy/cheese-backend-py/backend/.env`
    (the compose `env_file` default; `BACKEND_ENV_FILE` overrides). **Back it up
-   first** (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`).
+   first** (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`). prod (RUC) reads the
+   same default path on `cheese-prod-app` unless its `~/ops/deploy.env` sets
+   `BACKEND_ENV_FILE`; etrip reads `/opt/cheese-deploy/.env.prod`. A variable
+   the backend refuses to boot without on a deployment — `JWT_SECRET`,
+   `DATA_ENCRYPTION_KEY`, `PLATFORM_ADMIN_HANDLES`,
+   `ALIYUN_GREEN_ACCESS_KEY_ID` and `ALIYUN_GREEN_ACCESS_KEY_SECRET`
+   (`deploy/.env.prod.example`) — is in each of these files before a release
+   that needs it reaches that box.
 2. env_file is read at container **create** time — `docker restart` does NOT
    pick up changes. Recreate via the deploy script, re-deploying the sha that
    is already running:
@@ -818,11 +878,11 @@ recreate-not-restart rule (`deploy/gateway/README.md`).
 
 ## Backups
 
-Every box runs the same scripts (only the R2 prefix and host differ); details and
-restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
+dev 和 prod 使用 `db-backup.sh`，etrip 使用独立脚本；恢复步骤见
+[`deploy/README-backup.md`](../deploy/README-backup.md)。
 
-- **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
-  `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
+- **数据库**：dev 每小时 `pg_dump -Fc` 并校验本地备份；默认距上次 R2 上传成功至少 6 小时才再次上传。prod／etrip 保持每次备份上传。
+  桶为 `cheese-db-backups`，前缀分别为 `db/`（dev）、`prod-db/`（prod）、`etrip/`。
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
 - **Session records** (what each session's runner journaled,
   `session_records`): the last few minutes sit in the table and go out with the
@@ -849,9 +909,9 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   `backup-restore-test.yml` (weekly, restores the newest dump into a throwaway
   postgres and fails if it doesn't come back).
 
-The backup scripts are version-controlled, but **installing them on a box**
-(copying to `~/ops/`, systemd timers, the R2 credential in `~/ops/r2.env`) is a
-manual runbook, not automated provisioning — see `deploy/README-backup.md`.
+dev 发布流水线从同一发布提交安装备份脚本到 `~/ops/`，先备份旧脚本，再原子替换。
+systemd 小时 timer、`backup.env` 和 `r2.env` 保持原值；prod／etrip 没有此安装步骤。
+安装和异地上传间隔设置见 `deploy/README-backup.md`。
 
 ## Database encoding — always create with an explicit `ENCODING 'UTF8'`
 
@@ -928,7 +988,14 @@ way, one tunnel round trip.
 The client address travels in `X-Forwarded-For`. Caddy drops whatever the
 visitor sent there and writes the address the layer4 router's PROXY header
 gave it; the dev box's front door appends its own and the backend resolves the
-client through `FORWARDED_ALLOW_IPS`. The upstream is not TLS with PROXY
+client through `FORWARDED_ALLOW_IPS`. On dev every hop after Caddy is loopback
+or a docker network (`127.0.0.1,::1,172.16.0.0/12`, set in `deploy-dev.yml`);
+the frontend gateway resolves the same address (`mainland/main.conf`) and on
+dev caps the connections one visitor's address may hold at 2000
+(`GATEWAY_CONNECTIONS_PER_ADDRESS`), generous because a campus is one address
+behind NAT. Production sets neither until its own chain is checked: a hop left
+out of the list makes every visitor the same address.
+`GET /api/client-address` answers the address a caller is counted by. The upstream is not TLS with PROXY
 protocol to the dev box's `:18443`: with PROXY on, Caddy pools upstream
 connections per client address, so every new visitor would open its own and
 the round trips would come back.
@@ -1215,6 +1282,30 @@ GitHub and Google sign-in started on okcheese.cn run on okcheese.com, where
 their callback is registered, and the sign-in is handed back to okcheese.cn
 (`backend/app/api/routes/app_sign_in.py`). Mailed links point to okcheese.com.
 Cookies are per host, so the two addresses keep separate sign-ins.
+
+**Which origin a visitor gets is decided by `MAINLAND_ENTRY`.** Set to
+`https://okcheese.cn`, the frontend image's nginx answers a request for a page on
+any other origin of the deployment — a navigation, asking for HTML — from a
+visitor whose address is in China with a 302 to it. Nobody else is moved: not a
+visitor outside China, not one signed in on the origin they are on (their session
+is that origin's cookie; a sign-in leaves `cheese_signed_in` at path `/` for
+this rule to see, because the refresh cookie is scoped to the auth routes and
+never rides a page request), not an API call or a WebSocket, not the desktop app
+(whose window runs only its own origin's pages, and names itself in its
+`User-Agent`), and not another host of the deployment. Unset, the rule is still
+in the image and fires for nobody, which is the default.
+
+The rules are `frontend/nginx/mainland/`, the domain names and the entry are
+written at container start by `frontend/scripts/mainland-redirect.sh`, and the
+address space that counts as China is `frontend/nginx/mainland/china-ip.txt` —
+regenerated monthly from APNIC by `scripts/ops/refresh-china-ip-ranges.py`
+(`--check` reports a stale one).
+
+A machine enrolled from an alias installs and approves on that alias: the
+connector's install script and the approve link name the origin the request
+arrived on, so a machine added from okcheese.cn keeps dialling it instead of
+crossing to Hong Kong on every request (`backend/app/api/routes/installer.py`,
+`.../connector/devices.py`).
 
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
 Kong tunnels inside TLS on `:443` do not apply inside the mainland.

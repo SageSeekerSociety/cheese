@@ -464,6 +464,9 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
       [ -z "${APP_TIER_PREVIOUS_RELEASE:-}" ] || printf 'APP_RELEASE=%s\n' "$APP_TIER_PREVIOUS_RELEASE"
       ;;
     *State.Running*) printf 'true\n' ;;
+    # The command a backend's image starts with: APP_TIER_BACKEND_CMD, or the
+    # one images before backend/app/serve.py ran.
+    *Config.Cmd*) printf '%s\n' "${APP_TIER_BACKEND_CMD:-[\"sh\",\"-c\",\"exec uvicorn app.main:app\"]}" ;;
     # The image a running container was created from.
     *'{{.Image}}'*) printf '%s\n' "${APP_TIER_RUNNING_IMAGE:-sha256:running}" ;;
     # The configuration hash compose labelled a running container with.

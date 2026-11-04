@@ -7,6 +7,7 @@ import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestSiteSession } from '../api'
 import { t } from '../i18n'
+import { leaveForBrowser } from '../lib/desktopApp'
 
 import SiteOpenViewView from './SiteOpenViewView.vue'
 
@@ -53,6 +54,7 @@ async function openSite() {
 watch(
   () => route.params.projectId,
   () => {
+    if (leaveForBrowser(route.fullPath)) return
     if (!needsLogin.value) void openSite()
   },
   { immediate: true }

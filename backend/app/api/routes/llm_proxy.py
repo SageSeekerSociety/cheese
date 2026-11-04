@@ -24,6 +24,7 @@ as-is, so a client-side protocol change needs no change here.
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from typing import Annotated
@@ -37,7 +38,7 @@ from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
 from app.api.machine_caller import Caller
 from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER, STATE_HEADER
-from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
+from app.api.model_keys import credit_refusal, task_credit_context_of
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core import credentials
@@ -63,14 +64,17 @@ from app.core.sentences import listing, say
 from app.domain.agent import model_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
+from app.domain.agent.gateway_usage import UNKNOWN_TARGET
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.facts import project_agents_ride_along
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.memory import dream
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
+from app.domain.usage.budgets import CreditBudgets
+from app.domain.usage.ledger import project_with_payer
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger("cheesex.llm_proxy")
@@ -132,6 +136,25 @@ _DROP_REQUEST_HEADERS = frozenset(
 _DROP_RESPONSE_HEADERS = frozenset(
     {"content-length", "connection", "keep-alive", "transfer-encoding", "upgrade"}
 )
+
+
+# What the proxy forwards: the model calls the harnesses make (Claude Code's
+# messages, Codex's responses, pi's OpenAI-compatible calls) and the model list
+# they read. Anything else the gateway answers — key, spend, team and model
+# administration — is the platform's to call with its master key, not a
+# session's with the project's key, so it is refused here.
+_MODEL_PATH = re.compile(
+    r"^v1/(?:messages(?:/count_tokens)?|chat/completions|completions|embeddings"
+    r"|responses(?:/[A-Za-z0-9_.-]+)*|models(?:/[A-Za-z0-9_.:-]+)?)$"
+)
+
+
+def _model_path(path: str) -> str:
+    """``path`` when it is a model call this proxy forwards; refused otherwise."""
+    clean = path.lstrip("/")
+    if ".." in clean.split("/") or not _MODEL_PATH.match(clean):
+        raise NotFoundError(say("modelPathNotProxied", path=path[:120]))
+    return clean
 
 
 def _upstream_url(path: str) -> str:
@@ -284,7 +307,10 @@ async def admission(
         project_uuid = uuid.UUID(claims["p"])
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
-    project = await ProjectRepository(db).get(project_uuid)
+    # Read with who pays for it: admission asks that next, every model call.
+    project = await project_with_payer(
+        db, project_uuid, ride_along=project_agents_ride_along(db)
+    )
     if project is not None:
         try:
             await _require_model_caller(db, token, project_uuid)
@@ -306,6 +332,14 @@ async def admission(
     credit_context = None
     if project is not None:
         credit_context = await task_credit_context_of(db, project, claims)
+        # The project's credit cap, read with its gateway spend and the task
+        # owner's own cap: the refusal below asks the caps, and the key's
+        # budget further down asks all three.
+        await CreditBudgets(db).project_caps(
+            [project.id],
+            with_gateway_spend=True,
+            member=credit_context.owner_handle if credit_context else None,
+        )
         refused = await credit_refusal(db, project, credit_context)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
@@ -420,11 +454,6 @@ async def admission(
             }
         )
     pool = bound.supply
-    # A call made in the overview room while the project's memory is being
-    # consolidated is the dream's: it runs on the project's dream key, and the
-    # metering proxy writes the dream's kind on its usage line. Read before the
-    # read session is handed back below.
-    dreaming = await dreams(db, project, claims)
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
@@ -436,8 +465,36 @@ async def admission(
         supply["work_id"] = (
             str(credit_context.work_id) if credit_context.work_id else ""
         )
-    if dreaming:
-        supply["kind"] = dream.DREAM_KIND
+
+    # The project key carries a budget worked out from the same payer, packs
+    # and caps this admission just read: worked out here, those reads are
+    # answered again in this transaction rather than made again on the key's
+    # own session (`project_gateway_key`).
+    # When the project's settings, read at the top of this admission, already
+    # name a key in step with that budget, that key is the answer: the key's
+    # own read path would only read the project again to find the same.
+    project_key = pool == GATEWAY and refused is None and from_proxy
+    budget_target = UNKNOWN_TARGET
+    ready_key = None
+    if project_key and project is not None and credit_context is None:
+        try:
+            budget_target = await chat._gateway_budget_target(db, project_uuid)
+        except Exception:
+            # The key's own read path answers a failure here as no key, which
+            # the proxy refuses; raised from the route it would read as the
+            # backend unreachable and let the call through unchecked.
+            logger.exception("admission budget target failed for %s", project_uuid)
+        else:
+            ready_key = chat.room_key_in_step(project.settings, budget_target)
+    elif project_key and credit_context is not None:
+        # A task's key, asked here for the same reason: this transaction has
+        # the project and its payer, which a session of its own reads again.
+        try:
+            ready_key = await chat.task_key_in_step(
+                db, project_uuid, credit_context.task_id, credit_context.owner_handle
+            )
+        except Exception:
+            logger.exception("admission task key check failed for %s", project_uuid)
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -460,17 +517,19 @@ async def admission(
     # session holds its own token: answering that with the key would put a
     # shared pool credential inside every room that can reach this route.
     # Anyone else (a pi runner admitting a subagent) gets the decision.
-    if pool == GATEWAY and refused is None and from_proxy:
+    if project_key:
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         if credit_context is not None:
-            supply["key"] = await chat.project_gateway_key(
+            supply["key"] = ready_key or await chat.project_gateway_key(
                 project_uuid,
                 task_id=credit_context.task_id,
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
+            supply["key"] = ready_key or await chat.project_gateway_key(
+                project_uuid, budget_target=budget_target
+            )
 
     return ok(
         {
@@ -580,6 +639,7 @@ async def _forward(
     """``machine_conversation`` is the conversation a sandbox's call comes
     from: it goes out on that conversation's machine key, capped per day
     (`gateway_usage.MachineGatewayKey`), not on the session's own."""
+    path = _model_path(path)
     person = personal_claims(token) if token else None
     claims = scoped_token_claims(token) if token and person is None else None
     if person is None and (not claims or not claims.get("p")):
@@ -627,7 +687,6 @@ async def _forward(
                     status_code=400,
                     media_type="application/json",
                 )
-        dreaming = await dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
         if machine_conversation is not None:
@@ -645,7 +704,7 @@ async def _forward(
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            key = await chat.project_gateway_key(project_uuid, dream=dreaming)
+            key = await chat.project_gateway_key(project_uuid)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.

@@ -2,7 +2,6 @@ import type { AccountConnectionInput } from '@/types/modelConnections'
 import type { AccountConnection, ModelConnection } from '@/types/modelConnections'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import {
   addAccountConnection,
@@ -23,6 +22,7 @@ import {
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { desktopBridge } from '@/lib/desktop'
+import { toast } from '@/lib/toast'
 
 export function useTeamModels() {
   const team = inject(teamDataInjectionKey, ref())

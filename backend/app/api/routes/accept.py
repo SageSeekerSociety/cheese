@@ -111,7 +111,7 @@ async def _card_actor(
     topic = await service._topic_or_404(card.topic_id)
     actor = await resolver.resolve(project_id=topic.project_id, topic_id=topic.id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic.id
+        actor, project_id=topic.project_id, topic_id=topic.id, room=topic
     )
     # Deciding a review is the task side of the project (#3830).
     await require_role(db, actor, topic.project_id, Permission.tasks)
@@ -139,13 +139,14 @@ async def _task_actor(
 async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Actor:
     """Whoever may read this task, or this room's cards: the task's people, or
     whoever the room lets in."""
-    if place.task is not None:
-        actor, _room, _task = await _task_actor(place.conversation_id, db, resolver)
-        return actor
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
     )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, room=place.room
+    )
+    if place.task is not None and not actor.authenticated:
+        raise AuthenticationRequiredError()
     return actor
 
 
@@ -576,13 +577,18 @@ async def reject_card(
             if actionable
             else say("cardRejectedClosed", who=who)
         ),
-        meta=notice(
-            EVENT_CARD_REJECTED,
-            severity=SEVERITY_WARN,
-            who=WHO_CHEESE,
-            detail="\n\n".join(p for p in (reason, comment_summary(sent)) if p) or None,
-            detail_label=say("labelRejectReason"),
-        ),
+        meta={
+            **notice(
+                EVENT_CARD_REJECTED,
+                severity=SEVERITY_WARN,
+                who=WHO_CHEESE,
+                detail="\n\n".join(p for p in (reason, comment_summary(sent)) if p)
+                or None,
+                detail_label=say("labelRejectReason"),
+            ),
+            # The reason is that person's own words, drawn as what they said.
+            "by": decided_by,
+        },
     )
     await db.commit()
     if sent:

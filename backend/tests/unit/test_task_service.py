@@ -622,7 +622,7 @@ class TestTaskSubmissionService:
         entry = _make_entry()
 
         membership_repo = AsyncMock()
-        membership_repo.list_memberships_for_task.return_value = [membership]
+        membership_repo.get_by_ids.return_value = {50: membership}
 
         submission_repo = AsyncMock()
         submission_repo.list_submissions.return_value = [submission]
@@ -648,6 +648,35 @@ class TestTaskSubmissionService:
         assert total == 1
         assert len(items) == 1
         assert items[0]["id"] == 200
+        # The page's own claims, not the task's roster; a first page that is
+        # not full is its own total.
+        membership_repo.get_by_ids.assert_awaited_once_with([50])
+        membership_repo.list_memberships_for_task.assert_not_awaited()
+        submission_repo.count_submissions.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_list_submissions_counts_a_full_or_later_page(self):
+        membership = _make_membership(id=50)
+        submission = _make_submission(id=200, membership_id=50)
+        membership_repo = AsyncMock()
+        membership_repo.get_by_ids.return_value = {50: membership}
+        submission_repo = AsyncMock()
+        submission_repo.list_submissions.return_value = [submission]
+        submission_repo.count_submissions.return_value = 7
+        entry_repo = AsyncMock()
+        entry_repo.list_by_submission_ids.return_value = {}
+        svc = self._build_service(
+            submission_repo=submission_repo,
+            entry_repo=entry_repo,
+            review_repo=AsyncMock(),
+            membership_repo=membership_repo,
+        )
+
+        _, full = await svc.list_submissions(task_id=1, limit=1)
+        _, later = await svc.list_submissions(task_id=1, limit=20, offset=20)
+
+        assert (full, later) == (7, 7)
+        assert submission_repo.count_submissions.await_count == 2
 
     @pytest.mark.anyio
     async def test_list_submissions_reads_a_page_in_two_batches(self):
@@ -658,7 +687,7 @@ class TestTaskSubmissionService:
         memberships = [_make_membership(id=50 + i) for i in range(3)]
 
         membership_repo = AsyncMock()
-        membership_repo.list_memberships_for_task.return_value = memberships
+        membership_repo.get_by_ids.return_value = {m.id: m for m in memberships}
 
         submission_repo = AsyncMock()
         submission_repo.list_submissions.return_value = submissions
@@ -1646,7 +1675,7 @@ class TestTaskSubmissionServiceAdditional:
         submission = _make_submission(id=200, membership_id=999)
 
         membership_repo = AsyncMock()
-        membership_repo.list_memberships_for_task.return_value = []  # No memberships
+        membership_repo.get_by_ids.return_value = {}  # No memberships
 
         submission_repo = AsyncMock()
         submission_repo.list_submissions.return_value = [submission]
@@ -1678,7 +1707,7 @@ class TestTaskSubmissionServiceAdditional:
         review = _make_review(submission_id=200)
 
         membership_repo = AsyncMock()
-        membership_repo.list_memberships_for_task.return_value = [membership]
+        membership_repo.get_by_ids.return_value = {50: membership}
 
         submission_repo = AsyncMock()
         submission_repo.list_submissions.return_value = [submission]

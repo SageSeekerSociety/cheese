@@ -102,7 +102,8 @@ const listEl = ref<HTMLElement | null>(null)
 const pages = useLibraryPages(
   () => props.projectId,
   () => ({ dir: browsing.value ? dir.value : '', q: query.value, kind: kind.value }),
-  listEl
+  listEl,
+  () => !props.docId
 )
 const { rows: entries, loading, loadFailed, loadReason } = pages
 const inFolder = computed(() => browsing.value && !!dir.value)
@@ -114,7 +115,10 @@ const readonlyHere = computed(
 // 在 `题目/` 这一层：上面写一行它来自哪道题、现在第几版，连到题目页（`GET /projects/{id}`
 // 的 `task`，看的人看得到这个文件夹时才有）。
 const project = useQuery(
-  computed(() => projectQuery(props.projectId)),
+  computed(() => ({
+    ...projectQuery(props.projectId),
+    enabled: !props.docId && browsing.value && dir.value === TASK_FOLDER,
+  })),
   queryClient
 )
 const taskHere = computed(() => (browsing.value && dir.value === TASK_FOLDER ? project.data.value?.task ?? null : null))

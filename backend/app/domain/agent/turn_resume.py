@@ -2,9 +2,16 @@
 
 Before this, such a seat stayed idle until a person or another agent poked it
 (`resumable_failures` has the measurement). Now the failure is classified as it
-lands (`after_failure`, called from the hook intake before any failure
-card is posted), and a resumable one leaves a `TurnResume` row due after a
-backoff, or at the reset the service named. A clock (`hand_due`) turns a due
+lands (`after_failure`, called from the hook intake before the turn's line is
+posted), and a resumable one leaves a `TurnResume` row due after a backoff, or
+at the reset the service named — when that is within `RESUME_HORIZON`. A
+recovery dated further out is written as dropped (`RECOVERS_LATE`): the turn
+has failed, and nothing is owed.
+
+While a resume is owed the conversation gets no line: the line above the
+composer says the teammate is waiting on it (`waiting`, the run records). Once
+the platform gives up the turn has failed, and its line says so like any
+other failed model call (`intake.hooks`). A clock (`hand_due`) turns a due
 row into one instruction on the delivery ledger (`delivery.agent.record_agent`),
 so admission, leases, the closed-task check and the 30-second dispatch all stay
 the ledger's, exactly as for a timed delivery.
@@ -20,7 +27,9 @@ Why it cannot storm:
   meantime) moves that one row onto itself rather than adding another.
 - **A streak has a cap.** Each resume in a row waits longer and the streak stops
   after `Policy.attempts`; the row that would have exceeded it is written as
-  dropped, so the record says why the seat was left alone. A resumed turn that
+  dropped, so the record says why the seat was left alone. The conversation
+  is told so once per streak: a seat something else keeps waking fails again
+  and again, and each of those failures is written but not announced again. A resumed turn that
   failed more than `STREAK_WINDOW` after it was handed over made progress, and
   starts a new streak; so does a person speaking. A platform interruption
   (`Policy.platform`, the upgrade replacing the runner a turn was in) is
@@ -53,6 +62,7 @@ from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.models import AgentTurn, TurnResume
 from app.domain.agent.own_limit import refused_until
 from app.domain.agent.resumable_failures import (
+    RESUME_HORIZON,
     SUBSCRIPTION_COOLING,
     Resumable,
     classify,
@@ -61,6 +71,7 @@ from app.domain.agent.run_records import publish
 from app.domain.agent.service import AgentResult
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of, room_of_thread, rooms_of
 from app.domain.delivery.agent import instance_for_seat, record_agent
 from app.domain.delivery.models import Delivery
@@ -109,6 +120,9 @@ SEAT_RAN_AGAIN: Final = "seat_ran_again"
 CLOSED: Final = "conversation_closed"
 SEAT_GONE: Final = "seat_gone"
 DELIVERY_FAILED: Final = "delivery_failed"
+#: The failure dates its recovery beyond `RESUME_HORIZON`: not a passing fault.
+#: The row's ``due_at`` keeps when it said the service comes back.
+RECOVERS_LATE: Final = "recovers_late"
 
 _SAID_MAX: Final = 4000
 
@@ -138,7 +152,9 @@ async def after_failure(
     now: datetime | None = None,
 ) -> TurnResume | None:
     """Schedule this seat's resume when its failure is one that passes by
-    itself; the row written, or None when nothing was scheduled."""
+    itself, soon. What was decided: the row, owed or written as dropped with
+    its reason (`RECOVERS_LATE`, a spent streak), or None when the failure is
+    not one the platform waits out at all."""
     now = now or _now()
     reset = refused_until(result.rate_limit, now)
     if route == OWN_ROUTE and reset is not None:
@@ -155,6 +171,18 @@ async def after_failure(
         return None
     recorded: tuple[dict, uuid.UUID | None] | None = None
     async with sessions() as session:
+        decided = await session.scalar(
+            select(TurnResume).where(
+                TurnResume.conversation_id == conversation_id,
+                TurnResume.recipient_handle == seat,
+                TurnResume.failed_turn_id == failed_turn_id,
+            )
+        )
+        if decided is not None:
+            # The same failure reported again (the runner delivers a report
+            # until its follow-through is done): what was decided for it the
+            # first time stands, with the time the room was already told.
+            return decided
         instance = await instance_for_seat(session, project_id, seat)
         if instance is None or not instance.is_active:
             return None
@@ -209,9 +237,8 @@ async def after_failure(
         else:
             # A platform interruption carries the streak as it stands: it is
             # not one more failure of the agent's (`Policy.platform`).
-            attempt = await _streak(session, conversation_id, seat, now) + (
-                0 if found.policy.platform else 1
-            )
+            streak, told_spent = await _streak(session, conversation_id, seat, now)
+            attempt = streak + (0 if found.policy.platform else 1)
             wait, dropped = _wait(found, attempt, now)
             row = {
                 "id": uuid.uuid4(),
@@ -242,6 +269,20 @@ async def after_failure(
                 return None
             stored = await session.get(TurnResume, written)
             assert stored is not None
+            if told_spent and dropped == ATTEMPTS_USED_UP:
+                # The streak's end was already told, and nothing about it has
+                # changed: the row records this failure, the line is not
+                # repeated. The failed turn still has its own line.
+                await session.commit()
+                logger.info(
+                    "turn resume: %s in %s failed again (%s, attempt %s); "
+                    "attempts already used up",
+                    seat,
+                    conversation_id,
+                    found.kind,
+                    attempt,
+                )
+                return stored
             recorded = await _record_schedule(session, stored, now)
             if recorded is None:
                 return None
@@ -275,7 +316,12 @@ async def _record_schedule(
 ) -> tuple[dict, uuid.UUID | None] | None:
     """Keep the recovery outcome in the transaction that schedules it."""
     dropped = row.dropped_at is not None
-    if dropped:
+    if dropped and row.dropped_reason == RECOVERS_LATE:
+        content = say(
+            "turnResumeRecoversLate",
+            minutes=round(RESUME_HORIZON.total_seconds() / 60),
+        )
+    elif dropped:
         key = (
             "turnResumeExhausted"
             if row.dropped_reason == ATTEMPTS_USED_UP
@@ -306,6 +352,8 @@ async def _record_schedule(
             ),
             "reason": row.dropped_reason if dropped else row.reason,
             "resume_id": str(row.id),
+            # The composer shows the wait until then (`waiting`).
+            **({} if dropped else {"due_at": row.due_at.isoformat()}),
         },
         turn_id=row.failed_turn_id,
         seat=row.recipient_handle,
@@ -414,8 +462,18 @@ async def report_failed_deliveries(sessions: SessionFactory) -> int:
                 .with_for_update(of=TurnResume, skip_locked=True)
             )
         )
+        # Every conversation told here and its room, at once, before the first
+        # line (`conversation.numbering`), not as each line reaches its conversation.
+        rooms = {row.id: await room_of(session, row.conversation_id) for row in rows}
+        await lock_conversations(
+            session,
+            [
+                *(row.conversation_id for row in rows),
+                *(room for room in rooms.values() if room is not None),
+            ],
+        )
         for row in rows:
-            room = await room_of(session, row.conversation_id)
+            room = rooms[row.id]
             row.dropped_at = _now()
             row.dropped_reason = DELIVERY_FAILED
             kept = await record(
@@ -484,6 +542,10 @@ def _wait(
                 # operator resets them, or someone moves the project off the
                 # subscription. Neither is the platform's to do.
                 return None, NO_RESET
+    if stated is not None and stated > RESUME_HORIZON.total_seconds():
+        # Back only after anybody waiting has moved on: the turn fails, and
+        # the row keeps when the service said it returns.
+        return stated, RECOVERS_LATE
     if stated is not None:
         # Spread the seats that waited on the same reset over a short span.
         return stated + _AFTER_RESET_S + random.uniform(
@@ -497,9 +559,10 @@ def _wait(
 
 async def _streak(
     session: AsyncSession, conversation_id: uuid.UUID, seat: str, now: datetime
-) -> int:
+) -> tuple[int, bool]:
     """How many resumes in a row this seat already had: the previous row's
-    attempt when this failure continues its streak, else 0."""
+    attempt when this failure continues its streak, else 0; and whether that
+    streak has already been told its attempts are used up."""
     previous = await session.scalar(
         select(TurnResume)
         .where(
@@ -510,21 +573,22 @@ async def _streak(
         .limit(1)
     )
     if previous is None:
-        return 0
+        return 0, False
     if previous.dropped_reason in (
         PERSON_SPOKE,
         SEAT_RAN_AGAIN,
         CLOSED,
         SEAT_GONE,
         DELIVERY_FAILED,  # no resumed turn started; a later manual retry is a new streak
+        RECOVERS_LATE,  # the turn failed outright; whoever tries again starts afresh
     ):
-        return 0
+        return 0, False
     since = previous.handed_at or previous.failed_at
     if now - since > STREAK_WINDOW:
-        return 0
+        return 0, False
     if await _person_spoke(session, conversation_id, previous.failed_at):
-        return 0
-    return previous.attempt
+        return 0, False
+    return previous.attempt, previous.dropped_reason == ATTEMPTS_USED_UP
 
 
 async def hand_due(
@@ -618,6 +682,36 @@ async def hand_due(
     for payload, room in stopped:
         await publish(payload, room=room)
     return handed
+
+
+async def waiting(session: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
+    """The resumes this conversation is still owed, as the room is told them
+    when it asks for its state (the `room_state` frame): whose, why, when it
+    is due, and since when it has waited. A row the clock would drop when due
+    (`_no_longer_applies`) is not one: nothing will retry it."""
+    rows = list(
+        await session.scalars(
+            select(TurnResume)
+            .where(TurnResume.conversation_id == conversation_id, _owed())
+            .order_by(TurnResume.due_at)
+        )
+    )
+    if not rows:
+        return []
+    room = await room_of(session, conversation_id)
+    return [
+        {
+            "conversation_id": str(row.conversation_id),
+            "seat": row.recipient_handle,
+            "resume_id": str(row.id),
+            "due_at": row.due_at.isoformat(),
+            "since": row.failed_at.isoformat(),
+            # What it waits out: a platform upgrade is not a failed model call.
+            "reason": row.reason,
+        }
+        for row in rows
+        if await _no_longer_applies(session, row, room) is None
+    ]
 
 
 async def _no_longer_applies(

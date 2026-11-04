@@ -12,7 +12,18 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import DateTime, Uuid, column, or_, select, table, true, update
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    String,
+    Uuid,
+    column,
+    or_,
+    select,
+    table,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -91,6 +102,41 @@ def work_interval_is_over():
         )
         .exists()
     )
+
+
+#: A seat's runner registration, read bare for the same reason as `_TURNS`:
+#: `session_states` is the agent domain's.
+_SEATS = table(
+    "session_states",
+    column("conversation_id", Uuid),
+    column("agent_handle", String),
+    column("harness", String),
+    column("worker_epoch", BigInteger),
+)
+
+
+def seat_epoch_of(conversation_id, recipient_handle, harness):
+    """``seat_epoch_now`` for one seat, as a scalar subquery."""
+    return (
+        select(_SEATS.c.worker_epoch)
+        .where(
+            _SEATS.c.conversation_id == conversation_id,
+            _SEATS.c.agent_handle == recipient_handle,
+            _SEATS.c.harness == harness,
+        )
+        .scalar_subquery()
+    )
+
+
+def receiver_gone():
+    """Whether nothing can read this input any more, as the platform itself
+    recorded it: the one process it was last handed to has exited
+    (``receiver_exited_at``, written when that process's exit is applied and
+    cleared when the input is handed to a newer one). It reads no clock of
+    another host, and no placement of the session's work: a work host given up
+    or replaced leaves the session process, and what it holds, where it is.
+    """
+    return NativeInput.receiver_exited_at.is_not(None)
 
 
 async def instances_for_seats(session, project_id, seats) -> dict[str, AgentInstance]:
@@ -224,8 +270,12 @@ async def record_task_instruction(
     )
 
 
-async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
-    """Claim committed intent; expired sending attempts require reconciliation."""
+async def dispatch_pending(
+    sessions, *, chat, runner, limit=100, delivery_ids=None, asked=False
+):
+    """Claim committed intent; expired sending attempts require reconciliation.
+
+    ``asked`` marks the attempts this claims as a person's (`asked_attempt_id`)."""
     stamp = now()
     claimed = []
     async with sessions() as session:
@@ -301,6 +351,8 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     continue
             row.state = "claimed"
             row.attempt_id = uuid.uuid4()
+            if asked:
+                row.asked_attempt_id = row.attempt_id
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
             row.attempts += 1
             content = row.payload["content"]
@@ -344,6 +396,7 @@ async def redispatch_undelivered(
     chat,
     runner,
     recipient_handle: str | None = None,
+    asked: bool = False,
 ) -> int:
     """Send this conversation, now, the inputs the platform still owes it.
 
@@ -366,6 +419,9 @@ async def redispatch_undelivered(
     The other caller is a seat whose work just ended (``recipient_handle``
     names it): an attempt refused because that seat was still holding the
     earlier work was waiting for exactly this, not for its backoff.
+
+    ``asked`` says a person pressed for it, so the attempts it starts are
+    theirs (`dispatch_pending`).
     """
     stamp = now()
     async with sessions() as session:
@@ -397,7 +453,9 @@ async def redispatch_undelivered(
             update(Delivery).where(Delivery.id.in_(owed)).values(retry_at=None)
         )
         await session.commit()
-    return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
+    return await dispatch_pending(
+        sessions, chat=chat, runner=runner, delivery_ids=owed, asked=asked
+    )
 
 
 async def run_attempt(sessions, delivery_id, attempt_id, work):

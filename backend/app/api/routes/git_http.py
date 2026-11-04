@@ -1,11 +1,9 @@
-"""Machine task metadata and private backups; Git traffic goes to the forge."""
+"""Machine task metadata; Git traffic goes to the forge."""
 
-import asyncio
-import tempfile
 import uuid
-from typing import Annotated, BinaryIO, cast
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import PresentedCredential, require_seated_agent
@@ -32,7 +30,6 @@ from app.domain.delivery.agent import (
 from app.domain.delivery.ledger import settle_card
 from app.domain.review import credit
 from app.domain.review.services import AcceptService
-from app.domain.room_task import snapshots
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["git"])
@@ -42,10 +39,10 @@ async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
     """The task a credential reaches here, and how.
 
     Its own session works it: a credential minted in the task's conversation.
-    A session of its room reaches it only to keep what is already on the
-    machine — the sync and backup a machine switch runs over every task
-    directory there — and never opens it: the task is worked in its own
-    conversation, by its owner and that session, and nowhere else.
+    A session of its room reaches it only to read what a machine switch needs
+    for every task directory there — the task and its worktree — and never
+    opens it: the task is worked in its own conversation, by its owner and that
+    session, and nowhere else.
     """
     # deferred-import: tests patch this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -64,83 +61,6 @@ async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
     if opening:
         raise ForbiddenError(say("taskWorkedInItsConversation"))
     return task
-
-
-@router.put(
-    "/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}",
-    dependencies=[ROUTE_DECIDES],
-)
-async def save_task_snapshot(
-    project_id: uuid.UUID,
-    task_id: uuid.UUID,
-    snapshot_sha: str,
-    request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    credential: PresentedCredential,
-    x_cheese_head: str = Header(),
-    x_content_sha256: str = Header(),
-) -> dict:
-
-    task = await _task_for(db, project_id, task_id, credential)
-    size = 0
-    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as file:
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > 512 * 1024 * 1024:
-                raise ValidationError(say("taskBackupTooLarge"))
-            await asyncio.to_thread(file.write, chunk)
-        row = await snapshots.save(
-            db,
-            task,
-            file=cast(BinaryIO, file),
-            head_sha=x_cheese_head,
-            snapshot_sha=snapshot_sha,
-            digest=x_content_sha256,
-        )
-    return ok(
-        {"id": str(row.id), "snapshot_sha": row.snapshot_sha, "digest": row.digest}
-    )
-
-
-@router.get("/{project_id}/git/tasks/{task_id}/snapshots/latest")
-async def latest_task_snapshot(
-    project_id: uuid.UUID,
-    task_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    credential: PresentedCredential,
-) -> dict:
-
-    await _task_for(db, project_id, task_id, credential)
-    row = await snapshots.latest(db, task_id)
-    return ok(
-        {
-            "id": str(row.id),
-            "snapshot_sha": row.snapshot_sha,
-            "head_sha": row.head_sha,
-            "digest": row.digest,
-            "created_at": row.created_at.isoformat(),
-        }
-    )
-
-
-@router.get("/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_id}")
-async def download_task_snapshot(
-    project_id: uuid.UUID,
-    task_id: uuid.UUID,
-    snapshot_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    credential: PresentedCredential,
-) -> Response:
-
-    await _task_for(db, project_id, task_id, credential)
-    row = await snapshots.get(db, task_id=task_id, snapshot_id=snapshot_id)
-    if row is None:
-        raise NotFoundError(say("taskBackupNotFound"))
-    return Response(
-        await snapshots.download(row),
-        media_type="application/x-git-bundle",
-        headers={"Cache-Control": "no-store"},
-    )
 
 
 @router.post("/{project_id}/git/tasks/{task_id}", dependencies=[ROUTE_DECIDES])

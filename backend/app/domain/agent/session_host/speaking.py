@@ -127,6 +127,10 @@ async def _say(
     if prompt.acting is not None:
         params["platform_token"] = prompt.acting
     running.owed = True
+    if running.launched.epoch:
+        # Recorded before it leaves: an exit of the process it was handed to
+        # before must not be read as this one's (`delivery.receipts.hand_to`).
+        await svc._handing(ref, running, prompt.id)
     try:
         await svc._call(running, ref, method, params)
     except (DeviceOffline, DeviceCallError) as exc:

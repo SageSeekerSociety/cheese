@@ -174,6 +174,9 @@ def _with_standing(payload: dict, held: Standing | None) -> None:
     """Where the caller sits and what that lets them do: every screen shows or
     hides its controls by these, never by working the rules out."""
     payload["my_role"] = held.seat.value if held is not None else None
+    # The key of the role held (``owner`` for the owner): a channel that lets
+    # only some roles speak is read against it.
+    payload["my_role_key"] = held.role if held is not None else None
     payload["my_permissions"] = (
         [p.value for p in PERMISSION_ORDER if p in held.permissions]
         if held is not None
@@ -249,10 +252,11 @@ async def create_project(
     user_id = getattr(who, "user_id", None)
     if user_id is not None:
         await referrals.on_onboarded(db, user_id)
+    payload = await _project_payload(db, project)
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()
-    return ok(await _project_payload(db, project))
+    return ok(payload)
 
 
 @router.get("")
@@ -569,7 +573,11 @@ async def list_project_tasks(
             db, [t.id for t in tasks if t.status == "open"]
         )
         items = await project_task_rows(
-            db, actor.handle or "", tasks, incomplete_of=incomplete.get
+            db,
+            actor.handle or "",
+            tasks,
+            incomplete_of=incomplete.get,
+            last_activity_of={task.id: at for task, at in page_rows},
         )
         last = page_rows[-1] if page_rows and has_more else None
         return await conditional_json(
@@ -749,10 +757,11 @@ async def save_commit_credit(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    await change_project_settings(
+    del resolver
+    settings_now = await change_project_settings(
         db, at.project, {CREDIT_SETTING: body.mode}, by=at.actor.handle
     )
-    return await get_commit_credit(at.project.id, db, resolver)
+    return ok({"mode": credit_mode(settings_now)})
 
 
 @router.get("/{project_id}/task-naming")
@@ -782,13 +791,19 @@ async def set_task_naming(
 ) -> dict:
     """Switch the project's tasks between automatic and manual naming. Tasks a
     person named keep their names either way (``member_settings``)."""
+    del resolver
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    await change_project_settings(
+    settings_now = await change_project_settings(
         db, at.project, {naming.SETTINGS_KEY: mode}, by=at.actor.handle
     )
-    return await get_task_naming(at.project.id, db, resolver)
+    return ok(
+        {
+            "mode": naming.naming_mode(settings_now),
+            "available": naming.available(),
+        }
+    )
 
 
 # --- Project stewardship: who answers for a project ---------------------------
@@ -865,8 +880,9 @@ async def archive_project(
     await InvitationService(
         db, deliver=deliver, settle=settle, team=project_team
     ).revoke_all_pending(project_id)
+    payload = await _project_payload(db, project)
     await db.commit()
-    return ok(await _project_payload(db, project))
+    return ok(payload)
 
 
 @router.post("/{project_id}/unarchive", dependencies=[ROUTE_DECIDES])
@@ -878,8 +894,9 @@ async def unarchive_project(
     project = await ProjectService(
         db, sessions=AgentSessionService(db), events=platform_line
     ).unarchive(project_id, by=owner.handle)
+    payload = await _project_payload(db, project)
     await db.commit()
-    return ok(await _project_payload(db, project))
+    return ok(payload)
 
 
 def _branch_protection_payload(bp: BranchProtection) -> dict:

@@ -119,11 +119,20 @@ class RunnerIntake:
         may_summon: bool = True,
         handoff: HumanHandoff | None = None,
         by_assistant: bool = False,
+        expects_agent: bool = False,
+        landed: list[dict] | None = None,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
         ``may_summon`` is False for a person whose role does not let them use the
         project's AI teammates (#3830): the message is said, and wakes nobody.
+
+        ``expects_agent``: the sender was shown that this goes to an AI
+        teammate. When it no longer would, nothing is stored and
+        `AddressingChanged` is raised (`persist_human_message`).
+
+        ``landed``: given a list, the stored blocks are added to it as the room
+        is told them.
 
         ``by_assistant``: the person's own 芝士 wrote it for them
         (`Actor.by_assistant`), and the message says so (``meta.by_assistant``).
@@ -152,8 +161,14 @@ class RunnerIntake:
             quoted_context=quoted_context,
             handoff=handoff,
             by_assistant=by_assistant,
+            expects_agent=expects_agent,
         )
         turn_id = user_block_id
+        if landed is not None:
+            # What was stored, as the room is told it (`dump_blocks_json`, the
+            # reply's preview included), for a caller answering the sender
+            # without reading the blocks back.
+            landed.extend(payloads)
         recipient = next(
             (
                 (payload.get("meta") or {}).get("agent_recipient")

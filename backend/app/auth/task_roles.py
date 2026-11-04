@@ -104,8 +104,7 @@ class TaskPolicy(Policy[Task, Permission]):
     permissions = Permission
 
     async def load(self, session: AsyncSession, id: int) -> Task | None:
-        task = await session.get(Task, id)
-        return None if task is None or task.deleted_at is not None else task
+        return await TaskRepository(session=session).get_by_id(id)
 
     async def may(
         self, session: AsyncSession, obj: Task, user_id: int, permission: Permission

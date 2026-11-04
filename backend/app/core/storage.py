@@ -499,9 +499,9 @@ def compute_file_hash(file: BinaryIO) -> str:
 
 
 def private_storage() -> S3StorageBackend:
-    """The private bucket, for what holds working files: task bundles and
-    archived sandbox homes. With no private bucket configured this refuses
-    rather than use the public one."""
+    """The private bucket, for what holds working files: archived sandbox
+    homes, retained transcripts and raw session records. With no private
+    bucket configured this refuses rather than use the public one."""
     if (
         not settings.s3_endpoint_url
         or not settings.s3_access_key

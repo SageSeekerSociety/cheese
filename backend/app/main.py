@@ -26,6 +26,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.datastructures import URL, Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import app.api.routes as routes_pkg
 from app.api import machine_relay
@@ -44,9 +46,11 @@ from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
-from app.core.health import set_periodic_health
+from app.core.gc_tuning import tune_after_startup
+from app.core.health import set_domain_checks, set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
+from app.core.loop_stalls import watch_loop_stalls
 from app.core.metrics import active_requests, registry
 from app.core.net_io import watch_api_io, watch_net_io
 from app.core.obs import (
@@ -57,9 +61,12 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.ownership import keep_holding
+from app.core.process_role import is_api_pool
 from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
+from app.core.route_index import index_routes
 from app.core.route_mounting import FAILED_ROUTE_MODULES
+from app.core.startup_freeze import freeze_after_startup
 from app.core.storage import reuse_s3_connections
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
@@ -70,8 +77,11 @@ from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub import machine as machine_streams
 from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
+from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.realtime.relay import relay_into
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.feedback import announce as feedback_announce
 from app.domain.identity.services import IdentityService
 from app.domain.machine.microcloud import reuse_connections
 from app.domain.machine.runner import (
@@ -82,6 +92,7 @@ from app.domain.machine.runner import (
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.periodic import sweep_abandoned_gates
 from app.domain.room_cleanup.retire import sweep_retired_storage
+from app.domain.routine import builtin_triage
 from app.domain.skill_market import close_market_connections
 from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
@@ -117,17 +128,22 @@ async def lifespan(application: FastAPI):
 
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
-    # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
-    # its platform agent-binding. Idempotent — the migration seeds it too; this is
-    # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
-    try:
-        async with async_session_factory() as session:
-            await IdentityService(session).ensure_agent_user()
-            await session.commit()
-    except Exception as exc:  # a missing table (pre-migration) must not crash boot
-        get_logger("cheesex.runtime").warning(
-            "agent-user seed skipped", reason=str(exc)[:120]
-        )
+    # A pool process (`core/process_role`) answers reads beside the realtime
+    # process: it does not run the work, and it leaves the seeds below — writes
+    # every start repeats — to that process rather than race N copies of them.
+    pool = is_api_pool()
+    if not pool:
+        # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
+        # its platform agent-binding. Idempotent — the migration seeds it too; this is
+        # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
+        try:
+            async with async_session_factory() as session:
+                await IdentityService(session).ensure_agent_user()
+                await session.commit()
+        except Exception as exc:  # a missing table (pre-migration) must not crash boot
+            get_logger("cheesex.runtime").warning(
+                "agent-user seed skipped", reason=str(exc)[:120]
+            )
 
     # Which gateway model each platform model role runs on, as an administrator
     # pointed it (`app.core.model_roles`), read before this process serves: a
@@ -142,22 +158,43 @@ async def lifespan(application: FastAPI):
             "platform model roles read skipped", reason=str(exc)[:120]
         )
 
-    # Every project agent is a collaborator with an identity of its own — a user
-    # row under `agent_instance_handle(id)`, which is what its roster seats name.
-    # `ensure_identity` runs on create, so this only reaches agents created before
-    # it existed; and the migration that seated each room's former agent wrote
-    # the seat's handle without the user row behind it, which this supplies.
-    # Idempotent, and never blocks boot for the same reason as the seed above.
-    try:
-        async with async_session_factory() as session:
-            service = AgentInstanceService(session)
-            for instance in await AgentInstanceRepository(session).list_all():
-                await service.ensure_identity(instance)
-            await session.commit()
-    except Exception as exc:  # same rule as the seed above
-        get_logger("cheesex.runtime").warning(
-            "agent identity backfill skipped", reason=str(exc)[:120]
-        )
+    if not pool:
+        # Every project agent is a collaborator with an identity of its own — a user
+        # row under `agent_instance_handle(id)`, which is what its roster seats name.
+        # `ensure_identity` runs on create, so this only reaches agents created before
+        # it existed; and the migration that seated each room's former agent wrote
+        # the seat's handle without the user row behind it, which this supplies.
+        # Idempotent, and never blocks boot for the same reason as the seed above.
+        try:
+            async with async_session_factory() as session:
+                service = AgentInstanceService(session)
+                for instance in await AgentInstanceRepository(session).list_all():
+                    await service.ensure_identity(instance)
+                await session.commit()
+        except Exception as exc:  # same rule as the seed above
+            get_logger("cheesex.runtime").warning(
+                "agent identity backfill skipped", reason=str(exc)[:120]
+            )
+
+        # Feedback triage ships with the product: its rule is installed here, on
+        # every start, in the room the deployment names (`builtin_triage`).
+        # Idempotent; a pause somebody set is kept. Never blocks boot: what kept it
+        # from installing is the `feedback_triage` entry of the health report.
+        try:
+            async with async_session_factory() as session:
+                await builtin_triage.install(session)
+                await session.commit()
+        except Exception as exc:  # same rule as the seed above
+            get_logger("cheesex.runtime").warning(
+                "feedback triage install skipped", reason=str(exc)[:120]
+            )
+
+    set_domain_checks(
+        {
+            "feedback_announce": feedback_announce.health,
+            "feedback_triage": lambda: builtin_triage.health(async_session_factory),
+        }
+    )
 
     # The `cheese` CLI is now staged into each topic's session dir from THIS
     # build (ws.session_dir) instead of an operator-maintained host checkout. A
@@ -414,7 +451,12 @@ async def lifespan(application: FastAPI):
                 )
             )
 
-    taking_over = asyncio.create_task(take_over(), name="take over running work")
+    # A pool process never runs the work: it does not queue for the lock, and
+    # nothing it holds is anyone's to take over.
+    taking_over = asyncio.create_task(
+        take_over() if not pool else asyncio.sleep(0),
+        name="take over running work",
+    )
 
     # The jobs no longer behind the ownership lock run on every process, so they
     # start at boot rather than when the lock arrives: that, and not the lock, is
@@ -429,7 +471,14 @@ async def lifespan(application: FastAPI):
     # takes up the ones nobody reads from its start, and on its way out gives
     # its own up first, for the next process to take at once.
     reading_questions = asyncio.create_task(
-        get_consumptions().run(), name="questions nobody reads"
+        get_consumptions().run() if not pool else asyncio.sleep(0),
+        name="questions nobody reads",
+    )
+    # What pool processes publish reaches the room sockets through this
+    # process's broker (`realtime/relay.py`).
+    relaying = asyncio.create_task(
+        relay_into(get_broker()) if not pool else asyncio.sleep(0),
+        name="broker relay from the api pool",
     )
 
     # FastAPI builds the OpenAPI document, and with it every included route's
@@ -443,6 +492,9 @@ async def lifespan(application: FastAPI):
     application.openapi()
 
     background.spawn(watch_loop_lag(), name="event loop lag")
+    # Where the loop was each time it stalled for more than a tenth of a
+    # second, for the performance page (`core/loop_stalls.py`).
+    background.spawn(watch_loop_stalls(), name="event loop stalls")
     # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
     # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
     # 不只是「我们用户的流量」），重启即清零。
@@ -540,6 +592,14 @@ async def lifespan(application: FastAPI):
         reuse_s3_connections(),
         reuse_forge_connections(),
     ):
+        # The warm-ups above loaded the object store's SDK models after the
+        # import-time freeze; freeze them too, once, before serving
+        # (`core/startup_freeze.py`).
+        freeze_after_startup()
+        # And let the middle generation fill before it is promoted, so full
+        # collections — which walk the whole live heap with the loop held — run
+        # less often (`core/gc_tuning.py` says how much, and why).
+        tune_after_startup()
         try:
             yield
         finally:
@@ -547,8 +607,10 @@ async def lifespan(application: FastAPI):
             watching_jobs.cancel()
             await asyncio.gather(watching_jobs, return_exceptions=True)
             set_periodic_health(None)
+            set_domain_checks({})
             reading_questions.cancel()
-            await asyncio.gather(reading_questions, return_exceptions=True)
+            relaying.cancel()
+            await asyncio.gather(reading_questions, relaying, return_exceptions=True)
             await get_consumptions().let_go()
             await hand_over_once()
             # The backend serves through its drain, so requests since the
@@ -855,22 +917,40 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     # 服务器自己花了多久：从进这个中间件到处理器交回响应（流式响应的正文不在内）。
     # 浏览器开发者工具的 Timing 页会显示它，一个慢请求才分得清是慢在服务器还是
     # 慢在路上；只有总耗时的话，两者看起来一模一样。
-    response.headers["Server-Timing"] = f"app;dur={ms}"
+    # Appended, not set: the query watch inside has put the database's share
+    # (``db``) on the same response, and setting would drop it.
+    response.headers.append("Server-Timing", f"app;dur={ms}")
     return response
 
 
-@app.middleware("http")
-async def cheese_turn_context(request: Request, call_next: Callable):  # type: ignore[type-arg]
-    # Stash the cheese turn id so blocks written by this request inherit it (R4).
-    ctx = current_work_id.set(parse_work_id(request.headers.get("x-cheese-turn")))
-    try:
-        return await call_next(request)
-    finally:
-        current_work_id.reset(ctx)
+# The two layers below are plain ASGI, not ``@app.middleware("http")``: a
+# Starlette ``BaseHTTPMiddleware`` runs the route in a task of its own and relays
+# its response through a memory stream, about half a millisecond on every
+# request, and neither of these needs a ``Request`` or a ``Response`` to do its
+# job. They sit exactly where the decorators put them (each one outside the
+# layers added before it) and, like the decorators, touch only HTTP.
+class CheeseTurnContext:
+    """Stash the cheese turn id so blocks written by this request inherit it (R4)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        turn = Headers(scope=scope).get("x-cheese-turn")
+        ctx = current_work_id.set(parse_work_id(turn))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_work_id.reset(ctx)
 
 
-@app.middleware("http")
-async def report_unhandled_to_room(request: Request, call_next: Callable):  # type: ignore[type-arg]
+app.add_middleware(CheeseTurnContext)
+
+
+class ReportUnhandledToRoom:
     """The push half of the backend-error channel (app.domain.backend_log).
 
     Registered last among the user middleware, so it sees anything that escapes:
@@ -883,32 +963,58 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
     that changes nothing here: the audit only counts bytes and re-raises what it
     catches untouched, so every unhandled exception still arrives.
 
+    Only an exception raised before the response started is reported: that is
+    all the ``@app.middleware("http")`` this replaces could see, since its
+    ``call_next`` returned at the response's first frame and a body that failed
+    later failed outside it.
+
     The exception is re-raised untouched: this reports, it does not swallow.
     """
-    try:
-        return await call_next(request)
-    except Exception as exc:
-        # A failure inside the intake endpoint itself must not report into the
-        # same channel (a broken intake would amplify every other error).
-        #
-        # The path compared here is the one THIS app was handed, not the one a
-        # caller typed: the gateway forwards the public origin's `/api/` with a
-        # trailing slash in nginx's `proxy_pass`, so `/api/backend-errors`
-        # arrives as `/backend-errors` — the stripping API_GATEWAY_MOUNT
-        # describes. Compared against the public spelling, this guard never
-        # matched a request at all, so an exception raised by the intake itself
-        # was reported straight back into the intake.
-        if request.url.path != "/backend-errors":
-            await backend_log.report_request_failure(
-                exc,
-                method=request.method,
-                path=request.url.path,
-                # 这个请求自己在 `request_context` 里认下的 id（那层把它放在 scope
-                # 上）。读入站头读到的是没人发过的值：浏览器不带 X-Request-ID，于是
-                # 每一条 5xx 都存成空 id —— 而这张表正是拿来对人的。
-                request_id=request.scope.get("state", {}).get("request_id"),
-            )
-        raise
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def watched(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watched)
+        except Exception as exc:
+            path = URL(scope=scope).path
+            # A failure inside the intake endpoint itself must not report into
+            # the same channel (a broken intake would amplify every other error).
+            #
+            # The path compared here is the one THIS app was handed, not the one
+            # a caller typed: the gateway forwards the public origin's `/api/`
+            # with a trailing slash in nginx's `proxy_pass`, so
+            # `/api/backend-errors` arrives as `/backend-errors` — the stripping
+            # API_GATEWAY_MOUNT describes. Compared against the public spelling,
+            # this guard never matched a request at all, so an exception raised
+            # by the intake itself was reported straight back into the intake.
+            if not started and path != "/backend-errors":
+                await backend_log.report_request_failure(
+                    exc,
+                    method=scope["method"],
+                    path=path,
+                    # 这个请求自己在 `request_context` 里认下的 id（那层把它放在
+                    # scope 上）。读入站头读到的是没人发过的值：浏览器不带
+                    # X-Request-ID，于是每一条 5xx 都存成空 id —— 而这张表正是拿
+                    # 来对人的。
+                    request_id=scope.get("state", {}).get("request_id"),
+                )
+            raise
+
+
+app.add_middleware(ReportUnhandledToRoom)
 
 
 # Added LAST on purpose: Starlette builds the stack so the most recently added
@@ -998,6 +1104,11 @@ if not settings.device_connection_url:
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).
 seal(app)
+
+# Once every route is mounted: a request is matched against the routers that
+# hold a route under its first path segment, not all of them in turn
+# (app/core/route_index.py).
+index_routes(app.router)
 
 # Move the startup heap (modules, routers, settings, the pool) out of the
 # collector's scan set, so every later gen-0/1 pass stops re-walking it.

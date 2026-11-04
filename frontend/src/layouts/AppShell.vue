@@ -164,7 +164,6 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { scrollBehavior } from '@/utils/motion'
@@ -216,6 +215,7 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { DEFAULT_SHELL, shellFor, termParams } from '@/lib/shell'
+import { toast } from '@/lib/toast'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { projectsQuery, refreshProjects } from '@/query/projects'

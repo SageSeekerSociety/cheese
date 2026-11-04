@@ -53,6 +53,8 @@
     "imageFailed": "图片加载失败（HTTP {status}）",
     "fileReadFailed": "读取文件失败（HTTP {status}）",
     "downloadFailed": "下载失败（HTTP {status}）",
+    "downloadUnreachable": "网络连接失败，没能下载，检查网络后重试",
+    "downloaded": "已下载至浏览器当前下载目录",
     "revisionFileName": "{name}（第{seq}版）{ext}"
   },
   "dialog": {

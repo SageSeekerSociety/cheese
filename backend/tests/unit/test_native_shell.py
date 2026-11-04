@@ -1168,9 +1168,10 @@ LINUX_NAMESPACES = pytest.mark.skipif(
 )
 
 
-def _enter(tmp_path, seen, command):
+def _enter(tmp_path, seen, command, seat_only=()):
     """`client.py enter` for a session whose executor holds the project at
-    `seen`, running `command` where the session would run."""
+    `seen`, running `command` where the session would run, left only the
+    `keep` of each `[cover, keep]` in ``seat_only``."""
     directory = tmp_path / "session"
     view = directory / "view"
     view.mkdir(parents=True)
@@ -1185,6 +1186,7 @@ def _enter(tmp_path, seen, command):
                 "central_workspace": str(view),
                 "central_config": str(directory / "config"),
                 "central_tmp": str(directory / "tmp"),
+                "seat_only": [list(pair) for pair in seat_only],
             }
         )
     )
@@ -1302,8 +1304,85 @@ def test_the_guard_admits_file_tools_on_the_sessions_memory_and_nothing_past_it(
         assert _guard(session.target, call) == "deny", tool
 
 
+def test_the_guard_admits_no_memory_path_that_leads_somewhere_else_in_the_tree(
+    tmp_path, machine
+):
+    """Whose memory a file tool touches is read off the path it names
+    (`memory.files.private_owner`). A `team/` path that is a link into
+    somebody's `private/` would hand that person's memory to everyone who
+    reads the call, so a path inside the tree is admitted only when it is the
+    very file it names."""
+    session = Session(tmp_path / "guarded", machine)
+    memory = session.root / "home/.cheese/memory"
+    (memory / "team").mkdir(parents=True)
+    (memory / "private/alice").mkdir(parents=True)
+    (memory / "private/alice/note.md").write_text("alice-private")
+    (memory / "team/alias.md").symlink_to(memory / "private/alice/note.md")
+    (memory / "team/notes").symlink_to(memory / "private/alice")
+    target = json.loads(session.target.read_text())
+    session.target.write_text(json.dumps({**target, "central_memory": str(memory)}))
+    for path in (f"{memory}/team/alias.md", f"{memory}/team/notes/note.md"):
+        for tool in ("Read", "Write", "Edit"):
+            call = {"tool_name": tool, "tool_input": {"file_path": path}}
+            assert _guard(session.target, call) == "deny", (tool, path)
+    call = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": f"{memory}/private/alice/note.md"},
+    }
+    assert _guard(session.target, call) == "allow"
+
+
+@LINUX_NAMESPACES
+def test_a_session_cannot_open_another_seats_tree_by_any_path(tmp_path):
+    """Two seats of one room work for two people at once. Each seat's memory
+    tree holds the private memory of the person its turn answers; a process
+    the session starts cannot open the other seat's tree, whatever path it
+    names, and still reads its own."""
+    seats = tmp_path / "room/.cheese/seats"
+    for seat, owner in (("for-alice", "alice"), ("for-bob", "bob")):
+        note = seats / seat / "remote-session/memory/private" / owner / "note.md"
+        note.parent.mkdir(parents=True)
+        note.write_text(f"{owner}-private\n")
+    alices = seats / "for-alice/remote-session/memory/private/alice/note.md"
+    bobs = seats / "for-bob/remote-session/memory/private/bob/note.md"
+    _, done = _enter(
+        tmp_path,
+        "/executor/owner/project",
+        f"cat {bobs}; cat {alices} || echo refused; ls {seats}",
+        seat_only=[[str(seats), str(seats / "for-bob")]],
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "bob-private\nrefused\nfor-bob\n", done.stdout
+    assert alices.read_text() == "alice-private\n"
+
+
 def test_a_new_command_id_is_new(machine):
     ids = {f"shell-{uuid.uuid4().hex}" for _ in range(3)}
     for command_id in ids:
         machine.start(command_id, "true")
     assert all(machine.collect(command_id)[2]["exit"] == 0 for command_id in ids)
+
+
+def test_how_long_the_command_itself_ran_is_reported_apart(machine):
+    """A tool call's wall clock is the command's own run plus everything the
+    platform spent around it. The executor runs the command and is the only
+    one that sees both ends of it, so it says how long that was; the caller
+    subtracts it from what it waited to get the platform's own share."""
+    machine.start("timed", "sleep 0.6")
+    _, _, answer = machine.collect("timed")
+    assert answer["exit"] == 0
+    ran = answer["ran_ms"]
+    # The command slept 0.6s; starting a process and reporting it adds a
+    # little, and nothing subtracts it.
+    assert 600 <= ran < 5000, ran
+
+
+def test_the_prefix_leaves_the_commands_own_run_where_the_runner_reads_it(session):
+    """The runner cannot see the far end of a command, and the prefix on this
+    host is where the two halves of a call's wall clock meet: it leaves what
+    the command itself took, named for the call, beside the target file."""
+    code, _ = session.run(session.wrapped("sleep 0.3"))
+    assert code == 0
+    (timing,) = (session.target.parent / "command-timings").iterdir()
+    assert timing.name == "ab12.json"
+    assert 300 <= json.loads(timing.read_text())["ran_ms"] < 5000

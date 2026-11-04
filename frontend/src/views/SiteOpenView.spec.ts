@@ -80,3 +80,21 @@ it('shows a failed launch instead of navigating to an empty website', async () =
   expect(await screen.findByText('暂无已发布的网站')).toBeTruthy()
   expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
 })
+
+it('in the desktop app, opens the Site in the browser and never posts the window to the content host', async () => {
+  localStorage.setItem('accessToken', 'platform-secret')
+  requestSiteSession.mockResolvedValue({ url: 'https://site.example/_cheese/session', grant: 'site-read-grant' })
+  const invoke = vi.fn(async () => undefined)
+  vi.stubGlobal('__TAURI__', { core: { invoke } })
+  vi.stubGlobal('__CHEESE_APP__', { can: ['links'] })
+  const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+  const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+  mount()
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith('plugin:opener|open_url', { url: `${window.location.origin}/sites/project-a` })
+  )
+  await waitFor(() => expect(replace).toHaveBeenCalledWith('/'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(submit).not.toHaveBeenCalled()
+  expect(requestSiteSession).not.toHaveBeenCalled()
+})

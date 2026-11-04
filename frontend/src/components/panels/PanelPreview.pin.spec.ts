@@ -126,7 +126,6 @@ const props = {
   documentType: { view: 'pages' as const, label: 'document', icon: 'mdi-file-pdf-box' },
   documentName: 'deck.pdf',
   isImageArtifact: false,
-  downloadError: '',
   docBytes,
   docIdentity: context,
   docSnapshot: { bytes: docBytes, identity: context, sourceVersion: context.version },

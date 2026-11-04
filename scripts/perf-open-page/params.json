@@ -1,9 +1,12 @@
 {
   "handle": "alice",
-  "projectId": "7bbacd90-de6f-4740-89df-de2309e265f8",
-  "topicId": "b51a64ef-58de-43dc-b5a8-6c48961e8558",
-  "threadId": "3057fc50-bcb9-478b-ac3e-83bf19124f8d",
-  "taskId": "13b774c5-2393-44b1-b370-25dcce7ff66f",
-  "artifactId": "c975d45d-ba99-4850-aef3-f0fb7e7b33bd",
+  "projectId": "51d3aca0-ca5f-4648-98e3-90014dbd34e5",
+  "projectSlug": "d2wubcjm",
+  "topicId": "b8927427-8c9a-4f03-be2a-bd1d2096c4ab",
+  "emptyTopicId": "8fdde2ee-e870-4141-9dcf-b262d4b673eb",
+  "threadId": "52003f25-0d2b-40b7-91c2-881b7d6a14fe",
+  "taskId": "864ffbe8-4be2-4925-95c8-0f0529636798",
+  "docId": "07995024-f257-4ae0-b637-41ac76a1a47d",
+  "artifactId": "610b3725-2013-45d1-966e-10aae2954ec8",
   "teamHandle": "perf-demo"
 }

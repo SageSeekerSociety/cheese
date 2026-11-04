@@ -78,7 +78,10 @@
     "alerting": "告警通道",
     "database": "数据库",
     "event_loop": "事件循环",
+    "feedback_announce": "新反馈推送",
+    "feedback_triage": "反馈分诊",
     "note": "这一刻的状态，和上面的存量/窗口不是一回事。判据与 /health/detailed 同源。",
+    "periodic_jobs": "定时任务",
     "redis": "Redis",
     "routes": "路由模块",
     "title": "平台健康"

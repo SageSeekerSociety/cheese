@@ -142,7 +142,7 @@ function avatarUrl(avatarId: number | null | undefined): string {
           </ul>
           <BaseEmptyState v-else-if="!items.length" size="compact" :title="t('spaces.review.empty')" />
           <ul v-else class="asp__list">
-            <li v-for="item in items" :key="item.id" class="asp__row">
+            <li v-for="item in items" :key="`${item.kind}-${item.requestId ?? item.id}`" class="asp__row">
               <div class="asp__main">
                 <div class="asp__head">
                   <!-- **装饰**：名字就在旁边，头像只是让眼睛在一列里更快找到人。 -->
@@ -166,6 +166,9 @@ function avatarUrl(avatarId: number | null | undefined): string {
                   >
                   <span class="asp__meta" :title="localStamp(item.createdAt)">{{ relTime(item.createdAt) }}</span>
                 </div>
+                <p v-if="item.kind === 'open'" class="asp__desc">
+                  {{ t('spaces.review.openScope', { scope: (item.openScope ?? []).join('、') }) }}
+                </p>
                 <p v-if="blurb(item).main" class="asp__desc">{{ blurb(item).main }}</p>
                 <p v-if="blurb(item).extra" class="asp__desc asp__desc--sub">{{ blurb(item).extra }}</p>
                 <p v-if="item.reviewReason" class="asp__meta asp__meta--wrap">

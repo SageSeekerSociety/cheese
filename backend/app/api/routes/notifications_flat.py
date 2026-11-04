@@ -164,7 +164,11 @@ async def list_notifications(
     )
     has_more = len(rows) > pageSize
     content = list(rows[:pageSize])
-    total = await service.count_notifications_for_current_user(user.user_id, read=read)
+    total = (
+        len(content)
+        if cursor is None and not has_more
+        else await service.count_notifications_for_current_user(user.user_id, read=read)
+    )
 
     # 整页一次解析实体：逐条 _dump 会让每条通知各发一轮解析查询（一屏最多 100
     # 条就是 100 倍往返），而它们手上的外键本来就可以合并成每类实体一次查。
@@ -225,11 +229,8 @@ async def update_notification_status(
     notification_id: int, body: ReadStatusRequest, user: AuthUser, db: DbSession
 ) -> dict:
     service = _read_service(db)
-    affected = await service.set_read_status(user.user_id, notification_id, body.read)
-    if affected == 0:
-        raise NotFoundError(f"Notification {notification_id} not found")
-    notification = await service.get_notification_by_id_for_current_user(
-        user.user_id, notification_id
+    notification = await service.set_read_status_and_get(
+        user.user_id, notification_id, body.read
     )
     if notification is None:
         raise NotFoundError(f"Notification {notification_id} not found")

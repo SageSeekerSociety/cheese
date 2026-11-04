@@ -43,6 +43,7 @@ from app.domain.agent.harness.notices import (
     silence_reminder,  # noqa: F401
     stale_checklist_reminder,  # noqa: F401
     stale_progress_reminder,  # noqa: F401
+    still_working_reminder,  # noqa: F401
     strip_platform_notice,  # noqa: F401
 )
 from app.domain.agent.harness.opening import (
@@ -65,14 +66,13 @@ from app.domain.room_task.title_width import TITLE_CHARS
 
 #: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
 #: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的沙箱里，子 agent 与
-#: 起它的进程同生同死，沙箱一换就只剩分支上推走的东西和每轮结束时的快照
-#: （`cheese worktree` 在新环境里放回）。一轮当中还没到检查点的活过不了这个沙箱。
+#: 起它的进程同生同死，沙箱一换就只剩分支上推走的提交。平台不替没提交的改动留底。
 ALWAYS_PUSH = (
     "## 随时 push（所有 agent，主 agent 也一样）\n"
-    "干活期间**随时 push**，不要攒到交付那一下才推。你的环境随时可能被换掉。每次你停下"
-    "时平台会推一次，并把没提交的改动存一份快照，新环境里打开任务目录时放回来；可在你"
-    "停下之前、还没到那一步的改动、子 agent 手里的改动，环境一换就没有了，而且只有推上去"
-    "的，别人才拿得到。提交了却没推等于没有。"
+    "干活期间**随时提交、随时 push**，不要攒到交付那一下才推。你的环境随时可能被换掉，"
+    "换掉之后只有推上去的提交还在：没提交的改动、没推的提交、子 agent 手里的改动、"
+    "任务目录以外的文件都会丢，平台不留底。每次你停下时平台会推一次已有的提交，但不替"
+    "你提交；停下来等人回话之前，先把要留的改动提交。提交了却没推等于没有。"
 )
 
 #: 步骤清单是平台工具，每个 harness 都是同一个 `todo_write`；各自自带的那一套在启动
@@ -265,6 +265,10 @@ PLATFORM_RULES = (
     "- 改项目仓库里的文件、交出东西，在任务里做。你在支线里、有人要把这件事做出来时，"
     "用 `cheese_task(action=open)` 把这条支线转为任务，或者另开几件任务。怎么选、怎么交，在 "
     "`cheese` 技能里，先加载它。\n"
+    "- 你花的每一分算力都记在付费方头上：团队方案额度、项目预算或成员任务上限，"
+    "用完了你发起的调用会被拒绝。哪一层、还剩多少、几时恢复，用 "
+    "`cheese_session(action=status)` 看；完整说法在平台文档的「额度」页，用 "
+    "`cheese_help` 查。\n"
     "- 转述谁提出、谁决定了什么，记在真正说话的那一方名下。AI 队友说的话是它自己说的；"
     "成员表上标着「某某带来的」那几位也一样，不算带它来的人说的。称呼人用成员表上的"
     "名字，不写他的 handle。\n"

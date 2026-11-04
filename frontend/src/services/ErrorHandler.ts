@@ -1,8 +1,7 @@
-import { toast } from 'vuetify-sonner'
-
 import { ApiError } from '@/api/http'
 import { reportError } from '@/errorReporter'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 // 定义错误处理器类型
 export type ErrorHandler<T extends Error = Error> = (error: T) => Promise<boolean> | boolean

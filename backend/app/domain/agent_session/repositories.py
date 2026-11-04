@@ -427,7 +427,7 @@ class AgentSessionRepository:
         return {device_id: at for device_id, at in rows.all()}
 
     async def placed_everywhere(
-        self,
+        self, *, harness: str | None = None, device_id: str | None = None
     ) -> list[tuple[AgentSession, uuid.UUID, uuid.UUID]]:
         """Every placed session with its project and room, for a cold start.
 
@@ -444,14 +444,28 @@ class AgentSessionRepository:
         nothing clears the location of the one that stopped — and the harness
         each row names is handed on as it stands; recognising it is the
         runtime's, not the channel's, since one channel carries several of them.
+
+        ``harness`` and ``device_id`` narrow it to one harness's sessions, and
+        to those placed on one machine: a reconnecting device's recovery asks
+        once per harness, and reading every placed session on the platform for
+        each ask held the event loop a third of a second. No index serves the
+        machine's key in ``runtime_location``: the narrowing scans the sessions
+        in the database, and spares this process decoding the rest.
         """
         room = room_column(AgentSession.conversation_id)
-        result = await self._session.execute(
+        stmt = (
             select(AgentSession, Topic.project_id, room)
             .join(Topic, Topic.id == room)
             .where(AgentSession.runtime_location.is_not(None))
             .order_by(room, AgentSession.placed_at.desc(), AgentSession.id)
         )
+        if harness is not None:
+            stmt = stmt.where(AgentSession.harness == harness)
+        if device_id is not None:
+            stmt = stmt.where(
+                AgentSession.runtime_location["device_id"].as_string() == device_id
+            )
+        result = await self._session.execute(stmt)
         return [(row[0], row[1], row[2]) for row in result.all()]
 
     async def has_any(self, topic_id: uuid.UUID) -> bool:

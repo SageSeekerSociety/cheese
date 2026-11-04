@@ -8,15 +8,11 @@ vi.mock('virtual:pwa-register', () => ({ registerSW: () => async () => {} }))
 
 type Notice = { text: string; action?: { label?: string; onClick?: () => void } }
 const notices: Notice[] = []
-vi.mock('vuetify-sonner', () => ({
-  toast: {
-    warning: (text: string, options?: Omit<Notice, 'text'>) => {
-      notices.push({ text, ...options })
-      return notices.length
-    },
-    dismiss: () => {},
-  },
-}))
+const show = (text: string, options?: Omit<Notice, 'text'>) => {
+  notices.push({ text, ...options })
+  return notices.length
+}
+vi.mock('vuetify-sonner', () => ({ toast: { warning: show, error: show, dismiss: () => {} } }))
 
 const GENERATION = import.meta.env.VITE_API_GENERATION
 
@@ -112,6 +108,28 @@ describe('a page the backend calls outdated', () => {
     ])
     expect(notices).toHaveLength(1)
     expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('shows that request and nothing else, though every caller whose request failed raises its own notice', async () => {
+    const { request } = await import('./api')
+    const { default: errorHandler } = await import('./services/ErrorHandler')
+    const { t } = await import('./i18n')
+    await paintFirstScreen()
+
+    // Two parts of the page load at once and both are refused; each caller says
+    // its request failed, the way a page's generic failure notice does.
+    await Promise.all([
+      errorHandler.withErrorHandling(() => request('/projects')),
+      errorHandler.withErrorHandling(() => request('/topics', { method: 'POST' })),
+    ])
+    // A request that fails for another reason after that is not news either.
+    answer = () => {
+      throw new TypeError('Failed to fetch')
+    }
+    await errorHandler.withErrorHandling(() => request('/topics', { method: 'POST' }))
+    await tick()
+
+    expect(notices.map((n) => n.text)).toEqual([t('global.outdatedClient.message')])
   })
 
   it('reloads onto the new build when told to, after its worker takes over', async () => {

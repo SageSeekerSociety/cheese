@@ -27,6 +27,23 @@ async def pick_offering(client: MicroCloudClient, wanted: int = 0) -> dict[str, 
     return (active or offerings)[0]
 
 
+def effective_spec(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> dict[str, int]:
+    """The size a machine actually gets from ``offering``: each value asked
+    for, clamped into the offering's own range. The body sent to MicroCloud and
+    the image version recorded against the row both come from here, so a host is
+    never recorded as a size it did not get."""
+    return {
+        name: max(int(offering[f"{name}Min"]), min(int(offering[f"{name}Max"]), value))
+        for name, value in (
+            ("cores", cores),
+            ("memoryMb", memory_mb),
+            ("diskGb", disk_gb),
+        )
+    }
+
+
 def data_disk_gb(offering: dict[str, Any]) -> int:
     """The data disk ``offering`` gives each of its machines, in GB, which a
     pool host keeps its sandboxes' homes on (``enrollment.DATA_DISK``). An

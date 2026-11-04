@@ -2,11 +2,12 @@ import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, func, or_, select, text
+from sqlalchemy import Select, and_, func, inspect, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.avatars.models import Avatar
 from app.domain.team.models import (
@@ -21,6 +22,12 @@ from app.domain.team.models import (
 )
 
 _HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
+_TEAM_TABLES = frozenset({"team"})
+_TEAM_MEMBER_TABLES = frozenset({"team_user_relation"})
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
 
 
 async def refuse_admin_grant_by_non_owner(
@@ -72,11 +79,25 @@ class TeamRepository:
         return bool(result.scalar_one() or 0)
 
     async def get_by_id(self, team_id: int) -> Team | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("team_by_id", team_id))
+            if found:
+                return cached
         stmt: Select[tuple[Team]] = select(Team).where(
             and_(Team.id == team_id, Team.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        team = result.scalar_one_or_none()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("team_by_id", team_id),
+                team,
+                tables=_TEAM_TABLES,
+            )
+        return team
 
     @staticmethod
     def _name_search_filter(query: str):
@@ -199,7 +220,53 @@ class TeamRepository:
     async def get_by_ids(self, ids: Sequence[int]) -> dict[int, Team]:
         if not ids:
             return {}
-        stmt: Select[tuple[Team]] = select(Team).where(
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            by_id: dict[int, Team] = {}
+            missing: list[int] = []
+            for tid in dict.fromkeys(ids):
+                found, cached = recall(self._session, ("team_by_id", tid))
+                if found and (cached is None or not inspect(cached).expired_attributes):
+                    if cached is not None:
+                        by_id[tid] = cached
+                    continue
+                in_map = self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(Team, (tid,))
+                )
+                if (
+                    in_map is not None
+                    and not inspect(in_map).expired_attributes
+                    and in_map.deleted_at is None
+                ):
+                    by_id[tid] = in_map
+                    remember(
+                        self._session,
+                        ("team_by_id", tid),
+                        in_map,
+                        tables=_TEAM_TABLES,
+                    )
+                else:
+                    missing.append(tid)
+            if not missing:
+                return by_id
+            stmt: Select[tuple[Team]] = select(Team).where(
+                and_(Team.id.in_(missing), Team.deleted_at.is_(None))
+            )
+            result = await self._session.execute(stmt)
+            fetched = {t.id: t for t in result.scalars().all()}
+            for tid in missing:
+                team = fetched.get(tid)
+                if team is not None:
+                    by_id[tid] = team
+                remember(
+                    self._session,
+                    ("team_by_id", tid),
+                    team,
+                    tables=_TEAM_TABLES,
+                )
+            return by_id
+        stmt = select(Team).where(
             and_(Team.id.in_(list(ids)), Team.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
@@ -297,6 +364,12 @@ class TeamRepository:
 
     async def list_members_of_team(self, team_id: int) -> Sequence[TeamUserRelation]:
         """Return membership rows for a given team."""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("team_members", team_id))
+            if found:
+                return list(cached)
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
             and_(
                 TeamUserRelation.team_id == team_id,
@@ -304,11 +377,51 @@ class TeamRepository:
             )
         )
         result = await self._session.execute(stmt)
-        return list(result.scalars().all())
+        rows = list(result.scalars().all())
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("team_members", team_id),
+                tuple(rows),
+                tables=_TEAM_MEMBER_TABLES,
+            )
+        return rows
+
+    async def list_members_of_teams(
+        self, team_ids: Sequence[int]
+    ) -> dict[int, list[TeamUserRelation]]:
+        """Return membership rows grouped by team_id in a single query."""
+        if not team_ids:
+            return {}
+        stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
+            and_(
+                TeamUserRelation.team_id.in_(list(team_ids)),
+                TeamUserRelation.deleted_at.is_(None),
+            )
+        )
+        result = await self._session.execute(stmt)
+        by_team: dict[int, list[TeamUserRelation]] = {tid: [] for tid in team_ids}
+        for rel in result.scalars().all():
+            by_team.setdefault(rel.team_id, []).append(rel)
+        if _can_cache(self._session):
+            for tid, rows in by_team.items():
+                remember(
+                    self._session,
+                    ("team_members", tid),
+                    tuple(rows),
+                    tables=_TEAM_MEMBER_TABLES,
+                )
+        return by_team
 
     async def get_member_relation(
         self, team_id: int, user_id: int
     ) -> TeamUserRelation | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("team_members", team_id))
+            if found:
+                return next((r for r in cached if r.user_id == user_id), None)
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
             TeamUserRelation.team_id == team_id,
             TeamUserRelation.user_id == user_id,
@@ -318,6 +431,16 @@ class TeamRepository:
         return result.scalar_one_or_none()
 
     async def is_team_member(self, team_id: int, user_id: int) -> bool:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("team_members", team_id))
+            if found:
+                return any(r.user_id == user_id for r in cached)
+            for key_prefix in ("team_user_role", "team_member_role"):
+                found_role, role = recall(self._session, (key_prefix, team_id, user_id))
+                if found_role:
+                    return role is not None
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation.id).where(  # type: ignore[assignment]
             and_(
                 TeamUserRelation.team_id == team_id,

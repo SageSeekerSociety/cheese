@@ -52,6 +52,20 @@ jobs:
         if: runner.os == 'macOS'
         run: sh scripts/build-tmux.sh ${{ matrix.tmux }} resources/tmux
 
+      # The app must link the patched tao in src-tauri/patches/tao (Cargo.toml's
+      # [patch.crates-io] says why). A tauri bump that moves to another tao
+      # version leaves the patch unused without any error, and the build would
+      # ship the crash it fixes again; this stops the build instead.
+      - name: tao is the patched copy
+        working-directory: desktop/src-tauri
+        run: |
+          resolved=$(cargo tree --locked -i tao --target ${{ matrix.target }} --depth 0 --prefix none)
+          echo "$resolved"
+          if ! grep -Eq 'src-tauri[/\\]patches[/\\]tao\)$' <<<"$resolved"; then
+            echo "::error::tao does not resolve to desktop/src-tauri/patches/tao; move the patch to the tao version tauri now uses, or drop it once that version carries the fix"
+            exit 1
+          fi
+
       - name: Test
         if: matrix.target != 'x86_64-apple-darwin'
         working-directory: desktop/src-tauri

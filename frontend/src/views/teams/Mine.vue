@@ -3,7 +3,7 @@
     :is-loading-my-teams="isLoadingMyTeams"
     :load-my-teams-error="loadMyTeamsError"
     :my-teams="myTeams"
-    @fetch-my-teams="fetchMyTeams"
+    @fetch-my-teams="() => fetchMyTeams(true)"
   />
 </template>
 
@@ -14,18 +14,19 @@ import { onMounted, ref } from 'vue'
 
 import MineView from './MineView.vue'
 
-import { TeamsApi } from '@/api/teams'
+import { queryClient } from '@/query/client'
+import { myTeamsQuery } from '@/query/homeNav'
 
 const myTeams = ref<Team[]>([])
 const isLoadingMyTeams = ref(false)
 const loadMyTeamsError = ref(false)
 
-const fetchMyTeams = async () => {
+const fetchMyTeams = async (fresh = false) => {
   isLoadingMyTeams.value = true
   loadMyTeamsError.value = false
 
   try {
-    const { teams } = await TeamsApi.getMyTeams()
+    const teams = await queryClient.fetchQuery(fresh ? { ...myTeamsQuery(), staleTime: 0 } : myTeamsQuery())
     // 自己名下的项目不是一个团队，在侧栏「团队」之上单独一行，不列在这里。
     myTeams.value = teams.filter((team) => !team.personal)
   } catch (error) {

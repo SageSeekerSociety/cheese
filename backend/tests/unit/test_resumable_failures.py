@@ -136,6 +136,15 @@ def test_a_status_the_session_reported_decides_without_the_words():
     assert classify("request failed", api_error_status=403) is None
 
 
+def test_a_status_with_no_words_at_all_still_decides():
+    """A session can report a 429 or a 529 and say nothing else; the status is
+    still what happened."""
+    assert classify("", api_error_status=429).kind == RATE_LIMITED
+    assert classify("", api_error_status=529).kind == OVERLOADED
+    assert classify("", api_error_status=503).kind == OVERLOADED
+    assert classify("", api_error_status=400) is None
+
+
 def test_a_wait_the_service_names_is_the_wait():
     found = classify("API Error: 429 rate limited, retry-after: 42")
     assert found.kind == RATE_LIMITED and found.wait_s == 42

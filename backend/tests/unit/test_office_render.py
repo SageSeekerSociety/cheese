@@ -284,3 +284,25 @@ async def test_no_renderer_means_no_prewarm(client, monkeypatch):
     office.prewarm(b"fresh", "a.docx")
     await _settle()
     assert client.calls == []
+
+
+async def test_a_deck_cached_before_hidden_slides_were_kept_is_converted_again(client):
+    """Decks used to come back without their hidden slides. A copy from then,
+    kept under the bare digest, must not be served: it is a page short and puts
+    every note after a hidden slide on the wrong page."""
+    raw = b"PK\x03\x04deck"
+    office._remember(hashlib.sha256(raw).hexdigest(), b"%PDF-1.7 stale")
+    client.responses.append(_Response(200, b"%PDF-1.7 fresh"))
+
+    assert (
+        await office.render_to_pdf(raw, "out/汇报.pptx", "http://r:8901")
+        == b"%PDF-1.7 fresh"
+    )
+    # A Word file keeps its key: nothing about its PDF changed.
+    word = b"PK\x03\x04word"
+    office._remember(hashlib.sha256(word).hexdigest(), b"%PDF-1.7 word")
+    assert (
+        await office.render_to_pdf(word, "out/报告.docx", "http://r:8901")
+        == b"%PDF-1.7 word"
+    )
+    assert len(client.calls) == 1

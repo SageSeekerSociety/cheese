@@ -3,23 +3,24 @@
  * 读地址、取数、跳转）加一个画面（`XView.vue` —— 只收 props、只发事件）。这里摆的是
  * 画面那一半，所以每一件都不带路由、不带接口就能单独渲染。
  *
- * 这一组有四件：空间名录（谁都能看的那一页）、小队链接落地页、小队里的项目列表，以及
- * 提问页。条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
+ * 这一组有五件：空间名录（谁都能看的那一页）、小队链接落地页、空间加入链接落地页、小队里的
+ * 项目列表，以及提问页。条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
  * `catalog.ts`），单放一份是因为 `catalog.ts` 已经顶到将近一千行的上限。这里的
  * `CatalogEntry` 是 type-only 引用，`catalog.ts` 反过来要 `SCENES_PAGES_ENTRIES` 这个值，
  * 运行时不构成循环。数据见 `catalogScenesPagesFixtures.ts`。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { noop, noopAsync, TEAM_PROJECTS } from './catalogScenesPagesFixtures'
+import { noop, noopAsync, SPACE_INVITE, TEAM_PROJECTS } from './catalogScenesPagesFixtures'
 import { topicCandidates } from './catalogScenesSpacesFixtures'
 import { teamProfile } from './catalogSharedFixtures'
 
 import AskView from '@/views/question/AskView.vue'
+import SpaceInviteViewView from '@/views/SpaceInviteViewView.vue'
 import TeamInviteViewView from '@/views/TeamInviteViewView.vue'
 import TeamProjectsView from '@/views/teams/detail/TeamProjectsView.vue'
 
-/** 四件都要 Vuetify 的画法和一套语言包。 */
+/** 五件都要 Vuetify 的画法和一套语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
 /** 空间名录和小队链接落地页里带着 `to` 的去处（进某个空间、进小队主页）按 name 指路，
@@ -74,6 +75,60 @@ export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
         name: '正在读',
         note: '换小队还在路上：一条进度线，底下什么都不摆。',
         props: { busy: true },
+        expectSelector: '[aria-label="加载中"]',
+      },
+    ],
+  },
+  {
+    id: 'space-invite-view-view',
+    title: 'SpaceInviteViewView',
+    about:
+      '空间加入链接落地页的画面：有人拿着一个空间的加入链接（`/space-invites/:token`）过来，登录后看到的就是这一页 —— 是哪个空间、怎么加入，按下确认才加入（开着「加入需要批准」时是提交申请）。令牌换空间、加入调后端、加入后进空间都在容器 `SpaceInviteView.vue` 里；没登录的人由路由上的 `spaceSignInGuard` 先送去登录。',
+    file: 'src/views/SpaceInviteViewView.vue',
+    component: SpaceInviteViewView,
+    needs: UI_T_R,
+    args: { invite: null, loading: false, loadError: '', invalid: false, joining: false, joinError: '' },
+    states: [
+      {
+        name: '直接加入',
+        note: '空间没开批准：写着加入后能看到什么，一颗「加入空间」。',
+        props: { invite: SPACE_INVITE },
+        expect: '加入后可以看到这个空间的题目',
+      },
+      {
+        name: '加入需要批准',
+        note: '空间开着批准：说清要等空间管理员批准，按钮是「申请加入」。',
+        props: { invite: { ...SPACE_INVITE, joinApproval: true } },
+        expect: '申请加入',
+      },
+      {
+        name: '申请在等',
+        note: '已经申请过：不摆按钮，只说在等空间管理员批准。',
+        props: { invite: { ...SPACE_INVITE, joinApproval: true, joinStatus: 'pending' } },
+        expect: '申请已提交，待空间管理员批准',
+      },
+      {
+        name: '已经是成员',
+        note: '成员再点一次链接：不摆加入的按钮，给一条进空间的路。',
+        props: { invite: { ...SPACE_INVITE, joinStatus: 'member' } },
+        expect: '进入空间',
+      },
+      {
+        name: '链接失效了',
+        note: '链接被重置过、或空间没了（接口答 404）：说清找谁要新链接，不给重试。',
+        props: { invalid: true, loadError: '加入链接已失效或已重置，向空间管理员索取新链接' },
+        expect: '加入链接已失效或已重置，向空间管理员索取新链接',
+      },
+      {
+        name: '读失败',
+        note: '链接没问题，但没读出来：给一条重试的路。',
+        props: { loadError: '无法读取这个加入链接' },
+        expect: '重试',
+      },
+      {
+        name: '正在读',
+        note: '还在路上：一条进度线。',
+        props: { loading: true },
         expectSelector: '[aria-label="加载中"]',
       },
     ],

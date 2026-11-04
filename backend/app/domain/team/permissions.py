@@ -17,8 +17,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.policy import SeatPolicy
+from app.core.request_facts import recall, remember
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.team.protocol import TeamMemberRole
+from app.domain.team.repositories import TeamRepository
 
 
 class Seat(enum.StrEnum):
@@ -83,6 +85,20 @@ def seat_named(role: int | None) -> Seat | None:
 
 async def seat_of(session: AsyncSession, team_id: int, user_id: int) -> Seat | None:
     """Where the person sits on the team; ``None`` when they are not on it."""
+    can_cache = isinstance(session, AsyncSession)
+    if can_cache:
+        if session.autoflush:
+            await session.flush()
+        found_members, cached_members = recall(session, ("team_members", team_id))
+        if found_members:
+            return seat_named(
+                next((r.role for r in cached_members if r.user_id == user_id), None)
+            )
+        found_role, cached_role = recall(
+            session, ("team_member_role", team_id, user_id)
+        )
+        if found_role:
+            return seat_named(cached_role)
     role = await session.scalar(
         select(TeamUserRelation.role).where(
             TeamUserRelation.team_id == team_id,
@@ -90,6 +106,13 @@ async def seat_of(session: AsyncSession, team_id: int, user_id: int) -> Seat | N
             TeamUserRelation.deleted_at.is_(None),
         )
     )
+    if can_cache:
+        remember(
+            session,
+            ("team_member_role", team_id, user_id),
+            role,
+            tables=frozenset({"team_user_relation"}),
+        )
     return seat_named(role)
 
 
@@ -104,6 +127,11 @@ class TeamPolicy(SeatPolicy[Team, Permission, Seat]):
         return None if team is None or team.deleted_at is not None else team
 
     async def seat(self, session: AsyncSession, obj: Team, user_id: int) -> Seat | None:
+        if isinstance(session, AsyncSession):
+            members = await TeamRepository(session).list_members_of_team(obj.id)
+            return seat_named(
+                next((r.role for r in members if r.user_id == user_id), None)
+            )
         return await seat_of(session, obj.id, user_id)
 
     async def sees(self, session: AsyncSession, obj: Team, user_id: int) -> bool:

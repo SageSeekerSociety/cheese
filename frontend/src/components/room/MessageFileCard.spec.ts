@@ -124,6 +124,9 @@ it('点卡片、点「在右侧打开」都交出去开；点「下载」交出�
   await fireEvent.click(screen.getByText('下载'))
   expect(ui.emitted().open).toHaveLength(2)
   expect(ui.emitted().download).toHaveLength(1)
+  // 每种文件卡底下都只有这两颗：会话内展开是文档自己的，摆在正文下面。
+  const row = ui.container.querySelector('.fcard__actions') as HTMLElement
+  expect([...row.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['在右侧打开', '下载'])
 })
 
 async function sheet(orders: number): Promise<ArrayBuffer> {

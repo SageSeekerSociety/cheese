@@ -1,0 +1,1378 @@
+{
+  "_meta": {
+    "protocol": "interleaved_ab_alternating_order",
+    "rounds": 3,
+    "small_sample": true,
+    "before_commit": "bf8f646e687c",
+    "after_commit": "b6193a5fb540",
+    "environment": {
+      "base_url": "http://127.0.0.1:3000",
+      "viewport": "1440x900",
+      "backend_port": 8081,
+      "collab_port": 8902,
+      "postgres_port": 5433,
+      "redis_port": 6379
+    },
+    "target_pages": [
+      "user-profile",
+      "workspace-task",
+      "project-channels"
+    ],
+    "modes": [
+      "walk",
+      "warm",
+      "cold"
+    ],
+    "guardrails_all_ok": true,
+    "timestamp_utc": "2026-10-31T01:22:56Z"
+  },
+  "comparison": {
+    "user-profile": {
+      "walk": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 329.1,
+            "p95": 329.1,
+            "min": 322.6,
+            "max": 329.1,
+            "spread": 6.5
+          },
+          "paint_ms": {
+            "p50": 344.2,
+            "p95": 348.2,
+            "min": 338.5,
+            "max": 348.2,
+            "spread": 9.7
+          },
+          "critical_path_api_ms": {
+            "p50": 176.7,
+            "p95": 194.7,
+            "min": 165.7,
+            "max": 194.7,
+            "spread": 29.0
+          },
+          "api_count_p50": 3,
+          "long_task_ms_p50": 167.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 0,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 329.1,
+              "paint_ms": 348.2,
+              "critical_path_api_ms": 194.7,
+              "api_count": 3,
+              "long_task_ms": 159,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 329.1,
+              "paint_ms": 344.2,
+              "critical_path_api_ms": 165.7,
+              "api_count": 3,
+              "long_task_ms": 167,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 322.6,
+              "paint_ms": 338.5,
+              "critical_path_api_ms": 176.7,
+              "api_count": 3,
+              "long_task_ms": 168,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 325.2,
+            "p95": 330.8,
+            "min": 296.2,
+            "max": 330.8,
+            "spread": 34.6
+          },
+          "paint_ms": {
+            "p50": 345.6,
+            "p95": 346.5,
+            "min": 302.6,
+            "max": 346.5,
+            "spread": 43.9
+          },
+          "critical_path_api_ms": {
+            "p50": 180.3,
+            "p95": 203.6,
+            "min": 174.7,
+            "max": 203.6,
+            "spread": 28.9
+          },
+          "api_count_p50": 3,
+          "long_task_ms_p50": 170.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 0,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 330.8,
+              "paint_ms": 346.5,
+              "critical_path_api_ms": 180.3,
+              "api_count": 3,
+              "long_task_ms": 164,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 325.2,
+              "paint_ms": 345.6,
+              "critical_path_api_ms": 203.6,
+              "api_count": 3,
+              "long_task_ms": 170,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 296.2,
+              "paint_ms": 302.6,
+              "critical_path_api_ms": 174.7,
+              "api_count": 3,
+              "long_task_ms": 174,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": -3.9,
+          "paint_ms": 1.4,
+          "paint_pct": 0.4,
+          "critical_path_api_ms": 3.6,
+          "api_count": 0,
+          "noise_spread_ms": 43.9,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      },
+      "warm": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 701.4,
+            "p95": 713.8,
+            "min": 634.1,
+            "max": 713.8,
+            "spread": 79.7
+          },
+          "paint_ms": {
+            "p50": 709.7,
+            "p95": 722.2,
+            "min": 647.9,
+            "max": 722.2,
+            "spread": 74.3
+          },
+          "critical_path_api_ms": {
+            "p50": 461.5,
+            "p95": 519.8,
+            "min": 411.2,
+            "max": 519.8,
+            "spread": 108.6
+          },
+          "api_count_p50": 7,
+          "long_task_ms_p50": 366.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 634.1,
+              "paint_ms": 647.9,
+              "critical_path_api_ms": 461.5,
+              "api_count": 7,
+              "long_task_ms": 346,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 713.8,
+              "paint_ms": 722.2,
+              "critical_path_api_ms": 519.8,
+              "api_count": 7,
+              "long_task_ms": 409,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 701.4,
+              "paint_ms": 709.7,
+              "critical_path_api_ms": 411.2,
+              "api_count": 7,
+              "long_task_ms": 366,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 737.3,
+            "p95": 747.3,
+            "min": 675.9,
+            "max": 747.3,
+            "spread": 71.4
+          },
+          "paint_ms": {
+            "p50": 750.5,
+            "p95": 758.7,
+            "min": 684.1,
+            "max": 758.7,
+            "spread": 74.6
+          },
+          "critical_path_api_ms": {
+            "p50": 487.6,
+            "p95": 494.2,
+            "min": 437.4,
+            "max": 494.2,
+            "spread": 56.8
+          },
+          "api_count_p50": 7,
+          "long_task_ms_p50": 386.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 747.3,
+              "paint_ms": 758.7,
+              "critical_path_api_ms": 437.4,
+              "api_count": 7,
+              "long_task_ms": 336,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 737.3,
+              "paint_ms": 750.5,
+              "critical_path_api_ms": 494.2,
+              "api_count": 7,
+              "long_task_ms": 415,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 675.9,
+              "paint_ms": 684.1,
+              "critical_path_api_ms": 487.6,
+              "api_count": 7,
+              "long_task_ms": 386,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": 35.9,
+          "paint_ms": 40.8,
+          "paint_pct": 5.7,
+          "critical_path_api_ms": 26.1,
+          "api_count": 0,
+          "noise_spread_ms": 74.6,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      },
+      "cold": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1047.2,
+            "p95": 1106.5,
+            "min": 997.0,
+            "max": 1106.5,
+            "spread": 109.5
+          },
+          "paint_ms": {
+            "p50": 1057.5,
+            "p95": 1117.6,
+            "min": 1004.8,
+            "max": 1117.6,
+            "spread": 112.8
+          },
+          "critical_path_api_ms": {
+            "p50": 540.2,
+            "p95": 590.5,
+            "min": 518.1,
+            "max": 590.5,
+            "spread": 72.4
+          },
+          "api_count_p50": 7,
+          "long_task_ms_p50": 506.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1106.5,
+              "paint_ms": 1117.6,
+              "critical_path_api_ms": 590.5,
+              "api_count": 7,
+              "long_task_ms": 525,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1047.2,
+              "paint_ms": 1057.5,
+              "critical_path_api_ms": 518.1,
+              "api_count": 7,
+              "long_task_ms": 506,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 997.0,
+              "paint_ms": 1004.8,
+              "critical_path_api_ms": 540.2,
+              "api_count": 7,
+              "long_task_ms": 491,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1151.9,
+            "p95": 1193.3,
+            "min": 1025.5,
+            "max": 1193.3,
+            "spread": 167.8
+          },
+          "paint_ms": {
+            "p50": 1162.4,
+            "p95": 1203.4,
+            "min": 1034.2,
+            "max": 1203.4,
+            "spread": 169.2
+          },
+          "critical_path_api_ms": {
+            "p50": 593.4,
+            "p95": 669.2,
+            "min": 572.0,
+            "max": 669.2,
+            "spread": 97.2
+          },
+          "api_count_p50": 7,
+          "long_task_ms_p50": 554.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1025.5,
+              "paint_ms": 1034.2,
+              "critical_path_api_ms": 572.0,
+              "api_count": 7,
+              "long_task_ms": 522,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1193.3,
+              "paint_ms": 1203.4,
+              "critical_path_api_ms": 593.4,
+              "api_count": 7,
+              "long_task_ms": 573,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 1151.9,
+              "paint_ms": 1162.4,
+              "critical_path_api_ms": 669.2,
+              "api_count": 7,
+              "long_task_ms": 554,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": 104.7,
+          "paint_ms": 104.9,
+          "paint_pct": 9.9,
+          "critical_path_api_ms": 53.2,
+          "api_count": 0,
+          "noise_spread_ms": 169.2,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      }
+    },
+    "workspace-task": {
+      "walk": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 814.3,
+            "p95": 829.3,
+            "min": 797.6,
+            "max": 829.3,
+            "spread": 31.7
+          },
+          "paint_ms": {
+            "p50": 847.7,
+            "p95": 849.3,
+            "min": 821.1,
+            "max": 849.3,
+            "spread": 28.2
+          },
+          "critical_path_api_ms": {
+            "p50": 754.9,
+            "p95": 757.9,
+            "min": 731.7,
+            "max": 757.9,
+            "spread": 26.2
+          },
+          "api_count_p50": 15,
+          "long_task_ms_p50": 271.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 0,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 797.6,
+              "paint_ms": 821.1,
+              "critical_path_api_ms": 754.9,
+              "api_count": 15,
+              "long_task_ms": 271,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 814.3,
+              "paint_ms": 847.7,
+              "critical_path_api_ms": 731.7,
+              "api_count": 17,
+              "long_task_ms": 266,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 829.3,
+              "paint_ms": 849.3,
+              "critical_path_api_ms": 757.9,
+              "api_count": 14,
+              "long_task_ms": 320,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 829.6,
+            "p95": 890.4,
+            "min": 689.8,
+            "max": 890.4,
+            "spread": 200.6
+          },
+          "paint_ms": {
+            "p50": 844.5,
+            "p95": 908.4,
+            "min": 717.5,
+            "max": 908.4,
+            "spread": 190.9
+          },
+          "critical_path_api_ms": {
+            "p50": 752.1,
+            "p95": 807.7,
+            "min": 641.4,
+            "max": 807.7,
+            "spread": 166.3
+          },
+          "api_count_p50": 17,
+          "long_task_ms_p50": 302.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 0,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 890.4,
+              "paint_ms": 908.4,
+              "critical_path_api_ms": 807.7,
+              "api_count": 17,
+              "long_task_ms": 334,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 689.8,
+              "paint_ms": 717.5,
+              "critical_path_api_ms": 641.4,
+              "api_count": 13,
+              "long_task_ms": 261,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 829.6,
+              "paint_ms": 844.5,
+              "critical_path_api_ms": 752.1,
+              "api_count": 17,
+              "long_task_ms": 302,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": 15.3,
+          "paint_ms": -3.2,
+          "paint_pct": -0.4,
+          "critical_path_api_ms": -2.8,
+          "api_count": 2,
+          "noise_spread_ms": 190.9,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      },
+      "warm": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1141.0,
+            "p95": 1222.0,
+            "min": 1060.7,
+            "max": 1222.0,
+            "spread": 161.3
+          },
+          "paint_ms": {
+            "p50": 1168.8,
+            "p95": 1232.1,
+            "min": 1093.2,
+            "max": 1232.1,
+            "spread": 138.9
+          },
+          "critical_path_api_ms": {
+            "p50": 641.2,
+            "p95": 693.2,
+            "min": 556.1,
+            "max": 693.2,
+            "spread": 137.1
+          },
+          "api_count_p50": 9,
+          "long_task_ms_p50": 341.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 1,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1060.7,
+              "paint_ms": 1093.2,
+              "critical_path_api_ms": 641.2,
+              "api_count": 9,
+              "long_task_ms": 316,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1222.0,
+              "paint_ms": 1232.1,
+              "critical_path_api_ms": 556.1,
+              "api_count": 8,
+              "long_task_ms": 355,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 1141.0,
+              "paint_ms": 1168.8,
+              "critical_path_api_ms": 693.2,
+              "api_count": 10,
+              "long_task_ms": 341,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1137.4,
+            "p95": 1174.7,
+            "min": 1014.0,
+            "max": 1174.7,
+            "spread": 160.7
+          },
+          "paint_ms": {
+            "p50": 1153.8,
+            "p95": 1192.2,
+            "min": 1040.3,
+            "max": 1192.2,
+            "spread": 151.9
+          },
+          "critical_path_api_ms": {
+            "p50": 680.6,
+            "p95": 700.9,
+            "min": 652.8,
+            "max": 700.9,
+            "spread": 48.1
+          },
+          "api_count_p50": 9,
+          "long_task_ms_p50": 351.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 1,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1014.0,
+              "paint_ms": 1040.3,
+              "critical_path_api_ms": 652.8,
+              "api_count": 9,
+              "long_task_ms": 351,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1137.4,
+              "paint_ms": 1153.8,
+              "critical_path_api_ms": 700.9,
+              "api_count": 9,
+              "long_task_ms": 348,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 1174.7,
+              "paint_ms": 1192.2,
+              "critical_path_api_ms": 680.6,
+              "api_count": 10,
+              "long_task_ms": 377,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": -3.6,
+          "paint_ms": -15.0,
+          "paint_pct": -1.3,
+          "critical_path_api_ms": 39.4,
+          "api_count": 0,
+          "noise_spread_ms": 151.9,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      },
+      "cold": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1765.2,
+            "p95": 1794.9,
+            "min": 1692.9,
+            "max": 1794.9,
+            "spread": 102.0
+          },
+          "paint_ms": {
+            "p50": 1781.5,
+            "p95": 1850.1,
+            "min": 1733.7,
+            "max": 1850.1,
+            "spread": 116.4
+          },
+          "critical_path_api_ms": {
+            "p50": 1008.7,
+            "p95": 1010.8,
+            "min": 958.5,
+            "max": 1010.8,
+            "spread": 52.3
+          },
+          "api_count_p50": 14,
+          "long_task_ms_p50": 679.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1692.9,
+              "paint_ms": 1733.7,
+              "critical_path_api_ms": 1010.8,
+              "api_count": 14,
+              "long_task_ms": 669,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1765.2,
+              "paint_ms": 1781.5,
+              "critical_path_api_ms": 1008.7,
+              "api_count": 12,
+              "long_task_ms": 697,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 1794.9,
+              "paint_ms": 1850.1,
+              "critical_path_api_ms": 958.5,
+              "api_count": 14,
+              "long_task_ms": 679,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1743.5,
+            "p95": 1759.8,
+            "min": 1713.8,
+            "max": 1759.8,
+            "spread": 46.0
+          },
+          "paint_ms": {
+            "p50": 1788.1,
+            "p95": 1826.0,
+            "min": 1748.5,
+            "max": 1826.0,
+            "spread": 77.5
+          },
+          "critical_path_api_ms": {
+            "p50": 984.3,
+            "p95": 1009.1,
+            "min": 972.7,
+            "max": 1009.1,
+            "spread": 36.4
+          },
+          "api_count_p50": 14,
+          "long_task_ms_p50": 784.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1713.8,
+              "paint_ms": 1748.5,
+              "critical_path_api_ms": 984.3,
+              "api_count": 14,
+              "long_task_ms": 817,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1759.8,
+              "paint_ms": 1826.0,
+              "critical_path_api_ms": 972.7,
+              "api_count": 10,
+              "long_task_ms": 784,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 1743.5,
+              "paint_ms": 1788.1,
+              "critical_path_api_ms": 1009.1,
+              "api_count": 14,
+              "long_task_ms": 761,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": -21.7,
+          "paint_ms": 6.6,
+          "paint_pct": 0.4,
+          "critical_path_api_ms": -24.4,
+          "api_count": 0,
+          "noise_spread_ms": 116.4,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      }
+    },
+    "project-channels": {
+      "walk": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 246.1,
+            "p95": 287.4,
+            "min": 226.8,
+            "max": 287.4,
+            "spread": 60.6
+          },
+          "paint_ms": {
+            "p50": 257.7,
+            "p95": 321.3,
+            "min": 234.1,
+            "max": 321.3,
+            "spread": 87.2
+          },
+          "critical_path_api_ms": {
+            "p50": 203.8,
+            "p95": 284.7,
+            "min": 177.1,
+            "max": 284.7,
+            "spread": 107.6
+          },
+          "api_count_p50": 2,
+          "long_task_ms_p50": 58.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 0,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 287.4,
+              "paint_ms": 321.3,
+              "critical_path_api_ms": 284.7,
+              "api_count": 7,
+              "long_task_ms": 58,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 246.1,
+              "paint_ms": 257.7,
+              "critical_path_api_ms": 203.8,
+              "api_count": 2,
+              "long_task_ms": 58,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 226.8,
+              "paint_ms": 234.1,
+              "critical_path_api_ms": 177.1,
+              "api_count": 2,
+              "long_task_ms": 53,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 287.3,
+            "p95": 343.1,
+            "min": 257.1,
+            "max": 343.1,
+            "spread": 86.0
+          },
+          "paint_ms": {
+            "p50": 290.7,
+            "p95": 346.5,
+            "min": 268.7,
+            "max": 346.5,
+            "spread": 77.8
+          },
+          "critical_path_api_ms": {
+            "p50": 283.1,
+            "p95": 327.0,
+            "min": 215.5,
+            "max": 327.0,
+            "spread": 111.5
+          },
+          "api_count_p50": 3,
+          "long_task_ms_p50": 55.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 0,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 343.1,
+              "paint_ms": 346.5,
+              "critical_path_api_ms": 327.0,
+              "api_count": 7,
+              "long_task_ms": 53,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 257.1,
+              "paint_ms": 268.7,
+              "critical_path_api_ms": 215.5,
+              "api_count": 2,
+              "long_task_ms": 57,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 287.3,
+              "paint_ms": 290.7,
+              "critical_path_api_ms": 283.1,
+              "api_count": 3,
+              "long_task_ms": 55,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": 41.2,
+          "paint_ms": 33.0,
+          "paint_pct": 12.8,
+          "critical_path_api_ms": 79.3,
+          "api_count": 1,
+          "noise_spread_ms": 87.2,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      },
+      "warm": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 660.8,
+            "p95": 697.8,
+            "min": 658.0,
+            "max": 697.8,
+            "spread": 39.8
+          },
+          "paint_ms": {
+            "p50": 672.9,
+            "p95": 711.0,
+            "min": 668.6,
+            "max": 711.0,
+            "spread": 42.4
+          },
+          "critical_path_api_ms": {
+            "p50": 423.9,
+            "p95": 482.6,
+            "min": 415.0,
+            "max": 482.6,
+            "spread": 67.6
+          },
+          "api_count_p50": 7,
+          "long_task_ms_p50": 257.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 658.0,
+              "paint_ms": 672.9,
+              "critical_path_api_ms": 423.9,
+              "api_count": 6,
+              "long_task_ms": 309,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 697.8,
+              "paint_ms": 711.0,
+              "critical_path_api_ms": 482.6,
+              "api_count": 7,
+              "long_task_ms": 213,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 660.8,
+              "paint_ms": 668.6,
+              "critical_path_api_ms": 415.0,
+              "api_count": 7,
+              "long_task_ms": 257,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 662.4,
+            "p95": 731.2,
+            "min": 624.1,
+            "max": 731.2,
+            "spread": 107.1
+          },
+          "paint_ms": {
+            "p50": 677.2,
+            "p95": 746.4,
+            "min": 639.4,
+            "max": 746.4,
+            "spread": 107.0
+          },
+          "critical_path_api_ms": {
+            "p50": 477.8,
+            "p95": 493.9,
+            "min": 431.1,
+            "max": 493.9,
+            "spread": 62.8
+          },
+          "api_count_p50": 6,
+          "long_task_ms_p50": 242.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 662.4,
+              "paint_ms": 677.2,
+              "critical_path_api_ms": 431.1,
+              "api_count": 6,
+              "long_task_ms": 233,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 731.2,
+              "paint_ms": 746.4,
+              "critical_path_api_ms": 477.8,
+              "api_count": 6,
+              "long_task_ms": 274,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 624.1,
+              "paint_ms": 639.4,
+              "critical_path_api_ms": 493.9,
+              "api_count": 6,
+              "long_task_ms": 242,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": 1.6,
+          "paint_ms": 4.3,
+          "paint_pct": 0.6,
+          "critical_path_api_ms": 53.9,
+          "api_count": -1,
+          "noise_spread_ms": 107.0,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      },
+      "cold": {
+        "before": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1187.0,
+            "p95": 1285.3,
+            "min": 1068.7,
+            "max": 1285.3,
+            "spread": 216.6
+          },
+          "paint_ms": {
+            "p50": 1204.0,
+            "p95": 1303.0,
+            "min": 1091.7,
+            "max": 1303.0,
+            "spread": 211.3
+          },
+          "critical_path_api_ms": {
+            "p50": 742.1,
+            "p95": 845.2,
+            "min": 716.3,
+            "max": 845.2,
+            "spread": 128.9
+          },
+          "api_count_p50": 7,
+          "long_task_ms_p50": 414.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1068.7,
+              "paint_ms": 1091.7,
+              "critical_path_api_ms": 716.3,
+              "api_count": 7,
+              "long_task_ms": 398,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1285.3,
+              "paint_ms": 1303.0,
+              "critical_path_api_ms": 845.2,
+              "api_count": 7,
+              "long_task_ms": 429,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 1187.0,
+              "paint_ms": 1204.0,
+              "critical_path_api_ms": 742.1,
+              "api_count": 7,
+              "long_task_ms": 414,
+              "error": null
+            }
+          ]
+        },
+        "after": {
+          "n_attempts": 3,
+          "n_ok": 3,
+          "n_failed": 0,
+          "small_sample": true,
+          "dom_ready_ms": {
+            "p50": 1201.5,
+            "p95": 1243.6,
+            "min": 1006.5,
+            "max": 1243.6,
+            "spread": 237.1
+          },
+          "paint_ms": {
+            "p50": 1224.4,
+            "p95": 1251.6,
+            "min": 1029.1,
+            "max": 1251.6,
+            "spread": 222.5
+          },
+          "critical_path_api_ms": {
+            "p50": 748.4,
+            "p95": 818.7,
+            "min": 670.0,
+            "max": 818.7,
+            "spread": 148.7
+          },
+          "api_count_p50": 7,
+          "long_task_ms_p50": 400.0,
+          "unbatched_room_calls": 0,
+          "hidden_settings_calls": 0,
+          "default_model_calls": 0,
+          "my_teams_calls": 0,
+          "projects_calls": 1,
+          "address_project_calls": 0,
+          "raw_samples": [
+            {
+              "round": 1,
+              "outcome": "ok",
+              "dom_ready_ms": 1006.5,
+              "paint_ms": 1029.1,
+              "critical_path_api_ms": 670.0,
+              "api_count": 7,
+              "long_task_ms": 395,
+              "error": null
+            },
+            {
+              "round": 2,
+              "outcome": "ok",
+              "dom_ready_ms": 1243.6,
+              "paint_ms": 1251.6,
+              "critical_path_api_ms": 818.7,
+              "api_count": 7,
+              "long_task_ms": 400,
+              "error": null
+            },
+            {
+              "round": 3,
+              "outcome": "ok",
+              "dom_ready_ms": 1201.5,
+              "paint_ms": 1224.4,
+              "critical_path_api_ms": 748.4,
+              "api_count": 7,
+              "long_task_ms": 432,
+              "error": null
+            }
+          ]
+        },
+        "delta": {
+          "dom_ready_ms": 14.5,
+          "paint_ms": 20.4,
+          "paint_pct": 1.7,
+          "critical_path_api_ms": 6.3,
+          "api_count": 0,
+          "noise_spread_ms": 222.5,
+          "claim_status": "within_noise_band"
+        },
+        "guardrails": {
+          "selector_and_action_control_verified": true,
+          "failures_preserved_not_zeroed": true
+        }
+      }
+    }
+  }
+}

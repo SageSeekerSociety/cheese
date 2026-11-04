@@ -36,6 +36,9 @@ export interface CatalogState {
    *  再给一个只在这一格命中的选择器，测试断言它在画出来的东西里找得到。只给测试用，
    *  页面不读它；和 `expect` 可以同时给。 */
   expectSelector?: string
+  /** 这一格要**先点一下**才露出要看的那个状态（比如「看原文」里那条截断说明）：给测试
+   *  用，按键是 `data-testid`。点了之后才按 `expect` / `expectSelector` 判。 */
+  click?: string
 }
 
 export interface CatalogEntry {

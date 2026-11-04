@@ -79,8 +79,8 @@ from app.domain.skill_library import (
 # ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
 # 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，
 # 红得见。
-CLAUDE_PINNED_VERSION = "2.1.299"
-CLAUDE_MIN_VERSION = "2.1.299"
+CLAUDE_PINNED_VERSION = "2.1.316"
+CLAUDE_MIN_VERSION = "2.1.316"
 
 # What every session carries as its Claude login. It authenticates nothing; the
 # metering proxy replaces it with the platform's credential, or answers for it
@@ -446,6 +446,11 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 ROOM_CONFIG_DIR="$HOME/.claude"
 SEAT="{seat_home}"
 export CLAUDE_CONFIG_DIR="$SEAT/.claude"
+# The session is kept to its own seat of this room
+# (`remote_execution/namespace._keep_only`): a seat's memory tree holds the
+# private memory of the person its turn answers. To its own room of the
+# machine, the platform half of the launch says (`CHEESE_HOMES_ROOT`).
+export CHEESE_SEATS_ROOT="$(dirname "$SEAT")"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
 # Conversation transcripts belong to the room for resume and transfer, while
 # settings, skills and generated instructions belong to this seat.

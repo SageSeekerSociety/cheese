@@ -11,13 +11,13 @@ import type { MaybeRefOrGetter } from 'vue'
 import type { Answer, Question } from '@/types'
 
 import { computed, inject, toValue } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { AnswersApi } from '@/api/answers'
 import { QuestionApi } from '@/api/questions'
 import { NewAttitudeType } from '@/constants'
 import { t } from '@/i18n'
 import { refreshInjectionKey } from '@/keys'
+import { toast } from '@/lib/toast'
 import { currentUserId } from '@/services/account'
 
 /**

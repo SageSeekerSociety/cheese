@@ -19,7 +19,8 @@ vi.mock('@/api', async () => ({
 import type { Topic } from '@/cx_types'
 
 import { archiveTopic, createTopic, getTopic, listTopics } from '@/api'
-import { usePlace } from '@/query/project'
+import { queryClient } from '@/query/client'
+import { prefetchProjectTopics, usePlace } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { seedProject } from '@/test/seedQueries'
 
@@ -218,4 +219,28 @@ it('a burst of refreshes while a read is in flight costs one more read, which ha
   await flush()
   expect(listTopics).toHaveBeenCalledTimes(2)
   expect(store.topics.map((t) => t.id)).toEqual(['new'])
+})
+
+it('reuses an in-flight or cached project topic list instead of fetching the room row again', async () => {
+  queryClient.clear()
+  const listPending = deferred<TopicList>()
+  vi.mocked(listTopics).mockReturnValueOnce(listPending.promise)
+  prefetchProjectTopics('p-inflight')
+
+  const scope = effectScope()
+  const { place, resolving } = scope.run(() =>
+    usePlace(ref<string | null>('p-inflight'), ref('r-target'), ref<Topic[]>([]))
+  )!
+  await flush()
+
+  expect(resolving.value).toBe(true)
+  expect(getTopic).not.toHaveBeenCalled()
+
+  listPending.resolve(list(room('r-target', 'p-inflight')))
+  await flush()
+
+  expect(place.value?.id).toBe('r-target')
+  expect(resolving.value).toBe(false)
+  expect(getTopic).not.toHaveBeenCalled()
+  scope.stop()
 })

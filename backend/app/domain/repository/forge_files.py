@@ -2,12 +2,15 @@
 
 import asyncio
 import base64
+import json
 import uuid
 from typing import Any
 from urllib.parse import quote
 
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import settings
 from app.core.db import release_read_session
 from app.core.device_failures import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.core.errors import (
@@ -17,6 +20,7 @@ from app.core.errors import (
     UpstreamUnavailableError,
     ValidationError,
 )
+from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
@@ -29,9 +33,11 @@ from app.domain.repository import merge3, task_rows
 from app.domain.repository.ports import CompareStatus, ExecutorCall
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
+    PREVIEW_TEXT_BYTES,
     compare_bytes,
     content_version,
     decode_text,
+    head_text,
 )
 from app.domain.topic.models import Topic
 
@@ -62,6 +68,16 @@ def clean_path(path: str) -> str:
     ):
         raise ValidationError(say("taskFilePathOutside"))
     return path
+
+
+#: How long one head's changed paths are kept. The comparison is three-dot,
+#: from the merge base, so it moves only when the head does; the expiry covers
+#: the base branch being merged into the task branch's history some other way.
+_CHANGED_FILES_TTL = 6 * 3600
+
+
+def _changed_files_key(project_id: uuid.UUID, base: str, head: str) -> str:
+    return f"cheesex:changed-files:{project_id}:{base}:{head}"
 
 
 def _landed_head(task: Any) -> str | None:
@@ -414,7 +430,9 @@ class ProjectFiles:
             )
         return changes
 
-    async def comparison(self):
+    async def _refs(self) -> tuple[str, str] | None:
+        """The base branch and head commit the task's changes are read between,
+        or None while the task has no pushed commit."""
         task = await self.task()
         if task is None or not task.branch_name:
             return None
@@ -424,6 +442,13 @@ class ProjectFiles:
         if not head:
             return None  # The task has not pushed its first commit yet.
         base = task.base_branch or await default_branch(self.project_id, self.session)
+        return base, head
+
+    async def comparison(self, refs: tuple[str, str] | None = None):
+        refs = refs or await self._refs()
+        if refs is None:
+            return None
+        base, head = refs
         comparison = await self._data(
             self.project_id,
             self.session,
@@ -486,12 +511,52 @@ class ProjectFiles:
         ]
 
     async def changed_files(self):
-        comparison = await self.comparison()
+        """The task's changed paths. A head commit's changes against its base
+        stay what they were, so they are kept by commit (`_CHANGED_FILES_TTL`)
+        and an unchanged branch costs one head lookup instead of a comparison."""
+        refs = await self._refs()
+        if refs is None:
+            return []
+        key = _changed_files_key(self.project_id, *refs)
+        redis = get_redis_client()
+        if redis is not None:
+            # The comparison is the answer; a cache that is slow, down or holds
+            # something this code did not write is a miss, never the page's
+            # error. `request_limit_redis_timeout_s` is the request path's bound.
+            try:
+                cached = await asyncio.wait_for(
+                    redis.get(key),
+                    timeout=settings.request_limit_redis_timeout_s,
+                )
+            except (RedisError, TimeoutError):
+                cached = None
+            if cached is not None:
+                # Only the shape this code writes counts: valid JSON of another
+                # shape (`null`, a string, an object) is not a list of paths
+                # and is a miss too, not a TypeError in the route's `sorted`.
+                try:
+                    paths = json.loads(cached)
+                except (TypeError, ValueError):
+                    paths = None
+                if isinstance(paths, list) and all(
+                    isinstance(path, str) for path in paths
+                ):
+                    return paths
+        comparison = await self.comparison(refs)
         if comparison is None:
             return []
         if comparison.get("files") is None:
             raise GatewayUnavailableError(say("forgeNoChangedFiles"))
-        return [entry["filename"] for entry in comparison["files"]]
+        paths = [entry["filename"] for entry in comparison["files"]]
+        if redis is not None:
+            try:
+                await asyncio.wait_for(
+                    redis.set(key, json.dumps(paths), ex=_CHANGED_FILES_TTL),
+                    timeout=settings.request_limit_redis_timeout_s,
+                )
+            except (RedisError, TimeoutError):
+                pass
+        return paths
 
     async def diff(self, source: str, ref: str | None = None):
         if ref and ref.startswith("-"):
@@ -670,10 +735,22 @@ class ProjectFiles:
             version = content_version(data) if size <= MAX_TEXT_BYTES else None
         large = size > MAX_TEXT_BYTES
         text = None if large else decode_text(data)
+        if not large:
+            head = text
+        elif data:
+            # live 那一支读的是前 `MAX_TEXT_BYTES`，手里有开头，给得出来。
+            head = head_text(data[:PREVIEW_TEXT_BYTES])
+        else:
+            # committed 那一支超上限时一个字节都没读（不为了开头把整份拉回来），
+            # 那就没有开头可给：空串会被读者当成「是文本、但一个字都没有」。
+            head = None
         return {
             "path": path,
             "bytes": size,
             "content": text,
+            # 读者看的那一份：整份，或者开头（见 `textfile.text_payload`）。这一格
+            # 用的是编辑器，读的是 `content`；`head` 只为同一份契约在别处一致。
+            "head": head,
             "binary": not large and text is None,
             "too_large": large,
             "version": version,

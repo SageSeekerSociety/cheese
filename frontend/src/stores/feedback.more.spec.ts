@@ -51,7 +51,7 @@ function detail(id: string): FeedbackDetail {
 
 /** 一页。`total` 默认等于这一页的条数（**不是**累计数）—— 用例自己给。 */
 function page(items: FeedbackCard[], total = items.length) {
-  return { data: items, total, counts: { all: total, hot: 0, active: 0, resolved: 0, unread: 0 } }
+  return { data: items, total, counts: { all: total, hot: 0, resolved: 0, unread: 0 } }
 }
 
 function deferred<T>() {

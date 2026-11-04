@@ -33,7 +33,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -76,6 +76,10 @@ logger = logging.getLogger(__name__)
 _GW_KEY = "llm_gateway_key"
 _GW_CKPT = "llm_gateway_usage_ckpt"
 _GW_BUDGET = "llm_gateway_budget_usd"
+
+
+#: ``project_gateway_key`` was not told the project key's budget target.
+UNKNOWN_TARGET = object()
 
 
 @dataclass(frozen=True)
@@ -481,6 +485,25 @@ async def _model_kwargs(
     return kwargs, "gateway" if routed else "native"
 
 
+def _key_in_step(
+    settings: dict | None, slot: _KeySlot, target: float | None
+) -> str | None:
+    """The key in ``slot`` when the project's ``settings`` name one whose budget
+    is ``target``: nothing to mint or re-price, so nothing to write."""
+    s = settings or {}
+    key = s.get(slot.key)
+    if isinstance(key, str) and key and s.get(slot.budget) == target:
+        return key
+    return None
+
+
+def room_key_in_step(settings: dict | None, target: float | None) -> str | None:
+    """The project key from settings already read, by the same test
+    `_gateway_project_env`'s read path makes, without opening a session to
+    read the project again."""
+    return _key_in_step(settings, _ROOM_SLOT, target)
+
+
 async def project_gateway_key(
     service: _GatewayUsage,
     sessions: async_sessionmaker,
@@ -491,6 +514,7 @@ async def project_gateway_key(
     task_id: uuid.UUID | None = None,
     credit_owner_handle: str | None = None,
     machine_conversation_id: uuid.UUID | None = None,
+    budget_target: float | None | object = UNKNOWN_TARGET,
 ) -> str | None:
     """The project's virtual gateway key, minted on first use — the same one
     a local sandbox turn runs on, or with ``dream`` the key its memory
@@ -500,7 +524,13 @@ async def project_gateway_key(
 
     With ``machine_conversation_id`` it is the key that conversation's
     sandboxes call on (`MachineGatewayKey`), for ``credit_owner_handle`` or,
-    without one, the project."""
+    without one, the project.
+
+    ``budget_target``: the project key's ``_gateway_budget_target``, when the
+    caller has just read it (`routes/llm_proxy.py`, in the transaction that
+    admitted the call); the project key's read path then does not read it
+    again. Only the project key takes it; the write path reads it under the
+    lock whatever is given."""
     if machine_conversation_id is not None:
         return await _machine_gateway_key(
             sessions,
@@ -519,8 +549,27 @@ async def project_gateway_key(
         gateway,
         project_id,
         slot=_DREAM_SLOT if dream else _ROOM_SLOT,
+        known_target=UNKNOWN_TARGET if dream else budget_target,
     )
     return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
+
+
+async def task_key_in_step(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    owner_handle: str,
+) -> str | None:
+    """The task's key for ``owner_handle``, when it is minted and its budget
+    is in step with what the task may spend; None to ask `project_gateway_key`.
+    Read on ``session``: admission asks it on its own, whose request facts
+    already hold the project and its payer (`routes/llm_proxy.py`)."""
+    usage = UsageService(session)
+    account = await usage.task_gateway_account(project_id, task_id, owner_handle)
+    if account is None or account.project_id != project_id or not account.gateway_key:
+        return None
+    target = await usage.task_gateway_budget(project_id, task_id, owner_handle)
+    return account.gateway_key if account.budget_usd == target else None
 
 
 async def _task_gateway_key(
@@ -533,17 +582,9 @@ async def _task_gateway_key(
     if gateway is None:
         return None
     async with sessions() as session:
-        account = await session.get(TaskGatewayAccount, (task_id, owner_handle))
-        target = await UsageService(session).task_gateway_budget(
-            project_id, task_id, owner_handle
-        )
-        if (
-            account is not None
-            and account.project_id == project_id
-            and account.gateway_key
-            and account.budget_usd == target
-        ):
-            return account.gateway_key
+        ready = await task_key_in_step(session, project_id, task_id, owner_handle)
+        if ready is not None:
+            return ready
     async with sessions() as session:
         await session.execute(
             insert(TaskGatewayAccount)
@@ -660,6 +701,7 @@ async def _gateway_project_env(
     project_id: uuid.UUID,
     *,
     slot: _KeySlot = _ROOM_SLOT,
+    known_target: float | None | object = UNKNOWN_TARGET,
 ) -> dict | None:
     """Env override for a gateway-routed turn: mint (once) and return the
     project's virtual key in ``slot``, and keep its L2 max_budget in step with
@@ -689,9 +731,14 @@ async def _gateway_project_env(
             s = dict(project.settings or {})
             key = s.get(slot.key)
             if isinstance(key, str) and key:
-                target = await service._gateway_budget_target(session, project_id)
-                if s.get(slot.budget) == target:
-                    return {"ANTHROPIC_AUTH_TOKEN": key}
+                target = (
+                    await service._gateway_budget_target(session, project_id)
+                    if known_target is UNKNOWN_TARGET
+                    else cast("float | None", known_target)
+                )
+                in_step = _key_in_step(s, slot, target)
+                if in_step is not None:
+                    return {"ANTHROPIC_AUTH_TOKEN": in_step}
 
         # Write path: something must be minted or re-priced. The row lock
         # serialises it, and the settings are read under it here so a mint that

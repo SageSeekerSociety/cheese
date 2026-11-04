@@ -9,13 +9,13 @@ import type { Team, TeamMember } from '@/types'
 
 import { computed, inject, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import LeaveView from './LeaveView.vue'
 
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { toast } from '@/lib/toast'
 import { patchQuery } from '@/query/client'
 import { keys } from '@/query/keys'
 import AccountService from '@/services/account'

@@ -11,11 +11,16 @@ const props = defineProps<{
   revision: number
   paint: (page: number, host: HTMLElement, options: SlidePaintOptions) => Promise<void>
   cancelPaint: (host: HTMLElement) => void
+  /** 每一页的两样标记：隐藏页（缩略图压暗、标「隐藏」）、写了备注（左下角一个小记号）。 */
+  marks?: readonly { hidden: boolean; noted: boolean }[]
 }>()
 const emit = defineEmits<{ select: [page: number] }>()
 const rail = ref<HTMLElement | null>(null)
 const start = ref(0)
-const rowHeight = 112
+/** 一行 = 一张 16:9 的缩略图（112×63）+ 下面 8px 的缝。和样式里那两个数是同一组数。 */
+const rowHeight = 71
+const thumbWidth = 112
+const thumbHeight = 63
 const budget = 8
 const pages = computed(() =>
   Array.from({ length: Math.min(budget, Math.max(0, props.count - start.value)) }, (_, i) => start.value + i + 1)
@@ -47,6 +52,42 @@ watch(
     }
   }
 )
+/** 焦点在轨道里时，方向键在缩略图之间走：上下左右都是相邻页，Home / End 是首末页。
+ *
+ *  这一条和阅读器那条是分工而不是重复：焦点落在哪，键就归哪。轨道里挪焦点等于换页，
+ *  所以不必再让外面的处理函数翻一遍（`PreviewSlides.keyboard` 看到焦点在轨道里就退出）。 */
+function keydown(event: KeyboardEvent) {
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return
+  const button = target.closest<HTMLElement>('.slide-rail__page')
+  if (!button) return
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  const page = Number(button.dataset.slidePage)
+  if (!Number.isFinite(page)) return
+  const next = {
+    ArrowDown: page + 1,
+    ArrowRight: page + 1,
+    ArrowUp: page - 1,
+    ArrowLeft: page - 1,
+    Home: 1,
+    End: props.count,
+  }[event.key]
+  if (next === undefined) return
+  event.preventDefault()
+  event.stopPropagation()
+  const wanted = Math.min(props.count, Math.max(1, next))
+  if (wanted === props.current) {
+    focusPage(wanted)
+    return
+  }
+  emit('select', wanted)
+  void nextTick(() => focusPage(wanted))
+}
+async function focusPage(page: number) {
+  await nextTick()
+  const el = rail.value?.querySelector<HTMLElement>(`[data-slide-page="${page}"]`)
+  if (el) el.focus()
+}
 watch(
   [pages, () => props.revision],
   async () => {
@@ -56,7 +97,7 @@ watch(
     if (mine !== generation) return
     for (const page of pages.value) {
       const host = hosts.get(page)
-      if (host) void props.paint(page, host, { width: 112, height: 76 })
+      if (host) void props.paint(page, host, { width: thumbWidth, height: thumbHeight })
     }
   },
   { immediate: true, flush: 'post' }
@@ -68,19 +109,32 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <nav ref="rail" class="slide-rail" :aria-label="t('slides.thumbnails')" @scroll="scroll">
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the keys are handled for the buttons inside (focus is on a thumbnail, the handler moves between them); the nav itself takes no focus -->
+  <nav ref="rail" class="slide-rail" :aria-label="t('slides.thumbnails')" @scroll="scroll" @keydown="keydown">
     <div :style="{ height: `${start * rowHeight}px` }" />
     <button
       v-for="page in pages"
       :key="page"
       type="button"
       class="slide-rail__page"
-      :aria-label="t('slides.goPage', { page })"
+      :data-slide-page="page"
+      :aria-label="
+        marks?.[page - 1]?.hidden
+          ? `${t('slides.goPage', { page })} · ${t('slides.hiddenSlide')}`
+          : t('slides.goPage', { page })
+      "
+      :class="{ 'is-hidden-slide': marks?.[page - 1]?.hidden }"
       :aria-current="current === page ? 'page' : undefined"
       @click="emit('select', page)"
     >
-      <span class="slide-rail__image"><span :ref="(el) => setHost(page, el)" /></span>
-      <span class="t-meta">{{ page }}</span>
+      <span class="slide-rail__thumb">
+        <span :ref="(el) => setHost(page, el)" class="slide-rail__image" />
+        <span class="slide-rail__no" aria-hidden="true">{{ page }}</span>
+        <span v-if="marks?.[page - 1]?.hidden" class="slide-rail__tag" aria-hidden="true">{{
+          t('slides.hiddenSlide')
+        }}</span>
+        <span v-if="marks?.[page - 1]?.noted" class="slide-rail__noted" :title="t('slides.notes')" aria-hidden="true" />
+      </span>
     </button>
     <div :style="{ height: `${Math.max(0, count - start - pages.length) * rowHeight}px` }" />
   </nav>
@@ -88,45 +142,92 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .slide-rail {
-  width: 144px;
+  width: 132px;
   flex: none;
   min-height: 0;
+  padding: 10px;
   overflow: auto;
   border-right: 1px solid var(--line);
-  background: var(--canvas);
+  background: var(--surface);
 }
+/* 一行就是一张缩略图，下面留 8px 的缝（外面没有 gap：虚拟列表那两段占位高必须正好
+   等于一行，多出一点就会越滚越偏）。 */
 .slide-rail__page {
+  display: block;
   width: 100%;
-  height: 112px;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  height: 71px;
+  padding: 0 0 8px;
   color: var(--muted);
 }
-.slide-rail__page:hover {
-  background: var(--fill);
+.slide-rail__thumb {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--canvas);
 }
-.slide-rail__page[aria-current='page'] {
-  color: var(--accent-ink);
-  background: var(--fill-2);
+.slide-rail__page:hover .slide-rail__thumb {
+  border-color: var(--accent);
+}
+.slide-rail__page[aria-current='page'] .slide-rail__thumb {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
 }
 .slide-rail__page:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline-offset: 1px;
+  border-radius: 6px;
 }
 .slide-rail__image {
-  width: 120px;
-  height: 80px;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border: 1px solid var(--line);
-  background: var(--surface);
 }
 .slide-rail__image :deep(canvas) {
   display: block;
+}
+/* 页码压在缩略图右下角：白底的一小片，幻灯片本身是什么颜色都读得出来。 */
+.slide-rail__no {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.slide-rail__page.is-hidden-slide .slide-rail__image {
+  opacity: 0.45;
+}
+.slide-rail__tag {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+/* 写了备注的那几页：左下角一个小圆点，找讲稿写到哪一页用。 */
+.slide-rail__noted {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--surface);
 }
 </style>

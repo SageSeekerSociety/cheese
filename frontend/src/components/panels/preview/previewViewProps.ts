@@ -1,4 +1,5 @@
 // PanelPreviewView 的 props 契约：这一格要什么，全写在这里。摆在视图外面，取数那一层和这一格看的是同一份说明，视图文件也留在一千行以内。
+import type { AppWakeStep } from '../../../composables/panelPreview/appWake'
 import type { PreviewCommentsBundle } from '../../../composables/panelPreview/comments'
 import type { PanelPreviewLiveEdit } from '../../../composables/panelPreview/liveEdit'
 import type { PreviewVersionsBundle } from '../../../composables/panelPreview/versions'
@@ -11,11 +12,17 @@ import type { FileContent } from '../../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../../lib/documentIdentity'
 import type { FileKind } from '../../../lib/fileKind'
 import type { SubmitPreviewQuestion } from '../../../lib/previewQuestion'
+import type { SlideNote } from '../../../lib/slideNotes'
 import type { SlideSource } from './slidesContext'
 
 export interface PreviewViewProps {
   topicId: string | null
   submitQuestion?: SubmitPreviewQuestion
+  /** 私下问个人芝士：那一句只进读者和芝士那一条对话，不进这间房。
+   *
+   *  和 `submitQuestion` 同一条道理，能力由页面递下来——面板自己不碰那个全局 store，
+   *  它只发这一次意图。不给就是这一处没有这一项（没登录、或房东没有个人芝士）。 */
+  askPersonal?: (message: string) => void
   /** 标注图的上传：取数那一层给的能力。这一格只调它，自己不碰 fetch。 */
   uploadAnnotation?: UploadAnnotation
   /** 这一格是不是正显示着的那一页：收起来的那几页不接全局键（见 DesignImage）。 */
@@ -41,6 +48,15 @@ export interface PreviewViewProps {
   previewUrl: string | null
   previewAppNote: string
   previewTunnelUp: boolean
+  /** 应用的端口有应答：连通链「应用」那一段。 */
+  previewAppUp?: boolean
+  /** 应用睡着时顶上的静态快照，和它是多久以前留的。 */
+  appSnapshot?: { html: string; age: string; where?: string } | null
+  /** 这一件拍过、但超过快照上限留不下（不是「还没有快照」）。 */
+  snapshotTooLarge?: boolean
+  /** 唤醒的分步进度（没在唤醒是 null），和没成时那一句。 */
+  wakeSteps?: AppWakeStep[] | null
+  wakeError?: string
   previewNamedPath: string
   /** 刚跟着重启后的应用自动重载过：一句话解释那一闪，免得像是面板自己坏了。 */
   autoReloaded?: boolean
@@ -51,12 +67,13 @@ export interface PreviewViewProps {
   documentType: FileKind | null
   documentName: string
   isImageArtifact: boolean
-  downloadError: string
   docBytes: ArrayBuffer | null
   docIdentity?: DocumentIdentity | null
   docSnapshot?: DocumentSnapshot | null
   /** Identity verified against the actual conversion response, not current metadata alone. */
   slideContext?: SlideSource
+  /** 演示稿每一页的演讲者备注，下标即页码。空数组是「这一份没有备注可显示」。 */
+  slideNotes?: readonly SlideNote[]
   docLoading: boolean
   docError: string
   docRendererMissing: boolean

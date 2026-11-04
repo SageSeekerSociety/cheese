@@ -291,7 +291,6 @@ async def get_feedback_counts(
     payload = FeedbackCounts(
         all=counts["all"],
         hot=counts["hot"],
-        active=counts["active"],
         resolved=counts["resolved"],
         deployed=counts["deployed"],
         unread=counts["unread"],

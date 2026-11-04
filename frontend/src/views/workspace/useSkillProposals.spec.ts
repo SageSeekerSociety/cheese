@@ -93,4 +93,13 @@ describe('useSkillProposals', () => {
     expect(methods.saved.value).toEqual([])
     expect(methods.error.value).toBe('网络断了')
   })
+
+  it('deduplicates concurrent skill reads when channel and thread columns load together', async () => {
+    const room1 = useSkillProposals(ref('p1'), ref('room-1'))
+    const room2 = useSkillProposals(ref('p1'), ref('room-2'))
+    await Promise.all([room1.load(), room2.load()])
+    expect(listProjectSkills).toHaveBeenCalledTimes(1)
+    expect(room1.proposals.value.map((s) => s.id)).toEqual(['mine'])
+    expect(room2.proposals.value.map((s) => s.id)).toEqual(['other-room'])
+  })
 })

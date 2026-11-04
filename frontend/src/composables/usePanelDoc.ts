@@ -45,6 +45,7 @@ import { useMentionOutside } from './useMentionOutside'
 
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 /** 不在哪个对话里的一份文档（项目资料库里的）：直接给编号，不经对话去问。 */
 export interface PanelDocument extends AuthoredDocument {
@@ -436,7 +437,13 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
     /** 资料库文档现在叫什么（别人改了名之后重读）。 */
     currentTitle: async () => {
       const did = documentId.value
-      return did ? (await getDocumentAbout(did)).title ?? '' : null
+      if (!did) return null
+      const about = await queryClient.fetchQuery({
+        queryKey: keys.documentAbout(did),
+        queryFn: () => getDocumentAbout(did),
+        staleTime: 0,
+      })
+      return about.title ?? ''
     },
     toggleEditable,
     setSuggesting,

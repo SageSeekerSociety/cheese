@@ -29,7 +29,7 @@
   },
   "foot": "Public feedback is visible to everyone; if you file it as private, only you and platform admins can see it — nobody else can search it out or get a link to it.",
   "hot": {
-    "note": "Scored by support, but newer counts for more: 2 supports today weigh the same as 4 supports {halfLife} days ago. Items worth {threshold} points that aren't finished land in this tab; when fewer than {minItems} clear the bar the rest are filled in by score, so the tab is never empty."
+    "note": "Scored by support, but newer counts for more: 2 supports today weigh the same as 4 supports {halfLife} days ago. Items worth {threshold} points land in this tab; when fewer than {minItems} clear the bar the rest are filled in by score, so the tab is never empty."
   },
   "mine": "My feedback",
   "more": {
@@ -43,11 +43,15 @@
   },
   "submit": "Submit feedback",
   "tab": {
-    "active": "In progress",
     "all": "All",
     "hot": "Hot",
     "label": "Feedback tabs",
     "resolved": "Completed"
+  },
+  "tabEmpty": {
+    "action": "See all",
+    "desc": "Try another tab, or go back to All.",
+    "title": "Nothing in this tab yet"
   },
   "title": "Feedback center"
 }

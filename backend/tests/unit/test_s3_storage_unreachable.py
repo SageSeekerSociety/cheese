@@ -35,7 +35,7 @@ def _unreachable_bucket() -> S3StorageBackend:
 async def test_an_upload_to_an_unreachable_bucket_is_unavailable_not_a_crash():
     with pytest.raises(BaseError) as raised:
         await _unreachable_bucket().upload(
-            io.BytesIO(b"# v2 git bundle\n"), "task-snapshots/k", "application/x"
+            io.BytesIO(b"payload"), "session-records/k", "application/x"
         )
     assert raised.value.status_code == 503
     assert raised.value.retryable is True
@@ -43,7 +43,7 @@ async def test_an_upload_to_an_unreachable_bucket_is_unavailable_not_a_crash():
 
 async def test_a_download_from_an_unreachable_bucket_is_unavailable_not_a_crash():
     with pytest.raises(BaseError) as raised:
-        await _unreachable_bucket().download("task-snapshots/k")
+        await _unreachable_bucket().download("session-records/k")
     assert raised.value.status_code == 503
     assert raised.value.retryable is True
 
@@ -54,7 +54,7 @@ async def test_why_the_bucket_was_unreachable_is_logged(caplog):
     with caplog.at_level("WARNING", logger="app.core.storage"):
         with pytest.raises(BaseError) as raised:
             await _unreachable_bucket().upload(
-                io.BytesIO(b"# v2 git bundle\n"), "task-snapshots/k", "application/x"
+                io.BytesIO(b"payload"), "session-records/k", "application/x"
             )
     cause = type(raised.value.__cause__).__name__
     said = [r.getMessage() for r in caplog.records if r.name == "app.core.storage"]

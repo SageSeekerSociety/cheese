@@ -45,6 +45,11 @@ export function setCachedWindow(roomId: string, window: BlockWindow): void {
   queryClient.setQueryData(keys.roomNewestBlocks(roomId), window)
 }
 
+/** 这间房看不到了：手上那一页扔掉。 */
+export function forgetCachedWindow(roomId: string): void {
+  queryClient.removeQueries({ queryKey: keys.roomNewestBlocks(roomId), exact: true })
+}
+
 /**
  * 现在就去问最新一页；已经有一个在路上就等它。`restart`：在路上的那一个不能等了
  * （它发出之后连接断过，可能永远回不来），作废它重新问。

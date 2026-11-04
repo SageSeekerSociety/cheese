@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 # `AuthorType` and `BlockKind` are re-exported: a route that writes a block
 # reads them from here, not from `block.models` / `event_author`, so it does
@@ -17,6 +17,7 @@ from app.domain.block.models import (
 from app.domain.event_author import (
     AuthorType as AuthorType,
 )
+from app.domain.notice_meta import shown_as
 
 
 class ReactionOut(BaseModel):
@@ -59,6 +60,17 @@ class BlockOut(BaseModel):
     # endpoints fill it from one batch query (see reactions_for_blocks).
     reactions: list[ReactionOut] = []
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def shown_as(self) -> str | None:
+        """How a platform line is drawn in the conversation (`notice_meta.shown_as`);
+        None for anything that is not a platform line. Worked out on the way out,
+        from the same table that decides at write time whether it is shown, so a
+        line written before the table reads the same as one written after it."""
+        if self.kind != BlockKind.event:
+            return None
+        return shown_as(self.meta, in_turn=self.turn_id is not None)
 
 
 #: How much of a quoted message travels with the reply when its parent is not in

@@ -31,6 +31,7 @@ const { api } = vi.hoisted(() => ({
 vi.mock('@/api/addresses', () => api)
 
 import { addressProps, canonicalAddress, shortRoute } from './addresses'
+import { takeEarlyProjects } from './earlyProjects'
 
 import { canonicalNavigation } from '@/router/addressHistory'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
@@ -111,6 +112,33 @@ describe('认得的项目不再问一次', () => {
 
     expect(await landsOn(`/projects/${PROJECT}/tasks/${TASK}`)).toBe('/projects/helper/tasks/318')
     expect(api.resolveProject).not.toHaveBeenCalled()
+  })
+
+  it('启动脚本已经在问项目清单时，直接用那份结果记下短名，不再打一次 /addresses/projects', async () => {
+    const EARLY_PROJECT = '8f7e6d5c-4b3a-4123-9876-543210fedcba'
+    localStorage.setItem('accessToken', 'tok-early')
+    window.__cxEarlyProjects = Promise.resolve({
+      token: 'tok-early',
+      body: {
+        code: 200,
+        data: {
+          data: [{ id: EARLY_PROJECT, slug: 'early-slug', name: 'Early', created_at: '2026-10-01T00:00:00Z' }],
+          total: 1,
+        },
+      },
+    })
+    api.resolveProject.mockClear()
+
+    try {
+      expect(await landsOn(`/projects/${EARLY_PROJECT}`)).toBe('/projects/early-slug')
+      expect(api.resolveProject).not.toHaveBeenCalled()
+      // 并且不提前消费 __cxEarlyProjects，projectsQuery 第一次读时仍能接走它。
+      const consumed = await takeEarlyProjects()
+      expect(consumed?.data.map((p) => p.id)).toEqual([EARLY_PROJECT])
+    } finally {
+      delete window.__cxEarlyProjects
+      localStorage.removeItem('accessToken')
+    }
   })
 })
 

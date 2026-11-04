@@ -7,6 +7,7 @@
 // one RoomMessage already draws around a row — a composable knows what the room
 // is doing, a view knows what it looks like — and the views under ./chat are
 // those pieces: header, timeline, new-message pill, error toast.
+import type { PostedMessage } from '../api/messages'
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 import type { ChapterRow } from '../types/chapters'
@@ -22,7 +23,7 @@ import { useKeepAudience } from '../composables/useKeepAudience'
 import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
-import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
@@ -37,11 +38,13 @@ import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
+import EphemeralNotice from './room/EphemeralNotice.vue'
 import KeepToLibraryConfirm from './room/KeepToLibraryConfirm.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -95,8 +98,7 @@ const props = withDefaults(
     composerClosed?: string | null
     // 这里的提问已经不再等回答（任务关了、频道归档了）：选项不再给点。
     askClosed?: boolean
-    // 这一栏是一条支线：输入框写「在支线中回复」；我上一句叫过 AI 队友的话，打开时
-    // 先带上「@芝士 」。
+    // 这一栏是一条支线：输入框写「在支线中回复」。
     inThread?: boolean
     // 输入框里那句提示，当它不是这一栏默认的那句时：支线转成任务后写「在任务中回复」。
     hint?: string | null
@@ -106,10 +108,13 @@ const props = withDefaults(
     chapterable?: boolean
     /** 已经钉成章节的那几条（block id）。 */
     chapterIds?: ReadonlySet<string>
+    /** 这段对话自己的状态（任务开着还是关了）：变了，输入框重问一次「交给谁」。 */
+    placeState?: string | null
   }>(),
   {
     alwaysSummon: false,
     handOff: true,
+    placeState: null,
     showComposer: false,
     prHeader: false,
     hideHeader: false,
@@ -170,6 +175,19 @@ const mentionOutside = useMentionOutside({
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
+// 我发的一条谁也没交给，而我看起来在等 AI 队友（后端回这条消息时说的 `unasked`：这里只有
+// 我，或者我上一条是交给队友的）：队友在它下面对我一个人说一声，只说这一次。按了哪颗键、
+// 之后又有人说话、换了对话、刷新，这一条就不在了。
+const unaskedAfter = ref<Block | null>(null)
+watch(
+  () => props.conversationId ?? props.topic?.id,
+  () => (unaskedAfter.value = null)
+)
+function onPosted(block: PostedMessage) {
+  mentionOutside.offer(block)
+  unaskedAfter.value = block.unasked ? block : null
+}
+
 // 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
 // 把时间线包进了 `.timeline-zone`，滚动框的直接父元素已经不是包含输入区的那一层了。
 const chatRoot = ref<HTMLElement | null>(null)
@@ -186,7 +204,7 @@ const panel = useChatPanel({
   topicList: () => props.topicList,
   unreadOnOpen: () => props.unreadOnOpen,
   focusBlock: () => props.focusBlock ?? null,
-  onPosted: mentionOutside.offer,
+  onPosted,
   emit: panelEmit,
 })
 
@@ -345,6 +363,7 @@ const {
   removePendingAtt,
   retryPendingAtt,
   replyLabel,
+  replyTarget,
   editingId,
   editSaving,
   canEdit,
@@ -376,13 +395,21 @@ const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: pane
 // 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
 const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
-// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
-// 打开的那一刻做一次，删掉了不会再长回来。
-watch(loadingHistory, (loading, was) => {
-  if (!props.inThread || props.alwaysSummon || loading || !was || draft.value) return
-  const seat = agentSeat.value
-  draft.value = summonPrefill(panel.timeline.messages.value, isMine, seat ? `<@${seat.handle}>` : `@${agentName.value}`)
+// 只挂在我那一条还是最后一条的时候（同一次发出去的附件跟在它后面，不算别人说话）。
+const unaskedNotice = computed(() => {
+  const mine = unaskedAfter.value
+  if (!mine) return null
+  const messages = panel.timeline.messages.value
+  const at = messages.findIndex((m) => m.id === mine.id)
+  if (at < 0) return null
+  return messages.slice(at + 1).every((m) => m.turn_id === mine.turn_id) ? mine : null
 })
+// 「交给芝士」：走本来就有的那两步——回复这一条、在正文前面 @ 它。发不发由人决定。
+function askAbout(block: Block) {
+  unaskedAfter.value = null
+  setReply(block)
+  composerRef.value?.addAgentMention?.()
+}
 
 // 输入框旁边那颗队友头像要的两样：正在这一栏里跑一轮的队友，和我上一次交给的那位
 // （平时画它，点一下就交给它）。后者从我自己发过的话里找：最近一条 @ 了队友的那条。
@@ -423,6 +450,7 @@ const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 // keeps its own input bar for the root topic), so it stays exposed.
 const submitQuestion = createQuestionSubmit({
   topic: () => props.topic,
+  conversationId: () => props.conversationId,
   agentSeat: () => agentSeat.value,
   mentionPool: () => mentionPool.value,
   topicList: () => props.topicList,
@@ -594,7 +622,23 @@ useComposerShortcut({
             @keep="keepFile"
           >
             <template #timeline-start><slot name="timeline-start" /></template>
-            <template #timeline-end><slot name="timeline-end" /></template>
+            <template #timeline-end>
+              <EphemeralNotice
+                v-if="unaskedNotice && agentSeat"
+                :agent="{ handle: agentSeat.handle, label: agentName }"
+              >
+                {{ t('work.room.ephemeral.unasked') }}
+                <template #actions>
+                  <BaseButton kind="primary" size="sm" @click="askAbout(unaskedNotice)">
+                    {{ t('work.room.ephemeral.handTo', { name: agentName }) }}
+                  </BaseButton>
+                  <BaseButton kind="secondary" size="sm" @click="unaskedAfter = null">
+                    {{ t('work.room.ephemeral.dismiss') }}
+                  </BaseButton>
+                </template>
+              </EphemeralNotice>
+              <slot name="timeline-end" />
+            </template>
           </ChatTimeline>
         </ErrorBoundary>
         <!-- Floating bookmark rail at the top-left of the timeline; hidden when empty. -->
@@ -675,6 +719,9 @@ useComposerShortcut({
           :hear-voice="hearVoice"
           :busy-agents="busyAgents"
           :last-mate="lastMate"
+          :place="conversationId ?? topic.id"
+          :reply-to="replyTarget?.id ?? null"
+          :place-state="placeState ?? null"
           @send="onComposerSend"
           @clear-reply="clearReply"
           @clear-quote="clearDraftQuote"

@@ -169,6 +169,15 @@ export function imageMimeOf(suffix: string): string {
   return IMAGE_MIME[suffix] ?? 'image/jpeg'
 }
 
+/** 这个格式允许带透明通道没有。PNG / WebP / GIF 都可能，JPEG 不会。
+ *
+ *  允许不等于这一张真有透明——PNG 也能整张不透明。所以只用来铺棋盘格：底下的图要是
+ *  实的，格纹被盖住看不见；真有透明的地方才露出来。 */
+const MAY_HAVE_ALPHA = new Set(['png', 'webp', 'gif'])
+export function imageMayHaveAlpha(suffix: string): boolean {
+  return MAY_HAVE_ALPHA.has(suffix.toLowerCase())
+}
+
 /** 预览面板自己显示得出这个文件吗。
  *
  *  一枚 `<&路径>` chip 只是一个路径，不带它在哪个库；要决定把它开在哪一格，先得
@@ -232,9 +241,9 @@ export function suffixOf(path: string): string {
 /** 附件块左边那个方格里的图标，给没有缩略图可画的类型用。认不出的拿一张白纸:
  *  不是出错，只是这个类型没有更具体的说法。 */
 export function fileIcon(path: string): string {
-  return videoMimeOf(path)
-    ? 'mdi-video-outline'
-    : DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
+  if (videoMimeOf(path)) return 'mdi-video-outline'
+  if (IMAGE_SUFFIXES.has(suffixOf(path))) return 'mdi-file-image-outline'
+  return DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
 }
 
 /** 浏览器直接画得出、因此 DOCUMENT_TYPES 里没有的那几种。
@@ -259,6 +268,7 @@ const WEB_MIME: Record<string, string> = {
  *  一个说不出的类型不该在界面上变成一段后缀。 */
 export function fileLabel(path: string): string {
   const suffix = suffixOf(path)
+  if (IMAGE_SUFFIXES.has(suffix)) return t('work.room.fileKind.image')
   return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? t('work.room.fileKind.file')
 }
 
@@ -269,4 +279,41 @@ export const PREVIEW_MAX_MB = 200
 
 export function tooLargeToPreview(bytes: number): boolean {
   return bytes > PREVIEW_MAX_MB * 1024 * 1024
+}
+
+/** 一读进来的字节里摆多少给读者：和后端 `app/domain/textfile.py` 的
+ *  `PREVIEW_TEXT_BYTES` 是同一个数。超过就只摆开头、说清底下还有（下载看整份），
+ *  而不是一个字都不摆。这个数是怎么量出来的见后端那个常量的说明。 */
+export const PREVIEW_TEXT_BYTES = 256 * 1024
+
+/** 摆出来的最多几行，和后端 `PREVIEW_TEXT_LINES` 同一个数。行数才是这一格的开销，
+ *  短行的文件按字节卡不住（256 KB 的 4 字节行有五万行）。 */
+export const PREVIEW_TEXT_LINES = 4_000
+
+/** 按行预算把一段已经解码的文本切成给读者看的那些行；`cut` 说底下还有没有。
+ *
+ *  和后端 `head_text` 同一条规矩：落在行边界上，一行都没有（单行文件）就整段给。 */
+export function headOf(window: string, more: boolean): { head: string; cut: boolean } {
+  let at = 0
+  let end = 0
+  let lines = 0
+  while (lines < PREVIEW_TEXT_LINES) {
+    const next = window.indexOf('\n', at)
+    if (next < 0) break
+    end = next + 1
+    at = end
+    lines += 1
+  }
+  if (end === 0) return { head: window, cut: more }
+  return { head: window.slice(0, end), cut: more || end < window.length }
+}
+
+/** 读者该看到的那段文字：后端给了 `head` 就用它（超出编辑器上限时那是开头），
+ *  没给就退回 `content`（整份能装下的时候两者本来就一样）。
+ *
+ *  只认 `head` 会让所有只带 `content` 的调用方和夹具渲染成空白；所以这里统一
+ *  收口，别在组件里各自 `?.head ?? null`。 */
+export function readerText(file: { head?: string | null; content: string | null } | null | undefined): string | null {
+  if (!file) return null
+  return file.head ?? file.content
 }

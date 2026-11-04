@@ -12,8 +12,13 @@ export interface LocatorAnchor {
   viewBottom: number
 }
 
-/** 面板窄到放不下一张弹出的卡片时就贴底：这么窄的时候弹出来也只是把正文整个盖住。 */
-export const FLOATING_MIN_WIDTH = 440
+/** 面板窄到放不下一张弹出的卡片时就贴底：这么窄的时候弹出来也只是把正文整个盖住。
+ *
+ *  这个数是「卡片真放得下」的那条线，不是「宽不宽」的感觉：卡片最宽 348、左右各留
+ *  12，一共 372。原来定在 440，比卡片实际需要的宽出一截，结果手机（390）上明明放得下，
+ *  卡片却被推到底边——读者刚选中的那一行在上面，卡片跑到屏幕另一头，中间隔着一屏正文，
+ *  指认和框对不上。 */
+export const FLOATING_MIN_WIDTH = 372
 
 interface PointerMark {
   x: number
@@ -77,6 +82,31 @@ export function measureAnchor(
     rect = { top: y, bottom: y, left: pointer.x }
   }
   if (!rect) return null
+  const top = rect.top - box.top
+  const bottom = rect.bottom - box.top
+  if (bottom < 0 || top > panel.clientHeight) return null
+  return {
+    top: top + panel.scrollTop,
+    bottom: bottom + panel.scrollTop,
+    left: rect.left - box.left,
+    panelWidth: panel.clientWidth,
+    viewTop: panel.scrollTop,
+    viewBottom: panel.scrollTop + panel.clientHeight,
+  }
+}
+
+/**
+ * 图上框出来的那一块：位置取它在屏幕上的实际矩形，坐标系和 `measureAnchor` 逐字一致
+ * （面板内容坐标、`viewTop`/`viewBottom`、面板窄了就返回 null 退回贴底）。
+ *
+ * 单独一支是因为框选不是一段文字选区（没有 Range），也不是只记下一个点（那一块有面积，
+ * 卡片要落在它旁边而不是某个角上）。元素随缩放、内部滚动一起动，所以每次重算都现读。
+ */
+export function measureElementAnchor(panel: HTMLElement, element: Element | null): LocatorAnchor | null {
+  if (panel.clientWidth < FLOATING_MIN_WIDTH) return null
+  const rect = element?.getBoundingClientRect()
+  if (!rect || (!rect.width && !rect.height)) return null
+  const box = panel.getBoundingClientRect()
   const top = rect.top - box.top
   const bottom = rect.bottom - box.top
   if (bottom < 0 || top > panel.clientHeight) return null

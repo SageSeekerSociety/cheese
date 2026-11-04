@@ -49,7 +49,6 @@ def _join_board(client: TestClient, *, space_id: int, handle: str) -> int:
                 SpaceMember(
                     space_id=space_id,
                     user_id=user_id,
-                    invite_code_id=None,
                     created_at=now,
                     updated_at=now,
                     deleted_at=None,
@@ -379,7 +378,7 @@ def test_the_screen_shows_the_default_teammate_and_the_skills_it_brings(
 
     assert data["agent"]["typeName"] == "academic-research"
     assert data["agent"]["displayName"] == "学术研究"
-    assert data["agent"]["skills"] == ["documents", "wolfram"]
+    assert data["agent"]["skills"] == ["documents", "wolfram", "lean"]
 
 
 def test_a_role_that_names_no_shipped_preset_is_not_dressed_up_as_one(

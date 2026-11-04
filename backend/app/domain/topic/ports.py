@@ -276,21 +276,23 @@ class OpenTaskCounts(Protocol):
 
 
 class CloseRoomTasks(Protocol):
-    """一间房关掉了，里面还没结束的活跟着结束；还回被结束的那几条的 id。
+    """几间房关掉了，里面还没结束的活跟着结束；还回被结束的那几条（活的 id，它
+    所在的房间）。一次归档要关的每一间房在一次调用里给全，而且在别的锁之前：那几
+    条活的锁要一起、按同一个顺序取（`room_task.lock_order`）。
 
     形状就是 `room_task.archive.close_room_tasks`，实现留在那里，递进来的就是那个
     函数本身 —— 和 `ArchivedCards` 一样。一条活没有房间就没有上下文，也没有回去
     的路，所以关一个地方要把它里面的活一起关掉。
 
     为什么结束这件事不在这个口子里：那句话要落进每条活自己的支线，而那句话的内容
-    是本包决定的（说哪条活、因为哪间房关了），递回来的 id 就是给那几句话用的；
+    是本包决定的（说哪条活、因为哪间房关了），递回来的那几对就是给那几句话用的；
     写下去的那一步走 `PlatformLine`。一条早就结束的活不回报，也不重写它的
     `closed_at`。
     """
 
     async def __call__(
-        self, session: AsyncSession, room_id: uuid.UUID
-    ) -> Sequence[uuid.UUID]: ...
+        self, session: AsyncSession, room_ids: Sequence[uuid.UUID]
+    ) -> Sequence[tuple[uuid.UUID, uuid.UUID]]: ...
 
 
 class PlatformLine(Protocol):

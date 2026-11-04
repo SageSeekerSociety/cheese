@@ -28,6 +28,7 @@ from app.domain.memory.files import (
     MemoryType,
 )
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
@@ -73,6 +74,7 @@ def _remember(
                     content=memory.text(),
                     updated_by="cheese",
                     expected_version=None,
+                    writer=MemoryWriter.panel,
                 )
                 lines.append(memory.index_line(path))
             await store.write(
@@ -83,6 +85,7 @@ def _remember(
                 content="\n".join(lines) + "\n",
                 updated_by="cheese",
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
             await s.commit()
 

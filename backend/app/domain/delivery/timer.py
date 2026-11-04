@@ -41,6 +41,7 @@ from app.domain.notice_meta import (
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
+from app.domain.room_task.lock_order import lock_tasks_for_change
 from app.domain.run_record.service import keep as keep_record
 from app.domain.topic.models import Topic
 from app.domain.user.services import user_by_handle
@@ -253,6 +254,16 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
                 )
                 .with_for_update(skip_locked=True)
             )
+        )
+        # Several tasks may close here: all of them named at once, before any
+        # is looked at (`room_task.lock_order`).
+        await lock_tasks_for_change(
+            session,
+            [
+                row.conversation_id
+                for row in rows
+                if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id
+            ],
         )
         for row in rows:
             row.state = "failed"

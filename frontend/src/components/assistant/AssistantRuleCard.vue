@@ -6,11 +6,11 @@ import type { AgentRuleNow } from '@/lib/agentRules'
 import type { AssistantRule } from '@/stores/agentThread'
 
 import { computed, inject, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { agentRulesKey } from '@/lib/agentRules'
+import { toast } from '@/lib/toast'
 
 const props = defineProps<{ rule: AssistantRule }>()
 

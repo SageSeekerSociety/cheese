@@ -598,7 +598,7 @@ async def surroundings(
         overview = await pointed_overview(db, asked.project_id)
         if overview is not None and overview.id != asked.document_id:
             goals = overview.content
-        index = await memory_index(db, asked.project_id, speaker_handles=[])
+        index = await memory_index(db, asked.project_id, speaker=None)
         if not index.is_empty():
             memory = "\n\n".join(section.text for section in index.sections)
     return Surroundings(content, messages, goals, memory, machine, label=label)

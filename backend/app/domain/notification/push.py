@@ -206,6 +206,14 @@ def push_link(payload: dict[str, Any]) -> str:
     # panel, over their inbox.
     if conversation := payload.get("assistantConversation"):
         return f"/inbox?assistant={conversation}"
+    # 额度快用完了（`usage.alerts`）：这一条没有房间，去能处理它的那一页 —— 团队额度
+    # 在团队的额度页，项目预算和成员上限在项目的设置里。站内通知的渲染器认同两个键。
+    if handle := payload.get("teamHandle"):
+        return f"/teams/{handle}/credits"
+    if payload.get("event") == "credit_warning" and (
+        budget_project := payload.get("projectId")
+    ):
+        return f"/projects/{budget_project}/settings/environment"
     project_id = payload.get("projectId")
     topic_id = payload.get("topicId")
     task_id = payload.get("taskId")

@@ -33,7 +33,7 @@ from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
 from app.domain.room_task.dispatch import say_thread_title
-from app.domain.room_task.place import place_or_404
+from app.domain.room_task.place import inner_place_or_404, place_or_404
 from app.domain.thread import reads
 from app.domain.thread.recycle import restore_thread as restore_a_thread
 from app.domain.thread.schemas import ThreadOut
@@ -162,9 +162,15 @@ async def get_thread(
     Any other task reads the same way, opened beside the channel as a 支线 is:
     the message it hangs under is the one it was made from (a reply in a
     支线, or a main-line message), or none for a task created on its own."""
-    place = await place_or_404(db, topic_id)
+    place = await inner_place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
-    thread = await thread_of(db, topic_id)
+    thread = (
+        place.thread
+        if place.thread is not None
+        else await thread_of(db, topic_id)
+        if place.task is not None and place.task.upgraded_from_block_id is not None
+        else None
+    )
     if thread is None and place.task is not None:
         return ok(await _task_as_thread(db, place.task))
     if thread is None:
@@ -209,11 +215,11 @@ async def restore_thread(
     已经过了时限，所以频道那一行的红灯不会跟着回来。那间房要再红，得是之后又有一次
     没人恢复的失败。再点一次「恢复」（本来就开着）也回 200：这件事本来就是幂等的。
     """
-    place = await place_or_404(db, topic_id)
+    place = await inner_place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("threadRestoreSignIn"))
-    thread = await thread_of(db, topic_id)
+    thread = place.thread
     if thread is None or place.task is not None:
         raise NotFoundError(say("threadNotFound"))
     if thread.recycled:

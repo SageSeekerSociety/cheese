@@ -46,7 +46,10 @@ ROUNDS = int(os.environ.get("PERF_ROUNDS", "7"))
 os.environ.setdefault("DATABASE_URL", DB_URL)
 os.environ.setdefault("ENVIRONMENT", "development")
 os.environ.setdefault("JWT_SECRET", "perf-probe-secret")
-os.environ.setdefault("REDIS_URL", os.environ.get("PERF_REDIS_URL", "redis://127.0.0.1:6381/0"))
+os.environ.setdefault(
+    "REDIS_URL",
+    os.environ.get("PERF_REDIS_URL") or os.environ.get("REDIS_URL") or "redis://127.0.0.1:6379/0",
+)
 
 
 async def discover_ids() -> dict[str, str]:

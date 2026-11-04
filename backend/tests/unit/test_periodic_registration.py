@@ -454,6 +454,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "model_spend_cap_alert_interval_s",
         "question_expiry_sweep_interval_s",
         "thread_recycle_interval_s",
+        "credit_warning_interval_s",
+        "deepseek_balance_check_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -505,8 +507,11 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("task deadline sweep", 116),
         ("starter code pushes", 10),
         ("memory dream", 117),
+        ("memory history retention", 3600),
         ("platform model roles refresh", 121),
         ("model spend cap alert", 122),
+        ("relay balance check", 126),
+        ("credit warnings", 125),
         ("ci activity sweep", 300),
     ]
     # Every process serves requests that read the platform model roles, so that

@@ -21,6 +21,7 @@ from app.domain.review import (
     notes,
     pr_signals,
 )
+from app.domain.review.archive import OPEN_CARD_STATUSES
 from app.domain.review.merge_state import MergeVerdict, Who
 from app.domain.review.models import (
     AcceptCard,
@@ -252,6 +253,28 @@ class AcceptService:
         call deeper.
         """
         return await self._repo.latest_by_task(task_ids)
+
+    async def waiting_card(self, task_id: uuid.UUID) -> AcceptCard | None:
+        """这条活上还在等人决定的那张卡（一条活同时只有一张，`list_for_task`）；
+        没有就是 None。关任务会作废它，所以队友关不关得了任务看的是它。"""
+        return next(
+            (
+                card
+                for card in await self._repo.list_for_task(task_id)
+                if card.status in OPEN_CARD_STATUSES
+            ),
+            None,
+        )
+
+    async def held_pr_deliveries(self, project_id: uuid.UUID) -> list[dict]:
+        """这个项目里骑着 PR、还在等人决定的交付：PR 号、它的分支和要并进去的分支。
+        关掉这样的 PR，删掉、改名或清空它的分支，都是作废那份交付，所以队友经
+        forge 代理做不了（`agent.forge_requests`）。"""
+        rows = await self._repo.held_pr_deliveries(project_id, OPEN_CARD_STATUSES)
+        return [
+            {"number": number, "branch": branch, "base": base}
+            for number, branch, base in sorted(rows, key=lambda row: row[0])
+        ]
 
     async def reviewer_handles_for_cards(
         self, card_ids: list[uuid.UUID]

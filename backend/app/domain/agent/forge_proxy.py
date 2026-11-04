@@ -12,12 +12,17 @@ Two Unix domain sockets live in the room's read-only platform socket directory
   terminates TLS for the project's bound forge hosts using a per-machine CA,
   refuses pull-request merges (`PUT /repos/{owner}/{repo}/pulls/{n}/merge` and
   GraphQL `mergePullRequest` / `enablePullRequestAutoMerge`) with `403`,
+  refuses closing a pull request that is a delivery waiting on a person, or
+  deleting or emptying its branch (`forge_requests.read`, asked of
+  `platform.sock`), with `403`,
   replaces `placeholder` credentials with a cached single-repository token
   obtained from `platform.sock` using `X-Cheese-Proxy-Proof`, and connects
   directly to the forge (or falls back to the platform when the forge is
   unreachable from the execution machine). Other destinations are spliced
   through without terminating TLS, except private/loopback addresses which are
-  refused.
+  refused. Every destination is dialled by `ForgeProxyRuntime.dial`, which
+  reaches the deployment's site over the machine's forward when it has one
+  (`--site-forward`), so the room needs no route of its own to the site.
 - `preview.sock`: out-of-sandbox preview WebSocket relay. `cheese-preview.py`
   inside the sandbox connects here with no token; this process obtains a
   short-lived credential on `platform.sock` using `X-Cheese-Proxy-Proof`,
@@ -55,15 +60,19 @@ from pathlib import Path
 if sys.platform != "win32":
     import fcntl
 
+# Shipped beside this file (`RELEASE_FILES`); run as a script, its directory is
+# first on `sys.path`.
+if __package__:
+    from . import forge_requests
+else:
+    import forge_requests  # type: ignore[no-redef]
+
 PLACEHOLDER_TOKEN = "placeholder"
 MERGE_REFUSED_MESSAGE = (
     "[cheese] Merging accepts this task. Use cheese_card(action=request) "
     "to submit it for project review."
 )
 
-_REST_MERGE_RE = re.compile(
-    r"^(?:/api/v[13])?/repos/[^/]+/[^/]+/pulls/\d+/merge/*$", re.IGNORECASE
-)
 _GRAPHQL_MERGE_RE = re.compile(rb"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b")
 _SYSTEM_CA_PATHS = (
     "/etc/ssl/certs/ca-certificates.crt",
@@ -84,15 +93,31 @@ def _lock(file) -> None:
         fcntl.flock(file, fcntl.LOCK_EX)
 
 
-def is_pr_merge_request(method: str, path: str, body: bytes = b"") -> bool:
-    """Whether an HTTP request to a forge API attempts to merge a pull request."""
-    clean_path = urllib.parse.urlsplit(path).path or "/"
-    upper = method.upper()
-    if upper == "PUT" and _REST_MERGE_RE.match(clean_path):
+def is_pr_merge_request(
+    method: str, path: str, body: bytes = b"", headers: dict | None = None
+) -> bool:
+    """Whether an HTTP request to a forge API attempts to merge a pull request,
+    read as the forge reads it (`forge_requests.read`). A GraphQL request that
+    cannot be parsed counts when its bytes name a merge."""
+    write = forge_requests.read(method, path, headers or {}, body)
+    if write.merge:
         return True
-    if upper == "POST" and clean_path.rstrip("/") in ("/graphql", "/api/graphql"):
-        return bool(_GRAPHQL_MERGE_RE.search(body))
-    return False
+    clean = forge_requests.normalized_path(path)
+    return (
+        write.unreadable
+        and clean.endswith("/graphql")
+        and bool(_GRAPHQL_MERGE_RE.search(body))
+    )
+
+
+#: A pull request the platform holds as a delivery waiting on a person is
+#: that person's to close: closing it voids the delivery. The agent tells them
+#: where to click.
+HELD_REFUSED_MESSAGE = (
+    "[cheese] This pull request is a delivery waiting for a person's decision. "
+    "Closing it, deleting or emptying its branch would void the delivery, and "
+    "that is theirs to decide in the task's interface."
+)
 
 
 def rewrite_authorization(
@@ -366,6 +391,11 @@ class PlatformSocketClient:
             self._cached_until = time.monotonic() + 300.0
         return data
 
+    def held_deliveries(self) -> dict:
+        """The project's pull requests that are deliveries waiting on a person,
+        asked fresh every time: a delivery filed a minute ago counts."""
+        return self._get_json("/api/sandbox/forge-held")["data"]
+
     def proxy_credential(self, timeout: float = 20.0) -> str:
         data = self._get_json("/proxy-credential", timeout=timeout)
         return str(data["token"])
@@ -429,10 +459,10 @@ def _is_private_destination(host: str) -> bool:
     return False
 
 
-def _pipe(src: socket.socket, dst: socket.socket) -> None:
+def _pipe(src: socket.socket, dst: socket.socket, reader=None) -> None:
     try:
         while True:
-            data = src.recv(65536)
+            data = reader.read1(65536) if reader is not None else src.recv(65536)
             if not data:
                 break
             dst.sendall(data)
@@ -443,9 +473,11 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
             dst.shutdown(socket.SHUT_WR)
 
 
-def _splice(a: socket.socket, b: socket.socket) -> None:
-    t1 = threading.Thread(target=_pipe, args=(a, b), daemon=True)
-    t2 = threading.Thread(target=_pipe, args=(b, a), daemon=True)
+def _splice(
+    a: socket.socket, b: socket.socket, reader=None, upstream_reader=None
+) -> None:
+    t1 = threading.Thread(target=_pipe, args=(a, b, reader), daemon=True)
+    t2 = threading.Thread(target=_pipe, args=(b, a, upstream_reader), daemon=True)
     t1.start()
     t2.start()
     t1.join()
@@ -492,8 +524,63 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
 
     def _handle_one(self) -> None:
         proxy: ForgeProxyRuntime = self.server.proxy  # type: ignore[attr-defined]
+        data = proxy.platform.forge_data() or {}
+        clean_path = urllib.parse.urlsplit(self.path).path or "/"
+        forge_api = urllib.parse.urlsplit(data.get("api_url") or "")
+        forge_prefix = forge_api.path.removesuffix("/api/v1").rstrip("/")
+        if (
+            data.get("kind") == "forgejo"
+            and forge_api.hostname == self.target_host
+            and forge_prefix
+            and clean_path != forge_prefix
+            and not clean_path.startswith(forge_prefix + "/")
+        ):
+            # The site's pages and live connections share the forge's host.
+            # Keep their headers and streams intact, without adding credentials.
+            connection = _DialledConnection(
+                self.target_host,
+                self.target_port,
+                dial=proxy.dial,
+                tls=self.target_scheme == "https",
+                timeout=10,
+            )
+            try:
+                body = self._read_body()
+                headers = {
+                    key: value
+                    for key, value in self.headers.items()
+                    if key.lower() not in ("transfer-encoding", "content-length")
+                }
+                if not self.headers.get("Upgrade"):
+                    headers["Connection"] = "close"
+                connection.connect()
+                connection.sock.settimeout(300)
+                connection.request(self.command, self.path, body=body, headers=headers)
+                connection.sock.settimeout(None)
+                response = connection.getresponse()
+                upgraded = response.status == 101
+                self.send_response_only(response.status, response.reason)
+                for key, value in response.getheaders():
+                    if key.lower() != "transfer-encoding" and (
+                        key.lower() != "connection" or upgraded
+                    ):
+                        self.send_header(key, value)
+                if not upgraded:
+                    self.send_header("Connection", "close")
+                self.end_headers()
+                if upgraded:
+                    self.request.settimeout(None)
+                    # The HTTP readers may already hold bytes after the headers.
+                    _splice(self.request, connection.sock, self.rfile, response.fp)
+                else:
+                    while chunk := response.read1(65536):
+                        self.wfile.write(chunk)
+            finally:
+                self.close_connection = True
+                connection.close()
+            return
         body = self._read_body()
-        if is_pr_merge_request(self.command, self.path, body):
+        if is_pr_merge_request(self.command, self.path, body, dict(self.headers)):
             payload = json.dumps({"message": MERGE_REFUSED_MESSAGE}).encode("utf-8")
             self.send_response(403, "Forbidden")
             self.send_header("Content-Type", "application/json")
@@ -504,12 +591,10 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
 
-        data = proxy.platform.forge_data() or {}
         token = data.get("token") or ""
         if token == PLACEHOLDER_TOKEN:
             token = ""
         username = data.get("username") or "x-access-token"
-        clean_path = urllib.parse.urlsplit(self.path).path or "/"
         is_git = ".git/" in clean_path or clean_path.endswith(".git")
 
         headers: dict[str, str] = {}
@@ -543,6 +628,26 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
         if body or self.command in ("POST", "PUT", "PATCH"):
             headers["Content-Length"] = str(len(body))
         headers["Connection"] = "close"
+
+        write = forge_requests.read(self.command, self.path, dict(self.headers), body)
+        if write.any() and proxy.closes_held_delivery(
+            write,
+            scheme=self.target_scheme,
+            host=self.target_host,
+            port=self.target_port,
+            path=self.path,
+            headers=headers,
+            forge=data,
+        ):
+            payload = json.dumps({"message": HELD_REFUSED_MESSAGE}).encode("utf-8")
+            self.send_response(403, "Forbidden")
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(payload)
+            self.close_connection = True
+            return
 
         try:
             status, reason, resp_headers, resp_body = proxy.forward_forge_http(
@@ -591,6 +696,24 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _DialledConnection(http.client.HTTPConnection):
+    """An HTTP or HTTPS connection whose socket `ForgeProxyRuntime.dial` opens.
+    TLS is verified against the name asked for, wherever the socket leads."""
+
+    def __init__(self, host: str, port: int, *, dial, tls: bool, timeout: float):
+        super().__init__(host, port, timeout=timeout)
+        self._dial = dial
+        self._tls = tls
+
+    def connect(self) -> None:
+        sock = self._dial(self.host, self.port, self.timeout)
+        if self._tls:
+            sock = ssl.create_default_context().wrap_socket(
+                sock, server_hostname=self.host
+            )
+        self.sock = sock
+
+
 class ForgeProxyRuntime:
     def __init__(
         self,
@@ -600,6 +723,7 @@ class ForgeProxyRuntime:
         api_url: str,
         preview_url: str,
         proof: str,
+        site_forward: str = "",
     ) -> None:
         self.platform_dir = platform_dir
         self.ca_dir = ca_dir
@@ -607,6 +731,23 @@ class ForgeProxyRuntime:
         self.preview_url = preview_url
         self.certs = CertificateStore(ca_dir)
         self.platform = PlatformSocketClient(str(platform_dir / "platform.sock"), proof)
+        # `site:port` when this machine forwards the deployment's site over
+        # TLS to that loopback port (`machine_address.site_forward`).
+        site, _, port = site_forward.rpartition(":")
+        self.site_forward = (
+            (site.lower(), int(port)) if site and port.isdigit() else None
+        )
+
+    def dial(self, host: str, port: int, timeout: float) -> socket.socket:
+        """A TCP connection to `host:port`. The site's name on 443 is reached
+        over the machine's forward, which serves the site's own certificate:
+        its public address leaves the private network for the public relay
+        and comes back through its tunnels."""
+        if self.site_forward and (host.lower(), port) == (self.site_forward[0], 443):
+            return socket.create_connection(
+                ("127.0.0.1", self.site_forward[1]), timeout=timeout
+            )
+        return socket.create_connection((host, port), timeout=timeout)
 
     def is_forge_host(self, host: str) -> tuple[bool, str]:
         """Whether `host` is one of the project's forge hosts, and its scheme."""
@@ -623,6 +764,164 @@ class ForgeProxyRuntime:
                 return True, parsed.scheme or "https"
         return False, "https"
 
+    def closes_held_delivery(
+        self,
+        write: forge_requests.ForgeWrite,
+        *,
+        scheme: str,
+        host: str,
+        port: int,
+        path: str,
+        headers: dict[str, str],
+        forge: dict,
+    ) -> bool:
+        """Whether `write` would decide a pull request the platform holds as a
+        delivery waiting on a person: close or delete it, delete or rename its
+        branch, leave its branch with no commits over its base (a forge closes
+        a pull request whose head is gone or empty), write to its base branch
+        (a forge marks a pull request merged once its head reaches the base,
+        and a push cannot be read for whether it does), or delete the
+        repository.
+
+        Asked of the platform each time, never cached. Node ids are resolved,
+        and a pushed commit compared with the base, on the forge with the
+        proxy's credential. Where an answer cannot be had, or the request
+        could not be read, it is refused: it is a close, and closing a held
+        delivery cannot be taken back."""
+        try:
+            held = self.platform.held_deliveries()["prs"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return True
+        if not held:
+            return False
+        numbers = {int(pr["number"]) for pr in held}
+        bases = {pr["branch"]: pr.get("base") for pr in held if pr.get("branch")}
+        targets = {pr["base"] for pr in held if pr.get("base")}
+        guarded = set(bases) | targets
+        if write.unreadable or write.deletes_repository:
+            return True
+        if write.numbers & numbers or write.names & guarded:
+            return True
+        for rest in write.ref_paths:
+            for branch in guarded:
+                if rest in (f"git/refs/heads/{branch}", f"branches/{branch}"):
+                    return True
+                if rest.startswith(f"branches/{branch}/"):
+                    return True
+        for branch, sha in write.pushes:
+            if branch in targets:
+                return True
+            if branch not in bases:
+                continue
+            if forge_requests.is_deletion(sha):
+                return True
+            if not self._ahead_of_base(forge, bases[branch], sha):
+                return True
+        if write.node_ids:
+            return self._names_held(
+                write.node_ids,
+                numbers,
+                set(bases),
+                scheme=scheme,
+                host=host,
+                port=port,
+                path=path,
+                headers=headers,
+                forge=forge,
+            )
+        return False
+
+    def _names_held(
+        self,
+        node_ids: frozenset[str],
+        numbers: set[int],
+        branches: set[str],
+        *,
+        scheme: str,
+        host: str,
+        port: int,
+        path: str,
+        headers: dict[str, str],
+        forge: dict,
+    ) -> bool:
+        """Whether any of these GitHub node ids is a held pull request (or
+        its issue) or a held branch's ref; True when they cannot be resolved."""
+        query = json.dumps(
+            {
+                "query": "query($ids:[ID!]!){nodes(ids:$ids){"
+                "... on PullRequest{number} ... on Issue{number} ... on Ref{name}}}",
+                "variables": {"ids": sorted(node_ids)},
+            }
+        ).encode("utf-8")
+        try:
+            status, _reason, _headers, answer = self.forward_forge_http(
+                scheme=scheme,
+                host=host,
+                port=port,
+                method="POST",
+                path=urllib.parse.urlsplit(path).path,
+                headers={
+                    **{
+                        key: value
+                        for key, value in headers.items()
+                        if key.lower()
+                        not in ("accept-encoding", "content-encoding", "content-type")
+                    },
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(query)),
+                },
+                body=query,
+                forge=forge,
+            )
+            nodes = json.loads(answer)["data"]["nodes"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return True
+        if status != 200 or not isinstance(nodes, list):
+            return True
+        for node in nodes:
+            node = node or {}
+            if node.get("number") in numbers or node.get("name") in branches:
+                return True
+        return False
+
+    def _ahead_of_base(self, forge: dict, base: str | None, sha: str) -> bool:
+        """Whether `sha`, pushed to a held branch, still has commits over the
+        branch's base. A commit the forge has never seen comes in with this
+        push, so it is not in the base. Asked of the forge's compare API; an
+        answer it cannot read is a no."""
+        api = urllib.parse.urlsplit(forge.get("api_url") or "https://api.github.com")
+        repo = forge.get("repo") or ""
+        if not base or not repo or not api.hostname:
+            return False
+        tls = (api.scheme or "https") == "https"
+        compare = urllib.parse.quote(f"{base}...{sha}", safe="./")
+        try:
+            status, _reason, _headers, answer = self.forward_forge_http(
+                scheme="https" if tls else "http",
+                host=api.hostname,
+                port=api.port or (443 if tls else 80),
+                method="GET",
+                path=f"{api.path.rstrip('/')}/repos/{repo}/compare/{compare}",
+                headers={
+                    "Host": api.netloc,
+                    "Authorization": f"token {forge.get('token') or ''}",
+                    "Accept": "application/json",
+                    "User-Agent": "cheese-forge-proxy",
+                    "Connection": "close",
+                },
+                body=b"",
+                forge=forge,
+            )
+            if status == 404:
+                return True
+            if status != 200:
+                return False
+            answer_data = json.loads(answer)
+        except (OSError, ValueError):
+            return False
+        ahead = answer_data.get("ahead_by", answer_data.get("total_commits"))
+        return isinstance(ahead, int) and ahead > 0
+
     def forward_forge_http(
         self,
         *,
@@ -637,12 +936,9 @@ class ForgeProxyRuntime:
     ) -> tuple[int, str, list[tuple[str, str]], bytes]:
         clean_path = urllib.parse.urlsplit(path).path or "/"
         is_git = ".git/" in clean_path or clean_path.endswith(".git")
-        conn_cls = (
-            http.client.HTTPSConnection
-            if scheme == "https"
-            else http.client.HTTPConnection
+        conn = _DialledConnection(
+            host, port, dial=self.dial, tls=scheme == "https", timeout=10
         )
-        conn = conn_cls(host, port, timeout=10)
         connected = False
         try:
             conn.connect()
@@ -809,7 +1105,7 @@ class _ForgeSocketHandler(socketserver.BaseRequestHandler):
                     sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
                 return
             try:
-                upstream = socket.create_connection((host, port), timeout=15)
+                upstream = proxy.dial(host, port, timeout=15)
             except OSError:
                 with contextlib.suppress(OSError):
                     sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
@@ -925,6 +1221,7 @@ def serve(
     api_url: str,
     preview_url: str,
     proof: str,
+    site_forward: str = "",
 ) -> int:
     ensure_ca(ca_dir, platform_dir)
     forge_sock = platform_dir / "forge.sock"
@@ -938,6 +1235,7 @@ def serve(
         api_url=api_url,
         preview_url=preview_url,
         proof=proof,
+        site_forward=site_forward,
     )
     forge_srv = _ForgeSocketServer(str(forge_sock), _ForgeSocketHandler, proxy)
     preview_srv = _PreviewSocketServer(str(preview_sock), _PreviewSocketHandler, proxy)
@@ -980,6 +1278,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--preview-url", default=os.environ.get("CHEESE_PREVIEW_URL", "")
     )
+    parser.add_argument(
+        "--site-forward", default=os.environ.get("CHEESE_SITE_FORWARD", "")
+    )
     args = parser.parse_args(argv)
     return serve(
         platform_dir=Path(args.platform_dir),
@@ -987,6 +1288,7 @@ def main(argv: list[str] | None = None) -> int:
         api_url=args.api_url,
         preview_url=args.preview_url,
         proof=os.environ.get("CHEESE_PROXY_PROOF", ""),
+        site_forward=args.site_forward,
     )
 
 

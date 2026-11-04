@@ -104,6 +104,8 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
           (host.displayed.value?.identity === identity && host.navigation.value !== 'failed'))
       state.previewAppNote.value = art.kind === 'app' ? art.path : ''
       state.previewTunnelUp.value = !!art.tunnel_up
+      state.previewAppUp.value = art.kind === 'app' && !!art.url && !!art.tunnel_up
+      state.previewArtifactId.value = art.artifact_id ?? null
       // 屏幕上这一帧被换掉了实例、或者断线后又回来了：不能只把状态画出来——旧那一帧的请求
       // 可能已经被拒了。换实例就跟上去：`observeConnection` 在替换期间每一轮都报，所以一次
       // 跟丢（授权 404、应用还在冷启动）还能在后面的轮询里再试，试到 FOLLOW_WINDOW_MS 为止；

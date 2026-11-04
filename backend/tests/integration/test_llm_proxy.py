@@ -39,6 +39,7 @@ def test_admission_releases_its_database_connection_before_gateway_key(
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         status = pool_status(client.test_app_engine)
         assert status is not None
@@ -71,6 +72,7 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "project-key"
 
@@ -167,6 +169,7 @@ def _project_key(monkeypatch):
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "sk-virtual-for-" + str(project_id)[:8]
 
@@ -197,6 +200,26 @@ def test_scoped_token_is_swapped_for_the_project_key(client, _pool, _project_key
     # Protocol headers the client set are preserved.
     assert sent["headers"]["anthropic-version"] == "2023-06-01"
     assert sent["content"] == b'{"model":"m","messages":[]}'
+
+
+def test_only_model_calls_go_through_to_the_gateway(client, _pool, _project_key):
+    """A session's token rides on the project's gateway key, so what it may
+    reach there is the model calls the harnesses make — not the gateway's key,
+    spend or model administration, and no path climbing out of `v1/`."""
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    token = mint_scoped_token(
+        project_id=project["id"], topic_id=project["root_topic_id"]
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    _FakeClient.seen = {}
+    for path in ("key/info", "spend/logs", "v1/model/info", "v1/../key/info"):
+        refused = client.get(f"/llm/{path}", headers=headers)
+        assert refused.status_code == 404, (path, refused.text)
+    assert _FakeClient.seen == {}, "a refused path reached the gateway"
+
+    for path in ("v1/models", "v1/messages/count_tokens", "v1/responses"):
+        client.post(f"/llm/{path}", headers=headers, content=b"{}")
+        assert _FakeClient.seen["url"] == f"http://pool:4000/{path}"
 
 
 def test_a_room_session_names_its_room_so_the_gateway_keeps_its_cache(
@@ -271,6 +294,7 @@ def test_no_project_key_refuses_rather_than_using_pool_credentials(
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return None
 
@@ -557,81 +581,24 @@ async def test_admission_refuses_by_name_when_it_cannot_resolve_a_model(
     assert body["reason_kind"] == "binding"
 
 
-def _open_dream(client, pid: str, *, age=None) -> None:
-    """A memory consolidation of ``pid`` running now, or started ``age`` ago."""
-    from datetime import UTC, datetime
-
+def _open_dream(client, pid: str) -> None:
+    """A memory consolidation of ``pid`` running now."""
     from app.domain.memory import dream
 
     async def run():
         async with client.test_factory() as session:
-            await dream.open_run(
-                session,
-                uuid.UUID(pid),
-                tokens_at_start=1,
-                now=datetime.now(UTC) - age if age else None,
-            )
+            await dream.open_run(session, uuid.UUID(pid), tokens_at_start=1)
             await session.commit()
 
     client.portal.call(run)
 
 
-def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
+def test_a_call_from_the_overview_while_the_project_dreams_is_the_rooms(
     client, monkeypatch
 ):
-    """While a dream runs it holds the overview room, so a call made there is
-    the dream's: it runs on the project's dream key and the metering proxy is
-    told its kind. A call from any other room is a room turn, on the room key,
-    and so is one from the overview once the run is past its claim."""
-    from datetime import timedelta
-
-    from app.domain.agent.chat import ChatService
-    from app.domain.memory import dream
-
-    async def gateway_key(
-        self,
-        project_id,
-        *,
-        dream=False,
-        task_id=None,
-        credit_owner_handle=None,
-        machine_conversation_id=None,
-    ):
-        return "dream-key" if dream else "room-key"
-
-    monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
-    project = post_project(client, json={"name": "P"}).json()["data"]
-    pid, root = project["id"], project["root_topic_id"]
-    other = client.post(
-        "/topics", json={"project_id": pid, "title": "别的房间"}
-    ).json()["data"]["id"]
-
-    def admitted(topic):
-        token = mint_scoped_token(project_id=pid, topic_id=topic)
-        return client.post(
-            "/llm/admission",
-            headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
-            json={"session": token},
-        ).json()["data"]["supply"]
-
-    before = admitted(root)
-    assert (before.get("kind"), before["key"]) == (None, "room-key")
-
-    _open_dream(client, pid, age=dream.CLAIM_TTL + timedelta(minutes=1))
-    stale = admitted(root)
-    assert (stale.get("kind"), stale["key"]) == (None, "room-key")
-
-    _open_dream(client, pid)
-    overview, elsewhere = admitted(root), admitted(other)
-    assert (overview["kind"], overview["key"]) == (dream.DREAM_KIND, "dream-key")
-    assert (elsewhere.get("kind"), elsewhere["key"]) == (None, "room-key")
-
-
-def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_dream_key(
-    client, _pool, monkeypatch
-):
-    """Codex and pi reach the gateway through this route, not through the
-    metering proxy: the same rule picks the key here."""
+    """The dream holds no seat in any room: its calls are made by the backend
+    on the dream key itself. So a call made in the overview while a dream runs
+    is that room's own turn, on the rooms' key, like a call from any room."""
     from app.domain.agent.chat import ChatService
 
     async def gateway_key(
@@ -642,23 +609,22 @@ def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_drea
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "dream-key" if dream else "room-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
     project = post_project(client, json={"name": "P"}).json()["data"]
     pid, root = project["id"], project["root_topic_id"]
+
     _open_dream(client, pid)
     token = mint_scoped_token(project_id=pid, topic_id=root)
-
-    r = client.post(
-        "/llm/v1/messages",
-        headers={"Authorization": f"Bearer {token}", "anthropic-version": "2023-06-01"},
-        content=b'{"model":"m","messages":[]}',
-    )
-
-    assert r.status_code == 200
-    assert _FakeClient.seen["headers"]["authorization"] == "Bearer dream-key"
+    supply = client.post(
+        "/llm/admission",
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+        json={"session": token},
+    ).json()["data"]["supply"]
+    assert (supply.get("kind"), supply["key"]) == (None, "room-key")
 
 
 def test_a_credential_an_execution_machine_holds_calls_no_model(

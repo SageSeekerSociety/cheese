@@ -1,0 +1,21 @@
+{
+  "current": "现在",
+  "intro": "谁能看到这个空间里的题目、分类、公告和资料。设为开放空间要经平台审核，通过前保持现在的设置；改回只对成员开放立即生效。",
+  "members": "只对成员开放",
+  "membersHint": "只有管理员和成员能看到这个空间",
+  "mode": "访问方式",
+  "nowMembers": "只对成员开放",
+  "nowOpen": "开放空间：{scope}",
+  "open": "开放空间",
+  "openHint": "注册邮箱在范围内的登录用户不用加入就能看到、领题和出题；范围外的人由管理员在成员页添加",
+  "pending": "开放申请审核中：{scope}。通过前空间保持现在的设置",
+  "rejected": "开放申请被驳回：{reason}",
+  "save": "保存",
+  "saveFailed": "保存失败",
+  "saveSuccess": "已保存",
+  "scope": "邮箱后缀",
+  "scopeHint": "每行一个",
+  "scopePlaceholder": "ruc.edu.cn",
+  "scopeRequired": "至少填一个邮箱后缀",
+  "submitted": "已提交平台审核"
+}

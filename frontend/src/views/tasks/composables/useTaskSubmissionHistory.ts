@@ -2,11 +2,11 @@ import type { PostTaskSubmissionReviewRequestData } from '@/types/taskBoard'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { usePaging } from '@/utils/paging'
 
 import { TaskBoardApi } from '@/api/taskBoard'
+import { toast } from '@/lib/toast'
 
 /**
  * 一版提交历史的取数与评审写入。

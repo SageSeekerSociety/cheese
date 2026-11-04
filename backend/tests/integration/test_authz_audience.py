@@ -27,7 +27,7 @@ from app.domain.project.models import (
     ProjectMember,
     ProjectMemberExclusion,
     ProjectRole,
-    ProjectRoleGrant,
+    ProjectRoleDef,
 )
 from app.domain.topic.models import TopicMembership, TopicRole
 from app.domain.user.repositories import UserRepository
@@ -190,21 +190,31 @@ def test_every_handle_gets_the_answer_asking_one_by_one_would_give(client):
 
     async def _relationships(session):
         project_id = uuid.UUID(pid)
+        mentor_role = uuid.uuid4()
         session.add_all(
             [
                 ProjectMember(project_id=project_id, user_handle="rostered"),
                 ProjectMember(project_id=project_id, user_handle="roster-out"),
                 ProjectMember(project_id=project_id, user_handle="mentor"),
                 ProjectMember(project_id=project_id, user_handle="agent-rostered"),
-                ProjectRole(project_id=project_id, user_handle="mentor", role="mentor"),
-                ProjectRoleGrant(
+                ProjectRoleDef(
+                    id=mentor_role,
                     project_id=project_id,
-                    role="mentor",
+                    template="mentor",
                     permissions=["export_project"],
                 ),
                 ProjectMemberExclusion(project_id=project_id, user_handle="excluded"),
                 ProjectMemberExclusion(project_id=project_id, user_handle="roster-out"),
             ]
+        )
+        await session.flush()
+        session.add(
+            ProjectRole(
+                project_id=project_id,
+                user_handle="mentor",
+                role="custom",
+                role_id=mentor_role,
+            )
         )
         await session.flush()
         agents = [

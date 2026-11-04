@@ -476,6 +476,7 @@ class QuotedContextTest(unittest.TestCase):
             "task_id": None,
             "selector": "body:nth-of-type(1) > main > p:nth-of-type(2)",
             "tag": "p",
+            "label": "二、时间安排",
             "text": "这一句说错了",
             "rect": {"x": 12.5, "y": 40, "w": 300, "h": 24},
             "viewport": {"w": 1024, "h": 768},
@@ -489,6 +490,13 @@ class QuotedContextTest(unittest.TestCase):
         self.assertEqual(parsed.quoted_context.model_dump(mode="json"), element)
         # 左上角可以是负的：被滚到视口左上角之外的元素就是这么报的，这是它有部分在
         # 视口外的事实，不是坏数据。运行时和前端都原样带着它。
+        # 给人读的名字是后加的：老消息里没有它，照样收下，读出来是空串。
+        unnamed = {k: v for k, v in element.items() if k != "label"}
+        parsed = ChatMessageIn.model_validate({**body, "quoted_context": unnamed})
+        self.assertEqual(parsed.quoted_context.label, "")
+        too_long = {**element, "label": "长" * 81}
+        with self.assertRaises(ValidationError):
+            ChatMessageIn.model_validate({**body, "quoted_context": too_long})
         rolled = {**element, "rect": {"x": -8, "y": -8, "w": 10, "h": 10}}
         parsed = ChatMessageIn.model_validate({**body, "quoted_context": rolled})
         self.assertEqual(parsed.quoted_context.model_dump(mode="json"), rolled)

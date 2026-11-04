@@ -33,6 +33,8 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import { usePageTitleStore } from '@/stores/title'
 
 const props = defineProps<{ projectId: string; artifactId: string }>()
@@ -78,7 +80,9 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const found = await getProjectArtifact(projectId, artifactId)
+    const found = await fromSnapshot(keys.projectArtifact(projectId, artifactId), () =>
+      getProjectArtifact(projectId, artifactId)
+    )
     if (props.artifactId !== artifactId || props.projectId !== projectId) return
     artifact.value = found
   } catch (e) {
@@ -128,11 +132,9 @@ watch(
 async function download(version: ArtifactVersion) {
   if (!version.filename) return
   downloading.value = version.card_id
-  actionError.value = ''
   try {
+    // 成功和失败各弹一句，都在 `downloadFile` 那一层（`lib/download`）。
     await downloadFile(artifactVersionFileUrl(props.projectId, props.artifactId, version.card_id), version.filename)
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('tasks.artifact.downloadError')
   } finally {
     downloading.value = ''
   }

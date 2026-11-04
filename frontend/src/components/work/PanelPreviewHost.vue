@@ -22,6 +22,8 @@ const props = withDefaults(
   defineProps<{
     topicId: string | null
     submitQuestion?: SubmitPreviewQuestion
+    /** 私下问个人芝士：页面递下来的能力（同 `submitQuestion`）。 */
+    askPersonal?: (message: string) => void
     projectId: string | null
     // This tab is the one on screen. Loads happen on the rising edge.
     active?: boolean
@@ -41,6 +43,7 @@ const props = withDefaults(
     refreshTick: 0,
     path: null,
     submitQuestion: undefined,
+    askPersonal: undefined,
     agentName: undefined,
     members: () => [],
     agentHandle: null,
@@ -80,6 +83,7 @@ const preview = usePanelPreview(props, {
     ref="panelRef"
     :topic-id="props.topicId"
     :submit-question="props.submitQuestion"
+    :ask-personal="props.askPersonal"
     :project-id="props.projectId"
     :active="props.active"
     :refresh-tick="props.refreshTick"

@@ -249,9 +249,7 @@ async def _push_reached_pr(client, repo, number, sha):
 async def test_legacy_repository_migration_preserves_all_refs(
     db_factory, monkeypatch, tmp_path
 ):
-    from app.core.storage import LocalStorageBackend
-    from app.domain.project.forge_migration import git, references
-    from app.domain.room_task import snapshots
+    from app.domain.project.forge_migration import references
     from scripts import migrate_forge
     from tests.unit.test_forge_migration import legacy_repository
 
@@ -263,8 +261,6 @@ async def test_legacy_repository_migration_preserves_all_refs(
     root = tmp_path / "workspaces"
     monkeypatch.setattr(settings, "workspace_root", str(root))
     monkeypatch.setattr(migrate_forge, "async_session_factory", db_factory)
-    storage = LocalStorageBackend(str(tmp_path / "private"), "unused-private-url")
-    monkeypatch.setattr(snapshots, "private_storage", lambda: storage)
     async with db_factory() as session:
         project = Project(
             name="Legacy repository migration test", team_id=await a_team(session)
@@ -317,6 +313,7 @@ async def test_legacy_repository_migration_preserves_all_refs(
     assert await migrate_forge.migrate(project.id, backups, apply=True) == "skipped"
     await migrate_forge.main()  # A later release can proceed without stopping writers.
     assert references(source) == before
+    # The task's uncommitted file is kept in the archive, not uploaded.
     assert (task_worktree / "new.txt").read_bytes() == b"untracked\x00bytes"
     async with db_factory() as session:
         assert (
@@ -327,15 +324,6 @@ async def test_legacy_repository_migration_preserves_all_refs(
             await _indexed_branch_head(project.id, session, "task")
             == before["refs/heads/task"]
         )
-        snapshot = await snapshots.latest(session, task.id)
-        data = await snapshots.download(snapshot)
-    bundle = tmp_path / "downloaded.bundle"
-    bundle.write_bytes(data)
-    recovered = tmp_path / "recovered"
-    git(tmp_path, "clone", str(source), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task.id}")
-    git(recovered, "checkout", "--detach", snapshot.snapshot_sha)
-    assert (recovered / "new.txt").read_bytes() == b"untracked\x00bytes"
 
 
 async def test_new_repository_registers_forgejo_events(db_factory, monkeypatch):

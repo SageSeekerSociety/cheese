@@ -86,19 +86,19 @@ try {
   await page.screenshot({ path: path.join(output, 'light.png') })
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   assert.equal(await page.getByRole('spinbutton', { name: '页码' }).inputValue(), '2')
-  await page.getByRole('button', { name: '对整页提问' }).click()
+  await page.getByRole('button', { name: '标一处' }).click()
   await page.waitForFunction(() => window.events.length === 1)
   const context = await page.evaluate(() => window.events[0])
   assert.equal(context.page, 2)
   assert.match(context.text, /Slide 2: actual PDF fixture/)
   assert.equal(context.context.source, 'committed')
-  const trigger = page.getByRole('button', { name: '演示', exact: true })
+  const trigger = page.getByRole('button', { name: '放映', exact: true })
   await trigger.click()
   await page.keyboard.press('ArrowRight')
   assert.equal(await page.getByRole('spinbutton', { name: '页码' }).inputValue(), '3')
   await page.screenshot({ path: path.join(output, 'presentation.png') })
   await page.keyboard.press('Escape')
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '演示')
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '放映')
   await page.evaluate(() => document.documentElement.dataset.theme = 'dark')
   await page.screenshot({ path: path.join(output, 'dark.png') })
   await page.setViewportSize({ width: 380, height: 760 })
@@ -128,7 +128,7 @@ try {
     ['light', '阅读与页导航', '示例文件使用真实 PDF.js 解析和文字层。上一页、下一页、页码跳转、缩略图与适合页面可用。'],
     ['dark', '深色主题', '工具栏和阅读区使用产品主题。PDF 原页面保持其实际颜色，不修改原文件。'],
     ['narrow-dark', '窄面板', '缩略图默认收起，可手动展开。内容按面板宽度显示；工具栏换行。'],
-    ['presentation', '演示与退出', '演示保持同一文档与当前页。阅读器拥有焦点时支持逐页操作；退出回到触发按钮。'],
+    ['presentation', '放映与退出', '放映保持同一文档与当前页。阅读器拥有焦点时支持逐页操作；退出回到触发按钮。'],
     ['loading', '加载状态', '加载时显示状态，原始文件下载仍可用。示例状态由 fixture 控制。'],
     ['error', '读取错误', '显示实际错误原因，保留下载出口。此屏是示例错误，不是线上事故。'],
     ['missing', '转换服务不可用', '保留原文件下载；此屏仅验证状态展示，没有调用实际 Office 转换。'],

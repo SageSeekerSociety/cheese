@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.day_windows import utc_now
 from app.domain.usage.compute import SANDBOX, VM
 from app.domain.usage.ledger import (
     _TZ,
@@ -126,12 +127,16 @@ class UsageReport:
 
     @staticmethod
     def _windows(uses: tuple[WindowUse, ...]) -> list[dict]:
-        """Each window: how full it is and when it resets; an hours window no
-        call has started has no reset yet."""
+        """Each window: how full it is, in points and as a share, and when it
+        resets; an hours window no call has started has no reset yet. The
+        points are what the nearly-spent banner says (`usage.alerts` says the
+        same figure in the inbox)."""
         return [
             {
                 "hours": u.window.hours,
                 "calendar": u.window.calendar,
+                "credits_total": u.window.credits,
+                "credits_used": u.credits_used,
                 "used_ratio": _used(u),
                 "resets_at": u.resets_at.isoformat() if u.resets_at else None,
             }
@@ -179,7 +184,7 @@ class UsageReport:
             if line is not None:
                 by_line[line] += credits
             by_day[day][line or "all"] += credits
-        today = datetime.now(UTC).astimezone(_TZ).date()
+        today = utc_now().astimezone(_TZ).date()
         days = []
         day = month
         while day < end.date():

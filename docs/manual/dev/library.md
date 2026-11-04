@@ -63,7 +63,7 @@ covers:
 
 一份文件存进文件桶时最大 `files_bucket_file_max_bytes`（默认 20 GB）；题目的材料也是这一条：几 GB 的数据集要能做成题目材料。存在服务器本地盘上的照旧按原来的上限（项目的按房间文件的 10 MB，视频 200 MB；团队的和题目的按附件的 100 MB）。几 GB 的文件不整份读进内存：超过 `records.READ_WHOLE_MAX_BYTES`（200 MB）的，读成文本时只回「太大」，预览、按名字读字节都拒（`libraryFileTooLargeToOpen`）；下载按段从存储直接给，项目导出一段一段写进压缩包，恢复旧版是存储里的复制（超过 5 GiB 的按段复制）。
 
-芝士取一份资料（`cheese library get`）先要一个下载地址（`GET /projects/{id}/library/link`，`records.download_url`），再用 `curl` 从那里直接取：文件桶给预签名地址，字节不经过平台；本地存储给后端自己的 `/files/outgoing/<凭据>`。取到一半断了，再要一个地址接着取，取完、大小对上才落到目标路径。
+芝士取一份资料（`cheese library get`）先要一个下载地址（`GET /projects/{id}/library/link`，`records.download_link`），再用 `curl` 从那里直接取：文件桶给预签名地址，字节不经过平台；本地存储给后端自己的 `/files/outgoing/<凭据>`。取到一半断了，再要一个地址接着取，取完、大小对上才落到目标路径。
 
 「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，它的字节原地不动，新字节记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和字节一起扔掉。
 

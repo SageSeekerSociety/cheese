@@ -215,12 +215,9 @@ async def get_compute_configs(
         await MemberService(db).require(project_id, actor, Permission.edit_settings)
     except ForbiddenError:
         can_manage = False
-    devices = [
-        device
-        for device in await sql_device_service(db).list_devices_for_project(project_id)
-        if device.supply is Supply.self_hosted
-    ]
-    specs = await offered_specs(db, project)
+    all_devices = await sql_device_service(db).list_devices_for_project(project_id)
+    devices = [device for device in all_devices if device.supply is Supply.self_hosted]
+    specs = await offered_specs(db, project, project_devices=all_devices)
     labels = {spec["spec"]: spec["label"] for spec in specs}
     distribution = await project_distribution(db, project_id)
     return ok(
@@ -372,8 +369,6 @@ async def set_tier_policy(
     发生。身上带的档位名不做存在性校验：目录里的档位随部署变（接一个新池就多一
     档），而一条指向不存在档位的策略只是更严，不会让任何调用悄悄放行。
     """
-    project_id = at.project.id
-    await MemberService(db).require(project_id, at.actor, Permission.edit_settings)
     service = ProjectService(db)
     project = at.project
     patch: dict[str, object] = {}

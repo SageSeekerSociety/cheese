@@ -133,17 +133,21 @@ async def runs(
     where = [RoutineRun.routine_id == routine_id]
     if failed_only:
         where.append(RoutineRun.status.in_(("failed", "skipped")))
+    rows = list(
+        await svc._session.scalars(
+            select(RoutineRun)
+            .where(*where)
+            .order_by(RoutineRun.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    )
+    if offset == 0 and len(rows) < limit:
+        return rows, len(rows)
     total = await svc._session.scalar(
         select(func.count()).select_from(RoutineRun).where(*where)
     )
-    rows = await svc._session.scalars(
-        select(RoutineRun)
-        .where(*where)
-        .order_by(RoutineRun.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-    )
-    return list(rows), int(total or 0)
+    return rows, int(total or 0)
 
 
 async def latest_run_statuses(
@@ -206,10 +210,8 @@ async def create(
         agent = await svc._agent_for(topic.id, agent_handle or by)
         if not owner_handle:
             raise ValidationError(say("routineNeedsOwner"))
-        # The owner is told the results, and each run reads their private
-        # memory the way a turn reads its speaker's: so they are someone
-        # already in the channel the runs answer in. A teammate brings nobody
-        # in to be one.
+        # The owner is told the results: so they are someone already in the
+        # channel the runs answer in. A teammate brings nobody in to be one.
         members = TopicMemberService(svc._session)
         if owner_handle not in await members.people_in(topic, team=project_team):
             raise ValidationError(say("routineOwnerNotInChannel", handle=owner_handle))

@@ -370,6 +370,11 @@ class MachineGatewayAccount(Base):
     daily_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+#: The usage rows a project's gateway key spent: `ix_resource_usage_gateway_spend`
+#: covers exactly these, so the predicate is written once, as a literal.
+GATEWAY_ROWS = text("route = 'gateway'")
+
+
 class ResourceUsage(UuidPk, Timestamps, Base):
     __tablename__ = "resource_usage"
     #: 平台看板按天聚合这张表：`created_at` 的范围扫。等值的四条索引
@@ -393,6 +398,16 @@ class ResourceUsage(UuidPk, Timestamps, Base):
             "credit_owner_handle",
             "created_at",
             postgresql_include=["credits"],
+        ),
+        # What a project's gateway key has spent ever, read on every model
+        # admission (`UsageRepository.gateway_spend`): answered from the index
+        # alone. Query and index share `GATEWAY_ROWS`, a literal, so the planner
+        # can prove the predicate for a prepared statement as well.
+        Index(
+            "ix_resource_usage_gateway_spend",
+            "project_id",
+            postgresql_include=["cost_usd"],
+            postgresql_where=GATEWAY_ROWS,
         ),
     )
 

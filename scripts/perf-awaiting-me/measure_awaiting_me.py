@@ -68,6 +68,10 @@ FETCH_LEAVES = [
         "app.domain.room_task.repositories.TaskRepository.brief_for_projects",
     ),
     ("cards.listed", "app.api.awaiting_deps.listed_cards"),
+    (
+        "cards.reviewers",
+        "app.domain.review.services.AcceptService.reviewer_handles_for_cards",
+    ),
     ("threads", "app.api.awaiting_deps.threads_of_rooms"),
     (
         "blocks.questions",
@@ -78,7 +82,12 @@ FETCH_LEAVES = [
         "app.domain.notification.services.ProjectNotificationService.still_open",
     ),
     ("tasks.rows", "app.domain.room_task.repositories.TaskRepository.listed_by_ids"),
+    ("teammate_runs", "app.api.awaiting_deps.teammate_runs"),
     ("topics.rows", "app.domain.topic.repositories.TopicRepository.listed_by_ids"),
+    (
+        "teammates.named",
+        "app.domain.agent_instance.services.AgentInstanceService.for_task_by_id",
+    ),
 ]
 
 

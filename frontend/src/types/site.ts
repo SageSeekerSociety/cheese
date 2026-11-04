@@ -14,6 +14,11 @@ export type SitePage = ListPayload<Block> & {
   newest_id?: string | null
   /** `after` 的那一路上：这一页之后还有更新的。 */
   has_newer?: boolean
+  /**
+   * 这一页是从数据库的行里赶紧答出来的，跳过了对象存储那一趟：它少的是**最新**
+   * 那一头（不是上面更早的），所以读的人要整页重读一次，不能拿它当完整的一页。
+   */
+  deferred?: boolean
   /** When each turn on the page started: turn id → ISO time. */
   turn_starts?: Record<string, string>
 }

@@ -19,8 +19,10 @@ export interface AttachmentSource {
    */
   imageUrl(topicId: string, path: string): Promise<string>
   /** The URL a `<video>` streams a video attachment from; resolves once this
-   *  viewer may read it. Not an object URL: nothing to revoke. */
-  mediaUrl(topicId: string, path: string): Promise<string>
+   *  viewer may read it. Not an object URL: nothing to revoke. `bytes` is the
+   *  recording's whole size, read off the same response's Content-Range, or
+   *  null when the server did not say. */
+  mediaUrl(topicId: string, path: string): Promise<{ url: string; bytes: number | null }>
   /** 一份要转换才能预览的文档（.docx 这类）的 PDF 字节。 */
   documentPdf(topicId: string, path: string): Promise<ArrayBuffer>
   /** 一份附件的原始字节（能直接交给浏览器看的格式走这条）。 */

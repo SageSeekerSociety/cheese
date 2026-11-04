@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import urllib.parse
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,8 +43,13 @@ from pathlib import Path
 from sqlalchemy import select
 
 import app.models  # noqa: F401 — register every table so FKs resolve
+from app.core.config import settings
 from app.core.db import async_session_factory
-from app.domain.agent_instance.adapters import project_team, seat_project
+from app.domain.agent_instance.adapters import (
+    default_teammate,
+    project_team,
+    seat_project,
+)
 from app.domain.block.models import BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.block.repositories import BlockRepository
@@ -53,6 +59,9 @@ from app.domain.device.supply import Supply
 from app.domain.integration.models import Integration
 from app.domain.integration.service import seal as seal_integration
 from app.domain.library import records as library_records
+from app.domain.library.shelf import Shelf
+from app.domain.living_doc.models import Document
+from app.domain.living_doc.overview import seed_overview
 from app.domain.living_doc.services import Documents
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
@@ -267,14 +276,36 @@ async def _purge_projects(session, names: list[str]) -> None:
         print(f"removed {before} earlier demo project(s)")
 
 
+ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
+FORBIDDEN_DBS = {"postgres", "template0", "template1", "prod", "production"}
+
+
+def assert_safe_demo_db(db_url: str) -> str:
+    """Refuse to purge/seed demo projects on a non-local or production database."""
+    parsed = urllib.parse.urlsplit(db_url)
+    host = (parsed.hostname or "").lower()
+    dbname = parsed.path.lstrip("/")
+    if host not in ALLOWED_HOSTS:
+        raise RuntimeError(
+            f"Refusing to seed non-local database host {host!r} (allowed: {sorted(ALLOWED_HOSTS)})"
+        )
+    if not dbname or dbname.lower() in FORBIDDEN_DBS:
+        raise RuntimeError(f"Refusing to seed database {dbname!r}")
+    return dbname
+
+
 async def _make_project(session, name: str, team_id: int, owner: str) -> Project:
     # forge_kind stays the default ("forgejo") so the stubbed provisioner runs
     # and writes the inert ProjectForge row task branches read their base from.
-    return await ProjectService(session).create(
+    return await ProjectService(
+        session,
+        default_teammate=default_teammate,
+        overview=seed_overview,
+    ).create(
         name=name,
         owner_handle=owner,
         team_id=team_id,
-        intent="用于页面打开耗时测量的演示项目。",
+        intent=DOC_BODIES[0],
     )
 
 
@@ -354,8 +385,9 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
 
     # Tasks in the busy channel. 2026-10-16：开一条活的那批函数从 `TopicService`
     # 搬去了 `room_task.dispatch`，两个口子在这里按名字递进去（和路由同一个写法）。
+    first_task: Task | None = None
     for i, title in enumerate(TASK_TITLES):
-        await task_dispatch.create_task(
+        t_row = await task_dispatch.create_task(
             session,
             room_id=busiest.id,
             created_by=owner,
@@ -364,7 +396,22 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
             seat_project=seat_project,
             team=project_team,
         )
+        if first_task is None:
+            first_task = t_row
         counts["tasks"] += 1
+
+    # Seed messages in the first task so workspace-task renders real conversation rows.
+    if first_task is not None:
+        for k in range(4):
+            await _say(
+                session,
+                project,
+                first_task.id,
+                authors[k % len(authors)],
+                MESSAGE_TEXTS[(k + 2) % len(MESSAGE_TEXTS)],
+                created_at=now - timedelta(minutes=15 - k),
+            )
+            counts["messages"] += 1
 
     # 资料库: documents and uploaded files.
     docs = Documents(session)
@@ -375,8 +422,12 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
         counts["documents"] += 1
     for name, text in LIBRARY_FILES:
         await library_records.add(
-            session, project.id, name, text.encode("utf-8"),
-            added_by=owner, room_id=busiest.id,
+            session,
+            Shelf.of_project(project.id, with_task=False),
+            name,
+            text.encode("utf-8"),
+            added_by=owner,
+            room_id=busiest.id,
         )
         counts["library_files"] += 1
 
@@ -520,6 +571,7 @@ async def _seed_integrations(session, users: dict[str, int]) -> int:
 
 
 async def seed() -> None:
+    assert_safe_demo_db(settings.database_url)
     _stub_provisioner()
     random.seed(20261012)
     totals = dict(projects=0, channels=0, messages=0, tasks=0, threads=0,
@@ -575,11 +627,20 @@ async def _write_params(session, project: Project) -> None:
         select(Topic).where(Topic.project_id == project.id, Topic.title == EXTRA_CHANNELS[0])
     )
     assert room is not None, f"missing channel {EXTRA_CHANNELS[0]!r}"
+    empty_room = await session.scalar(
+        select(Topic).where(Topic.project_id == project.id, Topic.title == EXTRA_CHANNELS[2])
+    )
     thread = await session.scalar(
         select(Thread).where(Thread.room_id == room.id).order_by(Thread.created_at).limit(1)
     )
     task = await session.scalar(
         select(Task).where(Task.room_id == room.id).order_by(Task.created_at).limit(1)
+    )
+    doc = await session.scalar(
+        select(Document)
+        .where(Document.project_id == project.id, Document.title.is_not(None))
+        .order_by(Document.created_at)
+        .limit(1)
     )
     artifact = await session.scalar(
         select(ProjectArtifact).where(ProjectArtifact.project_id == project.id).limit(1)
@@ -587,9 +648,12 @@ async def _write_params(session, project: Project) -> None:
     params = {
         "handle": OWNER,
         "projectId": str(project.id),
+        "projectSlug": project.slug,
         "topicId": str(room.id),
+        "emptyTopicId": str(empty_room.id) if empty_room else "",
         "threadId": str(thread.id) if thread else "",
         "taskId": str(task.id) if task else "",
+        "docId": str(doc.id) if doc else "",
         "artifactId": str(artifact.id) if artifact else "",
         "teamHandle": DEMO_TEAM_HANDLE,
     }

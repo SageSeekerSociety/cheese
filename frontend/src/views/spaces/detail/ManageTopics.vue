@@ -18,13 +18,13 @@ import type { Topic } from '@/types'
 
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import ManageTopicsView from './ManageTopicsView.vue'
 
+import { toast } from '@/lib/toast'
 import { useSpaceStore } from '@/stores/space'
 
 const spaceStore = useSpaceStore()

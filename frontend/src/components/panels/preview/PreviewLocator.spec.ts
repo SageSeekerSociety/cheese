@@ -37,12 +37,92 @@ it('指出一处以后去处由一个下拉定：默认发进对话，切到「�
 
   await fireEvent.click(ui.getByTestId('locator-recipient'))
   await fireEvent.click(ui.getByTestId('locator-recipient-comment'))
-  // 切到评论以后：主按钮改叫「评论」，「加入待发」收起（评论不进发给芝士的那一篮）。
+  // 切到评论以后：主按钮改叫「评论」，「加入待发」收起（评论不进发给任务芝士的那一篮）。
   expect(labels()).toContain('评论')
   expect(labels()).not.toContain('加入待发')
   ;[...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!.click()
   expect(ui.emitted().comment).toHaveLength(1)
   expect(ui.emitted().send).toHaveLength(1)
+})
+
+it('去处里有「问个人芝士」：选中它以后发送走私聊那一路，不进这间房', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const personal = ui.getByTestId('locator-recipient-personal')
+  expect(personal.textContent).toContain('问个人芝士（私聊）')
+  await fireEvent.click(personal)
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().personal).toHaveLength(1)
+  // 私聊的那一句不能同时发进房间、也不能被当成评论。
+  expect(ui.emitted().send).toBeUndefined()
+  expect(ui.emitted().comment).toBeUndefined()
+})
+
+it('篮里有待发批注时切到私聊：主按钮不再写「全部发送」，那一下只发当前这一处', async () => {
+  const props = {
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: true,
+    queuedCount: 2,
+  }
+  const ui = render(PreviewLocator, { props, global: { stubs } })
+  const primary = () => [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.includes('发送'))!
+  // 去处是芝士时，主按钮把篮里那几条也算上。
+  expect(primary().textContent).toContain('全部发送（3）')
+
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  // 私下问只发当前这一处、篮里那两条原地不动——还写「全部发送（3）」就是骗人。
+  expect(primary().textContent?.trim()).toBe('发送')
+  expect(primary().textContent).not.toContain('全部发送')
+  // 切回芝士又算上了。
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-agent'))
+  expect(primary().textContent).toContain('全部发送（3）')
+})
+
+it('问不了个人芝士时那一项不列出来：留着一条按下去没反应的项比不摆更糟', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  expect(ui.queryByTestId('locator-recipient-personal')).toBeNull()
+})
+
+it('停在个人芝士上、这一项又没了（换了人）：切回发给任务芝士，不能让发送键按下去悄没声', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  await ui.rerender({
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: false,
+  })
+  expect(ui.getByTestId('locator-recipient').textContent).toContain('发给任务芝士')
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().send).toHaveLength(1)
+  expect(ui.emitted().personal).toBeUndefined()
 })
 
 it('给了位置就弹在那一处下面；下面放不下就翻到上面；左右夹在面板里', async () => {
@@ -182,6 +262,36 @@ it('拖选一段字：先只出「添加批注」，点了才展开整张卡；E
   expect(ui.emitted().cancel).toHaveLength(1)
 })
 
+it('小按钮浮着的时候读者把选中撤掉（点正文别处）：按钮跟着收，不再挡字', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+
+  // 点正文别处：浏览器把页面上那段选中收掉了。
+  window.getSelection()!.removeAllRanges()
+  document.dispatchEvent(new Event('selectionchange'))
+
+  expect(ui.emitted().cancel).toHaveLength(1)
+})
+
+it('卡展开了以后点输入框（选区也会被收掉）不算取消：那是在写这句话', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-arm'))
+  await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+
+  window.getSelection()!.removeAllRanges()
+  document.dispatchEvent(new Event('selectionchange'))
+
+  expect(ui.emitted().cancel).toBeUndefined()
+})
+
 it('先出按钮的一处滚出视野时按钮先藏起来，滚回来再出现，中途不变成整张卡', async () => {
   const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
   const ui = render(PreviewLocator, {
@@ -269,8 +379,46 @@ it('去处菜单每一项都说清会发生什么', async () => {
   })
   await fireEvent.click(ui.getByTestId('locator-recipient'))
   const text = ui.getByRole('listbox').textContent ?? ''
-  expect(text).toContain('发给芝士')
-  expect(text).toContain('由芝士按这一处修改文件')
+  expect(text).toContain('发给任务芝士')
+  expect(text).toContain('由任务芝士按这一处修改文件')
   expect(text).toContain('仅留评论')
   expect(text).toContain('不触发芝士修改')
+})
+
+it('卡关掉时焦点回到打开它的那一处', async () => {
+  // 卡自己不抢焦点，所以打开它的那一处就是按下去那一刻拿着焦点的东西：图上那颗
+  // 图上框一块、表格里那一格。不还的话焦点掉到 body。
+  const opener = document.createElement('button')
+  document.body.append(opener)
+  opener.focus()
+  const ui = render(PreviewLocator, { props: { target: null, note: '' }, global: { stubs } })
+  // 和真产品一样：这一格一直在，指了一处之后 target 才从 null 变成那一处。
+  await ui.rerender({ target: { label: '第 1 页', quote: '一段原文' } })
+  const input = await waitFor(() => {
+    const box = ui.container.querySelector('.locator__input') as HTMLTextAreaElement | null
+    expect(box).toBeTruthy()
+    return box as HTMLTextAreaElement
+  })
+  // 读者点了输入框（焦点进了卡里），然后关掉这一处。
+  input.focus()
+  await ui.rerender({ target: null })
+  await waitFor(() => expect(document.activeElement).toBe(opener))
+  opener.remove()
+})
+
+it('读者点去别处把卡关掉时，焦点不被他拽回来', async () => {
+  // 反面：焦点已经不在卡里了，说明读者自己去了别处。这时还硬拉回按钮，比不还更烦人。
+  const opener = document.createElement('button')
+  const elsewhere = document.createElement('button')
+  document.body.append(opener, elsewhere)
+  opener.focus()
+  const ui = render(PreviewLocator, { props: { target: null, note: '' }, global: { stubs } })
+  await ui.rerender({ target: { label: '第 1 页', quote: '一段原文' } })
+  await waitFor(() => expect(ui.container.querySelector('.locator__input')).toBeTruthy())
+  elsewhere.focus()
+  await ui.rerender({ target: null })
+  await waitFor(() => expect(ui.container.querySelector('.locator')).toBeNull())
+  expect(document.activeElement).toBe(elsewhere)
+  opener.remove()
+  elsewhere.remove()
 })

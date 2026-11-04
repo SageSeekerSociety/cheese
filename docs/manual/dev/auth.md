@@ -21,6 +21,7 @@ covers:
 | 访问令牌 | `localStorage` | 15 分钟（`access_token_expires_seconds`） | 每个 API 请求的 `Authorization` 头 |
 | 刷新令牌 | HttpOnly cookie `cheese_refresh` | 30 天（`refresh_token_expires_seconds`） | 只发给登录路由 `/api/users/auth` |
 | 受信设备 | HttpOnly cookie `cheese_trusted_device` | 由授予时决定 | 只发给登录路由，用来跳过两步验证 |
+| 已登录标记 | HttpOnly cookie `cheese_signed_in`（值就是 `1`） | 同刷新令牌 | 路径 `/`，每个请求都带；只是标记，认证不了任何东西，只有前端镜像里的国内跳转规则读它（`frontend/nginx/mainland/main.conf`） |
 
 刷新令牌每次刷新都轮换。cookie 带 `Secure`（开发和测试环境除外）和 `SameSite=Lax`，并且带 `Max-Age`：否则浏览器关掉会话就删掉它，而 `localStorage` 里的访问令牌还在，下一次刷新就会把用户登出（`backend/app/api/routes/users/auth.py`）。
 

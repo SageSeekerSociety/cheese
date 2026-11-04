@@ -50,13 +50,13 @@
 // server's minute has passed, and a way back to change the address. The screen
 // that shows it sends the first code and says what a verified code leads to.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { emailCodeMessage, useAttemptWait } from './attemptWait'
 
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 // The server refuses a new code within a minute of the last one.
 const RESEND_COOLDOWN_SECONDS = 60

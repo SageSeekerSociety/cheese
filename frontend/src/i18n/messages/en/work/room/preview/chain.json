@@ -1,0 +1,18 @@
+{
+  "platform": "Platform",
+  "tunnel": "Tunnel",
+  "app": "App",
+  "page": "Page",
+  "platformOk": "Preview details are reachable.",
+  "platformDown": "Preview details cannot be read: {error}",
+  "tunnelOk": "Connected to {agent}'s computer.",
+  "tunnelDown": "Cannot reach {agent}'s computer — probably asleep, or not started yet.",
+  "appOk": "It answers and the page has loaded.",
+  "appReady": "It answers and the page reported ready.",
+  "appSilent": "{agent}'s computer is connected, but the app does not answer; it may have exited.",
+  "appRestarted": "The app just restarted; following the new instance.",
+  "appReconnecting": "The connection dropped and is reconnecting; the loaded page stays on screen.",
+  "pageError": "The page itself reported an error: {error}",
+  "unknown": "The link before this one is down, so this one cannot be checked yet.",
+  "offline": "This device is offline. Reconnect and the preview picks up again."
+}

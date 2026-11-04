@@ -450,11 +450,11 @@ async def revoke_project_seats(
     （``TopicRepository.list_for_project`` 本来就不含它），人离开项目不该把它
     带走。频道不会因此没人管：管项目的人管它的每一个频道。
     """
-    topics = await svc._topics.list_for_project(project_id)
-    if not topics:
+    topic_ids = await svc._topics.ids_for_project(project_id)
+    if not topic_ids:
         return []
     return await svc._repo.delete_for_member(
-        topic_ids=[t.id for t in topics], member_handle=member_handle
+        topic_ids=topic_ids, member_handle=member_handle
     )
 
 

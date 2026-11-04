@@ -24,7 +24,6 @@ import type EditorJS from '@editorjs/editorjs'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -36,6 +35,7 @@ import { useTopicSearch } from '@/composables/useTopicSearch'
 import AskView from './AskView.vue'
 
 import { QuestionApi } from '@/api/questions'
+import { toast } from '@/lib/toast'
 import { toTypedSchema } from '@/lib/zodTypedSchema'
 
 let editor: EditorJS

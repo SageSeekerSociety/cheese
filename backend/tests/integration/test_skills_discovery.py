@@ -9,6 +9,7 @@ never returned; and search answers names and descriptions only, never a body
 
 import uuid
 
+from app.domain.skill_library import native_skill_doc, shipped_skill_names
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_project,
@@ -81,7 +82,12 @@ def test_the_platforms_shipped_skills_are_installed_for_every_room(client):
     )
     assert catalog.status_code == 200, catalog.text
     expected = {skill["name"] for skill in catalog.json()["data"]["data"]}
-    assert len(expected) == 6
+    # 期望值取自平台自己的发货清单，而不是写死的条数：加一颗技能要不要改这里，
+    # 由「它有没有 SKILL.md」决定（没有正文的名字上不了目录，见 _platform_catalog），
+    # 写死条数只会让每次加技能都得来改一个魔数。
+    assert expected == {
+        name for name in shipped_skill_names() if native_skill_doc(name) is not None
+    }
 
     found_names = set()
     for name in expected:

@@ -180,3 +180,42 @@ def test_closing_a_task_is_said_in_the_task_not_the_channel(client):
 
     assert "task_closed" not in _said(client, channel)
     assert "task_closed" in _said(client, task)
+
+
+def test_the_window_reads_only_work_that_is_open_or_moved_inside_it(client):
+    """The feed reads open work and work touched inside its window, not the
+    whole project: a task closed and left alone before the window cannot say
+    anything there, and a project holds thousands of those."""
+    from datetime import timedelta
+
+    from sqlalchemy import text
+
+    project = _project(client)
+    channel = _channel(client, project)
+    open_task = _task(client, channel, "还在做")
+    old = _task(client, channel, "早就关了")
+    recent = _task(client, channel, "刚关")
+    long_ago = datetime.now(UTC) - timedelta(days=60)
+    yesterday = datetime.now(UTC) - timedelta(days=1)
+
+    async def age() -> set[uuid.UUID]:
+        async with client.test_factory() as session:
+            for task_id, at in ((old, long_ago), (recent, yesterday)):
+                await session.execute(
+                    text(
+                        "UPDATE tasks SET status = 'closed', created_at = :old,"
+                        " updated_at = :at, closed_at = :at WHERE id = :id"
+                    ),
+                    {"old": long_ago, "at": at, "id": uuid.UUID(task_id)},
+                )
+            await session.commit()
+            rows = await TaskService(session).list_in_project(
+                uuid.UUID(project),
+                open_or_touched_since=datetime.now(UTC) - timedelta(days=14),
+            )
+            return {t.id for t in rows}
+
+    read = client.portal.call(age)
+    assert uuid.UUID(open_task) in read
+    assert uuid.UUID(recent) in read
+    assert uuid.UUID(old) not in read

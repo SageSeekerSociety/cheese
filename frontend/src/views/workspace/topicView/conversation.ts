@@ -22,6 +22,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
+import { useChannelSpeakers } from '@/composables/useChannelSpeakers'
 import { useChannelThreads } from '@/composables/useChannelThreads'
 
 import { newThread, restoreThread } from '@/api/threads'
@@ -130,13 +131,17 @@ export function useTopicConversation(opts: {
     isOpen: taskOpen,
   } = taskPage
 
-  // 任务里项目的人都能说话，关了也能接着说：AI 队友只回答，不再改动项目。
+  const speakers = useChannelSpeakers(opts.room)
+
+  // 任务里项目的人都能说话，关了也能接着说：AI 队友只回答，不再改动项目。频道主线只让部分
+  // 角色发言、支线也不让人人回时，任务里同样只读。
   const composerClosed = computed(() => {
-    if (opts.place().taskId) return null
+    if (opts.place().taskId) return speakers.notice(true)
     // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
     const topic = opts.room()
     if (topic?.status === 'archived') return t('work.channel.archivedNotice')
-    return topic?.joined === false ? t('work.channel.notJoined') : null
+    if (topic?.joined === false) return t('work.channel.notJoined')
+    return speakers.notice(false)
   })
 
   // 提问只在这件事还开着时等回答：任务关了、频道归档了，题跟着结束（待办里同样不再列

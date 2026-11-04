@@ -33,6 +33,7 @@ from app.domain.memory.files import (
 )
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
+from app.domain.memory.writers import MemoryWriter
 
 SCOPE = MemoryFileScope.personal
 
@@ -128,6 +129,7 @@ async def put(
                 owner_handle=handle,
                 paths=[path],
                 updated_by=by,
+                writer=MemoryWriter.assistant,
             )
         return before
     if memory is None:
@@ -140,6 +142,7 @@ async def put(
         content=content,
         updated_by=by,
         expected_version=None if row is None else row.version,
+        writer=MemoryWriter.assistant,
     )
     await _index_line(store, handle, path, memory.index_line(path), by=by)
     return before
@@ -170,6 +173,7 @@ async def _index_line(
         content=text,
         updated_by=by,
         expected_version=None if row is None else row.version,
+        writer=MemoryWriter.assistant,
     )
 
 

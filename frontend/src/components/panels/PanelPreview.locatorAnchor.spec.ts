@@ -12,9 +12,11 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { FLOATING_MIN_WIDTH } from './preview/locatorAnchor'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
+import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { previewBundles } from '@/test/panelBundles'
 
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
@@ -61,7 +63,6 @@ function props(path = 'output/说明.md', content = SOURCE) {
     documentType: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' as const },
     documentName: '说明.md',
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docLoading: false,
     docError: '',
@@ -80,12 +81,13 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges()
 })
 
-function mount() {
+function mount(pending?: ReturnType<typeof usePendingNotes>, over: Record<string, unknown> = {}) {
   return render(PanelPreviewView, {
-    props: props(),
+    props: { ...props(), ...over },
     global: {
       plugins: [createVuetify({ components, directives })],
       stubs: { VBtn: { template: '<button><slot /></button>' }, VIcon: true, VSpacer: true, VAlert: true },
+      ...(pending ? { provide: { [PENDING_NOTES as symbol]: pending } } : {}),
     },
   })
 }
@@ -141,7 +143,7 @@ async function selectFirstLine(ui: ReturnType<typeof mount>) {
 }
 
 it('面板窄到框只能贴底时，选中一段直接出卡，不先出按钮', async () => {
-  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(FLOATING_MIN_WIDTH - 1)
   const ui = mount()
   await selectFirstLine(ui)
   await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
@@ -165,8 +167,195 @@ it('先出了按钮后面板被拖窄：按钮无处可贴，改成直接出卡�
   const ui = mount()
   await selectFirstLine(ui)
   await waitFor(() => ui.getByTestId('locator-arm'))
-  w = 400
+  w = FLOATING_MIN_WIDTH - 1
   window.dispatchEvent(new Event('resize'))
   await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  width.mockRestore()
+})
+
+it('「加入待发」把这一处加进话题页那一份待发篮，不是本格自己那一条', async () => {
+  const send = vi.fn<(content: string) => boolean>(() => true)
+  const pending = usePendingNotes(send)
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount(pending)
+  const md = ui.getByTestId('markdown')
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
+  const range = document.createRange()
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
+  window.getSelection()!.removeAllRanges()
+  window.getSelection()!.addRange(range)
+  await fireEvent.mouseUp(md)
+
+  const arm = await waitFor(() => ui.getByTestId('locator-arm'))
+  await fireEvent.click(arm)
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  await fireEvent.update(field, '这里改成三段')
+  const queue = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '加入待发')!
+  expect(queue).toBeTruthy()
+  await fireEvent.click(queue)
+  await waitFor(() => expect(pending.notes.value).toHaveLength(1))
+  const note = pending.notes.value[0]
+  expect(note.where).toBeTruthy()
+  expect(note.text).toBe('这里改成三段')
+  expect(note.message).toContain('这里改成三段')
+  expect(note.message).not.toContain('上文「')
+  expect(note.message).not.toContain('下文「')
+  // 面板底下照旧留一条计数（原型里那一条和输入框上方那一篮同时在）；那两个按钮不在
+  // 这儿——同一批批注画两遍按钮，读者会以为进了两个地方。
+  const strip = ui.container.querySelector('.locator__queue')
+  expect(strip).not.toBeNull()
+  expect(strip!.textContent).toContain('1 条待发批注')
+  expect([...strip!.querySelectorAll('button')].map((b) => b.textContent?.trim())).not.toContain('全部发送（1）')
+  width.mockRestore()
+})
+
+it('篮里已经有几条时，卡片主按钮那一下发的是整批，不是当前这一处', async () => {
+  // 那颗键写着「全部发送（N+1）」，点下去必须整批发：按 `queuedCount` 分流。用本格
+  // 自己那条 `queued` 判的话（共享篮时它永远是空的），只会发当前这一处，篮里那几条
+  // 留着没发，而读者看到的是「已经整批发完了」。
+  const send = vi.fn<(content: string) => boolean>(() => true)
+  const pending = usePendingNotes(send)
+  pending.add({
+    file: '说明.md',
+    path: 'output/说明.md',
+    version: '',
+    where: '开头',
+    quote: '甲',
+    text: '先攒的一条',
+    audience: 'cheese',
+    message: '先攒的那条消息',
+  })
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount(pending)
+  const md = ui.getByTestId('markdown')
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
+  const range = document.createRange()
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
+  window.getSelection()!.removeAllRanges()
+  window.getSelection()!.addRange(range)
+  await fireEvent.mouseUp(md)
+  await fireEvent.click(await waitFor(() => ui.getByTestId('locator-arm')))
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  await fireEvent.update(field, '这一处也要改')
+  // 主按钮这时写的就是「全部发送（2）」。
+  const sendAll = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '全部发送（2）')!
+  expect(sendAll).toBeTruthy()
+  await fireEvent.click(sendAll)
+  await waitFor(() => expect(send).toHaveBeenCalled())
+  // 发出去的那一条同时含先攒的那句和当前这一处，说明走的是整批那条路。
+  const [firstCall] = send.mock.calls
+  const sent = String(firstCall?.[0] ?? '')
+  expect(sent).toContain('先攒的那条消息')
+  expect(sent).toContain('这一处也要改')
+  expect(pending.notes.value).toHaveLength(0)
+  width.mockRestore()
+})
+
+it('篮里别的文件上的那几处不在这份正文里找序号', async () => {
+  // 篮是整间房一份，换文件时不清空。按字找位置只在这一份正文里找——拿着别的文件上的
+  // 一句话来这儿找，要么找不到，要么把序号挂到这一份里碰巧同文的那句话上。
+  const pending = usePendingNotes(() => true)
+  // 同一句原文，但说的是另一份文件。
+  pending.add({
+    file: '别的.md',
+    path: 'other/别的.md',
+    version: '',
+    where: '开头',
+    quote: '失败以后重试 3 次。',
+    text: '改一下',
+    audience: 'cheese',
+    message: 'm',
+    anchor: { kind: 'text-range', text: '失败以后重试 3 次。', heading: null, prefix: '', suffix: '' },
+  })
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount(pending)
+  await waitFor(() => ui.getByTestId('markdown'))
+  // 等正文画出来（序号要等它渲染完才有地方挂）。
+  await waitFor(() => expect(ui.getByTestId('markdown').querySelector('p')).toBeTruthy(), { timeout: 5000 })
+  await new Promise((r) => setTimeout(r, 50))
+  expect(ui.container.querySelector('.pending-pin')).toBeNull()
+  // 而这一份文件自己那一条是挂得上去的：换一个文件名就画。
+  pending.add({
+    file: '说明.md',
+    path: 'output/说明.md',
+    version: '',
+    where: '开头',
+    quote: '失败以后重试 3 次。',
+    text: '改一下',
+    audience: 'cheese',
+    message: 'm',
+    anchor: { kind: 'text-range', text: '失败以后重试 3 次。', heading: null, prefix: '', suffix: '' },
+  })
+  await waitFor(() => expect(ui.container.querySelector('.pending-pin')).toBeTruthy())
+  width.mockRestore()
+})
+
+// ---- 看 / 批注 / 改 三段（原型里那一段）----
+//
+// 三段说的是「现在鼠标按下去算什么」：看那一段里选中先在选区下浮一颗「添加批注」、点了
+// 才展开整张卡（两步，原型读模式）；批注那一段里选中直接出卡（一步，原型批注模式）。
+// 把 `locatorFromSelection` 那一句里的模式判断删掉，下面第一条会红。
+
+it('默认是「看」：选中先在选区下浮一颗「添加批注」，不直接弹卡', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  // 刚打开一份就是「看」，不用点任何东西。
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  await selectFirstLine(ui)
+  await waitFor(() => ui.getByTestId('locator-arm'))
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+  width.mockRestore()
+})
+
+it('切到「批注」：同一段选中直接出卡，不走那颗小按钮', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
+  expect(ui.getByTestId('preview-mode-note').getAttribute('aria-pressed')).toBe('true')
+  await selectFirstLine(ui)
+  await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  expect(ui.queryByTestId('locator-arm')).toBeNull()
+  width.mockRestore()
+})
+
+it('这一份改不了时「改」那一颗不摆', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  // markdown 只有在协同会话连上时才可改；这里没给 liveEdit，所以「改」不给。
+  const ui = mount()
+  expect(ui.queryByTestId('preview-mode-edit')).toBeNull()
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  width.mockRestore()
+})
+
+it('没翻开的那一格不吃快捷键：藏着的预览不该跟着换模式', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  // 工作区里没翻开的页是 `v-show` 藏着的，组件还挂着。看着别的页按时，这一格不该变。
+  const ui = mount(undefined, { active: false })
+  await fireEvent.keyDown(window, { key: '2' })
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  width.mockRestore()
+})
+
+it('快捷键 2 切到批注，1 切回看', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  await fireEvent.keyDown(window, { key: '2' })
+  expect(ui.getByTestId('preview-mode-note').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(window, { key: '1' })
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  width.mockRestore()
+})
+
+it('在输入框里打字时，1/2/3 是那句话里的字，不切模式', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
+  await selectFirstLine(ui)
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  await fireEvent.keyDown(field, { key: '1' })
+  // 还停在「批注」：读者在写那句话，「1」是那句话里的字符。
+  expect(ui.getByTestId('preview-mode-note').getAttribute('aria-pressed')).toBe('true')
   width.mockRestore()
 })

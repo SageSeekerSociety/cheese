@@ -900,7 +900,7 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
     async with asyncio.timeout(HANG_S):
         while True:
             async with factory() as session:
-                kept = await read(session, topic_id)
+                kept = await read(session, topic_id, reader=None)
                 said = set(assistant_texts(kept.items))
             if expected <= said:
                 break
@@ -938,7 +938,7 @@ async def test_execution_notes_are_retained_outside_public_replies(
     await finish_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        kept = await read(session, tid)
+        kept = await read(session, tid, reader=None)
     replies = [
         b.content
         for b in rows
@@ -1008,7 +1008,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
     await finish_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-        kept = await read(session, topic_id)
+        kept = await read(session, topic_id, reader=None)
     assert assistant_texts(kept.items) == ["done"]
     assert not [b for b in rows if looks_like_agent_handle(b.author)]
 

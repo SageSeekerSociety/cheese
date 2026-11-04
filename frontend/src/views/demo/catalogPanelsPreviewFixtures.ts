@@ -151,6 +151,13 @@ export function previewFrame(over: Partial<PreviewFrame> = {}): PreviewFrame {
     instance: 'inst-7c41a9',
     runtime: 'ready',
     connection: 'online',
+    // 装了运行时桥的应用：地址栏写的是它此刻的地址，后退前进也亮得起来（和原型里那一行
+    // 同一个样子）。没装桥的页面这两样都不给，地址栏退回 label。
+    bridged: true,
+    href: 'http://127.0.0.1:4173/signup?step=2',
+    title: '第 2 步：填写信息',
+    canBack: true,
+    canForward: false,
     ...over,
   }
 }
@@ -174,12 +181,15 @@ export function headBarProps(over: Record<string, unknown> = {}): Record<string,
 /** 应用那一档（网页/应用帧）要的那几样。 */
 export function frameStageProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   const all = previewPanelProps()
-  return {
+  const merged: Record<string, unknown> = {
     topicId: all.topicId,
     frameName: all.frameName,
     previewFile: null,
     previewMime: 'text/html',
-    previewUrl: null,
+    // 这里给的是「应用跑着」那一档的输入，所以带一个地址：产品里 `previewAppUp` 是
+    // `!!url && !!tunnel_up` 算出来的（`panelPreview/currentPreview.ts`），没有地址就没有
+    // 应答着的应用——「有端口应答却没有地址」是产品到不了的状态，夹具别造它。
+    previewUrl: 'http://127.0.0.1:4173/',
     previewAppNote: '',
     previewTunnelUp: true,
     previewError: null,
@@ -189,6 +199,11 @@ export function frameStageProps(over: Record<string, unknown> = {}): Record<stri
     agentName: AGENT_NAME,
     ...over,
   }
+  // 应用有没有应答一律按产品那套算，不给它留一个能单独覆盖的口子：通道在、地址也
+  // 在，才算有应答。要摆睡着那几档，把 `previewTunnelUp` 或 `previewUrl` 说成假的就够
+  // 了——「通道在、有地址、应用却不答」是产品到不了的状态。
+  merged.previewAppUp = !!merged.previewTunnelUp && !!merged.previewUrl
+  return merged
 }
 
 /** 文档那一档要的那几样：默认是那篇 markdown。 */
@@ -205,7 +220,6 @@ export function docStageProps(over: Record<string, unknown> = {}): Record<string
     docLoading: false,
     docError: '',
     docRendererMissing: false,
-    downloadError: '',
     revs: revisionsWith(),
     fileHistory: fileHistoryWith(),
     showHistory: false,
@@ -218,14 +232,18 @@ export function docStageProps(over: Record<string, unknown> = {}): Record<string
  *  真去调那个 composable 得在组件里（它要一份 props，还要一个卸载钩子），所以这里照
  *  它的形状搭一个：写成 `satisfies ImageRegionHandle`，它的形状一变得这里当场红。 */
 export function imageRegionWith(over: { src?: string; identity?: string } = {}): ImageRegionHandle {
+  const version = over.identity ?? '设计稿.png'
+  const identity = { topicId: DEMO_TOPIC, path: '设计稿.png', taskId: null, source: 'live' as const, version }
   return {
     imageSrc: ref(over.src ?? PREVIEW_IMAGE_SRC),
-    imageIdentity: computed(() => over.identity ?? '设计稿.png'),
+    imageIdentity: computed(() => version),
     selectionEnabled: computed(() => true),
     target: shallowRef<ImageRegionTarget | null>(null),
     capture: () => null,
     message: () => null,
     clear: () => {},
+    // 摆出来的这一份字节：真预览里它和屏上那张图是同一份快照，动图逐帧和框选都读它。
+    snapshot: shallowRef({ bytes: new ArrayBuffer(8), identity, sourceVersion: version }),
   } satisfies ImageRegionHandle
 }
 
@@ -235,8 +253,6 @@ export function imageStageProps(over: Record<string, unknown> = {}): Record<stri
     documentName: '设计稿.png',
     previewFull: false,
     imageRegion: imageRegionWith(),
-    locatorNote: '',
-    locator: null,
     docError: '',
     annotateError: '',
     ...over,

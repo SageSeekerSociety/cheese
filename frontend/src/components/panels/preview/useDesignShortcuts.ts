@@ -69,7 +69,7 @@ export function useDesignShortcuts(options: DesignShortcutsOptions) {
    *
    * 正在图上打字：这次文字作废，画笔留着，方便重打。否则是画到一半（或只是挑着一支
    * 画笔）：手里的这一笔作废，光标交还默认的框选。已经框好的那一块不在这里动——它归
-   * 外面那条说明卡管（DesignRegionNote 自己接 Esc）。
+   * 外面那条统一的定位卡管（`PreviewLocator` 自己接 Esc）。
    */
   function exitCurrent(): boolean {
     if (textEditing.value) {

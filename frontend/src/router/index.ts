@@ -12,20 +12,22 @@ import LegalRoutes from './legal'
 import { carryLoginRedirect, leaveAppForPagesItHasNot } from './loginRedirect'
 import QuestionRoutes from './question'
 import SharedRoutes from './shared'
-import SpacesRoutes from './spaces'
+import SpacesRoutes, { spaceSignInGuard } from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
 import { isUuid, noteSignedOut, routeIds } from '@/lib/addresses'
+import { installPageTiming } from '@/lib/pageTiming'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
 import { prefetchNewestBlocks } from '@/query/blocks'
+import { prefetchPersonalRoute } from '@/query/homeNav'
 import { keys } from '@/query/keys'
-import { prefetchProjectTopics } from '@/query/project'
-import { prefetchPreview } from '@/query/room'
+import { prefetchProjectSubpage, prefetchProjectTopics } from '@/query/project'
+import { prefetchPreview, prefetchThread } from '@/query/room'
 import { expectRoom, readEarly } from '@/query/snapshot'
 import { recoverNavigations } from '@/services/staleBuild'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -44,6 +46,16 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/TeamInviteView.vue'),
     props: true,
     meta: { titleKey: 'work.teamProfile.joinTitle', isFullPage: true },
+  },
+  {
+    // 空间的加入链接：先登录（`spaceSignInGuard` 带着这条地址去登录页，登录完回来），
+    // 再看到是哪个空间、怎么加入，按下确认才加入。
+    name: 'space-join',
+    path: '/space-invites/:token',
+    component: () => import('@/views/SpaceInviteView.vue'),
+    props: true,
+    beforeEnter: spaceSignInGuard,
+    meta: { titleKey: 'spaces.join.title', isFullPage: true },
   },
   AccountRoutes,
   ...LegalRoutes,
@@ -85,6 +97,13 @@ const routes: RouteRecordRaw[] = [
     path: '/previews/:topicId',
     component: () => import('@/views/PreviewOpenView.vue'),
     meta: { titleKey: 'navigation.pages.openPreview', isFullPage: true, ...PERSONAL_PAGE },
+  },
+  {
+    // 讲者视图：放映时另开的窗口，内容由开它的那个窗口递过来（见 lib/slidePresenter）。
+    name: 'slides-presenter',
+    path: '/presenter',
+    component: () => import('@/views/SlidesPresenterView.vue'),
+    meta: { titleKey: 'navigation.pages.slidesPresenter', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
     name: 'site-open',
@@ -168,6 +187,10 @@ const router = createRouter({
   },
 })
 
+// 每个项目页在读者浏览器里的真实耗时（lib/pageTiming.ts）。装在这里、排在下面
+// 所有守卫前面：它的 beforeEach 要赶在 prefetch 守卫发出首屏请求之前记下这一跳的起点。
+installPageTiming(router)
+
 router.beforeEach(carryLoginRedirect)
 router.beforeEach(handSignInToApp(() => !!myId()))
 requireEmail(router, async () => (await import('@/services/account')).default)
@@ -211,12 +234,26 @@ router.afterEach((to, from, failure) => {
 // 在上面 `canonicalAddress` 那条守卫里已经换成了 UUID；换不出来的（没有这个项目、
 // 看不到）这里不发。
 router.beforeEach((to, from) => {
-  if (!myId() || !to.matched.some((record) => record.meta?.projectFrame === true)) return
-  const projectId = routeIds(to.params).projectId
+  if (!myId()) return
+  if (to.path !== from.path) {
+    prefetchPersonalRoute(to.name, to.params)
+  }
+  if (!to.matched.some((record) => record.meta?.projectFrame === true)) return
+  const ids = routeIds(to.params)
+  const projectId = ids.projectId
   if (!projectId || !isUuid(projectId)) return
+  const fromIds = routeIds(from.params)
   const fromProjectId = from.matched.some((record) => record.meta?.projectFrame === true)
-    ? routeIds(from.params).projectId
+    ? fromIds.projectId
     : undefined
+  const subpageChanged =
+    to.name !== from.name ||
+    projectId !== fromProjectId ||
+    (to.name === 'project-library' && (to.query.dir ?? '') !== (from.query.dir ?? '')) ||
+    (to.name === 'project-artifact' && ids.artifactId !== fromIds.artifactId)
+  if (subpageChanged) {
+    prefetchProjectSubpage(to.name, projectId, ids, to.query)
+  }
   if (fromProjectId === projectId) return
   prefetchProjectTopics(projectId)
 })
@@ -227,7 +264,8 @@ router.beforeEach((to, from) => {
 // 手上那份还新鲜就不取（`query/blocks`）；没登录就什么都不发。任务页读的是任务
 // 自己那段对话（任务的 id），不是它所在的频道。
 router.beforeEach((to, from) => {
-  if ((to.name !== 'workspace-topic' && to.name !== 'workspace-task') || !myId()) return
+  if ((to.name !== 'workspace-topic' && to.name !== 'workspace-task' && to.name !== 'workspace-thread') || !myId())
+    return
   const ids = routeIds(to.params)
   const conversation = to.name === 'workspace-task' ? ids.taskId : ids.topicId
   if (!conversation || !isUuid(conversation)) return
@@ -238,6 +276,9 @@ router.beforeEach((to, from) => {
   void prefetchNewestBlocks(conversation)
     .catch(() => {})
     .finally(() => preloadPdfViewer())
+  if (to.name === 'workspace-thread' && ids.threadId && isUuid(ids.threadId)) {
+    void prefetchThread(ids.threadId)
+  }
   // 房间的名册、任务、置顶这些随订阅一起来（query/snapshot）：页面上读它们的先等快照。
   if (ids.topicId && isUuid(ids.topicId)) expectRoom(conversation, ids.topicId)
   // 冷打开时订阅连得晚，快照赶不上消息：提议卡和消息一起先去问，不然它比消息晚一个来回。

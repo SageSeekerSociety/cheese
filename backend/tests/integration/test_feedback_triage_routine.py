@@ -183,8 +183,8 @@ def test_a_report_released_by_hand_is_still_handed_out(client, platform_room):
     assert row["display_id"] in runner.submitted[0][1]["content"]
 
 
-def test_a_report_an_earlier_run_offered_is_not_offered_again(client, platform_room):
-    """发过一遍的下一轮不再发，也不占掉真正没发过的那条的名额。"""
+def test_a_report_handed_out_before_waits_behind_a_new_one(client, platform_room):
+    """发过一遍还没人跟进的，排在从没发过的后面：不占掉新报告的名额。"""
     first = _report(client, "第一晚发过的")
     rule = _triage_rule(client, platform_room, batch=1).json()["data"]
     assert first["display_id"] in _fire(client, rule["id"]).submitted[0][1]["content"]
@@ -196,6 +196,32 @@ def test_a_report_an_earlier_run_offered_is_not_offered_again(client, platform_r
     content = runner.submitted[0][1]["content"]
     assert first["display_id"] not in content
     assert second["display_id"] in content
+
+
+def test_a_report_given_up_without_follow_up_is_offered_again(client, platform_room):
+    """那一轮跑完了，这条既没人领着、状态也没动：等于没人跟进，下一轮再交出去。"""
+    row = _report(client, "上一轮看了但没下文")
+    rule = _triage_rule(client, platform_room, batch=1).json()["data"]
+    assert row["display_id"] in _fire(client, rule["id"]).submitted[0][1]["content"]
+    _end_latest_run(client, rule["id"], "succeeded")
+
+    runner = _fire(client, rule["id"])
+
+    assert runner.submitted, "a report nobody followed up waited for nobody"
+    assert row["display_id"] in runner.submitted[0][1]["content"]
+
+
+def test_a_report_its_run_followed_up_is_not_offered_again(client, platform_room):
+    """那一轮领下了它（有了后续），下一轮不再交出去。"""
+    row = _report(client, "上一轮领下来的")
+    rule = _triage_rule(client, platform_room, batch=1).json()["data"]
+    assert row["display_id"] in _fire(client, rule["id"]).submitted[0][1]["content"]
+    assert _claim(client, DEV, row["display_id"]).status_code == 200
+    _end_latest_run(client, rule["id"], "succeeded")
+
+    runner = _fire(client, rule["id"])
+
+    assert runner.submitted == []
 
 
 def test_a_run_that_failed_hands_its_batch_out_again(client, platform_room):

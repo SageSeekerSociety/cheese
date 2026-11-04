@@ -10,7 +10,7 @@ ended, moved or was given another lease is nobody from its next request on.
 import hashlib
 import hmac
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, for_a_machine, mint_scoped_token
 from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
-from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.models import LEASE_DEVICE, AgentSession
 from app.domain.conversation.models import Conversation
 from app.domain.conversation.services import room_of
 from app.domain.machine.session_work import session_author
@@ -46,6 +46,11 @@ class MachineCaller:
     #: (`session_work.session_author`): its teammate's handle, not the key the
     #: session row is stored under.
     agent_handle: str
+    #: The session row as the lookup read it, on the request's own database
+    #: session. Held here so the credential made for this request
+    #: (`credential_of`) reads it from that session's identity map, which keeps
+    #: a row only while something refers to it, instead of reading it again.
+    row: AgentSession | None = field(default=None, compare=False, repr=False)
 
 
 def machine_proxy_proof(project_id: str) -> str:
@@ -76,7 +81,7 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
     rows = await db.execute(
         select(AgentSession, Conversation.project_id)
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
-        .where(AgentSession.work_lease["device_id"].as_string() == device)
+        .where(LEASE_DEVICE == device)
     )
     held = next(
         (
@@ -99,6 +104,7 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
         project_id=str(project_id),
         conversation_id=str(session.conversation_id),
         agent_handle=await session_author(db, project, session.agent_handle),
+        row=session,
     )
 
 
@@ -114,12 +120,16 @@ async def credential_of(
     `session_work.restart_executor` makes it), a 支线's marked as keeping no
     work, and marked as held by a machine (`held=True`) unless kept in-process
     for `/machine/api` (`held=False`). None when the session is gone."""
-    row = await db.get(AgentSession, uuid.UUID(caller.session_id))
+    row = caller.row or await db.get(AgentSession, uuid.UUID(caller.session_id))
     if row is None:
         return None
     lease = row.work_lease or {}
-    room = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
-    resource = lease.get("room_resource_id") or str(room.resource_id or room.id)
+    # A ready lease names its room's resource; only one that does not is
+    # given the room's own.
+    resource = lease.get("room_resource_id")
+    if not resource:
+        room = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
+        resource = str(room.resource_id or room.id)
     launch = mint_scoped_token(
         project_id=caller.project_id,
         topic_id=caller.conversation_id,

@@ -34,6 +34,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.attachment.services import AttachmentService
+from app.domain.library import mount
 from app.domain.library import records as library
 from app.domain.library.models import LibraryFileRecord
 from app.domain.library.service import clean_upload_name
@@ -41,7 +42,7 @@ from app.domain.library.shelf import Shelf
 from app.domain.notification.preferences import DEFAULT_TIMEZONE
 from app.domain.project import starter as starter_archive
 from app.domain.project.models import Project, ProjectStarterPush, StarterPushState
-from app.domain.task.claims import project_claim
+from app.domain.task.claims import project_claim, task_row
 from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
@@ -397,11 +398,17 @@ async def task_folder_shown(session: AsyncSession, project_id) -> bool:
     `claims.project_claim`）还在、已经通过。项目里每个人、每个 agent 看到的都一样——
     看的是项目的那一份申请，不是读的人自己名下别的申请。"""
     project = await session.get(Project, project_id)
-    if project is None or project.external_task_id is None:
+    if project is None:
         return False
-    task = await session.get(Task, project.external_task_id)
+    if project.external_task_id is None:
+        mount.known(session, project_id, None)
+        return False
+    task = await task_row(session, project.external_task_id)
     if task is None or task.deleted_at is not None:
+        mount.known(session, project_id, None)
         return False
+    # 资料库接着要问挂着哪道题目（`mount.mounted`），答案就在手上。
+    mount.known(session, project_id, task.id)
     claim = await project_claim(session, task=task, team_id=project.team_id)
     return claim is not None and claim.approved == APPROVE_APPROVED
 
@@ -416,7 +423,7 @@ async def shown_task(
         return None
     project = await session.get(Project, project_id)
     assert project is not None and project.external_task_id is not None  # shown
-    task = await session.get(Task, project.external_task_id)
+    task = await task_row(session, project.external_task_id)
     assert task is not None  # shown
     return task, await current_number(session, task.id)
 

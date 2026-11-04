@@ -1333,6 +1333,44 @@ test_rollout_recovers_after_forge_stops_backend() {
 # its work over and drains, and only then is it stopped. Every reload retires a
 # generation of app-router workers, and with them the WebSockets they carry, so
 # the number of reloads is the number of times a room's connection moves.
+# A box with an api pool (backend/app/serve.py) waits for the new slot's pool
+# before the switch and points app-router's reads at it, its realtime process
+# the backup; a slot whose image runs no pool — a rollback to a release from
+# before it — is not waited for, and its reads go to the realtime process.
+test_rollout_with_an_api_pool() {
+  local run_dir docker_log ready switched
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env API_POOL_WORKERS=3 \
+    APP_TIER_BACKEND_CMD='["python","-m","app.serve"]' >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "a rollout with an api pool did not succeed"; }
+  ready="$(log_line "$docker_log" ':18092/readyz')"
+  switched="$(log_line "$docker_log" 'exec cheese-app-router nginx -s reload')"
+  [ -n "$ready" ] && [ "$ready" -lt "$switched" ] \
+    || fail "app-router was switched before the new slot's api pool answered /readyz"
+  grep -Fqx 'upstream backend_pool_active { server 127.0.0.1:18092; server 127.0.0.1:18082 backup; }' \
+    "$run_dir/active/backend-pool.conf" \
+    || fail "reads do not go to the new slot's pool: $(cat "$run_dir/active/backend-pool.conf")"
+
+  : > "$docker_log"
+  rollout_run "$run_dir" env API_POOL_WORKERS=3 >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "a rollout to an image without a pool failed"; }
+  ! grep -q ':18091/readyz' "$docker_log" \
+    || fail "the rollout waited for a pool the image does not run"
+  grep -q 'runs no api pool' "$run_dir/release.log" \
+    || fail "the rollout did not say the slot runs no pool"
+  grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
+    || fail "the release to an image without a pool did not switch"
+
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "a rollout without a pool failed"; }
+  grep -Fqx 'upstream backend_pool_active { server 127.0.0.1:18082; }' "$run_dir/active/backend-pool.conf" \
+    || fail "a box without a pool still sends reads elsewhere: $(cat "$run_dir/active/backend-pool.conf")"
+  rm -rf "$run_dir"
+  echo "PASS: an api pool is waited for when the image runs one, and reads follow it"
+}
+
 test_rollout_switches_once() {
   local run_dir docker_log up healthy reload drain stopped removed reloads
   run_dir="$(new_rollout_run_dir)"
@@ -2605,6 +2643,7 @@ case "$CASE" in
   session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
   rollout) test_rollout_switches_once ;;
+  api-pool) test_rollout_with_an_api_pool ;;
   forge-router-recovery) test_rollout_recovers_after_forge_stops_backend ;;
   rollout-unknown-upstream) test_rollout_refuses_an_upstream_it_did_not_write ;;
   rollout-rollback) test_rollout_rollback_returns_to_the_previous_slot ;;
@@ -2647,6 +2686,7 @@ case "$CASE" in
   owners-unreadable-migrations) test_deploy_releases_owners_when_migrations_unreadable ;;
   owner-release-same-image) test_owner_release_of_the_running_image_keeps_connections ;;
   all)
+    test_rollout_with_an_api_pool
     test_missing_forge_fails_health_check
     test_forge_migration_release
     test_deploy_rejects_absent_frontend

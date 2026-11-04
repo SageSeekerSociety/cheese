@@ -7,10 +7,17 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import NOT_MODEL_CALLS, ResourceUsage, call_count
+from app.domain.usage.models import (
+    GATEWAY_ROWS,
+    NOT_MODEL_CALLS,
+    ResourceUsage,
+    TaskGatewayAccount,
+    call_count,
+)
 
 #: Rows of model calls. A compute charge (``usage.compute``) or a web search
 #: the platform asked for (``SEARCH_ROUTE``) is a usage row too, for its credits, but
@@ -41,6 +48,52 @@ def unpriced_tokens() -> Any:
             else_=0,
         )
     )
+
+
+def gateway_spend_select(project_ids: list[uuid.UUID]):
+    """Project id → ``spent``, the USD its gateway key has spent, ever, for
+    the projects among ``project_ids`` with gateway rows."""
+    return (
+        select(
+            ResourceUsage.project_id,
+            func.sum(ResourceUsage.cost_usd).label("spent"),
+        )
+        .where(ResourceUsage.project_id.in_(project_ids), GATEWAY_ROWS)
+        .group_by(ResourceUsage.project_id)
+    )
+
+
+def _gateway_spend_key(project_ids) -> tuple:
+    return ("gateway_spend", frozenset(project_ids))
+
+
+def remember_gateway_spend(
+    session: AsyncSession, project_ids: list[uuid.UUID], spent: dict
+) -> None:
+    """Leave ``spent`` (`gateway_spend_select`'s answer for ``project_ids``)
+    for `UsageRepository.gateway_spend` to answer from in this request."""
+    remember(
+        session,
+        _gateway_spend_key(project_ids),
+        spent,
+        tables=frozenset({"resource_usage"}),
+    )
+
+
+def task_gateway_spend_select(
+    project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+):
+    """USD a task's gateway key has spent for ``owner_handle``, ever."""
+    return select(func.coalesce(func.sum(ResourceUsage.cost_usd), 0)).where(
+        ResourceUsage.project_id == project_id,
+        ResourceUsage.conversation_id == task_id,
+        ResourceUsage.credit_owner_handle == owner_handle,
+        ResourceUsage.route == "gateway",
+    )
+
+
+def _task_gateway_spend_key(project_id, task_id, owner_handle) -> tuple:
+    return ("task_gateway_spend", project_id, task_id, owner_handle)
 
 
 class UsageRepository:
@@ -134,18 +187,26 @@ class UsageRepository:
         return [(d, p, k, float(c or 0.0)) for d, p, k, c in rows.all()]
 
     async def gateway_spend(self, project_ids: list[uuid.UUID]) -> dict:
-        """Project → USD its gateway key has been recorded spending, ever."""
+        """Project → USD its gateway key has been recorded spending, ever.
+
+        Read on every model admission. ``GATEWAY_ROWS`` is the literal predicate
+        of ``ix_resource_usage_gateway_spend``, which carries ``cost_usd``: the
+        sum comes from the index alone instead of every usage row of the
+        project fetched to test its route. Admission has usually read it
+        already, with the projects' credit caps (`CreditBudgets.project_caps`).
+        A project with no gateway rows is absent: callers read 0 for it."""
         if not project_ids:
             return {}
-        rows = await self._session.execute(
-            select(ResourceUsage.project_id, func.sum(ResourceUsage.cost_usd))
-            .where(
-                ResourceUsage.project_id.in_(project_ids),
-                ResourceUsage.route == "gateway",
-            )
-            .group_by(ResourceUsage.project_id)
-        )
-        return {pid: float(spent or 0.0) for pid, spent in rows}
+        can_cache = isinstance(self._session, AsyncSession)
+        if can_cache:
+            found, cached = recall(self._session, _gateway_spend_key(project_ids))
+            if found:
+                return cached
+        rows = await self._session.execute(gateway_spend_select(project_ids))
+        spent = {pid: float(usd) for pid, usd in rows if usd is not None}
+        if can_cache:
+            remember_gateway_spend(self._session, project_ids, spent)
+        return spent
 
     async def credits_by_work(
         self, work_ids: list[uuid.UUID], *, since: datetime, until: datetime
@@ -183,17 +244,50 @@ class UsageRepository:
     async def task_gateway_spend(
         self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
     ) -> float:
+        key = _task_gateway_spend_key(project_id, task_id, owner_handle)
+        if isinstance(self._session, AsyncSession):
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         return float(
             await self._session.scalar(
-                select(func.coalesce(func.sum(ResourceUsage.cost_usd), 0)).where(
-                    ResourceUsage.project_id == project_id,
-                    ResourceUsage.conversation_id == task_id,
-                    ResourceUsage.credit_owner_handle == owner_handle,
-                    ResourceUsage.route == "gateway",
-                )
+                task_gateway_spend_select(project_id, task_id, owner_handle)
             )
             or 0
         )
+
+    async def task_gateway_account(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> TaskGatewayAccount | None:
+        """The task's gateway account for ``owner_handle``, read with what the
+        task has spent through it: the key's budget is worked out from that
+        next (`UsageService.task_gateway_budget`), and it was a statement of
+        its own. The spend is left for `task_gateway_spend`."""
+        row = (
+            await self._session.execute(
+                select(
+                    TaskGatewayAccount,
+                    task_gateway_spend_select(
+                        project_id, task_id, owner_handle
+                    ).scalar_subquery(),
+                ).where(
+                    TaskGatewayAccount.conversation_id == task_id,
+                    TaskGatewayAccount.owner_handle == owner_handle,
+                    TaskGatewayAccount.project_id == project_id,
+                )
+            )
+        ).first()
+        if row is None:
+            return None
+        account, spent = row
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                _task_gateway_spend_key(project_id, task_id, owner_handle),
+                float(spent or 0),
+                tables=frozenset({"resource_usage"}),
+            )
+        return account
 
     async def _agg(self, where) -> dict:
         # The public `turns` key is retained for wire compatibility, but its

@@ -20,6 +20,7 @@ import { session, takeCountsRev } from '../session'
 
 import { getFeedbackCounts, getFeedbackMeta, listFeedback, listMyFeedback } from '@/api'
 import { t } from '@/i18n'
+import { statusesForTab } from '@/lib/feedbackMeta'
 
 interface ListSelf {
   meta: FeedbackMeta | null
@@ -195,10 +196,17 @@ export const listActions = {
     }
   },
 
-  /** 切栏位。必然重新拉 —— 栏位是**服务端**的筛选，本地过滤是第二份实现。 */
+  /** 切栏位。必然重新拉 —— 栏位是**服务端**的筛选，本地过滤是第二份实现。
+   *
+   *  原先选中的状态如果在新栏位里不可能出现（比如「已收录」再点「已完成」），
+   *  **这一次就一起清掉**，和换栏位合成同一次请求。分两步（先发一次、清掉再发）
+   *  会先拉回一个必然空的页，而那一页正是「看着空列表猜为什么」的来源。 */
   setTab(this: ListSelf, tab: FeedbackTab): void {
     if (this.tab === tab) return
     this.tab = tab
+    if (this.filterStatus !== null && !statusesForTab(tab, this.meta?.statuses).includes(this.filterStatus)) {
+      this.filterStatus = null
+    }
     void this.loadList()
   },
 

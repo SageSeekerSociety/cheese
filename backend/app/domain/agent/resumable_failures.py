@@ -24,15 +24,21 @@ rate limit.
 **Quota waits for its reset or does not resume.** A subscription whose accounts
 are all cooling down resumes once the earliest account thaws (the metering
 proxy's snapshot says when); a quota the service names with a reset time
-("try again in 4 hours") resumes then. A quota with no reset to wait for is a
+("try again in 20 minutes") resumes then. A quota with no reset to wait for is a
 person's decision — top up, switch the project to a model outside the
 subscription — and is left to them.
+
+**Only a short wait is waited out (`RESUME_HORIZON`).** A recovery the service
+dates beyond it — accounts cooling for days, a quota back next week — is not a
+passing fault: the turn fails, and the person who asked hears why and when it
+comes back, instead of a resume days later that nobody is waiting for any more.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Final
 
 from app.domain.agent.platform_failures import (
@@ -75,6 +81,15 @@ QUOTA_RESET: Final = "quota_reset"
 #: resumes before it (``Policy.platform``).
 RUNNER_REPLACED: Final = "runner_replaced"
 
+#: The longest wait the platform takes on for a turn by itself. A recovery the
+#: failure dates further out ends the turn as failed instead (`turn_resume`).
+#: Thirty minutes: the longest backoff the blind policies below already wait
+#: (``cap_s`` of a rate limit and of an offline egress; no ``cap_s`` exceeds
+#: it), and about when a person acts anyway — on dev the next action after such
+#: a failure came a median 23 minutes later (2026-10-03..17). Past it, a
+#: platform resume arrives after the person has moved on.
+RESUME_HORIZON: Final = timedelta(minutes=30)
+
 POLICIES: Final[dict[str, Policy]] = {
     RATE_LIMITED: Policy(base_s=60, cap_s=30 * 60, attempts=6),
     OVERLOADED: Policy(base_s=30, cap_s=15 * 60, attempts=6),
@@ -83,7 +98,7 @@ POLICIES: Final[dict[str, Policy]] = {
     UNREACHABLE: Policy(base_s=60, cap_s=10 * 60, attempts=2),
     EGRESS_OFFLINE: Policy(base_s=120, cap_s=30 * 60, attempts=6),
     # Unreadable snapshot: the accounts' thaw is unknown, so ask rarely.
-    SUBSCRIPTION_COOLING: Policy(base_s=15 * 60, cap_s=2 * 3600, attempts=3),
+    SUBSCRIPTION_COOLING: Policy(base_s=15 * 60, cap_s=30 * 60, attempts=3),
     QUOTA_RESET: Policy(base_s=0, cap_s=0, attempts=2, needs_reset=True),
     RUNNER_REPLACED: Policy(base_s=5, cap_s=5, attempts=0, platform=True),
 }
@@ -212,9 +227,9 @@ def classify(
     if failure_code == RUNNER_REPLACED_CODE:
         # The platform's own typed failure, not a service's words.
         return Resumable(RUNNER_REPLACED)
+    # No words is not no failure: a status the session reported in structure
+    # (429, 529, a 5xx) still says what happened, and is read below.
     said = (text or "").strip()
-    if not said:
-        return None
     if (
         is_provider_out_of_credit(said)
         or _NEVER.search(said)

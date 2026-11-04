@@ -39,6 +39,7 @@ from app.domain.block.questions import (
     withdraw_question,
 )
 from app.domain.block.schemas import BlockOut
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.delivery.agent import now, record_agent
 from app.domain.delivery.ledger import settle, settle_for
 from app.domain.delivery_events import DeliveryEvent
@@ -61,6 +62,25 @@ DEFAULT_QUESTION_LIFETIME = timedelta(hours=72)
 MAX_QUESTION_LIFETIME_HOURS = 24 * 30
 
 
+async def owner_chat(session, project_id, seat: str):
+    """The private chat ``seat``'s owner holds with it, opened if it is not
+    yet, and the owner's handle; None when the seat is nobody's own agent or
+    its owner is gone. Opening one writes no line in it."""
+    owned = await owned_by_seat(session, project_id, seat)
+    owner = await owner_of(session, owned.instance_id) if owned else None
+    if owned is None or owner is None:
+        return None
+    instance = await session.get(AgentInstance, owned.instance_id)
+    assert instance is not None
+    private = await TopicService(session).get_or_create_private(
+        project_id=project_id,
+        user_handle=owner[0],
+        agent_handle=instance.handle,
+        named_teammate=named_teammate,
+    )
+    return private, owner[0]
+
+
 async def ask(session, *, place, seat, body) -> list:
     """Post ``body``'s questions under ``seat`` and notify whoever they ask.
 
@@ -77,20 +97,12 @@ async def ask(session, *, place, seat, body) -> list:
     """
     questions = parse_questions(body)
     if body.get("to_owner") is True:
-        owned = await owned_by_seat(session, place.project_id, seat)
-        owner = await owner_of(session, owned.instance_id) if owned else None
-        if owned is None or owner is None:
+        chat = await owner_chat(session, place.project_id, seat)
+        if chat is None:
             raise UnprocessableEntityError(say("ownAgentHasNoOwner"))
-        instance = await session.get(AgentInstance, owned.instance_id)
-        assert instance is not None
-        private = await TopicService(session).get_or_create_private(
-            project_id=place.project_id,
-            user_handle=owner[0],
-            agent_handle=instance.handle,
-            named_teammate=named_teammate,
-        )
+        private, owner = chat
         place = Place(room=private)
-        body = {**body, "to": [owner[0]]}
+        body = {**body, "to": [owner]}
     to = body.get("to")
     if to is None:
         starter = await who_started_the_open_turn(
@@ -261,19 +273,23 @@ async def expire_due_questions(session, *, now: datetime | None = None) -> int:
             Block.created_at >= at - timedelta(hours=MAX_QUESTION_LIFETIME_HOURS),
         )
     )
+    due = [block for block in rows if _due(block.meta or {}, at)]
+    if not due:
+        return 0
+    # Their conversations' numbering in one batch, then the questions read
+    # again: an answer recorded after the scan took that numbering before it
+    # wrote the question, so it is read here (the question no longer due)
+    # rather than written over.
+    await lock_conversations(session, {block.conversation_id for block in due})
+    rows = await session.scalars(
+        select(Block)
+        .where(Block.id.in_([block.id for block in due]))
+        .order_by(Block.created_at, Block.id)
+        .execution_options(populate_existing=True)
+    )
     taken = 0
     for block in rows:
-        meta = block.meta or {}
-        deadline = meta.get("deadline")
-        if settled(meta) or deadline is None:
-            continue
-        try:
-            due = datetime.fromisoformat(str(deadline))
-        except ValueError:
-            continue
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=UTC)
-        if due > at:
+        if not _due(block.meta or {}, at):
             continue
         question = await expire_question(session, question=block, at=at)
         for notice in await notices_now_answered(session, [question]):
@@ -281,6 +297,20 @@ async def expire_due_questions(session, *, now: datetime | None = None) -> int:
         await _publish_question(question)
         taken += 1
     return taken
+
+
+def _due(meta: dict, at: datetime) -> bool:
+    """Not settled, and its ``meta.deadline`` is at or before ``at``."""
+    deadline = meta.get("deadline")
+    if settled(meta) or deadline is None:
+        return False
+    try:
+        due = datetime.fromisoformat(str(deadline))
+    except ValueError:
+        return False
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=UTC)
+    return due <= at
 
 
 async def _publish_question(question: Block) -> None:

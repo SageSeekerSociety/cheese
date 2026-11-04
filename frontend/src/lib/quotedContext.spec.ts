@@ -297,3 +297,13 @@ it('「在看哪一份」：只有路径和所在任务，不带版本和位置'
   expect(isQuotedContext({ ...viewing, path: 'x'.repeat(1001) })).toBe(false)
   expect(isQuotedContext({ ...viewing, task_id: 3 })).toBe(false)
 })
+
+it('网页引用的名字是后加的可选项：没有、空串、80 字以内都收，超长或不是字符串就拒', () => {
+  for (const quote of [webElement, webText]) {
+    expect(isQuotedContext(quote)).toBe(true)
+    expect(isQuotedContext({ ...quote, label: '' })).toBe(true)
+    expect(isQuotedContext({ ...quote, label: '甲'.repeat(80) })).toBe(true)
+    expect(isQuotedContext({ ...quote, label: '甲'.repeat(81) })).toBe(false)
+    expect(isQuotedContext({ ...quote, label: 3 })).toBe(false)
+  }
+})

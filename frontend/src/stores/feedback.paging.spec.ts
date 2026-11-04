@@ -84,7 +84,7 @@ beforeEach(() => {
   getFeedback.mockReset()
   getFeedbackCounts.mockReset()
   listFeedbackComments.mockReset()
-  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
+  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, resolved: 0, unread: 0 })
 })
 
 describe('顶层评论的下一页', () => {

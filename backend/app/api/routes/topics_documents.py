@@ -186,7 +186,7 @@ async def list_document_revisions(
     topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic_id, room=topic
     )
     topic_id = topic.id
     clean = clean_artifact_path(path)

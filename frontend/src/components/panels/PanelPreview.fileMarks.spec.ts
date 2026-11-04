@@ -101,7 +101,6 @@ it('打开一份有评论的 markdown，评论栏没开，正文上那几处也�
       documentType: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' as const },
       documentName: '说明.md',
       isImageArtifact: false,
-      downloadError: '',
       docBytes: null,
       docLoading: false,
       docError: '',

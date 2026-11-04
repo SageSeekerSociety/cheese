@@ -9,6 +9,9 @@ import { t } from '@/i18n'
 const props = defineProps<{
   /** 画出来的这些行，第一行当列名。 */
   rows: string[][]
+  /** 这一批的第一行在整张表里是第几行（0 起）。跳到最后一段时卡片从中间开始，
+   *  地址要按整张表算，不能从这一批的第一行重新数。 */
+  rowOffset?: number
   /** 画出来的列数。 */
   width: number
   /** 每格的地址、显示文字由表格那边给，两种读法说同一套话。 */
@@ -19,6 +22,8 @@ const props = defineProps<{
   selected: string
   /** 有评论的格子：地址 → 那几条。 */
   marks: Map<string, { id: string }[]>
+  /** 攒在待发篮里、还没发出去的那几处：地址 → 各自的序号（和 tray 上那一行对得上）。 */
+  pins?: Map<string, { id: string; n: number }[]>
   activeMark?: string | null
   /** 这一张表的名字：改过的格子按「表名!地址」记，和表格那边同一个键。 */
   sheetName?: string
@@ -36,6 +41,11 @@ const emit = defineEmits<{
   mark: [id: string]
 }>()
 
+/** 这一批里第 `r` 行在整张表里的行号。 */
+function rowOf(r: number): number {
+  return r + (props.rowOffset ?? 0)
+}
+
 /** 第一行里这一列写的是什么；空着就退回列名（A、B……），总得有个名字。 */
 function label(col: number): string {
   const head = (props.rows[0]?.[col] ?? '').trim()
@@ -43,15 +53,17 @@ function label(col: number): string {
 }
 
 /** 这一行里有内容的那几格（第一格当标题，不在这里）。全是空的格子不占地方 —— 但这一版
- *  刚被改空的格子、以及挂了评论的空格子要留下：删掉的东西和别人的一条评论都不能因为
- *  「这一格没有字」就在卡片里凭空消失（表格里这两样照旧在）。 */
+ *  刚被改空的格子、挂了评论的空格子、以及攒着一条待发批注的空格子要留下：删掉的东西、
+ *  别人的一条评论、自己刚指的一处，都不能因为「这一格没有字」就在卡片里凭空消失
+ *  （表格里这几样照旧在）。 */
 function fields(row: string[], rowIndex: number): number[] {
   const out: number[] = []
   for (let col = 1; col < props.width; col += 1) {
     const kept =
       (row[col] ?? '').trim() ||
       beforeAt(rowIndex, col) !== undefined ||
-      (props.marks.get(props.addressAt(rowIndex, col))?.length ?? 0) > 0
+      (props.marks.get(props.addressAt(rowIndex, col))?.length ?? 0) > 0 ||
+      (props.pins?.get(props.addressAt(rowIndex, col))?.length ?? 0) > 0
     if (kept) out.push(col)
   }
   return out
@@ -81,17 +93,19 @@ function changedTitle(row: number, col: number): string | null {
           <button
             type="button"
             class="ps-card__title"
-            :class="{ 'is-on': selected === addressAt(r, 0), 'is-chg': changedTitle(r, 0) !== null }"
-            :title="changedTitle(r, 0) ?? undefined"
-            @click="emit('choose', r, 0)"
+            :class="{ 'is-on': selected === addressAt(rowOf(r), 0), 'is-chg': changedTitle(rowOf(r), 0) !== null }"
+            :title="changedTitle(rowOf(r), 0) ?? undefined"
+            @click="emit('choose', rowOf(r), 0)"
           >
             <span class="ps-card__name"
-              ><del v-if="showBefore && beforeAt(r, 0)" class="ps-card__was">{{ cellText(beforeAt(r, 0) ?? '') }}</del
+              ><del v-if="showBefore && beforeAt(rowOf(r), 0)" class="ps-card__was">{{
+                cellText(beforeAt(rowOf(r), 0) ?? '')
+              }}</del
               >{{ cellText(row[0] ?? '') || label(0) }}</span
             >
           </button>
           <button
-            v-for="mark in marks.get(addressAt(r, 0)) ?? []"
+            v-for="mark in marks.get(addressAt(rowOf(r), 0)) ?? []"
             :key="mark.id"
             type="button"
             class="ps-card__cmt"
@@ -101,24 +115,35 @@ function changedTitle(row: number, col: number): string | null {
             :title="t('work.room.comments.commentHere')"
             @click="emit('mark', mark.id)"
           />
-          <span class="ps-card__row t-meta">{{ t('work.room.preview.sheetRow', { row: r + 1 }) }}</span>
+          <span
+            v-for="pin in pins?.get(addressAt(rowOf(r), 0)) ?? []"
+            :key="`pin-${pin.id}`"
+            class="ps-card__pin"
+            :data-pending-pin="pin.id"
+            :title="t('work.room.preview.pendingPin', { n: pin.n })"
+            aria-hidden="true"
+            >{{ pin.n }}</span
+          >
+          <span class="ps-card__row t-meta">{{ t('work.room.preview.sheetRow', { row: rowOf(r) + 1 }) }}</span>
         </div>
         <dl class="ps-card__fields">
           <div
-            v-for="c in fields(row, r)"
+            v-for="c in fields(row, rowOf(r))"
             :key="c"
             class="ps-card__field"
-            :class="{ 'is-on': selected === addressAt(r, c), 'is-chg': changedTitle(r, c) !== null }"
-            :title="changedTitle(r, c) ?? undefined"
+            :class="{ 'is-on': selected === addressAt(rowOf(r), c), 'is-chg': changedTitle(rowOf(r), c) !== null }"
+            :title="changedTitle(rowOf(r), c) ?? undefined"
           >
             <dt class="ps-card__label">{{ label(c) }}</dt>
             <dd class="ps-card__value">
-              <button type="button" class="ps-card__cell" @click="emit('choose', r, c)">
-                <del v-if="showBefore && beforeAt(r, c)" class="ps-card__was">{{ cellText(beforeAt(r, c) ?? '') }}</del>
+              <button type="button" class="ps-card__cell" @click="emit('choose', rowOf(r), c)">
+                <del v-if="showBefore && beforeAt(rowOf(r), c)" class="ps-card__was">{{
+                  cellText(beforeAt(rowOf(r), c) ?? '')
+                }}</del>
                 {{ cellText(row[c] ?? '') }}
               </button>
               <button
-                v-for="mark in marks.get(addressAt(r, c)) ?? []"
+                v-for="mark in marks.get(addressAt(rowOf(r), c)) ?? []"
                 :key="mark.id"
                 type="button"
                 class="ps-card__cmt"
@@ -128,6 +153,15 @@ function changedTitle(row: number, col: number): string | null {
                 :title="t('work.room.comments.commentHere')"
                 @click.stop="emit('mark', mark.id)"
               />
+              <span
+                v-for="pin in pins?.get(addressAt(rowOf(r), c)) ?? []"
+                :key="`pin-${pin.id}`"
+                class="ps-card__pin"
+                :data-pending-pin="pin.id"
+                :title="t('work.room.preview.pendingPin', { n: pin.n })"
+                aria-hidden="true"
+                >{{ pin.n }}</span
+              >
             </dd>
           </div>
         </dl>
@@ -244,6 +278,23 @@ function changedTitle(row: number, col: number): string | null {
 .ps-card__title:focus-visible,
 .ps-card__cell:focus-visible {
   outline: 2px solid var(--accent);
+}
+
+/* 待发批注的序号：和表格里那一颗同一种，摆在名字/值的右边。 */
+.ps-card__pin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-on);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 /* 有评论的那一格：值后面一颗琥珀的小点，和表格里挂在格子角上的是同一种。 */

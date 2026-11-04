@@ -28,6 +28,8 @@ import Detail from './Detail.vue'
 
 import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 function team(overrides: Partial<Team> = {}): Team {
   return {
@@ -60,6 +62,7 @@ function mount() {
 
 beforeEach(() => {
   setLocale('zh-CN')
+  queryClient.clear()
   route.params = { handle: 'crew' }
   route.name = 'TeamsDetailDefault'
   route.matched = []
@@ -160,5 +163,13 @@ describe('a team page', () => {
     await fireEvent.click(screen.getByText('重试'))
     await screen.findByText('成员工作区内容')
     expect(screen.queryByText('团队信息加载失败')).toBeNull()
+  })
+
+  it('mounts the member workspace immediately when the team is already in myTeams cache', async () => {
+    queryClient.setQueryData(keys.myTeams(), [team({ handle: 'crew', joinStatus: 'member' })])
+    detailByHandle.mockReturnValue(new Promise(() => {}))
+    mount()
+    await screen.findByText('成员工作区内容')
+    expect(detailByHandle).toHaveBeenCalledWith('crew')
   })
 })

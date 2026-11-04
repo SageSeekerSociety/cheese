@@ -10,7 +10,6 @@ harness asks of one: whether to take it (``/review``), and how (``/plan``).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel
@@ -44,10 +43,8 @@ ASK = {
     "join_request": "申请加入团队",
 }
 
-#: How a role is named to the person.
+#: How a role with no name of its own is named to the person.
 ROLE = {"owner": "所有者", "admin": "管理员", "member": "成员", "mentor": "导师"}
-#: Roles from the highest: a move down the list lowers someone.
-RANK = ("owner", "admin", "member", "mentor")
 
 
 @dataclass
@@ -79,7 +76,7 @@ class ActIn(BaseModel):
         "space_set",
         "announce",
         "category",
-        "invite_code",
+        "join_link",
         "problem_review",
     ]
     #: A message: where (a channel or a task) and what. A task: in which
@@ -107,9 +104,10 @@ class ActIn(BaseModel):
     pinned: bool | None = None
     #: A category put away, or brought back.
     archived: bool | None = None
-    #: An invite code: how many may use it, and how many days it lasts.
-    max_uses: int | None = None
-    days: int | None = None
+    #: A space's join link: whether joining through it waits for approval,
+    #: and whether to replace it with a new one (the old one stops working).
+    approval: bool | None = None
+    reset: bool = False
     #: Put it to the person if the gate stops it, rather than hand it back:
     #: 芝士 has nothing to put right, only the person's yes is missing.
     confirm: bool = False
@@ -581,66 +579,30 @@ async def category(db, me: Person, body: ActIn) -> Plan:
     )
 
 
-def _expires(days: int | None) -> int | None:
-    if days is None:
-        return None
-    return int((datetime.now(UTC) + timedelta(days=days)).timestamp() * 1000)
-
-
-async def invite_code(db, me: Person, body: ActIn) -> Plan:
-    """An invite code of a space: made, changed, or stopped."""
+async def join_link(db, me: Person, body: ActIn) -> Plan:
+    """A space's join link: replaced with a new one, or its approval switched."""
     sid = _space_id(body.where)
     space = await space_desk.managed(db, me.user_id, sid)
-    base = f"/spaces/{sid}/invite-codes"
-    terms = "，".join(
-        t
-        for t in (
-            f"可用 {body.max_uses} 次" if body.max_uses else "",
-            f"{body.days} 天后过期" if body.days else "",
-            f"说明：{body.text}" if body.text else "",
-        )
-        if t
-    )
-    change = {
-        k: v
-        for k, v in (
-            ("maxUses", body.max_uses),
-            ("expiresAt", _expires(body.days)),
-            ("note", body.text or None),
-        )
-        if v is not None
-    }
-    if not body.ref:
+    base = f"/spaces/{sid}/join-link"
+    if body.reset:
         return Plan(
             gate.Action(
-                "invite_code",
-                f"为空间「{space.name}」新建一个邀请码"
-                + (f"（{terms}）" if terms else ""),
-            ),
-            [{"method": "POST", "path": base, "body": change}],
-            card=("act", {}),
-            done=f"已为空间「{space.name}」新建邀请码。",
-        )
-    cid = _id(body.ref)
-    code = await space_desk.code_text(db, sid, cid)
-    if body.remove:
-        return Plan(
-            gate.Action(
-                "invite_code",
-                f"停用空间「{space.name}」的邀请码 {code}",
+                "join_link",
+                f"重置空间「{space.name}」的加入链接（旧链接立即失效，已加入的人不受影响）",
                 ("delete",),
             ),
-            [{"method": "DELETE", "path": f"{base}/{cid}"}],
+            [{"method": "POST", "path": f"{base}/reset"}],
             card=("act", {}),
-            done=f"已停用邀请码 {code}。",
+            done=f"已重置空间「{space.name}」的加入链接。",
         )
-    if not change:
-        raise BadRequestError(say("assistantActNeeds", what="max_uses / days / note"))
+    if body.approval is None:
+        raise BadRequestError(say("assistantActNeeds", what="approval / reset"))
+    terms = "需要管理员批准" if body.approval else "不需要批准"
     return Plan(
-        gate.Action("invite_code", f"修改空间「{space.name}」的邀请码 {code}：{terms}"),
-        [{"method": "PATCH", "path": f"{base}/{cid}", "body": change}],
+        gate.Action("join_link", f"把空间「{space.name}」改为通过加入链接加入{terms}"),
+        [{"method": "PATCH", "path": base, "body": {"approval": body.approval}}],
         card=("act", {}),
-        done=f"已修改邀请码 {code}。",
+        done=f"空间「{space.name}」通过加入链接加入现在{terms}。",
     )
 
 

@@ -63,6 +63,95 @@ class Store:
         return {"Body": io.BytesIO(self.data[Key])}
 
 
+class OffsiteCadence(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="offsite-cadence-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.backups = self.root / "backups"
+        self.backups.mkdir()
+        self.remote = self.root / "remote"
+        self.remote.mkdir()
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        self.now = 1793379600
+        tools = {
+            "pg_dump": '#!/bin/sh\nwhile [ "$1" != -f ]; do shift; done\necho readable-dump > "$2"\n',
+            "pg_restore": "#!/bin/sh\necho 'TABLE DATA public x'\n",
+            "date": f'#!{sys.executable}\nimport os, sys\nfrom datetime import datetime\n'
+                    'print(datetime.fromtimestamp(int(os.environ["BACKUP_TEST_NOW"])).strftime(sys.argv[1][1:]))\n',
+        }
+        for name, text in tools.items():
+            path = bin_dir / name
+            path.write_text(text)
+            path.chmod(0o755)
+        (self.root / "backend.env").write_text("DATABASE_URL=postgresql://fake/db\n")
+        (self.root / "r2.env").write_text("R2_BUCKET=fake\n")
+        uploader = self.root / "upload.py"
+        uploader.write_text(
+            'import os, sys\nfrom pathlib import Path\n'
+            'if os.environ.get("BACKUP_TEST_FAIL") == "1": raise SystemExit(1)\n'
+            'p = Path(sys.argv[1])\n'
+            '(Path(os.environ["BACKUP_TEST_REMOTE"]) / p.name).write_bytes(p.read_bytes())\n'
+        )
+        self.env = {
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "CHEESE_BACKUP_DIR": str(self.backups),
+            "CHEESE_BACKUP_ENV": str(self.root / "backup.env"),
+            "CHEESE_ENV_FILE": str(self.root / "backend.env"),
+            "CHEESE_R2_ENV": str(self.root / "r2.env"),
+            "CHEESE_R2_UPLOAD": str(uploader), "CHEESE_VENV_PY": sys.executable,
+            "BACKUP_TEST_REMOTE": str(self.remote),
+        }
+
+    def run_backup(self, age_hours=0, seconds=0, **extra):
+        env = {**self.env, "BACKUP_TEST_NOW": str(self.now + age_hours * 3600 + seconds), **extra}
+        result = subprocess.run(["bash", str(DEPLOY / "db-backup.sh")],
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.backups / ".last-success").exists())
+        return result
+
+    def test_hourly_local_dumps_only_go_offsite_once_six_hours_have_elapsed(self):
+        self.run_backup()
+        first = (self.backups / ".last-offsite-success").read_text()
+        self.run_backup(1)
+        self.run_backup(5)
+        self.run_backup(5, seconds=3599)
+        self.assertEqual(len(list(self.backups.glob("*.dump"))), 4)
+        self.assertEqual(len(list(self.remote.glob("*.dump"))), 1)
+        self.assertEqual((self.backups / ".last-offsite-success").read_text(), first)
+        self.run_backup(6)
+        self.assertEqual(len(list(self.remote.glob("*.dump"))), 2)
+        self.assertEqual(int((self.backups / ".last-offsite-success").read_text()), self.now + 6 * 3600)
+
+    def test_failed_due_upload_retries_the_next_hour_and_keeps_success_time(self):
+        self.run_backup()
+        first = (self.backups / ".last-offsite-success").read_text()
+        self.run_backup(6, BACKUP_TEST_FAIL="1")
+        self.assertEqual((self.backups / ".last-offsite-success").read_text(), first)
+        self.run_backup(7)
+        self.run_backup(8)
+        self.assertEqual(len(list(self.remote.glob("*.dump"))), 2)
+        self.assertEqual(int((self.backups / ".last-offsite-success").read_text()), self.now + 7 * 3600)
+
+    def test_interval_is_configurable_and_one_hour_preserves_hourly_uploads(self):
+        (self.root / "backup.env").write_text("CHEESE_BACKUP_OFFSITE_INTERVAL_HOURS=1\n")
+        self.run_backup()
+        self.run_backup(1)
+        self.assertEqual(len(list(self.remote.glob("*.dump"))), 2)
+
+    def test_missing_invalid_or_future_success_time_attempts_upload(self):
+        for marker in (None, "broken\n", str(self.now + 3600)):
+            with self.subTest(marker=marker):
+                path = self.backups / ".last-offsite-success"
+                path.unlink(missing_ok=True)
+                if marker is not None:
+                    path.write_text(marker)
+                self.run_backup()
+                self.assertEqual(int(path.read_text()), self.now)
+
+
 class Backups(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="backup-contract-")
@@ -202,9 +291,41 @@ class Backups(unittest.TestCase):
         for key in tuple(self.store.data):
             with self.subTest(key=key):
                 saved = self.store.modified[key]
-                self.store.modified[key] = datetime.fromtimestamp(time.time() - 7 * 3600, timezone.utc)
+                self.store.modified[key] = datetime.fromtimestamp(time.time() - 9 * 3600, timezone.utc)
                 self.assertEqual(self.call(check, "remote"), 1)
                 self.store.modified[key] = saved
+
+    def test_dev_freshness_allows_interval_and_two_hours_but_other_backups_stay_at_six(self):
+        directory = self.markers()
+        self.remote_backups()
+        now = int(time.time())
+        with patch.object(check.time, "time", return_value=now):
+            for interval in (6, 12):
+                with self.subTest(interval=interval), patch.dict(os.environ, {
+                    "CHEESE_BACKUP_OFFSITE_INTERVAL_HOURS": str(interval),
+                }):
+                    age = (interval + 2) * 3600
+                    (directory / ".last-offsite-success").write_text(str(now - age))
+                    key = "db/cheese-20261008-050000.dump"
+                    self.store.modified[key] = datetime.fromtimestamp(now - age, timezone.utc)
+                    self.assertEqual(self.call(check, "local"), 0)
+                    self.assertEqual(self.call(check, "remote"), 0)
+                    (directory / ".last-offsite-success").write_text(str(now - age - 1))
+                    self.store.modified[key] = datetime.fromtimestamp(now - age - 1, timezone.utc)
+                    self.assertEqual(self.call(check, "local"), 1)
+                    self.assertEqual(self.call(check, "remote"), 1)
+            self.markers()
+            self.remote_backups()
+            (directory / ".last-uploads-mirror-success").write_text(str(now - 6 * 3600 - 1))
+            self.assertEqual(self.call(check, "local"), 1)
+            for key in tuple(self.store.data):
+                if key.startswith("db/"):
+                    continue
+                with self.subTest(key=key):
+                    saved = self.store.modified[key]
+                    self.store.modified[key] = datetime.fromtimestamp(now - 6 * 3600 - 1, timezone.utc)
+                    self.assertEqual(self.call(check, "remote"), 1)
+                    self.store.modified[key] = saved
 
     def test_wrong_prefix_other_database_and_empty_dump_do_not_mask_missing_backup(self):
         self.store.add("prod-db/wrong-name.dump")
@@ -423,6 +544,33 @@ class TieredDumpRetention(unittest.TestCase):
         self.assertEqual(self.local(), sorted([survivor, truncated]))
         self.assertNotIn(good, self.local())
 
+    def test_local_retention_thins_unuploaded_dumps_without_creating_offsite_objects(self):
+        env = self.backup_script_env()
+        recent = self.dump(time.time() - 3600, remote=False)
+        kept = [recent]
+        for days_ago in (8, 15, 29):
+            for hour in (1, 2, 3):
+                daily = self.dump(self.day(days_ago, hour), remote=False)
+            kept.append(daily)
+        self.dump(self.day(35, 1), remote=False)
+        before = dict(self.store.data)
+        with patch.dict(os.environ, {"PATH": env["PATH"]}):
+            self.assertEqual(self.run_prune("--local-only"), 0)
+        self.assertEqual(self.local(), sorted(kept))
+        self.assertEqual(self.store.data, before)
+
+    def test_local_retention_keeps_readable_daily_dump_even_when_r2_is_down(self):
+        env = self.backup_script_env()
+        self.dump(self.day(9, 1), remote=False)
+        good = self.dump(self.day(9, 2), remote=False)
+        self.dump(self.day(9, 3), content=b"cut", remote=False)
+        with patch.dict(os.environ, {"PATH": env["PATH"]}), patch.object(
+            self.store, "paginate", side_effect=RuntimeError("endpoint down"),
+        ):
+            self.assertEqual(self.run_prune("--local-only"), 0)
+        self.assertEqual(self.local(), [good])
+        self.assertEqual(self.store.data, {})
+
     def backup_script(self, backup_env=None, r2_env=None, pruner=None):
         for path in self.dir.iterdir():
             path.unlink()
@@ -465,22 +613,26 @@ class TieredDumpRetention(unittest.TestCase):
     def test_backup_script_with_dev_setting_and_failing_pruner_still_expires_and_fails(self):
         crash = self.root / "crash.py"
         crash.write_text("raise SystemExit('pruner crashed')\n")
-        for case, kwargs in (
-            ("pruner crashes", {"pruner": crash}),
-            ("partial r2.env", {"r2_env": "R2_BUCKET=backups\n"}),
-        ):
-            with self.subTest(case):
-                result, hourly, expired = self.backup_script(
-                    backup_env="CHEESE_BACKUP_HOURLY_DAYS=7\n", **kwargs)
-                self.assertNotIn(expired, self.local())  # the horizon still holds
-                self.assertIn(hourly, self.local())  # nothing unverified is deleted
-                self.assertNotEqual(result.returncode, 0)  # the unit shows as failed
+        result, hourly, expired = self.backup_script(
+            backup_env="CHEESE_BACKUP_HOURLY_DAYS=7\n", pruner=crash)
+        self.assertNotIn(expired, self.local())
+        self.assertIn(hourly, self.local())
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_local_retention_and_hourly_backup_succeed_without_working_r2_config(self):
+        result, hourly, expired = self.backup_script(
+            backup_env="CHEESE_BACKUP_HOURLY_DAYS=7\n", r2_env="R2_BUCKET=backups\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(expired, self.local())
+        self.assertNotIn(hourly, self.local())
+        self.assertEqual(len(list(self.dir.glob("cheese-*.dump"))), 2)
 
     def backup_script_env(self):
         bin_dir = self.root / "bin"
         bin_dir.mkdir(exist_ok=True)
         (bin_dir / "pg_dump").write_text('#!/bin/sh\nwhile [ "$1" != -f ]; do shift; done\necho dump > "$2"\n')
-        (bin_dir / "pg_restore").write_text("#!/bin/sh\necho 'TABLE DATA public x'\n")
+        (bin_dir / "pg_restore").write_text(
+            '#!/bin/sh\n[ "$(cat "$2")" != cut ] || exit 1\necho "TABLE DATA public x"\n')
         for tool in ("pg_dump", "pg_restore"):
             (bin_dir / tool).chmod(0o755)
         (self.root / "backend.env").write_text("DATABASE_URL=postgresql://fake/db\n")

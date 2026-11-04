@@ -65,7 +65,6 @@ import type { Citable } from '@/types/citable'
 import { computed, onBeforeUnmount, provide, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
 import { useAgentCiting } from '@/composables/useAgentCiting'
 import { useAgentPointer } from '@/composables/useAgentPointer'
@@ -269,10 +268,9 @@ const panelEvents = {
   older: () => void agentThread.older().catch(() => undefined),
   olderMessages: (topic: string | null) => void agentThread.earlierMessages(topic).catch(() => undefined),
   close: () => (agentOpen.value = false),
+  // 成功和失败的话都在 `downloadFile` 那一层说（`lib/download`），这里不再补一句。
   downloadFile: (file: AssistantHanded) =>
-    void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)).catch(() =>
-      toast.error(t('work.library.downloadFailed'))
-    ),
+    void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)),
   dock: (next: boolean) => (docked.value = next),
   undo: (change: number, key: string) =>
     agentSurface.value?.undo ? agentSurface.value.undo(change, key) : void undoChange(change, key),

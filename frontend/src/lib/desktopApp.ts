@@ -201,6 +201,51 @@ export function openInBrowser(url: string): boolean {
   return true
 }
 
+/** Where the window goes after a landing page hands itself to the browser: the
+ *  page it came from when that is an ordinary page of the app, else the start
+ *  page. Never a page that could hand over again: the landing pages, and the
+ *  account pages, whose sign-in redirects to the page it was asked for. */
+function afterLeaving(): string {
+  const back = (window.history.state as { back?: unknown } | null)?.back
+  if (typeof back !== 'string' || !back.startsWith('/') || back.startsWith('//')) return '/'
+  const first = back.slice(1).split(/[/?#]/)[0].toLowerCase()
+  return ['previews', 'sites', 'account'].includes(first) ? '/' : back
+}
+
+/** Whether this run of a landing page repeats one that already handed it to the
+ *  browser: the same history entry (marked when it handed over), or the same
+ *  document loaded again in place (a reload, which the app also does by itself
+ *  when the page's process ends). A person following a link to it again is a new
+ *  history entry and a fresh load, so it is not. */
+function handedOverAlready(): boolean {
+  if ((window.history.state as { handedToBrowser?: unknown } | null)?.handedToBrowser) return true
+  const load = performance.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined
+  return load?.type === 'reload' && load.name === window.location.href
+}
+
+/** A page that hands the reader to the content domain at the top level (a
+ *  preview, a published Site) is the browser's to show: in the app the window
+ *  would end up on a page someone else wrote, with no way back. In the app,
+ *  opens `path` in the browser through the app's own opener, once for each time
+ *  a person arrives at the page (`handedOverAlready`), and replaces this page
+ *  with where the window came from (`afterLeaving`). False outside the app,
+ *  where the caller goes on as in a browser. */
+export function leaveForBrowser(path: string): boolean {
+  const core = tauri()?.core
+  if (!core || !desktopCan('links')) return false
+  let opening: Promise<unknown> = Promise.resolve()
+  if (!handedOverAlready()) {
+    window.history.replaceState({ ...(window.history.state ?? {}), handedToBrowser: true }, '')
+    const url = new URL(path, window.location.origin).href
+    opening = core.invoke('plugin:opener|open_url', { url }).catch(() => {})
+  }
+  // Only once the app has answered: leaving the page while the call is in flight
+  // aborts its request, and Tauri then sends the call again another way, so the
+  // browser would open the page twice.
+  void opening.then(() => window.location.replace(afterLeaving()))
+  return true
+}
+
 /** Whether the app opens by itself, out of sight, when the person logs in to this computer. */
 export async function desktopOpensAtLogin(): Promise<boolean> {
   if (!desktopCan('autostart')) return false

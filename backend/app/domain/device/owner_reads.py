@@ -34,7 +34,17 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Boolean, Integer, Uuid, column, select, table, union_all
+from sqlalchemy import (
+    Boolean,
+    Integer,
+    Subquery,
+    Uuid,
+    column,
+    literal,
+    select,
+    table,
+    union_all,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
@@ -52,27 +62,37 @@ class DeviceIdentity:
     credential_host: bool = False
 
 
+def token_holders(digest) -> Subquery:
+    """Who connects with the token whose digest is ``digest``: an enrolled
+    device, or a model-credential host, as rows of ``device_id``, ``name``
+    and ``credential_host``. A device is the answer before a host: ordered
+    by ``credential_host``, the first row is the holder. The one rule for
+    which machine a connector token is; the busiest poll there is reads it
+    joined to what runs there (`agent.device_sessions.running_for_token`)."""
+    return union_all(
+        select(
+            DeviceRow.device_id.label("device_id"),
+            DeviceRow.name.label("name"),
+            literal(False).label("credential_host"),
+        ).where(DeviceRow.token_digest == digest),
+        select(ModelCredentialHost.id, ModelCredentialHost.name, literal(True)).where(
+            ModelCredentialHost.token_digest == digest
+        ),
+    ).subquery("holder")
+
+
 async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity | None:
     if not token:
         return None
-    digest = digest_token(token)
+    holder = token_holders(digest_token(token))
     row = (
         await session.execute(
-            select(DeviceRow.device_id, DeviceRow.name).where(
-                DeviceRow.token_digest == digest
-            )
+            select(holder).order_by(holder.c.credential_host).limit(1)
         )
     ).one_or_none()
-    if row is not None:
-        return DeviceIdentity(row.device_id, row.name)
-    host = (
-        await session.execute(
-            select(ModelCredentialHost.id, ModelCredentialHost.name).where(
-                ModelCredentialHost.token_digest == digest
-            )
-        )
-    ).one_or_none()
-    return DeviceIdentity(host.id, host.name, True) if host else None
+    if row is None:
+        return None
+    return DeviceIdentity(row.device_id, row.name, row.credential_host)
 
 
 async def execution_device_authorized(

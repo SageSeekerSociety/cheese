@@ -25,7 +25,7 @@ covers:
 
 ## 管理项目 {#manage}
 
-一个人在项目里能做什么由 `backend/app/auth/project_roles.py` 回答：所有者（项目的 `owner_handle`，或所属团队的所有者）、管理员（所属团队的管理员，或项目设为管理员的人）、成员、导师，每个角色的权限默认值在 `backend/app/domain/project_permissions.py`，项目可以在「角色和权限」里改。路由只问 `project_roles.may(…, Permission.x)`。
+一个人在项目里能做什么由 `backend/app/auth/project_roles.py` 回答：所有者（项目的 `owner_handle`，或所属团队的所有者）、管理员（所属团队的管理员，或项目设为管理员的人）、成员，以及项目自己的角色（`project_role_defs`，导师是带 `template = mentor` 标记的一种）。内置两个角色的权限默认值在 `backend/app/domain/project_permissions.py`，项目可以在「角色和权限」里改。路由只问 `project_roles.may(…, Permission.x)`。
 
 ## 管理团队 {#teams}
 
@@ -35,7 +35,7 @@ covers:
 
 ## 空间 {#spaces}
 
-空间有自己的位置：所有者（建空间的人）、管理员（课程里就是教师）和成员。每个位置能做什么由 `backend/app/domain/space/permissions.py` 回答：成员看得到空间和里面的内容；管理员还能改设置和分类、管成员和邀请码、发公告、管资料、看数据分析；设置和撤销管理员、删除空间、被驳回后重新提交审核只有所有者能做。所有权可以转交，转交后旧所有者降为管理员。
+空间有自己的位置：所有者（建空间的人）、管理员（课程里就是教师）和成员。每个位置能做什么由 `backend/app/domain/space/permissions.py` 回答：成员看得到空间和里面的内容；管理员还能改设置和分类、管成员和加入链接、发公告、管资料、看数据分析；设置和撤销管理员、删除空间、被驳回后重新提交审核只有所有者能做。所有权可以转交，转交后旧所有者降为管理员。
 
 不在空间里的人得到 404，在空间里但位置不够得到 403。「这人是不是这门课的教师」就是空间的 `teach` 权限（所有者和管理员有），`runs()` 回答「是不是所有者或管理员」。
 

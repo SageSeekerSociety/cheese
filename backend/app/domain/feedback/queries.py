@@ -36,7 +36,6 @@ from sqlalchemy.orm import aliased
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
-    FeedbackKind,
     FeedbackStatus,
     FeedbackSupport,
     FeedbackVisibility,
@@ -522,41 +521,32 @@ class ListingQueries:
         return above.union(floor)
 
     def _tab_where(self, tab: str) -> list[Any]:
-        """The four public tabs, defined once so list and counts cannot drift.
+        """The three public tabs, defined once so list and counts cannot drift.
 
-        A finished item stops competing for attention, so it sinks out of the
-        working tabs — but only a finished **bug** does. A finished suggestion
-        is a feature the team decided to do and then did; it is still worth
-        reading, and hiding it was the wider reading that the product decision
-        (§8.23) did not take. The narrow one is also the easier to notice going
-        wrong: the wide version quietly removes content nobody is looking for.
+        `all` and `hot` narrow nothing: every public report is in both, whatever
+        its kind or its status. A finished **bug** used to sink out of them
+        (§8.23 — 「默认不展示已解决的 bug」 read narrowly, as only the bug), and
+        that left the tab named 「全部」 as the one place a third of the board was
+        missing from: it counted 16 while 「已完成」 counted 68, and nothing on
+        screen said where the rest had gone. Reversed 2026-10-28 — a report the
+        platform holds is reachable from 「全部」, and the status pills, not the
+        tab, are how a reader narrows to one rung. It also makes the tab honest:
+        「全部」 is now the widest cut rather than the widest cut minus something.
 
-        「办完了」 is `CLOSED_STATUSES` — `resolved`, `deployed` and `declined`. The
-        `resolved` tab is therefore every way a report ends: to the person who
-        filed it 修复 and 上线 are two halves of one answer, and 不修复 is an answer
-        too; listing only the first makes the others look like they went
-        missing. The tab is labelled 「已完成」 rather than after any one status,
-        because it is named for the set. `active` is the single
-        working rung (`in_progress`); 「已收录」 is not in it, because nobody has
-        picked those up yet and 「活跃」 would then mean "everything that is not
-        done".
+        `resolved` is the only tab with a rule, and it is the closed set rather
+        than the status of the same name: to the person who filed it 修复 and
+        上线 are two halves of one answer, and 不修复 is an answer too; listing
+        only the first makes the others look like they went missing. The tab is
+        labelled 「已完成」 because it is named for the set.
 
         Consequence worth stating: the tabs are filters, not a partition. A
-        finished suggestion is in both `all` and `resolved`, so the tab numbers
-        do not sum to a total. That is the decision, not an accounting bug — if
-        it ever needs to be a partition, this is the one line to change.
+        finished report is in both `all` and `resolved`, so the tab numbers do
+        not sum to a total. That is the decision, not an accounting bug — if it
+        ever needs to be a partition, this is the one line to change.
 
-        `public_counts` now reports a `deployed` count **beside** this one, so
-        the dashboard can draw 「解决」 and 「上线」 as two lines. The tab's own
-        numbers are unchanged: `resolved` still means the pair, and it still
-        overlaps `all`. The extra number narrows nothing.
+        `public_counts` also reports a `deployed` count, so the dashboard can
+        draw 「解决」 and 「上线」 as two lines. It narrows nothing here either.
         """
         if tab == "resolved":
             return [Feedback.status.in_(list(CLOSED_STATUSES))]
-        sunk = or_(
-            Feedback.status.not_in(list(CLOSED_STATUSES)),
-            Feedback.kind != FeedbackKind.bug,
-        )
-        if tab == "active":
-            return [sunk, Feedback.status == FeedbackStatus.in_progress]
-        return [sunk]
+        return []

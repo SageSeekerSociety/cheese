@@ -2,11 +2,11 @@ import type { Team, TeamSummary, TeamTaskEligibility } from '@/types'
 import type { useTaskData } from './useTaskData'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { useEvents } from '../events'
 
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 
 export function useTeamParticipation(taskDataModule: ReturnType<typeof useTaskData>) {

@@ -43,7 +43,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import Project, ProjectMember
 from app.domain.project.repositories import ProjectRepository
-from app.domain.project_permissions import Seat
+from app.domain.project_permissions import Permission
 from app.domain.team.models import TeamUserRelation
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.repositories import TopicRepository
@@ -163,11 +163,11 @@ async def _may_read_project_many(
 async def may_write_project(
     session: AsyncSession, *, project_id: uuid.UUID, handle: str | None
 ) -> bool:
-    """Whether ``handle`` works in this project rather than looking on: everyone
-    who sits in it but a mentor. What exactly they may change is the one
+    """Whether ``handle`` works in this project rather than looking on: their
+    role lets them change its content. What exactly they may change is the one
     permission each route asks for (``project_roles.may``)."""
     found = await standing(session, project_id, handle)
-    return found is not None and found.seat is not Seat.mentor
+    return found is not None and Permission.edit_content in found.permissions
 
 
 async def outsiders_reading(

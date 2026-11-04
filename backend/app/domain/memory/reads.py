@@ -70,7 +70,11 @@ async def body_reads(
         cursor = (since, "", "", -1)
         while True:
             page = await service.read(
-                session, conversation, after=cursor, before=(until, "", "", -1)
+                session,
+                conversation,
+                after=cursor,
+                before=(until, "", "", -1),
+                reader=None,
             )
             for item in page.items:
                 for part in parts(item["record"]):

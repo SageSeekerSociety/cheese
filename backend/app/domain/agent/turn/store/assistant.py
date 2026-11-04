@@ -100,6 +100,7 @@ async def persist_assistant_message(
     reply_to: uuid.UUID | None,
     roster: list[dict] | None,
     topic_refs: list[dict],
+    room: Topic | None = None,
     eid: str | None = None,
     eids: tuple[str, ...] = (),
     platform_unsolicited: bool = False,
@@ -180,10 +181,13 @@ async def persist_assistant_message(
             scope_id=str(topic_id),
         ):
             return StoredAssistant(None, False, None)
-        topic = await load_topic(session, topic_id)
-        text, roster = await prepare_mentions(
-            session, project_id, topic, text, roster, topic_refs
-        )
+        topic = room if room is not None else await load_topic(session, topic_id)
+        if "@" in text or inner_id is not None:
+            text, roster = await prepare_mentions(
+                session, project_id, topic, text, roster, topic_refs
+            )
+        else:
+            roster = roster or []
         if (
             closing
             and turn_id is not None

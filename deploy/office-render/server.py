@@ -170,6 +170,25 @@ async def healthz() -> dict:
     }
 
 
+#: A hidden slide is still a slide: PowerPoint numbers it, keeps its notes, and
+#: skips it only when presenting. LibreOffice leaves it out of a PDF by default,
+#: and then page 3 of the preview is slide 4 of the deck and every note after a
+#: hidden slide sits one page late (measured: a 4-slide deck with slide 2 hidden
+#: came out as 3 pages). The preview marks hidden slides itself, so they go in.
+#:
+#: The filter options are LibreOffice's JSON form (7.4 and later; the image
+#: installs Debian 12's 7.4).
+IMPRESS_PDF = (
+    'pdf:impress_pdf_Export:{"ExportHiddenSlides":{"type":"boolean","value":"true"}}'
+)
+
+
+def _filter(suffix: str, target: str) -> str:
+    """What `--convert-to` is given: the bare target, or a deck's PDF filter."""
+    if target == "pdf" and SUPPORTED.get(suffix) == "impress_pdf_Export":
+        return IMPRESS_PDF
+    return target
+
 
 def _convert(
     raw: bytes, suffix: str, target: str = "pdf", recalculate: bool = False
@@ -200,7 +219,7 @@ def _convert(
                 "--norestore",
                 f"-env:UserInstallation=file://{profile}",
                 "--convert-to",
-                target,
+                _filter(suffix, target),
                 "--outdir",
                 str(outdir),
                 str(source),

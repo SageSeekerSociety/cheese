@@ -141,7 +141,7 @@ it('认不出的 kind 不当作页码算：画得出一句「一份引用」，�
   expect(container.textContent).not.toContain('undefined')
 })
 
-it('网页元素：报出选择器、标签文字和文件身份', () => {
+it('网页元素：报出这一处的名字、文字和文件身份，选择器只留给芝士', () => {
   const { container } = render(MessageQuote, {
     props: {
       quote: {
@@ -161,8 +161,34 @@ it('网页元素：报出选择器、标签文字和文件身份', () => {
 
   expect(container.textContent).toContain('引用了页面上的一处')
   expect(container.textContent).toContain('report.html')
-  expect(container.textContent).toContain('body > main > p:nth-of-type(2)')
+  // 老消息没带名字：按标签说是一处段落，不把选择器念给人听。
+  expect(container.textContent).toContain('网页里的一处段落')
+  expect(container.textContent).not.toContain('nth-of-type')
   expect(container.textContent).toContain('这一句说错了')
+})
+
+it('网页元素带了名字（所在那一节的标题）就写名字', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'web-text' as const,
+        path: 'report.html',
+        source: 'committed' as const,
+        version: 'v7',
+        task_id: null,
+        selector: '#app > div > aside > section',
+        tag: 'section',
+        label: '二、时间安排',
+        text: '十月底前完成',
+        prefix: '',
+        suffix: '',
+        rect: { x: 12, y: 40, w: 300, h: 24 },
+        viewport: { w: 1024, h: 768 },
+      },
+    },
+  })
+  expect(container.textContent).toContain('二、时间安排')
+  expect(container.textContent).not.toContain('#app')
 })
 
 it('网页框选：只报网址，不装作有文件身份', () => {

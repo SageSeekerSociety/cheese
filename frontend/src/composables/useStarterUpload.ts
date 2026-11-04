@@ -7,9 +7,9 @@
  */
 import { ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { uploadPercent, type UploadProgress } from '@/api/partUpload'
+import { toast } from '@/lib/toast'
 
 export interface StarterFile<Id extends number | string = number | string> {
   id: Id

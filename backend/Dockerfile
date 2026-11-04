@@ -186,6 +186,8 @@ COPY --chown=cheese:python sandbox ./sandbox
 # file by file rather than `COPY scripts`: the rest of that directory is dev
 # probes and demo seeders that have no business in a production image.
 COPY --chown=cheese:python scripts/migrate_forge.py ./scripts/
+# An operator empties the retired task-snapshot prefix once, after deploy.
+COPY --chown=cheese:python scripts/purge_task_snapshots.py ./scripts/
 # Export only the App's public key to the separate event relay.
 COPY --chown=cheese:python scripts/forge_event_public_key.py ./scripts/
 # The dev deploy runs this after a release to move the feedback it fixes.
@@ -234,7 +236,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # worker its share of the container's connection budget
 # (Settings.db_connections_per_worker): four workers on the old per-process
 # pool ask a server that has 97 connections to give 4 x 36.
-# An exec-form CMD cannot expand a variable, so this goes through a shell;
-# `exec` keeps uvicorn the process Docker starts and signals.
+#
+# `app/serve.py` builds the command. Without `API_POOL_WORKERS` it execs
+# exactly `uvicorn app.main:app --port 8081 ... --workers $BACKEND_WORKERS`, so
+# uvicorn stays the process Docker starts and signals. With it, it also runs the
+# api pool on :8085 beside that one and forwards the signals
+# (`app/core/process_role.py`).
 ENV BACKEND_WORKERS=1
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8081 --timeout-graceful-shutdown 10 --no-access-log --workers \"${BACKEND_WORKERS:-1}\""]
+CMD ["python", "-m", "app.serve"]

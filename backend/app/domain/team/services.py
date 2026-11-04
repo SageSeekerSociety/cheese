@@ -16,6 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, review_text
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -145,13 +146,13 @@ class TeamService:
         A personal team's handle is its owner's username.
         """
         teams = await self._repo.get_by_ids(list(team_ids))
-        names = await usernames_by_ids(
-            self._repo._session,
-            {
-                t.personal_owner_user_id
-                for t in teams.values()
-                if t.personal_owner_user_id is not None
-            },
+        owner_ids = {
+            t.personal_owner_user_id
+            for t in teams.values()
+            if t.personal_owner_user_id is not None
+        }
+        names = (
+            await usernames_by_ids(self._repo._session, owner_ids) if owner_ids else {}
         )
         out: dict[int, TeamLabel] = {}
         for tid, team in teams.items():
@@ -170,7 +171,7 @@ class TeamService:
         """
         team = await self._repo.get_by_id(team_id)
         if team is not None and (
-            await self._repo.is_team_member(team_id, user_id) or team.open_to_all
+            team.open_to_all or await self._repo.is_team_member(team_id, user_id)
         ):
             return team
         raise NotFoundError(
@@ -181,7 +182,9 @@ class TeamService:
         """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of
         :meth:`visible_team`: the ones the viewer is also in, and the public
         shared ones. A stealth team is not named to anyone outside it."""
-        theirs = await self._repo.list_teams_of_user(user_id=user_id)
+        theirs = list(await self._repo.list_teams_of_user(user_id=user_id))
+        if viewer_id == user_id:
+            return theirs
         mine = (
             {t.id for t in await self._repo.list_teams_of_user(user_id=viewer_id)}
             if viewer_id is not None
@@ -206,16 +209,22 @@ class TeamService:
         A shared team is its own handle. A user's handle names their personal
         team, which only they can open — so ``/teams/<your username>`` is yours.
         """
-        team = await self._repo.get_by_handle(handle)
-        if team is None:
-            owner = await user_by_handle(self._repo._session, handle)
-            personal = await self._repo.get_personal_team(owner.id) if owner else None
-            if personal is not None and owner is not None and owner.id == user_id:
-                return personal
-            raise NotFoundError(
-                "Resource team not found", data={"type": "team", "handle": handle}
+        owner = await user_by_handle(self._repo._session, handle)
+        if owner is not None:
+            personal = (
+                await self._repo.get_personal_team(owner.id)
+                if owner.id == user_id
+                else None
             )
-        return await self.visible_team(team.id, user_id)
+            if personal is not None:
+                return personal
+        else:
+            team = await self._repo.get_by_handle(handle)
+            if team is not None:
+                return await self.visible_team(team.id, user_id)
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "handle": handle}
+        )
 
     async def team_for_join_token(self, token: str) -> Team:
         """The team a link names, for whoever holds it.
@@ -329,6 +338,12 @@ class TeamService:
         """Return raw membership records for a team."""
         return await self._repo.list_members_of_team(team_id=team_id)
 
+    async def get_teams_members(
+        self, team_ids: Sequence[int]
+    ) -> dict[int, list[TeamUserRelation]]:
+        """Return raw membership records grouped by team_id in one query."""
+        return await self._repo.list_members_of_teams(team_ids)
+
     async def list_teams_of_user(self, user_id: int) -> list[Team]:
         """Every team ``user_id`` is in, their personal team included."""
         return list(await self._repo.list_teams_of_user(user_id=user_id))
@@ -363,6 +378,11 @@ class TeamService:
                 "Team name already exists",
                 data={"field": "name", "value": name.strip()},
             )
+
+        # A new team is discoverable (``Team.visibility`` defaults to public),
+        # so its name and introduction are published as it is made.
+        await review_text(TextKind.NAME, [name.strip()])
+        await review_text(TextKind.PUBLIC_TEXT, [intro, description])
 
         now = datetime.now(UTC)
         # Without a chosen handle the team gets ``team-<id>``, the same
@@ -408,6 +428,13 @@ class TeamService:
         handle: str | None = None,
     ) -> Team:
         team = await self._get_team_or_error(team_id)
+        await self._review_what_it_publishes(
+            team,
+            name=name.strip() if isinstance(name, str) else None,
+            intro=intro,
+            description=description,
+            visibility=visibility,
+        )
         if name is not None:
             if not isinstance(name, str):
                 raise BadRequestError("Team name must be string")
@@ -442,6 +469,39 @@ class TeamService:
         team.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
         return team
+
+    @staticmethod
+    async def _review_what_it_publishes(
+        team: Team,
+        *,
+        name: str | None,
+        intro: str | None,
+        description: str | None,
+        visibility: TeamVisibility | None,
+    ) -> None:
+        """Review the name, introduction and description a stranger will read
+        once this change is made: what changes on a discoverable team, and all
+        of it on a team becoming discoverable. A team only its members see
+        publishes nothing."""
+        becomes_public = (
+            team.personal_owner_user_id is None
+            and (visibility.value if visibility is not None else team.visibility)
+            == TeamVisibility.PUBLIC.value
+        )
+        if not becomes_public:
+            return
+        was_public = team.open_to_all
+
+        def published(new: str | None, old: str) -> str | None:
+            if new is None:
+                return None if was_public else old
+            return None if was_public and new == old else new
+
+        await review_text(TextKind.NAME, [published(name, team.name)])
+        await review_text(
+            TextKind.PUBLIC_TEXT,
+            [published(intro, team.intro), published(description, team.description)],
+        )
 
     async def delete_team(self, *, team_id: int, has_live_projects: bool) -> None:
         """``has_live_projects``: the team still owns projects that are not

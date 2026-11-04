@@ -4,7 +4,7 @@
  */
 import { expect, it } from 'vitest'
 
-import { FLOATING_MIN_WIDTH, measureAnchor } from './locatorAnchor'
+import { FLOATING_MIN_WIDTH, measureAnchor, measureElementAnchor } from './locatorAnchor'
 
 function panel({ width = 800, height = 600, scrollTop = 0, top = 100, left = 50 } = {}) {
   const el = document.createElement('div')
@@ -58,4 +58,30 @@ it('点出来的一处：面板自己往下滚，那一点在内容里的位置�
   const after = measureAnchor(panel({ scrollTop: 150 }), null, pointer)
   expect(before?.top).toBe(300)
   expect(after?.top).toBe(300)
+})
+
+// ---- 图上框出来的那一块 ----
+// 它没有一段文字选区，也不是只记一个点：位置取那块元素在屏幕上的实际矩形，坐标系和
+// 上面那支逐字一致（面板内容坐标、viewTop/viewBottom、窄了返回 null）。
+function boxAt({ top = 200, left = 150, width = 120, height = 80 } = {}) {
+  const el = document.createElement('div')
+  el.getBoundingClientRect = () =>
+    ({ top, left, bottom: top + height, right: left + width, width, height, x: left, y: top, toJSON() {} }) as DOMRect
+  return el
+}
+
+it('图上框出来的一块：用那块元素的矩形，换成面板内容坐标', () => {
+  const a = measureElementAnchor(panel({ scrollTop: 300 }), boxAt())
+  expect(a).toEqual({ top: 400, bottom: 480, left: 100, panelWidth: 800, viewTop: 300, viewBottom: 900 })
+})
+
+it('图上框出来的一块：那一块滚出了可见区就不弹，框退回贴底', () => {
+  expect(measureElementAnchor(panel(), boxAt({ top: 20, height: 20 }))).toBeNull()
+  expect(measureElementAnchor(panel(), boxAt({ top: 800, height: 20 }))).toBeNull()
+})
+
+it('图上框出来的一块：面板太窄不弹，元素不在页面上也不弹', () => {
+  expect(measureElementAnchor(panel({ width: FLOATING_MIN_WIDTH - 1 }), boxAt())).toBeNull()
+  expect(measureElementAnchor(panel(), null)).toBeNull()
+  expect(measureElementAnchor(panel(), boxAt({ width: 0, height: 0 }))).toBeNull()
 })

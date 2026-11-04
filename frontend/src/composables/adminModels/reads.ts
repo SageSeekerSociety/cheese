@@ -41,6 +41,10 @@ export function useAdminModelsReads() {
   async function load() {
     loading.value = true
     loadError.value = null
+    // 三段同时发、各拉各的、各画各的失败：额度那一段挂了不该把模型表也一起清空，
+    // 也不该等模型表读完才开始读。
+    void loadProjects()
+    void loadAudit()
     try {
       models.value = (await getGatewayModels(days.value)) as unknown as ModelsListing
     } catch (e) {
@@ -49,9 +53,6 @@ export function useAdminModelsReads() {
     } finally {
       loading.value = false
     }
-    // 另外两段各拉各的、各画各的失败：额度那一段挂了不该把模型表也一起清空。
-    void loadProjects()
-    void loadAudit()
   }
 
   async function loadProjects() {

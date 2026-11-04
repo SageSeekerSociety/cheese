@@ -6,7 +6,6 @@
 // - 频道说它的支线变了（`threads`）：把屏幕上那几条消息下面那一行换成新的。
 // - 那位队友在支线里排队、重试、整理上下文、等环境时，那一行写它在等什么：支线里的
 //   运行记录同时告诉主线一份（`thread_status`），这里留每条支线最近那一条。
-// - 支线里我上一句叫过 AI 队友，打开时输入框先带上「@芝士 」，可以删。
 import type { Ref } from 'vue'
 import type { Block } from '../cx_types'
 import type { ThreadSummary } from '../types/threads'
@@ -154,15 +153,4 @@ export function useThreadLines(opts: {
   }
 
   return { replyingFor, replyingSeats, statusFor, onActivity, onStatus, refresh }
-}
-
-/** 支线里我上一句叫过 AI 队友：打开时输入框先带上的那个 @（`mention`，后面跟一个空格）；否则空串。 */
-export function summonPrefill(messages: Block[], isMine: (m: Block) => boolean, mention: string): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
-    if (m.kind !== 'message' || !isMine(m)) continue
-    const recipient = m.meta?.agent_recipient as { mentioned?: boolean } | undefined
-    return recipient?.mentioned ? `${mention} ` : ''
-  }
-  return ''
 }

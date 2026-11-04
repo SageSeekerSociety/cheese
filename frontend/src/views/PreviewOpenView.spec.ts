@@ -123,3 +123,25 @@ it('does not submit a stale grant after navigating to another topic', async () =
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(submit).not.toHaveBeenCalled()
 })
+
+it('in the desktop app, opens the preview in the browser and never posts the window to the content host', async () => {
+  localStorage.setItem('accessToken', 'platform-secret')
+  route.query.path = '/index.html'
+  route.fullPath += '?path=%2Findex.html'
+  requestPreviewSession.mockResolvedValue({ url: 'https://preview-a.example/_cheese/session', grant: 'preview-grant' })
+  const invoke = vi.fn(async () => undefined)
+  vi.stubGlobal('__TAURI__', { core: { invoke } })
+  vi.stubGlobal('__CHEESE_APP__', { can: ['links'] })
+  const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+  const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+  mount()
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith('plugin:opener|open_url', {
+      url: `${window.location.origin}/previews/topic-a?path=%2Findex.html`,
+    })
+  )
+  await waitFor(() => expect(replace).toHaveBeenCalledWith('/'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(submit).not.toHaveBeenCalled()
+  expect(requestPreviewSession).not.toHaveBeenCalled()
+})

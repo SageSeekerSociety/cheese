@@ -295,7 +295,7 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                 while True:
                     async with factory() as observer:
                         page = await session_records.read(
-                            observer, conversation, turn_id=second_turn
+                            observer, conversation, turn_id=second_turn, reader=None
                         )
                     output = next(
                         (

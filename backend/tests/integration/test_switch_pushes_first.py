@@ -3,15 +3,17 @@
 The checkpoint (`cheese sync --all`) runs on the machine being left, and the
 switch happens whether or not it went through: a machine that is away, a push
 that fails or outlasts its wait, an executor that cannot start — none of them
-holds the room, for a person or for its agent. What such a lost checkpoint
-loses is held by the snapshot of the session's last turn. A cloud sandbox left
-behind is left to the idle sweep either way.
+holds the room, for a person or for its agent. The platform keeps only what
+was pushed, so work a lost checkpoint did not push stays on the machine being
+left and is not carried anywhere. A cloud sandbox left behind is left to the
+idle sweep either way.
 """
 
 import ast
 import json
 import re
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -238,11 +240,6 @@ FAILED_PUSHES = {
             "[cheese] 任务 t1 同步失败：rejected non-fast-forward"
         }
     },
-    "a closed task was not backed up": {
-        "value": {
-            "stdout": "Exit code 1\n[cheese] 已结束的任务 t2 同步失败：Connection reset"
-        }
-    },
     "the command failed": {"error": "Stop hook failed"},
     "it outlasted its wait": {"value": {"stdout": "", "backgroundTaskId": "task-slow"}},
     "no answer": TimeoutError("no answer"),
@@ -331,6 +328,50 @@ async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
     assert host.released_at is None
     assert [home.session_id for home in homes] == [None]
     assert session.execution_request["retained_leases"] == []
+
+
+async def test_a_frozen_sandbox_is_not_checkpointed_on_its_way_out(client, monkeypatch):
+    """The sandbox was checkpointed before it was frozen and nothing ran since:
+    its stopped processes could not run `cheese sync` now, so the switch leaves
+    it alone."""
+    room = await _room(client, on_cloud=True)
+    async with client.test_factory() as db:
+        host = CloudHost(
+            machine_id=72,
+            customer_id=7,
+            account_id=9,
+            offering_id=1,
+            hostname="frozen-host",
+            login_user="cheese",
+            cores=2,
+            memory_mb=4096,
+            disk_gb=20,
+            status=MachineStatus.running,
+            device_id=room.old_device,
+        )
+        db.add(host)
+        await db.flush()
+        db.add(
+            SandboxHome(
+                host_id=host.id,
+                spec="standard",
+                project_id=room.project_id,
+                topic_id=room.topic_id,
+                room_resource_id=room.lease["room_resource_id"],
+                resource_id=room.lease["resource_id"],
+                session_id=room.session_id,
+                active_at=datetime.now(UTC),
+                frozen_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+    remote = _machines(monkeypatch)
+
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
+
+    assert switched.status_code == 200, switched.text
+    remote.assert_not_awaited()
+    assert (await _environment(client, room))["device_id"] == room.new_device
 
 
 class _IdleMachine:

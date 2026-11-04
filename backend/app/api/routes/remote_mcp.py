@@ -35,12 +35,14 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sentences import exception_text, say
+from app.core.single_use_state import SingleUseUnavailableError
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import project_types, type_of_seat
 from app.domain.authz import policy
 from app.domain.device import mcp_machines
 from app.domain.identity.services import IdentityService
 from app.domain.membership.roster import roster
+from app.domain.oauth import handoff as oauth_handoff
 from app.domain.project.models import Project
 from app.domain.project_permissions import Permission
 from app.domain.remote_mcp import oauth, service, upstream
@@ -307,31 +309,79 @@ def _failure(exc: AppError | BaseError) -> dict[str, str]:
 @router.get("/mcp/oauth/callback")
 async def callback(
     request: Request,
-    db: DbSession,
     state: str = "",
     code: str = "",
     error: str = "",
     iss: str | None = None,
 ) -> RedirectResponse:
+    """Where the authorization server sends the browser back. Nothing is saved
+    here: what came back is held for the member who started the connection
+    (`oauth/handoff.py`), and the settings page claims it once signed in."""
     base = settings.frontend_url.rstrip("/")
     try:
         flow = service.read_state(state)
     except UnprocessableEntityError as exc:
         return RedirectResponse(f"{base}/?{urlencode(_failure(exc))}", 302)
-    back = f"{base}/projects/{flow['project']}/settings"
+    # The MCP section itself: it is the part of the page that claims the
+    # hand-off, and a page landing on another section would never claim it.
+    back = f"{base}/projects/{flow['project']}/settings/mcp"
     query = {"mcp": flow["server"]}
     try:
         if error or not code:
             raise ValidationError(
                 say("mcpAuthIncomplete", error=error or say("mcpNoAuthCode"))
             )
-        await service.finish_connect(db, flow, code=code, issuer=iss)
+        query["mcp_handoff"] = await oauth_handoff.keep(
+            "mcp", {"state": state, "code": code, "iss": iss}
+        )
+    except (AppError, BaseError) as exc:
+        query |= _failure(exc)
+    except SingleUseUnavailableError:
+        query["mcp_error"] = "failed"
+    landing = RedirectResponse(f"{back}?{urlencode(query)}#mcp", 302)
+    return back_in_app(request, landing) if flow.get("app") else landing
+
+
+@router.post(
+    "/projects/{project_id}/mcp/handoffs/{handoff}",
+    **typed_response(oauth_handoff.HandoffOutcome),
+)
+async def claim_handoff(
+    at: Annotated[InProject, Can(Permission.configure_agents)],
+    handoff: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Finish the connection this browser came back with — only for the
+    member who started it, and only while they may still configure the
+    project's agents. Returns the outcome the settings page shows (``mcp``
+    with ``mcp_result`` or ``mcp_error``, as the callback used to land).
+
+    Who claims is settled before the hand-off is taken: a claim refused for
+    want of a session spends nothing, and the starter can sign in and land
+    again."""
+    handle = await manager(at, db, resolver)
+    held = await oauth_handoff.take(handoff)
+    if held is None or held.get("kind") != "mcp":
+        return ok({"query": {"mcp_error": "failed"}})
+    try:
+        flow = service.read_state(held["state"])
+    except UnprocessableEntityError as exc:
+        return ok({"query": _failure(exc)})
+    query = {"mcp": flow["server"]}
+    if flow["handle"] != handle or flow["project"] != str(at.project.id):
+        # Somebody else's connection, finished in this browser: spent, not saved.
+        invalid = UnprocessableEntityError(say("mcpAuthLinkInvalid"))
+        return ok({"query": query | _failure(invalid)})
+    try:
+        await service.finish_connect(
+            db, flow, code=held["code"], issuer=held.get("iss")
+        )
     except (AppError, BaseError) as exc:
         query |= _failure(exc)
     else:
         query["mcp_result"] = "connected"
-    landing = RedirectResponse(f"{back}?{urlencode(query)}#mcp", 302)
-    return back_in_app(request, landing) if flow.get("app") else landing
+    return ok({"query": query})
 
 
 class ProxyIn(BaseModel):

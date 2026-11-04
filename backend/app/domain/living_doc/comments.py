@@ -26,6 +26,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.living_doc.models import (
     CommentOperation,
@@ -127,9 +128,22 @@ class CommentThreads:
 
     async def comment(self, comment_id: uuid.UUID) -> DocumentComment:
         """One comment, opening a thread or replying in one."""
+        if isinstance(self.session, AsyncSession):
+            if self.session.autoflush:
+                await self.session.flush()
+            found, cached = recall(self.session, ("doc_comment_row", comment_id))
+            if found and cached is not None:
+                return cached
         row = await self.session.get(DocumentComment, comment_id)
         if row is None:
             raise NotFoundError(say("docCommentNotFound"))
+        if isinstance(self.session, AsyncSession):
+            remember(
+                self.session,
+                ("doc_comment_row", comment_id),
+                row,
+                tables=frozenset({"document_comments"}),
+            )
         return row
 
     async def open(
@@ -159,14 +173,26 @@ class CommentThreads:
         await self.session.flush()
         return comment
 
-    async def describe(self, comment: DocumentComment) -> dict:
+    async def describe(
+        self,
+        comment: DocumentComment,
+        *,
+        known_replies: list[DocumentComment] | None = None,
+    ) -> dict:
         thread = await self.session.get(DocumentThread, comment.id)
         assert thread is not None
-        replies = await self.session.scalars(
-            select(DocumentComment)
-            .where(DocumentComment.thread_id == comment.id)
-            .order_by(DocumentComment.sequence)
-        )
+        if known_replies is not None:
+            replies: list[DocumentComment] = known_replies
+        elif not thread.reply_count:
+            replies = []
+        else:
+            replies = list(
+                await self.session.scalars(
+                    select(DocumentComment)
+                    .where(DocumentComment.thread_id == comment.id)
+                    .order_by(DocumentComment.sequence)
+                )
+            )
         return {
             "comment": comment_out(comment),
             "revision": thread.revision,
@@ -177,6 +203,44 @@ class CommentThreads:
             ],
         }
 
+    async def describe_many(self, comments: list[DocumentComment]) -> list[dict]:
+        if not comments:
+            return []
+        ids = [c.id for c in comments]
+        threads = {
+            t.id: t
+            for t in await self.session.scalars(
+                select(DocumentThread).where(DocumentThread.id.in_(ids))
+            )
+        }
+        with_replies = [tid for tid, t in threads.items() if t.reply_count > 0]
+        replies_by_thread: dict[uuid.UUID, list[DocumentComment]] = {}
+        if with_replies:
+            for reply in await self.session.scalars(
+                select(DocumentComment)
+                .where(DocumentComment.thread_id.in_(with_replies))
+                .order_by(DocumentComment.thread_id, DocumentComment.sequence)
+            ):
+                if reply.thread_id is not None:
+                    replies_by_thread.setdefault(reply.thread_id, []).append(reply)
+        out: list[dict] = []
+        for comment in comments:
+            thread = threads.get(comment.id)
+            assert thread is not None
+            replies = replies_by_thread.get(comment.id, [])
+            out.append(
+                {
+                    "comment": comment_out(comment),
+                    "revision": thread.revision,
+                    "state": thread.state,
+                    "replies": [
+                        {"sequence": r.sequence, "comment": comment_out(r)}
+                        for r in replies
+                    ],
+                }
+            )
+        return out
+
     async def mutate(
         self,
         subject: Subject,
@@ -186,28 +250,31 @@ class CommentThreads:
         expected_revision: int,
         action: str,
         content: str | None = None,
+        locked: bool = False,
     ) -> dict:
-        await self.lock(subject)
+        if not locked:
+            await self.lock(subject)
         comment = await self.root(subject, comment_id)
-        thread = await self.session.get(DocumentThread, comment.id)
+        thread = await self.session.get(
+            DocumentThread, comment.id, populate_existing=True
+        )
         assert thread is not None
-        await self.session.refresh(thread)
         if thread.revision != expected_revision:
             raise ConflictError(say("commentThreadUpdated"))
+        reply_row: DocumentComment | None = None
         if action == "reply":
             if thread.state != "open":
                 raise ConflictError(say("commentResolvedReopenFirst"))
             assert content is not None
             thread.reply_count += 1
-            self.session.add(
-                DocumentComment(
-                    **self._subject_columns(subject),
-                    thread_id=comment.id,
-                    sequence=thread.reply_count,
-                    author=author,
-                    content=content,
-                )
+            reply_row = DocumentComment(
+                **self._subject_columns(subject),
+                thread_id=comment.id,
+                sequence=thread.reply_count,
+                author=author,
+                content=content,
             )
+            self.session.add(reply_row)
         else:
             target = "resolved" if action == "resolve" else "open"
             if thread.state == target:
@@ -215,7 +282,17 @@ class CommentThreads:
             thread.state = target
         thread.revision += 1
         await self.session.flush()
-        return await self.describe(comment)
+        if reply_row is not None and isinstance(self.session, AsyncSession):
+            remember(
+                self.session,
+                ("doc_comment_row", reply_row.id),
+                reply_row,
+                tables=frozenset({"document_comments"}),
+            )
+        known_replies = (
+            [reply_row] if reply_row is not None and thread.reply_count == 1 else None
+        )
+        return await self.describe(comment, known_replies=known_replies)
 
 
 class FileCommentOperations:

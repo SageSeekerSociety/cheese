@@ -3,6 +3,8 @@
 import asyncio
 import hashlib
 import json
+import logging
+import math
 import mimetypes
 import re
 import time
@@ -21,7 +23,7 @@ from starlette.websockets import WebSocket, WebSocketState
 
 from app.api.auth import ActorResolver
 from app.api.preview_relay import relay_http, relay_ws
-from app.api.preview_runtime import RUNTIME_SCRIPT, inject_runtime_script
+from app.api.preview_runtime import HTML_MEDIA, RUNTIME_SCRIPT, inject_runtime_script
 from app.core import origins, scoped_jwt
 from app.core.config import settings
 from app.core.db import get_db
@@ -29,9 +31,15 @@ from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
+from app.domain.machine.preview_wake import (
+    PREVIEW_TOUCH_STEP_S,
+    touch_preview_activity,
+)
 from app.domain.remote_mcp import apps
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_origin
+
+logger = logging.getLogger("cheese.preview_host")
 
 AUTH_PATH = "/_cheese/session"
 # 房间文件在这个内容域上的地址。它和 `AUTH_PATH` 同住 `/_cheese/` 这个命名空间：
@@ -246,9 +254,6 @@ def _destination(path: str) -> bool:
     )
 
 
-HTML_MEDIA = {"text/html", "application/xhtml+xml"}
-
-
 def _served_body(data: bytes, media: str | None) -> bytes:
     """这一段字节发出去时的样子：HTML 文档装上运行时，其余原样。
 
@@ -449,6 +454,20 @@ class PreviewHostMiddleware:
                 # A third party's View: fetched from its server here (the session
                 # is still open for that read) and served under its own policy.
                 return await self.mcp_app(session, place, request, resource)
+            if resource and resource["kind"] == "app":
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    resource["seat"],
+                    project_id=place.project_id,
+                )
+            elif artifact is not None and artifact.mime_type == APP_MIME:
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    artifact.author,
+                    project_id=place.project_id,
+                )
         if target is not None:
             if request.method not in {"GET", "HEAD"}:
                 return Response(status_code=405)
@@ -558,6 +577,39 @@ class PreviewHostMiddleware:
         response.headers["Content-Security-Policy"] = _mcp_app_csp(entry)
         return response
 
+    def _touch_on_use(self, conversation_id, seat, project_id, touches: set):
+        """What a live connection to the preview (a dev server's HMR socket)
+        calls for each message the page sends that is not a keep-alive: the
+        sandbox is touched, at most once per ``PREVIEW_TOUCH_STEP_S``, each
+        time with a session of its own. A page only held open sends nothing,
+        and its sandbox goes idle and freezes like any other; the next request
+        thaws it."""
+        last = -math.inf
+
+        async def touch() -> None:
+            try:
+                async with self.sessions() as sessions:
+                    session = await anext(sessions)
+                    await touch_preview_activity(
+                        session, conversation_id, seat, project_id=project_id
+                    )
+            except Exception:
+                logger.warning(
+                    "keeping a previewed sandbox in use failed", exc_info=True
+                )
+
+        def used() -> None:
+            nonlocal last
+            now = time.monotonic()
+            if now - last < PREVIEW_TOUCH_STEP_S:
+                return
+            last = now
+            task = asyncio.create_task(touch())
+            touches.add(task)
+            task.add_done_callback(touches.discard)
+
+        return used
+
     async def websocket(
         self, websocket: WebSocket, topic_id: uuid.UUID, content: str | None = None
     ) -> None:
@@ -587,13 +639,25 @@ class PreviewHostMiddleware:
                     if artifact is None or artifact.mime_type != APP_MIME:
                         raise NotFoundError("Preview unavailable")
                     seat = artifact.author
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    seat,
+                    project_id=place.project_id,
+                )
             # No DB session or read transaction lives for the HMR connection.
+            # What the page sends over it keeps the sandbox in use as its HTTP
+            # requests do; holding it open does not (`_touch_on_use`).
+            touches: set[asyncio.Task] = set()
             async with asyncio.timeout(max(0, claims["exp"] - time.time())):
                 await relay_ws(
                     websocket,
                     topic_id,
                     seat,
                     **({"instance": resource["instance"]} if resource else {}),
+                    on_use=self._touch_on_use(
+                        place.conversation_id, seat, place.project_id, touches
+                    ),
                 )
         except (AppError, BaseError, TimeoutError):
             if websocket.application_state != WebSocketState.DISCONNECTED:
