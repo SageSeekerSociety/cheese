@@ -210,10 +210,12 @@ useScreenHeader(() =>
       />
       <template v-if="processTurn">
         <div class="thread-pane__process-head">
+          <!-- 图标在字前面：`icon` 是纯图标按钮的写法，给了它 BaseButton 就不画插槽里的
+               字，这一颗会变成一颗没有名字的箭头。 -->
           <BaseButton
             kind="ghost"
             size="sm"
-            icon="mdi-arrow-left"
+            prepend-icon="mdi-arrow-left"
             data-testid="thread-process-back"
             @click="processTurn = null"
             >{{ t('work.room.thread.backToThread') }}</BaseButton

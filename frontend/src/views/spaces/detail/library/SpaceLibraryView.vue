@@ -261,6 +261,16 @@ const pane = usePaneWidth('cheese.library.previewShare', detailRef)
     >
       <PaneHandle v-if="wide" :pane="pane" />
       <header class="slib-detail__head">
+        <!-- 和项目资料库同一处：关一栏的那一颗钉在右上角，不跟下载挤在同一排。 -->
+        <BaseButton
+          v-if="wide"
+          icon="mdi-close"
+          size="sm"
+          class="slib-detail__close"
+          :title="t('spaces.materials.close')"
+          :aria-label="t('spaces.materials.close')"
+          @click="emit('close')"
+        />
         <h2 v-if="wide" class="t-title slib-detail__name" data-user-content>{{ selected.name }}</h2>
         <p class="slib-detail__meta t-meta c-muted">
           <span v-if="selected.uploaderName" data-user-content>{{ selected.uploaderName }}</span>
@@ -281,9 +291,6 @@ const pane = usePaneWidth('cheese.library.previewShare', detailRef)
         <div v-if="wide" class="slib-detail__actions">
           <BaseButton kind="primary" size="sm" prepend-icon="mdi-download-outline" @click="emit('download', selected)">
             {{ t('spaces.materials.download') }}
-          </BaseButton>
-          <BaseButton size="sm" prepend-icon="mdi-close" @click="emit('close')">
-            {{ t('spaces.materials.close') }}
           </BaseButton>
         </div>
       </header>
@@ -521,8 +528,17 @@ const pane = usePaneWidth('cheese.library.previewShare', detailRef)
   flex: none;
   flex-direction: column;
   gap: 4px;
-  padding: 12px 20px;
+  /* 右边留出角落那颗 ✕ 的位置：名字和来源行再长也不从它底下穿过去。 */
+  padding: 12px 44px 12px 20px;
   border-bottom: 1px solid var(--line);
+}
+
+/* 钉在整栏的右上角，不跟着头栏里那几行文字重排。 */
+.slib-detail__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: var(--z-raised);
 }
 
 .slib-detail--phone .slib-detail__head {
