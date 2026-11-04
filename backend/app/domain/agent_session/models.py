@@ -113,6 +113,27 @@ class SessionPlace:
     lease: dict | None
 
 
+def place_of(
+    runtime_location: dict | None, work_lease: dict | None
+) -> SessionPlace | None:
+    """The place a session's two columns describe, or None where it has none.
+
+    The one construction of a `SessionPlace` from stored columns. Both the
+    entity and the column-only read of it
+    (`agent_session.repositories.PlacedRow`) call this, so a key added here
+    reaches both instead of one.
+    """
+    if not runtime_location:
+        return None
+    return SessionPlace(
+        machine=runtime_location["device_id"],
+        channel=runtime_location["channel"],
+        resource_id=runtime_location["resource_id"],
+        runtime=runtime_location.get("runtime") or {},
+        lease=work_lease,
+    )
+
+
 #: The device a session's lease is on, as `ix_agent_sessions_lease_device`
 #: indexes it. The key is written as a literal, not bound, so the index serves
 #: a prepared statement's generic plan too (`LEASE_DEVICE`).
@@ -213,16 +234,7 @@ class AgentSession(UuidPk, Timestamps, Base):
         ``lease``（工作机器）是**房间**那一半，见 :class:`SessionPlace`：它跟着
         这一行走只是为了读的人当场看得见，解析它的是房间那一项。
         """
-        location = self.runtime_location
-        if not location:
-            return None
-        return SessionPlace(
-            machine=location["device_id"],
-            channel=location["channel"],
-            resource_id=location["resource_id"],
-            runtime=location.get("runtime") or {},
-            lease=self.work_lease,
-        )
+        return place_of(self.runtime_location, self.work_lease)
 
 
 class AgentEnvironment(Base):

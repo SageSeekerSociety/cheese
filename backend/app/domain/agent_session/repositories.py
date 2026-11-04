@@ -24,6 +24,7 @@ from app.domain.agent_session.models import (
     AgentRead,
     AgentSession,
     SessionPlace,
+    place_of,
 )
 from app.domain.conversation.services import of_room, room_column
 from app.domain.topic.models import Topic
@@ -42,18 +43,8 @@ class PlacedRow:
     work_lease: dict | None
 
     def place(self) -> SessionPlace | None:
-        """The session's place — the same answer as ``AgentSession.place()``,
-        from the columns selected above rather than a loaded entity."""
-        location = self.runtime_location
-        if not location:
-            return None
-        return SessionPlace(
-            machine=location["device_id"],
-            channel=location["channel"],
-            resource_id=location["resource_id"],
-            runtime=location.get("runtime") or {},
-            lease=self.work_lease,
-        )
+        """The session's place, built by the same function the entity uses."""
+        return place_of(self.runtime_location, self.work_lease)
 
 
 class AgentSessionRepository:
@@ -461,7 +452,7 @@ class AgentSessionRepository:
 
     async def placed_everywhere(
         self, *, harness: str | None = None, device_id: str | None = None
-    ) -> list[tuple[AgentSession, uuid.UUID, uuid.UUID]]:
+    ) -> list[tuple[PlacedRow, uuid.UUID, uuid.UUID]]:
         """Every placed session with its project and room, for a cold start.
 
         A channel re-adopts what outlived the backend, and to do that it needs
