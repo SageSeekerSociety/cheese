@@ -150,37 +150,31 @@ def classify_cli_notice(text: str) -> str | None:
     return None
 
 
-#: A compaction that could not be made room for, in the words the build puts on
-#: the turn's ending: `Prompt is too long · automatic compaction failed: …`.
+#: A compaction that was refused for size, in the words the build puts on the
+#: turn's ending: `Prompt is too long · automatic compaction failed: …`.
 #:
-#: Read before anything else and never by ``classify_cli_notice``: that one
-#: reads a line the build wrote INSTEAD of answering, and this is a sentence
-#: about a different call — the summary this conversation needs before it can
-#: speak again. It is longer than a CLI notice and ends with whatever the
-#: summarising call itself failed on, so matching its opening is the only part
-#: that is stable (`Prompt is too long` alone is what the build says when no
-#: compaction was asked for).
+#: Both halves are required. `Prompt is too long` alone is NOT this failure:
+#: the build also says it for an input it found too long for another reason,
+#: and for a turn stopped while its conversation was being compacted — states
+#: a retry does get past (its own release notes name both as fixes). Only the
+#: compound sentence means the summarising call itself could not be made.
+#:
+#: Never through ``classify_cli_notice``: that one reads a line the build wrote
+#: INSTEAD of answering, and this is a sentence about a different call.
 _COMPACT_REFUSED = re.compile(
-    r"^(?:Prompt is too long\b.*\bautomatic compaction failed\b"
-    r"|\bautomatic compaction failed\b)",
+    r"Prompt is too long\b.*\bautomatic compaction failed\b|\bautomatic compaction failed\b",
     re.I | re.S,
 )
-#: The same state one step later: an input that is refused because the window
-#: is full, with no compaction mentioned. What it means for the reader is the
-#: same — this conversation does not fit, and asking again sends the same
-#: conversation.
-_PROMPT_TOO_LONG = re.compile(r"^Prompt is too long\b", re.I)
 
 
 def is_compaction_refused(text: str | None) -> bool:
-    """Whether this failure is a conversation too long for its window, whose
-    own compaction could not run.
+    """Whether this failure is a conversation whose own compaction could not run.
 
     A state no retry changes and no wait passes: the request that would shrink
-    the conversation is the one that is being refused, so every later turn
-    sends the same thing and is refused the same way. It is the one failure
-    whose right advice is not 「再试一次」 (`turn.state.notices`)."""
+    the conversation is the one being refused, so every later turn sends the
+    same thing and is refused the same way. It is the one failure whose right
+    advice is not 「再试一次」 (`turn.state.notices`)."""
     said = (text or "").strip()
     if not said:
         return False
-    return bool(_COMPACT_REFUSED.search(said) or _PROMPT_TOO_LONG.search(said))
+    return bool(_COMPACT_REFUSED.search(said))

@@ -287,11 +287,11 @@ def test_a_conversation_too_long_to_compact_is_recognised_as_its_own_failure():
     from app.domain.agent.platform_failures import is_compaction_refused
 
     assert is_compaction_refused(REFUSED_BY_A_FULL_CONVERSATION)
-    # The same state with no compaction named: an input refused because the
-    # window is full.
-    assert is_compaction_refused("Prompt is too long: 210000 tokens > 200000")
-    # A compaction that failed for a reason a retry does pass is not this one:
-    # that one is kept to the platform's own retry (`resumable_failures`).
+    # `Prompt is too long` alone is NOT it: the build says that for an input
+    # too long for another reason, and for a turn stopped mid-compaction —
+    # both states a retry gets past (the build's own release notes).
+    assert not is_compaction_refused("Prompt is too long: 210000 tokens > 200000")
+    # Nor is an ordinary failed model call.
     assert not is_compaction_refused("API Error: 429 rate limited")
     assert not is_compaction_refused("")
 
