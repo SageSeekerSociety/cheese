@@ -32,19 +32,28 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
     <section v-if="file" class="tfp" :class="{ 'tfp--fit': tooLarge }" data-testid="task-file-preview">
       <header class="tfp__head">
         <h2 class="tfp__name t-title" data-user-content>{{ file.name }}</h2>
-        <span class="tfp__size t-meta-read t-num">{{ fmtBytes(file.size) }}</span>
-        <BaseButton
-          kind="primary"
-          size="sm"
-          prepend-icon="mdi-download-outline"
-          :loading="downloading"
-          @click="emit('download')"
-        >
-          {{ t('tasks.attachments.download') }}
-        </BaseButton>
-        <BaseButton size="sm" prepend-icon="mdi-close" @click="emit('close')">
-          {{ t('work.library.close') }}
-        </BaseButton>
+        <!-- 大小和两颗按钮成一组，靠 auto 外边距贴住右缘：标题长短不同、折行到第二行时，
+             它们都还在这只弹窗的右边。 -->
+        <span class="tfp__actions">
+          <span class="tfp__size t-meta-read t-num">{{ fmtBytes(file.size) }}</span>
+          <BaseButton
+            kind="primary"
+            size="sm"
+            prepend-icon="mdi-download-outline"
+            :loading="downloading"
+            @click="emit('download')"
+          >
+            {{ t('tasks.attachments.download') }}
+          </BaseButton>
+          <!-- 关在这只弹窗的右上角，不排在下载右边当第二颗动作。 -->
+          <BaseButton
+            icon="mdi-close"
+            size="sm"
+            :title="t('tasks.attachments.close')"
+            :aria-label="t('tasks.attachments.close')"
+            @click="emit('close')"
+          />
+        </span>
       </header>
       <div class="tfp__body">
         <p v-if="tooLarge" class="tfp__large t-body c-muted">
@@ -91,6 +100,14 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* 自动外边距只吸收它所在那一行的富余空间：标题独占一行时，这一组照样贴右缘。 */
+.tfp__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .tfp__size {

@@ -8,9 +8,11 @@ const emit = defineEmits<{ (e: 'toggle'): void }>()
 </script>
 
 <template>
+  <!-- 图标在字前面（`prepend-icon`），不用 `icon`：`icon` 是纯图标按钮的写法，给了它
+       插槽里的「圈选」两个字就不画了，这一颗会变成一颗看不懂的方块图标。 -->
   <BaseButton
     kind="ghost"
-    :icon="on ? 'mdi-cursor-default-click' : 'mdi-vector-square'"
+    :prepend-icon="on ? 'mdi-cursor-default-click' : 'mdi-vector-square'"
     size="sm"
     class="pick-toggle"
     :class="{ 'pick-toggle--on': on }"
