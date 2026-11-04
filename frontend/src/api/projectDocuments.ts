@@ -1,5 +1,6 @@
 // 项目自己的文档：资料库里那些能一起改的文档。对话自带的那一份不在列表里，
 // 但资料库的搜索找得到它，可以另存一份进来。
+import type { LibrarySort } from '../lib/libraryQuery'
 import type { DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
 import { t } from '../i18n'
@@ -16,14 +17,20 @@ const one = (documentId: string) => `/documents/${encodeURIComponent(documentId)
 /** 列表里的一份文档，带着它在资料库页那张混排的表里的位置（后端 `app/core/rank.py`）。 */
 export type ListedDocument = ProjectDocument & { rank: string }
 
-/** 项目自己的文档，一页一页地给，最近改过的在前；`next` 是下一页的游标。 */
+/** 项目自己的文档，一页一页地给，最近改过的在前；`next` 是下一页的游标。
+ *
+ *  `sort` 是资料库页那个排序框：给了 `asc` / `desc` 就和资料库里的文件、文件夹排进
+ *  同一条时间线，位置可以放在一起比。 */
 export function listProjectDocuments(
   projectId: string,
   cursor: string | null = null,
-  limit = 50
+  limit = 50,
+  sort: LibrarySort = 'off'
 ): Promise<{ data: ListedDocument[]; next: string | null }> {
   const params = new URLSearchParams({ limit: String(limit) })
   if (cursor) params.set('cursor', cursor)
+  // `off` 不写：不排序时请求和从前一模一样。
+  if (sort !== 'off') params.set('sort', sort)
   return request<{ data: ListedDocument[]; next: string | null }>(`${base(projectId)}?${params}`).then((page) => {
     // 项目的文档都带着它的项目；团队自己的文档不在这一页里，也没有编号可记。
     rememberNumbered(

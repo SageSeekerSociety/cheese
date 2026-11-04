@@ -182,6 +182,99 @@ async def _folders(
     ]
 
 
+async def _timeline_folders(
+    session: AsyncSession,
+    shelf: Shelf,
+    prefix: str,
+    spot: rank.Spot | None,
+    *,
+    descending: bool,
+    limit: int,
+    hidden: int | None = None,
+) -> list[dict]:
+    """升 / 降这两档里文件夹的那一半：按里面最近放进一份的时间排，和文件同一条线。"""
+    rest = func.substr(Row.name, len(prefix) + 1)
+    name = func.split_part(rest, "/", 1).label("name")
+    grouped = (
+        select(
+            name,
+            func.count().label("count"),
+            func.max(Row.created_at).label("latest"),
+        )
+        .where(
+            _current(shelf, hidden),
+            Row.name.like(f"{_escape(prefix)}%", escape="\\"),
+            func.strpos(rest, "/") > 0,
+        )
+        .group_by(name)
+        .subquery()
+    )
+    by_bytes = grouped.c.name.collate("C")
+    # 游标那一段是整条路径（文件的 rank 写的是整条路径）；文件夹按最后一层聚出来，
+    # 所以比较前把这一层的前缀去掉——同一层里前缀是个常数，先后不变。
+    tie = spot.tie[len(prefix) :] if spot is not None and spot.tie.startswith(prefix) else (spot.tie if spot else "")
+    if spot is not None:
+        beyond = (
+            or_(
+                grouped.c.latest < spot.at,
+                and_(grouped.c.latest == spot.at, by_bytes > tie),
+            )
+            if descending
+            else or_(
+                grouped.c.latest > spot.at,
+                and_(grouped.c.latest == spot.at, by_bytes > tie),
+            )
+        )
+        query = select(grouped).where(beyond)
+    else:
+        query = select(grouped)
+    order = (
+        (grouped.c.latest.desc(), by_bytes)
+        if descending
+        else (grouped.c.latest, by_bytes)
+    )
+    return [
+        {
+            "type": "folder",
+            "path": f"{prefix}{folder.name}",
+            "name": folder.name,
+            "count": folder.count,
+            "modified": folder.latest.timestamp(),
+            "readonly": False,
+            "rank": rank.timeline(
+                folder.latest, f"{prefix}{folder.name}", descending=descending
+            ),
+        }
+        for folder in await session.execute(query.order_by(*order).limit(limit))
+    ]
+
+
+async def _timeline_task_folder(
+    session: AsyncSession, task_id: int, *, descending: bool
+) -> list[dict]:
+    """`题目` 那个文件夹在时间线上的那一行（还没算它这一页给不给）。"""
+    count, latest = (
+        await session.execute(
+            select(func.count(), func.max(Row.created_at)).where(
+                _current(Shelf.of_task(task_id))
+            )
+        )
+    ).one()
+    if not count:
+        return []
+    return [
+        {
+            "type": "folder",
+            "path": mount.FOLDER,
+            "name": mount.FOLDER,
+            "count": count,
+            "modified": latest.timestamp(),
+            "readonly": True,
+            "rank": rank.timeline(latest, mount.FOLDER, descending=descending),
+        }
+    ]
+
+
 async def _task_folder(
     session: AsyncSession, task_id: int, after: str | None
 ) -> list[dict]:
@@ -240,6 +333,153 @@ async def _items(
     return await _describe(session, shelf, rooms, rows)
 
 
+def _by_name() -> ColumnElement:
+    """名字按字节比（`COLLATE "C"`）：和 `rank.timeline` 里那一段的先后一致。"""
+    return Row.name.collate("C")
+
+
+async def _timeline(
+    session: AsyncSession,
+    shelf: Shelf,
+    rooms: dict[uuid.UUID, dict],
+    where: list[ColumnElement[bool]],
+    spot: rank.Spot | None,
+    *,
+    descending: bool,
+    limit: int,
+) -> list[dict]:
+    """升 / 降这两档里文件的那一半：只按时间和名字排，和文件夹排进同一条线。
+
+    上一页最后一行之前的那些不再给：降序时 `at` 更早的、或者同一刻名字更靠后的；
+    升序反过来。"""
+    by_name = _by_name()
+    if spot is not None:
+        beyond = (
+            or_(Row.created_at < spot.at, and_(Row.created_at == spot.at, by_name > spot.tie))
+            if descending
+            else or_(Row.created_at > spot.at, and_(Row.created_at == spot.at, by_name > spot.tie))
+        )
+        where = [*where, beyond]
+    order = (Row.created_at.desc(), by_name) if descending else (Row.created_at, by_name)
+    rows = list(
+        await session.scalars(select(Row).where(*where).order_by(*order).limit(limit))
+    )
+    entries = await _describe(session, shelf, rooms, rows)
+    return [
+        {**entry, "rank": rank.timeline(row.created_at, row.name, descending=descending)}
+        for row, entry in zip(rows, entries, strict=True)
+    ]
+
+
+async def _page_on_timeline(
+    session: AsyncSession,
+    shelf: Shelf,
+    rooms: dict[uuid.UUID, dict],
+    *,
+    dir: str,
+    flat: bool,
+    q: str,
+    kind: str | None,
+    descending: bool,
+    after: str | None,
+    limit: int,
+) -> tuple[list[dict], str | None]:
+    """`sort` 选了升或降时的一页：文件夹和文件排进同一条时间线。
+
+    两边各自从游标之后取一页，按位置并起来取前 `limit` 行；没取完的那一边下页接着
+    取，所以往下翻得到的就是一次全排好的顺序。
+
+    挂题目的项目里，`题目/` 底下是另一张表（题目的资料库）：整层平铺时它也整个排进来，
+    进到那一层里时只看它。"""
+    flat = flat or bool(q) or kind is not None
+    task_id = await mount.task_of(session, shelf)
+    hidden = await mount.mounted(session, shelf)
+    if task_id is not None and not flat and mount.under(dir):
+        entries, more = await _page_on_timeline(
+            session,
+            Shelf.of_task(task_id),
+            {},
+            dir=dir[len(mount.FOLDER) :].strip("/"),
+            flat=False,
+            q="",
+            kind=None,
+            descending=descending,
+            after=after,
+            limit=limit,
+        )
+        return [_mounted(entry) for entry in entries], more
+
+    spot = rank.read_timeline(after, descending=descending) if after else None
+    prefix = f"{dir}/" if dir and not flat else ""
+    # 一页之下，两边最多各出一页；多要一行用来判断「还有没有下一页」。
+    wanted = limit + 1
+    merged: list[dict] = []
+    if flat:
+        match = [_matching(q) if q else true(), _of_kind(kind) if kind else true()]
+        merged += await _timeline(
+            session,
+            shelf,
+            rooms,
+            [_current(shelf, hidden), *match],
+            spot,
+            descending=descending,
+            limit=wanted,
+        )
+        if task_id is not None:
+            task_shelf = Shelf.of_task(task_id)
+            merged += [
+                _mounted(entry)
+                for entry in await _timeline(
+                    session,
+                    task_shelf,
+                    {},
+                    [_current(task_shelf), *match],
+                    spot,
+                    descending=descending,
+                    limit=wanted,
+                )
+            ]
+    else:
+        merged += await _timeline_folders(
+            session,
+            shelf,
+            prefix,
+            spot,
+            descending=descending,
+            limit=wanted,
+            hidden=hidden,
+        )
+        rest = func.substr(Row.name, len(prefix) + 1)
+        merged += await _timeline(
+            session,
+            shelf,
+            rooms,
+            [
+                _current(shelf, hidden),
+                Row.name.like(f"{_escape(prefix)}%", escape="\\"),
+                func.strpos(rest, "/") == 0,
+            ],
+            spot,
+            descending=descending,
+            limit=wanted,
+        )
+        if task_id is not None and not prefix:
+            # 上一页已经给过它（位置不在游标之后）时不再给。
+            merged += [
+                entry
+                for entry in await _timeline_task_folder(
+                    session, task_id, descending=descending
+                )
+                if after is None or entry["rank"] > after
+            ]
+
+    merged.sort(key=lambda entry: entry["rank"])
+    if len(merged) <= limit:
+        return merged, None
+    merged = merged[:limit]
+    return merged, merged[-1]["rank"]
+
+
 async def page(
     session: AsyncSession,
     shelf: Shelf,
@@ -249,15 +489,34 @@ async def page(
     flat: bool = False,
     q: str = "",
     kind: str | None = None,
+    sort: str = rank.SORT_OFF,
     after: str | None = None,
     limit: int = 50,
 ) -> tuple[list[dict], str | None]:
     """一页清单和下一页的游标（没有下一页时是 None）。
 
     `flat`、或者给了 `q` / `kind`，就是整个资料库平铺地找，`dir` 不管；否则是
-    `dir` 这一层。`dir` 是 `题目` 或它底下的一层时，看的是挂在这里的题目资料库。"""
+    `dir` 这一层。`dir` 是 `题目` 或它底下的一层时，看的是挂在这里的题目资料库。
+
+    `sort` 是资料库页那个排序框：`off`（默认）文件夹一拨、其余一拨；`asc` / `desc`
+    把文件夹和文件排进同一条时间线，只比时间，同一刻才比名字。"""
     if kind is not None and kind not in KINDS:
         raise UnprocessableEntityError(say("libraryKindUnknown", kind=kind))
+    if sort not in rank.SORTS:
+        raise UnprocessableEntityError(say("librarySortUnknown", sort=sort))
+    if sort != rank.SORT_OFF:
+        return await _page_on_timeline(
+            session,
+            shelf,
+            rooms,
+            dir=dir,
+            flat=flat,
+            q=q,
+            kind=kind,
+            descending=sort == rank.SORT_DESC,
+            after=after,
+            limit=limit,
+        )
     cursor = rank.decode(after) if after else None
     flat = flat or bool(q) or kind is not None
     task_id = await mount.task_of(session, shelf)

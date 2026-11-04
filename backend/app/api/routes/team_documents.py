@@ -62,15 +62,34 @@ class TeamDocumentsOut(BaseModel):
 
 @teams.get("/{team_id}/documents", **typed_response(TeamDocumentsOut))
 async def team_documents(
-    team_id: int, db: DbSession, resolver: ActorResolverDep
+    team_id: int,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    sort: str = "off",
 ) -> dict:
     """The team's own documents — none of its projects' — the latest changed
-    first. A person's own documents are their personal team's."""
+    first. A person's own documents are their personal team's.
+
+    ``sort`` is the library page's sort box: ``asc`` / ``desc`` put these on the
+    same timeline as the team library's folders and files."""
+    if sort not in rank.SORTS:
+        raise UnprocessableEntityError(say("librarySortUnknown", sort=sort))
     await _member(db, resolver, team_id)
-    docs = await Documents(db).of_team(team_id)
+    if sort == rank.SORT_OFF:
+        rows = [
+            {**document_row(doc), "rank": rank.encode(1, doc.updated_at, str(doc.id))}
+            for doc in await Documents(db).of_team(team_id)
+        ]
+        return ok({"data": rows, "next": None})
+    descending = sort == rank.SORT_DESC
     rows = [
-        {**document_row(doc), "rank": rank.encode(1, doc.updated_at, str(doc.id))}
-        for doc in docs
+        {
+            **document_row(doc),
+            "rank": rank.timeline(
+                doc.updated_at, rank.title_tie(doc.title, doc.id), descending=descending
+            ),
+        }
+        for doc in await Documents(db).of_team_timeline(team_id, descending=descending)
     ]
     return ok({"data": rows, "next": None})
 
