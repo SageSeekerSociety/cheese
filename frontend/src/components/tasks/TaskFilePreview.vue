@@ -33,6 +33,8 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
       <header class="tfp__head">
         <h2 class="tfp__name t-title" data-user-content>{{ file.name }}</h2>
         <span class="tfp__size t-meta-read t-num">{{ fmtBytes(file.size) }}</span>
+        <!-- 标题长短不同，下载和 ✕ 始终贴右缘；标题折行到第二行时也还是贴右边。 -->
+        <span class="tfp__gap" />
         <BaseButton
           kind="primary"
           size="sm"
@@ -100,6 +102,10 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
 
 .tfp__size {
   color: var(--muted);
+}
+
+.tfp__gap {
+  flex: 1 1 auto;
 }
 
 .tfp__body {
