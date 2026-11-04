@@ -158,6 +158,12 @@ def _tell_operators(cause: str, project_id: uuid.UUID, turn_id: uuid.UUID, said:
         # The key the gateway's own balance alert was always sent under, so a
         # change of wording does not report an ongoing outage again.
         title, key = "AI 中继余额已用完", "ai-relay-out-of-credit"
+    elif cause == CONTEXT_FULL:
+        # Not a model call failing: the summary that conversation needed could
+        # not be made, so that conversation cannot go on until the model it
+        # needs is available again. Keyed by cause, so one room failing every
+        # few minutes reports once per alerting window, not once per turn.
+        title, key = "有一场对话已满、整理失败，暂时接不上话", "context-full"
     else:
         title, key = f"AI 调用失败：平台侧（{cause}）", f"model-error-{cause}"
     room_line = (
