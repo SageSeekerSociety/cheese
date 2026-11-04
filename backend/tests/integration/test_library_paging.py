@@ -147,3 +147,119 @@ def test_a_named_file_and_the_folder_list_are_there_without_paging(client):
 
     folders = client.get(f"/projects/{project_id}/library/folders").json()["data"]
     assert folders["folders"] == ["合同", "合同/2026", "归档"]
+
+
+def test_off_is_the_order_it_always_was(client):
+    """`sort=off`（也就是不给）和从前一模一样：文件夹一拨，其余一拨。"""
+    project_id = _project(client)
+    url = f"/projects/{project_id}/library"
+    _put_in(client, project_id, "老板.md")
+    _put_in(client, project_id, "x.md", "夹")
+    _put_in(client, project_id, "最新的.md")
+
+    default = [row["path"] for page in _pages(client, url) for row in page]
+    off = [row["path"] for page in _pages(client, url, sort="off") for row in page]
+    assert off == default == ["夹", "最新的.md", "老板.md"]
+
+
+def test_ascending_puts_folders_on_the_same_timeline(client):
+    """升序里文件夹不再单独一拨：谁的最近一份更早谁就靠前。"""
+    project_id = _project(client)
+    url = f"/projects/{project_id}/library"
+    _put_in(client, project_id, "一.md")
+    _put_in(client, project_id, "二.md", "夹")  # 夹 里最近一份，比 一.md 新
+    _put_in(client, project_id, "三.md")
+
+    rows = [row for page in _pages(client, url, sort="asc") for row in page]
+    labels = [_label(row) for row in rows]
+    # 这一层只列这一层的东西：`夹/二.md` 在文件夹里，这里只算「夹」那一行。
+    # 一.md 最早，然后是它放进来的 夹，最后是最新的 三.md。
+    assert labels == ["file:一.md", "folder:夹", "file:三.md"]
+    # 位置单调递增，正是这条时间线
+    assert [row["rank"] for row in rows] == sorted(row["rank"] for row in rows)
+
+    # 比起「关」那一档：文件夹不再被整拨提到最前
+    off = [_label(row) for page in _pages(client, url, sort="off") for row in page]
+    assert off == ["folder:夹", "file:三.md", "file:一.md"]
+
+
+def test_descending_is_the_same_timeline_the_other_way(client):
+    project_id = _project(client)
+    url = f"/projects/{project_id}/library"
+    _put_in(client, project_id, "一.md")
+    _put_in(client, project_id, "二.md", "夹")
+    _put_in(client, project_id, "三.md")
+
+    ascending = [
+        _label(row) for page in _pages(client, url, sort="asc") for row in page
+    ]
+    descending = [
+        _label(row) for page in _pages(client, url, sort="desc") for row in page
+    ]
+    assert descending == list(reversed(ascending))
+
+
+def test_a_bad_sort_is_refused(client):
+    project_id = _project(client)
+    r = client.get(f"/projects/{project_id}/library", params={"sort": "size"})
+    assert r.status_code == 422
+
+
+def test_the_timeline_pages_without_repeating_or_losing_a_row(client):
+    """一页一页地翻升降，和不翻页一次取完得到的顺序一样。"""
+    project_id = _project(client)
+    url = f"/projects/{project_id}/library"
+    for name in ("a.md", "b.md", "c.md", "d.md"):
+        _put_in(client, project_id, name)
+    _put_in(client, project_id, "x.md", "夹")
+
+    for sort in ("asc", "desc"):
+        paged = [
+            row["path"]
+            for page in _pages(client, url, sort=sort, limit=2)
+            for row in page
+        ]
+        whole = [
+            row["path"]
+            for page in _pages(client, url, sort=sort, limit=200)
+            for row in page
+        ]
+        assert paged == whole
+
+
+def test_documents_join_the_same_timeline(client):
+    """文档和文件、文件夹并进同一条线：两串按 rank 并起来就是一次排好的顺序。"""
+    project_id = _project(client)
+    _put_in(client, project_id, "a.md")
+    r = client.post(f"/projects/{project_id}/documents", json={"title": "文档甲"})
+    assert r.status_code == 200, r.text
+    _put_in(client, project_id, "b.md", "夹")
+
+    for sort in ("asc", "desc"):
+        library = [
+            row
+            for page in _pages(
+                client, f"/projects/{project_id}/library", sort=sort, limit=1
+            )
+            for row in page
+        ]
+        documents = [
+            row
+            for page in _pages(
+                client, f"/projects/{project_id}/documents", sort=sort, limit=1
+            )
+            for row in page
+        ]
+        merged = [
+            _label(row) for row in sorted(library + documents, key=lambda r: r["rank"])
+        ]
+        whole = [
+            _label(row)
+            for page in _pages(
+                client, f"/projects/{project_id}/library", sort=sort, limit=200
+            )
+            for row in page
+        ]
+        # 资料库这一串里没有文档；并起来之后文档落在它按时间该在的位置上
+        assert "doc:文档甲" in merged
+        assert [label for label in merged if label != "doc:文档甲"] == whole

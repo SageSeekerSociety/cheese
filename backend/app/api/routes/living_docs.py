@@ -206,6 +206,7 @@ async def project_documents(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    sort: str = "off",
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict:
@@ -213,17 +214,49 @@ async def project_documents(
     (`next` is the cursor of the following page, null at the end). A room's
     living document is the room's and is not listed, nor is one a conversation
     keeps — except to 芝士 working in that conversation, whose own writing it
-    is. The order is the one `app.core.rank` writes down, so the library page
-    can merge these with the library's own pages into one list."""
+    is.
+
+    ``sort`` is the library page's sort box: ``off`` is the order
+    `app.core.rank` writes down, so the library page can merge these with the
+    library's own pages into one list; ``asc`` / ``desc`` put them on the same
+    timeline as the library's folders and files — only the time, the title as
+    the tie-break, no group."""
+    if sort not in rank.SORTS:
+        raise UnprocessableEntityError(say("librarySortUnknown", sort=sort))
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     await authorize_in_project(resolver, actor, project_id)
-    after = rank.decode(cursor) if cursor else None
     origin = _origin(resolver, actor)
+    also_of_room = await conversations.room_of(db, origin) if origin else None
+    if sort != rank.SORT_OFF:
+        descending = sort == rank.SORT_DESC
+        spot = rank.read_timeline(cursor, descending=descending) if cursor else None
+        docs = await Documents(db).of_project_timeline(
+            project_id,
+            after=spot,
+            limit=limit + 1,
+            descending=descending,
+            also_of_room=also_of_room,
+        )
+        rows = [
+            {
+                **document_row(doc),
+                "rank": rank.timeline(
+                    doc.updated_at,
+                    rank.title_tie(doc.title, doc.id),
+                    descending=descending,
+                ),
+            }
+            for doc in docs[:limit]
+        ]
+        return ok(
+            {"data": rows, "next": rows[-1]["rank"] if len(docs) > limit else None}
+        )
+    after = rank.decode(cursor) if cursor else None
     docs = await Documents(db).of_project(
         project_id,
         after=after,
         limit=limit + 1,
-        also_of_room=await conversations.room_of(db, origin) if origin else None,
+        also_of_room=also_of_room,
     )
     rows = [
         {**document_row(doc), "rank": rank.encode(1, doc.updated_at, str(doc.id))}

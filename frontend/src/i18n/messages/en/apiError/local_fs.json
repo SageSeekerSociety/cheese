@@ -21,6 +21,7 @@
   "libraryNotARevision": "Not a revision",
   "libraryPathRelative": "path must be a relative path in the library",
   "libraryPrefixReserved": "{prefix}/ is reserved for the library. Channel files can't go there",
+  "librarySortUnknown": "There is no sort called \"{sort}\"",
   "libraryTaskFolderNeedsApprovedClaim": "This project's application isn't approved or is no longer valid, so {folder}/ can't be read",
   "libraryTaskFolderReadOnly": "The “{folder}” folder is read-only. It holds the task's materials: nothing can be added, replaced, renamed or deleted there",
   "libraryTeamMembersOnly": "Only members of this team can view its library",
