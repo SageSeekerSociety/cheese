@@ -1,4 +1,5 @@
 {
   "download": "Download",
-  "locked": "Start this task to download"
+  "locked": "Start this task to download",
+  "close": "Close"
 }
