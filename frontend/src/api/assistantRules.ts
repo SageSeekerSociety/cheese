@@ -97,11 +97,18 @@ export function setAssistantRoutine(id: string, action: 'pause' | 'resume' | 'de
     : request<AssistantRoutines>(`/assistant/routines/${id}/${action}`, { method: 'POST' })
 }
 
-/** 设置页那张表填的东西。除了「目标」，每一项都可以留空，芝士先补上再跑。 */
+/** 设置页那张表填的东西。除了「目标」，每一项都可以留空，芝士先补上再跑。
+ *
+ *  时间和芝士那张表的空是同一套（`routes/assistant_agent.py` 的 `RoutineIn`）：
+ *  每种频率只问它自己那一刻 —— 每时问第几分钟，每周问星期几，每月问几号，
+ *  「只在某一刻」问具体时刻。等任务审阅的那些要说是哪个任务（地址栏里的引用），
+ *  或者 `mine` 表示「我提的任务」；`decided` 还能只说采纳还是退回。 */
 export interface AssistantRoutineForm {
   title: string
   /** 「目标」：这一条要做的事，必填。 */
   note: string
+  /** 「补充说明」：目标没说到的，可以空着。 */
+  explain: string
   trigger: string
   freq: string
   time: string
@@ -110,6 +117,14 @@ export interface AssistantRoutineForm {
   day: number | null
   at: string
   timezone: string
+  /** `filed` / `decided`：我提的任何任务。 */
+  mine: boolean
+  /** `filed` / `decided`：这一个任务，地址栏里的引用（`ml-course/tasks/12`）。 */
+  task: string
+  /** `decided`：只说采纳（`accepted`）或退回（`rejected`）；空着是两种都算。 */
+  outcome: string
+  /** 事件规则只等第一次。 */
+  once: boolean
 }
 
 export function createAssistantRoutine(body: AssistantRoutineForm): Promise<AssistantRoutines> {

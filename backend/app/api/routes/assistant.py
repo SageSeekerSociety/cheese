@@ -49,7 +49,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
-from app.domain.agent.personal import citing, pages
+from app.domain.agent.personal import citing, pages, reading
 from app.domain.agent.personal import service as assistant
 from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.consumptions import Consumptions
@@ -59,10 +59,11 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant import changes, gate, proposals
+from app.domain.assistant import changes, gate, proposals, refs
 from app.domain.assistant import memory as assistant_memory
 from app.domain.assistant.permissions import Permission as RoutinePermission
 from app.domain.memory.files import MemoryFileError
+from app.domain.project import address
 from app.domain.project.services import ProjectService
 from app.domain.routine import personal as routine_personal
 from app.domain.space.services import SpaceService
@@ -1164,12 +1165,21 @@ async def list_routines(db: DbSession, auth: AuthUser) -> dict:
 
 class RoutineFormIn(BaseModel):
     """What the settings form holds. Every field but the target may be left
-    out: 芝士 fills the blanks before anything runs (``personal.FILLING``)."""
+    out: 芝士 fills the blanks before anything runs (``personal.FILLING``).
+
+    It carries the same blanks ``RoutineIn`` gives 芝士 (``routes/
+    assistant_agent.py``), because it is the same kind of rule: a schedule says
+    ``freq`` and that frequency's own moment (``minute`` for hourly, ``time``
+    and ``weekdays`` for weekly, ``time`` and ``day`` for monthly, ``at`` for
+    once), and an event rule says ``task`` or ``mine`` when it waits on a task,
+    and ``outcome`` when it waits on a decision."""
 
     title: str = Field(default="", max_length=120)
     #: 「目标」 — what a run does, in the person's own words. The one field the
     #: form will not save empty.
     note: str = Field(default="", max_length=4000)
+    #: 「补充说明」 — anything the target does not say. May be empty.
+    explain: str = Field(default="", max_length=4000)
     #: ``schedule`` or one of the events ``personal.EVENTS``; empty means «let
     #: 芝士 decide».
     trigger: str = ""
@@ -1181,6 +1191,15 @@ class RoutineFormIn(BaseModel):
     day: int | None = None
     at: str = ""
     timezone: str = ""
+    #: ``filed`` / ``decided``: any task the person asked for.
+    mine: bool = False
+    #: ``filed`` / ``decided``: this task, by its ref in the address bar
+    #: (``ml-course/tasks/12``) — the same ref 芝士 is given.
+    task: str = ""
+    #: ``decided``: only ``accepted`` or only ``rejected``.
+    outcome: str = ""
+    #: An event rule that waits for the first thing only.
+    once: bool = False
 
     def kept_spec(self) -> dict:
         return {
@@ -1192,13 +1211,49 @@ class RoutineFormIn(BaseModel):
                 "weekdays": self.weekdays,
                 "day": self.day,
                 "at": self.at,
+                "mine": self.mine,
+                "outcome": self.outcome,
+                "once": self.once,
             }.items()
-            if v not in ("", None)
+            if v not in ("", None, False)
         }
 
 
+async def _form_spec(db, pages: ProjectPages, body: RoutineFormIn) -> tuple[str, dict]:
+    """What the form says, as the rule keeps it.
+
+    A task an event rule waits on is named by the ref the person reads in the
+    address bar (``ml-course/tasks/12``), the same one 芝士 is given; it is
+    resolved to the task's id and title here, because a rule is matched against
+    happenings by id and describes itself by title. Whether the person may see
+    that task is the same question opening it asks, so it goes through
+    ``ProjectPages`` — the resolver, as a read.
+    """
+    note = body.note.strip()
+    if body.explain.strip():
+        note = f"{note}\n\n{body.explain.strip()}"
+    if body.trigger not in ("filed", "decided") or not body.task.strip():
+        return note, body.kept_spec()
+    ref = refs.parse(body.task.strip())
+    if ref is None:
+        raise BadRequestError(say("assistantRefUnknown", ref=body.task))
+    _, found = await reading.numbered(db, ref, address.Numbered.task)
+    # The title is what the rule reads back as «任务「……」提交审阅时», so it is
+    # kept with the id; ``ProjectPages`` answers whether the person may see the
+    # task, the same question opening it asks (a task's id is itself a place,
+    # carrying the room its roster and machine are the room's).
+    place = await pages.topic(found.id)
+    title = place.task.title if place.task is not None else ""
+    return note, body.kept_spec() | {"task": str(found.id), "taskTitle": title}
+
+
 @router.post("/routines", dependencies=[AS_ONESELF], **typed_response(RoutinesOut))
-async def create_routine(body: RoutineFormIn, db: DbSession, auth: AuthUser) -> dict:
+async def create_routine(
+    body: RoutineFormIn,
+    db: DbSession,
+    auth: AuthUser,
+    resolver: ActorResolverDep,
+) -> dict:
     """A rule saved from the settings page: no conversation behind it.
 
     The target is the one thing a rule must say; a name and a moment may be
@@ -1209,14 +1264,15 @@ async def create_routine(body: RoutineFormIn, db: DbSession, auth: AuthUser) -> 
     target = body.note.strip()
     if not target:
         raise ValidationError(say("assistantRoutineGoalRequired"))
+    note, spec = await _form_spec(db, ProjectPages(db, resolver), body)
     await routine_personal.create(
         db,
         user_id=auth.user_id,
         conversation_id=None,
         title=body.title,
-        note=target,
+        note=note,
         trigger=body.trigger,
-        spec=body.kept_spec(),
+        spec=spec,
     )
     await db.commit()
     return ok(await _routines_out(db, auth.user_id))
@@ -1232,6 +1288,7 @@ async def update_routine(
     body: RoutineFormIn,
     db: DbSession,
     auth: AuthUser,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Change a rule from the settings page. Filling in the blanks it was
     waiting on starts it; taking the goal away is refused. A rule that is
@@ -1242,14 +1299,15 @@ async def update_routine(
     target = body.note.strip()
     if not target:
         raise ValidationError(say("assistantRoutineGoalRequired"))
+    note, spec = await _form_spec(db, ProjectPages(db, resolver), body)
     await routine_personal.change(
         db,
         row,
         conversation_id=None,
         title=body.title,
-        note=target,
+        note=note,
         trigger=body.trigger or None,
-        spec=body.kept_spec() if body.trigger else None,
+        spec=spec if body.trigger else None,
     )
     await db.commit()
     return ok(await _routines_out(db, auth.user_id))

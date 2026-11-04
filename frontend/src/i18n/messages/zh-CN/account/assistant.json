@@ -69,26 +69,37 @@
     "form": {
       "title": "标题",
       "note": "目标",
+      "explain": "补充说明",
       "onTime": "时间",
       "onCondition": "条件",
       "freq": "频率",
       "time": "几点",
+      "minute": "第几分钟",
+      "day": "几号",
       "hourly": "每小时",
       "daily": "每天",
       "weekly": "每周",
       "monthly": "每月",
+      "once": "只在某一刻",
+      "onceOnly": "只做一次，等到就结束",
+      "task": "哪个任务",
+      "taskPlaceholder": "填地址栏里的那个（如 ml-course/tasks/12）；留空就是我提的任务",
+      "outcomeEither": "采纳或退回都算",
       "blankHint": "不填的项由芝士照目标补上，补完就开始。",
       "when": {
         "mention": "有人 {'@'} 我或回复我的支线",
         "review": "有审阅等我处理",
-        "filed": "我提的任务提交审阅",
-        "accepted": "任务被采纳",
-        "rejected": "任务被退回",
+        "filed": "任务提交审阅",
+        "decided": "任务的审阅有结果",
+        "accepted": "被采纳",
+        "rejected": "被退回",
         "due": "题目快截止",
         "invite": "收到邀请"
       },
       "whenLabel": "什么时候",
-      "goalRequired": "「目标」要填：芝士照它开工。"
+      "goalRequired": "「目标」要填：芝士照它开工。",
+      "weekdaysRequired": "每周至少选一天。",
+      "taskRequired": "要填哪个任务：地址栏里的那个引用。"
     }
   },
   "recent": {

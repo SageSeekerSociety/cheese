@@ -151,7 +151,7 @@
     "expired": "Expired"
   },
   "run": {
-    "routine": "Automation “{title}” started",
+    "routine": "Routine “{title}” started",
     "wait": "“{title}” started",
     "filed": "Task “{task}” went to review",
     "accepted": "Task “{task}”: the delivery was accepted",

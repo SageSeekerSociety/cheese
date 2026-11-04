@@ -69,26 +69,37 @@
     "form": {
       "title": "Title",
       "note": "Goal",
+      "explain": "Notes",
       "onTime": "Time",
       "onCondition": "Condition",
       "freq": "Frequency",
       "time": "At",
+      "minute": "Minute",
+      "day": "Day of the month",
       "hourly": "Hourly",
       "daily": "Daily",
       "weekly": "Weekly",
       "monthly": "Monthly",
+      "once": "At one moment",
+      "onceOnly": "Once, then it ends",
+      "task": "Which task",
+      "taskPlaceholder": "The address bar's ref (ml-course/tasks/12); empty for any task of mine",
+      "outcomeEither": "Either accepted or returned",
       "blankHint": "Anything left blank is filled in from the goal, then it starts.",
       "when": {
         "mention": "Someone {'@'}-mentions me or replies in my thread",
         "review": "A review is waiting on me",
-        "filed": "A task I asked for goes to review",
-        "accepted": "A task is accepted",
-        "rejected": "A task is returned",
+        "filed": "A task goes to review",
+        "decided": "A task's review is decided",
+        "accepted": "Accepted",
+        "rejected": "Returned",
         "due": "A challenge is close to due",
         "invite": "An invitation arrives"
       },
       "whenLabel": "When",
-      "goalRequired": "Fill in the goal — it is what Cheese works from."
+      "goalRequired": "Fill in the goal — it is what Cheese works from.",
+      "weekdaysRequired": "Pick at least one day of the week.",
+      "taskRequired": "Name the task by its address bar ref."
     }
   },
   "recent": {

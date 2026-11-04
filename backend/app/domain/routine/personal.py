@@ -266,7 +266,12 @@ def _event_said(trigger: str, spec: dict) -> str:
         return "空间题目快到提交截止时"
     if trigger == "invite":
         return "收到邀请时"
-    task = f"任务「{spec['taskTitle']}」" if spec.get("task") else "你提的任务"
+    # A rule naming a task always keeps its title with the id (the form and 芝士
+    # both write them together), but an old row or a hand-made one may not: the
+    # line falls back to the id rather than taking the whole list down with a
+    # KeyError.
+    named = spec.get("taskTitle") or spec.get("task")
+    task = f"任务「{named}」" if named else "你提的任务"
     if trigger == "filed":
         return f"{task}提交审阅时"
     outcome = spec.get("outcome")
@@ -1021,7 +1026,7 @@ def _first_message(
     opening = (
         f"用户在这段对话里让你等的事到了（「{routine.title}」：{describe(routine)}）。"
         if once(routine)
-        else f"自动化「{routine.title}」现在运行（{describe(routine)}）。"
+        else f"例行事务「{routine.title}」现在运行（{describe(routine)}）。"
     )
     return "\n".join(
         [

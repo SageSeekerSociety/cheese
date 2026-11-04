@@ -91,27 +91,75 @@ const deleting = ref<AssistantRoutine | null>(null)
 /** 正在填的那张表：`null` 是没开，`{routine: null}` 是新建。 */
 const form = ref<{ routine: AssistantRoutine | null } | null>(null)
 
-/** The blank events a person's own rule may wait for, in the order the form
-    lists them. The channel's rules are a different, shorter list. */
+/** 那七条条件，一颗一颗列出来，和改动清单一一对上。界面上「任务被采纳」和
+    「任务被退回」是两颗；存的时候是后端说的「审阅有结果」（``decided``）加上
+    结果，见 ``pickCondition``。 */
 const CONDITION_TRIGGERS = ['mention', 'review', 'filed', 'accepted', 'rejected', 'due', 'invite'] as const
 
-/** The form's six blanks, as the person left them. */
-const draft = ref({ title: '', note: '', onTime: false, freq: 'daily', time: '08:00', condition: '' })
+/** 0=周一 … 6=周日，和频道那张表、后端同一套编号。 */
+const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
+
+/** The form's blanks, as the person left them. Every one but the target may
+ *  be left empty: the backend fills blanks in by 芝士 before anything runs.
+ *  A schedule carries the moment its frequency needs and no other. */
+const draft = ref({
+  title: '',
+  note: '',
+  explain: '',
+  onTime: false,
+  freq: 'daily',
+  time: '08:00',
+  minute: 0,
+  weekdays: [0] as number[],
+  day: 1,
+  condition: '',
+  task: '',
+  outcome: '',
+  once: false,
+})
 /** Said after a save the backend refused (the target is the one required
  *  field): shown in the form, not as a toast somewhere else. */
 const formError = ref('')
 
 function openForm(routine: AssistantRoutine | null) {
   formError.value = ''
+  const spec = (routine?.spec ?? {}) as Record<string, unknown>
   draft.value = {
     title: routine?.title ?? '',
     note: routine?.note ?? '',
+    explain: '',
     onTime: routine ? routine.trigger === 'schedule' : false,
-    freq: (routine?.spec?.freq as string) ?? 'daily',
-    time: (routine?.spec?.time as string) ?? '08:00',
+    freq: (spec.freq as string) ?? 'daily',
+    time: (spec.time as string) ?? '08:00',
+    minute: (spec.minute as number) ?? 0,
+    weekdays: (spec.weekdays as number[]) ?? [0],
+    day: (spec.day as number) ?? 1,
     condition: routine && routine.trigger !== 'schedule' ? routine.trigger : '',
+    task: '',
+    outcome: (spec.outcome as string) ?? '',
+    once: routine?.once ?? false,
   }
   form.value = { routine }
+}
+
+/** What the frequency needs to be one unambiguous moment: hourly names its
+ *  minute, weekly its weekdays, monthly its day, once its moment. Empty of
+ *  the rest — a weekly with a day of the month would be read as the wrong
+ *  question. */
+function momentOf(): Record<string, unknown> {
+  if (!draft.value.onTime) return {}
+  switch (draft.value.freq) {
+    case 'hourly':
+      return { minute: draft.value.minute }
+    case 'weekly':
+      return { time: draft.value.time, weekdays: [...draft.value.weekdays].sort() }
+    case 'monthly':
+      return { time: draft.value.time, day: draft.value.day }
+    case 'once':
+      return { at: draft.value.time }
+    default:
+      return { time: draft.value.time }
+  }
 }
 
 function submitForm() {
@@ -121,30 +169,64 @@ function submitForm() {
     formError.value = t('account.assistant.routines.form.goalRequired')
     return
   }
+  if (draft.value.onTime && draft.value.freq === 'weekly' && !draft.value.weekdays.length) {
+    formError.value = t('account.assistant.routines.form.weekdaysRequired')
+    return
+  }
+  // 「哪个任务」留空就是「我提的任何任务」：那是这一族规则的常见写法，不该拦。
+  const event = !draft.value.onTime && draft.value.condition
   formError.value = ''
+  const moment = momentOf()
   emit('saveRoutine', now.routine?.id ?? null, {
     title: draft.value.title.trim(),
     note: draft.value.note.trim(),
+    explain: draft.value.explain.trim(),
     trigger: draft.value.onTime ? 'schedule' : draft.value.condition,
     freq: draft.value.onTime ? draft.value.freq : '',
-    time: draft.value.onTime ? draft.value.time : '',
-    minute: null,
-    weekdays: null,
-    day: null,
-    at: '',
+    time: (moment.time as string) ?? '',
+    minute: (moment.minute as number) ?? null,
+    weekdays: (moment.weekdays as number[]) ?? null,
+    day: (moment.day as number) ?? null,
+    at: (moment.at as string) ?? '',
     timezone: '',
+    mine: Boolean(event) && !draft.value.task.trim(),
+    task: event ? draft.value.task.trim() : '',
+    outcome: event && draft.value.condition === 'decided' ? draft.value.outcome : '',
+    once: event && draft.value.once,
   })
   form.value = null
 }
 
+/** 「任务被采纳」和「任务被退回」是同一件事的两种结果（后端叫 ``decided``，
+ *  ``outcome`` 说哪一种）。界面上仍是两颗，和清单的七条一一对上。 */
 function pickCondition(trigger: string) {
   draft.value.onTime = false
-  draft.value.condition = draft.value.condition === trigger ? '' : trigger
+  if (draft.value.condition === trigger && draft.value.outcome === '') {
+    draft.value.condition = ''
+    draft.value.outcome = ''
+    return
+  }
+  draft.value.condition = trigger === 'accepted' || trigger === 'rejected' ? 'decided' : trigger
+  draft.value.outcome = trigger === 'accepted' || trigger === 'rejected' ? trigger : ''
+}
+
+/** 一颗按钮是不是正选着：``accepted``/``rejected`` 看 ``outcome``，其余看
+ *  触发方式本身。 */
+function picked(trigger: string): boolean {
+  return trigger === 'accepted' || trigger === 'rejected'
+    ? draft.value.condition === 'decided' && draft.value.outcome === trigger
+    : draft.value.condition === trigger
 }
 
 function pickTime() {
   draft.value.onTime = true
   draft.value.condition = ''
+}
+
+/** 星期几：按 0=周一 存，和频道那张表、后端同一套编号。 */
+function toggleWeekday(day: number) {
+  const days = draft.value.weekdays
+  draft.value.weekdays = days.includes(day) ? days.filter((d) => d !== day) : [...days, day]
 }
 
 /** 「只有一次」 and「生成中」 and「没补上」 each read their own way. */
@@ -357,6 +439,10 @@ function last(r: AssistantRoutine): string {
             <span>{{ t('account.assistant.routines.form.note') }} *</span>
             <textarea v-model="draft.note" rows="3" maxlength="4000" autocomplete="off" />
           </label>
+          <label class="ast__field">
+            <span>{{ t('account.assistant.routines.form.explain') }}</span>
+            <textarea v-model="draft.explain" rows="2" maxlength="4000" autocomplete="off" />
+          </label>
           <div class="ast__switch" role="radiogroup" :aria-label="t('account.assistant.routines.form.whenLabel')">
             <label>
               <input type="radio" name="ast-when" :checked="draft.onTime" @change="pickTime" />
@@ -375,11 +461,26 @@ function last(r: AssistantRoutine): string {
                 <option value="daily">{{ t('account.assistant.routines.form.daily') }}</option>
                 <option value="weekly">{{ t('account.assistant.routines.form.weekly') }}</option>
                 <option value="monthly">{{ t('account.assistant.routines.form.monthly') }}</option>
+                <option value="once">{{ t('account.assistant.routines.form.once') }}</option>
               </select>
             </label>
-            <label class="ast__field">
+            <!-- 每种频率只问它自己那一刻：每时问第几分钟，每周问星期几，
+                 每月问几号，其余问几点。留空的一项由芝士补。 -->
+            <label v-if="draft.freq === 'hourly'" class="ast__field">
+              <span>{{ t('account.assistant.routines.form.minute') }}</span>
+              <input v-model.number="draft.minute" type="number" min="0" max="59" autocomplete="off" />
+            </label>
+            <label v-else-if="draft.freq === 'monthly'" class="ast__field">
+              <span>{{ t('account.assistant.routines.form.day') }}</span>
+              <input v-model.number="draft.day" type="number" min="1" max="31" autocomplete="off" />
+            </label>
+            <label v-if="draft.freq !== 'hourly'" class="ast__field">
               <span>{{ t('account.assistant.routines.form.time') }}</span>
-              <input v-model="draft.time" type="time" autocomplete="off" />
+              <input
+                v-model="draft.time"
+                :type="draft.freq === 'once' ? 'datetime-local' : 'time'"
+                autocomplete="off"
+              />
             </label>
           </div>
           <div v-else class="ast__when-list">
@@ -388,13 +489,43 @@ function last(r: AssistantRoutine): string {
               :key="trigger"
               type="button"
               class="ast__when"
-              :class="{ 'ast__when--on': draft.condition === trigger }"
-              :aria-pressed="draft.condition === trigger"
+              :class="{ 'ast__when--on': picked(trigger) }"
+              :aria-pressed="picked(trigger)"
               @click="pickCondition(trigger)"
             >
               {{ t(`account.assistant.routines.form.when.${trigger}`) }}
             </button>
           </div>
+          <div v-if="draft.onTime && draft.freq === 'weekly'" class="ast__when-list">
+            <button
+              v-for="(day, i) in WEEKDAYS"
+              :key="day"
+              type="button"
+              class="ast__when"
+              :class="{ 'ast__when--on': draft.weekdays.includes(i) }"
+              :aria-pressed="draft.weekdays.includes(i)"
+              @click="toggleWeekday(i)"
+            >
+              {{ t(`routines.weekday.${day}`) }}
+            </button>
+          </div>
+          <!-- 「filed」「decided」等的是某个任务的审阅：填任务地址栏里的那个引用
+               （如 ``ml-course/tasks/12``）；留空就是「我提的任务」。 -->
+          <label
+            v-if="!draft.onTime && (draft.condition === 'filed' || draft.condition === 'decided')"
+            class="ast__field"
+          >
+            <span>{{ t('account.assistant.routines.form.task') }}</span>
+            <input
+              v-model="draft.task"
+              :placeholder="t('account.assistant.routines.form.taskPlaceholder')"
+              autocomplete="off"
+            />
+          </label>
+          <label v-if="!draft.onTime" class="ast__check">
+            <input v-model="draft.once" type="checkbox" />
+            {{ t('account.assistant.routines.form.onceOnly') }}
+          </label>
           <p class="ast__hint">{{ t('account.assistant.routines.form.blankHint') }}</p>
           <p v-if="formError" role="alert" class="ast__reason c-danger">{{ formError }}</p>
           <div class="ast__actions">

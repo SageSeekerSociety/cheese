@@ -151,7 +151,7 @@
     "expired": "已过期"
   },
   "run": {
-    "routine": "自动化「{title}」开始运行",
+    "routine": "例行事务「{title}」开始运行",
     "wait": "「{title}」开始运行",
     "filed": "任务「{task}」提交审阅了",
     "accepted": "任务「{task}」的提交已采纳",
