@@ -992,3 +992,30 @@ def test_a_rule_saved_with_no_goal_is_refused(client):
     me = _auth(client, "asker")
     r = client.post("/assistant/routines", json={"note": "  "}, headers=me)
     assert r.status_code == 422, r.text
+
+
+def test_a_rule_belongs_to_whoever_saved_it_and_to_nobody_else(client):
+    """A rule made from the form is its maker's: another person holding its id
+    is answered 404, exactly as for a rule that never existed, and the rule is
+    left as it was. Nobody signed in is refused before either."""
+    mine = _auth(client, "asker")
+    theirs = _auth(client, "dora")
+    r = client.post(
+        "/assistant/routines", json={"note": "把每天要审的东西列成三条"}, headers=mine
+    )
+    [listed] = r.json()["data"]["routines"]
+    path = f"/assistant/routines/{listed['id']}"
+    body = {"note": "改成别人的意思", "title": "别人的名字", "trigger": "schedule"}
+
+    stranger = client.put(path, json=body, headers=theirs)
+    assert stranger.status_code == 404, stranger.text
+    anonymous = client.put(path, json=body)
+    assert anonymous.status_code == 401, anonymous.text
+    kept = client.get("/assistant/routines", headers=mine).json()["data"]["routines"][0]
+    assert kept["note"] == "把每天要审的东西列成三条"
+    assert kept["title"] == ""
+    # A path that is not a rule id at all is a malformed request, not a look
+    # somebody may take: the declared parameter is validated as the kind's id
+    # (this app answers its validation failures 400).
+    malformed = client.put("/assistant/routines/not-a-uuid", json=body, headers=mine)
+    assert malformed.status_code == 400, malformed.text

@@ -35,7 +35,7 @@ from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import AS_ONESELF, ROUTE_DECIDES, Can
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.config import settings
@@ -61,6 +61,7 @@ from app.domain.agent.session_host.contract import (
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import changes, gate, proposals
 from app.domain.assistant import memory as assistant_memory
+from app.domain.assistant.permissions import Permission as RoutinePermission
 from app.domain.memory.files import MemoryFileError
 from app.domain.project.services import ProjectService
 from app.domain.routine import personal as routine_personal
@@ -1196,12 +1197,14 @@ class RoutineFormIn(BaseModel):
         }
 
 
-@router.post("/routines", dependencies=[ROUTE_DECIDES], **typed_response(RoutinesOut))
+@router.post("/routines", dependencies=[AS_ONESELF], **typed_response(RoutinesOut))
 async def create_routine(body: RoutineFormIn, db: DbSession, auth: AuthUser) -> dict:
     """A rule saved from the settings page: no conversation behind it.
 
     The target is the one thing a rule must say; a name and a moment may be
-    left to 芝士, which fills them before the first run.
+    left to 芝士, which fills them before the first run. The rule belongs to
+    whoever is signed in — the person comes from the credential, never from
+    the body.
     """
     target = body.note.strip()
     if not target:
@@ -1221,7 +1224,7 @@ async def create_routine(body: RoutineFormIn, db: DbSession, auth: AuthUser) -> 
 
 @router.put(
     "/routines/{routineId}",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(RoutinePermission.manage)],
     **typed_response(RoutinesOut),
 )
 async def update_routine(
@@ -1231,7 +1234,10 @@ async def update_routine(
     auth: AuthUser,
 ) -> dict:
     """Change a rule from the settings page. Filling in the blanks it was
-    waiting on starts it; taking the goal away is refused."""
+    waiting on starts it; taking the goal away is refused. A rule that is
+    someone else's is answered as if it did not exist — the declaration
+    ``Can(RoutinePermission.manage)`` reads it by this path's id and 404s
+    unless it is the caller's."""
     row = await _routine(db, auth.user_id, routine_id)
     target = body.note.strip()
     if not target:

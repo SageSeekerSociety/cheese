@@ -8,6 +8,8 @@ rename carries it along; a route without one stops the app from starting.
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, FastAPI, WebSocket
 from fastapi.testclient import TestClient
 
@@ -19,8 +21,11 @@ from app.api.write_access import (
     violations,
     write_routes,
 )
+from app.auth import can
 from app.core.errors import register_exception_handlers
+from app.domain.assistant.permissions import Permission as RoutinePermission
 from app.domain.project_permissions import AGENT_ONLY, Permission
+from app.domain.team.permissions import Permission as TeamPermission
 from app.main import app
 
 # The routes only an AI teammate may call: each needs a permission no person's
@@ -36,6 +41,28 @@ _AGENTS_ONLY = {
 
 def test_the_app_has_no_write_route_without_a_declaration() -> None:
     assert violations(app) == []
+
+
+def test_a_route_that_makes_the_callers_own_row_declares_it() -> None:
+    """Making one's own row has no object to judge: the declaration says the
+    caller is the one it is made for (``AS_ONESELF``), and it is a declaration
+    of its own — a route may not carry it beside ``Can``."""
+    found = {
+        (r.method, r.path): r.declared
+        for r in write_routes(app)
+        if "assistant/routines" in r.path
+    }
+    assert found[("POST", "/assistant/routines")] == ("as_oneself",)
+    assert found[("PUT", "/assistant/routines/{routineId}")] == ("can manage",)
+
+
+def test_a_kind_named_by_a_uuid_declares_its_path_parameter_as_one() -> None:
+    """A route's declared parameter is typed the way its kind's policy says
+    its ids are, so a path that is not one is a malformed request. A rule's id
+    is a UUID; a team's is a number."""
+    rule = can.policy_of(RoutinePermission.manage)
+    assert rule.id_type is uuid.UUID
+    assert can.policy_of(TeamPermission.edit_settings).id_type is int
 
 
 def test_the_surface_only_ai_teammates_call_is_the_one_decided() -> None:
