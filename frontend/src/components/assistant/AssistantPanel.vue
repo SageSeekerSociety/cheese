@@ -8,37 +8,19 @@
     @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
-    <header class="ap__head">
-      <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
-      <span class="ap__who">
-        <span class="ap__name">{{ t('work.agentAvatar.defaultName') }}</span>
-      </span>
-      <span class="ap__grow" />
-      <BaseButton
-        icon="mdi-pencil-outline"
-        size="sm"
-        :disabled="busy || (messages.length === 0 && streaming === null)"
-        :title="t('tasks.assistant.newTopic')"
-        :aria-label="t('tasks.assistant.newTopic')"
-        @click="!busy && emit('new')"
-      />
-      <BaseButton
-        v-if="dockable"
-        :icon="docked ? 'mdi-dock-window' : 'mdi-dock-right'"
-        size="sm"
-        :title="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
-        :aria-label="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
-        @click="emit('dock', !docked)"
-      />
-      <BaseButton
-        v-if="closable"
-        icon="mdi-close"
-        size="sm"
-        :title="t('tasks.assistant.close')"
-        :aria-label="t('tasks.assistant.close')"
-        @click="emit('close')"
-      />
-    </header>
+    <AssistantPanelHead
+      :busy="busy"
+      :new-topic-disabled="messages.length === 0 && streaming === null"
+      :closable="closable"
+      :dockable="dockable"
+      :docked="docked"
+      :draggable="draggable"
+      @new="emit('new')"
+      @dock="(next) => emit('dock', next)"
+      @close="emit('close')"
+      @drag-start="(event) => emit('dragStart', event)"
+      @recenter="emit('recenter')"
+    />
 
     <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- only catches clicks on the links in the answers; Enter on a focused link fires the same click -->
     <div ref="scroller" class="ap__chat" @click="followLink" @scroll.passive="nearTop">
@@ -327,6 +309,7 @@ import { useComposerVoice } from '@/composables/useComposerVoice'
 
 import AssistantAsked from './AssistantAsked.vue'
 import AssistantContextRow from './AssistantContextRow.vue'
+import AssistantPanelHead from './AssistantPanelHead.vue'
 import AssistantTurn from './AssistantTurn.vue'
 import CiteMenu from './CiteMenu.vue'
 
@@ -427,6 +410,8 @@ const props = withDefaults(
     /** 桌面上能停在右边：头上给一颗「固定到右侧」或「取消固定」。 */
     dockable?: boolean
     docked?: boolean
+    /** 取消固定之后是一块能挪的浮层：按住头上那一条拖，双击回到右下角。 */
+    draggable?: boolean
     /** 输入框上方那一排：这一页叫什么（没有就不画）、人关掉了没有，和选中交给芝士的那段字。 */
     pageLabel?: string | null
     pageOff?: boolean
@@ -446,6 +431,7 @@ const props = withDefaults(
     currentEarlier: false,
     dockable: false,
     docked: false,
+    draggable: false,
     queued: false,
     creditRefused: false,
     personalTeamHandle: undefined,
@@ -483,6 +469,10 @@ const emit = defineEmits<{
   /** 读一个话题（`null` 是当前这个）更早的那一页消息。 */
   olderMessages: [topic: string | null]
   dock: [docked: boolean]
+  /** 按住头顶那一条拖了起来（只有浮层能拖）：位置由外面那头管。 */
+  dragStart: [event: PointerEvent]
+  /** 双击头顶那一条：回到默认的角落。 */
+  recenter: []
   stop: []
   close: []
   undo: [changeId: number, key: string]
@@ -697,35 +687,9 @@ function nearTop() {
   background: var(--surface);
 }
 
-.ap__head {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  height: 48px;
-  padding: 0 8px 0 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.ap__mark,
 .ap__avatar {
   display: inline-flex;
   flex-shrink: 0;
-}
-
-.ap__who {
-  display: inline-flex;
-  gap: 6px;
-  align-items: baseline;
-  min-width: 0;
-  padding: 0 6px;
-}
-
-.ap__name {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  white-space: nowrap;
 }
 
 .ap__older {
@@ -761,10 +725,6 @@ function nearTop() {
   flex: 1;
   border-top: 1px solid var(--line-2);
   content: '';
-}
-
-.ap__grow {
-  flex: 1;
 }
 
 .ap__chat {

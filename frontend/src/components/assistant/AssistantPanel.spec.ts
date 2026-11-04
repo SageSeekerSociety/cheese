@@ -271,6 +271,35 @@ describe('AssistantPanel', () => {
     expect(view.emitted('dock')).toEqual([[true]])
   })
 
+  it('a floating panel is dragged by its header, and a press on a header button is not a drag', async () => {
+    const view = mount({ dockable: true, docked: false, draggable: true })
+    const header = view.container.querySelector('header') as HTMLElement
+    expect(header.getAttribute('title')).toBe('拖动可以换个位置，双击回到右下角')
+
+    // 按在「固定到右侧」上：那是点按钮，不是拖面板。
+    await fireEvent.pointerDown(view.getByRole('button', { name: '固定到右侧' }), { button: 0, pointerId: 1 })
+    expect(view.emitted('dragStart')).toBeUndefined()
+
+    await fireEvent.pointerDown(header, { button: 0, pointerId: 1, clientX: 10, clientY: 10 })
+    expect(view.emitted('dragStart')).toHaveLength(1)
+
+    await fireEvent.dblClick(header)
+    expect(view.emitted('recenter')).toHaveLength(1)
+
+    // 连点两下「新话题」不是「回角落」：双击从按钮冒上来时不算。
+    await fireEvent.dblClick(view.getByRole('button', { name: '固定到右侧' }))
+    expect(view.emitted('recenter')).toHaveLength(1)
+  })
+
+  it('a panel pinned to the side is not a drag handle', async () => {
+    const view = mount({ dockable: true, docked: true })
+    const header = view.container.querySelector('header') as HTMLElement
+    expect(header.getAttribute('title')).toBeNull()
+
+    await fireEvent.pointerDown(header, { button: 0, pointerId: 1 })
+    expect(view.emitted('dragStart')).toBeUndefined()
+  })
+
   it('a run the platform started reads as what started it, not as what the platform told 芝士', () => {
     const view = mount({
       messages: [

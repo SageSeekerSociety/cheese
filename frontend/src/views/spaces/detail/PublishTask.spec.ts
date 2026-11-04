@@ -886,4 +886,30 @@ describe('发题页：右边的芝士', () => {
     await fireEvent.click(view.getByRole('button', { name: '取消固定' }))
     expect(localStorage.getItem('cheesex.agentDocked')).toBe('false')
   })
+
+  it('取消固定之后按住头部拖得动，位置记在这台浏览器里；双击头部回右下角', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    await fireEvent.click(view.getByRole('button', { name: '取消固定' }))
+    const float = view.getByTestId('agent-host') as HTMLElement
+    const header = float.querySelector('header') as HTMLElement
+    expect(header.getAttribute('title')).toBe('拖动可以换个位置，双击回到右下角')
+
+    await fireEvent.pointerDown(header, { button: 0, pointerId: 1, clientX: 900, clientY: 300 })
+    await fireEvent.pointerMove(window, { pointerId: 1, buttons: 1, clientX: 500, clientY: 100 })
+    await fireEvent.pointerUp(window, { pointerId: 1 })
+
+    // 浮层身上多了一对内联坐标，浏览器里也记下了这次拖到的比例。
+    await waitFor(() => expect(float.style.left).not.toBe(''))
+    expect(float.style.top).not.toBe('')
+    expect(JSON.parse(localStorage.getItem('cheesex.agentFloatSpot') ?? 'null')).toMatchObject({
+      x: expect.any(Number),
+      y: expect.any(Number),
+    })
+
+    await fireEvent.dblClick(header)
+    await waitFor(() => expect(float.style.left).toBe(''))
+    expect(localStorage.getItem('cheesex.agentFloatSpot')).toBeNull()
+  })
 })
