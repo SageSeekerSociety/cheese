@@ -14,6 +14,7 @@ from app.domain.agent.platform_failures import (
     SUBSCRIPTION_EGRESS_OFFLINE_CODE,
     classify_cli_notice,
     classify_platform_failure,
+    is_compaction_refused,
     is_provider_out_of_credit,
     is_request_refused,
 )
@@ -35,6 +36,9 @@ MODEL_ERROR_CODE = "model_error"
 #: The turn ran on a model connection the project's own people added, and its
 #: account has no money left: theirs to top up (`own_out_of_credit_notice`).
 OWN_OUT_OF_CREDIT_CODE = "own_out_of_credit"
+#: The conversation is bigger than the model's window and the summary that
+#: would shrink it could not be made (`context_full_notice`).
+CONTEXT_FULL_CODE = "context_full"
 
 #: What Claude Code prints when calling the model failed: the service was busy
 #: or unreachable, a quota ran out, or the platform's own way to the model
@@ -65,6 +69,11 @@ _PLATFORM_SIDE_CLI: frozenset[str] = frozenset(
 
 #: The platform's own account with the model provider has no money.
 PROVIDER_OUT_OF_CREDIT = "provider_out_of_credit"
+#: A conversation that cannot be compacted, so it cannot go on: the platform's
+#: operators are the ones who can put the model that summarises it back
+#: (`intake.hooks`). Its own cause, because the room's line is not the model
+#: call's — that call was only why the summary could not be made.
+CONTEXT_FULL = "context_full"
 
 
 def model_error_notice(text: str | None) -> tuple[str, dict]:
@@ -88,6 +97,38 @@ def model_error_notice(text: str | None) -> tuple[str, dict]:
     }
 
 
+def context_full_notice(text: str | None) -> tuple[str, dict]:
+    """The room's line for a conversation that outgrew its window and could not
+    be compacted.
+
+    Not ``model_error_notice``: that one offers a retry because a retry is what
+    those failures need, and this is the one that sends the same conversation
+    again to be refused the same way. The reader is told what is true — the
+    conversation does not fit, summarising it failed, the files are still
+    there — and the retry is not offered, so nobody presses it all afternoon.
+    The service's own words stay behind the detail."""
+    said = scrub_secrets((text or "").strip())
+    return say("turnFailedContextFull"), {
+        **notice(
+            EVENT_TURN_FAILED,
+            severity=SEVERITY_ERROR,
+            who=WHO_HUMAN,
+            detail=(
+                say(
+                    "hintAndServiceWords",
+                    hint=say("turnFailedContextFullHint"),
+                    said=said,
+                )
+                if said
+                else say("turnFailedContextFullHint")
+            ),
+            detail_label=say("labelDetails"),
+            retryable=False,
+        ),
+        "code": CONTEXT_FULL_CODE,
+    }
+
+
 def platform_side_cause(text: str | None, *, own: bool = False) -> str | None:
     """Which of the platform's own causes made this call fail, for its
     operators; None when the cause is not the platform's (a busy provider, the
@@ -96,6 +137,11 @@ def platform_side_cause(text: str | None, *, own: bool = False) -> str | None:
     said = (text or "").strip()
     if own:
         return None
+    if is_compaction_refused(said):
+        # The room's line is not a model call's (`context_full_notice`), but
+        # the model that summarises is the platform's to put back: whoever can
+        # reopen it has to be told, or the conversation waits for nobody.
+        return CONTEXT_FULL
     if is_provider_out_of_credit(said):
         return PROVIDER_OUT_OF_CREDIT
     cli = classify_cli_notice(scrub_secrets(said))
@@ -149,6 +195,13 @@ def _turn_failure_notice(
             return line, _with_log(failure.meta, log)
         return failure.content, _with_log(failure.meta, log)
     detail = (text or "").strip()
+    if is_compaction_refused(detail):
+        # Read before the model-side branch below, which this sentence would
+        # otherwise fall into: a compaction that failed for its own reason
+        # («Failed to authenticate») is worded like a failed model call, and
+        # telling the reader to retry is the one piece of advice that is wrong
+        # here — every retry re-sends the same over-long conversation.
+        return context_full_notice(detail)
     out_of_credit = is_provider_out_of_credit(detail)
     if out_of_credit and own:
         # The turn ran on the team's or member's own model connection

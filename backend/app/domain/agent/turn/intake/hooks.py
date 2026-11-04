@@ -56,6 +56,7 @@ from app.domain.agent.turn.intake.notes import (
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.state.notices import (
     _TOOL_ACTION,
+    CONTEXT_FULL,
     PROVIDER_OUT_OF_CREDIT,
     _turn_failure_notice,
     model_error_notice,
@@ -159,13 +160,18 @@ def _tell_operators(cause: str, project_id: uuid.UUID, turn_id: uuid.UUID, said:
         title, key = "AI 中继余额已用完", "ai-relay-out-of-credit"
     else:
         title, key = f"AI 调用失败：平台侧（{cause}）", f"model-error-{cause}"
+    room_line = (
+        "「这次没做完：对话已经超出模型的容量，整理也失败了」"
+        if cause == CONTEXT_FULL
+        else "「这次没做完：调用的模型出错了」"
+    )
     alerting.send(
         title,
         [
             f"项目 {project_id}",
             f"轮次 {turn_id}",
             "上游原文：" + (said or "").strip()[:400],
-            "房间里看到的是「这次没做完：调用的模型出错了」。",
+            f"房间里看到的是{room_line}。",
         ],
         key=key,
         when=time.time(),

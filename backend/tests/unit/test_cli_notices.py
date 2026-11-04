@@ -271,3 +271,56 @@ def test_a_failure_the_platform_cannot_place_still_offers_a_retry():
 
     _, meta = _turn_failure_notice("upstream connect error before headers", None)
     assert meta.get("retryable") is True
+
+
+# ---- 一场对话大到装不下，整理又失败 ----
+
+
+REFUSED_BY_A_FULL_CONVERSATION = (
+    "Prompt is too long · automatic compaction failed: Failed to authenticate."
+    " API Error: 401 Authentication Error, litellm.PermissionDeniedError:"
+    " Model is blocked（invalid_request）"
+)
+
+
+def test_a_conversation_too_long_to_compact_is_recognised_as_its_own_failure():
+    from app.domain.agent.platform_failures import is_compaction_refused
+
+    assert is_compaction_refused(REFUSED_BY_A_FULL_CONVERSATION)
+    # The same state with no compaction named: an input refused because the
+    # window is full.
+    assert is_compaction_refused("Prompt is too long: 210000 tokens > 200000")
+    # A compaction that failed for a reason a retry does pass is not this one:
+    # that one is kept to the platform's own retry (`resumable_failures`).
+    assert not is_compaction_refused("API Error: 429 rate limited")
+    assert not is_compaction_refused("")
+
+
+def test_a_conversation_too_long_to_compact_offers_no_retry_and_says_why():
+    """The one failure whose right advice is not 「再试一次」: every retry sends
+    the same over-long conversation to be refused the same way. The room is told
+    what is true, the files are safe, and the service's words stay behind the
+    detail."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        CONTEXT_FULL_CODE,
+        _turn_failure_notice,
+    )
+
+    line, meta = _turn_failure_notice(REFUSED_BY_A_FULL_CONVERSATION, None)
+    assert line == say("turnFailedContextFull")
+    assert meta["code"] == CONTEXT_FULL_CODE
+    # Not the failed-model-call card: that one offers a retry, and `notice`
+    # writes the key only when it is true.
+    assert "retryable" not in meta
+    assert say("turnFailedContextFullHint") in meta["detail"]
+    assert REFUSED_BY_A_FULL_CONVERSATION in meta["detail"]
+
+
+def test_the_platform_does_not_start_that_turn_again_by_itself():
+    """A turn the platform re-sends on a timer retries a conversation that does
+    not fit, for as long as the streak allows — the 「永远点不通的重试」 this
+    exists to stop (`resumable_failures.classify`)."""
+    from app.domain.agent.resumable_failures import classify
+
+    assert classify(REFUSED_BY_A_FULL_CONVERSATION) is None

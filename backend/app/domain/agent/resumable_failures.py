@@ -43,6 +43,7 @@ from typing import Final
 
 from app.domain.agent.platform_failures import (
     RUNNER_REPLACED_CODE,
+    is_compaction_refused,
     is_provider_out_of_credit,
     is_request_refused,
 )
@@ -230,6 +231,13 @@ def classify(
     # No words is not no failure: a status the session reported in structure
     # (429, 529, a 5xx) still says what happened, and is read below.
     said = (text or "").strip()
+    if is_compaction_refused(said):
+        # The conversation is past its window and the call that would summarise
+        # it failed. Waiting changes nothing, and starting the turn again sends
+        # the same conversation to be refused the same way: an unbounded streak
+        # of retries that never looks different from one. The room is told the
+        # truth once (`turn.state.notices`).
+        return None
     if (
         is_provider_out_of_credit(said)
         or _NEVER.search(said)
