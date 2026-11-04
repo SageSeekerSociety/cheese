@@ -2186,7 +2186,7 @@ DELEGATED_TOOLS = ToolTable(
             ["key", "value"],
         ),
         _tool(
-            "cheese_routine",
+            "cheese_automation",
             "用户的自动化：用户让你定时做一件事，或在某件事发生时做一件事，就建一条，到时平台"
             "让你做，结果通知用户。只做一次的设 once=true（事件）或 freq=once（定时），到时在"
             "这段对话里接着做，做完就结束，事件 14 天内没发生就不再等；反复做的每次开一段新对"
@@ -2428,7 +2428,7 @@ DELEGATED_TOOLS = ToolTable(
         "cheese_space.link": REACHES_OTHERS,
         "cheese_space.review": REACHES_OTHERS,
         "cheese_settings": CHANGES,
-        "cheese_routine": CHANGES,
+        "cheese_automation": CHANGES,
         "cheese_notify": CHANGES,
         "cheese_todo": CHANGES,
         "cheese_memory.save": CHANGES,
@@ -2465,7 +2465,7 @@ _TOPIC_FREE = {
     "cheese_canvas",
 }
 #: By key (`<tool>.<action>` for an object's verbs): a person's 芝士 has objects
-#: of the same names (`cheese_routine`, `cheese_library`) that need no topic.
+#: of the same names (`cheese_automation`, `cheese_library`) that need no topic.
 _NEEDS_TOPIC = frozenset(
     key
     for name in PLATFORM_TOOLS.names()
@@ -2484,7 +2484,7 @@ _NEEDS_PROJECT = frozenset(
         "cheese_memory.project",
         "cheese_notify",
         "cheese_library.list",
-        "cheese_routine.list",
+        "cheese_automation.list",
     }
 )
 
@@ -2958,7 +2958,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": "/notifications/preferences/agent/set",
             "body": body,
         }
-    if tool == "cheese_routine":
+    if tool == "cheese_automation":
         return {"method": "POST", "path": "/assistant/agent/routine", "body": args}
     if tool == "cheese_todo":
         return {
@@ -5690,7 +5690,7 @@ _SAY = {
     "cheese_inbox.list": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
     "cheese_settings": lambda a, d, e: (d or {}).get("text") or "",
-    "cheese_routine": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_automation": lambda a, d, e: (d or {}).get("text") or "",
     **{
         f"cheese_memory.{verb}": lambda a, d, e: (d or {}).get("text") or ""
         for verb in ("save", "read", "forget")

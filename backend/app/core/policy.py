@@ -10,17 +10,26 @@ Kinds where people hold a seat — owner, admin, member — and each seat holds 
 fixed set of permissions are a :class:`SeatPolicy`: they say how to find the
 seat and give the table. Kinds that follow from who the person is to the
 object (a problem's setter, a question's asker) answer :meth:`Policy.may`
-themselves.
+themselves. A kind whose rows belong to one person and to nobody else — a rule
+芝士 keeps for someone, a conversation of theirs — is an :class:`OwnerPolicy`.
+
+Most kinds are keyed by an ``int`` id; a kind keyed by a UUID says so with
+:attr:`Policy.id_type`, and its ``load`` takes a UUID (``app.domain.assistant``
+permissions, whose rows have no number at all).
 """
 
 from __future__ import annotations
 
 import enum
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+#: What names an object of some kind: its number, or its UUID.
+ObjectId = int | uuid.UUID
 
 
 class Policy[O, P: enum.StrEnum](ABC):
@@ -30,9 +39,13 @@ class Policy[O, P: enum.StrEnum](ABC):
     path_param: ClassVar[str]
     #: The kind's permissions.
     permissions: ClassVar[type[enum.StrEnum]]
+    #: What the path parameter holds: its number (the default), or a UUID.
+    #: A route's declared parameter is validated as this, so a kind that says
+    #: the wrong thing answers 422 to every request instead of judging one.
+    id_type: ClassVar[type[int] | type[uuid.UUID]] = int
 
     @abstractmethod
-    async def load(self, session: AsyncSession, id: int) -> O | None:
+    async def load(self, session: AsyncSession, id: ObjectId) -> O | None:
         """The object, or ``None`` when there is none (deleted counts as none)."""
 
     @abstractmethod
@@ -46,12 +59,34 @@ class Policy[O, P: enum.StrEnum](ABC):
         return True
 
     async def allows(
-        self, session: AsyncSession, id: int, user_id: int, permission: P
+        self, session: AsyncSession, id: ObjectId, user_id: int, permission: P
     ) -> bool:
         """:meth:`may` for an object named by its id, for code that holds only
         the id — a service acting on a team's devices, say."""
         obj = await self.load(session, id)
         return obj is not None and await self.may(session, obj, user_id, permission)
+
+
+class OwnerPolicy[O, P: enum.StrEnum](Policy[O, P]):
+    """A kind whose every object belongs to one person, and to nobody else.
+
+    The question is only «is this row theirs?». There is no seat to hold, so a
+    stranger who holds the id is answered 404 rather than 403 — the row does
+    not exist for them, which is what ``app.core.policy`` means by «what a
+    person cannot see». Every permission is the owner's.
+    """
+
+    @abstractmethod
+    async def owner(self, obj: O) -> int | None:
+        """The person the row belongs to; ``None`` when it belongs to nobody."""
+
+    async def may(
+        self, session: AsyncSession, obj: O, user_id: int, permission: P
+    ) -> bool:
+        return await self.owner(obj) == user_id
+
+    async def sees(self, session: AsyncSession, obj: O, user_id: int) -> bool:
+        return await self.owner(obj) == user_id
 
 
 class SeatPolicy[O, P: enum.StrEnum, S](Policy[O, P]):

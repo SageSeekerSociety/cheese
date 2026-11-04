@@ -139,6 +139,9 @@ const onTime = computed(() => form.trigger === 'schedule')
  * 界面上永远取消不掉，也看不出两个都没选。它说的是「选了一种事件触发」。
  */
 const onCondition = computed(() => form.trigger !== '' && form.trigger !== 'schedule')
+/** 这张表还有没有空格要芝士补：名称取目标的第一句，所以「名称」和「什么时候」
+ *  才是那两格。全填上时那句「未填项由它生成」就不该再挂着。 */
+const hasBlank = computed(() => !form.title.trim() || !form.trigger)
 const conditionOptions = computed(() =>
   (['library_file_added', 'task_closed', 'card_accepted'] as RoutineTrigger[]).map((value) => ({
     value,
@@ -387,7 +390,11 @@ function submit() {
         <span class="compose__room-name">{{ roomName }}</span>
       </div>
 
-      <p class="t-meta c-faint compose__hint">{{ t('routines.form.autoHint', { agent: agentName }) }}</p>
+      <!-- 这句话只在真有空项时说：填全了的表上还挂着一句「未填项由它生成」，
+           会让人以为哪一格漏了。 -->
+      <p v-if="hasBlank" class="t-meta c-faint compose__hint">
+        {{ t('routines.form.autoHint', { agent: agentName }) }}
+      </p>
 
       <v-text-field
         v-model="form.title"

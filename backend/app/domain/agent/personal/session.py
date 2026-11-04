@@ -115,7 +115,7 @@ TOOLS = (
     "cheese_people",
     "cheese_space",
     "cheese_settings",
-    "cheese_routine",
+    "cheese_automation",
     "cheese_notify",
     "cheese_todo",
     # 记忆是用户的：记下、读、删掉。项目共享记忆是文档芝士读的。

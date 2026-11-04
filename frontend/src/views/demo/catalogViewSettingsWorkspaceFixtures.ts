@@ -659,7 +659,12 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     conversationId: 'k1',
     lastRun: { status: 'done', at: '2026-10-22T00:00:40Z', asked: 0, conversationId: 'c1' },
     weekCredits: 4.6,
+    trigger: 'schedule',
+    missing: [],
+    spec: {},
+    timezone: 'Asia/Shanghai',
   },
+
   {
     id: 'r2',
     title: '有人找我',
@@ -672,7 +677,12 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     conversationId: 'k2',
     lastRun: { status: 'done', at: '2026-10-22T09:00:18Z', asked: 1, conversationId: 'c2' },
     weekCredits: 12,
+    trigger: 'schedule',
+    missing: [],
+    spec: {},
+    timezone: 'Asia/Shanghai',
   },
+
   {
     id: 'r3',
     title: '周一交周报',
@@ -685,7 +695,12 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     conversationId: 'k3',
     lastRun: { status: 'skipped', at: '2026-10-20T01:00:00Z', asked: 0, conversationId: null },
     weekCredits: 0,
+    trigger: '',
+    missing: [],
+    spec: {},
+    timezone: 'Asia/Shanghai',
   },
+
   {
     id: 'r4',
     title: '提醒交开题报告',
@@ -698,7 +713,12 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     conversationId: 'c4',
     lastRun: { status: 'done', at: '2026-10-22T09:00:20Z', asked: 0, conversationId: 'c4' },
     weekCredits: 0.2,
+    trigger: 'schedule',
+    missing: [],
+    spec: {},
+    timezone: 'Asia/Shanghai',
   },
+
   {
     id: 'r5',
     title: '审阅接入搜索的提交',
@@ -711,7 +731,12 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     conversationId: 'c5',
     lastRun: null,
     weekCredits: 0,
+    trigger: 'schedule',
+    missing: [],
+    spec: {},
+    timezone: 'Asia/Shanghai',
   },
+
   {
     id: 'r6',
     title: '整理退回意见',
@@ -724,6 +749,10 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     conversationId: 'c6',
     lastRun: null,
     weekCredits: 0,
+    trigger: 'schedule',
+    missing: [],
+    spec: {},
+    timezone: 'Asia/Shanghai',
   },
 ]
 

@@ -27,7 +27,8 @@
     "active": "On",
     "paused": "Paused",
     "queued": "Queued, starting now",
-    "missed": "Last run didn't go"
+    "missed": "Last run didn't go",
+    "filling": "Cheese is filling it in"
   },
   "line": {
     "chip": "Routine · {title}",

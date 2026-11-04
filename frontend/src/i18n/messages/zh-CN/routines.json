@@ -27,7 +27,8 @@
     "active": "启用中",
     "paused": "已暂停",
     "queued": "排队中，这就跑",
-    "missed": "上一次没能执行"
+    "missed": "上一次没能执行",
+    "filling": "芝士生成中"
   },
   "line": {
     "chip": "例行 · {title}",

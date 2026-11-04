@@ -57,7 +57,9 @@ covers:
 
 ## 路由怎么声明权限 {#declaring}
 
-每类对象一个策略（`backend/app/core/policy.py` 的 `Policy`，按身份分权限的用 `SeatPolicy`）：它说这类对象的权限有哪些、路径里哪个参数是它的编号、怎么读出来、这个人能不能做某件事、对他存不存在。`backend/app/auth/can.py` 的 `POLICIES` 按权限的类型找到策略。
+每类对象一个策略（`backend/app/core/policy.py` 的 `Policy`，按身份分权限的用 `SeatPolicy`，只属于一个人的用 `OwnerPolicy`）：它说这类对象的权限有哪些、路径里哪个参数是它的编号、怎么读出来、这个人能不能做某件事、对他存不存在。`backend/app/auth/can.py` 的 `POLICIES` 按权限的类型找到策略。
+
+对象的编号默认是数字；主键是 UUID 的那类写 `id_type = uuid.UUID`，路由的路径参数就按它校验，声明在依赖里的路径参数也是（如个人自动化的 `ROUTINE`，见 `app/domain/assistant/permissions.py`）。
 
 路由把要的权限写在参数上，参数拿到的就是读出来、判过权限的对象：
 

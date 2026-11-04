@@ -100,10 +100,6 @@ async function openMenu(container: Element): Promise<string[]> {
 }
 
 /** 行上那颗状态图形说的是什么（读屏听到的那一句）。 */
-function stateLabel(container: Element): string | null {
-  return container.querySelector('.routine-row__state')?.getAttribute('aria-label') ?? null
-}
-
 function run(over: Partial<RoutineRun>): RoutineRun {
   return {
     id: 'run-1',
@@ -133,9 +129,9 @@ describe('一条规则这一行', () => {
     })
   })
 
-  it('启用中的：⋯ 里是暂停、立即执行一次、修改、执行记录、删除', async () => {
+  it('启用中的：⋯ 里是立即执行一次、修改、执行记录、删除（暂停在行上的图形里）', async () => {
     const { container } = mount(base)
-    expect(await openMenu(container)).toEqual(['暂停', '立即执行一次', '修改', '执行记录', '删除'])
+    expect(await openMenu(container)).toEqual(['立即执行一次', '修改', '执行记录', '删除'])
     expect(container.textContent).toContain('每周周一 09:00（北京时间）')
   })
 
@@ -145,45 +141,64 @@ describe('一条规则这一行', () => {
     await waitFor(() =>
       expect(
         Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
-      ).toEqual(['暂停', '立即执行一次', '修改', '执行记录', '删除'])
+      ).toEqual(['立即执行一次', '修改', '执行记录', '删除'])
     )
   })
 
   // 行上不写状态的字：图形就是「它怎么了」本身，颜色是跟着它走的第二层。
-  it('状态是一颗图形：启用中用暂停那两颗，读屏听到「启用中」', () => {
-    const { container } = mount(base)
-    expect(stateLabel(container)).toBe('启用中')
-    expect(container.querySelector('.routine-row__state--active')).not.toBeNull()
-    expect(container.textContent).not.toContain('启用中')
+  // 开着和停着的那两颗又是开关：按它就是在两者之间切换。
+  it('状态是一颗图形，也是开关：启用中按下去是暂停', async () => {
+    const ui = mount(base)
+    const state = ui.container.querySelector('.routine-row__state--active')!
+    expect(state.getAttribute('aria-label')).toBe('暂停')
+    expect(state.tagName).toBe('BUTTON')
+    expect(ui.container.textContent).not.toContain('启用中')
+    await fireEvent.click(state)
+    expect(ui.emitted().pause).toEqual([[]])
   })
 
-  it('暂停了的：动作是「恢复」，图形是三角，读屏听到「已暂停」', async () => {
-    const { container } = mount({ ...base, state: 'paused' })
-    expect(stateLabel(container)).toBe('已暂停')
-    expect(container.querySelector('.routine-row__state--paused')).not.toBeNull()
-    expect(await openMenu(container)).toContain('恢复')
-    expect(await openMenu(container)).not.toContain('暂停')
+  it('暂停了的：图形是三角，按下去是恢复', async () => {
+    const ui = mount({ ...base, state: 'paused' })
+    const state = ui.container.querySelector('.routine-row__state--paused')!
+    expect(state.getAttribute('aria-label')).toBe('恢复')
+    expect(state.querySelector('[aria-label]')).toBeNull()
+    await fireEvent.click(state)
+    expect(ui.emitted().resume).toEqual([[]])
+    expect(await openMenu(ui.container)).not.toContain('恢复')
   })
 
-  it('还没定触发方式的：没有「恢复」，让它跑起来的是「修改」', async () => {
+  it('补全中：图形是转圈，点不动，菜单里也没有暂停', async () => {
+    const ui = mount({ ...base, trigger: '', trigger_text: '还没定什么时候跑' })
+    const state = ui.container.querySelector('.routine-row__state--filling')
+    expect(state).not.toBeNull()
+    expect(state!.tagName).not.toBe('BUTTON')
+    expect(await openMenu(ui.container)).not.toContain('暂停')
+  })
+
+  it('还没定触发方式的：菜单里没有暂停/恢复，让它跑起来的是「修改」', async () => {
     const { container } = mount({ ...base, state: 'paused', trigger: '', trigger_text: '还没定什么时候跑' })
     const items = await openMenu(container)
     expect(items).not.toContain('恢复')
+    expect(items).not.toContain('暂停')
     expect(items).toContain('修改')
   })
 
   // 这两档不在规则自己身上（`state` 只知道启用 / 暂停）：正在跑的那条画沙漏，上一次
   // 没跑成的那条画红叉 —— 都得看最近一次执行跑成什么样。
-  it('最近一次在排队：画沙漏，不看规则自己的状态', () => {
-    const { container } = mount({ ...base, last_run_status: 'queued' })
-    expect(stateLabel(container)).toBe('排队中，这就跑')
-    expect(container.querySelector('.routine-row__state--queued')).not.toBeNull()
+  it('最近一次在排队：画沙漏；它仍是开着的规则，按下去是暂停', async () => {
+    const ui = mount({ ...base, last_run_status: 'queued' })
+    const state = ui.container.querySelector('.routine-row__state--queued')!
+    expect(state.getAttribute('aria-label')).toBe('暂停')
+    await fireEvent.click(state)
+    expect(ui.emitted().pause).toEqual([[]])
   })
 
-  it('最近一次没能执行：画红叉', () => {
-    const { container } = mount({ ...base, last_run_status: 'failed' })
-    expect(stateLabel(container)).toBe('上一次没能执行')
-    expect(container.querySelector('.routine-row__state--missed')).not.toBeNull()
+  it('最近一次没能执行：画红叉；按下去也是暂停', async () => {
+    const ui = mount({ ...base, last_run_status: 'failed' })
+    const state = ui.container.querySelector('.routine-row__state--missed')!
+    expect(state.getAttribute('aria-label')).toBe('暂停')
+    await fireEvent.click(state)
+    expect(ui.emitted().pause).toEqual([[]])
   })
 
   // 停着的规则先说话：它不会跑了，最近那次跑成什么样都是过去的事。
@@ -197,7 +212,7 @@ describe('一条规则这一行', () => {
   // 读得到就做得了，所以那一项单独不见。
   it('删不掉的那一条：别的动作都在，就是没有「删除」', async () => {
     const { container } = mount({ ...base, can_delete: false })
-    expect(await openMenu(container)).toEqual(['暂停', '立即执行一次', '修改', '执行记录'])
+    expect(await openMenu(container)).toEqual(['立即执行一次', '修改', '执行记录'])
   })
 
   // 归档不是暂停：规则自己的状态没变（取消归档后从下一个时刻继续），所以这里说的是
@@ -206,7 +221,7 @@ describe('一条规则这一行', () => {
     const { container } = mount({ ...base, room_archived: true })
     expect(container.textContent).toContain('已随频道归档停止')
     expect(container.textContent).not.toContain('下次')
-    expect(stateLabel(container)).toBe('启用中')
+    expect(container.querySelector('.routine-row__state--active')).not.toBeNull()
   })
 
   it('项目页的行：名字底下那一行是「房间名 · 什么时候跑」', () => {

@@ -676,7 +676,7 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
           return t('catalog.settingsAssistantView.s1.note')
         },
         props: {},
-        expect: '自动化',
+        expect: '例行事务',
       },
       {
         get name() {
@@ -690,7 +690,7 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
           memory: { enabled: false, items: [] },
           rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] },
         },
-        expect: '暂无自动化',
+        expect: '还没有例行事务',
       },
     ],
   },

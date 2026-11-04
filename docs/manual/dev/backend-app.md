@@ -100,6 +100,7 @@ covers:
 每条写路由在自己的依赖里声明谁能调它（`api/write_access.py`）：`Can(...)` 按权限判断（见[权限](/dev/seats)）；`ROUTE_DECIDES` 交给处理函数自己判断，只有 `Can` 还认不全调用方时写的那些旧路由还这样声明，正逐批改成 `Can`；新加的写路由不能再用它（`backend/scripts/check_route_decides.py` 拿合并基点比，只许减少）。凭据和别的请求一样从 `Authorization: Bearer` 读，是哪一种由 `core/credentials.py` 说了算。
 
 - 只有芝士调的写面（`cheese` CLI 给自己别的线程留便条、签频道的 webhook 凭据、记机器状态）声明的是只有 AI 队友才有的权限（`project_permissions.AGENT_ONLY`）：谁的角色都给不了，角色表也不列；人的登录会话在这里得到 403。
+- 新建「属于调用者自己的一行」的写面声明 `AS_ONESELF`：还没有对象可判，登录了就放行，处理函数必须从凭据取人、不从请求体取。改、删已有的行不能用它，那要按对象判（如 `Can(Permission.manage)`，或者对象只属于一个人时的 `OwnerPolicy`）。
 - 每轮凭据只认签给它的那个对话，项目凭据读库核对项目和是否撤销，都在 `ActorResolver.resolve` 里。
 - 应用启动时 `seal` 检查每条写路由都声明了一种；没声明的启动不了，启动后才建的路由一律 403。
 
