@@ -113,19 +113,13 @@ def context_full_notice(text: str | None, *, own: bool = False) -> tuple[str, di
     it does not alert its operators about it and must not tell the room it did
     — the connection's owners are the ones who can put it back."""
     said = scrub_secrets((text or "").strip())
-    hint = say(
-        "turnFailedContextFullOwnHint" if own else "turnFailedContextFullHint"
-    )
+    hint = say("turnFailedContextFullOwnHint" if own else "turnFailedContextFullHint")
     return say("turnFailedContextFull"), {
         **notice(
             EVENT_TURN_FAILED,
             severity=SEVERITY_ERROR,
             who=WHO_HUMAN,
-            detail=(
-                say("hintAndServiceWords", hint=hint, said=said)
-                if said
-                else hint
-            ),
+            detail=(say("hintAndServiceWords", hint=hint, said=said) if said else hint),
             detail_label=say("labelDetails"),
             retryable=False,
         ),

@@ -333,9 +333,7 @@ def test_on_the_projects_own_connection_the_room_is_not_told_admins_were_alerted
         platform_side_cause,
     )
 
-    line, meta = _turn_failure_notice(
-        REFUSED_BY_A_FULL_CONVERSATION, None, own=True
-    )
+    line, meta = _turn_failure_notice(REFUSED_BY_A_FULL_CONVERSATION, None, own=True)
     assert say("turnFailedContextFullOwnHint") in meta["detail"]
     assert say("turnFailedContextFullHint") not in meta["detail"]
     # And nothing goes to the platform's operators about it.
