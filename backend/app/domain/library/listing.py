@@ -209,29 +209,29 @@ async def _timeline_folders(
         .group_by(name)
         .subquery()
     )
-    by_bytes = grouped.c.name.collate("C")
-    # 游标那一段是整条路径（文件的 rank 写的是整条路径）；文件夹按最后一层聚出来，
-    # 所以比较前把这一层的前缀去掉——同一层里前缀是个常数，先后不变。
-    tie = spot.tie[len(prefix) :] if spot is not None and spot.tie.startswith(prefix) else (spot.tie if spot else "")
+    # 位置那一段是整条路径（文件写的是整条路径，文档写的是标题加编号），文件夹按最后
+    # 一层聚出来，所以这里也要拼回整条路径再比：只比最后一层的话，碰上同一刻的文档，
+    # 这一层的前缀会悄悄改掉比较结果。
+    by_path = func.concat(prefix, grouped.c.name).collate("C")
     if spot is not None:
         beyond = (
             or_(
                 grouped.c.latest < spot.at,
-                and_(grouped.c.latest == spot.at, by_bytes > tie),
+                and_(grouped.c.latest == spot.at, by_path > spot.tie),
             )
             if descending
             else or_(
                 grouped.c.latest > spot.at,
-                and_(grouped.c.latest == spot.at, by_bytes > tie),
+                and_(grouped.c.latest == spot.at, by_path > spot.tie),
             )
         )
         query = select(grouped).where(beyond)
     else:
         query = select(grouped)
     order = (
-        (grouped.c.latest.desc(), by_bytes)
+        (grouped.c.latest.desc(), by_path)
         if descending
-        else (grouped.c.latest, by_bytes)
+        else (grouped.c.latest, by_path)
     )
     return [
         {
