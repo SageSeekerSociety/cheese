@@ -342,9 +342,18 @@ function stateOf(task: RoomTask): TaskState {
                 ># {{ channelTitle.get(task.room_id) ?? '' }}</span
               >
               <span class="tasks__who">
-                <span v-if="task.owner_handle" class="tasks__name" data-user-content>{{
-                  nameOf(task.owner_handle)
-                }}</span>
+                <template v-if="task.owner_handle">
+                  <UserAvatar
+                    :size="20"
+                    :name="nameOf(task.owner_handle)"
+                    :avatar="avatars[task.owner_handle] || ''"
+                    :seed="task.owner_handle"
+                  />
+                  <span class="tasks__name" data-user-content>{{ nameOf(task.owner_handle) }}</span>
+                </template>
+                <span v-if="task.contributor_handles?.length" class="c-faint"
+                  >+{{ task.contributor_handles.length }}</span
+                >
               </span>
               <span class="tasks__state">
                 <TaskStateMark :state="stateOf(task)" />
