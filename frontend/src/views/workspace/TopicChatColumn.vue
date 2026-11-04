@@ -318,6 +318,7 @@ defineExpose({
               :key="made.id"
               :task="made"
               :owner-name="made.owner ? nameOf(made.owner) : null"
+              :owner-avatar="made.owner ? avatarOf(made.owner) : undefined"
               in-list
               @open="emit('open-card', $event)"
             />

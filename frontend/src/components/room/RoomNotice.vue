@@ -55,6 +55,9 @@ const props = defineProps<{
   agentName: string
   /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  /** handle→这个人自己挑过的头像；没挑过、名册上没有他时是空串。退回理由那一行画的是
+   *  那个人自己的消息，头像得和他在同一条对话里别处的一致；不接就只剩首字母。 */
+  avatarOf?: (handle: string) => string | null
   /** 房间允许在这一条上重试：它是最新的一条、房间没在跑、也没归档。可重试与否
    *  是提示自己说的（`retryable`），两者都成立才画按钮。 */
   canRetry?: boolean
@@ -313,6 +316,7 @@ const ACTION_META: Record<string, { btn: string }> = {
         :time="timeOf?.(row.block.created_at) ?? ''"
         :agent-name="agentName"
         :refs="refs"
+        :avatar-of="avatarOf"
         :project-id="projectId"
         inline
         @open-resource="(...a) => emit('open-resource', ...a)"
@@ -332,6 +336,7 @@ const ACTION_META: Record<string, { btn: string }> = {
     v-else-if="rejectedBy && rejectedReason"
     :handle="rejectedBy"
     :name="refs.mentionNames[rejectedBy] || rejectedBy"
+    :avatar="avatarOf?.(rejectedBy) ?? ''"
     :time="time"
     :cue="t('work.room.notice.rejectedCue')"
     :said="rejectedReason"
@@ -601,6 +606,7 @@ const ACTION_META: Record<string, { btn: string }> = {
           :time="''"
           :agent-name="agentName"
           :refs="refs"
+          :avatar-of="avatarOf"
           :project-id="projectId"
           inline
           @open-resource="(...a) => emit('open-resource', ...a)"

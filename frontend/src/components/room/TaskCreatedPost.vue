@@ -18,6 +18,9 @@ defineProps<{
   creator: string | null
   creatorName: string
   ownerName: string | null
+  /** 负责人自己挑过的头像。主线拆出去的那几张卡（ChatTimeline）是带的，这里也带上，
+   *  同一件任务在主线上不该一处有脸一处没有。不传就只写名字。 */
+  ownerAvatar?: string | null
   avatar: string | null
   time: string
   /** 紧接在同一个人新建的上一件后面：不再重复署名。 */
@@ -41,7 +44,12 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
         <span class="im-time">{{ time }}</span>
         <span class="task-post__what">{{ t('work.room.taskCard.created') }}</span>
       </div>
-      <TaskCard :task="task" :owner-name="ownerName" @open="emit('open', $event)" />
+      <TaskCard
+        :task="task"
+        :owner-name="ownerName"
+        :owner-avatar="task.owner ? ownerAvatar : undefined"
+        @open="emit('open', $event)"
+      />
     </div>
   </div>
 </template>
