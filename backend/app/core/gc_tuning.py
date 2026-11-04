@@ -44,9 +44,9 @@ import threading
 # tuning would stop reaching production with nothing failing.
 from app.core.startup_freeze import SERVING
 
-#: Generation 0's allocation threshold. The ceiling the interpreter ships with
-#: is a floor for us: it decides how much a pass walks, and a pass costs the
-#: same per object whether it walks 2,000 or 10,000 of them. Production's
+#: Generation 0's allocation threshold (a floor — see `tune_collector`). It
+#: decides how much a pass walks, and a pass costs the same per object whether
+#: it walks 2,000 or 10,000 of them. Production's
 #: readings at 5 hours: 8,000 gen-0 passes for 16.5 s — by far the largest
 #: collector cost on the loop — freeing ~966 objects each. Raising it to 5,000
 #: on a heap of production's shape cut the passes to 40% and the collector's
@@ -69,8 +69,12 @@ def tune_collector(*, serving: bool, on_main_thread: bool) -> bool:
     global _done
     if _done or not serving or not on_main_thread:
         return False
-    _gen0, _gen1, gen2 = gc.get_threshold()
-    gc.set_threshold(GEN0_THRESHOLD, GEN1_THRESHOLD, gen2)
+    gen0, _gen1, gen2 = gc.get_threshold()
+    # A floor, not a setting: the interpreter's own value is kept wherever it
+    # is already higher. The default has moved before (700 through 3.12, 2000
+    # from 3.13) and may move again; a build that ships 10,000 would otherwise
+    # be tuned *down* here, collecting the young heap more often than it chose.
+    gc.set_threshold(max(gen0, GEN0_THRESHOLD), GEN1_THRESHOLD, gen2)
     _done = True
     return True
 

@@ -94,3 +94,21 @@ def test_the_performance_board_says_which_policy_the_process_runs(monkeypatch):
     monkeypatch.setattr(gc, "get_threshold", lambda: (2000, 100, 10))
     status = loop_stalls.stall_status()
     assert status["thresholds"] == [2000, 100, 10]
+
+
+def test_a_build_that_already_walks_more_of_the_young_heap_is_left_alone(
+    interpreter_thresholds, monkeypatch
+):
+    # The interpreter's generation-0 default has moved before (700 -> 2000) and
+    # may move again. Where a build already walks more of it than our floor, the
+    # floor must not tune it down — that would collect the young heap more often
+    # than the build chose, the opposite of what this module exists for.
+    tuning = _tuning()
+    monkeypatch.setattr(tuning, "_done", False)
+    gc.set_threshold(tuning.GEN0_THRESHOLD * 2, 10, 10)
+
+    assert tuning.tune_collector(serving=True, on_main_thread=True) is True
+
+    gen0, gen1, _gen2 = gc.get_threshold()
+    assert gen0 == tuning.GEN0_THRESHOLD * 2, "a higher interpreter value was lowered"
+    assert gen1 == tuning.GEN1_THRESHOLD
