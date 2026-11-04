@@ -112,8 +112,8 @@ async def check(
     lifetime sum, so the window starts at `LEDGER_START`, and the whole ledger
     is several megabytes the gateway takes about a second and a half to send —
     on every sweep, every few minutes, with the event loop decoding it. Only
-    a handful of upstreams carry a cap (`answers._cap_spend` reads the page's
-    the same way, for the same reason)."""
+    a handful of upstreams carry a cap, and the page's own cap figures
+    (`answers._cap_spend`) are read the same way, for the same reason."""
     caps = caps_by_upstream(await admin.models())
     if not caps:
         return []
