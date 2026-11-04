@@ -727,10 +727,6 @@ function nearTop() {
   content: '';
 }
 
-.ap__grow {
-  flex: 1;
-}
-
 .ap__chat {
   display: flex;
   flex: 1;

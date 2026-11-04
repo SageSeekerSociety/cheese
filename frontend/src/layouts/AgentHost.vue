@@ -353,9 +353,13 @@ const panelEvents = {
   box-shadow: var(--shadow-2);
 }
 
-/* 拖着的时候不要文字被顺手选中，也不让面板自己在指针底下动（位置只跟指针走）。 */
+/* 拖起来之后整块都是「抓着」的手势：指针可能已经移到面板里的对话上，那里平时是文本光标。 */
 .agent-host__float--dragging {
-  user-select: none;
+  cursor: grabbing;
+}
+
+.agent-host__float--dragging :deep(*) {
+  cursor: grabbing;
 }
 
 .agent-host-enter-active,

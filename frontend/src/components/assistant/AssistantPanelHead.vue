@@ -7,7 +7,7 @@
     :class="{ 'aph--draggable': draggable }"
     :title="draggable ? t('tasks.assistant.dragHint') : undefined"
     @pointerdown="onDown"
-    @dblclick="draggable && emit('recenter')"
+    @dblclick="onDoubleClick"
   >
     <span class="aph__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
     <span class="aph__name">{{ t('work.agentAvatar.defaultName') }}</span>
@@ -75,11 +75,21 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
+/** 点在这一行里的按钮上，而不是这一行本身。 */
+function onControl(target: EventTarget | null): boolean {
+  return !!(target as Element | null)?.closest?.('button, a[href], input, textarea, [role="button"]')
+}
+
 /** 按下的是这一行里的按钮时不算拖：那是点按钮，不是拖面板。 */
 function onDown(event: PointerEvent) {
-  if (!props.draggable) return
-  if ((event.target as Element | null)?.closest?.('button, a[href], input, textarea, [role="button"]')) return
+  if (!props.draggable || onControl(event.target)) return
   emit('dragStart', event)
+}
+
+/** 双击回角落。连点两下按钮不是这个意思：那样「新话题」会被点两次，还顺带把面板弹回角落。 */
+function onDoubleClick(event: MouseEvent) {
+  if (!props.draggable || onControl(event.target)) return
+  emit('recenter')
 }
 </script>
 

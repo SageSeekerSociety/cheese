@@ -41,9 +41,10 @@ export function useFloatingPanelSpot(key: string, el: Ref<HTMLElement | null>) {
   const dragging = ref(false)
 
   /** 一块左上角像素位置：往里收到看得见的地方。窗口比面板还小时上下限会碰头，取小的那个。 */
-  function clampPx(left: number, top: number): { left: number; top: number } {
-    const width = el.value?.offsetWidth ?? 0
-    const height = el.value?.offsetHeight ?? 0
+  function clampPx(left: number, top: number, size?: { width: number; height: number }): { left: number; top: number } {
+    // 拖动时把手里的尺寸一路传进来：每帧现量一次是「写完样式紧接着读排版」，拖起来会抖。
+    const width = size?.width ?? el.value?.offsetWidth ?? 0
+    const height = size?.height ?? el.value?.offsetHeight ?? 0
     const maxLeft = Math.max(PANEL_EDGE, window.innerWidth - width - PANEL_EDGE)
     const maxTop = Math.max(PANEL_EDGE, window.innerHeight - height - PANEL_EDGE)
     return { left: clamp(left, PANEL_EDGE, maxLeft), top: clamp(top, PANEL_EDGE, maxTop) }
@@ -67,23 +68,46 @@ export function useFloatingPanelSpot(key: string, el: Ref<HTMLElement | null>) {
     else storageRemove(key)
   }
 
-  let from: { x: number; y: number; left: number; top: number; pointerId: number } | null = null
+  let from: {
+    x: number
+    y: number
+    left: number
+    top: number
+    width: number
+    height: number
+    pointerId: number
+    /** 捕获指针的那一个（头部那一行）。松手时要把捕获还给它。 */
+    captor: HTMLElement
+  } | null = null
 
   function move(event: PointerEvent) {
-    if (!from) return
+    const start = from
+    if (!start) return
     // 另一个指头（多指触屏）的移动不算这一拖。
-    if (event.pointerId !== from.pointerId) return
-    const dx = event.clientX - from.x
-    const dy = event.clientY - from.y
+    if (event.pointerId !== start.pointerId) return
+    // 松手发生在窗口外、或者浏览器把这一串事件丢了：`pointerup` 收不到，`from` 还留着。
+    // 没有按键还跟着指头走，就当作已经松手，把它收掉，别让面板漂到别处再记住。
+    if (event.buttons === 0) {
+      stop()
+      return
+    }
+    const dx = event.clientX - start.x
+    const dy = event.clientY - start.y
     if (!dragging.value && Math.abs(dx) + Math.abs(dy) < 3) return
     dragging.value = true
-    const at = clampPx(from.left + dx, from.top + dy)
+    const at = clampPx(start.left + dx, start.top + dy, start)
     spot.value = { x: at.left / window.innerWidth, y: at.top / window.innerHeight }
   }
 
   function stop() {
-    if (!from) return
+    const start = from
+    if (!start) return
     from = null
+    try {
+      start.captor.releasePointerCapture(start.pointerId)
+    } catch {
+      // 浏览器已经自己收回了：不用管。
+    }
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', stop)
     window.removeEventListener('pointercancel', stop)
@@ -105,7 +129,28 @@ export function useFloatingPanelSpot(key: string, el: Ref<HTMLElement | null>) {
     const node = el.value
     if (!node) return
     const box = node.getBoundingClientRect()
-    from = { x: event.clientX, y: event.clientY, left: box.left, top: box.top, pointerId: event.pointerId }
+    // 捕获指针：松手发生在窗口外、或者被系统手势接走时，`pointerup` 仍然回到这里，
+    // 这样 `stop()` 一定跑得到（`GuideBubble`、`DocCommentPanel` 的拖动也是这么做）。
+    //
+    // 捕获挂在**按下去的那一个**（头部那一行）上，不是整块浮层上：捕获期间浏览器会把
+    // click / dblclick 的目标也改成捕获元素，挂在浮层上时，双击头部就落到浮层自己头上，
+    // 头部的「双击回角落」永远收不到。
+    const captor = event.currentTarget instanceof HTMLElement ? event.currentTarget : node
+    try {
+      captor.setPointerCapture(event.pointerId)
+    } catch {
+      // 合成事件、或者指针已经不在了：捕获不上不影响拖。`move` 里还有一道 `buttons` 兜底。
+    }
+    from = {
+      x: event.clientX,
+      y: event.clientY,
+      left: box.left,
+      top: box.top,
+      width: box.width,
+      height: box.height,
+      pointerId: event.pointerId,
+      captor,
+    }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', stop)
     // 触摸被打断、窗口失焦时不会有 pointerup：取消也算松手，否则监听一直挂着。

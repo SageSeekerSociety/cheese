@@ -25,7 +25,9 @@ function setViewport(width: number, height: number) {
 
 function drag(spot: ReturnType<typeof useFloatingPanelSpot>, fromX: number, fromY: number, dx: number, dy: number) {
   spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: fromX, clientY: fromY }))
-  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: fromX + dx, clientY: fromY + dy }))
+  window.dispatchEvent(
+    new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: fromX + dx, clientY: fromY + dy })
+  )
   window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }))
 }
 
@@ -74,7 +76,7 @@ it('窗口改小到浮层放不下时，收回屏幕里，离边留 12px', () =>
 it('按一下不挪位置：挪过 3px 才算拖', () => {
   const spot = useFloatingPanelSpot(KEY, panelIn())
   spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 700, clientY: 200 }))
-  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 701, clientY: 201 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 701, clientY: 201 }))
   expect(spot.dragging.value).toBe(false)
   window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }))
   expect(spot.style.value).toBeUndefined()
@@ -84,15 +86,43 @@ it('按一下不挪位置：挪过 3px 才算拖', () => {
 it('拖动中途不写存储，松手写一次；取消也算松手', () => {
   const spot = useFloatingPanelSpot(KEY, panelIn())
   spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 700, clientY: 200 }))
-  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 600, clientY: 150 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 600, clientY: 150 }))
   expect(localStorage.getItem(KEY)).toBeNull()
   window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }))
   expect(localStorage.getItem(KEY)).not.toBeNull()
   expect(spot.dragging.value).toBe(false)
 
   // 松手之后再动鼠标不挪。
-  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 100, clientY: 100 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 100, clientY: 100 }))
   expect(spot.style.value).toMatchObject({ left: '484px', top: '118px' })
+})
+
+it('在窗口外松手（收不到 pointerup）之后再动鼠标，面板不跟着漂', () => {
+  const spot = useFloatingPanelSpot(KEY, panelIn())
+  // 松手发生在窗口外：后面来的是一个没有按键的 pointermove。
+  spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 700, clientY: 200 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 690, clientY: 190 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 0, clientX: 400, clientY: 100 }))
+
+  expect(spot.dragging.value).toBe(false)
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 0, clientX: 100, clientY: 50 }))
+
+  // 停在没有按键之前最后一次按住时挪到的位置（700−10, 200−10 起算），不是后来飘过去的点。
+  expect(spot.style.value).toMatchObject({ left: '574px', top: '158px' })
+})
+
+it('拖到一半面板被关掉（元素没了），不会写进一个坏位置', () => {
+  const el = panelIn()
+  const spot = useFloatingPanelSpot(KEY, el)
+  spot.startDrag(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 700, clientY: 200 }))
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 600, clientY: 150 }))
+
+  el.value = null
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 590, clientY: 140 }))
+
+  // 用的是按下时量到的尺寸，不是 0×0。
+  expect(spot.spot.value!.x).toBeGreaterThan(0.4)
+  expect(spot.spot.value!.y).toBeGreaterThan(0)
 })
 
 it('双击回右下角：位置忘掉，样式交还给 CSS', () => {
