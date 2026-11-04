@@ -285,6 +285,10 @@ describe('AssistantPanel', () => {
 
     await fireEvent.dblClick(header)
     expect(view.emitted('recenter')).toHaveLength(1)
+
+    // 连点两下「新话题」不是「回角落」：双击从按钮冒上来时不算。
+    await fireEvent.dblClick(view.getByRole('button', { name: '固定到右侧' }))
+    expect(view.emitted('recenter')).toHaveLength(1)
   })
 
   it('a panel pinned to the side is not a drag handle', async () => {
