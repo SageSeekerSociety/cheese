@@ -22,7 +22,7 @@ def interpreter_thresholds():
     gc.set_threshold(*before)
 
 
-def test_the_policy_raises_the_middle_generation_and_leaves_the_others(
+def test_the_policy_raises_both_young_generations_and_leaves_the_full_pass_alone(
     interpreter_thresholds, monkeypatch
 ):
     tuning = _tuning()
@@ -31,13 +31,15 @@ def test_the_policy_raises_the_middle_generation_and_leaves_the_others(
     assert tuning.tune_collector(serving=True, on_main_thread=True) is True
 
     gen0, gen1, gen2 = gc.get_threshold()
-    # Generation 1 is the one that decides how often the middle generation is
-    # promoted; raising it is the whole change.
+    # Generation 0's threshold decides how often the young heap is walked, and
+    # generation 1's how often its survivors are promoted; raising both is the
+    # change, and each has to be above the interpreter's own value rather than
+    # a copy of it (generation 0's default is not the same on every 3.13 build).
+    assert gen0 == tuning.GEN0_THRESHOLD > interpreter_thresholds[0]
     assert gen1 == tuning.GEN1_THRESHOLD > interpreter_thresholds[1]
-    # Generations 0 and 2 stay the interpreter's own: generation 0's default
-    # has already moved between builds of 3.13, and pinning it would change how
-    # often the young heap is walked, which nothing measured asked for.
-    assert (gen0, gen2) == (interpreter_thresholds[0], interpreter_thresholds[2])
+    # Generation 2's threshold decides nothing in 3.13 — a full pass is gated on
+    # the promotion ratio — so it stays whatever the interpreter started with.
+    assert gen2 == interpreter_thresholds[2]
 
 
 def test_only_a_serving_process_on_the_main_thread_is_tuned(

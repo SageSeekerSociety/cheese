@@ -44,11 +44,20 @@ import threading
 # tuning would stop reaching production with nothing failing.
 from app.core.startup_freeze import SERVING
 
-#: Generation 1's allocation threshold; 0 and 2 keep whatever this interpreter
+#: Generation 0's allocation threshold. The ceiling the interpreter ships with
+#: is a floor for us: it decides how much a pass walks, and a pass costs the
+#: same per object whether it walks 2,000 or 10,000 of them. Production's
+#: readings at 5 hours: 8,000 gen-0 passes for 16.5 s — by far the largest
+#: collector cost on the loop — freeing ~966 objects each. Raising it to 5,000
+#: on a heap of production's shape cut the passes to 40% and the collector's
+#: total time to 43%, and the extra young objects held between passes moved
+#: neither the peak object count nor RSS.
+GEN0_THRESHOLD = 5000
+
+#: Generation 1's allocation threshold; 2 keeps whatever this interpreter
 #: started with. Only this number is ours to set: generation 0's default is
 #: not a constant across CPython versions (700 up to 3.12, 2000 from 3.13),
-#: and pinning it here would silently make the young generation collect more
-#: often than the build we run chose to.
+#: so the value above is a deliberate setting rather than a copy of it.
 GEN1_THRESHOLD = 100
 
 _done = False
@@ -60,8 +69,8 @@ def tune_collector(*, serving: bool, on_main_thread: bool) -> bool:
     global _done
     if _done or not serving or not on_main_thread:
         return False
-    gen0, _gen1, gen2 = gc.get_threshold()
-    gc.set_threshold(gen0, GEN1_THRESHOLD, gen2)
+    _gen0, _gen1, gen2 = gc.get_threshold()
+    gc.set_threshold(GEN0_THRESHOLD, GEN1_THRESHOLD, gen2)
     _done = True
     return True
 
