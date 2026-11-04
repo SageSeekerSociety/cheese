@@ -148,3 +148,26 @@ async def test_without_admin_credentials_the_clock_does_nothing(monkeypatch, sen
 )
 def test_the_level_is_the_highest_mark_reached(used, expected):
     assert spend_cap_alerts.level(used, 100.0) == expected
+
+
+@pytest.mark.anyio
+async def test_a_capped_upstream_reads_only_its_own_ledger(sent):
+    """每次扫描按设了上限的上游各读一份，不把整本账拉回来。
+
+    整本账从 2000-01-01 起，网关要发好几 MB、事件循环要把它解完；上限只落在少数
+    几个上游上，按名字各读一份就够了。"""
+    gw, redis = _Gateway(), _Redis()
+    gw.caps = {"argon": 2000.0}
+    gw.ledger = {_ARGON: 1000.0}
+    asked: list[str | None] = []
+    handle = gw._handle
+
+    def recording(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/user/daily/activity/aggregated":
+            asked.append(request.url.params.get("model"))
+        return handle(request)
+
+    admin = GatewayAdmin("http://gw", "mk", transport=httpx.MockTransport(recording))
+    assert await spend_cap_alerts.check(admin, redis, today="2026-10-22") == []
+    # One request, and it named the capped upstream: the gateway can filter.
+    assert asked == [_ARGON], asked
