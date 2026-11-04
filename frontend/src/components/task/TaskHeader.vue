@@ -602,7 +602,7 @@ function actionTestId(id: string): string | undefined {
   color: var(--faint);
 }
 .task-header__title {
-  min-width: 0;
+  min-width: 6em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -662,11 +662,17 @@ function actionTestId(id: string): string | undefined {
 .task-header__owner-name {
   white-space: nowrap;
 }
+/* 状态那一格（在做什么、说要多久、谁离开了）可以缩到没有：主区被工作面板和助手面板
+   夹窄时，它原来写着 `flex: none`，把整行撑得比容器还宽——任务名被压成 0 宽，状态
+   那一句、负责人和状态标叠到一起。名字和负责人是不许让的（上面和下面各自有下限），
+   让的是这一句。 */
 .task-header__meta {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 /* 手机顶栏里两行（和支线转成任务时的 ThreadHead 一个样子）：任务名独占第一行；状态和
    负责人退到第二行，同一号字、同一种灰，各成一格，靠间距和小头像分开，不拿点号串。
