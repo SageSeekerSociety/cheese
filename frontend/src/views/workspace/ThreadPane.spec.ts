@@ -399,7 +399,8 @@ describe('支线', () => {
           AgentFeedbackCard: true,
           PanelSiteHost: true,
           ChatPanel: {
-            template: '<button data-testid="probe-open-process" @click="$emit(\'open-process\', \'turn-1\')">x</button>',
+            template:
+              '<button data-testid="probe-open-process" @click="$emit(\'open-process\', \'turn-1\')">x</button>',
           },
         },
       },
