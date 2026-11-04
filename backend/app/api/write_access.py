@@ -111,9 +111,9 @@ class _Can(WriteAccess):
         # under the name the path gives it, so the route's API description
         # keeps it and FastAPI validates it — a route that takes the object
         # rather than its id would otherwise drop it from both. It is typed
-        # the way the kind's policy says its ids are: a UUID kind answers 422
-        # to a path that is not one, instead of judging a string that no row
-        # can be.
+        # the way the kind's policy says its ids are: a UUID kind rejects a
+        # path that is not one before anything is judged, rather than reading
+        # a string no row can be.
         id_type = can.policy_of(self.permission).id_type if self.permission else int
         object.__setattr__(
             self,
@@ -330,14 +330,20 @@ ROUTE_DECIDES = Depends(WriteAccess("route_decides"))
 
 
 @dataclass(frozen=True, eq=False)
-class _HoldsLink(WriteAccess):
-    kind: Literal["holds_link"] = "holds_link"
+class _SignedIn(WriteAccess):
+    """A route whose declaration is only «somebody is signed in»: what it acts
+    on is not named by the path yet."""
 
     async def __call__(  # type: ignore[override]
         self, person: Annotated[AuthUserInfo, Depends(get_auth_user)]
     ) -> None:
         if person.user_id == 0:
             raise AuthenticationRequiredError(say("signInRequired"))
+
+
+@dataclass(frozen=True, eq=False)
+class _HoldsLink(_SignedIn):
+    kind: Literal["holds_link"] = "holds_link"
 
 
 #: A route opened by a join link's token: see ``HOLDS_LINK`` above.
@@ -345,20 +351,11 @@ HOLDS_LINK = Depends(_HoldsLink())
 
 
 @dataclass(frozen=True, eq=False)
-class _AsOneself(WriteAccess):
-    """A route that creates something of the caller's own: the handler must
-    take the person from the credential, never from the body."""
-
+class _AsOneself(_SignedIn):
     kind: Literal["as_oneself"] = "as_oneself"
 
-    async def __call__(  # type: ignore[override]
-        self, person: Annotated[AuthUserInfo, Depends(get_auth_user)]
-    ) -> None:
-        if person.user_id == 0:
-            raise AuthenticationRequiredError(say("signInRequired"))
 
-
-#: A route that creates a row belonging to the caller: see ``AS_ONESELF``.
+#: A route that creates a row belonging to the caller: see ``AS_ONESELF`` above.
 AS_ONESELF = Depends(_AsOneself())
 
 
