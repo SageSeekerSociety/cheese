@@ -151,3 +151,50 @@ def test_the_collectors_passes_say_how_much_they_freed():
     gen2 = loop_stalls.stall_status()["gc"][2]
     assert gen2["collected"] == before + 1234
     assert "worst_collected" in gen2
+
+
+def test_a_stall_inside_a_library_names_the_backend_call_that_waits(monkeypatch):
+    # Production's `ssl.py read` stalls came back with one frame: the loop was
+    # held inside a library, and the backend frame waiting for it was dropped.
+    # A stack that names only the library cannot be acted on.
+    import json
+    import sys
+
+    loop_stalls = _stalls()
+
+    def scanning_inside_the_library(text, end, strict=True):
+        # Runs inside json's own frame: exactly the shape of a library call
+        # holding the loop, with the backend frame above it.
+        return loop_stalls._where(sys._getframe())
+
+    def backend_waits():
+        return json.decoder.py_scanstring('"x"', 1)
+
+    monkeypatch.setattr(json.decoder, "py_scanstring", scanning_inside_the_library)
+    stack = backend_waits()
+    joined = " <- ".join(stack)
+    # The innermost entry names the library call; the backend frame that waited
+    # for it is still in the stack, which is the whole point.
+    assert stack[0].count(" <- ") >= 1, stack
+    assert "backend_waits" in joined, stack
+
+
+def test_a_deep_library_chain_is_folded_into_a_bounded_entry(monkeypatch):
+    # The fold runs inside the signal handler, once per sample, for as long as
+    # the stall lasts. It has to stay the size the constants promise, even when
+    # the chain below it has no backend frame at all.
+    import sys
+
+    loop_stalls = _stalls()
+    monkeypatch.setattr(loop_stalls, "_APP", "/nonexistent-backend-prefix/")
+
+    def descend(depth):
+        if depth == 0:
+            return loop_stalls._where(sys._getframe())
+        return descend(depth - 1)
+
+    stack = descend(60)
+    assert len(stack) == 1, stack
+    entry = stack[0]
+    assert entry.count(" <- ") == loop_stalls.LIBRARY_DEPTH - 1, entry
+    assert "deeper)" in entry, entry
