@@ -127,6 +127,18 @@ it('十四天没动静的收进「已停滞」，点开才列出来', async () =
   expect(titles(view)).toEqual(['还在动的', '停住的'])
 })
 
+it('「已停滞」那一行和上面的行一样有负责人头像和协作者数', async () => {
+  const view = mount([
+    task({ title: '停住的', owner_handle: 'alice', contributor_handles: ['bob', 'carol'], stalled: true }),
+  ])
+  await fireEvent.click(view.getByRole('button', { name: new RegExp(t('work.projectTasks.stalled')) }))
+  const row = view.getByRole('button', { name: /停住的/ })
+  const who = row.querySelector('.tasks__who')!
+  expect(who.querySelector('.v-avatar')).not.toBeNull()
+  expect(who.querySelector('.tasks__name')?.textContent).toBe('alice')
+  expect(who.textContent).toContain('+2')
+})
+
 it('选了频道就只列那个频道的任务', () => {
   const view = mount([task({ title: '前端的' }), task({ title: '分享的', room_id: 'share' })], { channelId: 'share' })
   expect(titles(view)).toEqual(['分享的'])
