@@ -33,9 +33,10 @@ def test_the_policy_raises_both_young_generations_and_leaves_the_full_pass_alone
     gen0, gen1, gen2 = gc.get_threshold()
     # Generation 0's threshold decides how often the young heap is walked, and
     # generation 1's how often its survivors are promoted; raising both is the
-    # change, and each has to be above the interpreter's own value rather than
-    # a copy of it (generation 0's default is not the same on every 3.13 build).
-    assert gen0 == tuning.GEN0_THRESHOLD > interpreter_thresholds[0]
+    # change. Generation 0 is a floor, so the target is the floor and not the
+    # constant: a build that already walks more of the young heap keeps its own
+    # value (pinned by the test below). Generation 1 is set outright.
+    assert gen0 == max(interpreter_thresholds[0], tuning.GEN0_THRESHOLD)
     assert gen1 == tuning.GEN1_THRESHOLD > interpreter_thresholds[1]
     # Generation 2's threshold decides nothing in 3.13 — a full pass is gated on
     # the promotion ratio — so it stays whatever the interpreter started with.

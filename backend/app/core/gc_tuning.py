@@ -1,4 +1,11 @@
-"""Let the middle generation fill before the collector promotes it.
+"""Walk the young heap less often, and let the middle generation fill.
+
+Two thresholds are raised, both above the interpreter's default. Generation
+0's decides how much each pass walks; it costs the loop most by running most
+often — 8,000 passes for 16.5 s in a five-hour production window — and is
+held as a floor at `GEN0_THRESHOLD`, never below what the build already does.
+Generation 1's decides how often survivors are promoted; that one is what the
+rest of this docstring argues.
 
 A full collection (generation 2) runs on the event loop's thread with the loop
 held, and its cost is the size of the whole tracked heap, not the garbage it
@@ -54,10 +61,10 @@ from app.core.startup_freeze import SERVING
 #: neither the peak object count nor RSS.
 GEN0_THRESHOLD = 5000
 
-#: Generation 1's allocation threshold; 2 keeps whatever this interpreter
-#: started with. Only this number is ours to set: generation 0's default is
-#: not a constant across CPython versions (700 up to 3.12, 2000 from 3.13),
-#: so the value above is a deliberate setting rather than a copy of it.
+#: Generation 1's allocation threshold; generation 2 keeps whatever this
+#: interpreter started with. Unlike the generation-0 floor above, this value is
+#: set outright rather than floored: it has been 10 on every CPython release so
+#: far, so there is no build whose own choice it could tune down.
 GEN1_THRESHOLD = 100
 
 _done = False
