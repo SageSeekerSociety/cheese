@@ -22,7 +22,7 @@ def interpreter_thresholds():
     gc.set_threshold(*before)
 
 
-def test_the_policy_raises_the_middle_generation_and_leaves_the_others(
+def test_the_policy_raises_both_young_generations_and_leaves_the_full_pass_alone(
     interpreter_thresholds, monkeypatch
 ):
     tuning = _tuning()
@@ -31,13 +31,16 @@ def test_the_policy_raises_the_middle_generation_and_leaves_the_others(
     assert tuning.tune_collector(serving=True, on_main_thread=True) is True
 
     gen0, gen1, gen2 = gc.get_threshold()
-    # Generation 1 is the one that decides how often the middle generation is
-    # promoted; raising it is the whole change.
+    # Generation 0's threshold decides how often the young heap is walked, and
+    # generation 1's how often its survivors are promoted; raising both is the
+    # change. Generation 0 is a floor, so the target is the floor and not the
+    # constant: a build that already walks more of the young heap keeps its own
+    # value (pinned by the test below). Generation 1 is set outright.
+    assert gen0 == max(interpreter_thresholds[0], tuning.GEN0_THRESHOLD)
     assert gen1 == tuning.GEN1_THRESHOLD > interpreter_thresholds[1]
-    # Generations 0 and 2 stay the interpreter's own: generation 0's default
-    # has already moved between builds of 3.13, and pinning it would change how
-    # often the young heap is walked, which nothing measured asked for.
-    assert (gen0, gen2) == (interpreter_thresholds[0], interpreter_thresholds[2])
+    # Generation 2's threshold decides nothing in 3.13 — a full pass is gated on
+    # the promotion ratio — so it stays whatever the interpreter started with.
+    assert gen2 == interpreter_thresholds[2]
 
 
 def test_only_a_serving_process_on_the_main_thread_is_tuned(
@@ -92,3 +95,21 @@ def test_the_performance_board_says_which_policy_the_process_runs(monkeypatch):
     monkeypatch.setattr(gc, "get_threshold", lambda: (2000, 100, 10))
     status = loop_stalls.stall_status()
     assert status["thresholds"] == [2000, 100, 10]
+
+
+def test_a_build_that_already_walks_more_of_the_young_heap_is_left_alone(
+    interpreter_thresholds, monkeypatch
+):
+    # The interpreter's generation-0 default has moved before (700 -> 2000) and
+    # may move again. Where a build already walks more of it than our floor, the
+    # floor must not tune it down — that would collect the young heap more often
+    # than the build chose, the opposite of what this module exists for.
+    tuning = _tuning()
+    monkeypatch.setattr(tuning, "_done", False)
+    gc.set_threshold(tuning.GEN0_THRESHOLD * 2, 10, 10)
+
+    assert tuning.tune_collector(serving=True, on_main_thread=True) is True
+
+    gen0, gen1, _gen2 = gc.get_threshold()
+    assert gen0 == tuning.GEN0_THRESHOLD * 2, "a higher interpreter value was lowered"
+    assert gen1 == tuning.GEN1_THRESHOLD
