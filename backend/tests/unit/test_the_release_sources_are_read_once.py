@@ -71,3 +71,15 @@ def test_a_substituted_sources_gets_its_own_version():
 
     assert release.version_of(changed) != release.version_of(own)
     assert release.version_of(changed) == release.digest(changed)
+
+
+def test_editing_the_same_dict_in_place_is_noticed():
+    """`_last_sources` holding the caller's own dict would compare it with
+    itself; an in-place edit between two asks must still change the answer."""
+    release._last_sources = None
+    sources = release.sources()
+    before = release.version_of(sources)
+
+    sources["client.py"] = sources["client.py"] + "\n# edited in place\n"
+
+    assert release.version_of(sources) != before

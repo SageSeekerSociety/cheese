@@ -409,8 +409,7 @@ CHEESE_SKILLS"""
     ) -> tuple[str, str]:
         """The configure and prepare holes, written for this prompt, these
         helpers and this installer of the pinned build: once for the launch,
-        and once for what the launch is compared by (below).
-"""
+        and once for what the launch is compared by (below)."""
         execution_setup = 'mkdir -p "$SEAT/remote-execution"\n'
         for name, source in helper_sources.items():
             execution_setup += (

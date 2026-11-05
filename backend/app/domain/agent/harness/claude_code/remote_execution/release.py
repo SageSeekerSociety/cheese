@@ -476,7 +476,10 @@ def version_of(sources):
     global _last_version, _last_sources
     if _last_sources is None or sources != _last_sources:
         _last_version = digest(sources)
-        _last_sources = sources
+        # A copy, not the caller's dict: `sources != _last_sources` on the same
+        # object compares it with itself, so an in-place edit between two asks
+        # would return the stale digest — and a release that never gets applied.
+        _last_sources = dict(sources)
     return _last_version
 
 
