@@ -223,6 +223,10 @@ const tierWidth = computed(() => VIEWPORT_WIDTH[viewport.value])
 const scale = computed(() => fitScale(paneWidth.value, viewport.value))
 /** 固定档那一块的尺寸和缩放。
  *
+ *  高度永远是「槽高 / 缩放」，缩放是 1 时也给：画出来正好填满槽，不论放不放得下那一档
+ *  的宽度。不给的话它只剩 `--preview-min` 那块地板，长网页在 240px 处截断、底下一片空白。
+ *  还没量到槽高（挂载那一刻）就不给，先按地板画。
+ *
  *  它是**绝对定位**在槽里的：缩小之后的布局尺寸（`paneHeight / scale`）比看得见的那块
  *  大，留在流里的话槽会跟着一起长高，下一帧量到的就更高，比例一路往下追（实测长到
  *  1.7 亿 px）。绝对定位把它从流里摘出去，槽的高度只由外面给。 */
@@ -230,10 +234,10 @@ const surfaceStyle = computed(() => {
   const target = tierWidth.value
   if (!target) return {}
   const s = scale.value
-  const height = s < 1 && paneHeight.value > 0 ? paneHeight.value / s : null
+  const height = paneHeight.value > 0 ? paneHeight.value / s : null
   return {
     width: `${target}px`,
-    ...(s < 1 && height ? { height: `${height}px` } : {}),
+    ...(height ? { height: `${height}px` } : {}),
     ...(s < 1
       ? {
           transform: `scale(${s})`,
@@ -765,15 +769,20 @@ button.preview-viewport__btn.preview-viewport__btn--active {
 }
 /* 画面那一槽：宽度永远等于面板，量的是它。里面那一块（`.preview-frames`）才按视口档
    变宽窄、变缩放——分开两级是为了**别量自己改过的东西**：量自己的话，缩到 0.78 之后
-   量出来的宽度又变了，比例会一直往下追。 */
+   量出来的宽度又变了，比例会一直往下追。
+   槽本身也是一列 flex：桌面档那一块留在流里，靠 `flex: 1` 长到槽那么高。槽是块盒的话
+   它只剩 `--preview-min` 那块地板（帧都是绝对定位，撑不起它）。 */
 .preview-slot {
   position: relative;
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   width: 100%;
   min-height: var(--preview-min);
 }
 .preview-frames {
   position: relative;
+  flex: 1 1 auto;
   width: 100%;
   min-height: var(--preview-min);
 }

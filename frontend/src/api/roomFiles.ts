@@ -1,4 +1,5 @@
 import type { ApiEnvelope, ChatAttachment, DocumentRevision, FileSource, ListPayload } from '../cx_types'
+import type { SlideNotesPayload } from '../lib/slideNotes'
 import type { DocumentTemplate, RoomOutput } from '../types/roomOutput'
 
 import { t } from '../i18n'
@@ -271,9 +272,9 @@ export function previewSlideNotes(
   path: string,
   task?: string | null,
   source: FileSource = 'live'
-): Promise<{ notes: string[]; readable: boolean; version: string }> {
+): Promise<SlideNotesPayload & { readable: boolean; version: string }> {
   const from = task ? `&task=${encodeURIComponent(task)}` : ''
-  return request<{ notes: string[]; readable: boolean; version: string }>(
+  return request<SlideNotesPayload & { readable: boolean; version: string }>(
     `/topics/${encodeURIComponent(topicId)}/attachments/notes?path=${encodeURIComponent(path)}&source=${source}${from}`
   )
 }

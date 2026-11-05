@@ -174,6 +174,8 @@ from tests.support.machine_path import resolved  # noqa: E402
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
+from tests.support.content_review import Green  # noqa: E402
+from tests.support.content_review import install as install_green  # noqa: E402
 from tests.support.seat_channel import EPOCHS, SeatChannel  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
@@ -1047,6 +1049,13 @@ def fast_timings(monkeypatch) -> FastTimings:
     is deliberately left out and why.
     """
     return FastTimings(monkeypatch).apply()
+
+
+@pytest.fixture
+def green(monkeypatch) -> Green:
+    """Content Moderation configured and answering as ``tests/support/
+    content_review.py`` says; request it in a test about what is published."""
+    return install_green(monkeypatch)
 
 
 @pytest.fixture
@@ -3041,7 +3050,6 @@ def seed_problem_reader(client, *, task_id: int, user_id: int) -> None:
                 SpaceMember(
                     space_id=task.space_id,
                     user_id=user_id,
-                    invite_code_id=None,
                     created_at=now,
                     updated_at=now,
                     deleted_at=None,

@@ -387,6 +387,29 @@ describe('支线', () => {
     await waitFor(() => expect(container.querySelector('.feedback-probe')?.textContent).toBe('th1'))
   })
 
+  it('「查看过程」里回去的那一颗写着「返回支线」，不是一颗没有名字的箭头', async () => {
+    // 这颗曾经写成 `icon`（纯图标按钮），插槽里的四个字被吞掉，页面上只剩一个箭头。
+    getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    const { findByTestId } = render(ThreadPane as Component, {
+      props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
+      global: {
+        plugins: [vuetify],
+        stubs: {
+          MarkdownView: true,
+          AgentFeedbackCard: true,
+          PanelSiteHost: true,
+          ChatPanel: {
+            template:
+              '<button data-testid="probe-open-process" @click="$emit(\'open-process\', \'turn-1\')">x</button>',
+          },
+        },
+      },
+    })
+    await fireEvent.click(await findByTestId('probe-open-process'))
+    const back = await findByTestId('thread-process-back')
+    expect(back.textContent).toContain('返回支线')
+  })
+
   it('输入框说给这条支线正在和它说话的那位队友，不是频道默认那位', async () => {
     getThread.mockResolvedValue({
       id: 'th-mate',

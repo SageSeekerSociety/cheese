@@ -45,6 +45,7 @@ from app.domain.block.repositories import BlockRepository
 # import a domain's models directly (C2 in `.importlinter`), and `schemas` is
 # the module that re-exports the two enums a route writes with.
 from app.domain.block.schemas import BlockKind, BlockOut, ReactionToggleIn
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.delivery.agent import dispatch_pending, record_task_instruction
 from app.domain.event_author import AuthorType
 from app.domain.room_task.place import place_or_404
@@ -271,6 +272,10 @@ async def withdraw_own_question(
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
+    # Numbering first, then the question read again, as `_answer_group` does: an
+    # answer recorded meanwhile is refused on, not written over.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
     await withdraw_question_by_asker(
         db, block=question, room_id=room_id, handle=actor.handle
     )
@@ -328,6 +333,12 @@ async def _answer_group(block_id, body, db, resolver, broker, chat, runner) -> d
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
 
+    # The conversation's numbering first, then the questions read again: a
+    # reply answering one of them takes that numbering before it writes the
+    # question (`conversation.numbering`), so one that landed while this
+    # request was on its way is read here, not written over.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
     questions = await group_of(db, question)
     answers = answers_from(body)
     known = {q.id for q in questions}
@@ -389,6 +400,11 @@ async def _respond(block_id, db, resolver, broker, chat, runner, *, act) -> dict
     # to take back: refuse it as what it is rather than as the wrong person.
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
+    # Numbering first, then the question read again, as `_answer_group` does:
+    # ``act`` writes the question's whole meta back, so it must start from what
+    # an answer recorded meanwhile left there.
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
     await act(
         db,
         block=question,

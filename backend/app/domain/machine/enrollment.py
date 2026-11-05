@@ -14,6 +14,7 @@ from the row the moment enrollment succeeds.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ import re
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
@@ -33,6 +35,8 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.place import footprint_root
 from app.domain.machine import claude_dist, toolchain_dist
+from app.domain.machine.microcloud import MicroCloudClient
+from app.domain.machine.supply import effective_spec, pick_offering
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
@@ -122,7 +126,10 @@ DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILIN
 # directories the platform keeps homes and stores in, so no path changes.
 # mkfs.xfs without -f: a disk that carries any signature is refused, not
 # wiped. A host with no such disk is not enrolled: it could not hold a sandbox
-# to a disk limit, and no sandbox runs without one.
+# to a disk limit, and no sandbox runs without one. The same step keeps the
+# host's swap file (`cloud_host_swap_mb`, made with fallocate beside the
+# homes); the capacity a host reports its data disk as is what the sandboxes
+# may use, and `models.capacity` takes the swap file off it.
 #
 # The mkfs.xfs is the platform's, placed with the host tools before this runs
 # (`run_bootstrap`, where `cli/internal/devenv` keeps them), not a package of
@@ -182,6 +189,35 @@ mountpoint -q /data || {{ sudo -n mkdir -p /data && sudo -n mount /data; }}
 sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 0700 /data/home /data/store
 mountpoint -q "$root/home" || sudo -n mount "$root/home"
 mountpoint -q "$root/store" || sudo -n mount "$root/store"
+# A swap file on the data disk, so a burst in the machine's own processes is
+# paged out instead of the kernel killing the connector and every sandbox with
+# it (`cloud_host_swap_mb`). fallocate only: the disk is on a thin pool, where
+# every block a dd'd file writes would be claimed before anything trims it
+# back. Enrollment is retried, so this whole step runs again: a file already
+# swapped on is left alone (swapping it off to resize it would push a host
+# that is short on memory into the case the file exists for), and one that is
+# not swapped on but of a size this deployment no longer asks for is made
+# again. No sandbox swaps (`memory.swap.max` stays 0).
+swapfile=/data/swapfile
+swap_mb={swap_mb}
+if [ "$swap_mb" -gt 0 ]; then
+  if ! sudo -n swapon --show=NAME --noheadings 2>/dev/null | grep -qxF "$swapfile"; then
+    wanted=$(( swap_mb * 1024 * 1024 ))
+    have=$(stat -c %s "$swapfile" 2>/dev/null || true)
+    if [ "$have" != "$wanted" ]; then
+      sudo -n rm -f "$swapfile"
+      sudo -n fallocate -l "$wanted" "$swapfile" \\
+        || {{ echo "could not make the swap file $swapfile" >&2; exit 1; }}
+    fi
+    sudo -n chmod 600 "$swapfile"
+    sudo -n mkswap "$swapfile" >/dev/null
+    sudo -n swapon "$swapfile"
+  fi
+  mount_line "$swapfile none swap sw,nofail 0 0"
+  swap_sysctl=/etc/sysctl.d/90-cheese-swap.conf
+  echo "vm.swappiness={swappiness}" | sudo -n tee "$swap_sysctl" >/dev/null
+  sudo -n sysctl -p "$swap_sysctl" >/dev/null
+fi
 set -- $(stat -f -c '%b %S' /data)
 echo "CHEESE_SANDBOX_DISK_BYTES=$(( $1 * $2 ))"
 """
@@ -235,7 +271,14 @@ def bootstrap_script(
     # enforces is a machine that enrolls cleanly and then runs nothing.
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
-    data_disk = DATA_DISK.format() if sandbox_disk else ""
+    data_disk = (
+        DATA_DISK.format(
+            swap_mb=settings.cloud_host_swap_mb,
+            swappiness=settings.cloud_host_swappiness,
+        )
+        if sandbox_disk
+        else ""
+    )
     return f"""set -eu
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
@@ -343,6 +386,74 @@ if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null)" != "Linger=yes" ]
 fi
 echo "cheese.service active"
 """
+
+
+#: Characters of an image version kept: wide enough that two versions do not
+#: collide by accident, short enough to read on the admin page.
+IMAGE_VERSION_CHARS = 16
+
+#: What stands in for the parts of the script that name ONE machine (its
+#: origin, token and device), so a version can be taken of what every machine
+#: gets rather than of one machine's credentials.
+_VERSION_PLACEHOLDER = "image-version-placeholder"
+
+
+def bootstrap_digest(*, sandbox_disk: bool) -> str:
+    """A digest of the script a host enrolls with, with its per-machine
+    credentials held at a placeholder: a change to anything the machine is set
+    up with changes the digest, and no token can ever reach it."""
+    script = bootstrap_script(
+        origin=_VERSION_PLACEHOLDER,
+        token=_VERSION_PLACEHOLDER,
+        device_id=_VERSION_PLACEHOLDER,
+        sandbox_disk=sandbox_disk,
+    )
+    return hashlib.sha256(script.encode()).hexdigest()
+
+
+def host_image_version(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> str:
+    """What a host created now would be made of, as one value a host row keeps
+    and the sweep compares it against: the offering and its template, the size
+    the machine gets, its login user, and the script it enrolls with. Change any
+    of those and a host enrolled before is out of date, due to be rolled."""
+    payload = {
+        "offering": [
+            offering.get(key)
+            for key in (
+                "id",
+                "machineTypeName",
+                "zoneName",
+                "templateName",
+                "dataDiskGb",
+            )
+        ],
+        "spec": [int(cores), int(memory_mb), int(disk_gb)],
+        "user": settings.microcloud_login_user,
+        "bootstrap": bootstrap_digest(sandbox_disk=True),
+    }
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]
+
+
+async def current_host_image_version(client: MicroCloudClient | None = None) -> str:
+    """The version a host created right now would record: the pool's offering
+    today, the size it asks for today, and the script it would enroll with.
+    Reads the provider, so call it with no lock held."""
+    offering = await pick_offering(client or MicroCloudClient())
+    spec = effective_spec(
+        offering,
+        cores=settings.microcloud_default_cores,
+        memory_mb=settings.microcloud_default_memory_mb,
+        disk_gb=settings.microcloud_default_disk_gb,
+    )
+    return host_image_version(
+        offering,
+        cores=spec["cores"],
+        memory_mb=spec["memoryMb"],
+        disk_gb=spec["diskGb"],
+    )
 
 
 def _last_result(state: RetryCallState):

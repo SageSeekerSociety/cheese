@@ -1,40 +1,6 @@
 /**
- * 空间页面共用的纯函数：邀请码是否可用、题目简介里的出处、公告的日期。
+ * 空间页面共用的纯函数：题目简介里的出处、公告的日期。
  */
-
-/** 一张邀请码现在的状态。库里只有次数与期限，两者都能让一张码失效。 */
-export interface InviteCodeStatus {
-  key: 'usable' | 'expired' | 'exhausted'
-}
-
-/**
- * 一张码还算不算数 —— **「当前使用中的码」唯一的判据**。
- *
- * 收的是真接口的形状：`maxUses` 为 0 或 `null` 都是不限。
- */
-export function inviteCodeStatus(
-  code: { maxUses: number | null; useCount: number; expiresAt: number | null },
-  now: number = Date.now()
-): InviteCodeStatus {
-  if (code.expiresAt !== null && code.expiresAt <= now) {
-    return { key: 'expired' }
-  }
-  if (code.maxUses !== null && code.maxUses > 0 && code.useCount >= code.maxUses) {
-    return { key: 'exhausted' }
-  }
-  return { key: 'usable' }
-}
-
-/** 还能用的第一张；没有就是 `null`（不拿一张废码顶上）。列表按建码时间排，所以
- *  这是**最早那张还开着的**。
- *
- *  `now` 与 `inviteCodeStatus` 同一个意思，只为测试能钉住「过期的被跳过」这件事。 */
-export function currentInviteCode<T extends { maxUses: number | null; useCount: number; expiresAt: number | null }>(
-  codes: readonly T[],
-  now: number = Date.now()
-): T | null {
-  return codes.find((c) => inviteCodeStatus(c, now).key === 'usable') ?? null
-}
 
 // --- 出处 --------------------------------------------------------------------
 

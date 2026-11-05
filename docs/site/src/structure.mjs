@@ -45,7 +45,7 @@ export const DEV = [
 // section of the old page. A key that names a section (`page#anchor`) is a
 // section that moved off a page that still exists: that page sends the old
 // #fragment on to the target.
-const SPACE_SECTIONS = ['spaces', 'create', 'invite-codes', 'members', 'publish', 'audit', 'participants', 'space-library', 'teaching']
+const SPACE_SECTIONS = ['spaces', 'create', 'join-link', 'members', 'publish', 'audit', 'participants', 'space-library', 'teaching']
 export const REDIRECTS = {
   compute: 'devices',
   members: 'teams',

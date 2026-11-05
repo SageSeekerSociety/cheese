@@ -35,14 +35,15 @@
     "clearBody": "芝士会忘记这 {n} 条，清除后不能恢复。"
   },
   "routines": {
-    "title": "自动化",
-    "desc": "芝士按时间或在某件事发生时自己去做，结果通知你。新建或修改，在面板中告诉芝士。",
-    "empty": "暂无自动化",
+    "title": "例行事务",
+    "desc": "芝士按时间或在某件事发生时自己去做，结果通知你。",
+    "empty": "还没有例行事务",
     "next": "下次运行：{time}",
     "paused": {
       "person": "已暂停",
       "credits": "额度已用完，已暂停",
-      "away": "长时间未登录，已暂停"
+      "away": "长时间未登录，已暂停",
+      "unfilled": "没补上，点「修改」自己填"
     },
     "last": {
       "done": "最近一次：已完成",
@@ -57,10 +58,47 @@
     "pause": "暂停",
     "resume": "恢复",
     "delete": "删除",
-    "deleteTitle": "删除自动化「{title}」？",
+    "edit": "修改",
+    "save": "保存",
+    "deleteTitle": "删除例行事务「{title}」？",
     "deleteBody": "删除后不再运行，已有的对话保留。",
     "cancel": "取消",
-    "waiting": "等待中"
+    "waiting": "等待中",
+    "actionNew": "＋ 新建",
+    "filling": "芝士生成中：还差{missing}，补完就开始",
+    "form": {
+      "title": "标题",
+      "note": "目标",
+      "explain": "补充说明",
+      "onTime": "时间",
+      "onCondition": "条件",
+      "freq": "频率",
+      "time": "几点",
+      "minute": "第几分钟",
+      "day": "几号",
+      "hourly": "每小时",
+      "daily": "每天",
+      "weekly": "每周",
+      "monthly": "每月",
+      "once": "只在某一刻",
+      "onceOnly": "只做一次，等到就结束",
+      "task": "哪个任务",
+      "taskPlaceholder": "填地址栏里的那个（如 ml-course/tasks/12）；留空就是我提的任务",
+      "blankHint": "不填的项由芝士照目标补上，补完就开始。",
+      "when": {
+        "mention": "有人 {'@'} 我或回复我的支线",
+        "review": "有审阅等我处理",
+        "filed": "任务提交审阅",
+        "decided": "任务的审阅有结果",
+        "accepted": "被采纳",
+        "rejected": "被退回",
+        "due": "题目快截止",
+        "invite": "收到邀请"
+      },
+      "whenLabel": "什么时候",
+      "goalRequired": "「目标」要填：芝士照它开工。",
+      "weekdaysRequired": "每周至少选一天。"
+    }
   },
   "recent": {
     "title": "最近的操作",

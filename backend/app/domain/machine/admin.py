@@ -28,8 +28,11 @@ from sqlalchemy import String, Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.errors import ValidationError
 from app.domain.agent.environment import spec_of
-from app.domain.machine import infra_records, readings
+from app.domain.machine import enrollment, infra_records, readings
+from app.domain.machine.lifecycle import previewed_sessions
+from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     MAX_PROVIDER_ERRORS,
     PROVIDER_ERROR_WINDOW,
@@ -39,6 +42,7 @@ from app.domain.machine.models import (
     SandboxHome,
     WarmMachine,
     capacity,
+    warm_pool_target,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.run_record.models import RunRecord
@@ -59,6 +63,22 @@ _rooms = table("topics", column("id", Uuid), column("title", String))
 
 def _iso(at: datetime | None) -> str | None:
     return at.isoformat() if at is not None else None
+
+
+async def _current_image_version() -> str | None:
+    """What a host created right now would be made of, so the page can say
+    which hosts are out of date. Asks the provider with a short timeout, not
+    ``microcloud_timeout_s``: a page that only reports must not hang on a
+    provider that is away, and an unreadable version is shown as unknown rather
+    than as agreed."""
+    if not settings.microcloud_base_url or not settings.microcloud_tenant_secret:
+        return None
+    try:
+        return await enrollment.current_host_image_version(
+            MicroCloudClient(timeout=5.0)
+        )
+    except (MicroCloudError, ValidationError):
+        return None
 
 
 def host_phase(host: CloudHost, *, homes: int, online: bool) -> str:
@@ -85,9 +105,13 @@ def host_phase(host: CloudHost, *, homes: int, online: bool) -> str:
 
 
 def sandbox_state(home: SandboxHome, now: datetime) -> str:
-    """销毁中、在等宿主机（会话已被告知「正在准备」）、工作中、空闲。"""
+    """销毁中、已冻结、在等宿主机（会话已被告知「正在准备」）、工作中、空闲。"""
     if home.stopped_at is not None:
         return "stopping"
+    if home.parked_at is not None:
+        return "parked"
+    if home.frozen_at is not None:
+        return "frozen"
     if home.waiting_since is not None:
         return "waiting"
     if now - home.active_at <= WORKING_WITHIN:
@@ -95,10 +119,22 @@ def sandbox_state(home: SandboxHome, now: datetime) -> str:
     return "idle"
 
 
-def _idle_deadline(home: SandboxHome) -> datetime | None:
+def _idle_deadline(home: SandboxHome, previewed: bool = False) -> datetime | None:
     """最早什么时候因空闲被回收：最近一次工具调用加上规格的空闲时长。真正的判据还
     看房间最后一轮何时结束、后台命令还在不在跑（``SandboxLifecycle._idle_since``），
     所以这是下限，不是时刻表。"""
+    if home.parked_at is not None:
+        # Parked for good past its keep time: the sweep destroys it then.
+        return home.parked_at + timedelta(seconds=settings.cloud_sandbox_parked_keep_s)
+    if home.frozen_at is not None:
+        # Frozen for good past its keep time: the sweep destroys it then. A
+        # conversation that previews an app is kept the longer time.
+        seconds = (
+            settings.cloud_sandbox_frozen_keep_preview_s
+            if previewed
+            else settings.cloud_sandbox_frozen_keep_s
+        )
+        return home.frozen_at + timedelta(seconds=seconds)
     spec = spec_of(home.spec)
     if spec is None or home.stopped_at is not None or home.waiting_since is not None:
         return None
@@ -158,6 +194,7 @@ async def _history(
                         "sandbox_asleep",
                         infra_records.REFUSED,
                         infra_records.HOST_LOST,
+                        *infra_records.TIMED,
                     ]
                 ),
                 RunRecord.created_at >= since,
@@ -170,8 +207,18 @@ async def _history(
     replaced = released_idle = released_unpaid = sandboxes_lost = 0
     refused: dict[str, set[str]] = defaultdict(set)
     hosts_lost: dict[str, int] = defaultdict(int)
+    # 每种计时（准备、冻结、检出）每一段的秒数，外加整段。
+    timed: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for kind, severity, meta, at in rows:
         meta = meta or {}
+        if kind in infra_records.TIMED:
+            for stage, seconds in {
+                **(meta.get("stages") or {}),
+                "total": meta.get("total_s"),
+            }.items():
+                if isinstance(seconds, (int, float)):
+                    timed[kind][stage].append(float(seconds))
+            continue
         home = meta.get("home")
         said = ((meta.get("i18n") or {}).get("content") or {}).get("key")
         if kind == infra_records.REFUSED:
@@ -213,6 +260,17 @@ async def _history(
         "wait_p50_s": _percentile(waits, 50),
         "wait_p95_s": _percentile(waits, 95),
         "wait_max_s": waits[-1] if waits else None,
+        "timings": {
+            kind: {
+                stage: {
+                    "count": len(values),
+                    "p50_s": _percentile(sorted(values), 50),
+                    "p95_s": _percentile(sorted(values), 95),
+                }
+                for stage, values in stages.items()
+            }
+            for kind, stages in timed.items()
+        },
     }
 
 
@@ -241,6 +299,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
         )
     )
     projects, rooms = await _names(session, homes, hosts)
+    previewed = await previewed_sessions(
+        session, [home.session_id for home in homes if home.session_id is not None]
+    )
     by_host: dict[uuid.UUID, list[SandboxHome]] = defaultdict(list)
     for home in homes:
         assert home.host_id is not None
@@ -250,6 +311,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
         session, [h for h in hosts if h.released_at is None], now
     )
     sandbox_usage = await readings.sandboxes_now(session, [h.id for h in homes])
+    # What a host built now would be made of; None when the provider cannot be
+    # asked, in which case the page says the versions' age but not their state.
+    current_image = await _current_image_version()
 
     def online(device_id: str | None) -> bool:
         return device_id is not None and hub.is_online(device_id)
@@ -280,6 +344,16 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 "offline_since": _iso(host.offline_since),
                 "failed_at": _iso(host.failed_at),
                 "released_at": _iso(host.released_at),
+                "image_version": host.image_version,
+                # None: the provider could not be asked, or this is a whole VM,
+                # which is never rolled.
+                "image_outdated": (
+                    None
+                    if current_image is None or host.whole_machine
+                    else host.image_version != current_image
+                ),
+                "draining": host.draining_since is not None,
+                "draining_since": _iso(host.draining_since),
                 "enroll_attempts": host.enroll_attempts,
                 "enroll_error": host.enroll_error or None,
                 "usage": usage.get(host.id),
@@ -301,7 +375,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                         "waiting_since": _iso(home.waiting_since),
                         "active_at": _iso(home.active_at),
                         "stopped_at": _iso(home.stopped_at),
-                        "idle_deadline": _iso(_idle_deadline(home)),
+                        "idle_deadline": _iso(
+                            _idle_deadline(home, home.session_id in previewed)
+                        ),
                         "usage": sandbox_usage.get(home.id),
                     }
                     for home in on
@@ -350,13 +426,15 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             "provider_probe_min": int(PROVIDER_PROBE_INTERVAL.total_seconds() // 60),
             "last_provider_failure": _iso(last_failure),
             "refusing": refusing,
-            "warm_target": settings.microcloud_warm_pool_size,
+            "fixed_hosts": settings.cloud_pool_fixed_hosts,
+            "warm_target": warm_pool_target(),
         },
         "config": {
             "slots_per_core": settings.cloud_host_slots_per_core,
             "sandbox_memory_mb": settings.cloud_sandbox_memory_mb,
             "sandbox_idle_s": settings.cloud_sandbox_idle_stop_s,
             "host_idle_hold_s": settings.cloud_host_idle_hold_s,
+            "rebuild_after_days": settings.cloud_host_rebuild_after_days,
             "vm_idle_s": settings.cloud_vm_idle_release_s,
             "sandbox_disk_budget_gb": settings.cloud_sandbox_disk_budget_gb,
             "sandbox_inode_budget": settings.cloud_sandbox_inode_budget,

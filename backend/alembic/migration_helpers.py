@@ -74,7 +74,9 @@ def with_lock_retries(tables: str, *, nowait: bool = False) -> None:
 
     The backend this deploy replaces is still serving while migrations run, so
     a DDL statement that queues behind a live transaction would otherwise hold
-    the global ``lock_timeout`` (10s) and then fail the whole deploy. Call this
+    the global ``lock_timeout`` (10s) and then roll the whole migration back to
+    be run again (``alembic/env.py``), having held every table it already
+    took for those 10 seconds. Call this
     first in ``upgrade()``, naming every table the migration alters AND every
     table a new or dropped foreign key points at (adding one locks its target).
 

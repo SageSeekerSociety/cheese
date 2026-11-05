@@ -6,6 +6,7 @@ import errno
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -13,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -37,7 +38,14 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LEFT_HOST_KEY,
+    LOST_KEY,
+    LOST_PROCESSES_KEY,
+    PARKED_KEY,
+    THAW_KEY,
+    AgentSession,
+)
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_of
 from app.domain.delivery.ledger import deliver
@@ -49,10 +57,15 @@ from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
-from app.domain.machine.infra_records import keep_refusal
+from app.domain.machine.infra_records import keep_prepared, keep_refusal
 from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
-from app.domain.machine.lifecycle import SandboxRemoving
+from app.domain.machine.lifecycle import (
+    SandboxRemoving,
+    frozen_sessions,
+    thaw_if_asked,
+    use_session_work,
+)
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
@@ -62,6 +75,8 @@ from app.domain.machine.sandbox_wait import (
     SANDBOX_LOST,
     SANDBOX_PREPARING,
     SANDBOX_REPLACED,
+    SANDBOX_RESUMED,
+    STOPPED_PROCESSES,
     VM_PREPARING,
     _cloud_progress,
     _home_removed,
@@ -341,8 +356,12 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
             )
         )
     )
+    # Frozen: checkpointed before it was frozen, and nothing ran since.
+    frozen = await frozen_sessions(session, [row.id for row in rows])
     starts = []
     for row in rows:
+        if row.id in frozen:
+            continue
         lease = row.work_lease or {}
         if lease.get("status", "ready") != "ready" or not lease.get("state"):
             continue
@@ -385,6 +404,25 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
 #: or could not be started at all. A command that chose its own exit status
 #: reports 0 or up, so this is never one of them (`cli/internal/host`).
 NO_EXIT_STATUS = -1
+
+
+#: The steps of an install the machine times (`bootstrap.configure_idle`):
+#: staging the release, finding the pinned Claude Code, starting the sandbox,
+#: and waiting for the executor's first answer. Parts of ``executor``.
+INSTALL_STEPS = ("release", "claude", "sandbox", "ready")
+
+
+def _install_steps(info: dict) -> dict[str, float]:
+    """The install's own step times from what it answered; an executor that
+    was only prepared, or a release that does not time them, answers none."""
+    timings = info.get("timings")
+    if not isinstance(timings, dict):
+        return {}
+    return {
+        step: float(timings[step])
+        for step in INSTALL_STEPS
+        if isinstance(timings.get(step), int | float)
+    }
 
 
 async def _start_executor(
@@ -650,7 +688,9 @@ async def switch_environment(
         # The machine was unbound: nothing can reach it, and nothing left on it
         # can be cleaned up.
         old = None
-    if old:
+    # A frozen sandbox is not checkpointed: it was before it was frozen, and
+    # its stopped processes could not run `cheese sync` now.
+    if old and not await frozen_sessions(db, [session_id]):
         generation = request.get("generation")
         start = await restart_executor(db, row, old)
         await db.commit()
@@ -755,9 +795,21 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     if holder is None:
         return None
     resource = holder.generation
-    row = await AgentSessionService(db).by_id(session_id)
-    if row is None:
+    # The session's row, with whether the agent its credential names is still
+    # a live account: the last thing asked below, in the same statement.
+    found = (
+        await db.execute(
+            select(
+                AgentSession,
+                exists().where(
+                    User.username == claims.get("a", ""), User.deleted_at.is_(None)
+                ),
+            ).where(AgentSession.id == session_id)
+        )
+    ).first()
+    if found is None:
         return None
+    row, agent_live = found
     lease = row.work_lease or {}
     request = row.execution_request or {}
     location = row.runtime_location or {}
@@ -772,6 +824,8 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         or lease.get("room_resource_id") != resource
         or lease.get("setup_digest") != _setup_digest(env)
         or request.get(LOST_KEY)
+        or request.get(THAW_KEY)
+        or request.get(PARKED_KEY) is not None
         or claims.get("session") != str(row.id)
         or claims.get("t") != str(row.conversation_id)
         or not holder.signed_for(claims)
@@ -788,7 +842,7 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         session_id, lease["device_id"]
     ):
         return None
-    if await user_by_handle(db, claims.get("a", "")) is None:
+    if not agent_live:
         return None
     await db.commit()
     return {
@@ -1043,6 +1097,7 @@ async def _attempt(
             await db.commit()
             return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
     cloud_host = None
+    placed_s = None
     if selected is None and not cloud_provisionable(settings):
         await db.commit()
         return {"unavailable": str(say("platformSpecUnavailable"))}
@@ -1056,6 +1111,7 @@ async def _attempt(
         )
         pool = HostPool(db, hub=hub)
         whole_machine = spec is not None and spec.name == VM
+        placing = time.monotonic()
         try:
             cloud_host = await pool.place(
                 session_id,
@@ -1083,6 +1139,7 @@ async def _attempt(
             # gone, places the session in a new one.
             await db.commit()
             return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
+        placed_s = time.monotonic() - placing
         if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
             line = await pool.tell_waiting(session_id)
             await db.commit()
@@ -1197,6 +1254,11 @@ async def _attempt(
             owner_device=selected is not None,
             own=isinstance(environment, Sandbox),
             tells_agent=tells_agent,
+            # Timed only when the call brings up hands it did not hold: a new
+            # sandbox, one another host now has, or one woken from a freeze
+            # (`infra_records.keep_prepared`). A re-check of ready hands is not.
+            fresh=holding is reservation,
+            placed_s=placed_s,
         )
     )
     _INSTALLS.add(work)
@@ -1258,6 +1320,8 @@ async def _install(
     owner_device,
     own,
     tells_agent=False,
+    fresh=False,
+    placed_s=None,
 ):
     """Bring the session's executor up under ``claim`` and record the outcome."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
@@ -1284,8 +1348,21 @@ async def _install(
             if owner_device
             else contextlib.nullcontext()
         )
+        started = time.monotonic()
+        thaw_s = None
+        install_steps: dict[str, float] = {}
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
+                thawed = await thaw_if_asked(
+                    db,
+                    hub,
+                    session_id=session_id,
+                    device_id=device_id,
+                    work_resource=work_resource,
+                )
+                if thawed:
+                    thaw_s = time.monotonic() - started
+                executor_from = time.monotonic()
                 async with shown as heard:
                     info = await _start_executor(
                         hub,
@@ -1298,6 +1375,8 @@ async def _install(
                         platform_machine=platform_machine,
                         on_stderr=heard,
                     )
+                executor_s = time.monotonic() - executor_from
+                install_steps = _install_steps(info)
                 target = {
                     **reservation,
                     "status": "ready",
@@ -1413,11 +1492,24 @@ async def _install(
             and target["status"] == "ready"
             and (row.execution_request or {}).get(LOST_KEY)
         )
-        if lost:
+        resumed = (
+            tells_agent
+            and not lost
+            and target["status"] == "ready"
+            and (row.execution_request or {}).get(PARKED_KEY) is not None
+        )
+        stopped = []
+        if lost or resumed:
+            request = row.execution_request or {}
+            stopped = [
+                str(one)
+                for one in request.get(LOST_PROCESSES_KEY if lost else PARKED_KEY) or []
+                if one
+            ]
             row.execution_request = {
                 key: value
-                for key, value in (row.execution_request or {}).items()
-                if key != LOST_KEY
+                for key, value in request.items()
+                if key not in (LOST_KEY, LOST_PROCESSES_KEY, PARKED_KEY)
             }
         conversation_id = row.conversation_id
         device = (
@@ -1435,6 +1527,20 @@ async def _install(
             )
         ready_line = None
         if cloud_host_id is not None and target["status"] == "ready":
+            if fresh or thaw_s is not None:
+                await keep_prepared(
+                    db,
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                    stages={
+                        "place": placed_s,
+                        "thaw": thaw_s,
+                        "executor": executor_s,
+                        **install_steps,
+                    },
+                    total_s=time.monotonic() - started + (placed_s or 0),
+                    waited_s=await HostPool(db, hub=hub).waited_s(session_id),
+                )
             ready_line = await HostPool(db, hub=hub).tell_ready(session_id)
         await db.commit()
         await publish_line(topic_id, ready_line)
@@ -1461,7 +1567,13 @@ async def _install(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
         lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
-        notices = [lost_notice] * bool(lost)
+        notices = [lost_notice] * bool(lost) + [SANDBOX_RESUMED] * bool(resumed)
+        if stopped:
+            notices.append(
+                STOPPED_PROCESSES.format(
+                    processes="\n".join(f"  {one}" for one in stopped)
+                )
+            )
         if disk_full_mb is not None:
             notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {
@@ -1473,3 +1585,8 @@ async def _install(
 
 async def _another_attempt() -> bool:
     return True
+
+
+# Freezing a sandbox runs this module's checkpoint first; `lifecycle` cannot
+# import this module (it is imported by it), so it is handed the two it uses.
+use_session_work(checkpoint=checkpoint, restart_executor=restart_executor)

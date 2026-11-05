@@ -503,7 +503,7 @@ def test_nested_and_workflow_agents_are_read_from_their_own_files(screen, contra
 def test_an_interrupt_is_the_failure_of_the_work_it_ends(screen, contract):
     work = str(uuid.uuid4())
     sent = screen.send(
-        contract.do("Bash", command="sleep 60; echo LATE", description="long"),
+        contract.do("Bash", command="env sleep 60; echo LATE", description="long"),
         work_id=work,
     )
     screen.wait(_is("system", "task_started"))

@@ -20,12 +20,17 @@ field. The message the question is stays in the room untouched either way.
 Real HTTP, PostgreSQL and the room's runner; the session is the scripted stub.
 """
 
+import asyncio
+import uuid
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 from sqlalchemy import select
 
+from app.api.routes import blocks as block_routes
+from app.domain.agent import ask as ask_module
 from app.domain.block.models import Block
-from tests.ask_fixtures import active_ask, wait_turn_idle
+from tests.ask_fixtures import active_ask, wait_turn_idle, while_held
 from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
@@ -350,3 +355,103 @@ def _click(client, room, question_id, who) -> object:
     )
     wait_work_idle()
     return response
+
+
+# ---- an answer given while the question is being written ----
+
+
+def _bob_answers_by_reply(client, room, question_id):
+    return client.post(
+        f"/topics/{room}/messages",
+        json={
+            "request_id": str(uuid.uuid4()),
+            "content": "按部门",
+            "reply_to": question_id,
+        },
+        headers=session_auth_headers("bob"),
+    )
+
+
+def test_an_answer_given_while_the_agent_takes_its_question_back_is_not_erased(
+    client, stub_hooks, monkeypatch
+):
+    """Whichever lands first holds: the question taken back (bob's reply is
+    then talk), or bob's answer (taking it back is then refused). An answer
+    already recorded is never wiped by taking the question back after it."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
+
+    recorded_meanwhile, taken_back, replied = while_held(
+        monkeypatch,
+        block_routes,
+        "withdraw_question_by_asker",
+        partial(
+            client.delete,
+            f"/blocks/{question['id']}/question",
+            headers=_its_author(client, room, question["id"]),
+        ),
+        partial(_bob_answers_by_reply, client, room, question["id"]),
+        read=lambda: _answer_log(client, room, question["id"]),
+    )
+    wait_turn_idle(client, room)
+
+    assert taken_back.status_code < 500, taken_back.text
+    assert replied.status_code == 200, replied.text
+    final = _answer_log(client, room, question["id"])
+    assert len(final) == 1, final
+    for entry in recorded_meanwhile:
+        assert entry in final, f"{entry} 已经记在题上，随后的撤回把它抹掉了：{final}"
+
+
+def test_an_answer_given_while_the_clock_takes_the_question_back_is_not_erased(
+    client, stub_hooks, monkeypatch
+):
+    """The sweep expires a question while bob answers it. An expired question
+    still takes an answer, so both land."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
+
+    _, taken, replied = while_held(
+        monkeypatch,
+        ask_module,
+        "expire_question",
+        lambda: asyncio.run(_sweep(days_ago=1.0)),
+        partial(_bob_answers_by_reply, client, room, question["id"]),
+    )
+    wait_turn_idle(client, room)
+
+    assert taken == 1
+    assert replied.status_code == 200, replied.text
+    assert _answer_log(client, room, question["id"]) == [
+        ("expired", _seat(client, room)),
+        ("option", "bob"),
+    ]
+
+
+def test_an_answer_given_while_the_agent_edits_its_question_is_not_erased(
+    client, stub_hooks, monkeypatch
+):
+    """The agent rewords its question while bob answers it: the question
+    reads the new words and keeps bob's answer."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
+
+    _, edited, replied = while_held(
+        monkeypatch,
+        block_routes,
+        "text_as_sent",
+        partial(
+            client.patch,
+            f"/blocks/{question['id']}",
+            json={"content": "预算按哪个口径统计？（含外包）"},
+            headers=_its_author(client, room, question["id"]),
+        ),
+        partial(_bob_answers_by_reply, client, room, question["id"]),
+    )
+    wait_turn_idle(client, room)
+
+    assert edited.status_code == 200, edited.text
+    assert replied.status_code == 200, replied.text
+    shown = _question_out(client, room, question["id"])
+    assert shown["content"] == "预算按哪个口径统计？（含外包）"
+    assert _answer_log(client, room, question["id"]) == [("option", "bob")]

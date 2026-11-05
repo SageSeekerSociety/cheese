@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 资料库里打开的那一份：谁在哪给的、被引用和替换过几次、里面写了什么。桌面上是
-// 列表右边一栏，手机上是整一页（底下一颗「下载」）。
+// 列表右边一栏，手机上是整一页（底下一颗「下载」、关闭在顶栏的返回）。
 //
 // 字节怎么读由页面给（`read`）：这一栏只摆，不知道服务端在哪。
 import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
@@ -55,6 +55,18 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
   >
     <PaneHandle v-if="props.wide" :pane="pane" />
     <header class="library-detail__head">
+      <!-- 关一栏的那一颗钉在右上角（助手栏、支线页头都这样），不跟下载、替换、评论挤
+           在同一排：挤在一起时它折行到哪里都像又一颗操作。手机上是整页，关闭在顶栏的
+           返回那里。 -->
+      <BaseButton
+        v-if="props.wide"
+        icon="mdi-close"
+        size="sm"
+        class="library-detail__close"
+        :title="t('work.library.close')"
+        :aria-label="t('work.library.close')"
+        @click="emit('close')"
+      />
       <h2 v-if="props.wide" class="t-title library-detail__name">{{ props.file.path }}</h2>
       <p class="t-meta c-faint library-detail__meta">
         {{ props.file.added_by ?? t('work.library.unknownSource') }} · {{ relTime(props.file.added_at) }} ·
@@ -98,9 +110,6 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
           @click="commentsOpen = !commentsOpen"
         >
           {{ t('work.library.comments') }}
-        </BaseButton>
-        <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="emit('close')">
-          {{ t('work.library.close') }}
         </BaseButton>
       </div>
     </header>
@@ -183,6 +192,20 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
   gap: 4px;
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+/* 桌面上右边留出角落那颗 ✕ 的位置：标题和来源行再长也不从它底下穿过去。手机上
+   没有那颗（关闭在顶栏的返回），不留这段空。 */
+.library-detail:not(.library-detail--phone) .library-detail__head {
+  padding-right: 44px;
+}
+
+/* 钉在整栏的右上角，不跟着头栏里那几行文字重排。 */
+.library-detail__close {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  z-index: var(--z-raised);
 }
 
 .library-detail--phone .library-detail__head {

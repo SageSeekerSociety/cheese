@@ -299,7 +299,9 @@ async def acquire_session_work_lease(
     token = credentials.presented(request.headers)
     claims = scoped_token_claims(token)
     if claims is not None and not held_by_a_machine(claims):
-        place = await place_or_404(db, topic_id)
+        # Read with the seat the credential's agent holds there: the check
+        # below asks it next.
+        place = await place_or_404(db, topic_id, member=claims.get("a") or None)
         await require_seated_agent(
             db, token, project_id=place.project_id, topic_id=topic_id
         )

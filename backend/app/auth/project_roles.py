@@ -37,13 +37,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.core.errors import ForbiddenError
 from app.core.request_facts import recall, remember
 from app.core.sentences import say
+from app.domain.identity.predicates import names_a_live_agent
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import (
     MemberRepository,
@@ -145,6 +146,29 @@ async def _team_role(
     return role
 
 
+async def _handle_on_team(session: AsyncSession, team_id: int, handle: str) -> bool:
+    """Whether ``handle`` names a live account on team ``team_id``. Asked with
+    the account and its team row in one statement; an account this request
+    has read already answers by its id (`_team_role`)."""
+    if isinstance(session, AsyncSession):
+        loaded, unread = await UserRepository(session).loaded_by_handles([handle])
+        if handle in loaded:
+            return await _team_role(session, team_id, loaded[handle].id) is not None
+        if not unread:
+            return False  # known to name no live account
+    role = await session.scalar(
+        select(TeamUserRelation.role)
+        .join(User, User.id == TeamUserRelation.user_id)
+        .where(
+            User.username == handle,
+            User.deleted_at.is_(None),
+            TeamUserRelation.team_id == team_id,
+            TeamUserRelation.deleted_at.is_(None),
+        )
+    )
+    return role is not None
+
+
 async def team_owner_handle(session: AsyncSession, team_id: int) -> str | None:
     return await session.scalar(
         select(User.username)
@@ -200,11 +224,7 @@ async def _resolve_owner_of(
             )
             if found_team and owner in team_roles:
                 return owner
-        user = await UserRepository(session).get_by_username(owner)
-        if (
-            user is not None
-            and await _team_role(session, project.team_id, user.id) is not None
-        ):
+        if await _handle_on_team(session, project.team_id, owner):
             return owner
         # An owner who is no longer on the team but was let in by a roster row
         # (a personal project's owner always is on its team) still holds it.
@@ -319,6 +339,9 @@ async def _standing(
     project = await ProjectRepository(session).get(project_id)
     if project is None:
         return None
+    # Everything below asks of ``handle``, read at once (the owner's own
+    # account included, when they are the one asking).
+    await _read_seat(session, project, handle)
     if await IdentityService(session).is_agent(handle):
         on_roster = await MemberRepository(session).get(
             project_id=project_id, user_handle=handle
@@ -351,6 +374,100 @@ async def _standing(
         project_id=project_id, user_handle=handle
     )
     return _held(roles, recorded)
+
+
+async def _read_seat(session: AsyncSession, project: Project, handle: str) -> None:
+    """Read in one statement what `_standing` asks of ``handle``: whether
+    they are an agent, their account and their team row, and for anyone but
+    the project's recorded owner whether they are excluded, their roster row
+    and the role recorded for them. Each was a statement of its own, up to
+    six for a member's permission check; the answers are left as the facts
+    those reads answer from. The recorded owner is read without the roster,
+    which a route reading the roster whole reads anyway; a recorded owner
+    who has left the team then has the rest read one by one, as before."""
+    if not isinstance(session, AsyncSession):
+        return
+    pid = project.id
+    if recall(session, ("project_member_row", pid, handle))[0]:
+        return
+    member_side = handle != project.owner_handle
+    anchor = select(literal(1).label("one")).subquery("one")
+    columns: list = [User, TeamUserRelation.role, names_a_live_agent(literal(handle))]
+    if member_side:
+        columns += [
+            ProjectMember,
+            ProjectRole.role,
+            ProjectRole.role_id,
+            exists().where(
+                ProjectMemberExclusion.project_id == pid,
+                ProjectMemberExclusion.user_handle == handle,
+            ),
+        ]
+    stmt = (
+        select(*columns)
+        .select_from(anchor)
+        .outerjoin(User, and_(User.username == handle, User.deleted_at.is_(None)))
+        .outerjoin(
+            TeamUserRelation,
+            and_(
+                TeamUserRelation.user_id == User.id,
+                TeamUserRelation.team_id == project.team_id,
+                TeamUserRelation.deleted_at.is_(None),
+            ),
+        )
+    )
+    if member_side:
+        stmt = stmt.outerjoin(
+            ProjectMember,
+            and_(ProjectMember.project_id == pid, ProjectMember.user_handle == handle),
+        ).outerjoin(
+            ProjectRole,
+            and_(ProjectRole.project_id == pid, ProjectRole.user_handle == handle),
+        )
+    # The anchor gives one row; nothing in the schema stops a person holding
+    # two live team rows, which would give two. The oldest answers, the same
+    # one every time.
+    row = (await session.execute(stmt.order_by(TeamUserRelation.id).limit(1))).one()
+    if member_side:
+        user, team_role, is_agent, member, role, role_id, is_excluded = row
+    else:
+        user, team_role, is_agent = row
+    remember(
+        session,
+        ("is_agent", handle),
+        bool(is_agent),
+        tables=frozenset({"user", "agent_bindings"}),
+    )
+    remember(session, ("user_by_username", handle), user, tables=frozenset({"user"}))
+    if user is not None:
+        remember(session, ("user_by_id", user.id), user, tables=frozenset({"user"}))
+        if project.team_id is not None:
+            remember(
+                session,
+                ("team_user_role", project.team_id, user.id),
+                team_role,
+                tables=frozenset({"team_user_relation"}),
+            )
+    if not member_side:
+        return
+    remember(
+        session,
+        ("project_member_excluded", pid, handle),
+        bool(is_excluded),
+        tables=frozenset({"project_member_exclusions"}),
+    )
+    remember(
+        session,
+        ("project_member_row", pid, handle),
+        member,
+        tables=frozenset({"project_members"}),
+    )
+    remember(
+        session,
+        ("project_role_of", pid, handle),
+        role_key(role, role_id) if role is not None else None,
+        tables=frozenset({"project_roles"}),
+    )
 
 
 async def seats(

@@ -46,9 +46,11 @@ from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
+from app.core.gc_tuning import tune_after_startup
 from app.core.health import set_domain_checks, set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
+from app.core.loop_stalls import watch_loop_stalls
 from app.core.metrics import active_requests, registry
 from app.core.net_io import watch_api_io, watch_net_io
 from app.core.obs import (
@@ -64,6 +66,7 @@ from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
 from app.core.route_index import index_routes
 from app.core.route_mounting import FAILED_ROUTE_MODULES
+from app.core.startup_freeze import freeze_after_startup
 from app.core.storage import reuse_s3_connections
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
@@ -489,6 +492,9 @@ async def lifespan(application: FastAPI):
     application.openapi()
 
     background.spawn(watch_loop_lag(), name="event loop lag")
+    # Where the loop was each time it stalled for more than a tenth of a
+    # second, for the performance page (`core/loop_stalls.py`).
+    background.spawn(watch_loop_stalls(), name="event loop stalls")
     # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
     # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
     # 不只是「我们用户的流量」），重启即清零。
@@ -586,6 +592,14 @@ async def lifespan(application: FastAPI):
         reuse_s3_connections(),
         reuse_forge_connections(),
     ):
+        # The warm-ups above loaded the object store's SDK models after the
+        # import-time freeze; freeze them too, once, before serving
+        # (`core/startup_freeze.py`).
+        freeze_after_startup()
+        # And let the middle generation fill before it is promoted, so full
+        # collections — which walk the whole live heap with the loop held — run
+        # less often (`core/gc_tuning.py` says how much, and why).
+        tune_after_startup()
         try:
             yield
         finally:

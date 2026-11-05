@@ -24,5 +24,9 @@
   "executorInstallDownloading": "Installing the AI teammate's runtime on “{device}”: {done} / {total} MB downloaded",
   "executorInstallDone": "Installed the AI teammate's runtime on “{device}”",
   "executorInstallStopped": "Installing the AI teammate's runtime on “{device}” stopped at {done} / {total} MB. The download continues the next time the AI teammate uses this computer",
-  "executorInstallFailed": "Installing the AI teammate's runtime on “{device}” failed"
+  "executorInstallFailed": "Installing the AI teammate's runtime on “{device}” failed",
+  "sandboxTimedCheckedOut": "The task checkout was ready in {seconds} s",
+  "sandboxTimedFrozen": "The idle environment was frozen in {seconds} s",
+  "sandboxTimedPrepared": "The environment was ready in {seconds} s",
+  "sandboxTimedParked": "The idle environment was parked in {seconds} s"
 }

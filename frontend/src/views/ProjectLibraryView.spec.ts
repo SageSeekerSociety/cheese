@@ -455,4 +455,36 @@ describe('资料库的文件夹', () => {
     await waitFor(() => expect(deleteLibraryFile).toHaveBeenCalledWith('p1', '合同'))
     await waitFor(() => expect(rowNames(container)).toEqual(['结题报告.docx']))
   })
+
+  it('排序框默认「关」：请求里不带 sort，列表还是原来那个顺序', async () => {
+    const { container } = await open()
+    expect(screen.getByTestId('library-sort').getAttribute('data-sort')).toBe('off')
+    // 「关」不写进查询串：不排序时请求和从前一模一样。
+    expect(vi.mocked(listProjectLibrary).mock.calls.at(-1)![1]).not.toHaveProperty('sort')
+    expect(rowNames(container).length).toBeGreaterThan(0)
+  })
+
+  it('点一下换成升，再点降，再点回关；每次都会带着新的 sort 重新取', async () => {
+    const { router } = await open()
+    const box = screen.getByTestId('library-sort')
+
+    await fireEvent.click(box)
+    await waitFor(() => expect(router.currentRoute.value.query.sort).toBe('asc'))
+    await waitFor(() => expect(box.getAttribute('data-sort')).toBe('asc'))
+    await waitFor(() => expect(vi.mocked(listProjectLibrary).mock.calls.at(-1)![1]).toMatchObject({ sort: 'asc' }))
+
+    await fireEvent.click(box)
+    await waitFor(() => expect(router.currentRoute.value.query.sort).toBe('desc'))
+    await waitFor(() => expect(box.getAttribute('data-sort')).toBe('desc'))
+
+    await fireEvent.click(box)
+    await waitFor(() => expect(router.currentRoute.value.query.sort).toBeUndefined())
+    await waitFor(() => expect(box.getAttribute('data-sort')).toBe('off'))
+  })
+
+  it('地址上带着 sort 进来，框上写的和取数用的都是它', async () => {
+    await open('/projects/p1/library?sort=desc')
+    expect(screen.getByTestId('library-sort').getAttribute('data-sort')).toBe('desc')
+    await waitFor(() => expect(vi.mocked(listProjectLibrary).mock.calls.at(-1)![1]).toMatchObject({ sort: 'desc' }))
+  })
 })

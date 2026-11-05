@@ -154,6 +154,6 @@
   "writeFile": "Write file",
   "cheeseSpaceAnnounce": "Announce",
   "cheeseSpaceCategory": "Manage categories",
-  "cheeseSpaceCode": "Manage invite codes",
+  "cheeseSpaceLink": "Manage a space's join link",
   "cheeseSpaceReview": "Review a problem"
 }

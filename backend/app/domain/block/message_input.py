@@ -330,7 +330,7 @@ class ChatAddressingOut(BaseModel):
     """Who a draft would be for if sent now (`preview_addressing`)."""
 
     agent: AddressedAgentOut | None
-    reason: Literal["mention", "reply", "task", "private"] | None
+    reason: Literal["mention", "reply", "task", "thread", "private"] | None
     people: list[str]
     place: Literal["channel", "task", "private"]
     task_status: Literal["open", "closed"] | None

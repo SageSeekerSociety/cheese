@@ -138,7 +138,7 @@ else:
     from shell_prefix import run_in_place, shell
     from shell_stop import deliver_stop
 
-PINNED_VERSION = "2.1.299"
+PINNED_VERSION = "2.1.316"
 # How long a request to the runner may take before the session's own helper
 # gives up on it (`compact`). The runner answers at once — the compaction it
 # then writes runs for minutes and is not waited for — so this is only the

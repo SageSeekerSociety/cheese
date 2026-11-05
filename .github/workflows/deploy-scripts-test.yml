@@ -151,6 +151,15 @@ jobs:
             mitmproxy/mitmproxy:12.1.2@sha256:0d7b2a14b4a71a908cd6f31b8f50e29bbc5c8720fe6caa706acf782da558e5c7 \
             deploy/tests/test_claude_retry.py
 
+      # compose.yml's own mitmdump command, started five times with TLS
+      # clients already dialling both listeners, as a release meets them.
+      - name: Metering proxy survives TLS clients during startup
+        run: |
+          docker run --rm --network none --memory 512m --entrypoint python \
+            -v "$GITHUB_WORKSPACE:/work:ro" -w /work \
+            mitmproxy/mitmproxy:12.1.2@sha256:0d7b2a14b4a71a908cd6f31b8f50e29bbc5c8720fe6caa706acf782da558e5c7 \
+            deploy/tests/test_metering_startup.py
+
       - name: Render browser reaches public addresses only
         run: python3 deploy/tests/test_browser_render_egress.py
 

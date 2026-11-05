@@ -22,9 +22,6 @@ defineProps<{
   transferLoading?: boolean
   transferBusy?: boolean
   transferError?: string | null
-  joinOpen: boolean
-  joinBusy?: boolean
-  joinError?: string
   createOpen: boolean
   createBusy?: boolean
   createError?: string
@@ -38,8 +35,6 @@ const emit = defineEmits<{
   'update:transferring': [team: Team | null]
   confirmTransfer: [userId: number]
   leave: [team: Team]
-  'update:joinOpen': [open: boolean]
-  join: [code: string]
   'update:createOpen': [open: boolean]
   createSpace: [payload: { name: string; intro: string; avatarFile?: File }]
 }>()
@@ -60,9 +55,6 @@ const emit = defineEmits<{
       :transfer-loading="transferLoading"
       :transfer-busy="transferBusy"
       :transfer-error="transferError"
-      :join-open="joinOpen"
-      :join-busy="joinBusy"
-      :join-error="joinError"
       :create-open="createOpen"
       :create-busy="createBusy"
       :create-error="createError"
@@ -73,8 +65,6 @@ const emit = defineEmits<{
       @update:transferring="(team) => emit('update:transferring', team)"
       @confirm-transfer="(userId) => emit('confirmTransfer', userId)"
       @leave="(team) => emit('leave', team)"
-      @update:join-open="(open) => emit('update:joinOpen', open)"
-      @join="(code) => emit('join', code)"
       @update:create-open="(open) => emit('update:createOpen', open)"
       @create-space="(payload) => emit('createSpace', payload)"
     />

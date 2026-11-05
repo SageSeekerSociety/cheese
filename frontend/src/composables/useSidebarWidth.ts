@@ -19,8 +19,13 @@ function read(): number {
 
 const width = ref(read())
 
-function setWidth(w: number) {
+/**
+ * 改宽度。`persist` 关掉时只改这一次会话里的数、不写本地存储——拖动中途每一帧都写
+ * 一次会拖慢这一下，所以拖的时候传 false，松手再单独写一次。
+ */
+function setWidth(w: number, persist = true) {
   width.value = clamp(w)
+  if (!persist) return
   // 存不进去（隐私模式、配额满）就只在这一次有效，拖出来的样子照旧。
   storageSet(KEY, String(width.value))
 }

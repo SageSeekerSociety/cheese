@@ -35,6 +35,7 @@ from app.domain.agent.device_hub import (
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine import session_work
+from app.domain.machine.infra_records import keep_checked_out
 from app.domain.room_task.place import session_keeps_work
 from app.domain.topic.reads import execution_room
 
@@ -365,6 +366,14 @@ async def execute(
         raise GatewayTimeoutError(say("executionTimedOut")) from exc
     else:
         await _settle(db, dispatch, dispatch_log.Outcome.done)
+        await _time_checkout(
+            db,
+            payload,
+            target,
+            topic_id=topic_id,
+            session_id=session_id,
+            took_s=time.monotonic() - (deadline - payload.timeout),
+        )
         return answer
     finally:
         await db.rollback()
@@ -373,6 +382,35 @@ async def execute(
             trace_id,
             time.monotonic_ns(),
         )
+
+
+async def _time_checkout(
+    db: AsyncSession,
+    payload: "ExecutionRequest",
+    lease: dict,
+    *,
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID | None,
+    took_s: float,
+) -> None:
+    """Keep how long opening a task's checkout took on a platform sandbox
+    (``task_checkout`` names its call ``task-checkout-…``), for the admin
+    machines page. Never changes how the call ends."""
+    tool_id = str(payload.params.get("id") or "")
+    if (
+        payload.method != "invoke"
+        or not tool_id.startswith("task-checkout-")
+        or not lease.get("platform")
+    ):
+        return
+    try:
+        await keep_checked_out(
+            db, conversation_id=topic_id, session_id=session_id, total_s=took_s
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("could not keep how long a checkout took", exc_info=True)
 
 
 async def _distrust(

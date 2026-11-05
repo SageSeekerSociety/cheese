@@ -14,13 +14,22 @@ export type HostPhase =
   | 'releasing'
   | 'failed'
 
-export type SandboxState = 'waiting' | 'working' | 'idle' | 'stopping'
+export type SandboxState = 'waiting' | 'working' | 'idle' | 'stopping' | 'frozen' | 'parked'
 
 /** 一个沙箱最近一次的读数：内存每分钟读一次，家目录每次走盘（几分钟一次）读一次。 */
 export interface SandboxUsage {
   memory_bytes: number | null
   /** 沙箱起来以来内存用到的最多。 */
   memory_peak_bytes: number | null
+  /** 其中进程自己的（匿名）和页缓存各多少。 */
+  anon_bytes: number | null
+  file_bytes: number | null
+  /** 用了宿主机多少交换文件。 */
+  swap_bytes: number | null
+  /** 最多可用多少（`memory.swap.max`）；不限或没读到为 null。 */
+  swap_max_bytes: number | null
+  /** 起来以来被内核因内存不足杀掉几次。 */
+  oom_kills: number | null
   memory_read_at: string | null
   disk_bytes: number | null
   disk_inodes: number | null
@@ -36,6 +45,16 @@ export interface HostUsage {
   inodes_used: number | null
   memory_bytes: number | null
   memory_used_bytes: number | null
+  /** 宿主机数据盘上的交换文件；没建时为 null。 */
+  swap_bytes: number | null
+  swap_used_bytes: number | null
+  /** 内存压力（PSI）：最近 1 分钟、5 分钟里因内存卡住的时间占比（百分数）。 */
+  memory_pressure_some_avg10: number | null
+  memory_pressure_some_avg60: number | null
+  memory_pressure_full_avg10: number | null
+  memory_pressure_full_avg60: number | null
+  /** 是否加载了 zswap。 */
+  zswap: boolean | null
   /** 两次读数之间占满了几成核（0–1）；只读到一次时为 null。 */
   cpu_busy: number | null
   load1: number | null
@@ -84,6 +103,13 @@ export interface MachineHost {
   offline_since: string | null
   failed_at: string | null
   released_at: string | null
+  /** 建这台时所装的镜像版本；旧行（和温机）为 null，即不知道。 */
+  image_version: string | null
+  /** 和现在会建的那一版是否不同；问不到 provider、或是整机虚拟机时为 null。 */
+  image_outdated: boolean | null
+  /** 正在滚动重建：不再接新沙箱，等它空了就释放、换一台新的。 */
+  draining: boolean
+  draining_since: string | null
   enroll_attempts: number
   enroll_error: string | null
   /** 还没读到过（没注册、不在线、刚起来）时为 null。 */
@@ -127,6 +153,8 @@ export interface MachinesOverview {
     provider_probe_min: number
     last_provider_failure: string | null
     refusing: boolean
+    /** 固定常开的普通宿主机数；0 表示纯按需扩缩。 */
+    fixed_hosts: number
     warm_target: number
   }
   config: {
@@ -134,6 +162,8 @@ export interface MachinesOverview {
     sandbox_memory_mb: number
     sandbox_idle_s: number
     host_idle_hold_s: number
+    /** 固定池里宿主机只按年龄重建的天数；0 表示年龄不触发重建。 */
+    rebuild_after_days: number
     vm_idle_s: number
     sandbox_disk_budget_gb: number
     sandbox_inode_budget: number
@@ -164,7 +194,17 @@ export interface MachinesOverview {
     hosts_lost: number
     hosts_lost_by_reason: Partial<Record<'provider_error' | 'never_enrolled' | 'connector_away', number>>
     sandboxes_lost: number
+    /** 按种类（准备、冻结、打开任务目录）和段（含 total）的耗时分位数。 */
+    timings: Partial<Record<TimedKind, Record<string, StageTiming>>>
   }
+}
+
+export type TimedKind = 'sandbox_prepared' | 'sandbox_frozen' | 'sandbox_checked_out' | 'sandbox_parked'
+
+export interface StageTiming {
+  count: number
+  p50_s: number | null
+  p95_s: number | null
 }
 
 export function getMachines(): Promise<MachinesOverview> {

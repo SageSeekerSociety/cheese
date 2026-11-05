@@ -25,6 +25,7 @@ import type { DocumentRevisionsBundle } from '@/composables/useDocumentRevisions
 import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
 import type { FileContent } from '@/cx_types'
 import type { FileKind } from '@/lib/fileKind'
+import type { SlideNote } from '@/lib/slideNotes'
 import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
@@ -80,7 +81,7 @@ const props = defineProps<{
   docRendererMissing: boolean
   slideContext?: SlideSource
   /** 演示稿每一页的演讲者备注，下标即页码。 */
-  slideNotes?: readonly string[]
+  slideNotes?: readonly SlideNote[]
   revs: DocumentRevisionsBundle
   fileHistory: RoomFileHistoryBundle
   /** 文件名旁「第 N 版」、下面那条「本版共修改 N 处」、对比态和看旧版（`composables/panelPreview/versions.ts`）。

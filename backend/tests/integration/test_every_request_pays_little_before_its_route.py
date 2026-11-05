@@ -56,6 +56,34 @@ def test_a_request_asks_only_the_routers_holding_its_first_segment(client, monke
     assert len(holding) < len(app.router.routes) / 4
 
 
+def test_a_request_under_topics_asks_only_the_routers_of_its_shape(client, monkeypatch):
+    """Most of the API sits under `/topics`, held by dozens of routers; a
+    request is matched against those holding a route of its shape, not all of
+    them in turn."""
+    asked: list[object] = []
+    matches = _IncludedRouter.matches
+
+    def counted(self, scope):
+        asked.append(self)
+        return matches(self, scope)
+
+    monkeypatch.setattr(_IncludedRouter, "matches", counted)
+    topic = "0b2c9a8e-7a64-4c5e-9f4a-3c2b1a0d9e8f"
+    client.post(f"/topics/{topic}/sessions/{topic}/work-lease", json={})
+
+    under_topics = [
+        route
+        for route in app.router.routes
+        if isinstance(route, _IncludedRouter)
+        and any(
+            (context.path or "").startswith("/topics/")
+            for context in route.effective_route_contexts()
+        )
+    ]
+    assert len(under_topics) > 10
+    assert 1 <= len(asked) <= 2
+
+
 def _sample(path: str) -> str:
     return re.sub(r"\{[^}:]+(:path)?\}", "x1", path)
 

@@ -41,6 +41,7 @@ const join = async () => {}
 
 /** 我建的、还没过审的两份申请：一份在等审，一份被驳回带原因。 */
 const APPLICATION_PENDING: SpaceApplication = {
+  kind: 'create',
   id: 8,
   avatarId: null,
   name: '操作系统 2026 秋',

@@ -61,7 +61,7 @@ covers:
 
 面板上那一轮怎么画分两半：不管写的是什么都一样的那一半（面板拿的形状、每一步怎么说）在 `lib/assistantView.ts`；写进题目草稿的改动卡、发布的结果怎么说在 `lib/draftChangeView.ts`。
 
-桌面上面板默认停在右边（把页面挤窄，芝士往表单里写时并排看得见），可以取消固定，变成右下角的浮层；这一项记在浏览器里（`cheesex.agentDocked`）。发布页、改题页在桌面上打开时，停在右边的面板自动打开。手机上从底部升起。
+桌面上面板默认停在右边（把页面挤窄，芝士往表单里写时并排看得见），可以取消固定，变成右下角的浮层；这一项记在浏览器里（`cheesex.agentDocked`）。浮层按住头部那一行能拖到任何地方（`composables/useFloatingPanelSpot.ts`），位置按占窗口的比例记在 `cheesex.agentFloatSpot`，所以换屏幕、改窗口大小之后它还在那个相对角落，窗口缩到放不下时收回屏幕里；双击头部回右下角。发布页、改题页在桌面上打开时，停在右边的面板自动打开。手机上从底部升起。
 ## 会话 {#session}
 
 和房间里的芝士是同一套底座：中心会话机上钉住版本的 pi，由 runner 守着，用同一个启动脚本起（`harness/pi/launch.py`、`host.py`），后端用同一种「等到有新东西才回」的读法读它的日志和正在写的内容（`driven/runner.py`）。区别是没有房间要的那些东西：没有项目、频道锁和房间日志。起会话、发问题、读回答由会话核心做（`agent/session_host/`），和[文档里的芝士](/dev/doc-agent#session)、[房间里的芝士](/dev/harness#contract)共用；这里只决定会话是什么样的（`personal/session.py`）。
@@ -91,7 +91,7 @@ covers:
 |---|---|---|
 | `cheese_inbox` | 等他处理的事，和「待办」页同一份，每件带读它或答复它的编号 | `POST /assistant/agent/inbox` |
 | `cheese_inbox(action=respond)` | 答复待办里要选一项的事：提醒、项目邀请、转让、设备上运行命令 | 经[授权判断](#acting) |
-| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置；`teams`、`teams/<id>`、`spaces`、`spaces/<id>/people` 是他的团队、空间和成员（`personal/rosters.py`），`spaces/<id>/manage` 是他管理的空间的设置、分类、邀请码、公告和待审核的题目（`personal/space_desk.py`），`<项目短名>/settings` 是项目设置（`personal/project_desk.py`） |
+| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置；`teams`、`teams/<id>`、`spaces`、`spaces/<id>/people` 是他的团队、空间和成员（`personal/rosters.py`），`spaces/<id>/manage` 是他管理的空间的设置、分类、加入方式、公告和待审核的题目（`personal/space_desk.py`），`<项目短名>/settings` 是项目设置（`personal/project_desk.py`） |
 | `cheese_find` | 搜他最近的几个项目或其中一个（频道、消息、任务、文档段落、资料库、产物），或一个空间的题目 | `POST /assistant/agent/search`（在 `routes/project_context.py`，复用项目搜索）；空间走 `/task-drafts/agent/search` |
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
 | `chat_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
@@ -100,7 +100,7 @@ covers:
 | `cheese_people` | 项目里邀请、改角色、移出；频道里加入、移出；团队里邀请、改角色、移出；空间里加入、移出、设或撤管理员 | 经授权判断，成员接口 |
 | `cheese_room(action=create)` | 新建频道 | 经授权判断，`POST /topics` |
 | `cheese_room(action=set)` | 项目短名、任务命名、默认 AI 队友、默认模型；频道负责人 | 经授权判断，项目设置的接口 |
-| `cheese_space` | 空间的名称、简介、可见题目上限；公告；分类；邀请码；审核待审核的题目 | 经授权判断，空间设置、公告、邀请码和 `PATCH /tasks/{id}` |
+| `cheese_space` | 空间的名称、简介、可见题目上限；公告；分类；加入链接（是否要批准、重置）；审核待审核的题目 | 经授权判断，空间设置、公告、加入链接和 `PATCH /tasks/{id}` |
 | `cheese_settings` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
 | `cheese_web(action=fetch)` | 读一个网页 | 经授权判断，`POST /fetch` |
 | `cheese_web(action=search)` | 搜网页，和房间里的 agent 同一个工具 | 直接 `GET /web-search`，不经授权判断：搜索词只发给 DeepSeek，它是模型的提供方，本来就收着整段对话；在他自己的网关 key 上搜，花费和这次提问的模型调用一起扣他的额度 |

@@ -27,7 +27,8 @@
     "active": "On",
     "paused": "Paused",
     "queued": "Queued, starting now",
-    "missed": "Last run didn't go"
+    "missed": "Last run didn't go",
+    "filling": "Cheese is filling it in"
   },
   "line": {
     "chip": "Routine · {title}",
@@ -152,8 +153,7 @@
     "time": "Time",
     "minute": "Minute",
     "day": "Day of month",
-    "timezone": "Time zone",
-    "triggerUnset": "Fine to pick neither: it is saved and stays idle until you set one when editing"
+    "timezone": "Time zone"
   },
   "deleteTitle": "Delete “{title}”",
   "deleteBody": "It stops running and its run history is deleted too; result files already in the channel are kept",

@@ -30,7 +30,7 @@ from app.api.assistant_acts import (
     Plan,
     announce,
     category,
-    invite_code,
+    join_link,
     named,
     need,
     problem_review,
@@ -698,7 +698,7 @@ _SPACE_ACTS = {
     "space_set": space_set,
     "announce": announce,
     "category": category,
-    "invite_code": invite_code,
+    "join_link": join_link,
     "problem_review": problem_review,
 }
 
@@ -1131,15 +1131,26 @@ async def agent_routine(
     if body.action == "list":
         rows = await routine_personal.mine(db, me.user_id)
         if not rows:
-            return ok({"text": "用户还没有自动化。"})
+            return ok({"text": "用户还没有例行事务。"})
         return ok(
             {
-                "text": f"用户的自动化（{len(rows)} 条，只做一次的和反复做的各最多 "
+                "text": f"用户的例行事务（{len(rows)} 条，只做一次的和反复做的各最多 "
                 f"{routine_personal.MAX_ROUTINES} 条）：\n"
                 + "\n".join(_routine_line(r, me.timezone) for r in rows)
             }
         )
-    if await _unattended(questions, claims.work) or not claims.conversation:
+    # A run may not make or change rules — nobody asked it to — with one
+    # exception: a run the platform started *to* fill a rule's blanks may fill
+    # that rule, and nothing else.
+    unattended = await _unattended(questions, claims.work)
+    if not claims.conversation:
+        raise BadRequestError(say("assistantRoutineInRun"))
+    fills = (
+        await routine_personal.filling_run_of(db, claims.conversation, claims.work)
+        if unattended
+        else None
+    )
+    if unattended and (fills is None or body.action not in ("change", "list")):
         raise BadRequestError(say("assistantRoutineInRun"))
     conversation = uuid.UUID(claims.conversation)
     if body.action == "create":
@@ -1155,7 +1166,7 @@ async def agent_routine(
         )
         await db.commit()
         await tell_rule(questions, claims, routine_personal.card(row))
-        return ok({"text": "已建好自动化：\n" + _routine_line(row, me.timezone)})
+        return ok({"text": "已建好例行事务：\n" + _routine_line(row, me.timezone)})
     try:
         routine_id = uuid.UUID(need(body.routine, "routine"))
     except ValueError as exc:
@@ -1163,11 +1174,14 @@ async def agent_routine(
     row = await routine_personal.one(db, me.user_id, routine_id)
     if row is None:
         raise NotFoundError.for_resource("routine", body.routine)
+    # A fill run reaches exactly the one rule it was started for.
+    if fills is not None and row.id != fills:
+        raise BadRequestError(say("assistantRoutineInRun"))
     if body.action == "delete":
         title = row.title
         await db.delete(row)
         await db.commit()
-        return ok({"text": f"已删除自动化「{title}」。"})
+        return ok({"text": f"已删除例行事务「{title}」。"})
     if body.action == "pause":
         routine_personal.pause(row)
     elif body.action == "resume":
@@ -1189,7 +1203,7 @@ async def agent_routine(
         )
     await db.commit()
     await tell_rule(questions, claims, routine_personal.card(row))
-    return ok({"text": "自动化现在是：\n" + _routine_line(row, me.timezone)})
+    return ok({"text": "例行事务现在是：\n" + _routine_line(row, me.timezone)})
 
 
 class NotifyMeIn(BaseModel):

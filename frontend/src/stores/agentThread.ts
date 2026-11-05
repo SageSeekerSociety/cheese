@@ -112,7 +112,7 @@ export interface AssistantHanded {
   bytes: number
 }
 
-/** 芝士建或改的一条自动化（`cheese_routine`），回答里的那张卡片：什么时候、做什么。
+/** 芝士建或改的一条自动化（`cheese_automation`），回答里的那张卡片：什么时候、做什么。
  *  它现在怎样（等待中、已开始……）按 `id` 另读。 */
 export interface AssistantRule {
   id: string

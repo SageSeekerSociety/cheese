@@ -835,7 +835,14 @@ Changing backend env (e.g. enabling an OAuth provider):
 
 1. Edit the env file — dev: `/home/nictheboy/cheese-backend-py/backend/.env`
    (the compose `env_file` default; `BACKEND_ENV_FILE` overrides). **Back it up
-   first** (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`).
+   first** (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`). prod (RUC) reads the
+   same default path on `cheese-prod-app` unless its `~/ops/deploy.env` sets
+   `BACKEND_ENV_FILE`; etrip reads `/opt/cheese-deploy/.env.prod`. A variable
+   the backend refuses to boot without on a deployment — `JWT_SECRET`,
+   `DATA_ENCRYPTION_KEY`, `PLATFORM_ADMIN_HANDLES`,
+   `ALIYUN_GREEN_ACCESS_KEY_ID` and `ALIYUN_GREEN_ACCESS_KEY_SECRET`
+   (`deploy/.env.prod.example`) — is in each of these files before a release
+   that needs it reaches that box.
 2. env_file is read at container **create** time — `docker restart` does NOT
    pick up changes. Recreate via the deploy script, re-deploying the sha that
    is already running:

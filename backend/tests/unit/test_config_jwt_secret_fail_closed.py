@@ -84,6 +84,8 @@ def test_deployment_with_a_real_secret_boots() -> None:
         # secret, so satisfy that other guard rather than trip it.
         platform_admin_handles=["ops"],
         data_encryption_key=_DATA_KEY,
+        aliyun_green_access_key_id="key-id",
+        aliyun_green_access_key_secret="key-secret",
     )
     assert settings.jwt_secret == "a-genuinely-random-48-char-secret-value"
 
@@ -120,6 +122,8 @@ def test_compose_deployment_with_a_real_secret_boots() -> None:
         # "a deployment boots" means.
         platform_admin_handles=["ops"],
         data_encryption_key=_DATA_KEY,
+        aliyun_green_access_key_id="key-id",
+        aliyun_green_access_key_secret="key-secret",
     )
     assert settings.deployed_via_compose is True
 

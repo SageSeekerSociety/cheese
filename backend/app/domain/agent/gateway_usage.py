@@ -33,7 +33,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -485,6 +485,25 @@ async def _model_kwargs(
     return kwargs, "gateway" if routed else "native"
 
 
+def _key_in_step(
+    settings: dict | None, slot: _KeySlot, target: float | None
+) -> str | None:
+    """The key in ``slot`` when the project's ``settings`` name one whose budget
+    is ``target``: nothing to mint or re-price, so nothing to write."""
+    s = settings or {}
+    key = s.get(slot.key)
+    if isinstance(key, str) and key and s.get(slot.budget) == target:
+        return key
+    return None
+
+
+def room_key_in_step(settings: dict | None, target: float | None) -> str | None:
+    """The project key from settings already read, by the same test
+    `_gateway_project_env`'s read path makes, without opening a session to
+    read the project again."""
+    return _key_in_step(settings, _ROOM_SLOT, target)
+
+
 async def project_gateway_key(
     service: _GatewayUsage,
     sessions: async_sessionmaker,
@@ -535,6 +554,24 @@ async def project_gateway_key(
     return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
 
 
+async def task_key_in_step(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    owner_handle: str,
+) -> str | None:
+    """The task's key for ``owner_handle``, when it is minted and its budget
+    is in step with what the task may spend; None to ask `project_gateway_key`.
+    Read on ``session``: admission asks it on its own, whose request facts
+    already hold the project and its payer (`routes/llm_proxy.py`)."""
+    usage = UsageService(session)
+    account = await usage.task_gateway_account(project_id, task_id, owner_handle)
+    if account is None or account.project_id != project_id or not account.gateway_key:
+        return None
+    target = await usage.task_gateway_budget(project_id, task_id, owner_handle)
+    return account.gateway_key if account.budget_usd == target else None
+
+
 async def _task_gateway_key(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
@@ -545,17 +582,9 @@ async def _task_gateway_key(
     if gateway is None:
         return None
     async with sessions() as session:
-        account = await session.get(TaskGatewayAccount, (task_id, owner_handle))
-        target = await UsageService(session).task_gateway_budget(
-            project_id, task_id, owner_handle
-        )
-        if (
-            account is not None
-            and account.project_id == project_id
-            and account.gateway_key
-            and account.budget_usd == target
-        ):
-            return account.gateway_key
+        ready = await task_key_in_step(session, project_id, task_id, owner_handle)
+        if ready is not None:
+            return ready
     async with sessions() as session:
         await session.execute(
             insert(TaskGatewayAccount)
@@ -705,10 +734,11 @@ async def _gateway_project_env(
                 target = (
                     await service._gateway_budget_target(session, project_id)
                     if known_target is UNKNOWN_TARGET
-                    else known_target
+                    else cast("float | None", known_target)
                 )
-                if s.get(slot.budget) == target:
-                    return {"ANTHROPIC_AUTH_TOKEN": key}
+                in_step = _key_in_step(s, slot, target)
+                if in_step is not None:
+                    return {"ANTHROPIC_AUTH_TOKEN": in_step}
 
         # Write path: something must be minted or re-priced. The row lock
         # serialises it, and the settings are read under it here so a mint that

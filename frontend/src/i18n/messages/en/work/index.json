@@ -1,10 +1,3 @@
 {
-  "emptyTitle": "No {project} yet",
-  "joinAction": "Join with a code",
-  "joinBody": "The space's creator provides the invite code",
-  "joinCancel": "Cancel",
-  "joinFailed": "This invite code is invalid, expired or used up",
-  "joinLabel": "Invite code",
-  "joinSubmit": "Join",
-  "joinTitle": "Join a space"
+  "emptyTitle": "No {project} yet"
 }

@@ -5,6 +5,9 @@
 //
 // 页头右边的工具（`#tools`）在桌面上进页头。手机上页头不画（页名在顶栏里），工具就挪到
 // 正文最上面一行：刷新、添加成员、统计窗口这些在手机上也要够得着。
+//
+// 标题旁边的一小段状态（`#meta`，如「12:03Z 统计」）在桌面上紧跟页名；手机上跟着工具
+// 进正文那一行，放在最右边，不为它单独撑起一条页头。
 import { useDisplay } from 'vuetify'
 
 import AppPage from '@/components/common/AppPage.vue'
@@ -20,6 +23,7 @@ defineProps<{
 defineSlots<{
   default?: () => unknown
   tools?: () => unknown
+  meta?: () => unknown
   extra?: () => unknown
 }>()
 
@@ -28,13 +32,17 @@ const { mdAndUp } = useDisplay()
 
 <template>
   <AppPage :title="title" width="admin">
+    <template v-if="mdAndUp && $slots.meta" #meta>
+      <slot name="meta" />
+    </template>
     <template v-if="mdAndUp && $slots.tools" #controls>
       <slot name="tools" />
     </template>
 
-    <div v-if="sub || $slots.extra || (!mdAndUp && $slots.tools)" class="admin-intro">
-      <div v-if="!mdAndUp && $slots.tools" class="admin-intro__tools">
+    <div v-if="sub || $slots.extra || (!mdAndUp && ($slots.tools || $slots.meta))" class="admin-intro">
+      <div v-if="!mdAndUp && ($slots.tools || $slots.meta)" class="admin-intro__tools">
         <slot name="tools" />
+        <div v-if="$slots.meta" class="admin-intro__meta"><slot name="meta" /></div>
       </div>
       <p v-if="sub" class="admin-intro__sub">{{ sub }}</p>
       <div v-if="$slots.extra" class="admin-intro__extra">
@@ -58,6 +66,14 @@ const { mdAndUp } = useDisplay()
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.admin-intro__meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
 }
 
 /* 上限按 em 而不是 ch 算：`ch` 是「0」的宽度，约半个汉字，72ch 只装得下三十几个字。

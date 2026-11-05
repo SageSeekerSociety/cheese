@@ -55,6 +55,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core import origins, single_use_state
 from app.core.config import settings
+from app.core.content_review import TextKind, review_text
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -62,6 +63,7 @@ from app.core.errors import (
     ConflictError,
     NotFoundError,
     UnprocessableEntityError,
+    UpstreamUnavailableError,
 )
 from app.core.single_use_state import SingleUseUnavailableError
 from app.db.session import get_db
@@ -1092,6 +1094,14 @@ async def oauth_create_user(
         )
     if not await _redeem_oauth_state_token(jti):
         return _oauth_error_redirect(request, "TOKEN_EXPIRED", "Session expired")
+    # After the state token is spent, not before: each review is a billed call,
+    # and an unspent token could be replayed with one nickname after another.
+    try:
+        await review_text(TextKind.NAME, [nickname])
+    except UnprocessableEntityError as exc:
+        return _oauth_error_redirect(request, "INVALID_NICKNAME", str(exc))
+    except UpstreamUnavailableError as exc:
+        return _oauth_error_redirect(request, "REVIEW_UNAVAILABLE", str(exc))
     # Before the account is created, not after: a second stateToken for an
     # identity linked meanwhile would otherwise leave an account behind with
     # nothing linked to it.

@@ -142,3 +142,21 @@ async def _name_owners_agents(
             distinction = base if seen[base] == 1 else f"{base} {seen[base]}"
             instance.display_name = own_name(nickname, distinction)
     await db.flush()
+
+
+async def connection_name(db: AsyncSession, instance_id: uuid.UUID) -> str | None:
+    """The name of the model connection a member's own agent runs on, as the
+    project's settings show it (``label``); None when the agent is not
+    anyone's own or its connection is gone."""
+    row = await db.get(OwnAgent, instance_id)
+    instance = await db.get(AgentInstance, instance_id)
+    if row is None or instance is None:
+        return None
+    project = await db.get(Project, instance.project_id)
+    key = _connection_key(row.login_id, row.account_connection_id)
+    if project is None or key is None:
+        return None
+    for login in await logins(db, project.team_id):
+        if login.id == key:
+            return label(login)
+    return None

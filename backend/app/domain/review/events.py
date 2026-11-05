@@ -13,7 +13,7 @@ from websockets.frames import CloseCode
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.core.forge_events import subscription_assertion
+from app.core.forge_events import signing_key, subscription_assertion
 from app.domain.delivery_events import SettleCard
 from app.domain.project.models import ProjectGitInstallation
 from app.domain.review import pr_poll
@@ -27,6 +27,9 @@ from app.domain.review.ports import (
 logger = logging.getLogger(__name__)
 
 RECONNECT_DELAY_S = 10
+#: How often an assertion is renewed. The assertion lives 300 s; renewing well
+#: inside that leaves room for a retry.
+RENEW_INTERVAL_S = 60
 
 
 async def register_subscriptions(socket, sessions: SessionFactory):
@@ -39,7 +42,9 @@ async def register_subscriptions(socket, sessions: SessionFactory):
     deployment = (
         urlsplit(settings.forge_event_relay_url).path.rstrip("/").split("/")[-2]
     )
-    private_key = Path(settings.github_app_private_key_path).read_text()
+    # Parsed once for the life of the renewal loop: `jwt.encode` parses a PEM
+    # on every call, and this loop signs once a minute on the event loop.
+    private_key = signing_key(Path(settings.github_app_private_key_path).read_text())
     while True:
         async with sessions() as session:
             rows = list(
@@ -61,7 +66,7 @@ async def register_subscriptions(socket, sessions: SessionFactory):
         await socket.send(
             json.dumps({"kind": "github_subscriptions", "assertion": assertion})
         )
-        await asyncio.sleep(60)
+        await asyncio.sleep(RENEW_INTERVAL_S)
 
 
 #: The key of a refresh of every project, run after each (re)connect.

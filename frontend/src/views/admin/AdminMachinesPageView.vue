@@ -63,6 +63,8 @@ const STATE_LABEL: Record<SandboxState, string> = {
   working: 'admin.machines.state.working',
   idle: 'admin.machines.state.idle',
   stopping: 'admin.machines.state.stopping',
+  frozen: 'admin.machines.state.frozen',
+  parked: 'admin.machines.state.parked',
 }
 
 /** 圆点：坏了的红、要留意的黄、正常的绿、走完了或还没开始的灰。 */
@@ -78,6 +80,17 @@ function stateDot(state: SandboxState): string {
   return 'status-dot--muted'
 }
 
+/** 冻着的沙箱不再跑、也不再计费，到 keep 之后才回收：说清它什么时候走。 */
+function frozenWhen(s: MachineSandbox): string {
+  const sleeping = t('admin.machines.when.frozen', { for: since(s.active_at) })
+  if (!s.idle_deadline) return sleeping
+  const due = new Date(s.idle_deadline).getTime() <= nowMs.value
+  const after = due
+    ? t('admin.machines.when.overdue')
+    : t('admin.machines.when.discard', { in: until(s.idle_deadline) })
+  return `${sleeping} · ${after}`
+}
+
 const nowMs = computed(() => (props.overview ? new Date(props.overview.now).getTime() : Date.now()))
 
 /** 一段时长：45 秒、12 分钟、3.5 小时、2 天。 */
@@ -89,6 +102,27 @@ function duration(seconds: number | null | undefined): string {
   if (s < 86400) return t('admin.machines.dur.h', { n: Math.round((s / 3600) * 10) / 10 })
   return t('admin.machines.dur.d', { n: Math.round((s / 86400) * 10) / 10 })
 }
+/** 过去 24 小时每种计时一行：每一段的 p50 / p95，合计放最前。 */
+const timingRows = computed(() =>
+  Object.entries(props.overview?.history?.timings ?? {}).map(([kind, stages]) => {
+    const all = stages ?? {}
+    const order = ['total', ...Object.keys(all).filter((stage) => stage !== 'total')]
+    return {
+      kind,
+      count: all.total?.count ?? 0,
+      text: order
+        .filter((stage) => all[stage])
+        .map((stage) =>
+          t('admin.machines.fact.stageValue', {
+            stage: t(`admin.machines.fact.stage.${stage}`),
+            p50: duration(all[stage]?.p50_s),
+            p95: duration(all[stage]?.p95_s),
+          })
+        )
+        .join(' · '),
+    }
+  })
+)
 function since(iso: string | null): string {
   return iso ? duration((nowMs.value - new Date(iso).getTime()) / 1000) : ''
 }
@@ -107,6 +141,7 @@ function spec(h: MachineHost | WarmMachineRow): string {
 /** 这一台此刻最该让人知道的一句：为什么坏、从什么时候起。 */
 function hostNote(h: MachineHost): string {
   if (h.phase === 'failed') return t('admin.machines.note.failed', { at: stamp(h.failed_at) })
+  if (h.draining && h.draining_since) return t('admin.machines.note.draining', { for: since(h.draining_since) })
   if (h.phase === 'releasing') return t('admin.machines.note.releasing', { at: stamp(h.released_at) })
   if (h.phase === 'enroll_failing')
     return t('admin.machines.note.enrollFailing', { n: h.enroll_attempts, error: h.enroll_error ?? '' })
@@ -119,6 +154,9 @@ function hostNote(h: MachineHost): string {
 function sandboxWhen(s: MachineSandbox): string {
   if (s.state === 'waiting') return t('admin.machines.when.waiting', { for: since(s.waiting_since) })
   if (s.state === 'stopping') return t('admin.machines.when.stopping', { for: since(s.stopped_at) })
+  if (s.state === 'frozen') return frozenWhen(s)
+  if (s.state === 'parked')
+    return t('admin.machines.when.parked', { in: s.idle_deadline ? until(s.idle_deadline) : '—' })
   const active = t('admin.machines.when.active', { ago: since(s.active_at) })
   if (s.state === 'idle' && s.idle_deadline) {
     const due = new Date(s.idle_deadline).getTime() <= nowMs.value
@@ -147,13 +185,19 @@ function stale(at: string | null): boolean {
   return (nowMs.value - new Date(at).getTime()) / 1000 > 3 * props.overview.config.check_s
 }
 
-type MeterKey = 'disk' | 'inodes' | 'memory' | 'cpu'
+type MeterKey = 'disk' | 'inodes' | 'memory' | 'swap' | 'cpu'
 type Meter = { key: MeterKey; label: string; value: string; ratio: number; hint: string; tone: 'ink' | 'warn' }
 const METER_LABEL: Record<MeterKey, string> = {
   disk: 'admin.machines.usage.disk',
   inodes: 'admin.machines.usage.inodes',
   memory: 'admin.machines.usage.memory',
+  swap: 'admin.machines.usage.swap',
   cpu: 'admin.machines.usage.cpu',
+}
+
+/** 内存压力是内核给的百分数（PSI 的 avg10/avg60），不是 0–1 的占比。 */
+function psi(value: number | null): string {
+  return value === null ? '—' : `${value.toFixed(1)}%`
 }
 
 /** 一台宿主机的四根条：过了告警线（`alert_used`，和告警同一条线）的那根标黄。 */
@@ -191,6 +235,14 @@ function meters(u: HostUsage): Meter[] {
     undefined,
     line?.memory
   )
+  // 没建交换文件（旧主机，或把 `cloud_host_swap_mb` 设成 0）就没有这一根条。
+  if (u.swap_bytes) {
+    add(
+      'swap',
+      ratio(u.swap_used_bytes, u.swap_bytes),
+      t('admin.machines.usage.gib', { used: gib(u.swap_used_bytes ?? 0), total: gib(u.swap_bytes) })
+    )
+  }
   add(
     'cpu',
     u.cpu_busy,
@@ -198,6 +250,23 @@ function meters(u: HostUsage): Meter[] {
     u.load1 === null ? '' : t('admin.machines.usage.load', { n: u.load1 })
   )
   return out
+}
+
+/** 内存压力：内核说最近 1 分钟、5 分钟里有多少时间在等内存。读不到的机器不显示。
+ * some 是有进程在等，full 是整个机器都卡住；两组都报出来。 */
+function pressure(u: HostUsage): string | null {
+  if (
+    u.memory_pressure_some_avg10 === null &&
+    u.memory_pressure_some_avg60 === null &&
+    u.memory_pressure_full_avg10 === null &&
+    u.memory_pressure_full_avg60 === null
+  )
+    return null
+  const pair = (minute: number | null, five: number | null) => `${psi(minute)} / ${psi(five)}`
+  return t('admin.machines.usage.pressure', {
+    some: pair(u.memory_pressure_some_avg10, u.memory_pressure_some_avg60),
+    full: pair(u.memory_pressure_full_avg10, u.memory_pressure_full_avg60),
+  })
 }
 
 /** 一个沙箱离它的上限多远：内存对 `sandbox_memory_mb`，磁盘对 `sandbox_disk_budget_gb`
@@ -232,6 +301,19 @@ function sandboxUse(s: MachineSandbox): { text: string; near: boolean }[] {
       }),
       near: u.disk_inodes >= c.near_cap * c.sandbox_inode_budget,
     })
+  }
+  // 运行中的沙箱可换出到 `memory.swap.max`；读到上限就和它比，到线标红。
+  if (u.swap_max_bytes) {
+    parts.push({
+      text: t('admin.machines.usage.sandboxSwapCap', { used: gib(u.swap_bytes ?? 0), cap: gib(u.swap_max_bytes) }),
+      near: (u.swap_bytes ?? 0) >= c.near_cap * u.swap_max_bytes,
+    })
+  } else if (u.swap_bytes) {
+    parts.push({ text: t('admin.machines.usage.sandboxSwap', { used: gib(u.swap_bytes) }), near: false })
+  }
+  // 被 OOM 杀掉过：这个沙箱以后还会再撞上同一个上限。
+  if (u.oom_kills) {
+    parts.push({ text: t('admin.machines.usage.oomKilled', { n: u.oom_kills }, u.oom_kills), near: true })
   }
   return parts.length ? parts : [{ text: t('admin.machines.usage.none'), near: false }]
 }
@@ -286,6 +368,7 @@ const hostsNote = computed(() =>
         t('admin.machines.kpi.hostsNote'),
         pool.value.vms ? t('admin.machines.kpi.vms', { n: pool.value.vms }) : '',
         t('admin.machines.kpi.warm', { n: warm.value.length, target: pool.value.warm_target }),
+        pool.value.fixed_hosts ? t('admin.machines.kpi.fixed', { n: pool.value.fixed_hosts }) : '',
       ]
         .filter(Boolean)
         .join(' ')
@@ -389,6 +472,8 @@ const failureNote = computed(() =>
                 <span class="mc-mono c-ink">{{ h.hostname }}</span>
                 <span v-if="h.machine_id !== null" class="t-meta">#{{ h.machine_id }}</span>
                 <span v-if="h.whole_machine" class="chip-neutral">{{ t('admin.machines.vm') }}</span>
+                <span v-if="h.draining" class="chip-neutral">{{ t('admin.machines.draining') }}</span>
+                <span v-else-if="h.image_outdated" class="chip-neutral">{{ t('admin.machines.outdated') }}</span>
               </span>
               <span class="mc-phase">
                 <span class="status-dot" :class="phaseDot(h.phase)" />
@@ -435,6 +520,9 @@ const failureNote = computed(() =>
                 <template v-if="historySpan">
                   · {{ t('admin.machines.usage.history', { span: historySpan }) }}</template
                 >
+              </p>
+              <p v-if="pressure(h.usage)" class="mc-usage__read mc-usage__pressure mc-dim">
+                {{ pressure(h.usage) }}
               </p>
             </div>
             <div v-if="open.has(h.id)" class="mc-sandboxes" role="rowgroup">
@@ -514,6 +602,10 @@ const failureNote = computed(() =>
               }}
             </dd>
           </div>
+          <div v-for="row in timingRows" :key="row.kind">
+            <dt>{{ t(`admin.machines.fact.timed.${row.kind}`, { count: row.count }) }}</dt>
+            <dd class="mc-num">{{ row.text }}</dd>
+          </div>
           <div>
             <dt>{{ t('admin.machines.fact.abandoned') }}</dt>
             <dd class="mc-num">{{ n(history.abandoned) }}</dd>
@@ -570,6 +662,14 @@ const failureNote = computed(() =>
             sandboxIdle: duration(overview.config.sandbox_idle_s),
             hostIdle: duration(overview.config.host_idle_hold_s),
             vmIdle: duration(overview.config.vm_idle_s),
+          })
+        }}
+      </p>
+      <p v-if="overview.pool.fixed_hosts" class="mc-foot">
+        {{
+          t(overview.config.rebuild_after_days ? 'admin.machines.fixedFoot' : 'admin.machines.fixedFootNoAge', {
+            n: overview.pool.fixed_hosts,
+            days: overview.config.rebuild_after_days,
           })
         }}
       </p>

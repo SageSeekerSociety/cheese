@@ -48,13 +48,24 @@ class MachineSettings(BaseModel):
     # sandboxes. Sessions in this repository's
     # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
     # 2 GiB (docs/topics), and the limit is there so that a session over it is
-    # killed alone, not to share the machine out evenly. No swap, so a session
-    # at its limit is killed instead of pushing the machine into swap. CPU:
+    # killed alone, not to share the machine out evenly. A running sandbox may
+    # use `cloud_sandbox_swap_mb` of the host's swap file: at its limit the
+    # kernel pushes what it can there first, so a build that peaks just above
+    # the limit runs slower instead of being killed (one sandbox was killed 15
+    # times in 19 hours with none; dev, 2026-11-02), and only what still does
+    # not fit is killed (`sandbox_host.limit`). The idle
+    # page-cache reclaim (`sandbox_host.reclaim`) turns that swap off while it
+    # runs, so it still only drops page cache. A frozen sandbox may use more
+    # (`machine/lifecycle.py`), so pages it will not touch may leave the
+    # machine. The host itself keeps a swap file
+    # (`cloud_host_swap_mb`), so a burst in the machine's own processes —
+    # the connector, sshd, the release's language servers — is absorbed
+    # instead of the kernel killing them. CPU:
     # two cores each, so a session alone on a host gets half of it; when they
     # all run, sessions share by equal weight. Processes: stops a
     # fork bomb, well above the threads a Node or JVM build starts.
     cloud_sandbox_memory_mb: int = Field(default=3072, ge=64)
-    cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
+    cloud_sandbox_swap_mb: int = Field(default=1024, ge=0)
     cloud_sandbox_cpus: int = Field(default=2, ge=1, le=1024)
     cloud_sandbox_pids: int = Field(default=4096, ge=16)
     # Disk. On a platform host a sandbox's home — its checkout, its
@@ -77,6 +88,20 @@ class MachineSettings(BaseModel):
     # 95–130 thousand inodes; one project's package store held 6.5 GB.
     cloud_sandbox_disk_gb: int = Field(default=4, ge=1)
     cloud_host_disk_reserve_gb: int = Field(default=10, ge=0)
+    # A swap file on a pool host's data disk, made when the host enrolls
+    # (`enrollment.DATA_DISK`): 8 GiB, counted against the disk its sandboxes
+    # share (`models.capacity`) and left out at 0. Extra room nothing is
+    # expected to use in normal running — it turns a burst in the machine's
+    # own processes into a slow page rather than an OOM kill of the connector
+    # and every sandbox with it, and it is what lets a frozen sandbox's pages
+    # leave RAM entirely (step after this one). A sandbox still has no swap
+    # of its own.
+    cloud_host_swap_mb: int = Field(default=8192, ge=0)
+    # How eagerly the host swaps: the kernel's own default is 60, which
+    # trades page cache away for anonymous memory all the time. 10 keeps it
+    # to the case the file is for — memory actually short. Written to
+    # /etc/sysctl.d/90-cheese-swap.conf beside the file.
+    cloud_host_swappiness: int = Field(default=10, ge=0, le=100)
     # What one sandbox on a platform host may hold, however much room the rest
     # of the disk has: its home's project quota (`sandbox_host.py`), past
     # which its writes are refused (ENOSPC). Each project's package store on
@@ -112,6 +137,27 @@ class MachineSettings(BaseModel):
     # computer keeps the idle time above, and a whole cloud VM is released on
     # its own clock (`cloud_vm_idle_release_s`).
     cloud_sandbox_idle_stop_pressed_s: int = Field(default=180, ge=1, le=86400)
+    # An idle cloud sandbox is frozen instead of destroyed: its processes are
+    # stopped (`cgroup.freeze`), whatever of its memory the kernel can take is
+    # given back, and its home, its work and its executor wait on the host
+    # (`machine/lifecycle.py`). The session's next tool call wakes the same
+    # sandbox. Off, an idle sandbox is destroyed as it always was. Only a
+    # standard sandbox on a platform host is frozen; a whole cloud VM and a
+    # sandbox on somebody's own computer keep the old lifecycle.
+    cloud_sandbox_freeze: bool = True
+    # How long a frozen sandbox is kept before it is destroyed anyway: it holds
+    # its host's slot and its home the whole time, so it cannot be kept for
+    # good. A slot needed, a disk running short or a host being rebuilt take a
+    # frozen sandbox sooner (`machine/lifecycle.py`, `disk_guard`, `reaper`).
+    cloud_sandbox_frozen_keep_s: int = Field(default=7200, ge=60, le=30 * 86400)
+    # A sandbox whose conversation has a previewed app (`cheese serve`, the
+    # conversation's latest artifact carries a `serve` spec) is kept frozen
+    # this long instead: somebody opening its preview is likely, and a thaw is
+    # a second, where starting the app again is a model turn. Frozen sandboxes
+    # without one are evicted for a slot first (`machine/lifecycle.py`).
+    cloud_sandbox_frozen_keep_preview_s: int = Field(
+        default=86400, ge=60, le=30 * 86400
+    )
     # A command the executor still runs for the session (a Bash call sent to the
     # background) keeps an otherwise idle sandbox up, but no longer than this
     # after the session's last activity.
@@ -130,6 +176,64 @@ class MachineSettings(BaseModel):
     # ten hosts' disks written full, so each place above ten over-commits it by
     # a disk. Raise this only as that pool grows.
     cloud_pool_max_hosts: int = Field(default=12, ge=1, le=500)
+    # How many ordinary hosts the pool keeps up, whatever the demand: ten, the
+    # number the shared thin pool above holds, leaving the other two places for
+    # whole cloud VMs. One is added until there are this many, an idle one is
+    # kept instead of released after `cloud_host_idle_hold_s`, and one above
+    # this number is released once it is idle. 0 = no fixed size: the pool is
+    # sized by demand (`cloud_pool_min_free_slots`) and an idle host is released
+    # again, which is what the platform did before this setting.
+    cloud_pool_fixed_hosts: int = Field(default=10, ge=0, le=500)
+    # A host older than this is rolled: taken out of rotation (it takes no new
+    # sandbox, and is released once its last one is gone) and replaced with a
+    # fresh one, so the fleet takes new enrollment scripts and templates without
+    # an outage. A host whose image version is no longer the current one is
+    # rolled regardless of age. 0 = age alone never rolls a host. Rolling needs
+    # a fixed size above (`cloud_pool_fixed_hosts`), and only one host is rolled
+    # at a time.
+    cloud_host_rebuild_after_days: int = Field(default=14, ge=0, le=365)
+    # A host being rebuilt waits this long for its sandboxes to go idle; past
+    # it, one still in use is moved off between two of its turns
+    # (`lifecycle._release_frozen_on_draining_hosts`), so one long-lived
+    # sandbox does not hold the rebuild of the whole fleet.
+    cloud_host_drain_wait_s: int = Field(default=21600, ge=0, le=7 * 86400)
+    # Past its reserved slots: when no host has a slot left at
+    # `cloud_sandbox_memory_mb` each (`models.capacity`), a host still takes
+    # one more sandbox if what it reads now says it has the room, up to its
+    # cores and its disk (`models.hard_capacity`). Sandboxes hold far less
+    # than their limit: a full host held 2.2 GiB at the median and 4.6 GiB at
+    # most of the 12 GiB reserved for its four (dev, 2026-11-01). What it
+    # reads (`reaper.memory_admits`): its last reading at most
+    # `cloud_pool_admit_reading_s` old, memory pressure (PSI some avg60) under
+    # `cloud_pool_admit_pressure` percent, and available memory, less one
+    # sandbox limit for each sandbox placed on it since that reading, still
+    # one sandbox limit plus `cloud_pool_admit_headroom_mb`. A host with no
+    # such reading takes none past its reserved slots. Off = the reserved
+    # slots are all there is, as before.
+    # A frozen sandbox past its keep time is parked rather than destroyed: its
+    # processes are stopped and it gives up its host's slot, but its home —
+    # checkout, dependencies, what was not pushed — stays on the host's disk,
+    # and the session's next tool call starts it again there instead of in a
+    # new sandbox that clones and installs everything again (`lifecycle._park`).
+    # Kept `cloud_sandbox_parked_keep_s` at most; and never at the cost of a
+    # sandbox in use: a host short of disk, being rebuilt, or holding more than
+    # `cloud_host_parked_budget_gb` of parked homes deletes them first, oldest
+    # first, and a host with no room for one coming back hands it a new
+    # sandbox elsewhere. Off = destroyed past the keep time, as before.
+    # An open turn of the session keeps its sandbox from going idle while the
+    # turn started, or the sandbox was used, within this long. A turn that has
+    # not touched its sandbox for longer — a subagent only reading the web, a
+    # turn whose runner died — lets it freeze, and its next tool call thaws it.
+    # It replaced a flat two hours after a turn started, which froze a long
+    # turn still at work and kept a dead one for two hours (`lifecycle`).
+    cloud_sandbox_turn_hold_s: int = Field(default=1800, ge=60, le=86400)
+    cloud_sandbox_park: bool = True
+    cloud_sandbox_parked_keep_s: int = Field(default=172800, ge=0, le=30 * 86400)
+    cloud_host_parked_budget_gb: int = Field(default=20, ge=0, le=1000)
+    cloud_pool_admit_by_use: bool = True
+    cloud_pool_admit_reading_s: int = Field(default=300, ge=30, le=3600)
+    cloud_pool_admit_pressure: float = Field(default=8.0, ge=0.0, le=100.0)
+    cloud_pool_admit_headroom_mb: int = Field(default=2048, ge=0)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer

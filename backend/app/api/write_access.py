@@ -16,6 +16,15 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   What only an AI teammate does there — the write surface the ``cheese`` CLI
   alone calls — is a permission no person's role holds
   (``project_permissions.AGENT_ONLY``).
+- ``HOLDS_LINK``: the credential is a join link's token in the path, so there
+  is no object id for ``Can`` to judge before the token is read. Any signed-in
+  person reaches the handler; nobody signed in is refused here. The handler
+  resolves the token and answers 404 when it names nothing the link may open.
+- ``AS_ONESELF``: what the handler makes belongs to whoever is asking — no
+  object exists yet for ``Can`` to judge, and every signed-in caller may make
+  one. Every signed-in person reaches the handler; nobody signed in is refused
+  here. A route that *changes* something declares ``Can`` on it instead; this
+  is only for the route that creates it.
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
   itself (``ActorResolver`` and friends). The routes written before ``Can``
   judged every caller still declare it and move onto ``Can`` a batch at a
@@ -60,6 +69,7 @@ from app.auth.project_roles import AGENT_PERMISSIONS, may
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.sentences import say
+from app.domain.agent_instance.facts import project_agents_ride_along
 from app.domain.identity.actor import Actor
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
@@ -74,7 +84,7 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class WriteAccess:
     """One declaration: which callers reach the handler."""
 
-    kind: Literal["route_decides", "can"]
+    kind: Literal["route_decides", "can", "holds_link", "as_oneself"]
 
     @property
     def name(self) -> str:
@@ -100,7 +110,11 @@ class _Can(WriteAccess):
         # The object's id is declared as a path parameter of this dependency,
         # under the name the path gives it, so the route's API description
         # keeps it and FastAPI validates it — a route that takes the object
-        # rather than its id would otherwise drop it from both.
+        # rather than its id would otherwise drop it from both. It is typed
+        # the way the kind's policy says its ids are: a UUID kind rejects a
+        # path that is not one before anything is judged, rather than reading
+        # a string no row can be.
+        id_type = can.policy_of(self.permission).id_type if self.permission else int
         object.__setattr__(
             self,
             "__signature__",
@@ -109,7 +123,7 @@ class _Can(WriteAccess):
                     inspect.Parameter(
                         "object_id",
                         inspect.Parameter.KEYWORD_ONLY,
-                        annotation=Annotated[int, Path(alias=self.at)],
+                        annotation=Annotated[id_type, Path(alias=self.at)],
                     ),
                     inspect.Parameter(
                         "db",
@@ -258,7 +272,11 @@ class _CanInChannel(WriteAccess):
         self, *, topic_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
     ) -> InChannel:
         assert self.permission is not None
-        place = await place_or_404(db, topic_id)
+        # Read with the project's agents: what these routes do next (whom a
+        # message is for, who answers here) asks which of them sits here.
+        place = await place_or_404(
+            db, topic_id, ride_along=project_agents_ride_along(db)
+        )
         # The room's roster, read once for the request: the door below asks the
         # caller's seat in it, and what these routes do next (whom a message is
         # for, who answers here) reads the same rows. Asked for the one seat
@@ -309,6 +327,36 @@ def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
 
 
 ROUTE_DECIDES = Depends(WriteAccess("route_decides"))
+
+
+@dataclass(frozen=True, eq=False)
+class _SignedIn(WriteAccess):
+    """A route whose declaration is only «somebody is signed in»: what it acts
+    on is not named by the path yet."""
+
+    async def __call__(  # type: ignore[override]
+        self, person: Annotated[AuthUserInfo, Depends(get_auth_user)]
+    ) -> None:
+        if person.user_id == 0:
+            raise AuthenticationRequiredError(say("signInRequired"))
+
+
+@dataclass(frozen=True, eq=False)
+class _HoldsLink(_SignedIn):
+    kind: Literal["holds_link"] = "holds_link"
+
+
+#: A route opened by a join link's token: see ``HOLDS_LINK`` above.
+HOLDS_LINK = Depends(_HoldsLink())
+
+
+@dataclass(frozen=True, eq=False)
+class _AsOneself(_SignedIn):
+    kind: Literal["as_oneself"] = "as_oneself"
+
+
+#: A route that creates a row belonging to the caller: see ``AS_ONESELF`` above.
+AS_ONESELF = Depends(_AsOneself())
 
 
 @dataclass(frozen=True)

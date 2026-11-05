@@ -56,16 +56,30 @@ the loop variable. Any other loop is read once, as written.
 1. **One transaction per migration.** `env.py` sets
    `transaction_per_migration=True`: a migration's locks and backfill row locks
    end with it, not with the last migration of the deploy. `lock_timeout` (10s)
-   is session-level and covers every migration. A deploy whose Nth migration
-   fails leaves the database at N−1 (no longer all-or-nothing) with the old
-   backend serving on it; rerunning the upgrade resumes from there. Another
-   reason each migration must be safe under the previous release.
+   is session-level and covers every migration. A migration that loses a lock
+   to live traffic — its `lock_timeout` runs out, or Postgres picks it as a
+   deadlock's victim — is rolled back whole and run again
+   (`run_migrations_retrying_lock_contention` in `app/core/db.py`). A
+   migration that already committed part of itself in an `autocommit_block`
+   is not rerun; there the `CREATE INDEX CONCURRENTLY` or `DROP INDEX
+   CONCURRENTLY` that lost the race is run again on its own
+   (`app/core/migration_impl.py`, which `env.py` installs under every `op.*`
+   call). Both draw on one allowance per upgrade (`LockRaceRetries`): 10 tries
+   in all, waiting 1, 2, 4, 8, 16, then 30 s, and no retry started more than
+   10 minutes after the upgrade began. Not retried: any other statement in an
+   `autocommit_block`, and a lock error a `with_lock_retries` loop let out
+   after spending its own attempts (one retry layer per lock). A deploy whose Nth migration still fails leaves the database at N−1
+   (no longer all-or-nothing) with the old backend serving on it; rerunning the
+   upgrade resumes from there. Another reason each migration must be safe under
+   the previous release.
 2. **Locks.** DDL on a table the live backend uses (`blocks`, `topics`,
    `tasks`, `agent_sessions`, `deliveries`, …) starts with
    `with_lock_retries("t1, t2")` from `migration_helpers` (on `sys.path` via
    `alembic.ini`), naming every table altered and every table a new or dropped
    foreign key points at. A table left out is locked after the listed ones are
-   held and deadlocks with the live backend (`b8d3f1a6c254` left out `topics`).
+   held, while the backend waits on them: the migration deadlocks with it or
+   times out and is retried from the start (rule 1), holding the listed tables
+   each time it waits (`b8d3f1a6c254` left out `topics`).
    ✓ Where `upgrade()` calls `with_lock_retries`, both tables of every foreign
    key it then adds or drops by name in that transaction are in the list
    (`create_foreign_key`, `drop_constraint`, keys written into `add_column` /
@@ -84,8 +98,13 @@ the loop variable. Any other loop is read once, as written.
    deployed: `op.drop_column` / `op.drop_table`. A rename is a new name mapped
    onto the old column (`mapped_column("old_name")`), not `ALTER … RENAME`.
 5. **Indexes on existing tables are built `CONCURRENTLY`** inside
-   `with op.get_context().autocommit_block():`, dropping an invalid leftover
-   first (see `c7e2a91f4d3b`). ✓ Tables created in the same PR are exempt.
+   `with op.get_context().autocommit_block():`, with `op.create_index(...,
+   postgresql_concurrently=True, if_not_exists=True)` or the same SQL through
+   `op.execute`. Before each try of such a build, `env.py` drops an INVALID
+   index of that name (what a failed concurrent build leaves, and what `IF NOT
+   EXISTS` would otherwise accept as done); a valid one is kept. So a
+   migration needs no invalid-index check of its own and no retry loop around
+   the build. ✓ Tables created in the same PR are exempt.
 6. **Constraints on existing tables**: foreign keys and CHECKs are added
    `NOT VALID` (`postgresql_not_valid=True`) and validated in a separate
    statement; UNIQUE is a `CREATE UNIQUE INDEX CONCURRENTLY` then

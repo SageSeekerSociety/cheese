@@ -24,6 +24,7 @@ from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
 from app.domain.usage.model_access import overseas_approved as _overseas_approved
+from app.domain.usage.models import TaskGatewayAccount
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -90,6 +91,13 @@ class UsageService:
             "project_remaining": cap_remaining,
             "layer": "project_budget" if by_budget else "plan",
         }
+
+    async def task_gateway_account(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> TaskGatewayAccount | None:
+        """The task's gateway account for ``owner_handle``, or None; read with
+        the spend `task_gateway_budget` asks next."""
+        return await self._repo.task_gateway_account(project_id, task_id, owner_handle)
 
     async def task_gateway_budget(
         self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
@@ -161,8 +169,11 @@ class UsageService:
 
     async def _summaries(self, payers: dict) -> dict[uuid.UUID, dict]:
         balances = await ledger.Ledger(self._session).balances(payers)
+        # Caps first: their statement brings the gateway spend with it.
+        caps = await CreditBudgets(self._session).project_caps(
+            list(payers), with_gateway_spend=True
+        )
         spent = await self._repo.gateway_spend(list(payers))
-        caps = await CreditBudgets(self._session).project_caps(list(payers))
         out = {}
         for key, balance in balances.items():
             summary = balance.summary()

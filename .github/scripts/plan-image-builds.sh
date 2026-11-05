@@ -168,7 +168,8 @@ else
       docs/manual/* | docs/site/* | backend/sandbox/cheese \
         | backend/app/core/config.py \
         | backend/app/core/sandbox_config.py \
-        | backend/app/core/machine_config.py)
+        | backend/app/core/machine_config.py \
+        | backend/app/core/db_config.py)
         frontend=true
         ;;
     esac

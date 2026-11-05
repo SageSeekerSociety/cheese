@@ -11,6 +11,7 @@ section's page title and heading weighted into its text. A few hundred
 sections need nothing heavier, and it answers in well under a millisecond.
 """
 
+import asyncio
 import logging
 import math
 import re
@@ -225,17 +226,21 @@ class IndexSource:
                     )
                     r.raise_for_status()
                     rows = r.json()
-                self._index = DocsIndex(
-                    [
-                        Section(
-                            str(x["title"]),
-                            str(x.get("heading", "")),
-                            str(x["url"]),
-                            str(x["text"]),
-                        )
-                        for x in rows
-                    ]
-                )
+                sections = [
+                    Section(
+                        str(x["title"]),
+                        str(x.get("heading", "")),
+                        str(x["url"]),
+                        str(x["text"]),
+                    )
+                    for x in rows
+                ]
+                # Tokenizing the whole index is hundreds of milliseconds of
+                # Python — 403 ms for the docs site's 1.5 M characters, measured
+                # here — and it runs in whichever request first finds the copy
+                # older than REFRESH_SECONDS. On the loop that is one long stall
+                # every ten minutes.
+                self._index = await asyncio.to_thread(DocsIndex, sections)
             except Exception:  # keep the last good copy
                 logger.warning("docs index refresh from %s failed", url, exc_info=True)
             self._at = time.monotonic()

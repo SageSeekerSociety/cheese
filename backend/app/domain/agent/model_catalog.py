@@ -208,16 +208,21 @@ def subagent_default(
     project_settings: dict | None, choices: dict[str, dict], policy: gate.Policy
 ) -> str | None:
     """The model a project's subagents default to: the project's own subagent
-    default, then the platform's (``subagent_model`` role) when the project is
-    entitled to it (``entitled``: the same gate its turns pass), then the
-    project's main default. None leaves it to the catalogue's.
+    default, then the project's main default, then the platform's
+    (``subagent_model`` role) when the project is entitled to it (``entitled``:
+    the same gate its turns pass). None leaves it to the catalogue's.
+
+    Never the seat that spawned the subagent: what a subagent costs follows the
+    project's settings, so an Opus seat does not quietly put every subagent it
+    spawns on Opus. A project that set a main model has chosen what its work
+    runs on, and that choice outranks the platform's pick.
     """
     configured = project_settings or {}
-    own = configured.get("default_subagent_model")
-    if isinstance(own, str) and own:
-        return own
+    for key in ("default_subagent_model", "default_model"):
+        own = configured.get(key)
+        if isinstance(own, str) and own:
+            return own
     platform = model_roles.get("subagent_model")
     if platform and entitled(platform, choices, policy):
         return platform
-    main = configured.get("default_model")
-    return main if isinstance(main, str) and main else None
+    return None

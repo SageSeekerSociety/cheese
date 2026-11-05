@@ -94,6 +94,7 @@ const {
   docIdentity,
   docSnapshot,
   slideContext,
+  slideNotes,
   docLoading,
   docError,
   docRendererMissing,
@@ -191,6 +192,7 @@ function history(action: 'back' | 'forward' | 'reload') {
     :doc-identity="docIdentity"
     :doc-snapshot="docSnapshot"
     :slide-context="slideContext"
+    :slide-notes="slideNotes"
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"

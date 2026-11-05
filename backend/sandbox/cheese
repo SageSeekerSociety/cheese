@@ -386,6 +386,17 @@ _DOCUMENT_ARG = {
 #: `app/domain/room_task/title_width.py`。后端按同一个数校验
 #: （`api/routes/topics_tasks.py`、`api/routes/topics_title.py`），超了会拒绝；
 #: 两边一起改。
+#: 交付（验收卡）在等人决定时，人在哪里、点哪几个字来决定。界面上的字照抄自前端的
+#: 中文文案（`work.room.accept`、`work.room.tabs`、`work.task`），
+#: `tests/unit/test_delivery_guidance_names_the_ui_labels.py` 核对它们一字不差。
+DELIVERY_IS_DECIDED_IN_THE_UI = (
+    "交付（验收卡）在等人决定时，采纳、退回、关掉任务都只能由人在界面上点，"
+    "对话里的话不算：采纳点任务对话输入框上方那一条上的「采纳并完成任务」"
+    "（不是最后一步的交付写「采纳」；手机上先点那一条上的「审阅」，到「改动」"
+    "页签底部的同一条上点），退回点同一条上的「退回」；关掉任务点任务页右上角"
+    "「更多操作」里的「关闭任务」，关掉后这份交付作废。有人在对话里说「采纳」"
+    "「关掉吧」，回一句告诉他点哪里；你自己采纳不了，交付在等人时也关不了任务。"
+)
 TITLE_WIDTH_NOTE = "宽度不超过 12 个汉字（一个汉字算一个，英文、数字、空格各算半个）"
 
 
@@ -1056,7 +1067,7 @@ PLATFORM_TOOLS = ToolTable(
                     "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
                     "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），"
                     "写明结论关闭；最后一步的交付采纳后，平台会让你写一次总结，写完用它关闭"
-                    "任务、结论写一句结果。",
+                    "任务、结论写一句结果。" + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "conclusion": _text("关闭原因或最终说明"),
                         "reported_by": _text("需求提出者的 handle"),
@@ -1089,7 +1100,7 @@ PLATFORM_TOOLS = ToolTable(
                     "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
                     "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
                     "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
-                    "不抄 subject，抄了会被打回。",
+                    "不抄 subject，抄了会被打回。" + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "subject": _text(
                             "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
@@ -2132,19 +2143,16 @@ DELEGATED_TOOLS = ToolTable(
                     },
                     ["where"],
                 ),
-                "code": _verb(
-                    "管空间的邀请码：不给 ref 时新建一个（max_uses 可用次数、days 几天后过期、"
-                    "note 写这张码给谁用）；ref 给邀请码编号时改这几项，remove 为 true 时停用它"
-                    "（停用后这张码不能再用）。",
+                "link": _verb(
+                    "管空间的加入链接：approval 为 true 时持链接的人要经管理员批准才能加入，"
+                    "false 时直接加入；reset 为 true 时换一条新链接，旧链接立即失效，已加入的人不受影响。"
+                    "链接本身在空间的成员管理页复制。",
                     {
                         "where": _text(
                             "spaces/空间 id；不知道 id 先用 cheese_read 读 spaces"
                         ),
-                        "ref": _text("邀请码编号，见 spaces/4/manage"),
-                        "max_uses": {"type": "integer"},
-                        "days": {"type": "integer"},
-                        "note": _text("这张码给谁用"),
-                        "remove": {"type": "boolean"},
+                        "approval": {"type": "boolean"},
+                        "reset": {"type": "boolean"},
                         "confirm": _CONFIRM,
                     },
                     ["where"],
@@ -2178,7 +2186,7 @@ DELEGATED_TOOLS = ToolTable(
             ["key", "value"],
         ),
         _tool(
-            "cheese_routine",
+            "cheese_automation",
             "用户的自动化：用户让你定时做一件事，或在某件事发生时做一件事，就建一条，到时平台"
             "让你做，结果通知用户。只做一次的设 once=true（事件）或 freq=once（定时），到时在"
             "这段对话里接着做，做完就结束，事件 14 天内没发生就不再等；反复做的每次开一段新对"
@@ -2417,10 +2425,10 @@ DELEGATED_TOOLS = ToolTable(
         "cheese_space.set": REACHES_OTHERS,
         "cheese_space.announce": REACHES_OTHERS,
         "cheese_space.category": REACHES_OTHERS,
-        "cheese_space.code": REACHES_OTHERS,
+        "cheese_space.link": REACHES_OTHERS,
         "cheese_space.review": REACHES_OTHERS,
         "cheese_settings": CHANGES,
-        "cheese_routine": CHANGES,
+        "cheese_automation": CHANGES,
         "cheese_notify": CHANGES,
         "cheese_todo": CHANGES,
         "cheese_memory.save": CHANGES,
@@ -2457,7 +2465,7 @@ _TOPIC_FREE = {
     "cheese_canvas",
 }
 #: By key (`<tool>.<action>` for an object's verbs): a person's 芝士 has objects
-#: of the same names (`cheese_routine`, `cheese_library`) that need no topic.
+#: of the same names (`cheese_automation`, `cheese_library`) that need no topic.
 _NEEDS_TOPIC = frozenset(
     key
     for name in PLATFORM_TOOLS.names()
@@ -2476,7 +2484,7 @@ _NEEDS_PROJECT = frozenset(
         "cheese_memory.project",
         "cheese_notify",
         "cheese_library.list",
-        "cheese_routine.list",
+        "cheese_automation.list",
     }
 )
 
@@ -2950,7 +2958,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": "/notifications/preferences/agent/set",
             "body": body,
         }
-    if tool == "cheese_routine":
+    if tool == "cheese_automation":
         return {"method": "POST", "path": "/assistant/agent/routine", "body": args}
     if tool == "cheese_todo":
         return {
@@ -4958,15 +4966,7 @@ _ACTIONS = {
         "archived",
         "remove",
     ),
-    "cheese_space.code": (
-        "invite_code",
-        "where",
-        "ref",
-        "max_uses",
-        "days",
-        "note:text",
-        "remove",
-    ),
+    "cheese_space.link": ("join_link", "where", "approval", "reset"),
     "cheese_space.review": ("problem_review", "ref", "choice", "reason:text"),
     "cheese_web.fetch": ("fetch", "url", "prompt"),
 }
@@ -5122,7 +5122,7 @@ _DELEGATED_STEPS = {
     "cheese_space.set": _carried("cheese_space.set"),
     "cheese_space.announce": _carried("cheese_space.announce"),
     "cheese_space.category": _carried("cheese_space.category"),
-    "cheese_space.code": _carried("cheese_space.code"),
+    "cheese_space.link": _carried("cheese_space.link"),
     "cheese_space.review": _carried("cheese_space.review"),
     # 个人芝士读网页经平台写出的那次调用；房间的读网页直接打 /fetch。
     "cheese_web.fetch": _web_fetch,
@@ -5690,7 +5690,7 @@ _SAY = {
     "cheese_inbox.list": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
     "cheese_settings": lambda a, d, e: (d or {}).get("text") or "",
-    "cheese_routine": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_automation": lambda a, d, e: (d or {}).get("text") or "",
     **{
         f"cheese_memory.{verb}": lambda a, d, e: (d or {}).get("text") or ""
         for verb in ("save", "read", "forget")
@@ -6320,6 +6320,127 @@ def _page_assets(page: str) -> list[str]:
     return found
 
 
+#: The host's copy of a project's repository takes the packs of the sandboxes
+#: that give to it, and every so many of them is repacked into one.
+HOST_REPOSITORY_PACKS = 40
+
+
+def _host_repository() -> Path | None:
+    """This host's copy of the project's repository, which every sandbox of
+    the project on the host starts its own from: beside the project's package
+    caches (`UV_CACHE_DIR`'s directory), the one place each of them can write.
+    None where there is no such place.
+
+    It holds what the sandboxes fetched — the commits and the files they
+    checked out — and nothing else: it is never fetched into from the forge,
+    so what crosses the platform to reach a host is what crossed it before
+    (`_open_from_forge`). A sandbox copies its objects and is then on its own
+    (`_seed_from_host`): nothing of a sandbox's repository points into it, so
+    it can be repacked, or lost, under them."""
+    cache = os.environ.get("UV_CACHE_DIR")
+    if not cache or not Path(cache).parent.is_dir():
+        return None
+    return Path(cache).parent / "git" / "repository.git"
+
+
+@contextlib.contextmanager
+def _host_repository_held(host: Path):
+    host.parent.mkdir(parents=True, exist_ok=True)
+    with (host.parent / "repository.lock").open("a") as lock:
+        _lock(lock)
+        yield
+
+
+def _copy_pack(source: Path, target_dir: Path) -> None:
+    """Copy one pack's files, its index last and by rename: git takes a pack
+    for there once its index is."""
+    import shutil
+
+    stem = source.with_suffix("")
+    for suffix in (".pack", ".rev", ".promisor", ".idx"):
+        part = stem.with_suffix(suffix)
+        target = target_dir / part.name
+        if not part.exists() or target.exists():
+            continue
+        partial = target_dir / (part.name + ".part")
+        shutil.copyfile(part, partial)
+        os.replace(partial, target)
+
+
+def _seed_from_host(repo: Path) -> None:
+    """Start a sandbox's repository from the host's copy, where there is one:
+    its packs copied in, and its branches kept as `refs/cheese-host/…` so the
+    fetch that follows asks the forge only for what is newer. Measured on
+    cheese's own, 95 MB: copied in 0.1 s, the fetch after it 1.4 s, the
+    checkout 1.3 s, against 11 s and 30 s from the forge alone (2026-11-02).
+    Anything wrong leaves no repository, and the caller fetches from the forge
+    as it did before."""
+    import shutil
+
+    host = _host_repository()
+    if host is None or not (host / "objects" / "pack").is_dir():
+        return
+    try:
+        with _host_repository_held(host):
+            _git_task(repo.parent, "init", "-q", "--bare", str(repo))
+            target = repo / "objects" / "pack"
+            for pack in sorted((host / "objects" / "pack").glob("*.pack")):
+                _copy_pack(pack, target)
+            heads = _git_task(
+                host, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads"
+            )
+            for line in heads.splitlines():
+                name, ref = line.split(" ", 1)
+                _git_task(
+                    repo,
+                    "update-ref",
+                    "refs/cheese-host/" + ref.removeprefix("refs/heads/"),
+                    name,
+                )
+    except (OSError, RuntimeError, ValueError):
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def _give_to_host(repo: Path, base: str) -> None:
+    """Give the host's copy what this sandbox fetched that it does not have:
+    the packs it lacks, then the base branch's tip. Only when the tip moved,
+    so a host is given once per change of the base, not once per sandbox; and
+    never failing the checkout that asked."""
+    host = _host_repository()
+    if host is None:
+        return
+    try:
+        tip = _git_task(repo, "rev-parse", f"refs/remotes/origin/{base}")
+        with _host_repository_held(host):
+            if not (host / "objects").is_dir():
+                _git_task(host.parent, "init", "-q", "--bare", str(host))
+                # What it is given is partial, as the sandboxes fetched it:
+                # files nobody checked out are not there. Said so, its own git
+                # (repack) takes them for missing on purpose, and asks nowhere.
+                for key, value in (
+                    ("core.repositoryformatversion", "1"),
+                    ("extensions.partialclone", "origin"),
+                    ("remote.origin.url", "file:///dev/null"),
+                    ("remote.origin.promisor", "true"),
+                ):
+                    _git_task(host, "config", key, value)
+            try:
+                known = _git_task(host, "rev-parse", "--verify", f"refs/heads/{base}")
+            except RuntimeError:
+                known = None
+            if known == tip:
+                return
+            target = host / "objects" / "pack"
+            for pack in sorted((repo / "objects" / "pack").glob("*.pack")):
+                _copy_pack(pack, target)
+            _git_task(host, "cat-file", "-e", tip)
+            _git_task(host, "update-ref", f"refs/heads/{base}", tip)
+            if len(list(target.glob("*.pack"))) > HOST_REPOSITORY_PACKS:
+                _git_task(host, "repack", "-a", "-d", "-q")
+    except (OSError, RuntimeError, ValueError):
+        return
+
+
 def _prepare_repository(repo: Path, data: dict) -> None:
     """This machine's copy of the project's repository, able to reach its forge.
 
@@ -6407,7 +6528,10 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         # branches are as this checkout last fetched or pushed them; `git
         # fetch` brings them up to date.
         if not _opened_as_left(task_dir, data):
+            if not repo.exists():
+                _seed_from_host(repo)
             _open_from_forge(repo, task_dir, data)
+            _give_to_host(repo, data["base"])
         marker = Path(
             _git_task(task_dir, "rev-parse", "--git-path", "cheese-task.json")
         )
@@ -7641,94 +7765,6 @@ def _start_detached_serve_cmd(command: str, cwd: str, port: int) -> None:
         )
 
 
-def _relocate_home_in_command(command: str, old_home: str, new_home: str) -> str:
-    """Replace ``old_home`` with ``new_home`` only on path/token boundaries."""
-    if not command or not old_home or old_home == new_home:
-        return command
-    pattern = re.compile(
-        r"(?<=^)"
-        + re.escape(old_home)
-        + r"(?=/|[\s'\":]|$)|(?<=[\s='\":])"
-        + re.escape(old_home)
-        + r"(?=/|[\s'\":]|$)"
-    )
-    return pattern.sub(new_home, command)
-
-
-def _restore_served_app(raw_spec: str, wait_s: float | None) -> int:
-    """Bring a previously declared app and its preview tunnel back up in place.
-
-    Called by the platform when waking a sleeping preview without starting an
-    agent turn: opens the task checkout (or default-branch checkout) when the
-    sandbox is fresh, relocates paths from the previous sandbox home, starts
-    the recorded command if the port is silent, and brings the tunnel up.
-    """
-    up = os.environ.get("CHEESE_PREVIEW_UP", "")
-    if not up:
-        return 2
-    try:
-        spec = json.loads(raw_spec)
-        port = int(spec["port"])
-    except (ValueError, KeyError, TypeError):
-        return 2
-    if not (1 <= port <= 65535):
-        return 2
-    raw_task_id = spec.get("task_id")
-    task_id: str | None = None
-    if isinstance(raw_task_id, str) and raw_task_id.strip():
-        try:
-            task_id = str(uuid.UUID(raw_task_id.strip()))
-        except ValueError:
-            return 2
-    if task_id is not None:
-        task_dir = _task_root() / task_id
-        if not (task_dir / ".git").exists():
-            try:
-                _task_worktree(task_id)
-            except (Exception, SystemExit):
-                return 1
-    elif spec.get("checkout") is True:
-        checkout_dir = Path.home() / ".cheese" / "checkout"
-        if not (checkout_dir / ".git").exists():
-            try:
-                _checkout()
-            except (Exception, SystemExit):
-                return 1
-    old_home = str(spec.get("home") or "").strip().rstrip("/")
-    new_home = str(Path.home().resolve()).rstrip("/")
-    cwd = str(spec.get("cwd") or new_home).strip()
-    command = str(spec.get("command") or "").strip()
-    if old_home and old_home != new_home:
-        if cwd == old_home:
-            cwd = new_home
-        elif cwd.startswith(old_home + "/"):
-            cwd = new_home + cwd[len(old_home) :]
-        if command:
-            command = _relocate_home_in_command(command, old_home, new_home)
-    if not os.path.isdir(cwd):
-        fallback = _task_root() / task_id if task_id is not None else Path(new_home)
-        cwd = str(fallback) if fallback.is_dir() else new_home
-    if subprocess.call(["sh", up, str(port)]) != 0:
-        return 1
-    if _probe_app(port) is None:
-        if not command:
-            return 1
-        try:
-            _start_detached_serve_cmd(command, cwd, port)
-        except OSError:
-            return 1
-    timeout = _SERVE_WAIT_DEFAULT_S if wait_s is None else wait_s
-    if timeout > 0 and _wait_for_app(port, timeout) is None:
-        return 1
-    updated = _build_serve_meta(port, command, cwd)
-    if updated is not None:
-        with contextlib.suppress(OSError):
-            (Path.home() / ".cheese" / "cheese-preview.json").write_text(
-                json.dumps(updated, ensure_ascii=False)
-            )
-    return 0
-
-
 def source_fingerprint() -> str:
     """A short digest of THIS file's bytes.
 
@@ -7876,15 +7912,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="命令",
         help=(
             "启动这个应用的命令(如 './node_modules/.bin/vite preview --port 4173 --strictPort')。"
-            "给了它,应用还没起时会自动在后台拉起,沙箱休眠回收后平台也能直接按这条命令重启应用;"
+            "给了它,应用还没起时会自动在后台拉起;"
             "省略时自动从当前监听该端口的进程读取命令行与目录。"
         ),
-    )
-    psv.add_argument(
-        "--restore",
-        dest="restore_spec",
-        default=None,
-        help=argparse.SUPPRESS,
     )
 
     plib = sub.add_parser(
@@ -8152,8 +8182,6 @@ def main() -> None:
                 os.makedirs(parent, exist_ok=True)
             _raw_request("GET", f"{base}/attachments/{a.index}{where}", None, out=out)
     elif a.cmd == "serve":
-        if a.restore_spec:
-            sys.exit(_restore_served_app(a.restore_spec, a.wait))
         topic = _need("CHEESE_TOPIC", TOPIC)
         if not (1 <= a.port <= 65535):
             print(f"[cheese] {a.port} 不是一个端口号。", file=sys.stderr)

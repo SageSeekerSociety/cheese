@@ -35,7 +35,7 @@ from app.api.refusal import refuse
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import AS_ONESELF, ROUTE_DECIDES, Can
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.config import settings
@@ -49,7 +49,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
-from app.domain.agent.personal import citing, pages
+from app.domain.agent.personal import citing, pages, reading
 from app.domain.agent.personal import service as assistant
 from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.consumptions import Consumptions
@@ -59,9 +59,11 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant import changes, gate, proposals
+from app.domain.assistant import changes, gate, proposals, refs
 from app.domain.assistant import memory as assistant_memory
+from app.domain.assistant.permissions import Permission as RoutinePermission
 from app.domain.memory.files import MemoryFileError
+from app.domain.project import address
 from app.domain.project.services import ProjectService
 from app.domain.routine import personal as routine_personal
 from app.domain.space.services import SpaceService
@@ -1086,15 +1088,24 @@ class RoutineOut(BaseModel):
     note: str
     #: When it runs, in a line.
     when: str
+    #: ``filling``: saved with a blank in it, 芝士 is deciding it right now.
     #: ``done``: a one-off that has run; it is cleared once its cards expire.
-    state: Literal["active", "paused", "done"]
-    #: Why a paused one stopped: ``person``, ``credits`` or ``away``.
+    state: Literal["active", "paused", "filling", "done"]
+    #: Why a paused one stopped: ``person``, ``credits``, ``away`` or
+    #: ``unfilled`` (芝士 never finished filling it in).
     paused: str
     nextRunAt: str | None = None
     #: Fires once, and runs in the conversation it was asked for in.
     once: bool
-    #: The conversation it was asked for in.
+    #: The conversation it was asked for in; none when the form made it.
     conversationId: str | None = None
+    #: What a ``filling`` one is still short of, in the words the row shows.
+    missing: list[str] = []
+    #: What it was saved with: so «修改» can open the form on it. ``note`` is
+    #: the form's 「目标」.
+    trigger: str = ""
+    spec: dict = {}
+    timezone: str = ""
     lastRun: RoutineRunOut | None = None
     #: What its runs cost over the last seven days, in credits.
     weekCredits: float
@@ -1125,6 +1136,10 @@ async def _routines_out(db, user_id: int) -> dict:
                 else None,
                 "once": routine_personal.once(r),
                 "conversationId": str(r.conversation_id) if r.conversation_id else None,
+                "missing": routine_personal.missing(r),
+                "trigger": r.trigger,
+                "spec": r.spec,
+                "timezone": r.timezone,
                 "lastRun": None
                 if r.id not in last
                 else {
@@ -1145,6 +1160,156 @@ async def _routines_out(db, user_id: int) -> dict:
 @router.get("/routines", **typed_response(RoutinesOut))
 async def list_routines(db: DbSession, auth: AuthUser) -> dict:
     """The person's routines, oldest first."""
+    return ok(await _routines_out(db, auth.user_id))
+
+
+class RoutineFormIn(BaseModel):
+    """What the settings form holds. Every field but the target may be left
+    out: 芝士 fills the blanks before anything runs (``personal.FILLING``).
+
+    It carries the same blanks ``RoutineIn`` gives 芝士 (``routes/
+    assistant_agent.py``), because it is the same kind of rule: a schedule says
+    ``freq`` and that frequency's own moment (``minute`` for hourly, ``time``
+    and ``weekdays`` for weekly, ``time`` and ``day`` for monthly, ``at`` for
+    once), and an event rule says ``task`` or ``mine`` when it waits on a task,
+    and ``outcome`` when it waits on a decision."""
+
+    title: str = Field(default="", max_length=120)
+    #: 「目标」 — what a run does, in the person's own words. The one field the
+    #: form will not save empty.
+    note: str = Field(default="", max_length=4000)
+    #: 「补充说明」 — anything the target does not say. May be empty.
+    explain: str = Field(default="", max_length=4000)
+    #: ``schedule`` or one of the events ``personal.EVENTS``; empty means «let
+    #: 芝士 decide».
+    trigger: str = ""
+    #: A schedule, when the trigger is one: ``freq`` and its moment.
+    freq: str = ""
+    time: str = ""
+    minute: int | None = None
+    weekdays: list[int] | None = None
+    day: int | None = None
+    at: str = ""
+    timezone: str = ""
+    #: ``filed`` / ``decided``: any task the person asked for.
+    mine: bool = False
+    #: ``filed`` / ``decided``: this task, by its ref in the address bar
+    #: (``ml-course/tasks/12``) — the same ref 芝士 is given.
+    task: str = ""
+    #: ``decided``: only ``accepted`` or only ``rejected``.
+    outcome: str = ""
+    #: An event rule that waits for the first thing only.
+    once: bool = False
+
+    def kept_spec(self) -> dict:
+        return {
+            k: v
+            for k, v in {
+                "freq": self.freq,
+                "time": self.time,
+                "minute": self.minute,
+                "weekdays": self.weekdays,
+                "day": self.day,
+                "at": self.at,
+                "mine": self.mine,
+                "outcome": self.outcome,
+                "once": self.once,
+            }.items()
+            if v not in ("", None, False)
+        }
+
+
+async def _form_spec(db, pages: ProjectPages, body: RoutineFormIn) -> tuple[str, dict]:
+    """What the form says, as the rule keeps it.
+
+    A task an event rule waits on is named by the ref the person reads in the
+    address bar (``ml-course/tasks/12``), the same one 芝士 is given; it is
+    resolved to the task's id and title here, because a rule is matched against
+    happenings by id and describes itself by title. Whether the person may see
+    that task is the same question opening it asks, so it goes through
+    ``ProjectPages`` — the resolver, as a read.
+    """
+    note = body.note.strip()
+    if body.explain.strip():
+        note = f"{note}\n\n{body.explain.strip()}"
+    if body.trigger not in ("filed", "decided") or not body.task.strip():
+        return note, body.kept_spec()
+    ref = refs.parse(body.task.strip())
+    if ref is None:
+        raise BadRequestError(say("assistantRefUnknown", ref=body.task))
+    _, found = await reading.numbered(db, ref, address.Numbered.task)
+    # The title is what the rule reads back as «任务「……」提交审阅时», so it is
+    # kept with the id; ``ProjectPages`` answers whether the person may see the
+    # task, the same question opening it asks (a task's id is itself a place,
+    # carrying the room its roster and machine are the room's).
+    place = await pages.topic(found.id)
+    title = place.task.title if place.task is not None else ""
+    return note, body.kept_spec() | {"task": str(found.id), "taskTitle": title}
+
+
+@router.post("/routines", dependencies=[AS_ONESELF], **typed_response(RoutinesOut))
+async def create_routine(
+    body: RoutineFormIn,
+    db: DbSession,
+    auth: AuthUser,
+    resolver: ActorResolverDep,
+) -> dict:
+    """A rule saved from the settings page: no conversation behind it.
+
+    The target is the one thing a rule must say; a name and a moment may be
+    left to 芝士, which fills them before the first run. The rule belongs to
+    whoever is signed in — the person comes from the credential, never from
+    the body.
+    """
+    target = body.note.strip()
+    if not target:
+        raise ValidationError(say("assistantRoutineGoalRequired"))
+    note, spec = await _form_spec(db, ProjectPages(db, resolver), body)
+    await routine_personal.create(
+        db,
+        user_id=auth.user_id,
+        conversation_id=None,
+        title=body.title,
+        note=note,
+        trigger=body.trigger,
+        spec=spec,
+    )
+    await db.commit()
+    return ok(await _routines_out(db, auth.user_id))
+
+
+@router.put(
+    "/routines/{routineId}",
+    dependencies=[Can(RoutinePermission.manage)],
+    **typed_response(RoutinesOut),
+)
+async def update_routine(
+    routine_id: Annotated[uuid.UUID, Path(alias="routineId")],
+    body: RoutineFormIn,
+    db: DbSession,
+    auth: AuthUser,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Change a rule from the settings page. Filling in the blanks it was
+    waiting on starts it; taking the goal away is refused. A rule that is
+    someone else's is answered as if it did not exist — the declaration
+    ``Can(RoutinePermission.manage)`` reads it by this path's id and 404s
+    unless it is the caller's."""
+    row = await _routine(db, auth.user_id, routine_id)
+    target = body.note.strip()
+    if not target:
+        raise ValidationError(say("assistantRoutineGoalRequired"))
+    note, spec = await _form_spec(db, ProjectPages(db, resolver), body)
+    await routine_personal.change(
+        db,
+        row,
+        conversation_id=None,
+        title=body.title,
+        note=note,
+        trigger=body.trigger or None,
+        spec=spec if body.trigger else None,
+    )
+    await db.commit()
     return ok(await _routines_out(db, auth.user_id))
 
 

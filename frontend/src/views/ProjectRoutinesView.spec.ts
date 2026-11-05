@@ -158,10 +158,11 @@ describe('例行事务', () => {
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('已经在跑的日报'))
     expect(container.textContent).toContain('Every Monday at 09:00 (Beijing time)')
-    expect(row(container, 'live-2').querySelector('.routine-row__state')?.getAttribute('aria-label')).toBe('Paused')
+    // 停着的那一颗是「恢复」的开关，所以读屏听到的是它按下去会做什么。
+    expect(row(container, 'live-2').querySelector('.routine-row__state')?.getAttribute('aria-label')).toBe('Resume')
   })
 
-  // 存下来就在跑：暂停 / 恢复就在 ⋯ 里，没有「等人确认」那一步。
+  // 存下来就在跑：没有「等人确认」那一步；暂停 / 恢复在行尾那颗开关上。
   it('存下来就在跑：没有「确认启用」，暂停发的是「暂停」', async () => {
     vi.mocked(routineAction).mockResolvedValue({ ...base, id: 'live-1', title: '已经在跑的日报', state: 'paused' })
     const { container } = mount()
@@ -169,10 +170,10 @@ describe('例行事务', () => {
 
     expect(container.textContent).not.toContain('确认启用')
     expect(container.textContent).not.toContain('等你确认')
-    expect(await openMenu(row(container, 'live-2'))).toContain('恢复')
+    expect(await openMenu(row(container, 'live-2'))).not.toContain('恢复')
     expect(await openMenu(row(container, 'live-2'))).not.toContain('暂停')
 
-    await choose(row(container, 'live-1'), '暂停')
+    await fireEvent.click(row(container, 'live-1').querySelector('.routine-row__state')!)
 
     expect(routineAction).toHaveBeenCalledWith('live-1', 'pause')
   })

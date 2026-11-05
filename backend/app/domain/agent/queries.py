@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
+from app.core.request_facts import recall
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.model_catalog import catalog
@@ -87,8 +88,18 @@ async def task_credit_context(
     agent_handles: list[str],
 ) -> TaskCreditContext | None:
     """The running execution's budget holder, or the next task execution's."""
-    place = await PlaceResolver(session).conversation(conversation_id)
-    if place is None or place.task is None or place.project_id != project_id:
+    # A room's own conversation, as the access check found it, has no task.
+    if isinstance(session, AsyncSession):
+        found, room_id = recall(session, ("conversation_room_id", conversation_id))
+        if found and room_id == conversation_id:
+            return None
+        found, room = recall(session, ("topic_row", conversation_id))
+        if found and room is not None:
+            return None
+    # Read with whether its owner and creator are agents: `credit_owner`
+    # below asks it when the running turn names no payer.
+    task = await TaskService(session).with_people(conversation_id)
+    if task is None or task.project_id != project_id:
         return None
     turn = await AgentTurnRepository(session).open_turn_of(
         conversation_id, agent_handles
@@ -98,7 +109,7 @@ async def task_credit_context(
     )
     if owner is not None:
         return TaskCreditContext(conversation_id, owner, turn.id if turn else None)
-    owner = await TaskService(session).credit_owner(place.task)
+    owner = await TaskService(session).credit_owner(task)
     return TaskCreditContext(conversation_id, owner, None) if owner else None
 
 

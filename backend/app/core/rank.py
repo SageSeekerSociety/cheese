@@ -11,8 +11,13 @@
 一致）或者文件夹名（查询里用 `COLLATE "C"`，按字节比）。
 
 它也是翻页的游标：下一页从这一行之后接着取。
+
+资料库页选「升 / 降」时不是这个顺序：那时文件夹不再单独一拨，和文件、文档排进同
+一条时间线，只比时间，同一时刻才比名字（`timeline`）。两种位置都是可比较的字符串，
+但只有同一种能并排用——前端拿到的 `rank` 始终是当前那一种。
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -23,10 +28,24 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _SPAN = 10**17
 _WIDTH = 17
 
+#: 资料库页那个排序框的三档。`off` 是默认：文件夹一拨、其余一拨，各自新的在前。
+SORT_OFF = "off"
+SORT_ASC = "asc"
+SORT_DESC = "desc"
+SORTS = (SORT_OFF, SORT_ASC, SORT_DESC)
+
 
 @dataclass(frozen=True)
 class Rank:
     group: int
+    at: datetime
+    tie: str
+
+
+@dataclass(frozen=True)
+class Spot:
+    """一条时间线上的一处：什么时候，同一时刻再按什么比。"""
+
     at: datetime
     tie: str
 
@@ -44,3 +63,35 @@ def decode(raw: str) -> Rank:
         raise UnprocessableEntityError(say("listCursorUnreadable")) from exc
     at = _EPOCH + timedelta(microseconds=_SPAN - inverse)
     return Rank(group, at, raw[1 + _WIDTH :])
+
+
+def title_tie(title: str | None, document_id: uuid.UUID | str) -> str:
+    """一份文档在时间线上的名字那一段：标题，然后是一个文件名字里不可能出现的
+    分隔符（`chr(1)`），然后是编号。
+
+    标题可以不唯一，同一刻同名的两份文档还得有个先后，不然翻页会漏掉其中一份。资料库
+    里的文件用整个路径当 `tie`，那份路径里只有 `/` 这一种结构，碰不到 `chr(1)`。"""
+    return f"{title or ''}{chr(1)}{document_id}"
+
+
+def timeline(at: datetime, tie: str, *, descending: bool) -> str:
+    """一条时间线上的位置：`<时间><名字>`，按字符串从小到大就是显示的顺序。
+
+    升序时间从小到大；降序把时间倒过来（`_SPAN - micros`），名字那一段两个方向都是
+    从小到大——降序只翻时间，不翻名字。"""
+    micros = (at - _EPOCH) // timedelta(microseconds=1)
+    if descending:
+        return f"{_SPAN - micros:0{_WIDTH}d}{tie}"
+    return f"{micros:0{_WIDTH}d}{tie}"
+
+
+def read_timeline(raw: str, *, descending: bool) -> Spot:
+    """`timeline` 写出来的那个游标指的是哪一刻、哪个名字。
+
+    方向得由调用方给：降序存的是倒过来的数，只有知道方向才换得回来。"""
+    try:
+        first = int(raw[:_WIDTH])
+    except (IndexError, ValueError) as exc:
+        raise UnprocessableEntityError(say("listCursorUnreadable")) from exc
+    micros = _SPAN - first if descending else first
+    return Spot(_EPOCH + timedelta(microseconds=micros), raw[_WIDTH:])

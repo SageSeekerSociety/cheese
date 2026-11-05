@@ -130,9 +130,11 @@ export function routineRoomTarget(r: Pick<Routine, 'project_id' | 'topic_id'>): 
  * 沙漏、上一次没跑成的那条要画红叉，这两档得看最近一次执行（`last_run_status`）。
  * 停着的规则先说话：它不会跑了，最近那次跑成什么样都是过去的事。
  */
-export type RoutineStateKind = 'active' | 'paused' | 'queued' | 'missed'
+export type RoutineStateKind = 'active' | 'paused' | 'queued' | 'missed' | 'filling'
 
-export function routineStateKind(r: Pick<Routine, 'state' | 'last_run_status'>): RoutineStateKind {
+export function routineStateKind(r: Pick<Routine, 'state' | 'last_run_status' | 'trigger'>): RoutineStateKind {
+  // 建的时候留了空、芝士正在补：它没在跑，也停不了，和「已暂停」不是一回事。
+  if (r.state === 'active' && !r.trigger) return 'filling'
   if (r.state === 'paused') return 'paused'
   if (r.last_run_status === 'queued' || r.last_run_status === 'running') return 'queued'
   if (r.last_run_status === 'failed' || r.last_run_status === 'skipped') return 'missed'
@@ -155,6 +157,8 @@ const STATE_ICONS: Record<RoutineStateKind, string> = {
   paused: 'mdi-play',
   queued: 'mdi-timer-sand',
   missed: 'mdi-close',
+  // 补全中：一个转圈，点不动（它没在跑，也停不了）。
+  filling: 'mdi-loading',
 }
 
 export function routineStateIcon(kind: RoutineStateKind): string {

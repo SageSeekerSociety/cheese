@@ -97,7 +97,18 @@ const summaryLine = computed(() =>
     .join(' · ')
 )
 const running = computed(() => props.routine.state === 'active')
+/** 那颗图形能不能按：只有「开着」和「停着」能，补全中和排队中不能。
+ *  没定触发方式的（补全中）按了也没用 —— 它没有「下一次」可以恢复。 */
+const toggleable = computed(() => props.routine.state === 'paused' || (running.value && !!props.routine.trigger))
 const busyOn = (action: string) => props.busy === action
+/** 按下去做什么：两支分开写，`emit` 才认得出是哪一个事件。 */
+function toggle() {
+  if (running.value) emit('pause')
+  else emit('resume')
+}
+
+/** 按下去会发生什么，读屏和悬停都说这一句。 */
+const toggleLabel = computed(() => (running.value ? t('routines.action.pause') : t('routines.action.resume')))
 
 /** 展开的那一段只画最近三次；再多就有「看全部」。 */
 const RECENT = 3
@@ -124,19 +135,6 @@ const rowMenu = useRowMenu<'row'>()
 /** 行尾 ⋯ 里那几件。设计稿上就没有图标：每一行都是两个字，读得懂，图形只是噪声。 */
 const actions = computed<MenuAction[]>(() =>
   [
-    running.value
-      ? {
-          key: 'pause',
-          label: t('routines.action.pause'),
-          loading: busyOn('pause'),
-          onSelect: () => emit('pause'),
-        }
-      : {
-          key: 'resume',
-          label: t('routines.action.resume'),
-          loading: busyOn('resume'),
-          onSelect: () => emit('resume'),
-        },
     {
       key: 'run',
       label: t('routines.action.runNow'),
@@ -157,13 +155,7 @@ const actions = computed<MenuAction[]>(() =>
       divider: true,
       onSelect: () => emit('delete'),
     },
-  ].filter(
-    (a) =>
-      (a.key !== 'delete' || props.routine.can_delete) &&
-      // 还没定触发方式的规则没有「恢复」：恢复它只会挂着「运行中」却永不响。
-      // 让它跑起来的动作是「修改」里把触发方式定下来。
-      (a.key !== 'resume' || props.routine.trigger)
-  )
+  ].filter((a) => a.key !== 'delete' || props.routine.can_delete)
 )
 </script>
 
@@ -178,13 +170,40 @@ const actions = computed<MenuAction[]>(() =>
         <div class="t-body routine-row__title">{{ routine.title || t('routines.unnamed') }}</div>
         <div v-if="summaryLine" class="t-meta c-faint" data-testid="routine-row-summary">{{ summaryLine }}</div>
       </div>
+      <!-- 那一颗图形就是开关：在跑的点它暂停，停着的点它开始。补全中和排队中
+           点不动 —— 一个没在跑，一个已经在路上了。 -->
+      <button
+        v-if="toggleable"
+        type="button"
+        class="routine-row__state routine-row__state--button"
+        :class="`routine-row__state--${kind}`"
+        :aria-label="toggleLabel"
+        :title="toggleLabel"
+        :disabled="busyOn('pause') || busyOn('resume')"
+        @click="toggle()"
+      >
+        <v-icon :icon="routineStateIcon(kind)" size="16" aria-hidden="true" />
+        <v-progress-circular
+          v-if="busyOn('pause') || busyOn('resume')"
+          indeterminate
+          size="16"
+          width="2"
+          class="routine-row__spin"
+        />
+      </button>
       <span
+        v-else
         class="routine-row__state"
         :class="`routine-row__state--${kind}`"
         role="img"
         :aria-label="routineStateText(kind)"
       >
-        <v-icon :icon="routineStateIcon(kind)" size="16" aria-hidden="true" />
+        <v-icon
+          :icon="routineStateIcon(kind)"
+          size="16"
+          aria-hidden="true"
+          :class="{ 'routine-row__spin': kind === 'filling' }"
+        />
       </span>
       <AdaptiveMenu :actions="actions" :title="routine.title">
         <template #activator="{ props: menuProps }">
@@ -289,6 +308,51 @@ const actions = computed<MenuAction[]>(() =>
   background: var(--fill);
   color: var(--muted);
 }
+.routine-row__state--button {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.routine-row__state--button:hover {
+  filter: brightness(0.94);
+}
+
+.routine-row__state--button:disabled {
+  cursor: default;
+  filter: none;
+}
+
+.routine-row__state--filling {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+/* 转圈：补全中那颗图标，以及按下暂停/恢复时压在图标上的那一颗。 */
+.routine-row__spin {
+  animation: routine-spin 1.4s linear infinite;
+}
+
+.routine-row__state--button .routine-row__spin {
+  position: absolute;
+}
+
+.routine-row__state--button {
+  position: relative;
+}
+
+@keyframes routine-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .routine-row__spin {
+    animation: none;
+  }
+}
+
 .routine-row__state--active {
   background: var(--ok-wash);
   color: var(--ok-ink);

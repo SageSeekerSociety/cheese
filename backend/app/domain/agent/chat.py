@@ -57,6 +57,8 @@ from app.domain.agent.gateway_usage import (
     _schedule_deferred_drain,
     charge_turn_spend,
     project_gateway_key,
+    room_key_in_step,
+    task_key_in_step,
 )
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.input_registration import confirm_receipt
@@ -486,6 +488,28 @@ class ChatService(
             machine_conversation_id=machine_conversation_id,
             budget_target=budget_target,
         )
+
+    def room_key_in_step(
+        self, settings: dict | None, budget_target: float | None
+    ) -> str | None:
+        """The project key from settings already read, when it is in step
+        with ``budget_target``; None to ask `project_gateway_key`."""
+        if self._gateway is None:
+            return None
+        return room_key_in_step(settings, budget_target)
+
+    async def task_key_in_step(
+        self,
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        task_id: uuid.UUID,
+        owner_handle: str,
+    ) -> str | None:
+        """The task key, read on ``session``, when it is in step with what
+        the task may spend; None to ask `project_gateway_key`."""
+        if self._gateway is None:
+            return None
+        return await task_key_in_step(session, project_id, task_id, owner_handle)
 
     async def _gateway_budget_target(
         self, session: AsyncSession, project_id: uuid.UUID

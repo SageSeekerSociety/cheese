@@ -7,6 +7,9 @@ and :data:`POLICIES` gives each kind's :class:`~app.core.policy.Policy`. A
 route names what it needs with ``Can(...)`` (``app.api.write_access``), and
 :func:`authorize` decides it before the handler runs.
 
+An object is named by its number, or by its UUID for a kind whose policy says
+so (``Policy.id_type``); :func:`authorize` passes on whatever it was given.
+
 What a person cannot see does not exist for them: :func:`authorize` answers
 404 when the object is missing or hidden from them, and 403 only when they see
 it but may not do this to it.
@@ -21,8 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.task_roles import CLAIM, TASK
 from app.core.errors import AccessDeniedError, NotFoundError
-from app.core.policy import Policy
+from app.core.policy import ObjectId, Policy
 from app.domain.answers.permissions import ANSWER
+from app.domain.assistant.permissions import ROUTINE
 from app.domain.questions.permissions import QUESTION
 from app.domain.space.permissions import SPACE
 from app.domain.team.permissions import TEAM
@@ -30,7 +34,7 @@ from app.domain.team.permissions import TEAM
 #: Each kind's policy, by the type of its permissions.
 POLICIES: dict[type[enum.StrEnum], Policy[Any, Any]] = {
     policy.permissions: policy
-    for policy in (TEAM, SPACE, TASK, CLAIM, QUESTION, ANSWER)
+    for policy in (TEAM, SPACE, TASK, CLAIM, QUESTION, ANSWER, ROUTINE)
 }
 
 
@@ -38,16 +42,22 @@ def policy_of(permission: enum.StrEnum) -> Policy[Any, Any]:
     return POLICIES[type(permission)]
 
 
-def refuse(permission: enum.StrEnum, on: int) -> NoReturn:
+def _named(on: ObjectId) -> int | str:
+    """The id as an error's data carries it: a number stays one, a UUID is
+    written as the string a client reads it as."""
+    return on if isinstance(on, int) else str(on)
+
+
+def refuse(permission: enum.StrEnum, on: ObjectId) -> NoReturn:
     """The person sees the object but may not do this to it."""
     raise AccessDeniedError(
         action=permission.value,
         resource_type=policy_of(permission).kind,
-        resource_id=on,
+        resource_id=_named(on),
     )
 
 
-def refuse_unless(allowed: bool, permission: enum.StrEnum, on: int) -> None:
+def refuse_unless(allowed: bool, permission: enum.StrEnum, on: ObjectId) -> None:
     """For a rule that turns on more than the person's standing — removing
     someone below one's own seat, reading one's own claim — asked by the handler
     once :func:`authorize` has let the person in."""
@@ -56,17 +66,17 @@ def refuse_unless(allowed: bool, permission: enum.StrEnum, on: int) -> None:
 
 
 async def authorize(
-    session: AsyncSession, user_id: int, permission: enum.StrEnum, on: int
+    session: AsyncSession, user_id: int, permission: enum.StrEnum, on: ObjectId
 ) -> Any:
     """The object, if the person may do ``permission`` to it; else 404 or 403."""
     policy = policy_of(permission)
     obj = await policy.load(session, on)
     if obj is None:
-        raise NotFoundError.for_resource(policy.kind, on)
+        raise NotFoundError.for_resource(policy.kind, _named(on))
     if await policy.may(session, obj, user_id, permission):
         return obj
     if not await policy.sees(session, obj, user_id):
-        raise NotFoundError.for_resource(policy.kind, on)
+        raise NotFoundError.for_resource(policy.kind, _named(on))
     refuse(permission, on)
 
 

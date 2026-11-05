@@ -201,9 +201,9 @@ async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
     included. None when nobody in it has called one, or when that teammate has
     since left the channel.
 
-    A person's message said in a 支线 without calling anyone is for this
-    teammate, and calls it as an @ would: the conversation is the one held with
-    it, not with the channel's default."""
+    A person's message said in a 支线 without @-ing a teammate is for this
+    teammate, and calls it as an @ would unless it @-s only people: the
+    conversation is the one held with it, not with the channel's default."""
     root = (
         session.sync_session.identity_map.get(
             session.sync_session.identity_key(Block, (thread.root_block_id,))

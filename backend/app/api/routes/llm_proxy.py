@@ -67,11 +67,14 @@ from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.gateway_usage import UNKNOWN_TARGET
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.facts import project_agents_ride_along
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
+from app.domain.usage.budgets import CreditBudgets
+from app.domain.usage.ledger import project_with_payer
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger("cheesex.llm_proxy")
@@ -304,7 +307,10 @@ async def admission(
         project_uuid = uuid.UUID(claims["p"])
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
-    project = await ProjectRepository(db).get(project_uuid)
+    # Read with who pays for it: admission asks that next, every model call.
+    project = await project_with_payer(
+        db, project_uuid, ride_along=project_agents_ride_along(db)
+    )
     if project is not None:
         try:
             await _require_model_caller(db, token, project_uuid)
@@ -326,6 +332,14 @@ async def admission(
     credit_context = None
     if project is not None:
         credit_context = await task_credit_context_of(db, project, claims)
+        # The project's credit cap, read with its gateway spend and the task
+        # owner's own cap: the refusal below asks the caps, and the key's
+        # budget further down asks all three.
+        await CreditBudgets(db).project_caps(
+            [project.id],
+            with_gateway_spend=True,
+            member=credit_context.owner_handle if credit_context else None,
+        )
         refused = await credit_refusal(db, project, credit_context)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
@@ -456,8 +470,12 @@ async def admission(
     # and caps this admission just read: worked out here, those reads are
     # answered again in this transaction rather than made again on the key's
     # own session (`project_gateway_key`).
+    # When the project's settings, read at the top of this admission, already
+    # name a key in step with that budget, that key is the answer: the key's
+    # own read path would only read the project again to find the same.
     project_key = pool == GATEWAY and refused is None and from_proxy
     budget_target = UNKNOWN_TARGET
+    ready_key = None
     if project_key and project is not None and credit_context is None:
         try:
             budget_target = await chat._gateway_budget_target(db, project_uuid)
@@ -466,6 +484,17 @@ async def admission(
             # the proxy refuses; raised from the route it would read as the
             # backend unreachable and let the call through unchecked.
             logger.exception("admission budget target failed for %s", project_uuid)
+        else:
+            ready_key = chat.room_key_in_step(project.settings, budget_target)
+    elif project_key and credit_context is not None:
+        # A task's key, asked here for the same reason: this transaction has
+        # the project and its payer, which a session of its own reads again.
+        try:
+            ready_key = await chat.task_key_in_step(
+                db, project_uuid, credit_context.task_id, credit_context.owner_handle
+            )
+        except Exception:
+            logger.exception("admission task key check failed for %s", project_uuid)
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -492,13 +521,13 @@ async def admission(
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         if credit_context is not None:
-            supply["key"] = await chat.project_gateway_key(
+            supply["key"] = ready_key or await chat.project_gateway_key(
                 project_uuid,
                 task_id=credit_context.task_id,
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            supply["key"] = await chat.project_gateway_key(
+            supply["key"] = ready_key or await chat.project_gateway_key(
                 project_uuid, budget_target=budget_target
             )
 

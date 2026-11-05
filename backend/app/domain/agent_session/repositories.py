@@ -1,6 +1,7 @@
 """Agent session data access."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -18,9 +19,32 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import AgentEnvironment, AgentRead, AgentSession
+from app.domain.agent_session.models import (
+    AgentEnvironment,
+    AgentRead,
+    AgentSession,
+    SessionPlace,
+    place_of,
+)
 from app.domain.conversation.services import of_room, room_column
 from app.domain.topic.models import Topic
+
+
+@dataclass(frozen=True)
+class PlacedRow:
+    """The columns of one placed session that ``place()`` reads, without the
+    full ORM object: a takeover reads every placed session on the platform."""
+
+    conversation_id: uuid.UUID
+    agent_handle: str
+    harness: str
+    resume_token: str | None
+    runtime_location: dict | None
+    work_lease: dict | None
+
+    def place(self) -> SessionPlace | None:
+        """The session's place, built by the same function the entity uses."""
+        return place_of(self.runtime_location, self.work_lease)
 
 
 class AgentSessionRepository:
@@ -427,8 +451,8 @@ class AgentSessionRepository:
         return {device_id: at for device_id, at in rows.all()}
 
     async def placed_everywhere(
-        self,
-    ) -> list[tuple[AgentSession, uuid.UUID, uuid.UUID]]:
+        self, *, harness: str | None = None, device_id: str | None = None
+    ) -> list[tuple[PlacedRow, uuid.UUID, uuid.UUID]]:
         """Every placed session with its project and room, for a cold start.
 
         A channel re-adopts what outlived the backend, and to do that it needs
@@ -444,15 +468,59 @@ class AgentSessionRepository:
         nothing clears the location of the one that stopped — and the harness
         each row names is handed on as it stands; recognising it is the
         runtime's, not the channel's, since one channel carries several of them.
+
+        ``harness`` and ``device_id`` narrow it to one harness's sessions, and
+        to those placed on one machine: a reconnecting device's recovery asks
+        once per harness, and reading every placed session on the platform for
+        each ask held the event loop a third of a second. No index serves the
+        machine's key in ``runtime_location``: the narrowing scans the sessions
+        in the database, and spares this process decoding the rest.
+
+        The columns, not the entity: a takeover walks every placed session on
+        the platform, and selecting ``AgentSession`` built a full ORM object per
+        row — every column decoded and every one of them through the ORM — for
+        six fields the caller reads. Production's worst stall (283 ms, 2026-11-04)
+        was this query's rows being built. ``place()`` reads the same columns
+        from the mapping it gets, so its answer is unchanged.
         """
-        room = room_column(AgentSession.conversation_id)
-        result = await self._session.execute(
-            select(AgentSession, Topic.project_id, room)
+        room = room_column(AgentSession.conversation_id).label("room_id")
+        stmt = (
+            select(
+                AgentSession.conversation_id,
+                AgentSession.agent_handle,
+                AgentSession.harness,
+                AgentSession.resume_token,
+                AgentSession.runtime_location,
+                AgentSession.work_lease,
+                Topic.project_id,
+                room,
+            )
             .join(Topic, Topic.id == room)
             .where(AgentSession.runtime_location.is_not(None))
             .order_by(room, AgentSession.placed_at.desc(), AgentSession.id)
         )
-        return [(row[0], row[1], row[2]) for row in result.all()]
+        if harness is not None:
+            stmt = stmt.where(AgentSession.harness == harness)
+        if device_id is not None:
+            stmt = stmt.where(
+                AgentSession.runtime_location["device_id"].as_string() == device_id
+            )
+        result = await self._session.execute(stmt)
+        return [
+            (
+                PlacedRow(
+                    conversation_id=row.conversation_id,
+                    agent_handle=row.agent_handle,
+                    harness=row.harness,
+                    resume_token=row.resume_token,
+                    runtime_location=row.runtime_location,
+                    work_lease=row.work_lease,
+                ),
+                row.project_id,
+                row.room_id,
+            )
+            for row in result.all()
+        ]
 
     async def has_any(self, topic_id: uuid.UUID) -> bool:
         """Whether ANY agent has ever run in this room's own conversation — i.e.

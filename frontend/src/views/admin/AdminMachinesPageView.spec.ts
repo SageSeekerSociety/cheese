@@ -40,6 +40,10 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
     offline_since: null,
     failed_at: null,
     released_at: null,
+    image_version: null,
+    image_outdated: null,
+    draining: false,
+    draining_since: null,
     enroll_attempts: 1,
     enroll_error: null,
     usage: null,
@@ -108,6 +112,7 @@ function overview(
       provider_probe_min: 5,
       last_provider_failure: null,
       refusing: false,
+      fixed_hosts: 0,
       warm_target: 0,
       ...pool,
     },
@@ -116,6 +121,7 @@ function overview(
       sandbox_memory_mb: 3072,
       sandbox_idle_s: 600,
       host_idle_hold_s: 1800,
+      rebuild_after_days: 14,
       vm_idle_s: 1800,
       sandbox_disk_budget_gb: 12,
       sandbox_inode_budget: 600000,
@@ -142,6 +148,7 @@ function overview(
       hosts_lost: 0,
       hosts_lost_by_reason: {},
       sandboxes_lost: 0,
+      timings: {},
     },
   }
 }
@@ -157,6 +164,13 @@ function usage(fields: Partial<HostUsage> = {}): HostUsage {
     inodes_used: 300_000,
     memory_bytes: 16 * GIB,
     memory_used_bytes: 6 * GIB,
+    swap_bytes: 8 * GIB,
+    swap_used_bytes: 0.5 * GIB,
+    memory_pressure_some_avg10: 1.5,
+    memory_pressure_some_avg60: 2.5,
+    memory_pressure_full_avg10: 0.2,
+    memory_pressure_full_avg60: 0.1,
+    zswap: false,
     cpu_busy: 0.25,
     load1: 1.2,
     sandboxes: 1,
@@ -186,6 +200,19 @@ describe('机器', () => {
       overview: overview({ provider_failures: 3, refusing: true, last_provider_failure: '2026-10-12T09:58:00Z' }),
     })
     expect(bad.queryByText(refusing)).not.toBeNull()
+  })
+
+  it('过去 24 小时准备沙箱的每一段耗时都写出来', () => {
+    const page = overview()
+    page.history.timings = {
+      sandbox_prepared: {
+        total: { count: 3, p50_s: 12, p95_s: 40 },
+        executor: { count: 3, p50_s: 9, p95_s: 30 },
+      },
+    }
+    const { getByText } = mount({ overview: page })
+    expect(getByText(/Preparing a sandbox \(3\)|准备沙箱（3 次）/)).toBeTruthy()
+    expect(getByText(/(total|合计) 12 ?(s|秒).*(executor|装执行器) 9 ?(s|秒)/)).toBeTruthy()
   })
 
   it('点开一台宿主机，看见它上面的沙箱', async () => {
@@ -236,6 +263,11 @@ describe('机器', () => {
       usage: {
         memory_bytes: 2.7 * GIB,
         memory_peak_bytes: 2.9 * GIB,
+        anon_bytes: 2.4 * GIB,
+        file_bytes: 0.3 * GIB,
+        swap_bytes: 0,
+        swap_max_bytes: null,
+        oom_kills: 0,
         memory_read_at: '2026-10-12T09:59:30Z',
         disk_bytes: 4e9,
         disk_inodes: 120_000,
@@ -250,6 +282,67 @@ describe('机器', () => {
     expect(queryByText(/4\.0 \/ 12 GB/)).not.toBeNull()
   })
 
+  it('宿主机用了多少交换文件、内存有多紧，页面都说出来', () => {
+    const { getByText } = mount({ overview: overview({}, [host({ usage: usage() })]) })
+    // 交换那一根条，和内存那根分开。
+    expect(getByText('0.5 / 8.0 GiB')).toBeTruthy()
+    expect(
+      getByText(
+        /Memory pressure \(1 min \/ 5 min\): some 1\.5% \/ 2\.5%, full 0\.2% \/ 0\.1%|内存压力（1 分钟 \/ 5 分钟）：some 1\.5% \/ 2\.5%，full 0\.2% \/ 0\.1%/
+      )
+    ).toBeTruthy()
+  })
+
+  it('沙箱用了交换文件、被 OOM 杀过，页面把它们标出来', async () => {
+    const sandbox = {
+      ...host().sandboxes[0],
+      usage: {
+        memory_bytes: 2.7 * GIB,
+        memory_peak_bytes: 2.9 * GIB,
+        anon_bytes: 2.4 * GIB,
+        file_bytes: 0.3 * GIB,
+        swap_bytes: 0.5 * GIB,
+        swap_max_bytes: null,
+        oom_kills: 2,
+        memory_read_at: '2026-10-12T09:59:30Z',
+        disk_bytes: 4e9,
+        disk_inodes: 120_000,
+        disk_read_at: '2026-10-12T09:57:00Z',
+      },
+    }
+    const { getByText, queryByText } = mount({
+      overview: overview({}, [host({ usage: usage(), sandboxes: [sandbox] })]),
+    })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(/swap 0\.5 GiB|交换 0\.5 GiB/)).not.toBeNull()
+    expect(queryByText(/OOM-killed 2 times|被 OOM 杀过 2 次/)).not.toBeNull()
+  })
+
+  it('沙箱的交换和它能用的上限放在一起，快用满时标出来', async () => {
+    const sandbox = {
+      ...host().sandboxes[0],
+      usage: {
+        memory_bytes: 2.9 * GIB,
+        memory_peak_bytes: 3 * GIB,
+        anon_bytes: 2.8 * GIB,
+        file_bytes: 0.1 * GIB,
+        swap_bytes: 0.9 * GIB,
+        swap_max_bytes: 1 * GIB,
+        oom_kills: 0,
+        memory_read_at: '2026-10-12T09:59:30Z',
+        disk_bytes: 4e9,
+        disk_inodes: 120_000,
+        disk_read_at: '2026-10-12T09:57:00Z',
+      },
+    }
+    const { getByText } = mount({
+      overview: overview({}, [host({ usage: usage(), sandboxes: [sandbox] })]),
+    })
+    await fireEvent.click(getByText('pool-a'))
+    const swap = getByText(/swap 0\.9 \/ 1\.0 GiB|交换 0\.9 \/ 1\.0 GiB/)
+    expect(swap).toBeTruthy()
+  })
+
   it('还没被领走的温机也在宿主机表里，带着它此刻的阶段：在跑的机器一台都不漏', () => {
     const { getByRole } = mount({
       overview: overview({}, [host()], [warm(), warm({ id: 'w2', state: 'preparing', hostname: 'warm-booting' })]),
@@ -259,6 +352,60 @@ describe('机器', () => {
     expect(within(spare).queryByText(/Unclaimed|待领用/)).not.toBeNull()
     const booting = table.getByText('warm-booting').closest('[role="row"]') as HTMLElement
     expect(within(booting).queryByText(/Warming up|预热中/)).not.toBeNull()
+  })
+
+  it('冻结的沙箱标出「已冻结」，说它什么时候最迟销毁、不再计费', async () => {
+    const [mine] = host().sandboxes
+    const frozen = host({
+      sandboxes: [
+        {
+          ...mine,
+          state: 'frozen',
+          active_at: '2026-10-12T08:30:00Z',
+          idle_deadline: '2026-10-12T10:30:00Z',
+        },
+      ],
+    })
+    const { getByText, queryByText } = mount({ overview: overview({}, [frozen]) })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(i18n.global.t('admin.machines.state.frozen'))).not.toBeNull()
+    // 冻了多久、最迟什么时候销毁：两件都是一个冻着的沙箱要让人知道的。
+    expect(
+      queryByText(/Frozen 1\.5 h \(processes stopped, not billed\)|已冻结 1\.5 小时（进程停着，不计费）/)
+    ).not.toBeNull()
+    expect(queryByText(/discarded at latest 30 min|最迟 30 分钟后销毁/)).not.toBeNull()
+  })
+
+  it('冻结的沙箱过了最迟销毁时间还没走，页面说它已过期，不画一个负的倒计时', async () => {
+    const [mine] = host().sandboxes
+    const late = host({
+      sandboxes: [
+        { ...mine, state: 'frozen', active_at: '2026-10-12T08:30:00Z', idle_deadline: '2026-10-12T09:30:00Z' },
+      ],
+    })
+    const { getByText, queryByText } = mount({ overview: overview({}, [late]) })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(/past its idle time|已过空闲期/)).not.toBeNull()
+    expect(queryByText(/discarded at latest|最迟 .*后销毁/)).toBeNull()
+  })
+
+  it('滚动重建的宿主机标出「重建中」，版本旧了的标出「镜像过期」', () => {
+    const draining = i18n.global.t('admin.machines.draining')
+    const outdated = i18n.global.t('admin.machines.outdated')
+    const { getByText, queryByText } = mount({
+      overview: overview({ fixed_hosts: 2 }, [
+        host({ draining: true, draining_since: '2026-10-12T09:50:00Z', image_outdated: true }),
+        host({ id: 'h2', hostname: 'pool-b', image_outdated: true }),
+        host({ id: 'h3', hostname: 'pool-c' }),
+      ]),
+    })
+    const rows = getByText('pool-a').closest('[role="row"]') as HTMLElement
+    expect(within(rows).queryByText(draining)).not.toBeNull()
+    const stale = getByText('pool-b').closest('[role="row"]') as HTMLElement
+    expect(within(stale).queryByText(outdated)).not.toBeNull()
+    const fresh = getByText('pool-c').closest('[role="row"]') as HTMLElement
+    expect(within(fresh).queryByText(outdated)).toBeNull()
+    expect(queryByText(i18n.global.t('admin.machines.fixedFoot', { n: 2, days: 14 }))).not.toBeNull()
   })
 
   it('只有温机、还没有宿主机时，不说「一台宿主机都没有」', () => {

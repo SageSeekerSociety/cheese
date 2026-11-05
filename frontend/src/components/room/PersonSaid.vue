@@ -9,6 +9,8 @@ defineProps<{
   /** 说这句话的人。 */
   handle: string
   name: string
+  /** 这个人自己挑过的头像；没挑过、名册上没有他时是空串，画彩色首字母。 */
+  avatar?: string
   time: string
   /** 正文上面那一小行：在做什么。 */
   cue: string
@@ -21,7 +23,7 @@ defineProps<{
   <div class="im-row person-said" data-testid="person-said">
     <div class="im-gutter">
       <button type="button" class="im-person" :data-handle="handle" :aria-label="name">
-        <UserAvatar avatar="" :name="name" :seed="handle" :size="28" />
+        <UserAvatar :avatar="avatar ?? ''" :name="name" :seed="handle" :size="28" />
       </button>
     </div>
     <div class="im-main">

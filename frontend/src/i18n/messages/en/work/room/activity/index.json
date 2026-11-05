@@ -1,4 +1,5 @@
 {
+  "retrying": "{name}'s call to the model failed, retrying automatically",
   "separator": " · ",
   "typingMany": "Several people are typing…",
   "typingOne": "{name} is typing…",

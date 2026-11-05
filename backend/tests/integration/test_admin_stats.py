@@ -991,3 +991,55 @@ def test_personal_credits_stay_out_of_the_project_credit_board(
     credits = _stats(client, as_admin, "usage", days=DAYS)["credits"]
     assert credits["exhausted"] == [] and credits["low"] == []
     assert credits["burn"]["credits_in_window"] == 0
+
+
+def test_performance_counts_the_heap_only_when_asked(client, as_admin):
+    """The census holds the loop as long as a full collection does, so a plain
+    read does not run it; asked for, it names what the collector walks."""
+
+    class HeldByTheProcess:
+        pass
+
+    held = [HeldByTheProcess() for _ in range(3000)]
+    for each in held:
+        each.me = each  # a cycle, so the collector tracks and walks it
+
+    plain = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    )
+    asked = client.get(
+        "/admin/stats/performance",
+        params={"heap": "true"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    assert plain.status_code == 200 and "heap" not in plain.json()["data"]
+    heap = asked.json()["data"]["heap"]
+    counts = {row["type"]: row["count"] for row in heap["top"]}
+    name = f"{__name__}.{HeldByTheProcess.__qualname__}"
+    assert counts.get(name, 0) >= 3000, heap["top"][:5]
+    assert heap["tracked"] >= 3000 and heap["frozen"] >= 0
+
+
+def test_the_heap_census_says_who_holds_the_leading_types(client, as_admin):
+    """Asked for owners, the census traces a sample of each leading type to
+    the objects holding it.
+
+    The fixture used to allocate 30,000 of its own objects and expect them to
+    rank in the process's top six types. That is not the test's to control:
+    the app's own dict/list/tuple counts vary with what the harness loaded, and
+    on CI they already fill all six slots — the keeper never appeared, and the
+    case failed twice in a row before a rerun. It now asks for a type the app
+    certainly holds in quantity (``dict``) and asserts the shape of the answer:
+    a sample, and the objects holding that sample."""
+
+    r = client.get(
+        "/admin/stats/performance",
+        params={"heap": "true", "owners": "true"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    owners = {row["type"]: row for row in r.json()["data"]["heap"]["owners"]}
+    assert "builtins.dict" in owners, list(owners)
+    assert owners["builtins.dict"]["sampled"] > 0
+    assert owners["builtins.dict"]["held_by"], owners["builtins.dict"]

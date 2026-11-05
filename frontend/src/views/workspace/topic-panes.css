@@ -66,10 +66,41 @@
   inset: 0 -4px;
 }
 .pane-resizer:hover {
+  background: var(--muted);
+}
+/* 中间一小截把手：平时就看得见这里能拖（只有 2px 的 --line-2 在浅色主题下几乎是白的），
+   悬停时跟着整条一起加深。 */
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  width: 4px;
+  height: 36px;
+  border-radius: 2px;
   background: var(--faint);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.pane-resizer:hover::after {
+  background: var(--text);
 }
 .col {
   min-width: 0;
+}
+/* 这一排本身不横向滚。
+ *
+ * 收起的面板浮层（`.panel-host--sheet`）整块被 translateX(100%) 推到这一排右边外面，
+ * 于是这一排多出一段横向可滚区域；话题页再有 `overflow: hidden` 兜着，整页就能被滚
+ * 到一个偏左的位置：对话被推出左边、右边一片空白、任务页头只剩最后一截——而且它就
+ * 停在那儿，看上去像「页面歪了、卡住了」。触发它不需要人拖动：收起的面板里任何一次
+ * `scrollIntoView`（面板自己的滚动、聚焦、锚点）都会把最近的那个可滚祖先横向滚过去。
+ *
+ * `clip` 而不是 `hidden`：hidden 会让这一排变成滚动容器，横竖两个方向都得自己管；clip
+ * 两个方向都能看见，只是不产生可滚区域，纵向弹层照样溢出显示。只横着裁，纵向留给
+ * 输入框上方的 @ 候选这类贴边浮层。 */
+.panes {
+  overflow-x: clip;
 }
 /* 工作面板的外壳（里面就是 WorkPanel 本身）：并排时是普通的 flex 子项，窄档里被
    下面的 --sheet 改成一只浮层。 */

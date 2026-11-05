@@ -56,6 +56,19 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 #: (idle, or given up with its host). Cleared by the first tool call that lands
 #: in a new one; until then the room's lease still names the machine it was on.
 LOST_KEY = "sandbox_lost"
+#: Set beside ``LOST_KEY`` when the host could say what was running in the
+#: sandbox it destroyed (``sandbox_home.destroy``): each process's command
+#: line, its executor and bare shells left out, secrets masked. Read with
+#: ``LOST_KEY`` into the notice the next tool call carries, and cleared with
+#: it. Absent when nothing was running, or the host could not read it — the
+#: copy is the same as before there were processes to name.
+LOST_PROCESSES_KEY = "sandbox_lost_processes"
+#: Set in a session's ``execution_request`` when its cloud sandbox was parked
+#: (``lifecycle._park``): its processes stopped, its home kept on the host.
+#: The value is what was running, as ``LOST_PROCESSES_KEY`` names it (an empty
+#: list when nothing was). The first tool call that lands in it again is told
+#: its files are all there and its processes are not, and clears it.
+PARKED_KEY = "sandbox_parked"
 #: Set in a session's ``execution_request`` when it asked for another cloud
 #: sandbox while it already had one — the spec it is on, asked again
 #: (``session_work.switch_environment``). The host it left is named here so its
@@ -63,6 +76,15 @@ LOST_KEY = "sandbox_lost"
 #: preference for the fullest host would otherwise do. Cleared by that
 #: placement (``HostPool._placed_off``).
 LEFT_HOST_KEY = "sandbox_left_host"
+#: Set in a session's ``execution_request`` when a tool call arrives for a
+#: frozen cloud sandbox: the resource id of that sandbox. The row's home is
+#: kept, its ``frozen_at`` is cleared under the pool lock and its ``active_at``
+#: moved to now, but its processes are still stopped, and neither the pool nor
+#: the executor may be asked anything until they run again. The actual thaw
+#: happens off the database locks, in ``session_work._install`` before the
+#: executor starts; it clears this. A stale value is harmless: the same home
+#: thawing twice is a no-op (`machine/services.py`, `sandbox_home.thaw`).
+THAW_KEY = "sandbox_thaw"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +111,27 @@ class SessionPlace:
     runtime: dict
     #: 工作机器租约：这条会话的手。私聊这类"手就在会话机上"的路子没有单独的租约。
     lease: dict | None
+
+
+def place_of(
+    runtime_location: dict | None, work_lease: dict | None
+) -> SessionPlace | None:
+    """The place a session's two columns describe, or None where it has none.
+
+    The one construction of a `SessionPlace` from stored columns. Both the
+    entity and the column-only read of it
+    (`agent_session.repositories.PlacedRow`) call this, so a key added here
+    reaches both instead of one.
+    """
+    if not runtime_location:
+        return None
+    return SessionPlace(
+        machine=runtime_location["device_id"],
+        channel=runtime_location["channel"],
+        resource_id=runtime_location["resource_id"],
+        runtime=runtime_location.get("runtime") or {},
+        lease=work_lease,
+    )
 
 
 #: The device a session's lease is on, as `ix_agent_sessions_lease_device`
@@ -191,16 +234,7 @@ class AgentSession(UuidPk, Timestamps, Base):
         ``lease``（工作机器）是**房间**那一半，见 :class:`SessionPlace`：它跟着
         这一行走只是为了读的人当场看得见，解析它的是房间那一项。
         """
-        location = self.runtime_location
-        if not location:
-            return None
-        return SessionPlace(
-            machine=location["device_id"],
-            channel=location["channel"],
-            resource_id=location["resource_id"],
-            runtime=location.get("runtime") or {},
-            lease=self.work_lease,
-        )
+        return place_of(self.runtime_location, self.work_lease)
 
 
 class AgentEnvironment(Base):
