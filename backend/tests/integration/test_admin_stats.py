@@ -1023,16 +1023,15 @@ def test_performance_counts_the_heap_only_when_asked(client, as_admin):
 
 def test_the_heap_census_says_who_holds_the_leading_types(client, as_admin):
     """Asked for owners, the census traces a sample of each leading type to
-    the objects holding it."""
+    the objects holding it.
 
-    class Keeper:
-        pass
-
-    kept = []
-    for i in range(30000):
-        keeper = Keeper()
-        keeper.mapping = {"n": i, "self": keeper}
-        kept.append(keeper)
+    The fixture used to allocate 30,000 of its own objects and expect them to
+    rank in the process's top six types. That is not the test's to control:
+    the app's own dict/list/tuple counts vary with what the harness loaded, and
+    on CI they already fill all six slots — the keeper never appeared, and the
+    case failed twice in a row before a rerun. It now asks for a type the app
+    certainly holds in quantity (``dict``) and asserts the shape of the answer:
+    a sample, and the objects holding that sample."""
 
     r = client.get(
         "/admin/stats/performance",
@@ -1041,7 +1040,6 @@ def test_the_heap_census_says_who_holds_the_leading_types(client, as_admin):
     )
 
     owners = {row["type"]: row for row in r.json()["data"]["heap"]["owners"]}
-    keeper = f"{__name__}.{Keeper.__qualname__}"
-    assert keeper in owners, list(owners)
-    assert owners[keeper]["sampled"] > 0
-    assert owners[keeper]["held_by"], owners[keeper]
+    assert "builtins.dict" in owners, list(owners)
+    assert owners["builtins.dict"]["sampled"] > 0
+    assert owners["builtins.dict"]["held_by"], owners["builtins.dict"]
