@@ -110,3 +110,20 @@ async def test_every_renewal_signs_with_the_key_parsed_once(tmp_path, monkeypatc
             message["assertion"], app_id=123, public_key=public, deployment="second"
         )
         assert repositories == [(11, "owner/project")]
+
+
+def test_a_key_that_is_not_rsa_is_refused_where_it_is_read():
+    """The check has to survive `python -O`: it is on configuration, not an
+    invariant of the code, so it is a raise and not an assert."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from app.core.forge_events import signing_key
+
+    other = ed25519.Ed25519PrivateKey.generate()
+    pem = other.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    with pytest.raises(ValueError):
+        signing_key(pem)

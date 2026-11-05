@@ -18,7 +18,11 @@ def signing_key(pem: str) -> RSAPrivateKey:
     signs once a minute for the life of the process, on the event loop.
     """
     key = serialization.load_pem_private_key(pem.encode(), password=None)
-    assert isinstance(key, RSAPrivateKey)
+    if not isinstance(key, RSAPrivateKey):
+        # A real check, not an assert: the PEM is configuration, and `assert`
+        # is gone under `python -O`. GitHub Apps sign with RSA; anything else
+        # should fail here rather than inside `jwt.encode` later.
+        raise ValueError("GitHub App signing requires an RSA key")
     return key
 
 
