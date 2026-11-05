@@ -479,19 +479,6 @@ class HookEvents:
                     )
                     resumable = True
                     cause = platform_side_cause(event.text, own=own)
-                    if meta.get("code") == CONTEXT_FULL_CODE and seat and event.harness:
-                        # The conversation is past its window and the summary
-                        # that would shrink it could not be made. The next turn
-                        # would send the same history and be refused the same
-                        # way, so this one is over: a new session, told the
-                        # whole project state, picks up from here. Done once,
-                        # on the failure itself — nothing retries it.
-                        await abandon_opening(
-                            sessions,
-                            conversation_id=conversation_id,
-                            agent_handle=seat,
-                            harness=event.harness,
-                        )
                 if resumable:
                     resume = await self._resume_later(
                         project_id,
@@ -528,13 +515,45 @@ class HookEvents:
                 )
                 if attempted is not None:
                     meta = {**meta, "delivery_id": str(attempted[0])}
-                if not recovering and not await _turn_ended_noticed(
+                noticed = recovering or await _turn_ended_noticed(
                     sessions,
                     turn_id,
                     meta,
                     conversation_id=conversation_id,
                     asked=attempted is not None and attempted[1],
+                )
+                if (
+                    not noticed
+                    and not recovering
+                    and meta.get("code") == CONTEXT_FULL_CODE
+                    and seat
+                    and event.harness
                 ):
+                    # The conversation is past its window and the summary that
+                    # would shrink it could not be made. The next turn would
+                    # send the same history and be refused the same way, so this
+                    # one is over: a new session, told the whole project state,
+                    # picks up from here.
+                    #
+                    # Inside this branch on purpose — a report delivered again
+                    # finds its line already there and must not clear a pointer
+                    # a newer turn has since written. Best-effort for the same
+                    # reason the pointer's own write is: this sits on a failure
+                    # path, and a raise here would leave the turn open with no
+                    # line at all.
+                    try:
+                        await abandon_opening(
+                            sessions,
+                            conversation_id=conversation_id,
+                            seat=seat,
+                            harness=event.harness,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "could not abandon the un-compactable conversation of %s",
+                            conversation_id,
+                        )
+                if not noticed:
                     room_meta = dict(meta)
                     if "error" in room_meta:
                         # Startup diagnostics are platform records. The room

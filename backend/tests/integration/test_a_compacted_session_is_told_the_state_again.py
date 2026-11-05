@@ -183,7 +183,12 @@ async def _after_a_compaction_that_could_not_be_made(factory) -> tuple:
         was=None,
         **seat,
     )
-    await abandon_opening(factory, conversation_id=topic_id, **seat)
+    await abandon_opening(
+        factory,
+        conversation_id=topic_id,
+        seat=seat["agent_handle"],
+        harness=seat["harness"],
+    )
     async with factory() as session:
         service = AgentSessionService(session)
         token = await service.resume_token(
@@ -192,7 +197,8 @@ async def _after_a_compaction_that_could_not_be_made(factory) -> tuple:
         told = await service.told(
             topic_id, seat["agent_handle"], harness=seat["harness"]
         )
-    return token, told
+        ran = await service.has_run(topic_id)
+    return token, told, ran
 
 
 async def test_a_compaction_that_could_not_be_made_lets_the_next_turn_start_fresh(
@@ -203,7 +209,7 @@ async def test_a_compaction_that_could_not_be_made_lets_the_next_turn_start_fres
     the same history and is refused the same way, so the platform stops
     pointing the seat at that native session — the next turn opens a new one,
     and, its `told` also gone, tells it the whole project state."""
-    token, told = client.portal.call(
+    token, told, ran = client.portal.call(
         lambda: _after_a_compaction_that_could_not_be_made(client.test_request_factory)
     )
 
@@ -211,3 +217,7 @@ async def test_a_compaction_that_could_not_be_made_lets_the_next_turn_start_fres
         "the next turn must not resume the conversation that cannot fit"
     )
     assert told is None, "a new session has to be told the whole state"
+    # ...and the room still reads as one that has run: giving up on a
+    # conversation is not the same as never having had one, and the 现场 tab
+    # (and the compute pin) hang on this answer.
+    assert ran is True

@@ -79,15 +79,18 @@ class AgentSessionRepository:
     async def resume_token(
         self, conversation_id: uuid.UUID, agent_handle: str, harness: str
     ) -> str | None:
-        """What this agent resumes its conversation in this place by."""
+        """What this agent resumes its conversation in this place by; None when
+        there is nothing to resume — never started, or given up on
+        (`abandoned_at`, ``forget_conversation``)."""
         result = await self._session.execute(
-            select(AgentSession.resume_token).where(
+            select(AgentSession.resume_token, AgentSession.abandoned_at).where(
                 AgentSession.conversation_id == conversation_id,
                 AgentSession.agent_handle == agent_handle,
                 AgentSession.harness == harness,
             )
         )
-        return result.scalar_one_or_none()
+        token, abandoned = result.one_or_none() or (None, None)
+        return None if abandoned is not None else token
 
     async def save(
         self,
@@ -107,7 +110,10 @@ class AgentSessionRepository:
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
-            values={"resume_token": resume_token},
+            # A session is being recorded, so nothing is given up on any more:
+            # the marker lives until the next start replaces it with a real
+            # conversation.
+            values={"resume_token": resume_token, "abandoned_at": None},
         )
 
     async def save_told(
@@ -173,14 +179,18 @@ class AgentSessionRepository:
     async def forget_conversation(
         self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
     ) -> None:
-        """Stop pointing at the conversation's native session, and at what it
-        was told.
+        """Give up on the conversation's native session, and on what it was told.
 
-        The next turn opens a new one (``resume_token`` NULL is "this place has
-        not run") and, with ``told`` cleared, tells it the whole of the project
-        state. Used when the conversation cannot go on: a compaction that
-        could not be made means the next turn re-sends a history that will not
-        fit, and every turn after that repeats it."""
+        The next turn opens a new one (`abandoned_at` set, which `resume_token`
+        answers as no session) and, with ``told`` cleared, tells it the whole of
+        the project state. Used when the conversation cannot go on: a
+        compaction that could not be made means the next turn re-sends a
+        history that will not fit, and every turn after that repeats it.
+
+        ``resume_token`` is left where it is. Clearing it would say "this place
+        has never run" (`has_any`), and a room that has been worked in for
+        hours has not stopped having run because its conversation was given up
+        on."""
         await self._session.execute(
             update(AgentSession)
             .where(
@@ -188,7 +198,9 @@ class AgentSessionRepository:
                 AgentSession.agent_handle == agent_handle,
                 AgentSession.harness == harness,
             )
-            .values(resume_token=None, told=None, updated_at=datetime.now(UTC))
+            .values(
+                abandoned_at=datetime.now(UTC), told=None, updated_at=datetime.now(UTC)
+            )
         )
 
     async def save_place(
