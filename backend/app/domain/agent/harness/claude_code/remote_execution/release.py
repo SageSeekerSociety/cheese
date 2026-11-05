@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import errno
+import functools
 import hashlib
 import json
 import os
@@ -282,6 +283,25 @@ def release_abandoned_views():
 
 
 def sources():
+    """The helpers' own source, read and kept once per process.
+
+    24 files and 0.8 MiB, including `sandbox/cheese` whole, were read on every
+    call — and the call is a screen launch's preparation, so it lands on
+    whichever turn is starting a session. Production's stall board has a
+    131 ms stall whose stack is `json/encoder` over this dict inside
+    `release.digest`, called from `device_launch.holes` during a prewarm.
+
+    These are the image's own files, fixed for as long as it runs — the same
+    reading `remote_execution/launch._file_sources` already caches for its own
+    set. A caller that needs the current bytes from disk (a test that writes
+    one, a release that replaces one) has to start a process to see it, which
+    is what shipping the file means.
+    """
+    return dict(_sources())
+
+
+@functools.cache
+def _sources():
     # deferred-import: this file also runs on the machine, with no `app` package
     from app.domain.agent import executor_transport, pr_creation, task_checkout
 
