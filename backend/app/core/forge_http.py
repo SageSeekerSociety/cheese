@@ -32,6 +32,7 @@ from typing import Any, Literal
 import httpx
 
 from app.core import forge_etags, forge_quota, metrics
+from app.core.tls_context import OUTBOUND_TLS
 
 #: GitHub closes a connection that has sat idle somewhere between 20 and 60
 #: seconds (measured from the deployment). Letting go of it first means a call
@@ -230,6 +231,11 @@ def forge_client(
         forge_quota.observe,
         _count_response,
     ]
+    # The one TLS context the process builds (`core/tls_context`): a client's
+    # own costs about 26 ms of the loop to build, and this one is built inside
+    # request handlers and background jobs. A caller that passes `verify=` keeps
+    # its own choice.
+    kwargs.setdefault("verify", OUTBOUND_TLS)
     client = httpx.AsyncClient(event_hooks=hooks, **kwargs)
     plain = client.send
 

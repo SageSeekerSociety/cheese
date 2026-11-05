@@ -11,6 +11,14 @@ dependencies = [
     "bcrypt>=5.0.0",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
+    # httpcore asks `sniffio` which async library it runs under, on every pool
+    # operation, and catches ImportError to fall back to "asyncio". A failed
+    # import is not cached: without this package every HTTP request re-ran
+    # CPython's whole path search for it — 16 `stat` calls per request measured
+    # here — inside connection setup, on the event loop. It used to reach the
+    # image through another package's dependency tree; that package went in
+    # #2377 and nothing declared it since.
+    "sniffio>=1.3.1",
     # Fetching the web for an agent (app.domain.fetch). markdownify converts a
     # page without deciding what its "main content" is — the readability-style
     # extractors discard list pages wholesale. curl_cffi carries a real browser
