@@ -1,11 +1,12 @@
 """Walk the young heap less often, and let the middle generation fill.
 
 Two thresholds are raised, both above the interpreter's default. Generation
-0's decides how much each pass walks; it costs the loop most by running most
-often — 8,000 passes for 16.5 s in a five-hour production window — and is
-held as a floor at `GEN0_THRESHOLD`, never below what the build already does.
-Generation 1's decides how often survivors are promoted; that one is what the
-rest of this docstring argues.
+0's decides how much each pass walks; it is the collector's largest cost —
+about 11,300 passes for 26 s in a 6.2-hour production window — but not the
+largest stall, because a pass is 2.3 ms. It is held as a floor at `GEN0_THRESHOLD`,
+never below what the build already does. Generation 1's decides how often
+survivors are promoted, and through that how often a full pass runs; that one
+is what the rest of this docstring argues.
 
 A full collection (generation 2) runs on the event loop's thread with the loop
 held, and its cost is the size of the whole tracked heap, not the garbage it
@@ -52,13 +53,16 @@ import threading
 from app.core.startup_freeze import SERVING
 
 #: Generation 0's allocation threshold (a floor — see `tune_collector`). It
-#: decides how much a pass walks, and a pass costs the same per object whether
-#: it walks 2,000 or 10,000 of them. Production's
-#: readings at 5 hours: 8,000 gen-0 passes for 16.5 s — by far the largest
-#: collector cost on the loop — freeing ~966 objects each. Raising it to 5,000
-#: on a heap of production's shape cut the passes to 40% and the collector's
-#: total time to 43%, and the extra young objects held between passes moved
-#: neither the peak object count nor RSS.
+#: decides how much each pass walks, and a pass costs about the same per object
+#: whether it walks 2,000 or 10,000 of them — so raising it trades passes for
+#: time per pass and frees less often, but it does not by itself remove the
+#: collector's cost. Production, 6.2 h at 2,000: ~11,300 passes for 26 s — 83%
+#: of all the time the collector took, 2.3 ms each, freeing ~917 objects each.
+#: At 5,000 the same work is ~4,500 passes of ~5.8 ms. What the raise really
+#: buys is fewer promotions: the young heap fills slower, so the full passes
+#: that hold the loop for 200 ms apiece fall from 10 to about 4 in that window.
+#: On a heap of production's shape the extra young objects held between passes
+#: moved neither the peak object count nor RSS.
 GEN0_THRESHOLD = 5000
 
 #: Generation 1's allocation threshold; generation 2 keeps whatever this
