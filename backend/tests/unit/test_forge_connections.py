@@ -66,7 +66,7 @@ async def test_successive_forge_calls_share_one_connection(monkeypatch):
 
 
 def test_the_forge_client_verifies_against_the_process_wide_context():
-    """Building a client's own trust store is about 26 ms of the loop, paid
+    """Building a client's own trust store is tens of milliseconds of the loop, paid
     inside request handlers; one context serves every client that does not ask
     for its own."""
     from app.core.forge_http import forge_client

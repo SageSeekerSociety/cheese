@@ -232,7 +232,7 @@ def forge_client(
         _count_response,
     ]
     # The one TLS context the process builds (`core/tls_context`): a client's
-    # own costs about 26 ms of the loop to build, and this one is built inside
+    # own costs tens of milliseconds of the loop to build, and this one is built inside
     # request handlers and background jobs. A caller that passes `verify=` keeps
     # its own choice.
     kwargs.setdefault("verify", OUTBOUND_TLS)
