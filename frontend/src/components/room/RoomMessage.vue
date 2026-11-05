@@ -25,6 +25,7 @@ import {
   replySnippet,
 } from '../../lib/blockDisplay'
 import { fileIcon, hasPagePreview, previewCanShowInRoom, suffixOf } from '../../lib/fileKind'
+import { MCP_APP_MIME } from '../../lib/mcpAppBridge'
 import { toldByMessage } from '../../lib/refChip'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
@@ -187,6 +188,16 @@ const richFileCard = computed(
     canOpenFile.value &&
     props.block.mime_type !== APP_MIME &&
     (hasPagePreview(props.block.content) || ['xlsx', 'xlsm'].includes(suffixOf(props.block.content)))
+)
+/** 这一行底下有没有一份真字节可以下载。
+ *
+ *  附件都有；芝士摆出来的东西要看类型——「正在跑的应用」和 MCP 视图的内容是一句说明
+ *  或一个指针，取不到字节。其余的（含认不出后缀的 zip）都是房间里的一份文件，和附件
+ *  同一条下载路（`/topics/{id}/attachments/raw?download=true`）。 */
+const downloadable = computed(
+  () =>
+    props.block.kind === 'attachment' ||
+    (props.block.kind === 'artifact' && props.block.mime_type !== APP_MIME && props.block.mime_type !== MCP_APP_MIME)
 )
 
 // 作者改过它：正文后面标一句「已编辑」。
@@ -357,7 +368,7 @@ const told = computed(() => toldByMessage(props.refs))
             <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
           </button>
           <BaseButton
-            v-if="block.kind === 'attachment' && !richFileCard"
+            v-if="downloadable && !richFileCard"
             kind="ghost"
             size="sm"
             icon="mdi-download-outline"
@@ -381,7 +392,7 @@ const told = computed(() => toldByMessage(props.refs))
         <FileBlockMenu
           :name="artifactName(block)"
           :can-open="canOpenFile"
-          :can-download="block.kind === 'attachment' || richFileCard"
+          :can-download="downloadable"
           :can-keep="
             (block.kind === 'artifact' || (block.kind === 'attachment' && !inLibrary(block.content))) && !!topicId
           "
