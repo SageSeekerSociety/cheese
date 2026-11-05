@@ -46,3 +46,17 @@ def test_the_sources_are_the_real_files():
     assert sources["client.py"].lstrip().startswith(('"""', "from", "import")), sources[
         "client.py"
     ][:40]
+
+
+def test_the_version_is_encoded_once():
+    """`digest` serializes 0.8 MiB of JSON; the callers that matter ask it
+    every turn (`device_provider._resident_release_due`)."""
+    release._version.cache_clear()
+
+    first = release.version_of()
+    second = release.version_of()
+
+    info = release._version.cache_info()
+    assert info.misses == 1, f"encoded {info.misses} times for two asks"
+    assert first == second
+    assert first == release.digest(release.sources())

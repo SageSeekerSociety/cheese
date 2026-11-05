@@ -409,7 +409,21 @@ CHEESE_SKILLS"""
     ) -> tuple[str, str]:
         """The configure and prepare holes, written for this prompt, these
         helpers and this installer of the pinned build: once for the launch,
-        and once for what the launch is compared by (below)."""
+        and once for what the launch is compared by (below).
+
+        The marker holds the release's version, which is the digest of the
+        process's own sources — the release the caller is launching is this
+        one whenever the dict handed in is `release.sources()` (which it is,
+        both times). Asking `release.version_of()` keeps that 0.8 MiB
+        encoding off the launch path; a caller with its own helpers still
+        gets the honest answer, encoded here."""
+        # Comparing the dicts is cheap — the strings are the same objects —
+        # and it is what makes `version_of()` the right answer here.
+        launch_version = (
+            release.version_of()
+            if helper_sources == release.sources()
+            else release.digest(helper_sources)
+        )
         execution_setup = 'mkdir -p "$SEAT/remote-execution"\n'
         for name, source in helper_sources.items():
             execution_setup += (
@@ -429,7 +443,7 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         execution_setup += (
             'mkdir -p "$SEAT/remote-session"\n'
-            f"printf %s {release.digest(helper_sources)} "
+            f"printf %s {launch_version} "
             '> "$SEAT/remote-session/release-ready"\n'
         )
         configure = f"""\

@@ -460,6 +460,25 @@ def script(function, *args):
     )
 
 
+def version_of():
+    """This process's release version, encoded once.
+
+    `digest` serializes the whole 0.8 MiB dict to JSON before hashing it — 6.2 ms
+    here — and the callers that matter ask on every turn
+    (`device_provider._resident_release_due`) rather than once. The sources are
+    the image's own files, so this cannot change while the process runs.
+
+    A caller with its own dict still gets an honest answer from `digest`; this
+    is for the ones asking about the process's own release.
+    """
+    return _version()
+
+
+@functools.cache
+def _version():
+    return digest(_sources())
+
+
 def digest(sources):
     return hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()
 

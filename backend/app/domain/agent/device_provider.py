@@ -618,9 +618,7 @@ class DeviceChannel(Channel):
     @staticmethod
     def _resident_release_due(state: dict) -> bool:
         """Whether the screen's release marker is behind this backend's release."""
-        return state.get("version") != resident_release.digest(
-            resident_release.sources()
-        )
+        return state.get("version") != resident_release.version_of()
 
     async def _runner(
         self, device_id: str, state: str, method: str, params: dict | None = None
@@ -660,7 +658,7 @@ class DeviceChannel(Channel):
         """Bring this seat's helpers to this release; False when it must wait."""
         seat = seat_dir(home_dir, seat)
         sources = resident_release.sources()
-        version = resident_release.digest(sources)
+        version = resident_release.version_of()
         if release.get("version") == version:
             return True
 
