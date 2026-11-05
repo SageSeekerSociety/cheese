@@ -33,6 +33,7 @@ whichever agent the room asked for.
 
 import hashlib
 import json
+from functools import cache
 from pathlib import Path
 
 from app.core.config import settings
@@ -486,6 +487,33 @@ def screen_env(
     return env
 
 
+@cache
+def _shipped_sources() -> tuple[str, str, str, str, str]:
+    """The five programs the launcher carries, read from disk once per process.
+
+    They are shipped by reading each module's own bytes rather than by keeping a
+    second copy here: they are real, linted, unit-tested modules precisely so
+    there is only one version of them to be wrong. What was wrong was doing it
+    on every launch: `sandbox/cheese` alone is 376 KiB, and reading it lands on
+    the request that happens to start a screen — production's stall board has
+    two 130-140 ms stalls whose whole stack is `read_text` under
+    `machine_launcher.screen_launch`, one in `open` and one in `decode`.
+
+    A file on disk does not change under a running process: these are the
+    image's own code, baked at build time. A test that edits one has to start a
+    new process to be testing the new bytes, which is what shipping it means.
+    """
+    return (
+        (Path(__file__).resolve().parents[3] / "sandbox" / "cheese").read_text(
+            encoding="utf-8"
+        ),
+        Path(forge_cli.__file__).read_text(),
+        Path(environment_runner.__file__).read_text().rstrip("\n") + "\n",
+        Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n",
+        Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n",
+    )
+
+
 def launch_script(
     *,
     configure: str = "",
@@ -498,18 +526,9 @@ def launch_script(
     Every value the harness needs beyond these reaches it as environment: the
     channel builds one environment for the session and both halves read it.
     """
-    cli_source = (Path(__file__).resolve().parents[3] / "sandbox" / "cheese").read_text(
-        encoding="utf-8"
+    cli_source, forge_source, environment_helper, tunnel_helper, preview_helper = (
+        _shipped_sources()
     )
-    forge_source = Path(forge_cli.__file__).read_text()
-    # Shipped by reading each module's own bytes rather than by keeping a second
-    # copy here: they are real, linted, unit-tested modules precisely so there is
-    # only one version of them to be wrong.
-    environment_helper = (
-        Path(environment_runner.__file__).read_text().rstrip("\n") + "\n"
-    )
-    tunnel_helper = Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n"
-    preview_helper = Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n"
     tunnel_up = CHEESE_TUNNEL_UP
     preview_up = CHEESE_PREVIEW_UP
     toolchain = toolchain_block()
