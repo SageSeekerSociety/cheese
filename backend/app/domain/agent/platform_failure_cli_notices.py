@@ -148,3 +148,42 @@ def classify_cli_notice(text: str) -> str | None:
         if pattern.search(line):
             return failure
     return None
+
+
+#: A compaction that was refused for size, in the words the build puts on the
+#: turn's ending: `Prompt is too long · automatic compaction failed: …`.
+#:
+#: Anchored at the start, like every other line this module reads: a failure
+#: whose text merely mentions the phrase — a log, a quoted message — is not
+#: this failure, and matching it anywhere would take its conversation's retry
+#: and its resume away for nothing.
+#:
+#: `Prompt is too long` alone is NOT this failure either: the build says it for
+#: an input too long for another reason, and for a turn stopped while its
+#: conversation was being compacted — states a retry does get past (its own
+#: release notes name both as fixes). Only `automatic compaction failed`, at
+#: the start, means the summarising call itself could not be made.
+#:
+#: Never through ``classify_cli_notice``: that one reads a line the build wrote
+#: INSTEAD of answering, and this is a sentence about a different call.
+_COMPACT_REFUSED = re.compile(
+    # The build's own composition: `Prompt is too long · automatic compaction
+    # failed: <why>`. Kept to one line — the prefix and the phrase are the same
+    # sentence, and a whole log is not.
+    r"^(?:Prompt is too long\b[^\n]*?\bautomatic compaction failed\b"
+    r"|automatic compaction failed\b)",
+    re.I,
+)
+
+
+def is_compaction_refused(text: str | None) -> bool:
+    """Whether this failure is a conversation whose own compaction could not run.
+
+    A state no retry changes and no wait passes: the request that would shrink
+    the conversation is the one being refused, so every later turn sends the
+    same thing and is refused the same way. It is the one failure whose right
+    advice is not 「再试一次」 (`turn.state.notices`)."""
+    said = (text or "").strip()
+    if not said:
+        return False
+    return bool(_COMPACT_REFUSED.search(said))

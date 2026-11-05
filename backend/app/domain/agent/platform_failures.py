@@ -140,6 +140,9 @@ from app.domain.agent.platform_failure_cli_notices import (
     classify_cli_notice as classify_cli_notice,
 )
 from app.domain.agent.platform_failure_cli_notices import (
+    is_compaction_refused as is_compaction_refused,
+)
+from app.domain.agent.platform_failure_cli_notices import (
     is_request_refused as is_request_refused,
 )
 from app.domain.agent.platform_failure_rules import (
