@@ -21,7 +21,10 @@ def signing_key(pem: str) -> RSAPrivateKey:
     if not isinstance(key, RSAPrivateKey):
         # A real check, not an assert: the PEM is configuration, and `assert`
         # is gone under `python -O`. GitHub Apps sign with RSA; anything else
-        # should fail here rather than inside `jwt.encode` later.
+        # should fail here rather than inside `jwt.encode` later. Nobody reads
+        # this sentence on a screen — it stops the event relay's start-up on a
+        # misconfigured deployment — so it is not a `say()` sentence.
+        # i18n-exempt: start-up failure from a misconfigured deployment
         raise ValueError("GitHub App signing requires an RSA key")
     return key
 
