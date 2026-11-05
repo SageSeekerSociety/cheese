@@ -76,6 +76,21 @@ def test_the_forge_client_verifies_against_the_process_wide_context():
     assert client._transport._pool._ssl_context is OUTBOUND_TLS
 
 
+async def test_the_shared_pool_the_application_uses_has_the_same_context():
+    """The application's forge traffic goes through the borrowed pool, and
+    httpx ignores `verify` on a client that was handed a transport. So the pool
+    is where the shared context has to be, or the busiest path keeps building
+    its own."""
+    from app.core.forge_http import forge_client, reuse_forge_connections
+    from app.core.tls_context import OUTBOUND_TLS
+
+    async with reuse_forge_connections():
+        client = forge_client()
+        pool_client = client._transport._pool
+        assert pool_client._transport._pool._ssl_context is OUTBOUND_TLS
+        await client.aclose()
+
+
 def test_a_caller_that_passes_its_own_verify_keeps_it():
     import ssl
 

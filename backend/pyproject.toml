@@ -19,6 +19,10 @@ dependencies = [
     # image through another package's dependency tree; that package went in
     # #2377 and nothing declared it since.
     "sniffio>=1.3.1",
+    # app/core/tls_context.py imports it directly, to build the process's one
+    # outbound TLS context. It reached the image only through httpx/httpcore's
+    # dependency tree, which is the same borrowing #2377 ended for sniffio.
+    "certifi",
     # Fetching the web for an agent (app.domain.fetch). markdownify converts a
     # page without deciding what its "main content" is — the readability-style
     # extractors discard list pages wholesale. curl_cffi carries a real browser

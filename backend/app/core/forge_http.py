@@ -200,7 +200,14 @@ async def reuse_forge_connections() -> AsyncIterator[None]:
     """Keep forge connections open until the application stops."""
     global _shared
     previous = _shared
-    pool = httpx.AsyncClient(limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S))
+    # This pool, not the per-call client, is what negotiates TLS for the
+    # application's forge traffic: `forge_client` hands the borrowed pool over
+    # as `transport`, and httpx ignores `verify` when a transport is given. So
+    # the shared context has to be given here or the busiest path keeps
+    # building one of its own.
+    pool = httpx.AsyncClient(
+        limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S), verify=OUTBOUND_TLS
+    )
     _shared = (asyncio.get_running_loop(), _Borrowed(pool))
     try:
         yield
