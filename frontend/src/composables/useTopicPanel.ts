@@ -4,9 +4,15 @@
 // 地址里的 `?tab=` 是「有人要看这一格」：对话里点「查看改动」、别人发来的链接都走
 // 它，它总能把面板打开。并排时，「概览」那颗开关记下这个人自己的选择；浮层不记，
 // 开关只是写或清 `?tab=`。
+//
+// `?tab=` 打开的浮层是压在对话上的一张纸，对话看不见。所以主区变窄、并排换成浮层时，
+// 原来并排开着的那一格要让开：地址里那一格留着（换回宽档还开着它），但浮层不因此
+// 自己拉开。不然打开个人芝士（它自己占掉右边一条）时，对话会被一块面板和一层遮罩盖住。
+// 主动要看的（人自己点了那一格、点了「查看改动」）照旧拉开——那是刚发生的一次点击，
+// 不是「上次看过的那一格」。
 import type { Ref } from 'vue'
 
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useElementSize } from '@vueuse/core'
 
 import { panelMode, panelOpenByDefault } from '@/composables/useWorkspaceLayout'
@@ -36,6 +42,15 @@ export function useTopicPanel(opts: {
     return store.panelPref ?? panelOpenByDefault(width.value)
   })
 
+  // 并排换成浮层的那一下（主区变窄：助手面板打开、窗口缩小）：原来并排开着的那一格
+  // 让开，不变成盖在对话上的浮层。地址里那一格也清掉，理由和 hide() 一样——不清的话
+  // 下次「查看改动」会因为「已经在那一格」什么都不做。
+  //
+  // 只在换档这一下让：已经在浮层里点开一格（人自己点的那一下）照常开。
+  watch(float, (now, before) => {
+    if (!now || before) return
+    if (opts.tab.value) opts.setTab(undefined)
+  })
   function show() {
     if (!float.value) store.setPanelPref(true)
     else opts.setTab(opts.showing() ?? 'overview')
