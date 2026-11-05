@@ -618,7 +618,9 @@ class DeviceChannel(Channel):
     @staticmethod
     def _resident_release_due(state: dict) -> bool:
         """Whether the screen's release marker is behind this backend's release."""
-        return state.get("version") != resident_release.version_of()
+        return state.get("version") != resident_release.version_of(
+            resident_release.sources()
+        )
 
     async def _runner(
         self, device_id: str, state: str, method: str, params: dict | None = None
@@ -658,7 +660,10 @@ class DeviceChannel(Channel):
         """Bring this seat's helpers to this release; False when it must wait."""
         seat = seat_dir(home_dir, seat)
         sources = resident_release.sources()
-        version = resident_release.version_of()
+        # From the snapshot actually staged: `sources()` is the override point
+        # (a release or a test substitutes it), and the marker has to describe
+        # the helpers that went to disk, not the process's own.
+        version = resident_release.digest(sources)
         if release.get("version") == version:
             return True
 

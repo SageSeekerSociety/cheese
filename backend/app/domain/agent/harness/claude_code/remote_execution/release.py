@@ -460,23 +460,29 @@ def script(function, *args):
     )
 
 
-def version_of():
-    """This process's release version, encoded once.
+def version_of(sources):
+    """``digest(sources)``, kept when the same dict is asked about again.
 
     `digest` serializes the whole 0.8 MiB dict to JSON before hashing it — 6.2 ms
-    here — and the callers that matter ask on every turn
-    (`device_provider._resident_release_due`) rather than once. The sources are
-    the image's own files, so this cannot change while the process runs.
+    here — and `device_provider._resident_release_due` asks on every turn. The
+    answer depends only on the dict, so a repeat of the same dict can be
+    answered from the last one.
 
-    A caller with its own dict still gets an honest answer from `digest`; this
-    is for the ones asking about the process's own release.
+    Compared by identity first and contents second: `sources()` hands back a
+    fresh dict of the same strings each call, so the strings compare equal
+    cheaply and the encode is skipped; a caller that substituted `sources()`
+    (a release, a test) gets its own answer, which is what it must get.
     """
-    return _version()
+    global _last_version, _last_sources
+    if _last_sources is None or sources != _last_sources:
+        _last_version = digest(sources)
+        _last_sources = sources
+    return _last_version
 
 
-@functools.cache
-def _version():
-    return digest(_sources())
+#: The last dict `version_of` was asked about and the answer it gave.
+_last_sources: dict[str, str] | None = None
+_last_version = ""
 
 
 def digest(sources):

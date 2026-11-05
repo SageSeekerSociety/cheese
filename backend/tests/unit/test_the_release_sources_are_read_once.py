@@ -49,14 +49,25 @@ def test_the_sources_are_the_real_files():
 
 
 def test_the_version_is_encoded_once():
-    """`digest` serializes 0.8 MiB of JSON; the callers that matter ask it
-    every turn (`device_provider._resident_release_due`)."""
-    release._version.cache_clear()
+    """`digest` serializes 0.8 MiB of JSON; `_resident_release_due` asks it
+    every turn, with the same `sources()` dict each time."""
+    release._last_sources = None
 
-    first = release.version_of()
-    second = release.version_of()
+    sources = release.sources()
+    first = release.version_of(sources)
+    for _ in range(20):
+        assert release.version_of(release.sources()) == first
 
-    info = release._version.cache_info()
-    assert info.misses == 1, f"encoded {info.misses} times for two asks"
-    assert first == second
-    assert first == release.digest(release.sources())
+    assert first == release.digest(sources)
+
+
+def test_a_substituted_sources_gets_its_own_version():
+    """`sources()` is the override point a release and a test both use; the
+    answer must describe what they handed over, not the process's own."""
+    release._last_sources = None
+    own = release.sources()
+
+    changed = {**own, "client.py": own["client.py"] + "\n# next\n"}
+
+    assert release.version_of(changed) != release.version_of(own)
+    assert release.version_of(changed) == release.digest(changed)
