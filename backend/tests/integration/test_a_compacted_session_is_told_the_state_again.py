@@ -147,3 +147,67 @@ async def test_a_compaction_that_ends_mid_send_is_not_written_over(client):
     # window. Nothing may say the rest is still there, so the next input tells
     # the whole state.
     assert told is None
+
+
+async def _after_a_compaction_that_could_not_be_made(factory) -> tuple:
+    """A conversation that pointed at a native session, then a compaction that
+    could not be made. What the next turn would resume by, and what it was told."""
+    from app.domain.agent.turn.store.session_inputs import abandon_opening
+    from app.domain.agent_session.services import AgentSessionService
+
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+        topic_id = topic.id
+    seat = {"agent_handle": "cheese", "harness": "claude-code"}
+    async with factory() as session:
+        service = AgentSessionService(session)
+        await service.ensure(topic_id, seat["agent_handle"], harness=seat["harness"])
+        await service.remember(
+            conversation_id=topic_id,
+            agent_handle=seat["agent_handle"],
+            resume_token="native-1",
+            harness=seat["harness"],
+        )
+        await session.commit()
+    from app.domain.agent.turn.store.session_inputs import remember_opening
+
+    await remember_opening(
+        factory,
+        topic_id=topic_id,
+        digests={"roster": "a"},
+        was=None,
+        **seat,
+    )
+    await abandon_opening(factory, conversation_id=topic_id, **seat)
+    async with factory() as session:
+        service = AgentSessionService(session)
+        token = await service.resume_token(
+            topic_id, seat["agent_handle"], harness=seat["harness"]
+        )
+        told = await service.told(
+            topic_id, seat["agent_handle"], harness=seat["harness"]
+        )
+    return token, told
+
+
+async def test_a_compaction_that_could_not_be_made_lets_the_next_turn_start_fresh(
+    client,
+):
+    """The state that ended a conversation for good: past its window, and the
+    summary that would shrink it could not be made. Every later turn re-sends
+    the same history and is refused the same way, so the platform stops
+    pointing the seat at that native session — the next turn opens a new one,
+    and, its `told` also gone, tells it the whole project state."""
+    token, told = client.portal.call(
+        lambda: _after_a_compaction_that_could_not_be_made(client.test_request_factory)
+    )
+
+    assert token is None, (
+        "the next turn must not resume the conversation that cannot fit"
+    )
+    assert told is None, "a new session has to be told the whole state"

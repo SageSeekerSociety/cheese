@@ -170,6 +170,27 @@ class AgentSessionRepository:
             .values(told=None, updated_at=datetime.now(UTC))
         )
 
+    async def forget_conversation(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """Stop pointing at the conversation's native session, and at what it
+        was told.
+
+        The next turn opens a new one (``resume_token`` NULL is "this place has
+        not run") and, with ``told`` cleared, tells it the whole of the project
+        state. Used when the conversation cannot go on: a compaction that
+        could not be made means the next turn re-sends a history that will not
+        fit, and every turn after that repeats it."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(resume_token=None, told=None, updated_at=datetime.now(UTC))
+        )
+
     async def save_place(
         self,
         *,
