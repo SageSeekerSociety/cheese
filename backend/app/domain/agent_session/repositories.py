@@ -106,14 +106,26 @@ class AgentSessionRepository:
         (a resumed turn and the sweep's own resume are the pair that actually
         does), and losing that race must overwrite, not raise.
         """
+        # The marker is cleared only by a start that records a DIFFERENT
+        # conversation. A resumed start reports the id it resumed under, and
+        # one launched just before the give-up committed reports the old one
+        # too; either would otherwise wipe the marker while `resume_token` still
+        # names the conversation that cannot fit, and the loop comes back.
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+                AgentSession.resume_token.is_distinct_from(resume_token),
+            )
+            .values(abandoned_at=None)
+        )
         await self._upsert(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
-            # A session is being recorded, so nothing is given up on any more:
-            # the marker lives until the next start replaces it with a real
-            # conversation.
-            values={"resume_token": resume_token, "abandoned_at": None},
+            values={"resume_token": resume_token},
         )
 
     async def save_told(

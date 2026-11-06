@@ -17,6 +17,7 @@ Create Date: 2026-11-05 19:20:00
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -27,6 +28,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    with_lock_retries("agent_sessions")
     op.add_column(
         "agent_sessions",
         sa.Column("abandoned_at", sa.DateTime(timezone=True), nullable=True),

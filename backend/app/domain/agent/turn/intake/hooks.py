@@ -131,16 +131,16 @@ async def _turn_ended_noticed(
                 Block.meta["delivery_id"].as_string() == delivery,
             ),
         )
+    # The same event type is not the same line: every failed turn carries
+    # `turn_failed`, `context_full` among them, so an earlier plain failure of
+    # the same delivery must not count as this one having been said — that would
+    # skip the abandonment of an un-compactable conversation for good.
+    said = Block.meta["event_type"].as_string() == meta.get("event_type")
+    if meta.get("code"):
+        said = and_(said, Block.meta["code"].as_string() == meta["code"])
     async with sessions() as session:
         return (
-            await session.scalar(
-                select(Block.id)
-                .where(
-                    said_by,
-                    Block.meta["event_type"].as_string() == meta.get("event_type"),
-                )
-                .limit(1)
-            )
+            await session.scalar(select(Block.id).where(said_by, said).limit(1))
             is not None
         )
 

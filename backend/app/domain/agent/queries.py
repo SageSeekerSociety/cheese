@@ -672,3 +672,22 @@ async def instance_of_handle(
                 AgentInstance.handle == agent_handle,
             )
         )
+
+
+async def agent_for_seat(
+    session: AsyncSession, place: Place, seat: str | None
+) -> ResolvedAgent:
+    """The agent a seat's session row is keyed by, in this place.
+
+    An event names who ACTED — the seat its session authors under. The row is
+    keyed by the agent that seat belongs to, the key the next turn reads the
+    resume token back under. One function for every writer, because a write
+    under the seat and a read under the agent do not fail: they find nothing,
+    and the caller goes on as if it had worked (`chat_places._save_session_pointer`,
+    `turn.store.session_inputs.abandon_opening`)."""
+    owner = await ProjectRepository(session).get(place.project_id)
+    if owner is not None:
+        named = await AgentInstanceService(session).for_seat_handle(owner, seat)
+        if named is not None:
+            return named
+    return await _agent_at(session, place)
