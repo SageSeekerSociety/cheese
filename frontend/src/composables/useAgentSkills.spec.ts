@@ -305,6 +305,91 @@ describe('队友技能面板', () => {
     expect(saved).not.toHaveBeenCalled()
   })
 
+  it('网上取技能装完时人已换到另一位：不把它装备给现在这一位', async () => {
+    let releaseScan: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseScan = resolve))
+    vi.mocked(fetchMachineSkill).mockImplementationOnce(async () => {
+      await held
+      return {
+        landed: true,
+        plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
+        skills: [
+          { name: 'pdf', description: '读 PDF', source_root: '/w/pdf', digest: 'x', state: 'seen', adopted: false },
+        ],
+        problems: [],
+        roots: [],
+        workspaces: [],
+      } as never
+    })
+
+    const { panel, switchTo } = switchingSkills(['wolfram'])
+    await panel.openSkills()
+    const installing = panel.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
+    await panel.releaseAgent('a1')
+    switchTo('b2', ['documents'])
+    await panel.openSkills()
+    releaseScan()
+    await installing
+
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+    expect(panel.carried.value).toEqual(['documents'])
+  })
+
+  it('A→B→A：第一次打开 A 的池子回得晚，不盖住重新打开 A 之后的面板', async () => {
+    let releaseFirst: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseFirst = resolve))
+    vi.mocked(listSkillCatalog)
+      .mockImplementationOnce(async () => {
+        await held
+        return { data: CATALOG, total: 2 } as never
+      })
+      .mockImplementation(async () => ({ data: [CATALOG[1]], total: 1 }) as never)
+
+    const { panel, switchTo } = switchingSkills(['wolfram'])
+    const openingFirst = panel.openSkills()
+    await panel.releaseAgent('a1')
+    switchTo('b2', ['documents'])
+    await panel.openSkills()
+    await panel.releaseAgent('b2')
+    switchTo('a1', ['documents'])
+    await panel.openSkills()
+    const reopenedPool = panel.pool.value.map((p) => p.name)
+    expect(reopenedPool).not.toContain('wolfram')
+
+    releaseFirst()
+    await openingFirst
+
+    expect(panel.pool.value.map((p) => p.name)).toEqual(reopenedPool)
+  })
+
+  it('A→B→A：第一次占 A 的回答晚到说被占，不把重新打开的 A 标成只读', async () => {
+    let releaseFirst: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseFirst = resolve))
+    vi.mocked(setAgentEditing)
+      .mockImplementationOnce(async () => {
+        await held
+        throw new ApiError(409, 'conflict')
+      })
+      .mockResolvedValue({ editing: null } as never)
+
+    const { panel, switchTo } = switchingSkills()
+    void panel.openSkills()
+    const holdingFirst = panel.holdAgent('a1')
+    await panel.releaseAgent('a1')
+    switchTo('b2')
+    void panel.openSkills()
+    await panel.holdAgent('b2')
+    await panel.releaseAgent('b2')
+    switchTo('a1')
+    void panel.openSkills()
+    await panel.holdAgent('a1')
+    releaseFirst()
+    await holdingFirst
+
+    expect(panel.editingBlocked.value).toBe(false)
+    expect(panel.editingBy.value).toBeNull()
+  })
+
   it('带了八颗再加一颗：没有上限，整份名单落库', async () => {
     const saved = vi.fn()
     const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']

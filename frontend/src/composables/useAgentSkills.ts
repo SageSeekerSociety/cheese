@@ -73,6 +73,15 @@ export function useAgentSkills(
   const editingBlocked = ref(false)
   const editingBy = ref<string | null>(null)
 
+  // 面板的「这一场」：每次打开、每次关掉都换一场。异步回包落地前要对上发起时的那一场
+  // 和那一位——只比队友 id 拦不住 A→B→A：重新打开的 A 和第一次打开的 A 是同一个 id，
+  // 第一次的回包晚到就会盖上来。
+  let session = 0
+  function boundTo(pid: string, agentId: string) {
+    const mine = session
+    return () => session === mine && projectId() === pid && agent()?.id === agentId
+  }
+
   const carried = computed<string[]>(() => carriedNames.value)
 
   /** 带上的技能，连池子里查不到的也画出来（名字认得、说明欠奉），从格子里消失更糟。 */
@@ -90,6 +99,10 @@ export function useAgentSkills(
     const pid = projectId()
     const subject = agent()
     if (!pid || !subject) return
+    session += 1
+    // 这一趟读的是「打开时那一位」的池子：人关掉面板、换了队友或重新打开了，读回来的东西
+    // 不能画到现在这块面板上（技能跟着人走，池子里的机器和项目那两段也是按人挑的）。
+    const stillHere = boundTo(pid, subject.id)
     loading.value = true
     skillHealth.value = {}
     carriedNames.value = [...(subject.configuration.skills ?? [])]
@@ -112,9 +125,6 @@ export function useAgentSkills(
         () => []
       ),
     ])
-    // 这一趟读的是「打开时那一位」的池子：人已经换到另一个队友了，读回来的东西不能画到
-    // 现在这块面板上（技能跟着人走，池子里的机器和项目那两段也是按人挑的）。
-    const stillHere = () => projectId() === pid && agent()?.id === subject.id
     if (!stillHere()) return
     deviceId.value = pickMyDevice(devices)?.device_id ?? null
 
@@ -146,7 +156,7 @@ export function useAgentSkills(
       catalog.map(async (s) => {
         try {
           const health = await getSkillHealth(pid, s.name)
-          if (projectId() === pid) skillHealth.value = { ...skillHealth.value, [s.name]: health }
+          if (stillHere()) skillHealth.value = { ...skillHealth.value, [s.name]: health }
         } catch {
           // 未知：那一颗的圆点留着灰的，别的照常。
         }
@@ -162,8 +172,8 @@ export function useAgentSkills(
     const before = [...carriedNames.value]
     carriedNames.value = next
     saving.value = true
-    // 这一笔写的是「发起时那一位」：人已经换到另一个队友了，回包和它的失败都不属于这一位。
-    const stillHere = () => projectId() === pid && agent()?.id === subject.id
+    // 这一笔写的是「发起时那一场的那一位」：换场之后，回包和它的失败都不属于现在的面板。
+    const stillHere = boundTo(pid, subject.id)
     try {
       const updated = await updateProjectAgent(pid, subject.id, {
         configuration: { ...subject.configuration, skills: next },
@@ -200,15 +210,16 @@ export function useAgentSkills(
   async function holdAgent(agentId: string) {
     const pid = projectId()
     if (!pid) return
+    // 还没回来人就关掉、换了队友或重新打开了：这一句说的是上一场的占用，不能画到现在这块面板上。
+    const stillHere = boundTo(pid, agentId)
     editingBlocked.value = false
     editingBy.value = null
     try {
       const got = await setAgentEditing(pid, agentId, true)
-      // 还没回来人就切到另一个队友了：这一句说的是上一位的占用，不能画到现在这块面板上。
-      if (agent()?.id !== agentId) return
+      if (!stillHere()) return
       editingBy.value = got.editing?.handle ?? null
     } catch (e) {
-      if (agent()?.id !== agentId) return
+      if (!stillHere()) return
       // 409 = 别人正拿着。名字从打开时那一行读，并如实说一声 —— 面板这一轮只读。
       editingBlocked.value = true
       editingBy.value = agent()?.editing ?? null
@@ -219,6 +230,7 @@ export function useAgentSkills(
   /** 放掉占用（关掉面板时）。放不掉也不打扰人：租约自己会过期。 */
   async function releaseAgent(agentId: string) {
     const pid = projectId()
+    session += 1
     editingBlocked.value = false
     editingBy.value = null
     if (!pid) return
@@ -232,10 +244,16 @@ export function useAgentSkills(
   /** 从网上取一份技能：按 agentskills.io 规范检验后直接安装，并装备给当前队友。 */
   async function fetchWebSkill(url: string, kind: 'skill' | 'plugin' = 'skill') {
     const device = deviceId.value
-    if (!device || scanning.value) return
+    const pid = projectId()
+    const subject = agent()
+    if (!device || !pid || !subject || scanning.value) return
+    // 装到机器上要等一阵：装完人已经换场了，就不能把它装备给现在面板上的那一位。技能已经
+    // 落在机器上，下次打开面板会在池子里看到。
+    const stillHere = boundTo(pid, subject.id)
     scanning.value = true
     try {
-      const scan = await fetchMachineSkill(device, url, projectId(), kind)
+      const scan = await fetchMachineSkill(device, url, pid, kind)
+      if (!stillHere()) return
       if (scan.landed) {
         machineSkills.value = scan.skills
         machineProblems.value = scan.problems
