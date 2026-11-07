@@ -12,6 +12,7 @@ import { setLocale } from '@/i18n'
 
 const state: OwnAgentsSettings = {
   can_manage: true,
+  standard_sandbox_available: false,
   agents: [],
   my_connections: [
     {
@@ -74,7 +75,10 @@ function mount(canManage = true) {
 }
 async function choose(index: number, name: string) {
   await fireEvent.mouseDown(
-    screen.getByLabelText(['Model connection', 'Model', 'Execution device'][index]!, { exact: true, selector: 'input' })
+    screen.getByLabelText(['Model connection', 'Model', 'Execution environment'][index]!, {
+      exact: true,
+      selector: 'input',
+    })
   )
   await fireEvent.click(await screen.findByRole('option', { name }))
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
@@ -101,6 +105,44 @@ it('replaces the selected model when switching to a connection that cannot use i
   await choose(0, 'Research API')
   await fireEvent.click(screen.getByRole('button', { name: 'Add AI teammate' }))
   expect(view.emitted().add).toEqual([['service', 'research-model', 'laptop']])
+})
+
+it('creates a teammate in the platform sandbox without any team device', async () => {
+  const view = render(TeamAgentPicker, {
+    props: { state: { ...state, devices: [], standard_sandbox_available: true }, error: '', saving: false },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await choose(0, 'Research API')
+  const add = screen.getByRole('button', { name: 'Add AI teammate' }) as HTMLButtonElement
+  expect(add.disabled).toBe(false)
+  await fireEvent.click(add)
+  expect(view.emitted().add).toEqual([['service', 'research-model', null]])
+})
+
+it('can choose a team device instead of the default platform sandbox', async () => {
+  const view = render(TeamAgentPicker, {
+    props: { state: { ...state, standard_sandbox_available: true }, error: '', saving: false },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await choose(0, 'Research API')
+  await choose(2, 'Laptop')
+  await fireEvent.click(screen.getByRole('button', { name: 'Add AI teammate' }))
+  expect(view.emitted().add).toEqual([['service', 'research-model', 'laptop']])
+})
+
+it('explains unavailable platform sandboxes and cannot create without any environment', async () => {
+  const view = render(TeamAgentPicker, {
+    props: { state: { ...state, devices: [] }, error: '', saving: false },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await choose(0, 'Research API')
+  expect(screen.getByRole('status').textContent).toMatch(/platform.*does not.*sandbox/i)
+  const add = screen.getByRole('button', { name: 'Add AI teammate' }) as HTMLButtonElement
+  expect(add.disabled).toBe(true)
+  await fireEvent.click(add)
+  expect(view.emitted().add).toBeUndefined()
+  await fireEvent.mouseDown(screen.getByLabelText('Execution environment', { exact: true, selector: 'input' }))
+  expect(screen.queryByRole('option', { name: 'Platform standard sandbox' })).toBeNull()
 })
 
 it('does not offer creation to a reader without project configuration permission', () => {

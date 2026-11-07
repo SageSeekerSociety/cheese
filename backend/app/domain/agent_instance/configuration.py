@@ -9,7 +9,7 @@ the gateway, the harnesses or the supply policy.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 #: The thinking efforts a teammate can ask for, lowest first; the same words
 #: as the gateway's ``cheese_efforts`` (``gateway.EFFORTS``).
@@ -27,6 +27,9 @@ class AgentConfiguration(BaseModel):
     skills: list[str] = Field(default_factory=list)
     model: str | None = None
     execution_device_id: str | None = Field(default=None, max_length=64)
+    # Explicit platform selection for new teammates; absent on older teammates,
+    # which continue to inherit their conversation's environment defaults.
+    execution_spec: Literal["standard"] | None = None
     # How hard the model thinks (`gateway.EFFORTS`). None leaves it to the
     # model. Kept when the model changes: a model that does not honour it runs
     # at its own default (`launch_env`), and the choice is back when one does.
@@ -36,3 +39,11 @@ class AgentConfiguration(BaseModel):
     # full; a lower share compacts sooner. Claude Code only lowers its
     # threshold with it, never raises it.
     compact_percent: int | None = Field(default=None, ge=50, le=90)
+
+    @model_validator(mode="after")
+    def execution_target_is_unambiguous(self):
+        if self.execution_device_id is not None and self.execution_spec is not None:
+            raise ValueError(
+                "execution_device_id and execution_spec are mutually exclusive"
+            )
+        return self

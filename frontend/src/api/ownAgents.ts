@@ -16,7 +16,7 @@ export function addOwnAgent(
   projectId: string,
   connectionId: string,
   model: string,
-  deviceId: string
+  deviceId: string | null
 ): Promise<OwnAgentsSettings> {
   return request<OwnAgentsSettings>(path(projectId), {
     method: 'POST',
