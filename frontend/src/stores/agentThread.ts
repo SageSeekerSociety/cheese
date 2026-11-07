@@ -332,12 +332,25 @@ export function createAssistant(opts: AssistantOptions = {}) {
     nextPage.value = data.next ?? null
   }
 
+  /** 第几次登录：退出登录、换了一个人时加一。往上读的那几次读回来时已经换过人，读到的是
+   *  上一个人的话题和消息，不再摆。 */
+  let signedIn = 0
+
+  /** 正在往上读的话题和它那一次读：连点、翻到顶和点按钮撞在一起时只读一次，
+   *  不然两次都从同一句往前读，同一页接上去两遍。 */
+  const readingEarlier = new Map<string, Promise<void>>()
+
+  /** 正在读的那一次往上翻：没读完再翻，等的还是这一次，同一个话题不会摆上去两遍。 */
+  let readingOlder: Promise<void> | null = null
+
   /** 接着读下一页更早的话题。 */
   async function morePage() {
     if (nextPage.value === null) return
+    const at = signedIn
     const data = await request<ConversationPage>(
       `/assistant/conversations?before=${encodeURIComponent(nextPage.value)}`
     )
+    if (at !== signedIn) return
     const known = new Set(conversations.value.map((c) => c.id))
     conversations.value = [...conversations.value, ...(data.conversations ?? []).filter((c) => !known.has(c.id))]
     nextPage.value = data.next ?? null
@@ -387,6 +400,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   /** 换了一个人（退出登录）：之前的对话一样不留。 */
   function reset() {
+    signedIn++
+    readingEarlier.clear()
+    readingOlder = null
     loaded.value = false
     conversations.value = []
     nextPage.value = null
@@ -431,17 +447,15 @@ export function createAssistant(opts: AssistantOptions = {}) {
     await listConversations().catch(() => undefined)
   }
 
-  /** 正在往上读的话题和它那一次读：连点、翻到顶和点按钮撞在一起时只读一次，
-   *  不然两次都从同一句往前读，同一页接上去两遍。 */
-  const readingEarlier = new Map<string, Promise<void>>()
-
   /** 一个话题（`null` 是当前这个）更早的那一页消息：读回来接在它最上面。 */
   function earlierMessages(id: string | null): Promise<void> {
     const conversation = id ?? current.value
     if (!conversation) return Promise.resolve()
     const running = readingEarlier.get(conversation)
     if (running) return running
-    const reading = readEarlier(id, conversation).finally(() => readingEarlier.delete(conversation))
+    const reading = readEarlier(id, conversation).finally(() => {
+      if (readingEarlier.get(conversation) === reading) readingEarlier.delete(conversation)
+    })
     readingEarlier.set(conversation, reading)
     return reading
   }
@@ -451,9 +465,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
     const shown = topic ? topic.messages : messages.value
     const first = shown.find((m) => typeof m.seq === 'number')?.seq
     if (first === undefined) return
+    const at = signedIn
     const data = await request<{ messages: ReadMessage[]; earlier?: boolean }>(
       `/assistant/conversations/${conversation}/messages?before=${first}`
     )
+    if (at !== signedIn) return
     const more = shownMessages(data)
     if (topic)
       earlier.value = earlier.value.map((t) =>
@@ -466,16 +482,15 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
   }
 
-  /** 正在读的那一次往上翻：没读完再翻，等的还是这一次，同一个话题不会摆上去两遍。 */
-  let readingOlder: Promise<void> | null = null
-
   /** 往上翻：最上面那个话题还有更早的消息，先读它的；读完了，再把还没摆出来的、最近的那个
    *  更早的话题读回来，摆在最上面。读过的那几页里没有了，就接着读下一页话题。 */
   function older(): Promise<void> {
-    readingOlder ??= readOlder().finally(() => {
-      readingOlder = null
+    if (readingOlder) return readingOlder
+    const reading = readOlder().finally(() => {
+      if (readingOlder === reading) readingOlder = null
     })
-    return readingOlder
+    readingOlder = reading
+    return reading
   }
 
   async function readOlder() {
@@ -485,13 +500,16 @@ export function createAssistant(opts: AssistantOptions = {}) {
       const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
       return conversations.value.find((c) => !shown.has(c.id))
     }
+    const at = signedIn
     let next = unshown()
     while (!next && nextPage.value !== null) {
       await morePage()
+      if (at !== signedIn) return
       next = unshown()
     }
     if (!next) return
     const data = await read(next.id)
+    if (at !== signedIn) return
     earlier.value = [
       {
         id: next.id,
