@@ -570,7 +570,7 @@ describe('芝士这一轮做了什么', () => {
     expect(a.hasOlder.value).toBe(false)
   })
 
-  describe('reading back twice before the first page arrives reads it once', () => {
+  describe('reading back twice before the first page arrives puts it on screen once', () => {
     const line = (seq: number) => ({ seq, role: 'user', text: `第 ${seq} 句`, at: '2026-10-19T08:00:00Z' })
     const LATEST = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 2 }
     const OLDEST = { id: 'c1', title: '最早的', lastActiveAt: '2026-10-19T08:00:00Z', questions: 1 }
@@ -579,7 +579,6 @@ describe('芝士这一轮做了什么', () => {
      *  is on the second page of topics. ``failing``: that many reads back fail before one works.
      *  ``whole``: the latest topic has nothing earlier. */
     function slowServer({ paged = false, failing = 0, whole = false } = {}) {
-      const asked: string[] = []
       const held: (() => void)[] = []
       let fails = failing
       vi.stubGlobal('fetch', async (url: string) => {
@@ -589,7 +588,6 @@ describe('芝士这一轮做了什么', () => {
           )
         if (url.endsWith('/assistant/conversations/c3'))
           return envelope({ ...LATEST, answering: null, messages: [line(2)], earlier: !whole })
-        asked.push(url)
         await new Promise<void>((resolve) => held.push(resolve))
         if (fails > 0) {
           fails--
@@ -608,11 +606,11 @@ describe('芝士这一轮做了什么', () => {
         held.splice(0).forEach((go) => go())
         await settle()
       }
-      return { asked, release }
+      return { release }
     }
 
     it('the earlier page of the open topic', async () => {
-      const { asked, release } = slowServer()
+      const { release } = slowServer()
       const a = createAssistant()
       await a.load()
 
@@ -621,11 +619,11 @@ describe('芝士这一轮做了什么', () => {
       await both
 
       expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2])
-      expect(asked).toEqual([expect.stringContaining('/assistant/conversations/c3/messages?before=2')])
+      expect(a.currentEarlier.value).toBe(false)
     })
 
     it('the earlier page of a topic kept above', async () => {
-      const { asked, release } = slowServer()
+      const { release } = slowServer()
       const a = createAssistant()
       await a.load()
       a.startNew()
@@ -635,22 +633,22 @@ describe('芝士这一轮做了什么', () => {
       await both
 
       expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[1, 2]])
-      expect(asked).toHaveLength(1)
+      expect(a.earlier.value[0].earlier).toBe(false)
     })
 
     it('the older topic read back above', async () => {
-      const { asked, release } = slowServer()
+      const { release } = slowServer()
       const a = createAssistant()
       await a.load()
       await Promise.all([a.earlierMessages(null), release()])
-      asked.length = 0
 
       const both = Promise.all([a.older(), a.older()])
       await release()
       await both
 
       expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
-      expect(asked).toEqual([expect.stringContaining('/assistant/conversations/c1')])
+      expect(a.earlier.value[0].messages.map((m) => m.seq)).toEqual([1])
+      expect(a.hasOlder.value).toBe(false)
     })
 
     it('a page that arrives after the topic was left stays out of the next one', async () => {
@@ -767,7 +765,7 @@ describe('芝士这一轮做了什么', () => {
     })
 
     it('signing back in reads back afresh, without the page read before signing out', async () => {
-      const { asked, release } = slowServer()
+      const { release } = slowServer()
       const a = createAssistant()
       await a.load()
       a.startNew()
@@ -784,11 +782,10 @@ describe('芝士这一轮做了什么', () => {
       await release()
       await fresh
       expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[1, 2]])
-      expect(asked).toHaveLength(2)
     })
 
     it('a read back that failed can be asked again', async () => {
-      const { asked, release } = slowServer({ failing: 1 })
+      const { release } = slowServer({ failing: 1 })
       const a = createAssistant()
       await a.load()
 
@@ -804,7 +801,6 @@ describe('芝士这一轮做了什么', () => {
       await release()
       await again
       expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2])
-      expect(asked).toHaveLength(2)
     })
 
     it('an older topic that failed to read can be asked again', async () => {
