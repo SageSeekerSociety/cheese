@@ -112,7 +112,10 @@ export function useAgentSkills(
         () => []
       ),
     ])
-    if (projectId() !== pid) return
+    // 这一趟读的是「打开时那一位」的池子：人已经换到另一个队友了，读回来的东西不能画到
+    // 现在这块面板上（技能跟着人走，池子里的机器和项目那两段也是按人挑的）。
+    const stillHere = () => projectId() === pid && agent()?.id === subject.id
+    if (!stillHere()) return
     deviceId.value = pickMyDevice(devices)?.device_id ?? null
 
     machineSkills.value = []
@@ -120,7 +123,9 @@ export function useAgentSkills(
     workspaceRoots.value = []
     if (deviceId.value) {
       try {
-        machineSkills.value = (await listMachineSkills(deviceId.value)).skills
+        const scanned = (await listMachineSkills(deviceId.value)).skills
+        if (!stillHere()) return
+        machineSkills.value = scanned
       } catch {
         // 不是自己的机器、或者后端那一半还没上线：机器那一段空着，别的照常。
       }
@@ -157,6 +162,8 @@ export function useAgentSkills(
     const before = [...carriedNames.value]
     carriedNames.value = next
     saving.value = true
+    // 这一笔写的是「发起时那一位」：人已经换到另一个队友了，回包和它的失败都不属于这一位。
+    const stillHere = () => projectId() === pid && agent()?.id === subject.id
     try {
       const updated = await updateProjectAgent(pid, subject.id, {
         configuration: { ...subject.configuration, skills: next },
@@ -166,9 +173,10 @@ export function useAgentSkills(
       })
       // 这一笔把 version 顶了一格，而面板下一次保存还要靠它：把新值交给父组件，
       // 否则父组件只更新了名单、留着旧 version，下一颗就白撞一次 409。
-      onSaved?.(subject.id, next, updated.version)
+      if (stillHere()) onSaved?.(subject.id, next, updated.version)
     } catch (e) {
-      if (projectId() === pid && agent()?.id === subject.id) carriedNames.value = before
+      if (!stillHere()) return
+      carriedNames.value = before
       if (e instanceof ApiError && e.status === 409) {
         onError(t('work.room.skills.stale'))
         // Re-read so the next attempt carries the version that won.
@@ -196,8 +204,11 @@ export function useAgentSkills(
     editingBy.value = null
     try {
       const got = await setAgentEditing(pid, agentId, true)
+      // 还没回来人就切到另一个队友了：这一句说的是上一位的占用，不能画到现在这块面板上。
+      if (agent()?.id !== agentId) return
       editingBy.value = got.editing?.handle ?? null
     } catch (e) {
+      if (agent()?.id !== agentId) return
       // 409 = 别人正拿着。名字从打开时那一行读，并如实说一声 —— 面板这一轮只读。
       editingBlocked.value = true
       editingBy.value = agent()?.editing ?? null

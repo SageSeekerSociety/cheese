@@ -1,6 +1,7 @@
 // 技能面板那点会算错的事：打开时从队友身上抄一份名单、把池子拼出来；加/减一颗之后
 // 落库的是**这个队友带的全部名字**（整份覆盖，不是只发这一颗）；落库失败要翻回去；
 // 超过上限要拦住；机器只认**我自己**的（在线的优先）。面板画成什么样这里不管。
+import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../api/machineSkills', () => ({
@@ -65,6 +66,21 @@ function skills(
     onSaved,
     onStale
   )
+}
+
+/** 面板开着的时候人换了一个队友：技能面板本身不重建，`agent()` 换了指向。 */
+function switchingSkills(carried = ['wolfram'], onSaved?: (id: string, s: string[], version: number) => void) {
+  const subject = ref(agent(carried))
+  const panel = useAgentSkills(
+    () => 'p1',
+    () => subject.value,
+    () => {},
+    onSaved
+  )
+  const switchTo = (id: string, skillsOf = ['wolfram']) => {
+    subject.value = { ...agent(skillsOf), id, handle: id, seat_handle: id, display_name: id }
+  }
+  return { panel, switchTo }
 }
 
 beforeEach(() => {
@@ -221,6 +237,72 @@ describe('队友技能面板', () => {
 
     expect(setAgentEditing).toHaveBeenCalledWith('p1', 'a1', false)
     expect(s.editingBlocked.value).toBe(false)
+  })
+
+  it('占用的回答回得比换人晚：不把上一位的名字画到这一位身上', async () => {
+    let releaseFirst: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseFirst = resolve))
+    vi.mocked(setAgentEditing)
+      .mockImplementationOnce(async () => {
+        await held
+        throw new ApiError(409, 'conflict')
+      })
+      .mockResolvedValue({ editing: null } as never)
+
+    const { panel, switchTo } = switchingSkills()
+    const holdingFirst = panel.holdAgent('a1')
+    switchTo('b2')
+    await panel.holdAgent('b2')
+    releaseFirst()
+    await holdingFirst
+
+    expect(panel.editingBlocked.value).toBe(false)
+    expect(panel.editingBy.value).toBeNull()
+  })
+
+  it('快速切换队友：上一位的池子回得晚，不盖到这一位的面板上', async () => {
+    let releaseFirst: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseFirst = resolve))
+    vi.mocked(listSkillCatalog)
+      .mockImplementationOnce(async () => {
+        await held
+        return { data: CATALOG, total: 2 } as never
+      })
+      .mockImplementation(async () => ({ data: [CATALOG[1]], total: 1 }) as never)
+
+    const { panel, switchTo } = switchingSkills(['wolfram'])
+    const openingFirst = panel.openSkills()
+    switchTo('b2', ['documents'])
+    await panel.openSkills()
+    const secondPool = panel.pool.value.map((p) => p.name)
+    expect(secondPool).not.toContain('wolfram')
+
+    releaseFirst()
+    await openingFirst
+
+    expect(panel.carried.value).toEqual(['documents'])
+    expect(panel.pool.value.map((p) => p.name)).toEqual(secondPool)
+  })
+
+  it('给上一位加技能的回包回得晚，不把上一位的名单写进这一位', async () => {
+    const saved = vi.fn()
+    let releaseFirst: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseFirst = resolve))
+    vi.mocked(updateProjectAgent).mockImplementationOnce(async () => {
+      await held
+      return { ...agent([]), version: 2 } as never
+    })
+
+    const { panel, switchTo } = switchingSkills(['wolfram'], saved)
+    await panel.openSkills()
+    const saving = panel.adoptSkill('documents')
+    switchTo('b2', ['pdf'])
+    await panel.openSkills()
+    releaseFirst()
+    await saving
+
+    expect(panel.carried.value).toEqual(['pdf'])
+    expect(saved).not.toHaveBeenCalled()
   })
 
   it('带了八颗再加一颗：没有上限，整份名单落库', async () => {
