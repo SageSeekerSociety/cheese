@@ -43,7 +43,7 @@ export function useAgentSkills(
   projectId: () => string | null,
   agent: () => ProjectAgent | null,
   onError: (message: string) => void,
-  onSaved?: (agentId: string, skills: string[], version: number) => void,
+  onSaved?: (agentId: string, skills: string[], version: number, current: boolean) => void,
   onStale?: () => void
 ) {
   const pool = ref<SkillItem[]>([])
@@ -183,9 +183,10 @@ export function useAgentSkills(
         expected_version: subject.version,
       })
       // 这一笔把 version 顶了一格，而下一次保存还要靠它：把新值连同是哪一位交给父组件，
-      // 否则下一颗就白撞一次 409。换了场也要交——落库是真的成功了，关掉再打开这一位时
-      // 版本号要接得上；父组件按队友 id 记，不会把面板拉回这一位。
-      if (projectId() === pid) onSaved?.(subject.id, next, updated.version)
+      // 否则下一颗就白撞一次 409。换了场也要交——落库是真的成功了，下次打开这一位时版本号
+      // 要接得上。current 说它还是不是现在这一场：不是的话父组件只记下，不改面板正用着的
+      // 版本——面板上的名单是新一场从名册读的旧名单，配上新版本会把这一笔悄悄盖掉。
+      if (projectId() === pid) onSaved?.(subject.id, next, updated.version, stillHere())
     } catch (e) {
       // 名单只在还是这一场时翻回去；没存上这件事照样要说：这一笔是人自己点的，关掉面板或
       // 换了队友不等于不想知道它失败了。

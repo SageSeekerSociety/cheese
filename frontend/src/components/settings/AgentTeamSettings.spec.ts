@@ -435,6 +435,37 @@ describe('技能面板的 409', () => {
     expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
   })
 
+  // 重开得比上一场的保存回来还早：面板上的名单是从名册读的旧名单。这时不能把那一笔的新
+  // 版本号塞给面板，否则下一颗带着新版本号和旧名单落库，刚存进去的那颗被悄悄盖掉；
+  // 宁可带旧版本撞一次 409、重读。
+  it('上一场的保存在重开同一位之后才回来：下一笔不拿新版本配旧名单', async () => {
+    skillsWorld([agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 })])
+    let releaseSave: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseSave = resolve))
+    updateProjectAgent
+      .mockImplementationOnce(async () => {
+        await held
+        return { version: 2 }
+      })
+      .mockResolvedValueOnce({ version: 3 })
+    mountPage()
+
+    await fireEvent.click((await skillButtons())[0])
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await closePanel()
+    await fireEvent.click((await skillButtons())[0])
+    releaseSave()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    fetchMachineSkill.mockResolvedValue(landed('images', '图'))
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
+    expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({
+      expected_version: 1,
+      configuration: expect.objectContaining({ skills: ['wolfram', 'images'] }),
+    })
+  })
+
   it('上一位的保存晚到时人已换到另一位：面板不被拉回上一位，下一笔写给现在这位', async () => {
     skillsWorld([
       agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 }),

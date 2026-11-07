@@ -104,12 +104,14 @@ const skills = useAgentSkills(
   () => props.projectId,
   () => skillTarget.value,
   (message) => toast.error(message),
-  (agentId, list, version) => {
+  (agentId, list, version, current) => {
     savedSkills.set(agentId, { skills: list, version })
-    // 面板已经换到别的队友了：只记下，不把面板拉回这一位。
-    if (skillTarget.value?.id !== agentId) return
+    // 面板已经换场（关掉、换了人或重新打开）：只记下，下次打开时接上。
+    if (!current || skillTarget.value?.id !== agentId) return
     const row = agents.value.find((a) => a.id === agentId)
-    if (row) skillTarget.value = withSaved(row)
+    // 面板正用着的就是这一笔存下的名单：版本跟着这一笔走，不拿名册里可能更新的那一版——
+    // 那一版里别人的改动面板上没有，配上它的版本号会把别人的改动悄悄盖掉。
+    if (row) skillTarget.value = { ...row, configuration: { ...row.configuration, skills: list }, version }
   },
   // 409：别人先写了。重读一遍，并把面板目标重指到新读回来的那一行 —— 名单
   // 刷新是整份换成新对象，skillTarget 不跟过去，下一次保存还带旧 version，只会再撞 409。

@@ -184,7 +184,7 @@ describe('队友技能面板', () => {
       configuration: expect.objectContaining({ skills: ['wolfram', 'documents'] }),
       expected_version: 1,
     })
-    expect(saved).toHaveBeenCalledWith('a1', ['wolfram', 'documents'], 1)
+    expect(saved).toHaveBeenCalledWith('a1', ['wolfram', 'documents'], 1, true)
   })
 
   it('落库失败就翻回去，并把原因说出去', async () => {
@@ -303,7 +303,7 @@ describe('队友技能面板', () => {
 
     expect(panel.carried.value).toEqual(['pdf'])
     expect(saved).toHaveBeenCalledTimes(1)
-    expect(saved).toHaveBeenCalledWith('a1', ['wolfram', 'documents'], 2)
+    expect(saved).toHaveBeenCalledWith('a1', ['wolfram', 'documents'], 2, false)
   })
 
   it('网上取技能装完时人已换到另一位：不把它装备给现在这一位', async () => {
