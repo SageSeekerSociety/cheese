@@ -26,7 +26,7 @@ def check_subject(subject: str) -> str:
     subject = subject.strip()
     if not subject:
         raise InvalidSubject(say("commitSubjectEmpty"))
-    if "\n" in subject:
+    if "\n" in subject or "\r" in subject:
         raise InvalidSubject(say("commitSubjectOneLine"))
     return subject
 
