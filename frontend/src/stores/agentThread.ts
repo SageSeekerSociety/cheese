@@ -431,13 +431,26 @@ export function createAssistant(opts: AssistantOptions = {}) {
     await listConversations().catch(() => undefined)
   }
 
+  /** 正在往上读的话题和它那一次读：连点、翻到顶和点按钮撞在一起时只读一次，
+   *  不然两次都从同一句往前读，同一页接上去两遍。 */
+  const readingEarlier = new Map<string, Promise<void>>()
+
   /** 一个话题（`null` 是当前这个）更早的那一页消息：读回来接在它最上面。 */
-  async function earlierMessages(id: string | null) {
-    const topic = id === null ? null : earlier.value.find((t) => t.id === id)
+  function earlierMessages(id: string | null): Promise<void> {
     const conversation = id ?? current.value
+    if (!conversation) return Promise.resolve()
+    const running = readingEarlier.get(conversation)
+    if (running) return running
+    const reading = readEarlier(id, conversation).finally(() => readingEarlier.delete(conversation))
+    readingEarlier.set(conversation, reading)
+    return reading
+  }
+
+  async function readEarlier(id: string | null, conversation: string) {
+    const topic = id === null ? null : earlier.value.find((t) => t.id === id)
     const shown = topic ? topic.messages : messages.value
     const first = shown.find((m) => typeof m.seq === 'number')?.seq
-    if (!conversation || first === undefined) return
+    if (first === undefined) return
     const data = await request<{ messages: ReadMessage[]; earlier?: boolean }>(
       `/assistant/conversations/${conversation}/messages?before=${first}`
     )
@@ -446,15 +459,26 @@ export function createAssistant(opts: AssistantOptions = {}) {
       earlier.value = earlier.value.map((t) =>
         t.id === id ? { ...t, messages: [...more, ...t.messages], earlier: data.earlier === true } : t
       )
-    else {
+    // 读的时候眼前还是这个话题才接上：换了话题（「新话题」、打开别的、退出登录），这一页不是它的。
+    else if (current.value === conversation) {
       messages.value = [...more, ...messages.value]
       currentEarlier.value = data.earlier === true
     }
   }
 
+  /** 正在读的那一次往上翻：没读完再翻，等的还是这一次，同一个话题不会摆上去两遍。 */
+  let readingOlder: Promise<void> | null = null
+
   /** 往上翻：最上面那个话题还有更早的消息，先读它的；读完了，再把还没摆出来的、最近的那个
    *  更早的话题读回来，摆在最上面。读过的那几页里没有了，就接着读下一页话题。 */
-  async function older() {
+  function older(): Promise<void> {
+    readingOlder ??= readOlder().finally(() => {
+      readingOlder = null
+    })
+    return readingOlder
+  }
+
+  async function readOlder() {
     const top = earlier.value[0]
     if (top ? top.earlier : currentEarlier.value) return earlierMessages(top ? top.id : null)
     const unshown = () => {
