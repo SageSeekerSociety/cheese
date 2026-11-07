@@ -358,8 +358,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const shownMessages = (data: { messages: ReadMessage[] }) =>
     data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
 
-  /** 第几次打开：读回来时已经又打开了一次（连点两下、点了别的又点回来、开了新话题），
-   *  这一次读到的不再摆。 */
+  /** 第几次打开：读回来时已经又打开了一次（连点两下、点了别的又点回来）、开了新话题或
+   *  退出了登录，这一次读到的不再摆。 */
   let opening = 0
 
   async function open(id: string) {
@@ -404,6 +404,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     currentEarlier.value = false
     notice.value = null
     creditRefused.value = false
+    // 退出时还在读的那次打开，读回来的是上一个人的对话，不再摆。
+    opening++
   }
 
   /** 「新话题」：之前说的留在上面，芝士从下一句话起不再读它们。话题等第一句话发出去才建。 */

@@ -753,6 +753,24 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
     expect(said(a)).toEqual([])
   })
 
+  it('signing out while a conversation is still being read leaves nothing of the last person on the panel', async () => {
+    const reply = deferred<object>()
+    const followed = serveTopics({
+      read: () => reply.promise,
+      answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+
+    const showing = a.show('c1')
+    a.reset()
+    reply.resolve({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+    await showing
+
+    expect(a.current.value).toBeNull()
+    expect(followed).toEqual([])
+    expect(said(a)).toEqual([])
+  })
+
   it('showing the conversation again once its answer is done reads what the server kept, once', async () => {
     let answering: string | null = 'q1'
     const kept = { role: 'assistant', text: '先会 gdb。', at: '2026-10-01T08:00:05Z' }
