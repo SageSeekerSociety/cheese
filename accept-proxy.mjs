@@ -14,10 +14,10 @@ const DEV = 'accept-demo-device'
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000))
 
 const DEFAULTS = () => ({
-  hold: { target: 'A', outcome: 'manual', delay: 0, once: true },
+  hold: { target: 'A', outcome: 'ok', delay: 0, once: true },
   save: { delay: 0, outcome: 'ok' },
   scan: { delay: 0, outcome: 'ok', onceOnly: true },
-  install: { delay: 0, outcome: 'manual' },
+  install: { delay: 0, outcome: 'ok' },
   catalogDropAfterFirst: false,
 })
 let cfg = DEFAULTS()
