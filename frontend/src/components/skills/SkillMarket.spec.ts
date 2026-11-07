@@ -4,7 +4,7 @@
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import SkillMarket from './SkillMarket.vue'
@@ -101,5 +101,21 @@ describe('技能市场（共享）', () => {
     const button = await screen.findByLabelText(t('work.room.skills.marketInstall'))
     expect((button as HTMLButtonElement).disabled).toBe(true)
     expect(button.getAttribute('title')).toBe(t('work.room.skills.noMachine'))
+  })
+
+  it('notes 的分隔符跟着界面语言走：英文界面不许出现全角标点', async () => {
+    // 后端下发的是拼好的英文句子（skill_market.py 的 notes），连法由前端按当前语言选。
+    // 这一条钉的正是出事那一层：notes 非空时才渲染的那个节点，2026-10-25 主干 e2e 报的
+    // 就是它 —— 写死的 '；' 让 /market 页在英文界面出现了全角分号。
+    const notes = ['skills: descriptions stopped early (GitHub rate limit)', 'mcp: timed out']
+    mount({ market: { ...MARKET, notes } })
+
+    expect(await screen.findByText(notes.join('；'))).toBeTruthy()
+
+    setLocale('en')
+    await waitFor(() => expect(screen.getByText(notes.join('; '))).toBeTruthy())
+
+    setLocale('zh-CN')
+    await waitFor(() => expect(screen.getByText(notes.join('；'))).toBeTruthy())
   })
 })
