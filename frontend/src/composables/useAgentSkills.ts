@@ -182,9 +182,10 @@ export function useAgentSkills(
         // this one a 409 instead of a silent overwrite of their change.
         expected_version: subject.version,
       })
-      // 这一笔把 version 顶了一格，而面板下一次保存还要靠它：把新值交给父组件，
-      // 否则父组件只更新了名单、留着旧 version，下一颗就白撞一次 409。
-      if (stillHere()) onSaved?.(subject.id, next, updated.version)
+      // 这一笔把 version 顶了一格，而下一次保存还要靠它：把新值连同是哪一位交给父组件，
+      // 否则下一颗就白撞一次 409。换了场也要交——落库是真的成功了，关掉再打开这一位时
+      // 版本号要接得上；父组件按队友 id 记，不会把面板拉回这一位。
+      if (projectId() === pid) onSaved?.(subject.id, next, updated.version)
     } catch (e) {
       // 名单只在还是这一场时翻回去；没存上这件事照样要说：这一笔是人自己点的，关掉面板或
       // 换了队友不等于不想知道它失败了。

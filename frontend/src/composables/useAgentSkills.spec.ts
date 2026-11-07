@@ -284,7 +284,7 @@ describe('队友技能面板', () => {
     expect(panel.pool.value.map((p) => p.name)).toEqual(secondPool)
   })
 
-  it('给上一位加技能的回包回得晚，不把上一位的名单写进这一位', async () => {
+  it('给上一位加技能的回包回得晚：不改这一位的名单，新版本按上一位的 id 交回', async () => {
     const saved = vi.fn()
     let releaseFirst: () => void = () => {}
     const held = new Promise<void>((resolve) => (releaseFirst = resolve))
@@ -302,7 +302,8 @@ describe('队友技能面板', () => {
     await saving
 
     expect(panel.carried.value).toEqual(['pdf'])
-    expect(saved).not.toHaveBeenCalled()
+    expect(saved).toHaveBeenCalledTimes(1)
+    expect(saved).toHaveBeenCalledWith('a1', ['wolfram', 'documents'], 2)
   })
 
   it('网上取技能装完时人已换到另一位：不把它装备给现在这一位', async () => {
