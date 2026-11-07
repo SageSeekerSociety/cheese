@@ -12,6 +12,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.environment import STANDARD
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance.configuration import AgentConfiguration
@@ -26,6 +27,7 @@ from app.domain.agent_instance.own.ownership import connection_of
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.machine.environments import offered_specs
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.topic_membership.services import TopicMemberService
@@ -38,7 +40,8 @@ class OwnAgentAdd(BaseModel):
     model_config = ConfigDict(extra="forbid")
     connection_id: str = Field(min_length=1, max_length=64)
     model: str = Field(min_length=1, max_length=128)
-    device_id: str = Field(min_length=1, max_length=64)
+    # Required: null explicitly selects the platform's standard sandbox.
+    device_id: str | None = Field(min_length=1, max_length=64)
 
 
 class OwnAgentMachineOut(BaseModel):
@@ -91,6 +94,7 @@ class OwnAgentsOut(BaseModel):
     agents: list[OwnAgentOut]
     my_connections: list[MyConnectionOut]
     devices: list[ExecutionDeviceOut]
+    standard_sandbox_available: bool
 
 
 @router.get("/{project_id}/own-agents", **typed_response(OwnAgentsOut))
@@ -110,6 +114,10 @@ async def get_own_agents(
     devices = await sql_device_service(db).list_devices_for_project(project_id)
     refusing = await sql_device_service(db).refusing_sandboxes(
         [d.device_id for d in devices]
+    )
+    standard_sandbox_available = any(
+        spec["spec"] == STANDARD
+        for spec in await offered_specs(db, project, project_devices=devices)
     )
     choices = await my_connections(
         db, project_id, actor.user_id, project.settings, device_hub.is_online
@@ -138,6 +146,7 @@ async def get_own_agents(
                 db, project_id, actor.user_id, device_hub.is_online, project.settings
             ),
             "my_connections": choices,
+            "standard_sandbox_available": standard_sandbox_available,
             "devices": [
                 {
                     "device_id": d.device_id,
@@ -173,11 +182,20 @@ async def add_own_agent(
             actor, project_id=project_id, permission=Permission.configure_agents
         )
     devices = sql_device_service(db)
-    device = await devices.get_hosted_device(body.device_id)
-    if device is None or not await devices.serves_project(body.device_id, project_id):
-        raise NotFoundError(say("deviceNotInProject"))
-    if body.device_id in await devices.refusing_sandboxes([body.device_id]):
-        raise ForbiddenError(say("environmentSpecNotOffered"))
+    if body.device_id is None:
+        standard_available = any(
+            spec["spec"] == STANDARD for spec in await offered_specs(db, project)
+        )
+        if not standard_available:
+            raise ForbiddenError(say("environmentSpecNotOffered"))
+    else:
+        device = await devices.get_hosted_device(body.device_id)
+        if device is None or not await devices.serves_project(
+            body.device_id, project_id
+        ):
+            raise NotFoundError(say("deviceNotInProject"))
+        if body.device_id in await devices.refusing_sandboxes([body.device_id]):
+            raise ForbiddenError(say("environmentSpecNotOffered"))
     if body.connection_id == "platform":
         await AgentInstanceService(db, models=model_choices).create(
             project_id=project_id,
@@ -185,7 +203,9 @@ async def add_own_agent(
             type_name=None,
             display_name=body.model,
             configuration=AgentConfiguration(
-                model=body.model, execution_device_id=body.device_id
+                model=body.model,
+                execution_device_id=body.device_id,
+                execution_spec=STANDARD if body.device_id is None else None,
             ),
         )
     else:

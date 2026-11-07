@@ -11,7 +11,7 @@ const emit = defineEmits<{ added: [] }>()
 const { state, error, saving, load, add } = useOwnAgents(() => props.projectId)
 const release = holdRevealGate()
 onMounted(() => load().finally(release))
-async function create(connectionId: string, model: string, deviceId: string) {
+async function create(connectionId: string, model: string, deviceId: string | null) {
   await add(connectionId, model, deviceId)
   if (!error.value) emit('added')
 }

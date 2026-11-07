@@ -7,6 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.own.ownership import connection_of, owned_instance
 from app.domain.device.models import DeviceClaudeLoginRow
@@ -243,6 +244,78 @@ def test_project_uses_team_connection_model_and_device_and_keeps_it_after_enroll
             ]
 
     assert client.portal.call(usable) == [True, True]
+
+
+def test_project_can_create_account_teammate_in_standard_sandbox_without_devices(
+    client, service, monkeypatch
+):
+    from tests.integration.conftest import approve_overseas, put_on_plan
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://cloud.test")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    project = new_project(client, "No devices", owner="alice")["id"]
+
+    async def team_id():
+        async with client.test_factory() as db:
+            team = (await db.get(Project, uuid.UUID(project))).team_id
+            await put_on_plan(db, team, "reserve")
+            await approve_overseas(db, team)
+            await db.commit()
+            return team
+
+    connection = keep(client, client.portal.call(team_id))
+    endpoint = f"/projects/{project}/own-agents"
+    listed = client.get(endpoint, headers=session_auth_headers("alice")).json()["data"]
+    assert listed["devices"] == []
+    assert listed["standard_sandbox_available"] is True
+
+    response = client.post(
+        endpoint,
+        headers=session_auth_headers("alice"),
+        json={"connection_id": connection, "model": "sonnet", "device_id": None},
+    )
+    assert response.status_code == 200, response.text
+
+    async def configs():
+        from app.domain.agent_instance.models import AgentInstance
+
+        async with client.test_factory() as db:
+            rows = (
+                await db.scalars(
+                    select(AgentInstance).where(
+                        AgentInstance.project_id == uuid.UUID(project)
+                    )
+                )
+            ).all()
+            return [row.configuration for row in rows]
+
+    standard = [
+        config
+        for config in client.portal.call(configs)
+        if config.get("execution_spec") == "standard"
+    ]
+    assert len(standard) == 1
+    assert all(
+        config.get("model") == "sonnet" and config.get("execution_device_id") is None
+        for config in standard
+    )
+
+
+def test_project_rejects_standard_sandbox_when_deployment_does_not_offer_it(
+    client, service, monkeypatch
+):
+    monkeypatch.setattr(settings, "microcloud_base_url", "")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "")
+    project, team, _, _ = setup_team(client)
+    connection = keep(client, team)
+
+    response = client.post(
+        f"/projects/{project}/own-agents",
+        headers=session_auth_headers("bob"),
+        json={"connection_id": connection, "model": "sonnet", "device_id": None},
+    )
+
+    assert response.status_code == 403, response.text
 
 
 def test_project_cannot_select_disallowed_model_or_another_teams_device(

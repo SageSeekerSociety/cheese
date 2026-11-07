@@ -29,9 +29,9 @@ async def add(
     harness: str,
     *,
     model: str,
-    device_id: str,
+    device_id: str | None,
 ) -> AgentInstance:
-    """Create one teammate with a team connection, model and execution device."""
+    """Create a teammate; a null device explicitly selects a platform sandbox."""
     login = next(
         (c for c in await logins(db, project.team_id) if c.id == connection_id), None
     )
@@ -47,7 +47,11 @@ async def add(
         project_id=project.id,
         handle=own_handle(owner_user_id),
         type_name=None,
-        configuration={"model": model, "execution_device_id": device_id},
+        configuration={
+            "model": model,
+            "execution_device_id": device_id,
+            "execution_spec": "standard" if device_id is None else None,
+        },
         display_name=own_name(nickname, label(login))
         if login.owner_user_id is not None
         else label(login),

@@ -7,10 +7,30 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{ state: OwnAgentsSettings | null; error: string; saving: boolean }>()
-const emit = defineEmits<{ add: [connectionId: string, model: string, deviceId: string] }>()
+const emit = defineEmits<{ add: [connectionId: string, model: string, deviceId: string | null] }>()
 const connectionId = ref('')
 const model = ref('')
-const deviceId = ref('')
+const environmentId = ref('')
+const environments = computed(() => [
+  ...(props.state?.standard_sandbox_available
+    ? [{ id: 'sandbox:standard', name: t('work.projectSettings.ownAgents.standardSandbox'), deviceId: null }]
+    : []),
+  ...(props.state?.devices ?? []).map((device) => ({
+    id: `device:${device.device_id}`,
+    name: device.name,
+    deviceId: device.device_id,
+  })),
+])
+const environment = computed(() => environments.value.find((item) => item.id === environmentId.value))
+watch(
+  environments,
+  (items) => {
+    if (!items.some((item) => item.id === environmentId.value)) {
+      environmentId.value = items.find((item) => item.deviceId === null)?.id ?? ''
+    }
+  },
+  { immediate: true }
+)
 const choices = computed(() =>
   (props.state?.my_connections ?? [])
     .filter((c) => props.state?.can_manage || c.owner_user_id != null)
@@ -30,8 +50,9 @@ const connection = computed(() => choices.value.find((c) => c.id === connectionI
 watch(connectionId, () => {
   model.value = connection.value?.allowed_models[0] ?? ''
 })
+const canCreate = computed(() => !!connection.value?.allowed_models.includes(model.value) && !!environment.value)
 function create() {
-  if (connectionId.value && model.value && deviceId.value) emit('add', connectionId.value, model.value, deviceId.value)
+  if (canCreate.value && environment.value) emit('add', connectionId.value, model.value, environment.value.deviceId)
 }
 </script>
 
@@ -55,14 +76,21 @@ function create() {
         :label="t('work.projectSettings.ownAgents.model')"
       />
       <v-select
-        v-model="deviceId"
+        v-model="environmentId"
         autocomplete="off"
-        :items="state.devices"
+        :items="environments"
         item-title="name"
-        item-value="device_id"
-        :label="t('work.projectSettings.ownAgents.device')"
+        item-value="id"
+        :label="t('work.projectSettings.ownAgents.environment')"
+        :no-data-text="t('work.projectSettings.ownAgents.noEnvironments')"
       />
-      <BaseButton kind="primary" :disabled="!connectionId || !model || !deviceId" :loading="saving" @click="create">{{
+      <p v-if="!state.standard_sandbox_available" class="t-body c-muted" role="status">
+        {{ t('work.projectSettings.ownAgents.sandboxUnavailable') }}
+      </p>
+      <p v-else-if="environment?.deviceId === null" class="t-body c-muted">
+        {{ t('work.projectSettings.ownAgents.sandboxAbout') }}
+      </p>
+      <BaseButton kind="primary" :disabled="!canCreate" :loading="saving" @click="create">{{
         t('work.projectSettings.ownAgents.add')
       }}</BaseButton>
     </div>
