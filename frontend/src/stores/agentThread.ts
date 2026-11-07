@@ -314,6 +314,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const creditRefused = ref(false)
   const loaded = ref(false)
   let editSeq = 0
+  /** 退出登录过几次。读到一半、问到一半、回答接到一半时退出了，之后读回来的都是上一个人的，
+   *  不再碰面板：不摆话题、不建话题、不问、不写字、不收尾。 */
+  let signedOut = 0
 
   const busy = computed(() => streaming.value !== null)
 
@@ -327,7 +330,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   /** 读最近的一页话题，替换掉之前读的。 */
   async function listConversations() {
+    const out = signedOut
     const data = await request<ConversationPage>('/assistant/conversations')
+    if (out !== signedOut) return
     conversations.value = data.conversations ?? []
     nextPage.value = data.next ?? null
   }
@@ -361,10 +366,6 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 第几次打开：读回来时已经又打开了一次（连点两下、点了别的又点回来）、开了新话题或
    *  退出了登录，这一次读到的不再摆。 */
   let opening = 0
-
-  /** 退出登录过几次。问到一半、回答接到一半时退出了，之后它们读到的都是上一个人的，
-   *  不再碰面板：不建话题、不问、不写字、不收尾。 */
-  let signedOut = 0
 
   async function open(id: string) {
     const turn = ++opening
@@ -898,6 +899,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   async function say(text: string, fallback: string, files: HandedFile[] = []) {
     const words = text.trim()
     const id = current.value
+    const out = signedOut
     if (!words && !files.length) return
     if (!id || !busy.value) return ask(words, fallback, files)
     const at = new Date().toISOString()
@@ -921,6 +923,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
         }),
       })
     } catch {
+      // 退出登录后才没发出去：那是上一个人的话，不替下一个人问。
+      if (out !== signedOut) return
       messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
       if (!busy.value) return ask(words, fallback, files)
       notice.value = fallback

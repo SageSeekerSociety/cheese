@@ -1002,6 +1002,68 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
     expect(said(a)).toEqual([])
   })
 
+  it("a topic list read before sign-out does not come back as the next person's topics", async () => {
+    const listed = deferred<Response>()
+    let lists = 0
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return ++lists === 1 ? envelope({ conversations: [] }) : listed.promise
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+
+    const hearing = a.heard('c1')
+    await vi.waitFor(() => expect(lists).toBe(2))
+    a.reset()
+    listed.resolve(envelope({ conversations: [CONVERSATION] }))
+    await hearing
+
+    expect(a.conversations.value).toEqual([])
+  })
+
+  it('words said mid-answer whose sending fails after sign-out are not asked for the next person', async () => {
+    const stream = held()
+    const said: string[] = []
+    const asked: string[] = []
+    let refuse!: () => void
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return envelope(C2, 201)
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/say')) {
+        said.push(JSON.parse(String(init?.body)).text)
+        return new Promise<Response>((r) => (refuse = () => r(new Response('gone', { status: 500 }))))
+      }
+      if (url.endsWith('/ask')) {
+        asked.push(JSON.parse(String(init?.body)).question)
+        return asked.length === 1 ? stream.response : placed(['answering', { id: 'q2' }], ['done', {}, '1-0'])
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    const asking = a.ask('把报告打分', '答不上来')
+    stream.send('answering', { id: 'q1' })
+    stream.send('delta', { text: '先读', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先读'))
+
+    const saying = a.say('只看第 3 份', '答不上来')
+    await vi.waitFor(() => expect(said).toEqual(['只看第 3 份']))
+    a.reset()
+    stream.send('done', { stopped: false }, '2-0')
+    stream.end()
+    await asking
+    refuse()
+    await saying
+
+    expect(asked).toEqual(['把报告打分'])
+  })
+
   it('a question asked while a conversation is still being read keeps the conversation it was asked in', async () => {
     const reply = deferred<object>()
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
