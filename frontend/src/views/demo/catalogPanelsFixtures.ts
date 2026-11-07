@@ -402,6 +402,7 @@ export function previewBundle(
     // 这一格是 markdown 演示：评论那一包用真的文档评论动作，这里还没有评论。
     comments: {
       target: computed(() => null),
+      writable: computed(() => false),
       author: 'demo',
       open: ref(false),
       toggle: noop,
