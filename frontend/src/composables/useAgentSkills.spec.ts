@@ -359,6 +359,37 @@ describe('队友技能面板', () => {
     expect(errors).toEqual(['网络断了'])
   })
 
+  it('上一位的机器扫描晚到并且失败：不把上一位的池子画到这一位身上', async () => {
+    let failFirst: () => void = () => {}
+    const held = new Promise<void>((resolve) => (failFirst = resolve))
+    vi.mocked(listSkillCatalog)
+      .mockResolvedValueOnce({ data: CATALOG, total: 2 } as never)
+      .mockResolvedValue({ data: [CATALOG[1]], total: 1 } as never)
+    let scanStarted: () => void = () => {}
+    const scanning = new Promise<void>((resolve) => (scanStarted = resolve))
+    vi.mocked(listMachineSkills)
+      .mockImplementationOnce(async () => {
+        scanStarted()
+        await held
+        throw new Error('机器离线')
+      })
+      .mockResolvedValue({ skills: [] } as never)
+
+    const { panel, switchTo } = switchingSkills(['wolfram'])
+    const openingFirst = panel.openSkills()
+    await scanning
+    await panel.releaseAgent('a1')
+    switchTo('b2', ['documents'])
+    await panel.openSkills()
+    const secondPool = panel.pool.value.map((p) => p.name)
+    expect(secondPool).toEqual(['documents'])
+
+    failFirst()
+    await openingFirst
+
+    expect(panel.pool.value.map((p) => p.name)).toEqual(secondPool)
+  })
+
   it('A→B→A：第一次打开 A 的池子回得晚，不盖住重新打开 A 之后的面板', async () => {
     let releaseFirst: () => void = () => {}
     const held = new Promise<void>((resolve) => (releaseFirst = resolve))

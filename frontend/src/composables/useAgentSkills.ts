@@ -134,11 +134,12 @@ export function useAgentSkills(
     if (deviceId.value) {
       try {
         const scanned = (await listMachineSkills(deviceId.value)).skills
-        if (!stillHere()) return
-        machineSkills.value = scanned
+        if (stillHere()) machineSkills.value = scanned
       } catch {
         // 不是自己的机器、或者后端那一半还没上线：机器那一段空着，别的照常。
       }
+      // 扫描成败都要等一个来回：回来时已经换场，下面拼出来的池子就不是现在这一位的。
+      if (!stillHere()) return
     }
     // 市场：和哪台机器无关，但「装」要有个落点，所以等 deviceId 定下来才拉。不 await
     // ——它慢起来不该把整块面板按住。
