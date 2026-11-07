@@ -5,7 +5,7 @@ import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const replace = vi.fn()
@@ -418,47 +418,83 @@ describe('inviting someone by name', () => {
     expect(vi.mocked(TeamsApi.createInvitation).mock.calls[0][1]).toMatchObject({ userId: 58 })
   })
 
-  it('a second submit while the first invitation is on its way sends nothing more', async () => {
+  // 一个替身后端：每个到它这里的邀请都落一行，和修前两次提交都越过「先查」时一样；
+  // 列表读回它记下的。断言看的是页面上列出了几条邀请，不数调用了几次。
+  function inviteServer() {
+    const sent: unknown[] = []
+    const held: Array<() => void> = []
+    let holding = false
+    let failing = false
+    vi.mocked(TeamsApi.createInvitation).mockImplementation((async (_team: number, body: { userId: number }) => {
+      if (failing) {
+        failing = false
+        throw new ApiError(503, 'Service Unavailable')
+      }
+      sent.push({
+        id: 100 + sent.length,
+        type: 'INVITATION',
+        status: 'PENDING',
+        message: null,
+        createdAt: '2026-11-07T08:00:00Z',
+        user: { id: body.userId, username: 'zhangheng', nickname: '张衡', avatarId: null },
+      })
+      if (holding) await new Promise<void>((release) => held.push(release))
+      return true
+    }) as never)
+    vi.mocked(TeamsApi.listTeamInvitations).mockImplementation((async () => ({ invitations: [...sent] })) as never)
+    return {
+      holdAnswers: () => (holding = true),
+      releaseAnswers: () => {
+        holding = false
+        held.splice(0).forEach((release) => release())
+      },
+      failNext: () => (failing = true),
+    }
+  }
+
+  const invitedRows = () => {
+    const section = document.getElementById('team-invitations')
+    return section ? within(section).queryAllByText('张衡') : []
+  }
+
+  it('submitting again while the first invitation is on its way leaves one invitation', async () => {
     lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
-    let answer!: (v: unknown) => void
-    vi.mocked(TeamsApi.createInvitation).mockImplementation(() => new Promise((r) => (answer = r)) as never)
+    const server = inviteServer()
+    server.holdAnswers()
     const field = await openInvite()
 
     await fireEvent.update(field, 'zhangheng')
     await screen.findByText('张衡', {}, { timeout: 2000 })
     const form = screen.getByRole('button', { name: '邀请' }).closest('form')!
     await fireEvent.submit(form)
-    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1))
-    // 第一次还没回话：回车再提交也不再发，按钮也按不动。
+    // 第一次已经发出、还没回话：再回车提交两次。
+    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalled())
     await fireEvent.submit(form)
     await fireEvent.submit(form)
-    expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1)
-    expect((screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement).disabled).toBe(true)
+    const lockedWhileOnItsWay = (screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement).disabled
 
-    answer(true)
-    await waitFor(() => expect(TeamsApi.listTeamInvitations).toHaveBeenCalledWith(7))
-    expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1)
+    server.releaseAnswers()
+    await waitFor(() => expect(invitedRows()).toHaveLength(1))
+    expect(lockedWhileOnItsWay).toBe(true)
   })
 
-  it('an invitation that failed can be sent again from the same dialog', async () => {
+  it('an invitation that failed can be sent again from the same dialog, and is then listed once', async () => {
     lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
-    vi.mocked(TeamsApi.createInvitation)
-      .mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
-      .mockResolvedValueOnce(true as never)
+    const server = inviteServer()
+    server.failNext()
     const field = await openInvite()
 
     await fireEvent.update(field, 'zhangheng')
     await screen.findByText('张衡', {}, { timeout: 2000 })
     await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
-    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1))
-    // 失败了：框还开着、查到的人还在，按钮又能按了。
+    // 失败了：框还开着、查到的人还在，按钮又能按了，列表里还没有这一位。
     const button = screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement
     await waitFor(() => expect(button.disabled).toBe(false))
     expect(screen.getByTestId('found-user')).toBeTruthy()
+    expect(invitedRows()).toHaveLength(0)
 
     await fireEvent.submit(button.closest('form')!)
-    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(2))
-    expect(vi.mocked(TeamsApi.createInvitation).mock.calls[1][1]).toMatchObject({ userId: 31 })
+    await waitFor(() => expect(invitedRows()).toHaveLength(1))
   })
 
   it('editing the name drops the person found for the old one at once', async () => {
