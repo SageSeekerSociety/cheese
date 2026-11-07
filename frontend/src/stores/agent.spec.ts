@@ -9,10 +9,15 @@ vi.mock('@/lib/libraryApi', () => ({ uploadLibraryFile: (...a: unknown[]) => kee
 // 登录换人不刷新页面：`who.handle` 换掉就是换了个人。`server` 是服务端此刻认的「谁名下是哪个
 // 团队」，测试里可以改它，模拟同一个人再登录时归属已经变了。
 const who = vi.hoisted(() => ({ handle: 'lin' }))
-const server = vi.hoisted(() => ({ teams: {} as Record<string, number>, down: false }))
+const server = vi.hoisted(() => ({
+  teams: {} as Record<string, number>,
+  down: false,
+  hold: null as Promise<void> | null,
+}))
 vi.mock('@/api/teams', () => ({
   TeamsApi: {
     detailByHandle: async (handle: string) => {
+      if (server.hold) await server.hold
       if (server.down) throw new Error('offline')
       return { team: { id: server.teams[handle] } }
     },
@@ -52,11 +57,12 @@ import {
 
 import { ApiError } from '@/api'
 
-/** 各团队资料库里实际放进了哪些文件：上传落在哪儿，就看这里。 */
-function libraries() {
+/** 各团队资料库里实际放进了哪些文件：上传落在哪儿，就看这里。`who` 记下传的那一刻是以谁的
+ *  身份传的（请求带的是那一刻登录着的人的凭据），给了 `as` 时写成「谁:文件名」。 */
+function libraries(opts: { as?: boolean } = {}) {
   const shelves: Record<number, string[]> = {}
   keep.mockImplementation(async ({ team }: { team: number }, file: File) => {
-    ;(shelves[team] ??= []).push(file.name)
+    ;(shelves[team] ??= []).push(opts.as ? `${who.handle}:${file.name}` : file.name)
     return { path: file.name, bytes: file.size }
   })
   return shelves
@@ -72,6 +78,7 @@ describe('交给芝士的文件', () => {
     keep.mockReset()
     server.teams = { lin: 9, zhao: 12 }
     server.down = false
+    server.hold = null
   })
 
   it('换了个账号（不刷新页面）再交文件，落在新账号自己名下的资料库', async () => {
@@ -114,6 +121,48 @@ describe('交给芝士的文件', () => {
 
     expect(shelves).toEqual({ 9: ['b.pdf'] })
     expect(agentFiles.value.map((f) => [f.path, f.uploading])).toEqual([['b.pdf', false]])
+  })
+
+  it('A 交的文件还在查资料库时退出、换 B 登录：A 的文件不会以 B 的身份传上去', async () => {
+    const shelves = libraries({ as: true })
+    let release!: () => void
+    server.hold = new Promise<void>((r) => (release = r))
+    const fromA = attachToAgent([pdf('a.pdf')])
+
+    resetAgent()
+    who.handle = 'zhao'
+    server.hold = null
+    await attachToAgent([pdf('b.pdf')])
+    release()
+    await fromA
+
+    expect(shelves).toEqual({ 12: ['zhao:b.pdf'] })
+    expect(agentFiles.value.map((f) => f.name)).toEqual(['b.pdf'])
+  })
+
+  it('A 一次交两份，第一份还在传时退出、换 B 登录：第二份不再传', async () => {
+    const shelves: Record<number, string[]> = {}
+    let finish!: () => void
+    keep.mockImplementationOnce(async ({ team }: { team: number }, file: File) => {
+      const by = who.handle
+      await new Promise<void>((r) => (finish = r))
+      ;(shelves[team] ??= []).push(`${by}:${file.name}`)
+      return { path: file.name, bytes: file.size }
+    })
+    keep.mockImplementation(async ({ team }: { team: number }, file: File) => {
+      ;(shelves[team] ??= []).push(`${who.handle}:${file.name}`)
+      return { path: file.name, bytes: file.size }
+    })
+    const fromA = attachToAgent([pdf('a1.pdf'), pdf('a2.pdf')])
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+
+    resetAgent()
+    who.handle = 'zhao'
+    finish()
+    await fromA
+
+    expect(shelves).toEqual({ 9: ['lin:a1.pdf'] })
+    expect(agentFiles.value).toEqual([])
   })
 
   it('传完的那一行带上它在资料库里的名字，不再是上传中', async () => {

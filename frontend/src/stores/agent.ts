@@ -260,24 +260,34 @@ function myLibrary(): Promise<number> {
   return cached
 }
 
-async function keep(file: File): Promise<Pick<AgentFile, 'id' | 'path'>> {
+/** 换一个人（退出登录）就加一：交到一半的文件看它变了，就知道交它的人已经不在了。 */
+let session = 0
+/** 交文件的人已经退出：这份不再传，不能拿下一个人的凭据替上一个人传。 */
+class SignedOut extends Error {}
+
+async function keep(file: File, mine: number): Promise<Pick<AgentFile, 'id' | 'path'>> {
   if (agentContext.value?.attachAsMaterials) {
     const done = await AttachmentsApi.upload({ type: 'file', file })
     return { id: done.id, path: null }
   }
-  const placed = await uploadLibraryFile({ team: await myLibrary() }, file)
+  const team = await myLibrary()
+  if (mine !== session) throw new SignedOut()
+  const placed = await uploadLibraryFile({ team }, file)
   return { id: null, path: placed.path }
 }
 
 export async function attachToAgent(picked: File[]) {
+  const mine = session
   for (const file of picked) {
+    if (mine !== session) return
     const row: AgentFile = { id: null, path: null, name: file.name, mime: file.type, uploading: true }
     agentFiles.value = [...agentFiles.value, row]
     try {
-      const done = await keep(file)
+      const done = await keep(file, mine)
       agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, ...done, uploading: false } : f))
     } catch (error) {
       agentFiles.value = agentFiles.value.filter((f) => f !== row)
+      if (error instanceof SignedOut || mine !== session) return
       // 服务端说了为什么（资料库满了、文件太大）就照它说。
       toast.error(error instanceof ApiError && error.message ? error.message : t('tasks.assistant.files.failed'))
     }
@@ -295,6 +305,7 @@ export function resetAgent() {
   agentSelection.value = null
   agentPicked.value = {}
   ownLibraries.clear()
+  session += 1
   agentThread.reset()
 }
 
