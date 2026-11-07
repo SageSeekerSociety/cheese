@@ -560,14 +560,15 @@ export function createAssistant(opts: AssistantOptions = {}) {
         creditRefused.value = isCreditRefusal(error.body)
       } else notice.value = fallback
     } finally {
-      if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
-      // 退出登录后，面板上正在写的是下一个人的那一轮，不替它收，也不替它重读话题。
+      // 退出登录后，面板上已经是下一个人的了：不替它删、不替它收，也不替它重读话题。
       if (out === signedOut) {
+        if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
         streaming.value = null
         await listConversations().catch(() => undefined)
       }
     }
-    await askUnheard(unheard, fallback)
+    // 上一个人插的话不替下一个人问。
+    if (out === signedOut) await askUnheard(unheard, fallback)
   }
 
   /** 插进那一轮的话，那一轮结束前芝士没听到：合成一个问题接着问。 */

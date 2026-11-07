@@ -962,6 +962,46 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
     ])
   })
 
+  it('words the last person said mid-answer are not asked for the next person after sign-out', async () => {
+    const listed = deferred<Response>()
+    let lists = 0
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return ++lists === 1
+          ? envelope({ conversations: [CONVERSATION] })
+          : lists === 2
+            ? listed.promise
+            : envelope({ conversations: [] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return envelope(C2, 201)
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/ask')) {
+        asked.push(JSON.parse(String(init?.body)).question)
+        if (asked.length > 1) return placed(['answering', { id: 'q2' }], ['done', {}, '1-0'])
+        return placed(
+          ['answering', { id: 'q1' }],
+          ['delta', { text: '先读一遍。', at: 0 }, '1-0'],
+          ['unheard', { said: [{ text: '只看第 3 份' }] }],
+          ['done', {}, '2-0']
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+
+    const asking = a.ask('把报告打分', '答不上来')
+    await vi.waitFor(() => expect(lists).toBe(2))
+    a.reset()
+    listed.resolve(envelope({ conversations: [] }))
+    await asking
+
+    expect(asked).toEqual(['把报告打分'])
+    expect(said(a)).toEqual([])
+  })
+
   it('a question asked while a conversation is still being read keeps the conversation it was asked in', async () => {
     const reply = deferred<object>()
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
