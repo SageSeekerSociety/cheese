@@ -804,6 +804,91 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
     expect(said(a)).toEqual([['user', '第二个人的问题']])
   })
 
+  it("the last person's answer ending after sign-out does not touch the next person's answer", async () => {
+    const first = held()
+    const second = held()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [C2] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+      if (url.endsWith('/assistant/conversations/c2') && method === 'GET')
+        return envelope({ ...C2, messages: [{ ...QUESTION, text: '第二个人的问题' }], answering: 'q2' })
+      if (url.includes('/assistant/conversations/c1/answers/q1')) return first.response
+      if (url.includes('/assistant/conversations/c2/answers/q2')) return second.response
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    first.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+    a.reset()
+    person = 'second'
+    await a.load()
+    second.send('tool', { name: 'cheese_read', call: 'r1', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.steps.value.map((s) => [s.call, s.state])).toEqual([['r1', 'run']]))
+
+    first.send('done', { stopped: false }, '2-0')
+    first.end()
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(a.steps.value.map((s) => [s.call, s.state])).toEqual([['r1', 'run']])
+    second.send('tool_done', { call: 'r1' }, '2-0')
+    second.send('delta', { text: '读完了。', at: 0 }, '3-0')
+    second.send('done', { stopped: false }, '4-0')
+    second.end()
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    expect(said(a)).toEqual([
+      ['user', '第二个人的问题'],
+      ['assistant', '读完了。'],
+    ])
+  })
+
+  it("the last person's question ending after sign-out leaves the next person's answer coming", async () => {
+    const first = held()
+    const second = held()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [C2] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/assistant/conversations/c2') && method === 'GET')
+        return envelope({ ...C2, messages: [{ ...QUESTION, text: '第二个人的问题' }], answering: 'q2' })
+      if (url.endsWith('/assistant/conversations/c1/ask')) return first.response
+      if (url.includes('/assistant/conversations/c2/answers/q2')) return second.response
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    const asking = a.ask('要先会什么？', '答不上来')
+    first.send('answering', { id: 'q1' })
+    first.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+    a.reset()
+    person = 'second'
+    await a.load()
+    second.send('delta', { text: '第二个人的', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('第二个人的'))
+
+    first.send('done', { stopped: false }, '2-0')
+    first.end()
+    await asking
+
+    expect(a.busy.value).toBe(true)
+    expect(a.streaming.value).toBe('第二个人的')
+    second.send('done', { stopped: false }, '2-0')
+    second.end()
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    expect(said(a)).toEqual([
+      ['user', '第二个人的问题'],
+      ['assistant', '第二个人的'],
+    ])
+  })
+
   it('a question asked while a conversation is still being read keeps the conversation it was asked in', async () => {
     const reply = deferred<object>()
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {

@@ -406,8 +406,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     creditRefused.value = false
     // 退出时还在读的那次打开、还在接的那个回答，都是上一个人的，不再摆。
     opening++
-    if (answering) answering.dropped = true
-    answering = null
+    if (following) following.dropped = true
+    following = null
     clearTurn()
   }
 
@@ -552,7 +552,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
       } else notice.value = fallback
     } finally {
       if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
-      streaming.value = null
+      // 退出登录后下一个人已经接上了自己的回答：那是它在写，不替它收。
+      if (!following) streaming.value = null
       await listConversations().catch(() => undefined)
     }
     await askUnheard(unheard, fallback)
@@ -722,9 +723,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
   }
 
-  /** 正在接的那个回答。退出登录时标成不要了：它之后再读到的字不写进面板。答完时的收尾照旧：
-   *  那时眼前已经不是它的话题，收尾什么也不写。 */
-  let answering: { dropped: boolean } | null = null
+  /** 正在接的那个回答。退出登录时标成不要了：它之后再读到的字、答完时的收尾都不碰面板。 */
+  let following: { dropped: boolean } | null = null
 
   /** 收起这一轮正在写的回答和它的步骤。 */
   function clearTurn() {
@@ -750,7 +750,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     question?: string
   ): Promise<Unheard[]> {
     const mine = { dropped: false }
-    answering = mine
+    following = mine
     streaming.value = ''
     tool.value = null
     queued.value = false
@@ -807,36 +807,39 @@ export function createAssistant(opts: AssistantOptions = {}) {
       failed = true
       notice.value = fallback
     } finally {
-      if (answering === mine) answering = null
-      settleSteps()
-      const did =
-        steps.value.length > 0 ||
-        edits.value.length > 0 ||
-        published.value.length > 0 ||
-        proposals.value.length > 0 ||
-        handed.value.length > 0 ||
-        rules.value.length > 0
-      if (current.value === conversation && ((answer && !failed && done) || stopped || did))
-        messages.value = [
-          ...messages.value,
-          {
-            role: 'assistant',
-            text: answer.trim(),
-            stopped,
-            at: new Date().toISOString(),
-            steps: steps.value,
-            edits: edits.value,
-            published: published.value,
-            proposals: proposals.value,
-            handed: handed.value,
-            rules: rules.value,
-            ...(subagents.value.length ? { subagents: subagents.value } : {}),
-            ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
-          },
-        ]
-      if (current.value === conversation) clearTurn()
+      if (following === mine) following = null
+      // 退出登录后才答完的：面板上已经是下一个人的这一轮，不去动它。
+      if (!mine.dropped) {
+        settleSteps()
+        const did =
+          steps.value.length > 0 ||
+          edits.value.length > 0 ||
+          published.value.length > 0 ||
+          proposals.value.length > 0 ||
+          handed.value.length > 0 ||
+          rules.value.length > 0
+        if (current.value === conversation && ((answer && !failed && done) || stopped || did))
+          messages.value = [
+            ...messages.value,
+            {
+              role: 'assistant',
+              text: answer.trim(),
+              stopped,
+              at: new Date().toISOString(),
+              steps: steps.value,
+              edits: edits.value,
+              published: published.value,
+              proposals: proposals.value,
+              handed: handed.value,
+              rules: rules.value,
+              ...(subagents.value.length ? { subagents: subagents.value } : {}),
+              ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
+            },
+          ]
+        if (current.value === conversation) clearTurn()
+      }
     }
-    return stopped || current.value !== conversation ? [] : unheard
+    return mine.dropped || stopped || current.value !== conversation ? [] : unheard
   }
 
   /** 一件起草的事现在怎样了（人发出了，或说不用了）：面板照着改那张卡。 */
