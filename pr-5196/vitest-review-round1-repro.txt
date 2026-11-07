@@ -1,0 +1,51 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+ ❯ src/stores/agentThread.spec.ts (30 tests | 2 failed | 28 skipped) 1756ms
+   ❯ 打开正在答的那段对话：一个回答只留一遍 (9)
+     × signing out while an opened answer is still coming leaves nothing of it, and the next person opens their own 1137ms
+     × a question asked while a conversation is still being read keeps the conversation it was asked in 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > signing out while an opened answer is still coming leaves nothing of it, and the next person opens their own
+AssertionError: expected '先会 gdb。' to be null
+
+- Expected:
+null
+
++ Received:
+"先会 gdb。"
+
+ ❯ src/stores/agentThread.spec.ts:798:54
+    796|     stream.send('done', { stopped: false }, '3-0')
+    797|     stream.end()
+    798|     await vi.waitFor(() => expect(a.streaming.value).toBeNull())
+       |                                                      ^
+    799|
+    800|     expect(a.busy.value).toBe(false)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > a question asked while a conversation is still being read keeps the conversation it was asked in
+AssertionError: expected 'c1' to be 'c2' // Object.is equality
+
+Expected: "c2"
+Received: "c1"
+
+ ❯ src/stores/agentThread.spec.ts:826:29
+    824|     await showing
+    825|
+    826|     expect(a.current.value).toBe('c2')
+       |                             ^
+    827|     expect(said(a)).toEqual([
+    828|       ['user', '新的问题'],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 28 skipped (30)
+   Start at  15:53:05
+   Duration  4.36s (tests 42%, transform 34%, import 9%, environment 9%, setup 5%)
+

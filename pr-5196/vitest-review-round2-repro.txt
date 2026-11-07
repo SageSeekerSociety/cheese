@@ -1,0 +1,39 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+ ❯ src/stores/agentThread.spec.ts (31 tests | 1 failed | 30 skipped) 868ms
+   ❯ 打开正在答的那段对话：一个回答只留一遍 (10)
+     × the last person's answer ending after sign-out does not touch the next person's answer 230ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > the last person's answer ending after sign-out does not touch the next person's answer
+AssertionError: expected [ [ 'r1', 'done' ] ] to deeply equal [ [ 'r1', 'run' ] ]
+
+- Expected
++ Received
+
+  [
+    [
+      "r1",
+-     "run",
++     "done",
+    ],
+  ]
+
+ ❯ src/stores/agentThread.spec.ts:837:57
+    835|     await new Promise((r) => setTimeout(r, 50))
+    836|
+    837|     expect(a.steps.value.map((s) => [s.call, s.state])).toEqual([['r1'…
+       |                                                         ^
+    838|     second.send('tool_done', { call: 'r1' }, '2-0')
+    839|     second.send('delta', { text: '读完了。', at: 0 }, '3-0')
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 30 skipped (31)
+   Start at  16:02:37
+   Duration  3.45s (transform 43%, tests 27%, import 13%, environment 11%, setup 6%)
+

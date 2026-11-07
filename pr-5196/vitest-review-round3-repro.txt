@@ -1,0 +1,56 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+ ❯ src/stores/agentThread.spec.ts (34 tests | 2 failed | 32 skipped) 702ms
+   ❯ 打开正在答的那段对话：一个回答只留一遍 (13)
+     × signing out while a question is still creating its conversation asks nothing and keeps nothing 72ms
+     × the last person's question ending while the next person's question is being set up leaves it asking 55ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > signing out while a question is still creating its conversation asks nothing and keeps nothing
+AssertionError: expected [ Array(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "/api/assistant/conversations/c1/ask",
++ ]
+
+ ❯ src/stores/agentThread.spec.ts:914:19
+    912|     await asking
+    913|
+    914|     expect(asked).toEqual([])
+       |                   ^
+    915|     expect(a.current.value).toBeNull()
+    916|     expect(a.conversations.value).toEqual([])
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > the last person's question ending while the next person's question is being set up leaves it asking
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/stores/agentThread.spec.ts:956:26
+    954|     await firstAsking
+    955|
+    956|     expect(a.busy.value).toBe(true)
+       |                          ^
+    957|     created.resolve(envelope(C2, 201))
+    958|     await secondAsking
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 32 skipped (34)
+   Start at  16:11:46
+   Duration  3.30s (transform 45%, tests 23%, import 14%, environment 11%, setup 7%)
+

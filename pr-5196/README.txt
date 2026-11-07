@@ -1,6 +1,6 @@
-PR #5196 evidence (not for merge). Taken 2026-11-07 ~15:49 UTC.
+PR #5196 evidence (not for merge). Taken 2026-11-07 ~16:27 UTC.
 before-*.png : local vite serving base 043455b5d (frontend/), app at http://127.0.0.1:5311
-after-*.png  : local vite serving PR head 6244ba12d (frontend/), app at http://127.0.0.1:5312
+after-*.png  : local vite serving PR head 7241ff47f (frontend/), app at http://127.0.0.1:5312
 Both: real app, every /api request proxied to production https://okcheese.com/api, dev account login.
 Controllable stand-in (in-page fetch wrapper, see repro-playwright.cjs): /api/assistant/conversations*
 and /api/assistant/routines only. Conversation c1 is answering q1; the answer stream sends its first part,
