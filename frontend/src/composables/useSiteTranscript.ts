@@ -13,7 +13,7 @@ import { getTranscript, SITE_PAGE_SIZE } from '../api'
 import { capAround, MAX_WINDOW, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
 import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
 import { isForbidden } from '../lib/loadFailure'
-import { cachedWindow, cursorOf, rememberWindow } from '../lib/siteWindow'
+import { cachedWindow, cursorOf, forgetTopicWindows, rememberWindow } from '../lib/siteWindow'
 
 import { t } from '@/i18n'
 
@@ -135,6 +135,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   //: 裁掉的是离读者最远的那一头，预取补的那几页正是最近刚添上去的，别让它们当场被裁。
   const PREFETCH_CEILING = MAX_WINDOW - SITE_PAGE_SIZE
 
+  // 这一窗被撤下（401/403）过几次：往上翻的请求发出时记一下，回来时对不上就丢掉。
+  let droppedEpoch = 0
+
   // 一次只让一个「往上读」的请求在飞：读者翻到边上与后台预取可能同时要读上一页。
   let olderBusy = false
 
@@ -144,6 +147,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const tid = hooks.topicId()
     if (!tid || !olderCursor || olderBusy || !hasOlder.value) return false
     const author = hooks.viewing()
+    const epoch = droppedEpoch
     olderBusy = true
     if (!quiet) loadingOlder.value = true
     // 这一趟真的要发了，才把**这一方向**上一次的失败收掉：上面那几条守卫发不出去
@@ -160,6 +164,8 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // 读的人可能已经换了视角：这一页是上一位的，丢掉——合进来就是把别人的行塞进
       // 这个人的时间线。
       if (hooks.topicId() !== tid || hooks.viewing() !== author) return false
+      // 请求在路上时这段现场被拒了（`dropWindow`）：那一窗已经撤下，这一页不能再拼回去。
+      if (epoch !== droppedEpoch) return false
       hooks.noteAgents(page.data)
       hooks.noteStarts(page.turn_starts)
       // 量在行进去之前：一行的真实高度和它此刻报出来的可能不一样（长输出折起来、
@@ -427,12 +433,49 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // 首屏已经在屏上了，再在后台把上面两页补出来：读者往上翻时不必等。
       void prefetchOlder()
     } catch (e) {
+      // 401/403 说的是「这段现场不给你看」：手上那一窗（缓存先画的、或刚才还在看的）
+      // 一行也不能再留在屏上，表里存着的那几份也一起丢掉，下次打开不会再先画出来。
+      if (isForbidden(e)) {
+        dropWindow(tid)
+        fail(e)
+        return
+      }
+      // 缓存已经画出来了：这一格屏上有东西，这次没读成跟后台刷新失败是一回事——那几行
+      // 还是好的，只是旧了。报错页会把它整个挡住（弱网、离线时就再也看不成手上已有
+      // 的现场）。认下这一窗，之后的刷新从它的游标往后接着读，网回来就自己追上。
+      if (painted) {
+        if (hooks.topicId() === tid && hooks.viewing() === author) {
+          loadedOnce = true
+          loadedFor = author
+          loadedTopic = tid
+        }
+        return
+      }
       if (firstRead || switched || switchedTopic) {
         fail(e)
       }
     } finally {
       loading.value = false
     }
+  }
+
+  /** 这段对话不给看了：屏上那一窗清空，存着的各个视角一并丢掉。 */
+  function dropWindow(tid: string): void {
+    forgetTopicWindows(tid)
+    if (hooks.topicId() !== tid) return
+    droppedEpoch += 1
+    // 撤下之后这一格等于没读过：权限回来、下一次读成了，要像第一次打开那样整页收下
+    // 「上面还有没有、往回翻从哪儿接」——不然那一页的 has_more 被当成后台刷新丢掉，
+    // 读者翻不上去。
+    loadedOnce = false
+    loadedFor = null
+    loadedTopic = null
+    transcript.value = []
+    hasOlder.value = false
+    hasNewer.value = false
+    olderCursor = null
+    newestCursor = null
+    arrived.clear()
   }
 
   /** 把这一次读回来的、比手上新的几条接在末尾。按 id 去重：往前读的边界取的是
@@ -541,6 +584,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   function receive(block: Block): void {
     // 一行属于哪段对话：任务里的带着任务的 id，房间自己的没有。
     if (block.conversation_id !== hooks.topicId() || block.kind !== 'event') return
+    // 这段现场刚被拒了：推上来的行同样不该出现在屏上，也不能借它写回缓存。下一次读
+    // 成了（权限回来）才收掉这一条，那时整页读回来，这几行都在里面。
+    if (errorForbidden.value) return
     // Native activity is read from the journal projection, never from blocks.
     if (!('run_record' in block)) {
       void load()
