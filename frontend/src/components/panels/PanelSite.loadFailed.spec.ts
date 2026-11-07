@@ -26,7 +26,7 @@ vi.mock('../../composables/useSessionInspector', () => ({ useSessionInspector: (
 vi.mock('../SessionInspector.vue', () => ({ default: { template: '<div><slot name="actions" /></div>' } }))
 
 import { usePanelSite } from '../../composables/usePanelSite'
-import { cachedWindow, forgetWindows, rememberWindow } from '../../lib/siteWindow'
+import { cachedWindow, cursorOf, forgetWindows, rememberWindow } from '../../lib/siteWindow'
 
 import PanelSite from './PanelSite.vue'
 
@@ -108,64 +108,90 @@ function holdWindow() {
   )
 }
 
-describe('a 现场 already held from last time', () => {
-  // 弱网、离线时打开：缓存先画出来了，这一次读又没成。那几行还是好的，报错页不能
-  // 把它们挡住；之后的刷新从缓存的游标往后接着读，网回来就自己追上。
-  it('keeps the held window on screen when the read fails, and picks up from it once the network is back', async () => {
-    holdWindow()
-    api.getTranscript.mockRejectedValue(new Error('offline'))
-    const view = open()
+function newRow(): Block {
+  const parts = [{ kind: 'tool', name: 'Bash', input: { command: 'echo new-row' }, preview: 'echo new-row' }]
+  return {
+    ...heldRow(),
+    id: 'fresh',
+    created_at: '2026-11-07T10:00:05Z',
+    meta: { ...heldRow().meta, parts, cursor: 'c-fresh' },
+  } as Block
+}
 
-    await waitFor(() => expect(api.getTranscript).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(view.container.textContent).toContain('echo held-row'))
+/** 一个假的现场服务端：此刻是正常、断网还是拒绝，库里有哪几行。断言只看屏幕和缓存，
+ *  不看它被调了几次、带了什么参数。 */
+const server = { mode: 'ok' as 'ok' | 'offline' | 'forbidden', rows: [] as Block[] }
+
+function serve() {
+  api.getTranscript.mockImplementation(async (_topic: string, args: { after?: string } = {}) => {
+    if (server.mode === 'offline') throw new Error('offline')
+    if (server.mode === 'forbidden') throw Object.assign(new Error('forbidden'), { status: 403 })
+    const at = args.after ? server.rows.findIndex((b) => cursorOf(b) === args.after) : -1
+    const data = server.rows.slice(at + 1)
+    const newest = server.rows.length ? cursorOf(server.rows[server.rows.length - 1]) : null
+    return { data, has_more: false, newest_id: newest }
+  })
+}
+
+/** 让在路上的读都落地：假服务端是立刻答的，几拍宏任务就够。 */
+async function settled() {
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+describe('a 现场 already held from last time', () => {
+  beforeEach(() => {
+    server.mode = 'ok'
+    server.rows = [heldRow()]
+    serve()
+  })
+
+  // 弱网、离线时打开：缓存先画出来了，这一次读又没成。那几行还是好的，报错页不能
+  // 把它们挡住；网回来以后，新写的行接在后面，旧的那行还在。
+  it('keeps the held window on screen when the read fails, and catches up once the network is back', async () => {
+    holdWindow()
+    server.mode = 'offline'
+    const view = open()
+    await settled()
+
+    expect(view.container.textContent).toContain('echo held-row')
     expect(view.container.textContent).not.toContain('加载失败')
     expect(view.container.textContent).not.toContain('offline')
 
-    // 网回来了：下一次刷新只问缓存那一条之后的，新的一行接在后面，旧的那行还在。
-    const parts = [{ kind: 'tool', name: 'Bash', input: { command: 'echo new-row' }, preview: 'echo new-row' }]
-    const fresh = {
-      ...heldRow(),
-      id: 'fresh',
-      created_at: '2026-11-07T10:00:05Z',
-      meta: { ...heldRow().meta, parts, cursor: 'c-fresh' },
-    } as Block
-    api.getTranscript.mockReset()
-    api.getTranscript.mockResolvedValue({ data: [fresh], has_more: false, newest_id: 'c-fresh' })
+    server.mode = 'ok'
+    server.rows = [heldRow(), newRow()]
     tick.value++
 
     await waitFor(() => expect(view.container.textContent).toContain('echo new-row'))
-    expect(api.getTranscript).toHaveBeenCalledWith('room', expect.objectContaining({ after: 'c-held' }))
     expect(view.container.textContent).toContain('echo held-row')
+    expect(cachedWindow('room', null, 120)?.blocks.map((b) => b.id)).toEqual(['held', 'fresh'])
   })
 
   // 权限被拒是另一回事：这段现场不给看了，缓存那几行一行也不能留在屏上，下次打开
   // 也不能再先画出来。
   it('takes the held window down and says it is not yours to see when the read is refused', async () => {
     holdWindow()
-    api.getTranscript.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }))
+    server.mode = 'forbidden'
     const view = open()
 
-    await waitFor(() => expect(api.getTranscript).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(view.container.textContent).not.toContain('echo held-row'))
+    await waitFor(() => expect(view.getByText('你没有权限查看')).toBeTruthy())
+    expect(view.container.textContent).not.toContain('echo held-row')
     expect(view.queryByRole('button', { name: '重试' })).toBeNull()
-    expect(view.container.querySelector('.site-log')).toBeNull()
     expect(cachedWindow('room', null, 120)).toBeNull()
   })
 
   // 离线时留下来的那一窗，网回来后读到的是 403：权限在这期间被撤了，旧那几行同样要撤下。
   it('takes the held window down when a later refresh is refused', async () => {
     holdWindow()
-    api.getTranscript.mockRejectedValue(new Error('offline'))
+    server.mode = 'offline'
     const view = open()
-    await waitFor(() => expect(api.getTranscript).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(view.container.textContent).toContain('echo held-row'))
+    await settled()
+    expect(view.container.textContent).toContain('echo held-row')
 
-    api.getTranscript.mockReset()
-    api.getTranscript.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }))
+    server.mode = 'forbidden'
     tick.value++
 
-    await waitFor(() => expect(api.getTranscript).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(view.container.textContent).not.toContain('echo held-row'))
+    await waitFor(() => expect(view.getByText('你没有权限查看')).toBeTruthy())
+    expect(view.container.textContent).not.toContain('echo held-row')
     expect(view.queryByRole('button', { name: '重试' })).toBeNull()
     expect(cachedWindow('room', null, 120)).toBeNull()
   })
