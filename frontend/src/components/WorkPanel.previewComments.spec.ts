@@ -33,6 +33,7 @@ vi.mock('../api/routines', () => ({
 }))
 
 import * as api from '../api'
+
 import WorkPanel from './WorkPanel.vue'
 
 const topic = {

@@ -32,8 +32,8 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
-import { mayCommentIn } from '@/lib/projectPermissions'
 import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
+import { mayCommentIn } from '@/lib/projectPermissions'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
@@ -275,7 +275,10 @@ const canPin = computed(() => {
 // 预览里的文件评论能不能写（判据见 `mayCommentIn`）。
 const canComment = computed(() => {
   const topic = selectedTopic.value
-  return mayCommentIn(topic, store.projects.find((p) => p.id === topic?.project_id))
+  return mayCommentIn(
+    topic,
+    store.projects.find((p) => p.id === topic?.project_id)
+  )
 })
 
 // ---- 章节：这段对话（频道主线或任务）的目录 ----
