@@ -1,0 +1,30 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch();
+  const page = await b.newPage({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN' });
+  page.on('pageerror', (e) => console.log('pageerror', e.message));
+  await page.goto('http://127.0.0.1:3218/', { waitUntil: 'domcontentloaded' });
+  const rail = page.getByTestId('bookmark-rail');
+  await rail.waitFor({ timeout: 90000 });
+  await page.waitForTimeout(2500);
+  console.log('url', page.url());
+  await rail.hover(); await page.waitForTimeout(300);
+  await page.locator('.bm-rail__more').first().click();
+  await page.getByText('重命名', { exact: true }).first().click();
+  const input = page.locator('.bm-rail__input');
+  await input.fill(''); await input.pressSequentially('发布前检查：灰度到 20%', { delay: 20 });
+  const st0 = await (await page.request.get('http://127.0.0.1:3218/__preview/state')).json();
+  await page.click('#bmp-other');
+  for (let i = 0; i < 40; i++) { await page.waitForTimeout(100); }
+  const st1 = await (await page.request.get('http://127.0.0.1:3218/__preview/state')).json();
+  console.log('reads', st0.chapterReads, '->', st1.chapterReads, 'rows', st1.rows);
+  console.log('input still there:', await input.count(), await input.count() ? await input.inputValue() : '');
+  await page.screenshot({ path: '/tmp/bmpreview/p1-after-other-rename.png' });
+  if (await input.count()) await input.press('Enter');
+  await page.waitForTimeout(2000);
+  const st2 = await (await page.request.get('http://127.0.0.1:3218/__preview/state')).json();
+  console.log('after enter rows', st2.rows, 'saved', st2.savedByYou.map(x=>x.title), 'blocked', st2.blockedWrites, st2.lastBlocked);
+  await rail.hover(); await page.waitForTimeout(400);
+  await page.screenshot({ path: '/tmp/bmpreview/p2-after-enter.png' });
+  await b.close();
+})().catch((e) => { console.error(e); process.exit(1); });
