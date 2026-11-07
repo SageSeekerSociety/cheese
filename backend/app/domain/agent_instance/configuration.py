@@ -9,7 +9,7 @@ the gateway, the harnesses or the supply policy.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 #: The thinking efforts a teammate can ask for, lowest first; the same words
 #: as the gateway's ``cheese_efforts`` (``gateway.EFFORTS``).
@@ -39,11 +39,3 @@ class AgentConfiguration(BaseModel):
     # full; a lower share compacts sooner. Claude Code only lowers its
     # threshold with it, never raises it.
     compact_percent: int | None = Field(default=None, ge=50, le=90)
-
-    @model_validator(mode="after")
-    def execution_target_is_unambiguous(self):
-        if self.execution_device_id is not None and self.execution_spec is not None:
-            raise ValueError(
-                "execution_device_id and execution_spec are mutually exclusive"
-            )
-        return self
