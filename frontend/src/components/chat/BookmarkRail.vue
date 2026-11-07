@@ -90,19 +90,26 @@ function saveRename() {
   emit('rename', id, name)
   cancelRename()
 }
+// 名单会在后台重取，每次都是内容相同的新数组；只有正在改名或开着菜单的那一条
+// 不在名单里了（被取消、换到了别的对话），才收起编辑和菜单。见到新数组就收，
+// 会把人正在打的名字清掉。
 watch(
   () => props.chapters,
-  () => {
-    menuForId.value = null
-    if (editingId.value) cancelRename()
+  (rows) => {
+    const present = (id: string) => rows.some((row) => row.block.id === id)
+    if (menuForId.value && !present(menuForId.value)) menuForId.value = null
+    if (editingId.value && !present(editingId.value)) cancelRename()
   }
 )
 // 菜单只在能改的时候画。它被卸掉时没有人会再报「菜单关了」，留着那个 id 会让
-// 浮条再也收不起来：移开鼠标、点面板外面都被这两条判定挡回去。
+// 浮条再也收不起来：移开鼠标、点面板外面都被这两条判定挡回去。改名框同理：
+// 没资格改了就不该留着一个存不进去的输入框。
 watch(
   () => props.canChapter,
   (can) => {
-    if (!can) menuForId.value = null
+    if (can) return
+    menuForId.value = null
+    if (editingId.value) cancelRename()
   }
 )
 

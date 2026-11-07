@@ -115,8 +115,7 @@ describe('对话左上角的书签条', () => {
   })
 
   it('能改的身份没了时，菜单不会把浮条卡在展开状态', async () => {
-    // The same array both times: a new one would clear the menu through the
-    // chapters watch and hide what this case is about.
+    // The same array both times, so only the permission change is in play.
     const rows = [bookmark('b1', '登录')]
     const ui = await mountOpen(rows, true)
     await fireEvent.click(ui.getByTestId('menu-open'))
@@ -144,5 +143,81 @@ describe('对话左上角的书签条', () => {
     // The row itself is the way back to the message.
     await fireEvent.click(ui.getByRole('button', { name: '登录' }))
     expect(ui.emitted().jump).toEqual([['b1']])
+  })
+})
+
+describe('书签名单在后台重取时', () => {
+  const refs = { mentionNames: {}, topicTitles: {} }
+
+  async function startEditing(rows: ChapterRow[], canChapter = true) {
+    const ui = await mountOpen(rows, canChapter)
+    // Rows read in order (same timestamp, then id), so the first ⋯ belongs to b1.
+    await fireEvent.click(ui.getAllByRole('button', { name: '重命名' })[0]!)
+    const field = ui.getByRole('textbox', { name: '书签名字' })
+    await fireEvent.update(field, '没打完的名')
+    return ui
+  }
+
+  it('内容相同的新名单不清掉正在输入的名字，回车照常存下打的那一版', async () => {
+    const ui = await startEditing([bookmark('b1', '登录')])
+
+    // A background refetch hands over a fresh array with the same rows.
+    await ui.rerender({ chapters: [bookmark('b1', '登录')], canChapter: true, refs })
+
+    const field = ui.getByRole('textbox', { name: '书签名字' }) as HTMLInputElement
+    expect(field.value).toBe('没打完的名')
+    await fireEvent.keyDown(field, { key: 'Enter' })
+    expect(ui.emitted().rename).toEqual([['b1', '没打完的名']])
+  })
+
+  it('别的书签增减时，正在改的这一条照常留着', async () => {
+    const ui = await startEditing([bookmark('b1', '登录'), bookmark('b2', '发布')])
+
+    await ui.rerender({ chapters: [bookmark('b1', '登录'), bookmark('b3', '回滚')], canChapter: true, refs })
+
+    expect((ui.getByRole('textbox', { name: '书签名字' }) as HTMLInputElement).value).toBe('没打完的名')
+  })
+
+  it('正在改的那一条被取消了，就收起改名框，不往一个不存在的书签上存', async () => {
+    const ui = await startEditing([bookmark('b1', '登录'), bookmark('b2', '发布')])
+
+    await ui.rerender({ chapters: [bookmark('b2', '发布')], canChapter: true, refs })
+
+    expect(ui.queryByRole('textbox', { name: '书签名字' })).toBeNull()
+    expect(ui.emitted().rename).toBeUndefined()
+    await fireEvent.mouseLeave(ui.getByTestId('bookmark-rail'))
+    expect(ui.queryByRole('button', { name: '收起书签' }), '编辑态没留下，移开照常收起').toBeNull()
+  })
+
+  it('换到别的对话（名单里没有这一条）时收起改名框', async () => {
+    const ui = await startEditing([bookmark('b1', '登录')])
+
+    await ui.rerender({ chapters: [bookmark('x1', '另一段对话的书签')], canChapter: true, refs })
+
+    expect(ui.queryByRole('textbox', { name: '书签名字' })).toBeNull()
+    expect(ui.emitted().rename).toBeUndefined()
+  })
+
+  it('改名资格没了（归档、被移出）时收起改名框，不存', async () => {
+    const rows = [bookmark('b1', '登录')]
+    const ui = await startEditing(rows)
+
+    await ui.rerender({ chapters: rows, canChapter: false, refs })
+
+    expect(ui.queryByRole('textbox', { name: '书签名字' })).toBeNull()
+    expect(ui.emitted().rename).toBeUndefined()
+  })
+
+  it('开着的 ⋯ 菜单在名单重取后还开着；那一条没了才关', async () => {
+    const ui = await mountOpen([bookmark('b1', '登录')])
+    await fireEvent.click(ui.getByTestId('menu-open'))
+
+    await ui.rerender({ chapters: [bookmark('b1', '登录')], canChapter: true, refs })
+    await fireEvent.mouseLeave(ui.getByTestId('bookmark-rail'))
+    expect(ui.getByRole('button', { name: '收起书签' }), '菜单还开着，移开不收').toBeTruthy()
+
+    await ui.rerender({ chapters: [bookmark('b2', '发布')], canChapter: true, refs })
+    await fireEvent.mouseLeave(ui.getByTestId('bookmark-rail'))
+    expect(ui.queryByRole('button', { name: '收起书签' }), '菜单的那一条没了，移开照常收起').toBeNull()
   })
 })
