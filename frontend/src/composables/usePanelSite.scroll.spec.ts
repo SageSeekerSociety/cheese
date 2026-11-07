@@ -656,6 +656,58 @@ describe('a read that is slow or fails', () => {
   })
 })
 
+describe('a 现场 that was refused while open', () => {
+  it('pages up again once access comes back and the next read lands', async () => {
+    api.getTranscript.mockResolvedValueOnce(
+      page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'a', newest_id: 'b' })
+    )
+    api.getTranscript.mockRejectedValueOnce(new Error('预取这次没读成'))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    api.getTranscript.mockRejectedValueOnce(Object.assign(new Error('没有权限'), { status: 403 }))
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(site.transcript.value).toEqual([])
+    expect(site.hasOlder.value).toBe(false)
+
+    // 权限回来了：下一次读整页收下，上面还有更早的就照实能往上翻。后台预取那一页
+    // 这次不给（安静地失败，不动 hasOlder），看的只是整页读回来的那一份。
+    api.getTranscript.mockImplementation(async (_topic: string, args: { before?: string } = {}) => {
+      if (args.before) throw new Error('预取这次没读成')
+      return page([block('c', 3), block('d', 4)], { has_more: true, oldest_id: 'c', newest_id: 'd' })
+    })
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    expect(site.errorMsg.value).toBeNull()
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['c', 'd'])
+    expect(site.hasOlder.value, '服务端说上面还有，读者就能往上翻').toBe(true)
+    scope.stop()
+  })
+
+  it('keeps socket rows off the refused pane and out of the cache', async () => {
+    api.getTranscript.mockResolvedValueOnce(page([row('a', 1)], { newest_id: 'a' }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    api.getTranscript.mockRejectedValue(Object.assign(new Error('没有权限'), { status: 403 }))
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(site.errorMsg.value).toBe('没有权限')
+
+    site.receive(row('b', 2))
+    await settle()
+    expect(site.transcript.value, '推上来的行不进被拒的那一格').toEqual([])
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    expect(site.transcript.value).toEqual([])
+    expect(cachedWindow('room', null, 120)).toBeNull()
+    scope.stop()
+  })
+})
+
 describe('a topic with no records yet', () => {
   it('does not flash the skeleton on every background refresh', async () => {
     api.getTranscript.mockResolvedValue(page([]))

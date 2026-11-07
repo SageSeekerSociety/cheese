@@ -464,6 +464,12 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     forgetTopicWindows(tid)
     if (hooks.topicId() !== tid) return
     droppedEpoch += 1
+    // 撤下之后这一格等于没读过：权限回来、下一次读成了，要像第一次打开那样整页收下
+    // 「上面还有没有、往回翻从哪儿接」——不然那一页的 has_more 被当成后台刷新丢掉，
+    // 读者翻不上去。
+    loadedOnce = false
+    loadedFor = null
+    loadedTopic = null
     transcript.value = []
     hasOlder.value = false
     hasNewer.value = false
@@ -578,6 +584,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   function receive(block: Block): void {
     // 一行属于哪段对话：任务里的带着任务的 id，房间自己的没有。
     if (block.conversation_id !== hooks.topicId() || block.kind !== 'event') return
+    // 这段现场刚被拒了：推上来的行同样不该出现在屏上，也不能借它写回缓存。下一次读
+    // 成了（权限回来）才收掉这一条，那时整页读回来，这几行都在里面。
+    if (errorForbidden.value) return
     // Native activity is read from the journal projection, never from blocks.
     if (!('run_record' in block)) {
       void load()
