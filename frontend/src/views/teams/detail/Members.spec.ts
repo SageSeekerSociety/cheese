@@ -418,6 +418,49 @@ describe('inviting someone by name', () => {
     expect(vi.mocked(TeamsApi.createInvitation).mock.calls[0][1]).toMatchObject({ userId: 58 })
   })
 
+  it('a second submit while the first invitation is on its way sends nothing more', async () => {
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
+    let answer!: (v: unknown) => void
+    vi.mocked(TeamsApi.createInvitation).mockImplementation(() => new Promise((r) => (answer = r)) as never)
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhangheng')
+    await screen.findByText('张衡', {}, { timeout: 2000 })
+    const form = screen.getByRole('button', { name: '邀请' }).closest('form')!
+    await fireEvent.submit(form)
+    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1))
+    // 第一次还没回话：回车再提交也不再发，按钮也按不动。
+    await fireEvent.submit(form)
+    await fireEvent.submit(form)
+    expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1)
+    expect((screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement).disabled).toBe(true)
+
+    answer(true)
+    await waitFor(() => expect(TeamsApi.listTeamInvitations).toHaveBeenCalledWith(7))
+    expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1)
+  })
+
+  it('an invitation that failed can be sent again from the same dialog', async () => {
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
+    vi.mocked(TeamsApi.createInvitation)
+      .mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
+      .mockResolvedValueOnce(true as never)
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhangheng')
+    await screen.findByText('张衡', {}, { timeout: 2000 })
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1))
+    // 失败了：框还开着、查到的人还在，按钮又能按了。
+    const button = screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement
+    await waitFor(() => expect(button.disabled).toBe(false))
+    expect(screen.getByTestId('found-user')).toBeTruthy()
+
+    await fireEvent.submit(button.closest('form')!)
+    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(TeamsApi.createInvitation).mock.calls[1][1]).toMatchObject({ userId: 31 })
+  })
+
   it('editing the name drops the person found for the old one at once', async () => {
     lookupUser.mockResolvedValue({ id: 31, handle: 'zhang', name: '张', avatar_id: null })
     const field = await openInvite()

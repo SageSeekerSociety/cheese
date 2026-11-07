@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -133,6 +134,27 @@ class TeamMembershipService:
         if await self._app_repo.exists_pending_for_user_and_team(user_id, team_id):
             raise ConflictError(say("teamApplicationPending"))
 
+    async def _save_pending(
+        self, app: TeamMembershipApplication
+    ) -> TeamMembershipApplication | None:
+        """Insert a pending request or invitation; ``None`` if one beat it in.
+
+        The check in ``_validate_user_can_apply_or_be_invited`` reads before it
+        writes, so two submissions at once (a double click, two admins) both
+        pass it. ``uq_team_membership_application_pending`` lets only one of
+        them in; the other is told what the check would have said. Inside a
+        savepoint so the caller's transaction survives the refusal.
+        """
+        try:
+            async with self._session.begin_nested():
+                return await self._app_repo.save(app)
+        except IntegrityError:
+            if await self._app_repo.exists_pending_for_user_and_team(
+                app.user_id, app.team_id
+            ):
+                return None
+            raise
+
     async def _update_status(
         self,
         app: TeamMembershipApplication,
@@ -192,7 +214,9 @@ class TeamMembershipService:
             updated_at=now,
             deleted_at=None,
         )
-        saved = await self._app_repo.save(app)
+        saved = await self._save_pending(app)
+        if saved is None:
+            return "pending"
 
         # 推送是服务端替人渲染好的一句话，拿不到实体解析（`push.push_text`），
         # 所以这两个名字跟着 payload 走，和频道里那几种带 `authorName` 一样。
@@ -271,7 +295,9 @@ class TeamMembershipService:
             updated_at=now,
             deleted_at=None,
         )
-        saved = await self._app_repo.save(app)
+        saved = await self._save_pending(app)
+        if saved is None:
+            raise ConflictError(say("teamApplicationPending"))
 
         payload: dict[str, Any] = {
             "inviter": {"type": "user", "id": str(initiator_user_id)},
