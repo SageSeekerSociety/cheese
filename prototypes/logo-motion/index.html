@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>知是 logo 动效 · 四个方向</title>
+<meta name="description" content="知是（奶酪月亮 + 仰望的老鼠）logo 动效的四个方向：每一个都从 logo 自身的构件里长出来，不借用任何滤镜。">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0;padding:44px 22px 60px;background:var(--bg);color:var(--fg);
+    font:14px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;transition:background-color .32s ease,color .32s ease}
+  body[data-theme="light"]{--bg:#faf7f0;--fg:#3b3229;--dim:#8a8175;--line:#e2d8c6;--hair:#efe7d8;--card:#fffdf8}
+  body[data-theme="dark"]{--bg:#0e0d12;--fg:#ece6dc;--dim:#8b8598;--line:#302c3a;--hair:#1c1a24;--card:#16141c}
+  .wrap{max-width:1000px;margin:0 auto}
+  header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:8px}
+  h1{margin:0;font-size:19px;font-weight:600;letter-spacing:.01em}
+  h1 .en{margin-left:9px;font-size:12px;font-weight:400;color:var(--dim);letter-spacing:.07em}
+  .lead{margin:10px 0 0;max-width:62ch;color:var(--dim);font-size:13px}
+  .lead b{color:var(--fg);font-weight:600}
+  button{font:inherit;font-size:12.5px;color:var(--fg);background:transparent;border:1px solid var(--line);
+    border-radius:999px;padding:5px 14px;cursor:pointer;transition:border-color .2s}
+  button:hover{border-color:var(--dim)}
+  .grid{display:grid;gap:18px;margin-top:30px}
+  @media (min-width:720px){.grid{grid-template-columns:1fr 1fr}}
+  .card{display:flex;flex-direction:column;gap:14px;padding:18px 18px 16px;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;position:relative}
+  .card.pick{border-color:#FF9900;box-shadow:0 0 0 1px #FF9900 inset}
+  .badge{position:absolute;top:-1px;right:14px;transform:translateY(-50%);background:#FF9900;color:#231a10;
+    font-size:11px;font-weight:600;letter-spacing:.04em;border-radius:999px;padding:2px 10px}
+  .nib{display:flex;gap:16px;align-items:flex-start}
+  .screen{flex:0 0 164px;width:164px;height:164px;border-radius:10px;overflow:hidden;background:var(--hair)}
+  /* 缩略图：原型页加 #thumb 就只剩 logo 自己（跟着一起动） */
+  .screen iframe{display:block;width:100%;height:100%;border:0;pointer-events:none}
+  h2{margin:0;font-size:14px;font-weight:600}
+  h2 .en{margin-left:8px;font-size:11.5px;font-weight:400;color:var(--dim);letter-spacing:.06em}
+  h2 a{color:inherit;text-decoration:none;border-bottom:1px solid var(--line);padding-bottom:1px}
+  h2 a:hover{border-color:#FF9900}
+  .card p{margin:8px 0 0;font-size:12.5px;line-height:1.78;color:var(--dim)}
+  .card p b{color:var(--fg);font-weight:600}
+  .why{margin-top:12px;padding-top:11px;border-top:1px dashed var(--line);font-size:12px;color:var(--dim)}
+  .notes{margin-top:34px;display:grid;gap:18px}
+  @media (min-width:720px){.notes{grid-template-columns:1fr 1fr}}
+  .note{padding:16px 18px;border:1px solid var(--line);border-radius:12px}
+  .note h3{margin:0 0 8px;font-size:13px;font-weight:600}
+  .note ul{margin:0;padding-left:18px;color:var(--dim);font-size:12.5px}
+  .note li{margin:5px 0}
+  code{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--hair);border-radius:4px;padding:1px 5px;color:var(--fg)}
+  pre{margin:8px 0 0;padding:11px 13px;background:var(--hair);border-radius:8px;overflow:auto}
+  pre code{background:none;padding:0;font-size:11.5px;line-height:1.7}
+  .foot{margin-top:26px;font-size:11.5px;color:var(--dim);opacity:.8}
+</style>
+</head>
+<body data-theme="light">
+<div class="wrap">
+  <header>
+    <div>
+      <h1>知是 logo 动效<span class="en">logo motion</span></h1>
+      <p class="lead">四个方向，每一个都<b>只动 logo 自己的构件</b>——那八个洞、那段橙到黄的渐变、胡须、老鼠的轮廓。没有滤镜、没有粒子、没有一直在动的背景：镜头拉远也只是一个 logo 在活着。<br>每个方向都能单独打开、单独改：进场（加载时一次，约 2 秒）＋ 待机（进场之后不落地的循环）＋ 悬停（胡须一颤）＋ 点击（各自的一个小动作）。背景可切浅色 <code>#faf7f0</code> / 深色 <code>#0e0d12</code>，尊重 <code>prefers-reduced-motion</code>（直接给最终画面，不动），标签页隐藏时待机时钟停走。</p>
+    </div>
+    <button id="theme">深色背景</button>
+  </header>
+
+  <div class="grid">
+    <article class="card pick">
+      <span class="badge">推荐</span>
+      <div class="nib">
+        <div class="screen"><iframe src="01-nibble.html#thumb" scrolling="no" title="01 咬痕 预览" loading="lazy"></iframe></div>
+        <div>
+          <h2><a href="01-nibble.html">01 · 咬痕</a><span class="en">nibble</span></h2>
+          <p>月亮上那八个洞不是天生的，是这只老鼠啃出来的。进场时奶酪是完整的一块，洞从离鼻尖最近的地方开始，一口一口向外扩散——每个洞都从靠近老鼠的一侧先破开，像被咬掉一口；最后胡须从鼻尖扫开。<br>进场之后它还在啃：一条很轻的波纹按啃食的顺序在八个洞上走过去，一圈五秒多。</p>
+        </div>
+      </div>
+      <p class="why">选它的理由：八个洞和那只老鼠是 logo 里最贵的东西（一眼就能认出来），这个方向只用了这两件，别的什么都不加。洞是"被啃掉的"这件事把鼠标与奶酪的关系说清楚了——老鼠在 logo 的左下角，洞就从离它最近的地方开始被吃掉。待机的波纹幅度只有洞半径的 9%，是"还在呼吸"而不是"在闪"。</p>
+    </article>
+
+    <article class="card">
+      <div class="nib">
+        <div class="screen"><iframe src="02-phase.html#thumb" scrolling="no" title="02 月相 预览" loading="lazy"></iframe></div>
+        <div>
+          <h2><a href="02-phase.html">02 · 月相</a><span class="en">phase</span></h2>
+          <p>它本来就是月亮。挡着它的那块影子不是随便一个圆，就是月亮自己的轮廓（连老鼠、耳朵、尾巴一起），所以影子滑开一点，露出来的就是月亮自己的形状。影子退向右上，月亮一寸寸圆起来，圆到老鼠那圈轮廓包住它，才发现这只老鼠不是站在月亮前面，是月亮自己让出来的一块空缺。<br>进场之后影子没走远，它一进一退地呼吸，月牙在老鼠那一角轻轻来回。</p>
+        </div>
+      </div>
+      <p class="why">代价：影子是整块剪影在平移，动的是"月亮被遮住多少"，所以它在小尺寸下最不显眼——更像一张会呼吸的静图。想强调"月亮"这层意象时用它。</p>
+    </article>
+
+    <article class="card">
+      <div class="nib">
+        <div class="screen"><iframe src="03-warmup.html#thumb" scrolling="no" title="03 回暖 预览" loading="lazy"></iframe></div>
+        <div>
+          <h2><a href="03-warmup.html">03 · 回暖</a><span class="en">first light</span></h2>
+          <p>用的是 logo 自己的那段渐变：橙到黄，从上到下。开场它只是一块平的暖橙——轮廓、洞、胡须、耳朵、眼睛都在，但没有光；然后光从下缘升起来，像日落后贴地的那一层，慢慢把这块奶酪点亮成它本来的样子。没有任何颜色是外加的，从头到尾都在这条渐变上跑。<br>点亮之后光没有走：它退到下缘待着，一上一下地呼吸。</p>
+        </div>
+      </div>
+      <p class="why">代价：它动的是渐变的位置而不是形状，所以对"是不是这个 logo"的辨识没有帮助，只添了一层温度——适合放在已经认得出 logo 的页面上（比如首页的底图）。</p>
+    </article>
+
+    <article class="card">
+      <div class="nib">
+        <div class="screen"><iframe src="04-moonrise.html#thumb" scrolling="no" title="04 月升 预览" loading="lazy"></iframe></div>
+        <div>
+          <h2><a href="04-moonrise.html">04 · 月升</a><span class="en">moonrise</span></h2>
+          <p>给首页那张星图用的：地平线、准星、刻度都在原地不动，月亮从线后面升进准星里，升起时带一点点冲过头的浮劲，落定时胡须一颤、眼睛接住光。<br>升到位之后它没钉死：仍在准星里极慢地浮着，胡须跟着轻轻扫。</p>
+        </div>
+      </div>
+      <p class="why">这是四个方向里唯一依赖场景的一个——它只在有地平线的首页成立，单独的 logo 上没法用。留着给首页，不要当通用 logo 动效。</p>
+    </article>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <h3>推荐方向怎么用（01 咬痕）</h3>
+      <p style="margin:0;font-size:12.5px;color:var(--dim)">先把 <code>logo-motion.css</code> 里的两条规则并进全局样式，再把 <code>logo-motion.js</code> 放到任意位置（普通 <code>&lt;script&gt;</code>，无依赖），然后：</p>
+      <pre><code>&lt;script src="logo-motion.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  var m = logoMotion.attach(document.querySelector('#logo'));
+  m.play();          // 进场 + 之后一直待机循环
+&lt;/script&gt;</code></pre>
+      <p style="margin:8px 0 0;font-size:12.5px;color:var(--dim)">它自己从页面里那个 <code>logo.svg</code> 上量出八个洞的中心与半径、鼻尖的位置（不需要你再抄一遍坐标），量不到就安静地什么都不做。<code>prefers-reduced-motion</code> 下 <code>play()</code> 直接把 logo 摆成最终画面。要手动停：<code>m.still()</code>／<code>m.stop()</code>；要再咬一口：<code>m.bite()</code>。</p>
+      <p style="margin:8px 0 0;font-size:12.5px;color:var(--dim)"><code>logo-motion.test.html</code> 是同一个脚本直接挂在未改动的 <code>logo.svg</code> 上的演示页（也是验收页）。</p>
+    </div>
+    <div class="note">
+      <h3>四个方向都遵守的约束</h3>
+      <ul>
+        <li>单文件、内联 SVG，不用 WebGL、不用任何库、不联网。</li>
+        <li>浅色 / 深色两套背景都能站住，页面里可切。</li>
+        <li>停下来的那一帧与 <code>logo.svg</code> 逐像素一致（512×512 下 maxDiff = 0，浅色与深色、正常与 reduced-motion 都测过）。</li>
+        <li>待机幅度都很小：与静帧的平均像素差最大 2.3/255（03 回暖），最小的 0.15/255（02 月相）。</li>
+        <li>标签页隐藏时停走，回到前台接着走，不会"跳时间"。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>试过但没留下的做法</h3>
+      <ul>
+        <li><b>描边走过再填色</b>：轮廓本身已经把老鼠的空缺和边缘的三处咬痕都包含在里面了，再描一遍只是把同一条线画两次，没有新信息。</li>
+        <li><b>WebGL 着色器滤镜</b>（液态金属、热力图、长虹玻璃、水波）：动作与 logo 无关，是往上面盖一层效果，评审已经否掉。</li>
+        <li><b>一直移动的背景、粒子、绕转的奶酪碎</b>：都是外加的装饰，抢 logo 本身。</li>
+        <li><b>影子用一个圆滑过</b>（02 的早期版本）：圆盖不住月亮 + 老鼠 + 尾巴的非凸形状，0% 那一帧会漏出尾巴和边缘。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>文件</h3>
+      <ul>
+        <li><code>01-nibble.html</code> <code>02-phase.html</code> <code>03-warmup.html</code> <code>04-moonrise.html</code> — 四个方向，各自独立可打开。</li>
+        <li><code>logo-motion.js</code> <code>logo-motion.css</code> — 推荐方向的落地件。</li>
+        <li><code>logo-motion.test.html</code> — 落地件挂在原版 logo.svg 上的演示 / 验收页。</li>
+        <li>每个页面底部都有「重播」，右上角可切浅色 / 深色。</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="foot">全部动画只改 logo 自己的属性（洞的半径与中心、渐变的两端、胡须的旋转），关掉动画之后页面里剩下的就是原始的那一份 <code>logo.svg</code>。</p>
+</div>
+<script>
+  document.getElementById('theme').addEventListener('click', function () {
+    var b = document.body;
+    var dark = b.dataset.theme === 'dark';
+    b.dataset.theme = dark ? 'light' : 'dark';
+    this.textContent = dark ? '深色背景' : '浅色背景';
+    // 预览页自己也认 #dark：重设 src 让它跟着换背景（file:// 下跨文档改不了）
+    var n = Date.now();
+    Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
+      // 只改片段浏览器不会重新加载，所以带一个查询串把它逼一次
+      var base = f.getAttribute('src').split('#')[0].split('?')[0];
+      f.setAttribute('src', base + '?t=' + n + '#thumb' + (dark ? '' : ',dark'));
+    });
+  });
+</script>
+</body>
+</html>
