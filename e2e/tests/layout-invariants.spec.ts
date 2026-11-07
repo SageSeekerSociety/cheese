@@ -988,17 +988,34 @@ const ROUTE_READY_MS = 30_000;
 // 热路由：模块已经编译过，一次导航 + 一次渲染 + 一次接口回来的预算。
 const WARM_STEP_MS = 10_000;
 
-// 小队详情这一条要导航 4 次（下面 2 个窗口 × 2 个 tab），而两个 tab 是**两个各自懒加载
-// 的路由块**（`router/teams.ts`：`detail/TeamProjects.vue` / `Library.vue`），所以这条
-// 用例天生是「冷 2 次 + 热 4 次」。成员、设备这些是团队设置，开在设置浮层里，由下面
-// 「设置浮层」那一组量。
+// 小队详情这一条要导航 8 次（下面 2 个窗口 × 4 个 tab），而四个 tab 是**四个各自懒加载
+// 的路由块**（`router/teams.ts`：`detail/TeamProjects.vue` / `Members.vue` /
+// `Library.vue` / `Compute.vue`），所以这条用例天生是「冷 4 次 + 热 12 次」。
 // 两段的等待预算都写在这里：**整条用例的预算必须容得下它们之和**。不然后果和
 // `WorkPanelTabs.test.ts` 那次一模一样 —— 内层还没轮到说话，外层先把用例掐了，报出来
 // 只有一句「Test timeout of 60000ms exceeded」（playwright 那边是
 // `Error: Test timeout of 60000ms exceeded`），看不出在等第几次导航、等的是哪一步。
 // 2026-09-26 它就是因此成了 main 上的常客：当天至少 8 次跑里先失败、靠 `retries: 2`
 // 才绿，CI 每次白等一两分钟。
-const TAB_PATHS = ['', 'library'];
+//
+// 每个 tab 量**它自己住的那一层**（`views/teams/DetailView.vue` 挑一个画）：项目页和
+// 资料库走 `AppPage`，会滚的是 `.app-page__body`；成员、算力这些从 #4729 起搬进了盖在
+// 整个窗口上的设置层（路由上带 `meta.settingsOverlay`），画法在
+// `components/common/SettingsOverlay.vue`，会滚的是那一层的主区 —— 桌面 `.so__main`、
+// 窄于 960 换成 `.so__phone`（同一个 v-if/v-else 的两支，不会同时出现）。拿
+// `.app-page__body` 去量成员页，等的是一个这一页根本不画的盒子。
+//
+// 成员页在窄窗口下真的溢出一屏（量到 250px / 553px），设置层自己领着滚动，所以这一条
+// 是四格里唯一真在判「够不够得着」的；把它从这一组里拿掉，浮层哪天漏领滚动就没人看得见。
+//
+// `docs` 是老地址，落地时重定向到 `library`，量的仍是 `AppPage`。
+const TAB_FRAMES = [
+  { path: '', frame: '.app-page__body' },
+  { path: 'members', frame: '.so__main, .so__phone' },
+  { path: 'docs', frame: '.app-page__body' },
+  { path: 'compute', frame: '.so__main, .so__phone' },
+];
+const TAB_PATHS = TAB_FRAMES.map((tab) => tab.path);
 const VIEWPORT_SIZES = [
   // 视图高度压到 360 是故意的：这一套种子数据只有 5 个小队成员，靠内容自然长到溢出
   // 不可靠；把窗口压矮能让「内容比窗口高」这件事在任何数据下都成立，而宽度保持在
@@ -1011,23 +1028,24 @@ const WARMUP_MS = TAB_PATHS.length * 2 * ROUTE_READY_MS; // 每个 tab 冷一次
 const SWEEP_MS = VIEWPORT_SIZES.length * TAB_PATHS.length * 2 * WARM_STEP_MS; // 每个窗口 × 每个 tab 两道等待
 
 test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
-  test('小队详情：两个 tab 在窄窗口下都够得着底部', async ({ page }) => {
-    // 这条用例真正需要的范围是「冷 2 次 + 热 4 次」两段之和，比 config 里给的 60s 大
-    // 好几倍。它只在「又慢又没错」时才用得满：真出问题会在第一道等待上炸出来
+  test('小队详情：四个 tab 在窄窗口下都够得着底部', async ({ page }) => {
+    // 这条用例真正需要的范围是「冷 4 次 + 热 12 次」两段之和，比 config 里给的 60s 大
+    // 一个数量级。它只在「又慢又没错」时才用得满：真出问题会在第一道等待上炸出来
     // （最多 ROUTE_READY_MS），不会一路拖到底。
     test.setTimeout(WARMUP_MS + SWEEP_MS + 20_000);
 
     await apiLogin(page);
 
     // 冷编译这份钱在循环外付清，每个 tab 一次。等的东西和下面循环里完全一样
-    // （`.app-page__body` 真的出现、里面真的画出了字），一字没有放水 —— 只是预算按冷的
+    // （这一层的盒子真的出现、里面真的画出了字），一字没有放水 —— 只是预算按冷的
     // 给。这样下面量到的才是布局本身，不是 Vite 的编译速度。
-    for (const path of TAB_PATHS) {
-      await page.goto(`/teams/team-1${path ? '/' + path : ''}`);
-      await expect(page.locator('.app-page__body')).toBeVisible({ timeout: ROUTE_READY_MS });
+    for (const { path, frame } of TAB_FRAMES) {
+      const url = `/teams/team-1${path ? '/' + path : ''}`;
+      await page.goto(url);
+      await expect(page.locator(frame)).toBeVisible({ timeout: ROUTE_READY_MS });
       await expect
-        .poll(async () => page.locator('.app-page__body').evaluate((el) => (el.textContent || '').trim().length), {
-          message: `/teams/team-1${path ? '/' + path : ''}：工作区一直是空的，这一条等于没做`,
+        .poll(async () => page.locator(frame).evaluate((el) => (el.textContent || '').trim().length), {
+          message: `${url}：工作区一直是空的，这一条等于没做`,
           timeout: ROUTE_READY_MS,
         })
         .toBeGreaterThan(0);
@@ -1035,28 +1053,28 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
 
     for (const size of VIEWPORT_SIZES) {
       await page.setViewportSize(size);
-      for (const path of TAB_PATHS) {
+      for (const { path, frame } of TAB_FRAMES) {
+        const label = `${size.width}×${size.height} · /teams/team-1${path ? '/' + path : ''}`;
         await page.goto(`/teams/team-1${path ? '/' + path : ''}`);
 
         // 量不到这一层就是范围选错了（比如 alice 不是成员，看到的是对外主页），
         // 空范围永远返回「没有缺陷」，是一条只会绿的断言，所以这里炸掉而不是放过。
-        await expect(
-          page.locator('.app-page__body'),
-          `${size.width}×${size.height} · /teams/team-1/${path}：没落在小队工作区里，这条断言等于没做`,
-        ).toBeVisible({ timeout: WARM_STEP_MS });
+        await expect(page.locator(frame), `${label}：没落在小队工作区里，这条断言等于没做`).toBeVisible({
+          timeout: WARM_STEP_MS,
+        });
 
-        // `.app-page__body` 一出现就量还不够 —— 它的内容（项目/资料库）是另一次请求
+        // 这一层一出现就量还不够 —— 它的内容（项目/成员/资料库/算力）是另一次请求
         // 填进去的，量早了会量到一个半空的工作区，而**空范围永远返回「没有缺陷」**。
         // 等这一层里真的画出了字（页头在它外面，所以量到的就是当前 tab 自己的内容），
-        // 两个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
+        // 四个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
         await expect
-          .poll(async () => page.locator('.app-page__body').evaluate((el) => (el.textContent || '').trim().length), {
-            message: `${size.width}×${size.height} · /teams/team-1/${path}：工作区一直是空的，这一条等于没做`,
+          .poll(async () => page.locator(frame).evaluate((el) => (el.textContent || '').trim().length), {
+            message: `${label}：工作区一直是空的，这一条等于没做`,
             timeout: WARM_STEP_MS,
           })
           .toBeGreaterThan(0);
 
-        expect(await unreachableBelowFold(page), `${size.width}×${size.height} · /teams/team-1/${path}`).toEqual([]);
+        expect(await unreachableBelowFold(page), label).toEqual([]);
       }
     }
   });
