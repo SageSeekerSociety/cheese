@@ -6,8 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const upload = vi.fn()
 const keep = vi.fn()
 vi.mock('@/lib/libraryApi', () => ({ uploadLibraryFile: (...a: unknown[]) => keep(...a) }))
-vi.mock('@/api/teams', () => ({ TeamsApi: { detailByHandle: async () => ({ team: { id: 9 } }) } }))
-vi.mock('@/me', () => ({ myHandle: () => 'lin' }))
+// 登录换人不刷新页面：`who.handle` 换掉就是换了个人，各自名下那个团队不一样。
+const who = vi.hoisted(() => ({ handle: 'lin' }))
+const teams: Record<string, number> = { lin: 9, zhao: 12 }
+vi.mock('@/api/teams', () => ({
+  TeamsApi: { detailByHandle: async (handle: string) => ({ team: { id: teams[handle] } }) },
+}))
+vi.mock('@/me', () => ({ myHandle: () => who.handle }))
 const post = vi.fn()
 const openTask = vi.fn()
 const settle = vi.fn()
@@ -44,8 +49,27 @@ import { ApiError } from '@/api'
 describe('交给芝士的文件', () => {
   afterEach(() => {
     resetAgent()
+    who.handle = 'lin'
     upload.mockReset()
     keep.mockReset()
+  })
+
+  it('换了个账号（不刷新页面）再交文件，落在新账号自己名下的资料库', async () => {
+    keep.mockResolvedValue({ path: 'a.pdf' })
+    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+
+    who.handle = 'zhao'
+    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+
+    expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }, { team: 12 }])
+  })
+
+  it('同一个人交第二个文件不再问一遍', async () => {
+    keep.mockResolvedValue({ path: 'a.pdf' })
+    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+
+    expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }, { team: 9 }])
   })
 
   it('传完的那一行带上它在资料库里的名字，不再是上传中', async () => {

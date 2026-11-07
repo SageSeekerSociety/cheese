@@ -246,12 +246,18 @@ export interface AgentFile {
 /** 先传上去，下一个问题带上它们。浅的：传完按那一行本身找回它，行不能被换成代理。 */
 export const agentFiles = shallowRef<AgentFile[]>([])
 
-/** 这个人自己的资料库（他名下那个团队的）；问一次就记住。 */
-let ownLibrary: Promise<number> | null = null
+/** 这个人自己的资料库（他名下那个团队的）；问一次就记住，按人分开记——登录换人不会刷新
+ *  页面，记成一份就会把下一个人交的文件送进上一个人的资料库。 */
+const ownLibraries = new Map<string, Promise<number>>()
 function myLibrary(): Promise<number> {
-  ownLibrary ??= TeamsApi.detailByHandle(myHandle()).then(({ team }) => team.id)
-  ownLibrary.catch(() => (ownLibrary = null))
-  return ownLibrary
+  const handle = myHandle()
+  let cached = ownLibraries.get(handle)
+  if (!cached) {
+    cached = TeamsApi.detailByHandle(handle).then(({ team }) => team.id)
+    cached.catch(() => ownLibraries.delete(handle))
+    ownLibraries.set(handle, cached)
+  }
+  return cached
 }
 
 async function keep(file: File): Promise<Pick<AgentFile, 'id' | 'path'>> {
@@ -288,6 +294,7 @@ export function resetAgent() {
   agentFiles.value = []
   agentSelection.value = null
   agentPicked.value = {}
+  ownLibraries.clear()
   agentThread.reset()
 }
 
