@@ -371,4 +371,27 @@ describe('技能面板的 409', () => {
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
     expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
   })
+
+  // 面板里的市场和全局市场页画的是同一块（SkillMarket）：目录读失败时那颗「重试」
+  // 要真的重读目录，不能只是一颗按了没反应的按钮。
+  it('市场目录读失败后，面板里点重试就重读目录', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a1', configuration: { body: '', skills: [] }, version: 1 })],
+      total: 1,
+    })
+    listSkillCatalog.mockResolvedValue({ data: [], total: 0 })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    setAgentEditing.mockResolvedValue({ editing: null })
+    fetchSkillMarket.mockReset().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(MARKET)
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    const retry = await screen.findByRole('button', { name: t('global.loadError.retry') })
+    await fireEvent.click(retry)
+
+    await waitFor(() => expect(fetchSkillMarket).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('pdf')).toBeTruthy()
+  })
 })

@@ -24,6 +24,10 @@ withDefaults(
     marketLoading?: boolean
     /** 技能市场的目录与机器都读过了：在那之前不急着说「先连接一台机器」。 */
     marketLoaded?: boolean
+    /** 目录读失败时服务端给的那句原因；没有就只显示标题。 */
+    marketFailureReason?: string | null
+    /** 目录读失败是 401/403：说没权限、不给重试。 */
+    marketForbidden?: boolean
     /** 装到哪台机器上。没有 = 卡片上的 + 按不动。 */
     deviceId?: string | null
     scanning?: boolean
@@ -32,12 +36,16 @@ withDefaults(
     market: null,
     marketLoading: false,
     marketLoaded: false,
+    marketFailureReason: null,
+    marketForbidden: false,
     deviceId: null,
     scanning: false,
   }
 )
 const emit = defineEmits<{
   install: [payload: { url: string; kind: 'skill' | 'plugin' }]
+  /** 目录读失败后点了「重试」：容器重新读一次。 */
+  retry: []
 }>()
 
 const { t } = useI18n()
@@ -55,8 +63,11 @@ const { t } = useI18n()
       :loading="marketLoading"
       :device-id="deviceId"
       :scanning="scanning"
+      :failure-reason="marketFailureReason"
+      :forbidden="marketForbidden"
       show-agents
       @install="emit('install', $event)"
+      @retry="emit('retry')"
     />
   </AppPage>
 </template>

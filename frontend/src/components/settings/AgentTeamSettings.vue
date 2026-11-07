@@ -244,6 +244,7 @@ async function confirmDeactivate() {
       :saving="skills.saving.value"
       :can-manage="skills.canManage.value"
       @install="(payload) => void skills.fetchWebSkill(payload.url, payload.kind)"
+      @retry-market="() => void skills.openMarket()"
     />
 
     <ConfirmDialog

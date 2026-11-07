@@ -75,6 +75,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
+  /** 市场目录读失败后点了「重试」。 */
+  (e: 'retryMarket'): void
 }>()
 
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
@@ -150,6 +152,7 @@ const locked = () => !props.canManage || props.editingBlocked
       :scanning="scanning"
       :saving="saving"
       @install="emit('install', $event)"
+      @retry="emit('retryMarket')"
     />
   </AdaptiveDialog>
 </template>

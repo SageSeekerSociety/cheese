@@ -102,4 +102,27 @@ describe('技能市场（共享）', () => {
     expect((button as HTMLButtonElement).disabled).toBe(true)
     expect(button.getAttribute('title')).toBe(t('work.room.skills.noMachine'))
   })
+
+  it('目录没读出来：失败留在这块并给重试，点了往上发 retry', async () => {
+    const { emitted } = mount({ market: null, failureReason: 'offline' })
+
+    expect(screen.getByText(t('work.room.skills.marketFailed'))).toBeTruthy()
+    expect(screen.getByText('offline')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
+    expect(emitted().retry).toHaveLength(1)
+  })
+
+  it('目录读失败是 401/403：说没权限，不摆重试', () => {
+    mount({ market: null, forbidden: true })
+
+    expect(screen.getByText(t('global.loadError.forbidden'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('global.loadError.retry') })).toBeNull()
+  })
+
+  it('还在读时不画失败那块', () => {
+    mount({ market: null, loading: true })
+
+    expect(screen.getByText(t('work.room.skills.marketLoading'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('global.loadError.retry') })).toBeNull()
+  })
 })
