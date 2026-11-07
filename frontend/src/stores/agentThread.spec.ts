@@ -628,7 +628,8 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
     const stream = held()
     let asked = false
     const followed = serveTopics({
-      read: () => (asked ? { ...CONVERSATION, messages: [QUESTION], answering: 'q1' } : { ...CONVERSATION, messages: [] }),
+      read: () =>
+        asked ? { ...CONVERSATION, messages: [QUESTION], answering: 'q1' } : { ...CONVERSATION, messages: [] },
       ask: () => ((asked = true), stream.response),
       answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
     })
@@ -732,6 +733,24 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
       ['user', '要先会什么？'],
       ['assistant', 'c1 的回答'],
     ])
+  })
+
+  it('a new topic started while a conversation is still being read stays the new topic', async () => {
+    const reply = deferred<object>()
+    const followed = serveTopics({
+      read: () => reply.promise,
+      answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+
+    const showing = a.show('c1')
+    a.startNew()
+    reply.resolve({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+    await showing
+
+    expect(a.current.value).toBeNull()
+    expect(followed).toEqual([])
+    expect(said(a)).toEqual([])
   })
 
   it('showing the conversation again once its answer is done reads what the server kept, once', async () => {

@@ -358,8 +358,16 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const shownMessages = (data: { messages: ReadMessage[] }) =>
     data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
 
+  /** 第几次打开：读回来时已经又打开了一次（连点两下、点了别的又点回来、开了新话题），
+   *  这一次读到的不再摆。 */
+  let opening = 0
+
   async function open(id: string) {
+    const turn = ++opening
     const data = await read(id)
+    // 读的时候已经接上了一个回答（另一次打开、或这里刚问了一句）：它会把回答写进来，
+    // 这一次再摆、再接一遍，同一个回答就进来两遍。
+    if (turn !== opening || busy.value) return
     current.value = id
     messages.value = shownMessages(data)
     currentEarlier.value = data.earlier === true
@@ -401,6 +409,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 「新话题」：之前说的留在上面，芝士从下一句话起不再读它们。话题等第一句话发出去才建。 */
   function startNew() {
     if (busy.value) return
+    opening++
     if (current.value) {
       const at = conversations.value.find((c) => c.id === current.value)
       earlier.value = [
@@ -423,8 +432,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 打开指定的一段对话（通知、设置页里的「查看对话」）：眼前这段收到上面，像「新话题」一样。 */
   async function show(id: string) {
     loaded.value = true
-    if (current.value === id) return open(id)
+    // 正在答着就不动：眼前要么就是这一段、回答正写进来，要么是别的一段、答完之前不换走。
     if (busy.value) return
+    if (current.value === id) return open(id)
     startNew()
     earlier.value = earlier.value.filter((topic) => topic.id !== id)
     await open(id)
