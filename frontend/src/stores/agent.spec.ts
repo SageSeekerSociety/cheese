@@ -6,12 +6,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const upload = vi.fn()
 const keep = vi.fn()
 vi.mock('@/lib/libraryApi', () => ({ uploadLibraryFile: (...a: unknown[]) => keep(...a) }))
-// 登录换人不刷新页面：`who.handle` 换掉就是换了个人，各自名下那个团队不一样。
+// 登录换人不刷新页面：`who.handle` 换掉就是换了个人。`server` 是服务端此刻认的「谁名下是哪个
+// 团队」，测试里可以改它，模拟同一个人再登录时归属已经变了。
 const who = vi.hoisted(() => ({ handle: 'lin' }))
-const teams: Record<string, number> = { lin: 9, zhao: 12 }
-const lookup = vi.fn(async (handle: string) => ({ team: { id: teams[handle] } }))
+const server = vi.hoisted(() => ({ teams: {} as Record<string, number>, down: false }))
 vi.mock('@/api/teams', () => ({
-  TeamsApi: { detailByHandle: (handle: string) => lookup(handle) },
+  TeamsApi: {
+    detailByHandle: async (handle: string) => {
+      if (server.down) throw new Error('offline')
+      return { team: { id: server.teams[handle] } }
+    },
+  },
 }))
 vi.mock('@/me', () => ({ myHandle: () => who.handle }))
 const post = vi.fn()
@@ -47,66 +52,68 @@ import {
 
 import { ApiError } from '@/api'
 
+/** 各团队资料库里实际放进了哪些文件：上传落在哪儿，就看这里。 */
+function libraries() {
+  const shelves: Record<number, string[]> = {}
+  keep.mockImplementation(async ({ team }: { team: number }, file: File) => {
+    ;(shelves[team] ??= []).push(file.name)
+    return { path: file.name, bytes: file.size }
+  })
+  return shelves
+}
+const pdf = (name: string) => new File(['x'], name, { type: 'application/pdf' })
+
 describe('交给芝士的文件', () => {
+  server.teams = { lin: 9, zhao: 12 }
   afterEach(() => {
     resetAgent()
     who.handle = 'lin'
     upload.mockReset()
     keep.mockReset()
-    lookup.mockClear()
+    server.teams = { lin: 9, zhao: 12 }
+    server.down = false
   })
 
   it('换了个账号（不刷新页面）再交文件，落在新账号自己名下的资料库', async () => {
-    keep.mockResolvedValue({ path: 'a.pdf' })
-    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+    const shelves = libraries()
+    await attachToAgent([pdf('a.pdf')])
 
     who.handle = 'zhao'
-    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+    await attachToAgent([pdf('b.pdf')])
 
-    expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }, { team: 12 }])
-    expect(lookup.mock.calls.map((c) => c[0])).toEqual(['lin', 'zhao'])
+    expect(shelves).toEqual({ 9: ['a.pdf'], 12: ['b.pdf'] })
   })
 
-  it('同一个人交第二个文件不再问一遍', async () => {
-    keep.mockResolvedValue({ path: 'a.pdf' })
-    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
-    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+  it('同一个人连交两份文件，都落在自己名下的资料库', async () => {
+    const shelves = libraries()
+    await attachToAgent([pdf('a.pdf')])
+    await attachToAgent([pdf('b.pdf')])
 
-    expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }, { team: 9 }])
-    expect(lookup).toHaveBeenCalledTimes(1)
+    expect(shelves).toEqual({ 9: ['a.pdf', 'b.pdf'] })
   })
 
-  it('退出登录后清掉记下的资料库，再登录重新问', async () => {
-    keep.mockResolvedValue({ path: 'a.pdf' })
-    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+  it('退出登录再登录同一个账号，文件落在他此刻名下的资料库', async () => {
+    const shelves = libraries()
+    await attachToAgent([pdf('a.pdf')])
+
     resetAgent()
-    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+    server.teams.lin = 15
+    await attachToAgent([pdf('b.pdf')])
 
-    expect(lookup).toHaveBeenCalledTimes(2)
+    expect(shelves).toEqual({ 9: ['a.pdf'], 15: ['b.pdf'] })
   })
 
-  it('没问到资料库时不记住失败，下次重新问', async () => {
-    keep.mockResolvedValue({ path: 'a.pdf' })
-    lookup.mockRejectedValueOnce(new Error('offline'))
-    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
-    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+  it('一时查不到自己的资料库，这份交不上；网络恢复后再交能传上去', async () => {
+    const shelves = libraries()
+    server.down = true
+    await attachToAgent([pdf('a.pdf')])
+    expect(agentFiles.value).toEqual([])
 
-    expect(lookup).toHaveBeenCalledTimes(2)
-    expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }])
-  })
+    server.down = false
+    await attachToAgent([pdf('b.pdf')])
 
-  it('退出前那次没问到、登录后才失败，不会把新记下的那份撤掉', async () => {
-    keep.mockResolvedValue({ path: 'a.pdf' })
-    let fail!: (e: Error) => void
-    lookup.mockImplementationOnce(() => new Promise((_, reject) => (fail = reject)))
-    const first = attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
-    resetAgent()
-    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
-    fail(new Error('offline'))
-    await first.catch(() => {})
-    await attachToAgent([new File(['z'], 'c.pdf', { type: 'application/pdf' })])
-
-    expect(lookup).toHaveBeenCalledTimes(2)
+    expect(shelves).toEqual({ 9: ['b.pdf'] })
+    expect(agentFiles.value.map((f) => [f.path, f.uploading])).toEqual([['b.pdf', false]])
   })
 
   it('传完的那一行带上它在资料库里的名字，不再是上传中', async () => {
