@@ -79,15 +79,18 @@ class AgentSessionRepository:
     async def resume_token(
         self, conversation_id: uuid.UUID, agent_handle: str, harness: str
     ) -> str | None:
-        """What this agent resumes its conversation in this place by."""
+        """What this agent resumes its conversation in this place by; None when
+        there is nothing to resume — never started, or given up on
+        (`abandoned_at`, ``forget_conversation``)."""
         result = await self._session.execute(
-            select(AgentSession.resume_token).where(
+            select(AgentSession.resume_token, AgentSession.abandoned_at).where(
                 AgentSession.conversation_id == conversation_id,
                 AgentSession.agent_handle == agent_handle,
                 AgentSession.harness == harness,
             )
         )
-        return result.scalar_one_or_none()
+        token, abandoned = result.one_or_none() or (None, None)
+        return None if abandoned is not None else token
 
     async def save(
         self,
@@ -103,6 +106,21 @@ class AgentSessionRepository:
         (a resumed turn and the sweep's own resume are the pair that actually
         does), and losing that race must overwrite, not raise.
         """
+        # The marker is cleared only by a start that records a DIFFERENT
+        # conversation. A resumed start reports the id it resumed under, and
+        # one launched just before the give-up committed reports the old one
+        # too; either would otherwise wipe the marker while `resume_token` still
+        # names the conversation that cannot fit, and the loop comes back.
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+                AgentSession.resume_token.is_distinct_from(resume_token),
+            )
+            .values(abandoned_at=None)
+        )
         await self._upsert(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
@@ -168,6 +186,33 @@ class AgentSessionRepository:
                 AgentSession.harness == harness,
             )
             .values(told=None, updated_at=datetime.now(UTC))
+        )
+
+    async def forget_conversation(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """Give up on the conversation's native session, and on what it was told.
+
+        The next turn opens a new one (`abandoned_at` set, which `resume_token`
+        answers as no session) and, with ``told`` cleared, tells it the whole of
+        the project state. Used when the conversation cannot go on: a
+        compaction that could not be made means the next turn re-sends a
+        history that will not fit, and every turn after that repeats it.
+
+        ``resume_token`` is left where it is. Clearing it would say "this place
+        has never run" (`has_any`), and a room that has been worked in for
+        hours has not stopped having run because its conversation was given up
+        on."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(
+                abandoned_at=datetime.now(UTC), told=None, updated_at=datetime.now(UTC)
+            )
         )
 
     async def save_place(

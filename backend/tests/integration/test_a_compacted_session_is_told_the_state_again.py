@@ -147,3 +147,235 @@ async def test_a_compaction_that_ends_mid_send_is_not_written_over(client):
     # window. Nothing may say the rest is still there, so the next input tells
     # the whole state.
     assert told is None
+
+
+async def _after_a_compaction_that_could_not_be_made(factory) -> tuple:
+    """A conversation that pointed at a native session, then a compaction that
+    could not be made. What the next turn would resume by, and what it was told."""
+    from app.domain.agent.turn.store.session_inputs import abandon_opening
+    from app.domain.agent_session.services import AgentSessionService
+
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+        topic_id = topic.id
+    seat = {"agent_handle": "cheese", "harness": "claude-code"}
+    async with factory() as session:
+        service = AgentSessionService(session)
+        await service.ensure(topic_id, seat["agent_handle"], harness=seat["harness"])
+        await service.remember(
+            conversation_id=topic_id,
+            agent_handle=seat["agent_handle"],
+            resume_token="native-1",
+            harness=seat["harness"],
+        )
+        await session.commit()
+    from app.domain.agent.turn.store.session_inputs import remember_opening
+
+    await remember_opening(
+        factory,
+        topic_id=topic_id,
+        digests={"roster": "a"},
+        was=None,
+        **seat,
+    )
+    await abandon_opening(
+        factory,
+        conversation_id=topic_id,
+        seat=seat["agent_handle"],
+        harness=seat["harness"],
+    )
+    async with factory() as session:
+        service = AgentSessionService(session)
+        token = await service.resume_token(
+            topic_id, seat["agent_handle"], harness=seat["harness"]
+        )
+        told = await service.told(
+            topic_id, seat["agent_handle"], harness=seat["harness"]
+        )
+        ran = await service.has_run(topic_id)
+    return token, told, ran
+
+
+async def test_a_compaction_that_could_not_be_made_lets_the_next_turn_start_fresh(
+    client,
+):
+    """The state that ended a conversation for good: past its window, and the
+    summary that would shrink it could not be made. Every later turn re-sends
+    the same history and is refused the same way, so the platform stops
+    pointing the seat at that native session — the next turn opens a new one,
+    and, its `told` also gone, tells it the whole project state."""
+    token, told, ran = client.portal.call(
+        lambda: _after_a_compaction_that_could_not_be_made(client.test_request_factory)
+    )
+
+    assert token is None, (
+        "the next turn must not resume the conversation that cannot fit"
+    )
+    assert told is None, "a new session has to be told the whole state"
+    # ...and the room still reads as one that has run: giving up on a
+    # conversation is not the same as never having had one, and the 现场 tab
+    # (and the compute pin) hang on this answer.
+    assert ran is True
+
+
+async def _two_seats_one_given_up(factory) -> dict:
+    """Two seats in one room, both with a native session and both told the
+    state. Only one of them has the conversation that could not be compacted."""
+    from app.domain.agent.turn.store.session_inputs import abandon_opening
+    from app.domain.agent_session.services import AgentSessionService
+
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+        topic_id = topic.id
+    seats = {
+        "cheese": "native-cheese",
+        "other": "native-other",
+    }
+    async with factory() as session:
+        service = AgentSessionService(session)
+        for handle, token in seats.items():
+            await service.ensure(topic_id, handle, harness="claude-code")
+            await service.remember(
+                conversation_id=topic_id,
+                agent_handle=handle,
+                resume_token=token,
+                harness="claude-code",
+            )
+        await session.commit()
+    for handle in seats:
+        await remember_opening(
+            factory,
+            topic_id=topic_id,
+            agent_handle=handle,
+            harness="claude-code",
+            digests={"roster": "a"},
+            was=None,
+        )
+    await abandon_opening(
+        factory,
+        conversation_id=topic_id,
+        seat="cheese",
+        harness="claude-code",
+    )
+    out: dict = {}
+    async with factory() as session:
+        service = AgentSessionService(session)
+        for handle in seats:
+            out[handle] = {
+                "token": await service.resume_token(
+                    topic_id, handle, harness="claude-code"
+                ),
+                "told": await service.told(topic_id, handle, harness="claude-code"),
+            }
+    return out
+
+
+async def test_giving_up_on_one_conversation_leaves_every_other_seat_alone(client):
+    """A room seats several teammates, each with its own conversation. Clearing
+    the one that cannot be compacted must not touch another's session or what it
+    was told — the row is keyed by the agent, and the update carries that key."""
+    seats = client.portal.call(
+        lambda: _two_seats_one_given_up(client.test_request_factory)
+    )
+
+    assert seats["cheese"]["token"] is None
+    assert seats["cheese"]["told"] is None
+    assert seats["other"]["token"] == "native-other"
+    assert seats["other"]["told"] == {"roster": "a"}
+
+
+async def _abandon_a_seat_that_has_no_row(client) -> None:
+    from app.domain.agent.turn.store.session_inputs import abandon_opening
+
+    factory = client.test_request_factory
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+        topic_id = topic.id
+    await abandon_opening(
+        factory,
+        conversation_id=topic_id,
+        seat="nobody-here",
+        harness="claude-code",
+    )
+
+
+async def test_giving_up_on_a_conversation_that_was_never_there_changes_nothing(
+    client,
+):
+    """A seat with no row of its own, or a conversation with no session yet: the
+    update matches nothing and nothing is raised. The failure path this runs on
+    must never be the reason a turn has no line."""
+    client.portal.call(lambda: _abandon_a_seat_that_has_no_row(client))
+
+
+async def _a_resumed_start_does_not_revive_the_given_up_conversation(factory) -> tuple:
+    """The conversation is given up on, then a start that was already on its
+    way reports the SAME native id it resumed under. That is a resumed start,
+    not a new conversation: the give-up has to stand."""
+    from app.domain.agent.turn.store.session_inputs import abandon_opening
+    from app.domain.agent_session.services import AgentSessionService
+
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+        topic_id = topic.id
+    async with factory() as session:
+        service = AgentSessionService(session)
+        await service.ensure(topic_id, "cheese", harness="claude-code")
+        await service.remember(
+            conversation_id=topic_id,
+            agent_handle="cheese",
+            resume_token="native-1",
+            harness="claude-code",
+        )
+        await session.commit()
+    await abandon_opening(
+        factory, conversation_id=topic_id, seat="cheese", harness="claude-code"
+    )
+    # The in-flight start reports the id it was launched with.
+    async with factory() as session:
+        await AgentSessionService(session).remember(
+            conversation_id=topic_id,
+            agent_handle="cheese",
+            resume_token="native-1",
+            harness="claude-code",
+        )
+        await session.commit()
+        token = await AgentSessionService(session).resume_token(
+            topic_id, "cheese", harness="claude-code"
+        )
+    return token
+
+
+async def test_a_resumed_start_does_not_revive_the_given_up_conversation(client):
+    """`save` is what a resumed start writes too, and it reports the id it
+    resumed under. Clearing the marker on that would put the seat back on the
+    conversation that cannot fit, and the next turn would be refused the same
+    way — the standing give-up has to survive a start that brought no new
+    conversation."""
+    token = client.portal.call(
+        lambda: _a_resumed_start_does_not_revive_the_given_up_conversation(
+            client.test_request_factory
+        )
+    )
+
+    assert token is None
