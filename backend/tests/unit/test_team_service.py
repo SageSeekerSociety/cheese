@@ -124,6 +124,9 @@ def _build_membership_service(
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = 1
     session.execute.return_value = mock_result
+    # Pending rows are inserted inside a savepoint (`_save_pending`); there is
+    # no database here, so the savepoint only has to be enterable.
+    session.begin_nested = MagicMock(return_value=AsyncMock())
     # `_notify` is patched out in these tests, so the ledger the service was
     # handed is never called; a stand-in keeps the constructor honest.
     svc = TeamMembershipService(

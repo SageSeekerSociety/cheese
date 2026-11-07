@@ -577,14 +577,16 @@ class TeamMembershipApplicationRepository:
     async def exists_pending_for_user_and_team(
         self, user_id: int, team_id: int
     ) -> bool:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(
-            TeamMembershipApplication.id
-        ).where(  # type: ignore[assignment]
-            TeamMembershipApplication.user_id == user_id,
-            TeamMembershipApplication.team_id == team_id,
-            TeamMembershipApplication.status == ApplicationStatus.PENDING.value,
-            TeamMembershipApplication.deleted_at.is_(None),
-        ).limit(1)
+        stmt: Select[tuple[TeamMembershipApplication]] = (
+            select(TeamMembershipApplication.id)
+            .where(  # type: ignore[assignment]
+                TeamMembershipApplication.user_id == user_id,
+                TeamMembershipApplication.team_id == team_id,
+                TeamMembershipApplication.status == ApplicationStatus.PENDING.value,
+                TeamMembershipApplication.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 

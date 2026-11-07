@@ -88,9 +88,7 @@ def test_a_second_invitation_that_raced_past_the_check_is_refused(
     assert len(_pending(api_client, team, "invitations")) == 1
 
 
-def test_an_invitation_can_be_sent_again_once_the_first_is_withdrawn(
-    api_client, team
-):
+def test_an_invitation_can_be_sent_again_once_the_first_is_withdrawn(api_client, team):
     assert _invite(api_client, team).status_code == 201
     [first] = _pending(api_client, team, "invitations")
     withdrawn = api_client.delete(
