@@ -521,6 +521,10 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			if err != nil || cfg.Base == "" {
 				return fmt.Errorf("no server configured — run `cheesehost auth login` first")
 			}
+			self, err := update.SelfPath()
+			if err != nil {
+				return err
+			}
 			fmt.Println("Downloading the latest cheese…")
 			tmp, err := update.Fetch(context.Background(), cfg.Base)
 			if errors.Is(err, update.ErrCurrent) {
@@ -530,10 +534,6 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 				}
 				return nil
 			}
-			if err != nil {
-				return err
-			}
-			self, err := update.SelfPath()
 			if err != nil {
 				return err
 			}
