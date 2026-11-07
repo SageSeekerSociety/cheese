@@ -889,6 +889,79 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
     ])
   })
 
+  it('signing out while a question is still creating its conversation asks nothing and keeps nothing', async () => {
+    const created = deferred<Response>()
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET') return envelope({ conversations: [] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return created.promise
+      if (url.endsWith('/ask')) {
+        asked.push(url)
+        return placed(['answering', { id: 'q1' }], ['delta', { text: '好。', at: 0 }, '1-0'], ['done', {}, '2-0'])
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+
+    const asking = a.ask('上一个人的问题', '答不上来')
+    await vi.waitFor(() => expect(a.busy.value).toBe(true))
+    a.reset()
+    created.resolve(envelope(CONVERSATION, 201))
+    await asking
+
+    expect(asked).toEqual([])
+    expect(a.current.value).toBeNull()
+    expect(a.conversations.value).toEqual([])
+    expect(said(a)).toEqual([])
+    expect(a.busy.value).toBe(false)
+  })
+
+  it("the last person's question ending while the next person's question is being set up leaves it asking", async () => {
+    const first = held()
+    const created = deferred<Response>()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return created.promise
+      if (url.endsWith('/assistant/conversations/c1/ask')) return first.response
+      if (url.endsWith('/assistant/conversations/c2/ask'))
+        return placed(
+          ['answering', { id: 'q2' }],
+          ['delta', { text: '第二个人的回答', at: 0 }, '1-0'],
+          ['done', {}, '2-0']
+        )
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    const firstAsking = a.ask('上一个人的问题', '答不上来')
+    first.send('answering', { id: 'q1' })
+    first.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+    a.reset()
+    person = 'second'
+    const secondAsking = a.ask('第二个人的问题', '答不上来')
+    await vi.waitFor(() => expect(a.streaming.value).toBe(''))
+
+    first.send('done', { stopped: false }, '2-0')
+    first.end()
+    await firstAsking
+
+    expect(a.busy.value).toBe(true)
+    created.resolve(envelope(C2, 201))
+    await secondAsking
+    expect(said(a)).toEqual([
+      ['user', '第二个人的问题'],
+      ['assistant', '第二个人的回答'],
+    ])
+  })
+
   it('a question asked while a conversation is still being read keeps the conversation it was asked in', async () => {
     const reply = deferred<object>()
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {

@@ -362,6 +362,10 @@ export function createAssistant(opts: AssistantOptions = {}) {
    *  退出了登录，这一次读到的不再摆。 */
   let opening = 0
 
+  /** 退出登录过几次。问到一半、回答接到一半时退出了，之后它们读到的都是上一个人的，
+   *  不再碰面板：不建话题、不问、不写字、不收尾。 */
+  let signedOut = 0
+
   async function open(id: string) {
     const turn = ++opening
     const data = await read(id)
@@ -406,8 +410,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     creditRefused.value = false
     // 退出时还在读的那次打开、还在接的那个回答，都是上一个人的，不再摆。
     opening++
-    if (following) following.dropped = true
-    following = null
+    signedOut++
     clearTurn()
   }
 
@@ -497,7 +500,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   async function ensureConversation(): Promise<string> {
     if (current.value) return current.value
+    const out = signedOut
     const data = await request<AssistantConversation>('/assistant/conversations', { method: 'POST' })
+    if (out !== signedOut) return data.id
     conversations.value = [data, ...conversations.value]
     current.value = data.id
     return data.id
@@ -510,6 +515,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     if ((!text && !files.length) || busy.value) return
     // 这时还在读的那次打开（刚打开面板、点了「查看对话」）读回来，会把正在问的这段换走。
     opening++
+    const out = signedOut
     notice.value = null
     creditRefused.value = false
     streaming.value = ''
@@ -526,7 +532,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
     let unheard: Unheard[] = []
     try {
       const prepared = await target?.prepare?.()
+      if (out !== signedOut) return
       const id = await ensureConversation()
+      if (out !== signedOut) return
       const page = target?.on ? prepared || target.page : null
       unheard = await follow(
         id,
@@ -546,15 +554,18 @@ export function createAssistant(opts: AssistantOptions = {}) {
         fallback
       )
     } catch (error) {
+      if (out !== signedOut) return
       if (error instanceof StreamRefused) {
         notice.value = refusalText(error.body, error.body.message || fallback)
         creditRefused.value = isCreditRefusal(error.body)
       } else notice.value = fallback
     } finally {
       if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
-      // 退出登录后下一个人已经接上了自己的回答：那是它在写，不替它收。
-      if (!following) streaming.value = null
-      await listConversations().catch(() => undefined)
+      // 退出登录后，面板上正在写的是下一个人的那一轮，不替它收，也不替它重读话题。
+      if (out === signedOut) {
+        streaming.value = null
+        await listConversations().catch(() => undefined)
+      }
     }
     await askUnheard(unheard, fallback)
   }
@@ -723,9 +734,6 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
   }
 
-  /** 正在接的那个回答。退出登录时标成不要了：它之后再读到的字、答完时的收尾都不碰面板。 */
-  let following: { dropped: boolean } | null = null
-
   /** 收起这一轮正在写的回答和它的步骤。 */
   function clearTurn() {
     streaming.value = null
@@ -749,8 +757,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     fallback: string,
     question?: string
   ): Promise<Unheard[]> {
-    const mine = { dropped: false }
-    following = mine
+    const out = signedOut
     streaming.value = ''
     tool.value = null
     queued.value = false
@@ -767,7 +774,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     let done = false
     let unheard: Unheard[] = []
     const onEvent: OnEvent = (event, payload) => {
-      if (mine.dropped) return
+      if (out !== signedOut) return
       if (event === 'queued') {
         queued.value = true
       } else if (event === 'delta' && typeof payload.text === 'string' && payload.text) {
@@ -802,14 +809,13 @@ export function createAssistant(opts: AssistantOptions = {}) {
       )
     } catch (error) {
       // 退出登录后才断的：那是上一个人的回答，不说它没答上来。
-      if (mine.dropped) return []
+      if (out !== signedOut) return []
       if (error instanceof StreamRefused && !question) throw error
       failed = true
       notice.value = fallback
     } finally {
-      if (following === mine) following = null
       // 退出登录后才答完的：面板上已经是下一个人的这一轮，不去动它。
-      if (!mine.dropped) {
+      if (out === signedOut) {
         settleSteps()
         const did =
           steps.value.length > 0 ||
@@ -839,7 +845,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         if (current.value === conversation) clearTurn()
       }
     }
-    return mine.dropped || stopped || current.value !== conversation ? [] : unheard
+    return out !== signedOut || stopped || current.value !== conversation ? [] : unheard
   }
 
   /** 一件起草的事现在怎样了（人发出了，或说不用了）：面板照着改那张卡。 */
