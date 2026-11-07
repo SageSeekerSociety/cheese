@@ -73,6 +73,7 @@ function comments(): PreviewCommentsBundle {
   const open = ref(true)
   return {
     target: computed(() => ({ topicId: 'room', path: 'docs/week-1.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => {
       open.value = !open.value

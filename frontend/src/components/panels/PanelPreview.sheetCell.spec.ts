@@ -307,6 +307,7 @@ function commentsWith(anchors: (Record<string, unknown> | null)[], state: (at: n
   const open = ref(false)
   return {
     target: computed(() => ({ topicId: 'room', path: 'budget.xlsx', version: 'v7' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',

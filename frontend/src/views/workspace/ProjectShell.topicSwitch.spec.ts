@@ -124,6 +124,7 @@ function setup() {
   store.value = reactive({
     topics: [TOPIC_A, TOPIC_B],
     members: [],
+    projects: [],
     unreadMap: {},
     chatPct: 50,
     rememberPlace: vi.fn(),
