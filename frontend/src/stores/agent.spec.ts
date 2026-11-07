@@ -182,6 +182,7 @@ describe('交给芝士的文件', () => {
     await fromA
 
     expect(shelves).toEqual({})
+    expect(agentFiles.value).toEqual([])
   })
 
   it('传完的那一行带上它在资料库里的名字，不再是上传中', async () => {

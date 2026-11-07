@@ -284,7 +284,10 @@ export async function attachToAgent(picked: File[]) {
     agentFiles.value = [...agentFiles.value, row]
     try {
       const done = await keep(file, mine)
-      if (!done) return
+      if (!done) {
+        agentFiles.value = agentFiles.value.filter((f) => f !== row)
+        return
+      }
       agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, ...done, uploading: false } : f))
     } catch (error) {
       agentFiles.value = agentFiles.value.filter((f) => f !== row)
