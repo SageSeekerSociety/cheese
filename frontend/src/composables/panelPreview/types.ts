@@ -25,6 +25,12 @@ export interface PanelPreviewProps {
   agentHandle?: string | null
   /** 这间房队友现在的名字（项目可以给它改名）：评论卡上写它、@ 候选里也用它。 */
   agentName?: string
+  /**
+   * 我能不能在这里的文件上写评论：频道或项目归档了、或者我的角色没有「评论」，就不能。
+   * 和文档评论同一条规矩（服务端 `file_comments` 也按这几样拒）。不能时照样读已有的评论，
+   * 只是不给写、回复和解决。不给就当能写。
+   */
+  canComment?: boolean
 }
 
 export interface PanelPreviewOptions {

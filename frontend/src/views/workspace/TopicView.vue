@@ -32,6 +32,7 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
+import { mayCommentIn } from '@/lib/projectPermissions'
 import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
@@ -271,6 +272,12 @@ const canPin = computed(() => {
   return !!topic && topic.status !== 'archived' && (topic.kind === 'root' || !!topic.joined)
 })
 
+// 预览里的文件评论能不能写（判据见 `mayCommentIn`）。
+const canComment = computed(() => {
+  const topic = selectedTopic.value
+  return mayCommentIn(topic, store.projects.find((p) => p.id === topic?.project_id))
+})
+
 // ---- 章节：这段对话（频道主线或任务）的目录 ----
 // 跟对话走：频道是频道本身，任务页是任务的 id。任务的对话里项目的人都能说话，所以
 // 都能整理章节；频道主线仍然要加入了这个频道。
@@ -494,6 +501,7 @@ void openPlace()
             :topic="selectedTopic"
             :task-id="taskId ?? null"
             :task-read-only="!!taskId && (!taskOwner || !taskOpen)"
+            :can-comment="canComment"
             :task-has-branch="currentTask?.branch_name !== null"
             :activity-tick="activityTick"
             :working="working"

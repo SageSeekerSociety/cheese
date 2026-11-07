@@ -406,6 +406,8 @@ useEventListener(typeof window === 'undefined' ? null : window, 'resize', placeL
 // 开着没有是这一格自己的事（和全屏、标注条一样）；线程和写入从 `comments` 递进来。
 const showComments = computed(() => props.comments?.open.value ?? false)
 const commentTarget = computed(() => props.comments?.target.value ?? null)
+// 能不能写评论（归档、没有「评论」权限时不能）：栏照开、评论照读，只是不给写的入口。
+const commentsWritable = computed(() => props.comments?.writable.value ?? false)
 // 读者此刻指着的那一处：页上一点、表里一格、正文一段、网页里一处。没指就是整份文件。
 const commentPick = computed(() => {
   const anchor = pageLocator.anchor() ?? quoted.anchor()
@@ -444,7 +446,7 @@ watch(locator, () => {
 const commenting = ref(false)
 async function commentHere() {
   const body = locatorNote.value.trim()
-  if (!body || !props.comments || commenting.value) return
+  if (!body || !props.comments || !commentsWritable.value || commenting.value) return
   // 先把这一处和这句话取下来：`postFileComment` 成功后会 `clearLocator`，那时两样都没了。
   const target = commentPick.value
   const pick = target?.quote ?? null
@@ -838,7 +840,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :thread-actions="props.comments!.threads.actions"
       :pick="commentPick"
       :focus-id="focusedThread"
-      :writable="true"
+      :writable="commentsWritable"
       :post="postFileComment"
       :name-of="commentNameOf"
       :avatar-of="commentAvatarOf"
@@ -854,7 +856,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :queued-count="queuedCount"
       :pending-elsewhere="pendingElsewhere"
       :busy="pageLocator.sending.value || commenting"
-      :can-comment="!!commentTarget"
+      :can-comment="!!commentTarget && commentsWritable"
       :can-ask-personal="!!props.askPersonal"
       :comment-error="commentError"
       :anchor="locatorAnchor"
