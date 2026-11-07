@@ -24,6 +24,7 @@ import { getSkillHealth, listProjectSkills, listSkillCatalog } from '../api/proj
 import { listMyDevices, setAgentEditing, updateProjectAgent } from '@/api'
 import { ApiError } from '@/api/http'
 import { t } from '@/i18n'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { pickMyDevice } from '@/lib/myDevice'
 
 export type SkillSource = 'platform' | 'machine' | 'project'
@@ -57,6 +58,12 @@ export function useAgentSkills(
   // 市场：两家厂商公开的技能 / 插件 / MCP。公开目录，和哪台机器无关。
   const market = ref<SkillMarket | null>(null)
   const marketLoading = ref(false)
+  // 目录没读出来时的那个错误：面板据此把失败和一条重试的路留在市场那块（design-system
+  // §3.10），401/403 不给重试。没读过、正在读都不算失败。
+  const marketError = ref<unknown>(null)
+  const marketFailed = computed(() => marketError.value !== null)
+  const marketForbidden = computed(() => isForbidden(marketError.value))
+  const marketFailureReason = computed(() => loadFailureReason(marketError.value))
   // 面板自己的名单：打开时从队友身上抄一份，保存后就地更新，父组件不必重拉。
   const carriedNames = ref<string[]>([])
   const loading = ref(false)
@@ -243,14 +250,17 @@ export function useAgentSkills(
     }
   }
 
-  /** 读市场：两家厂商公开的技能 / 插件 / MCP。读不到就在那段说一声，别处照常。 */
+  /** 读市场：两家厂商公开的技能 / 插件 / MCP。读不到就把错误留在市场那块（面板上给重试），
+   *  别处照常；不再另弹一条提示，同一件事不说两遍。正在读时不再发第二份。 */
   async function openMarket() {
+    if (marketLoading.value) return
     marketLoading.value = true
+    marketError.value = null
     try {
       market.value = await fetchSkillMarket()
     } catch (e) {
       market.value = null
-      onError(e instanceof Error ? e.message : t('work.room.skills.marketFailed'))
+      marketError.value = e
     } finally {
       marketLoading.value = false
     }
@@ -267,6 +277,9 @@ export function useAgentSkills(
     workspaceRoots,
     market,
     marketLoading,
+    marketFailed,
+    marketForbidden,
+    marketFailureReason,
     editingBlocked,
     editingBy,
     deviceId,

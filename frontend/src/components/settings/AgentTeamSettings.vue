@@ -237,6 +237,9 @@ async function confirmDeactivate() {
       :device-id="skills.deviceId.value"
       :market="skills.market.value"
       :market-loading="skills.marketLoading.value"
+      :market-failed="skills.marketFailed.value"
+      :market-failure-reason="skills.marketFailureReason.value"
+      :market-forbidden="skills.marketForbidden.value"
       :editing-blocked="skills.editingBlocked.value"
       :editing-by="skills.editingBy.value"
       :loading="skills.loading.value"
@@ -244,6 +247,7 @@ async function confirmDeactivate() {
       :saving="skills.saving.value"
       :can-manage="skills.canManage.value"
       @install="(payload) => void skills.fetchWebSkill(payload.url, payload.kind)"
+      @retry-market="() => void skills.openMarket()"
     />
 
     <ConfirmDialog
