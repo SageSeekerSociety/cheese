@@ -1,7 +1,7 @@
 import type { Component } from 'vue'
 import type { Team } from '@/types'
 
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -152,5 +152,108 @@ describe('the team address', () => {
     await screen.findByText('这个地址已被占用')
     expect(screen.queryByText('这个名称已被占用，换一个试试')).toBeNull()
     expect(replace).not.toHaveBeenCalled()
+  })
+})
+
+// 地址和其余几样分两次存：地址那一步先存上、团队跟着换了地址，人还没存上的名称、简介和
+// 选好的头像不能被团队现在的样子冲掉。
+describe('saving in two steps', () => {
+  const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement
+
+  async function fillAll() {
+    await fireEvent.update(field('团队名称'), '芝士社')
+    await fireEvent.update(field('团队介绍'), '新的简介')
+    await fireEvent.update(field('团队地址'), 'zhishi')
+  }
+
+  it('the team moving to a new address keeps the name and intro still being typed', async () => {
+    const team = mount()
+    await fillAll()
+    team.value = crew({ handle: 'zhishi' })
+    await nextTick()
+
+    expect(field('团队名称').value).toBe('芝士社')
+    expect(field('团队介绍').value).toBe('新的简介')
+    expect(field('团队地址').value).toBe('zhishi')
+  })
+
+  it('a field nobody touched follows the team', async () => {
+    const team = mount()
+    await fireEvent.update(field('团队地址'), 'zhishi')
+    team.value = crew({ handle: 'zhishi', intro: '别处改的简介' })
+    await nextTick()
+
+    expect(field('团队介绍').value).toBe('别处改的简介')
+    expect(field('团队名称').value).toBe('知是开发组')
+  })
+
+  it('address saved but the name step fails: the typing stays, and saving again sends only the rest', async () => {
+    update
+      .mockResolvedValueOnce({ team: crew({ handle: 'zhishi' }) })
+      .mockRejectedValueOnce(new ApiError(500, 'boom', 'Server Error'))
+    const team = mount()
+    await fillAll()
+    await save()
+
+    await screen.findByText('保存失败：保存失败，请稍后重试')
+    expect(team.value.handle).toBe('zhishi')
+    expect(field('团队名称').value).toBe('芝士社')
+    expect(field('团队介绍').value).toBe('新的简介')
+    expect(field('团队地址').value).toBe('zhishi')
+
+    update.mockResolvedValueOnce({ team: crew({ handle: 'zhishi', name: '芝士社', intro: '新的简介' }) })
+    await save()
+    await waitFor(() => expect(team.value.name).toBe('芝士社'))
+    expect(update).toHaveBeenCalledTimes(3)
+    expect(update).toHaveBeenLastCalledWith(7, { name: '芝士社', intro: '新的简介' })
+  })
+
+  it('address saved but the avatar upload fails: the picked avatar is kept and uploaded on the retry', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
+    URL.revokeObjectURL = vi.fn()
+    update.mockResolvedValueOnce({ team: crew({ handle: 'zhishi' }) })
+    createAvatar.mockRejectedValueOnce(new ApiError(500, 'boom', 'Server Error'))
+    const team = mount()
+    await fillAll()
+    const file = new File(['image'], 'avatar.png', { type: 'image/png' })
+    await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    await save()
+
+    await screen.findByText('保存失败：保存失败，请稍后重试')
+    expect(field('团队名称').value).toBe('芝士社')
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+
+    createAvatar.mockResolvedValueOnce({ avatarId: 77 })
+    update.mockResolvedValueOnce({ team: crew({ handle: 'zhishi', name: '芝士社', intro: '新的简介', avatarId: 77 }) })
+    await save()
+    await waitFor(() => expect(team.value.avatarId).toBe(77))
+    expect(createAvatar).toHaveBeenCalledTimes(2)
+    expect(update).toHaveBeenLastCalledWith(7, { name: '芝士社', intro: '新的简介', avatarId: 77 })
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:avatar-preview'))
+  })
+
+  it('nothing saved: every field keeps what was typed', async () => {
+    update.mockRejectedValueOnce(new ApiError(500, 'boom', 'Server Error'))
+    const team = mount()
+    await fillAll()
+    await save()
+
+    await screen.findByText('保存失败，请稍后重试')
+    expect(team.value.handle).toBe('crew')
+    expect(field('团队名称').value).toBe('芝士社')
+    expect(field('团队介绍').value).toBe('新的简介')
+    expect(field('团队地址').value).toBe('zhishi')
+  })
+
+  it('once all of it is saved, the draft takes the saved spelling and nothing is left unsaved', async () => {
+    update.mockResolvedValueOnce({ team: crew({ name: '芝士社', intro: '新的简介' }) })
+    mount()
+    await fireEvent.update(field('团队名称'), ' 芝士社 ')
+    await fireEvent.update(field('团队介绍'), '新的简介  ')
+    await save()
+
+    await waitFor(() => expect(field('团队名称').value).toBe('芝士社'))
+    expect(field('团队介绍').value).toBe('新的简介')
+    expect(screen.queryByText('有未保存的改动')).toBeNull()
   })
 })
