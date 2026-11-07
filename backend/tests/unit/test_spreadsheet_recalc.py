@@ -132,6 +132,36 @@ def test_text_that_merely_looks_like_an_error_is_not_one():
     )
 
 
+@pytest.mark.parametrize("prefixed", [False, True])
+def test_error_cells_are_reported_independent_of_xml_serialization(prefixed):
+    """XML attribute order and prefixes cannot hide an uncomputed formula."""
+    xml = sheet('<c t="e" r="B7"><f>A1/0</f><v>#DIV/0!</v></c>')
+    if prefixed:
+        xml = xml.replace("xmlns=", "xmlns:s=")
+        for tag in ("worksheet", "sheetData", "row", "c", "f", "v"):
+            xml = xml.replace(f"<{tag}", f"<s:{tag}").replace(f"</{tag}", f"</s:{tag}")
+
+    bad = spreadsheet.cells_that_did_not_compute(book(xml))
+
+    assert [(c.address, c.value) for c in bad] == [("预算!B7", "#DIV/0!")]
+
+
+def test_error_address_uses_the_sheet_tab_name_without_xml_escaping():
+    raw = BytesIO()
+    with zipfile.ZipFile(
+        BytesIO(book(sheet('<c r="B7" t="e"><v>#REF!</v></c>')))
+    ) as source:
+        with zipfile.ZipFile(raw, "w") as target:
+            for name in source.namelist():
+                target.writestr(
+                    name, source.read(name).replace("预算".encode(), b"R&amp;D")
+                )
+
+    (bad,) = spreadsheet.cells_that_did_not_compute(raw.getvalue())
+
+    assert bad.address == "R&D!B7"
+
+
 async def test_the_workbook_goes_out_with_its_format_named(client):
     """soffice 按扩展名选导入过滤器，不带扩展名它会当成另一种格式打开。"""
     good = book(sheet('<c r="A1" t="n"><f>SUM(B1:B2)</f><v>5</v></c>'))
