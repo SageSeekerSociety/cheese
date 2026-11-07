@@ -52,3 +52,13 @@ export function isLocked(permission: string): boolean {
 export function mayIn(project: { my_permissions?: string[] } | null | undefined, permission: string): boolean {
   return project?.my_permissions?.includes(permission) ?? false
 }
+
+/** 我能不能在这个频道的文件上写评论：频道和项目都没归档，我的角色有「评论」。和文档评论同一条
+ *  规矩，服务端（`file_comments`）也按这几样拒；这里只决定写的入口摆不摆出来。 */
+export function mayCommentIn(
+  topic: { status: string } | null | undefined,
+  project: { my_permissions?: string[]; archived_at?: string | null } | null | undefined
+): boolean {
+  if (!topic || topic.status === 'archived') return false
+  return !project?.archived_at && mayIn(project, 'comment')
+}
