@@ -1,0 +1,9 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+
+ Test Files  1 passed (1)
+      Tests  28 passed (28)
+   Start at  15:48:48
+   Duration  4.59s (tests 49%, transform 26%, import 13%, environment 8%, setup 4%)
+

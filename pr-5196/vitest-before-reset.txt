@@ -1,0 +1,34 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+ ❯ src/stores/agentThread.spec.ts (28 tests | 1 failed | 27 skipped) 614ms
+   ❯ 打开正在答的那段对话：一个回答只留一遍 (7)
+     × signing out while a conversation is still being read leaves nothing of the last person on the panel 74ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > signing out while a conversation is still being read leaves nothing of the last person on the panel
+AssertionError: expected 'c1' to be null
+
+- Expected:
+null
+
++ Received:
+"c1"
+
+ ❯ src/stores/agentThread.spec.ts:769:29
+    767|     await showing
+    768|
+    769|     expect(a.current.value).toBeNull()
+       |                             ^
+    770|     expect(followed).toEqual([])
+    771|     expect(said(a)).toEqual([])
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 27 skipped (28)
+   Start at  15:38:25
+   Duration  3.08s (transform 44%, tests 21%, import 14%, environment 13%, setup 7%)
+

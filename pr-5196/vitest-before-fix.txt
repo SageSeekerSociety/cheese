@@ -1,0 +1,119 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+ ❯ src/stores/agentThread.spec.ts (27 tests | 5 failed) 2141ms
+   ❯ 打开正在答的那段对话：一个回答只留一遍 (6)
+     × showing the conversation being asked in, twice, keeps its answer once 71ms
+     × showing a conversation opened mid-answer, twice, reads the answer on once 106ms
+     × two shows of a conversation still answering, both reading at once, read the answer on once 56ms
+     × switching to c2 and straight back to c1 shows c1 and reads on only its answer 106ms
+     × a new topic started while a conversation is still being read stays the new topic 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > showing the conversation being asked in, twice, keeps its answer once
+AssertionError: expected [ 'c1/q1', 'c1/q1' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "c1/q1",
++   "c1/q1",
++ ]
+
+ ❯ src/stores/agentThread.spec.ts:650:22
+    648|     await asking
+    649|
+    650|     expect(followed).toEqual([])
+       |                      ^
+    651|     expect(said(a)).toEqual([
+    652|       ['user', '要先会什么？'],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > showing a conversation opened mid-answer, twice, reads the answer on once
+AssertionError: expected [ 'c1/q1', 'c1/q1', 'c1/q1' ] to deeply equal [ 'c1/q1' ]
+
+- Expected
++ Received
+
+  [
+    "c1/q1",
++   "c1/q1",
++   "c1/q1",
+  ]
+
+ ❯ src/stores/agentThread.spec.ts:676:22
+    674|     await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    675|
+    676|     expect(followed).toEqual(['c1/q1'])
+       |                      ^
+    677|     expect(said(a)).toEqual([
+    678|       ['user', '要先会什么？'],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > two shows of a conversation still answering, both reading at once, read the answer on once
+AssertionError: expected [ 'c1/q1', 'c1/q1' ] to deeply equal [ 'c1/q1' ]
+
+- Expected
++ Received
+
+  [
+    "c1/q1",
++   "c1/q1",
+  ]
+
+ ❯ src/stores/agentThread.spec.ts:702:22
+    700|     await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    701|
+    702|     expect(followed).toEqual(['c1/q1'])
+       |                      ^
+    703|     expect(said(a)).toEqual([
+    704|       ['user', '要先会什么？'],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > switching to c2 and straight back to c1 shows c1 and reads on only its answer
+AssertionError: expected 'c2' to be 'c1' // Object.is equality
+
+Expected: "c1"
+Received: "c2"
+
+ ❯ src/stores/agentThread.spec.ts:730:29
+    728|     await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    729|
+    730|     expect(a.current.value).toBe('c1')
+       |                             ^
+    731|     expect(followed).toEqual(['c1/q1'])
+    732|     expect(said(a)).toEqual([
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > a new topic started while a conversation is still being read stays the new topic
+AssertionError: expected 'c1' to be null
+
+- Expected:
+null
+
++ Received:
+"c1"
+
+ ❯ src/stores/agentThread.spec.ts:751:29
+    749|     await showing
+    750|
+    751|     expect(a.current.value).toBeNull()
+       |                             ^
+    752|     expect(followed).toEqual([])
+    753|     expect(said(a)).toEqual([])
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 22 passed (27)
+   Start at  14:58:32
+   Duration  4.54s (tests 49%, transform 29%, import 9%, environment 8%, setup 4%)
+
