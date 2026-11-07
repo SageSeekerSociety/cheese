@@ -33,10 +33,13 @@ async function settle(outcome, delay, what) {
   await sleep(delay); return outcome === 'ok' ? 'ok' : 'fail'
 }
 function reset() {
+  // 版本号只增不减：产品页不刷新时，它记着的版本号不会比代理里的新，重置后点名册的刷新就能接上
+  const prev = state
   state = {
     [A]: { name: '测试队友A（假）', handle: 'accept-a', skills: ['documents'], version: 1 },
     [B]: { name: '测试队友B（假）', handle: 'accept-b', skills: ['lean'], version: 1 },
   }
+  if (prev) for (const id of Object.keys(state)) state[id].version = prev[id].version + 1
   log = []
   catalogReads = 0
   if (pending) for (const p of pending.values()) p.resolve('ok')
