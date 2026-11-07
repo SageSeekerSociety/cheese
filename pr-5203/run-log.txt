@@ -1,0 +1,81 @@
+== before: UI (shots.js before) ==
+[route] POST #1 to /teams/1/invitations at 2026-11-07T16:15:51.481Z
+[route] POST #2 to /teams/1/invitations at 2026-11-07T16:15:51.483Z
+[route] POST #1 real backend answered 201; held 3 s before the page sees it
+[route] POST #2 real backend answered 409; held 3 s before the page sees it
+[ui] 400ms after double-clicking 邀请: button disabled=false
+[route] POST #3 to /teams/1/invitations at 2026-11-07T16:15:52.019Z
+[route] POST #3 real backend answered 409; held 3 s before the page sees it
+[route] POST #4 to /teams/1/invitations at 2026-11-07T16:15:52.042Z
+[route] POST #5 to /teams/1/invitations at 2026-11-07T16:15:52.068Z
+[route] POST #4 real backend answered 409; held 3 s before the page sees it
+[route] POST #5 real backend answered 409; held 3 s before the page sees it
+[ui] POSTs sent by the dialog in this burst: 5
+[api] pending invitations team 1: ["40:frank"]
+[api] pending invitations team 2: ["39:david","38:david"]
+== before: UI double click, no delay (dbl.js) ==
+round 1: POSTs sent=2 pending rows for frank=1
+round 2: POSTs sent=2 pending rows for frank=1
+round 3: POSTs sent=2 pending rows for frank=1
+round 4: POSTs sent=2 pending rows for frank=1
+round 5: POSTs sent=2 pending rows for frank=1
+round 6: POSTs sent=2 pending rows for frank=1
+round 7: POSTs sent=2 pending rows for frank=1
+round 8: POSTs sent=2 pending rows for frank=1
+rounds with two pending invitations: 0/8
+== before: two simultaneous POSTs x20 (race.py team 2 david) ==
+round 14: statuses=[201, 201] pending_rows=2
+round 15: statuses=[201, 201] pending_rows=2
+round 16: statuses=[201, 201] pending_rows=2
+round 17: statuses=[201, 201] pending_rows=2
+round 18: statuses=[201, 201] pending_rows=2
+round 19: statuses=[201, 201] pending_rows=2
+round 20: statuses=[201, 201] pending_rows=2
+rounds with two pending invitations for the same person: 18/20
+== before: one more POST for david ==
+{"code":500,"message":"服务器出错，稍后重试","error":{"name":"InternalServerError","message":"服务器出错，稍后重试","data":null,"retryable":false,"i18n":{"key":"serverInternalError","params":{}}}}
+HTTP 500
+
+== DB before migration ==
+alembic: a0f25891015d
+{'id': 48, 'user_id': 6, 'team_id': 1, 'status': 'PENDING', 'processed_by_id': None}
+{'id': 47, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 46, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 45, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 44, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 43, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 42, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 41, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 40, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 39, 'user_id': 4, 'team_id': 2, 'status': 'PENDING', 'processed_by_id': None}
+{'id': 38, 'user_id': 4, 'team_id': 2, 'status': 'PENDING', 'processed_by_id': None}
+{'id': 37, 'user_id': 4, 'team_id': 2, 'status': 'CANCELED', 'processed_by_id': 1}
+== DB after migration b7e2c4a91f30 ==
+alembic: b7e2c4a91f30
+{'id': 48, 'user_id': 6, 'team_id': 1, 'status': 'PENDING', 'processed_by_id': None}
+{'id': 47, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 46, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 45, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 44, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 43, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 42, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 41, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 40, 'user_id': 6, 'team_id': 1, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 39, 'user_id': 4, 'team_id': 2, 'status': 'CANCELED', 'processed_by_id': 1}
+{'id': 38, 'user_id': 4, 'team_id': 2, 'status': 'PENDING', 'processed_by_id': None}
+{'id': 37, 'user_id': 4, 'team_id': 2, 'status': 'CANCELED', 'processed_by_id': 1}
+== after: UI (shots.js after) ==
+[route] POST #1 to /teams/1/invitations at 2026-11-07T16:20:56.093Z
+[route] POST #1 answered 503 by the browser (stand-in failure, never reached the backend)
+[ui] after the 503: button disabled=false
+[route] POST #2 to /teams/1/invitations at 2026-11-07T16:20:59.140Z
+[route] POST #2 real backend answered 201; held 3 s before the page sees it
+[ui] 400ms after double-clicking 邀请: button disabled=true
+[ui] POSTs sent by the dialog in this burst: 1
+[api] pending invitations team 1: ["49:grace","48:frank"]
+[api] pending invitations team 2: ["38:david"]
+== after: two simultaneous POSTs x20 (race.py team 2 carol) ==
+round 18: statuses=[201, 409] pending_rows=1
+round 19: statuses=[201, 409] pending_rows=1
+round 20: statuses=[201, 409] pending_rows=1
+rounds with two pending invitations for the same person: 0/20
