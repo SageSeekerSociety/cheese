@@ -1,0 +1,63 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+ ❯ src/stores/agentThread.spec.ts (37 tests | 2 failed | 35 skipped) 872ms
+   ❯ 打开正在答的那段对话：一个回答只留一遍 (16)
+     × a topic list read before sign-out does not come back as the next person's topics 130ms
+     × words said mid-answer whose sending fails after sign-out are not asked for the next person 116ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > a topic list read before sign-out does not come back as the next person's topics
+AssertionError: expected [ { id: 'c1', title: '', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "id": "c1",
++     "lastActiveAt": "2026-10-01T08:00:00Z",
++     "questions": 0,
++     "title": "",
++   },
++ ]
+
+ ❯ src/stores/agentThread.spec.ts:1023:35
+    1021|     await hearing
+    1022|
+    1023|     expect(a.conversations.value).toEqual([])
+       |                                   ^
+    1024|   })
+    1025|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > words said mid-answer whose sending fails after sign-out are not asked for the next person
+AssertionError: expected [ '把报告打分', '只看第 3 份' ] to deeply equal [ '把报告打分' ]
+
+- Expected
++ Received
+
+  [
+    "把报告打分",
++   "只看第 3 份",
+  ]
+
+ ❯ src/stores/agentThread.spec.ts:1064:19
+    1062|     await saying
+    1063|
+    1064|     expect(asked).toEqual(['把报告打分'])
+       |                   ^
+    1065|   })
+    1066|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 35 skipped (37)
+   Start at  16:32:23
+   Duration  3.23s (transform 39%, tests 28%, import 14%, environment 11%, setup 7%)
+

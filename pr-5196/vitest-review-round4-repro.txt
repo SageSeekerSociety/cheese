@@ -1,0 +1,36 @@
+
+ RUN  v5.0.3 /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/5f32621a-86a1-4df0-b7fa-d0370aec3c2e/.cheese/tasks/30ee451d-7615-4d69-b6e5-6cd531aeb37d/frontend
+
+ ❯ src/stores/agentThread.spec.ts (35 tests | 1 failed | 34 skipped) 672ms
+   ❯ 打开正在答的那段对话：一个回答只留一遍 (14)
+     × words the last person said mid-answer are not asked for the next person after sign-out 117ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/stores/agentThread.spec.ts > 打开正在答的那段对话：一个回答只留一遍 > words the last person said mid-answer are not asked for the next person after sign-out
+AssertionError: expected [ '把报告打分', '只看第 3 份' ] to deeply equal [ '把报告打分' ]
+
+- Expected
++ Received
+
+  [
+    "把报告打分",
++   "只看第 3 份",
+  ]
+
+ ❯ src/stores/agentThread.spec.ts:1001:19
+    999|     await asking
+    1000|
+    1001|     expect(asked).toEqual(['把报告打分'])
+       |                   ^
+    1002|     expect(said(a)).toEqual([])
+    1003|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 34 skipped (35)
+   Start at  16:29:28
+   Duration  3.14s (transform 45%, tests 23%, import 12%, environment 12%, setup 7%, worker 1%)
+

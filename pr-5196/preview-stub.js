@@ -43,7 +43,7 @@
     var d = document.createElement('div');
     d.setAttribute('style', 'position:fixed;left:72px;bottom:8px;z-index:2147483647;background:#1f2328;color:#fff;font:12px/1.6 system-ui,sans-serif;padding:6px 10px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3);max-width:620px');
     var b = function (label, fn) { var x = document.createElement('button'); x.textContent = label; x.setAttribute('style', 'margin-left:8px;background:#f59e0b;color:#111;border:0;border-radius:4px;padding:1px 8px;cursor:pointer;font:inherit'); x.onclick = fn; return x; };
-    d.appendChild(document.createTextNode('PR #5196 预览 · 当前：' + (build === 'after' ? '修后 7241ff47f' : '修前 043455b5d') + ' · 演示替身：' + (on ? '开（芝士对话为假数据，回答中途停 8 秒）' : '关')));
+    d.appendChild(document.createTextNode('PR #5196 预览 · 当前：' + (build === 'after' ? '修后 770614582' : '修前 043455b5d') + ' · 演示替身：' + (on ? '开（芝士对话为假数据，回答中途停 8 秒）' : '关')));
     d.appendChild(b(build === 'after' ? '切到修前' : '切到修后', function () { document.cookie = 'cheese_build=' + (build === 'after' ? 'before' : 'after') + ';path=/'; location.reload(); }));
     d.appendChild(b(on ? '关掉替身' : '打开替身', function () { localStorage.setItem('cheeseRepro', on ? '0' : '1'); location.reload(); }));
     if (on) d.appendChild(b('去「设置 › 芝士」', function () { location.href = '/users/settings/assistant'; }));
