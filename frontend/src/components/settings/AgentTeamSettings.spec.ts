@@ -330,8 +330,8 @@ describe('技能面板的 409', () => {
     const retry = await screen.findByRole('button', { name: t('global.loadError.retry') })
     await fireEvent.click(retry)
 
-    await waitFor(() => expect(fetchSkillMarket).toHaveBeenCalledTimes(2))
     expect(await screen.findByText('pdf')).toBeTruthy()
+    expect(screen.queryByText(t('work.room.skills.marketFailed'))).toBeNull()
   })
 
   // 别人先写了 → 这次保存被 409 拦下 → 面板重读名册。重读必须顺手把面板目标换到

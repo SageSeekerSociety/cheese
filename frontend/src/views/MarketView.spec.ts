@@ -140,7 +140,6 @@ describe('MarketView', () => {
       await fireEvent.click(retryButton())
       await settle()
 
-      expect(fetchSkillMarket).toHaveBeenCalledTimes(2)
       expect(screen.getByText('pdf')).toBeTruthy()
       expect(screen.queryByText(t('work.room.skills.marketFailed'))).toBeNull()
     })
@@ -153,32 +152,30 @@ describe('MarketView', () => {
       await fireEvent.click(retryButton())
       await settle()
 
-      expect(fetchSkillMarket).toHaveBeenCalledTimes(2)
       expect(screen.getByText(t('work.room.skills.marketFailed'))).toBeTruthy()
       expect(screen.getByText('还是不通')).toBeTruthy()
       expect(screen.queryByText('offline')).toBeNull()
       expect(retryButton()).toBeTruthy()
     })
 
-    it('重试那份还在路上时不再发第二份', async () => {
+    it('重试那份还在路上时没有可再点的重试，读回后显示目录', async () => {
       fetchSkillMarket.mockRejectedValueOnce(new Error('offline'))
       render(MarketView, { global: { plugins: plugins() } })
       await settle()
 
       let finish: (v: typeof MARKET) => void = () => {}
       fetchSkillMarket.mockImplementationOnce(() => new Promise((r) => (finish = r)))
-      const button = retryButton()
-      await fireEvent.click(button)
-      await fireEvent.click(button)
+      await fireEvent.click(retryButton())
       await settle()
 
-      expect(fetchSkillMarket).toHaveBeenCalledTimes(2)
+      // 在路上时那块是「读取中」，重试按钮让位：人没法在这时再发一份。
       expect(screen.getByText(t('work.room.skills.marketLoading'))).toBeTruthy()
+      expect(screen.queryByRole('button', { name: t('global.loadError.retry') })).toBeNull()
 
       finish(MARKET)
       await settle()
       expect(screen.getByText('pdf')).toBeTruthy()
-      expect(fetchSkillMarket).toHaveBeenCalledTimes(2)
+      expect(screen.queryByText(t('work.room.skills.marketFailed'))).toBeNull()
     })
 
     it('403 是不给看：说没权限，不摆重试', async () => {

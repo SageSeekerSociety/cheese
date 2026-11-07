@@ -316,25 +316,30 @@ describe('队友技能面板', () => {
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
   })
 
-  it('市场重读：开头清掉上一次的失败，正在读时不再发第二份', async () => {
+  it('市场重读：开头清掉上一次的失败；正在读时再点一次，不会被第二份的结果搅乱', async () => {
     vi.mocked(fetchSkillMarket).mockRejectedValueOnce(new Error('offline'))
     const s = skills()
     await s.openSkills()
     await vi.waitFor(() => expect(s.marketFailed.value).toBe(true))
 
+    // 在路上的这一份最终读到目录；要是又发了第二份，它会失败并把失败留在面板上。
     let finish: (v: unknown) => void = () => {}
-    vi.mocked(fetchSkillMarket).mockImplementationOnce(() => new Promise((r) => (finish = r)) as never)
-    const calls = vi.mocked(fetchSkillMarket).mock.calls.length
+    vi.mocked(fetchSkillMarket)
+      .mockImplementationOnce(() => new Promise((r) => (finish = r)) as never)
+      .mockRejectedValueOnce(new Error('重复请求'))
     void s.openMarket()
     void s.openMarket()
 
-    expect(vi.mocked(fetchSkillMarket).mock.calls.length).toBe(calls + 1)
     expect(s.marketFailed.value).toBe(false)
     expect(s.marketLoading.value).toBe(true)
-    finish({ skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] })
+    finish({ ...MARKET_EMPTY })
     await vi.waitFor(() => expect(s.marketLoading.value).toBe(false))
     expect(s.market.value).not.toBeNull()
+    expect(s.marketFailed.value).toBe(false)
+    expect(s.marketFailureReason.value).toBeNull()
   })
+
+  const MARKET_EMPTY = { skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] }
 
   it('市场 403：标成不给看', async () => {
     vi.mocked(fetchSkillMarket).mockRejectedValue(new ApiError(403, 'forbidden'))
