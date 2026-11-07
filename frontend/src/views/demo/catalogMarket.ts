@@ -44,6 +44,12 @@ export const MARKET_ENTRIES: CatalogEntry[] = [
         props: { market: null, marketLoaded: false, marketLoading: true },
         expect: '正在读市场…',
       },
+      {
+        name: '目录读失败',
+        note: '目录没读出来：那一格换成失败块，写着服务端的原因，下面一颗「重试」原地再读。',
+        props: { market: null, marketLoaded: true, marketFailed: true, marketFailureReason: 'Failed to fetch' },
+        expect: '市场读不出来',
+      },
     ],
   },
 ]

@@ -24,6 +24,8 @@ withDefaults(
     marketLoading?: boolean
     /** 技能市场的目录与机器都读过了：在那之前不急着说「先连接一台机器」。 */
     marketLoaded?: boolean
+    /** 目录读失败了。没读过、正在读都不算。 */
+    marketFailed?: boolean
     /** 目录读失败时服务端给的那句原因；没有就只显示标题。 */
     marketFailureReason?: string | null
     /** 目录读失败是 401/403：说没权限、不给重试。 */
@@ -36,6 +38,7 @@ withDefaults(
     market: null,
     marketLoading: false,
     marketLoaded: false,
+    marketFailed: false,
     marketFailureReason: null,
     marketForbidden: false,
     deviceId: null,
@@ -63,6 +66,7 @@ const { t } = useI18n()
       :loading="marketLoading"
       :device-id="deviceId"
       :scanning="scanning"
+      :failed="marketFailed"
       :failure-reason="marketFailureReason"
       :forbidden="marketForbidden"
       show-agents

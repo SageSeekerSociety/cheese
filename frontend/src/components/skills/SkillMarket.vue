@@ -44,6 +44,9 @@ const props = withDefaults(
     /** 要不要摆第四个货架「Agent 模板」。只在**市场**里摆：队友技能面板那一格问的是
      *  「这个队友带哪些技能」，模板不属于那一问。 */
     showAgents?: boolean
+    /** 目录读失败了（由取数的那一层判定）。没读过、正在读都不是失败：`market` 为空
+     *  分不出这两种，所以单列一个。 */
+    failed?: boolean
     /** 目录没读出来时服务端给的那句原因；没有就只显示「市场读不出来」。 */
     failureReason?: string | null
     /** 目录读失败是 401/403：说没权限、不给重试（BaseLoadError 的 forbidden）。 */
@@ -56,6 +59,7 @@ const props = withDefaults(
     scanning: false,
     saving: false,
     showAgents: false,
+    failed: false,
     failureReason: null,
     forbidden: false,
   }
@@ -121,15 +125,18 @@ const cards = computed(() => {
     <p v-if="marketTab === 'agents'" class="market__note t-meta-read">
       {{ t('work.room.skills.marketTabAgentsEmpty') }}
     </p>
-    <p v-else-if="loading" class="market__note t-meta-read">{{ t('work.room.skills.marketLoading') }}</p>
     <!-- 目录没读出来：失败留在目录这块，并摆一条重试的路（docs/design-system.md §3.10）。 -->
     <BaseLoadError
-      v-else-if="!market"
+      v-else-if="failed && !loading"
       :title="t('work.room.skills.marketFailed')"
       :error="failureReason"
       :forbidden="forbidden"
       @retry="emit('retry')"
     />
+    <!-- 正在读，或者宿主还没发出请求（面板要等机器定下来才拉目录）：都是「读取中」。 -->
+    <p v-else-if="loading || !market" class="market__note t-meta-read">
+      {{ t('work.room.skills.marketLoading') }}
+    </p>
     <template v-else>
       <p v-if="!cards.length" class="market__note t-meta-read">
         {{ t('work.room.skills.marketEmpty') }}

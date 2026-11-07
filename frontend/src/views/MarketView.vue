@@ -20,6 +20,7 @@ const marketLoaded = ref(false)
 // 目录没读出来时的那个错误：画面据此把「市场读不出来」和一条重试的路留在目录那块
 // （docs/design-system.md §3.10），401/403 不给重试。
 const marketError = ref<unknown>(null)
+const marketFailed = computed(() => marketError.value !== null)
 const marketForbidden = computed(() => isForbidden(marketError.value))
 const marketFailureReason = computed(() => loadFailureReason(marketError.value))
 const deviceId = ref<string | null>(null)
@@ -75,6 +76,7 @@ async function install({ url, kind }: { url: string; kind: 'skill' | 'plugin' })
     :market="market"
     :market-loading="marketLoading"
     :market-loaded="marketLoaded"
+    :market-failed="marketFailed"
     :market-failure-reason="marketFailureReason"
     :market-forbidden="marketForbidden"
     :device-id="deviceId"

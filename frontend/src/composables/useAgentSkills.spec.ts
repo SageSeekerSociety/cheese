@@ -300,7 +300,7 @@ describe('队友技能面板', () => {
     expect(s.market.value?.mcp.map((c) => c.name)).toEqual(['Acme'])
   })
 
-  it('市场读不到：说一声，机器那一段照常', async () => {
+  it('市场读不到：失败和原因留给市场那块，不另弹提示，机器那一段照常', async () => {
     vi.mocked(fetchSkillMarket).mockRejectedValue(new Error('offline'))
     const fail = vi.fn()
     const s = skills(fail)
@@ -309,8 +309,41 @@ describe('队友技能面板', () => {
     await vi.waitFor(() => expect(s.marketLoading.value).toBe(false))
 
     expect(s.market.value).toBeNull()
-    expect(fail).toHaveBeenCalledWith('offline')
+    expect(s.marketFailed.value).toBe(true)
+    expect(s.marketFailureReason.value).toBe('offline')
+    expect(s.marketForbidden.value).toBe(false)
+    expect(fail).not.toHaveBeenCalled()
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
+  })
+
+  it('市场重读：开头清掉上一次的失败，正在读时不再发第二份', async () => {
+    vi.mocked(fetchSkillMarket).mockRejectedValueOnce(new Error('offline'))
+    const s = skills()
+    await s.openSkills()
+    await vi.waitFor(() => expect(s.marketFailed.value).toBe(true))
+
+    let finish: (v: unknown) => void = () => {}
+    vi.mocked(fetchSkillMarket).mockImplementationOnce(() => new Promise((r) => (finish = r)) as never)
+    const calls = vi.mocked(fetchSkillMarket).mock.calls.length
+    void s.openMarket()
+    void s.openMarket()
+
+    expect(vi.mocked(fetchSkillMarket).mock.calls.length).toBe(calls + 1)
+    expect(s.marketFailed.value).toBe(false)
+    expect(s.marketLoading.value).toBe(true)
+    finish({ skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] })
+    await vi.waitFor(() => expect(s.marketLoading.value).toBe(false))
+    expect(s.market.value).not.toBeNull()
+  })
+
+  it('市场 403：标成不给看', async () => {
+    vi.mocked(fetchSkillMarket).mockRejectedValue(new ApiError(403, 'forbidden'))
+    const s = skills()
+
+    await s.openSkills()
+    await vi.waitFor(() => expect(s.marketLoading.value).toBe(false))
+
+    expect(s.marketForbidden.value).toBe(true)
   })
 
   it('装一枚插件：kind 跟着地址发上去并自动安装', async () => {
