@@ -56,6 +56,7 @@ import {
 } from './agent'
 
 import { ApiError } from '@/api'
+import { identityChanges } from '@/lib/identity'
 
 /** 各团队资料库里实际放进了哪些文件：上传落在哪儿，就看这里。`who` 记下传的那一刻是以谁的
  *  身份传的（请求带的是那一刻登录着的人的凭据），给了 `as` 时写成「谁:文件名」。 */
@@ -66,6 +67,12 @@ function libraries(opts: { as?: boolean } = {}) {
     return { path: file.name, bytes: file.size }
   })
   return shelves
+}
+/** 照登录服务的做法换人：先记一次「登录的人变了」，退出时清掉面板，再以 `handle` 登录。 */
+function signOutThenIn(handle: string) {
+  identityChanges.value += 1
+  resetAgent()
+  who.handle = handle
 }
 const pdf = (name: string) => new File(['x'], name, { type: 'application/pdf' })
 
@@ -129,8 +136,7 @@ describe('交给芝士的文件', () => {
     server.hold = new Promise<void>((r) => (release = r))
     const fromA = attachToAgent([pdf('a.pdf')])
 
-    resetAgent()
-    who.handle = 'zhao'
+    signOutThenIn('zhao')
     server.hold = null
     await attachToAgent([pdf('b.pdf')])
     release()
@@ -156,13 +162,26 @@ describe('交给芝士的文件', () => {
     const fromA = attachToAgent([pdf('a1.pdf'), pdf('a2.pdf')])
     await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
 
-    resetAgent()
-    who.handle = 'zhao'
+    signOutThenIn('zhao')
     finish()
     await fromA
 
     expect(shelves).toEqual({ 9: ['lin:a1.pdf'] })
     expect(agentFiles.value).toEqual([])
+  })
+
+  it('A 交的文件还在查资料库时，别的标签页直接换成 B 登录：A 的文件也不以 B 的身份传', async () => {
+    const shelves = libraries({ as: true })
+    let release!: () => void
+    server.hold = new Promise<void>((r) => (release = r))
+    const fromA = attachToAgent([pdf('a.pdf')])
+
+    identityChanges.value += 1
+    who.handle = 'zhao'
+    release()
+    await fromA
+
+    expect(shelves).toEqual({})
   })
 
   it('传完的那一行带上它在资料库里的名字，不再是上传中', async () => {

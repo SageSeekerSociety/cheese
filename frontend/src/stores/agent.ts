@@ -25,6 +25,7 @@ import { t } from '@/i18n'
 import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
+import { identityChanges } from '@/lib/identity'
 import { uploadLibraryFile } from '@/lib/libraryApi'
 import { toast } from '@/lib/toast'
 import { myHandle } from '@/me'
@@ -260,34 +261,35 @@ function myLibrary(): Promise<number> {
   return cached
 }
 
-/** 换一个人（退出登录）就加一：交到一半的文件看它变了，就知道交它的人已经不在了。 */
-let session = 0
-/** 交文件的人已经退出：这份不再传，不能拿下一个人的凭据替上一个人传。 */
-class SignedOut extends Error {}
+/** 交文件的那个人还登录着吗：`identityChanges` 在换人（含退出）时加一，开始交时记下它，
+ *  中途变了就是交它的人已经不在了，不能拿下一个人的凭据替他接着传。 */
+const stillSignedIn = (mine: number) => mine === identityChanges.value
 
-async function keep(file: File, mine: number): Promise<Pick<AgentFile, 'id' | 'path'>> {
+async function keep(file: File, mine: number): Promise<Pick<AgentFile, 'id' | 'path'> | null> {
   if (agentContext.value?.attachAsMaterials) {
     const done = await AttachmentsApi.upload({ type: 'file', file })
     return { id: done.id, path: null }
   }
   const team = await myLibrary()
-  if (mine !== session) throw new SignedOut()
+  if (!stillSignedIn(mine)) return null
   const placed = await uploadLibraryFile({ team }, file)
   return { id: null, path: placed.path }
 }
 
 export async function attachToAgent(picked: File[]) {
-  const mine = session
+  const mine = identityChanges.value
   for (const file of picked) {
-    if (mine !== session) return
+    if (!stillSignedIn(mine)) return
     const row: AgentFile = { id: null, path: null, name: file.name, mime: file.type, uploading: true }
     agentFiles.value = [...agentFiles.value, row]
     try {
       const done = await keep(file, mine)
+      if (!done) return
       agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, ...done, uploading: false } : f))
     } catch (error) {
       agentFiles.value = agentFiles.value.filter((f) => f !== row)
-      if (error instanceof SignedOut || mine !== session) return
+      // 人已经走了，这句报错没人要看。
+      if (!stillSignedIn(mine)) return
       // 服务端说了为什么（资料库满了、文件太大）就照它说。
       toast.error(error instanceof ApiError && error.message ? error.message : t('tasks.assistant.files.failed'))
     }
@@ -305,7 +307,6 @@ export function resetAgent() {
   agentSelection.value = null
   agentPicked.value = {}
   ownLibraries.clear()
-  session += 1
   agentThread.reset()
 }
 
