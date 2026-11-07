@@ -9,8 +9,9 @@ vi.mock('@/lib/libraryApi', () => ({ uploadLibraryFile: (...a: unknown[]) => kee
 // 登录换人不刷新页面：`who.handle` 换掉就是换了个人，各自名下那个团队不一样。
 const who = vi.hoisted(() => ({ handle: 'lin' }))
 const teams: Record<string, number> = { lin: 9, zhao: 12 }
+const lookup = vi.fn(async (handle: string) => ({ team: { id: teams[handle] } }))
 vi.mock('@/api/teams', () => ({
-  TeamsApi: { detailByHandle: async (handle: string) => ({ team: { id: teams[handle] } }) },
+  TeamsApi: { detailByHandle: (handle: string) => lookup(handle) },
 }))
 vi.mock('@/me', () => ({ myHandle: () => who.handle }))
 const post = vi.fn()
@@ -52,6 +53,7 @@ describe('交给芝士的文件', () => {
     who.handle = 'lin'
     upload.mockReset()
     keep.mockReset()
+    lookup.mockClear()
   })
 
   it('换了个账号（不刷新页面）再交文件，落在新账号自己名下的资料库', async () => {
@@ -62,6 +64,7 @@ describe('交给芝士的文件', () => {
     await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
 
     expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }, { team: 12 }])
+    expect(lookup.mock.calls.map((c) => c[0])).toEqual(['lin', 'zhao'])
   })
 
   it('同一个人交第二个文件不再问一遍', async () => {
@@ -70,6 +73,40 @@ describe('交给芝士的文件', () => {
     await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
 
     expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }, { team: 9 }])
+    expect(lookup).toHaveBeenCalledTimes(1)
+  })
+
+  it('退出登录后清掉记下的资料库，再登录重新问', async () => {
+    keep.mockResolvedValue({ path: 'a.pdf' })
+    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+    resetAgent()
+    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+
+    expect(lookup).toHaveBeenCalledTimes(2)
+  })
+
+  it('没问到资料库时不记住失败，下次重新问', async () => {
+    keep.mockResolvedValue({ path: 'a.pdf' })
+    lookup.mockRejectedValueOnce(new Error('offline'))
+    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+
+    expect(lookup).toHaveBeenCalledTimes(2)
+    expect(keep.mock.calls.map((c) => c[0])).toEqual([{ team: 9 }])
+  })
+
+  it('退出前那次没问到、登录后才失败，不会把新记下的那份撤掉', async () => {
+    keep.mockResolvedValue({ path: 'a.pdf' })
+    let fail!: (e: Error) => void
+    lookup.mockImplementationOnce(() => new Promise((_, reject) => (fail = reject)))
+    const first = attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+    resetAgent()
+    await attachToAgent([new File(['y'], 'b.pdf', { type: 'application/pdf' })])
+    fail(new Error('offline'))
+    await first.catch(() => {})
+    await attachToAgent([new File(['z'], 'c.pdf', { type: 'application/pdf' })])
+
+    expect(lookup).toHaveBeenCalledTimes(2)
   })
 
   it('传完的那一行带上它在资料库里的名字，不再是上传中', async () => {

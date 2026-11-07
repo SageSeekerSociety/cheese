@@ -254,7 +254,8 @@ function myLibrary(): Promise<number> {
   let cached = ownLibraries.get(handle)
   if (!cached) {
     cached = TeamsApi.detailByHandle(handle).then(({ team }) => team.id)
-    cached.catch(() => ownLibraries.delete(handle))
+    // 只撤自己这一份：退出登录清空后又记上的新一份不能被旧的失败带走。
+    cached.catch(() => ownLibraries.get(handle) === cached && ownLibraries.delete(handle))
     ownLibraries.set(handle, cached)
   }
   return cached
