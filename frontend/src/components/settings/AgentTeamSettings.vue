@@ -92,32 +92,35 @@ function openEdit(agent: ProjectAgent) {
 // 所以入口在这一行队友上。保存后把那行就地改掉，不整份重拉。
 const skillTarget = ref<ProjectAgent | null>(null)
 const skillsOpen = ref(false)
+// 名册是 query 缓存里那一份、只读，保存后不重读：每一位最近一次存成功的名单和版本记在
+// 这里，下次打开这一位时盖在名册那一行上，版本号才接得上。
+const savedSkills = new Map<string, { skills: string[]; version: number }>()
+function withSaved(row: ProjectAgent): ProjectAgent {
+  const saved = savedSkills.get(row.id)
+  if (!saved || saved.version <= row.version) return row
+  return { ...row, configuration: { ...row.configuration, skills: saved.skills }, version: saved.version }
+}
 const skills = useAgentSkills(
   () => props.projectId,
   () => skillTarget.value,
   (message) => toast.error(message),
   (agentId, list, version) => {
+    savedSkills.set(agentId, { skills: list, version })
+    // 面板已经换到别的队友了：只记下，不把面板拉回这一位。
+    if (skillTarget.value?.id !== agentId) return
     const row = agents.value.find((a) => a.id === agentId)
-    if (row) {
-      // 名册是 query 缓存里那一份、只读：改它会被静默丢掉。换一份新对象指给面板，
-      // 这一次保存带的就是翻过页的 version，下一次不用白撞一次 409。
-      skillTarget.value = {
-        ...row,
-        configuration: { ...row.configuration, skills: list },
-        version,
-      }
-    }
+    if (row) skillTarget.value = withSaved(row)
   },
   // 409：别人先写了。重读一遍，并把面板目标重指到新读回来的那一行 —— 名单
   // 刷新是整份换成新对象，skillTarget 不跟过去，下一次保存还带旧 version，只会再撞 409。
   async () => {
     await refresh()
     const fresh = agents.value.find((a) => a.id === skillTarget.value?.id)
-    if (fresh) skillTarget.value = fresh
+    if (fresh) skillTarget.value = withSaved(fresh)
   }
 )
 function openSkills(agent: ProjectAgent) {
-  skillTarget.value = agent
+  skillTarget.value = withSaved(agent)
   skillsOpen.value = true
   void skills.openSkills()
   // 打开就占住「编辑中」：别人进来会看到「XX 正在编辑」，而不是白改一场。
