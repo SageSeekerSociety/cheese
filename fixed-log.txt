@@ -1,0 +1,17 @@
+--- alice 交 alice-fixed.txt
+GET /api/teams/by-handle/alice
+POST /api/teams/4/library/uploads
+POST /api/teams/4/library/uploads/part
+POST /api/teams/4/library
+--- 页面内退出登录
+url after sign-out: /
+sign-in entry: <a data-v-33235260="" data-v-0033175f="" href="/account/signin" class="v-btn v-btn--flat v-theme--light v-btn--density-d
+url after bobby sign-in: /projects/0v5lb0qt/overview
+--- bobby 交 bobby-fixed.txt（同一页面，没有刷新）
+GET /api/teams/by-handle/bobby
+POST /api/teams/5/library/uploads
+POST /api/teams/5/library/uploads/part
+POST /api/teams/5/library
+same page (no reload): never-reloaded
+GET /api/teams/by-handle/bobby
+bobby library has: bobby-fixed.txt, bobby-测试.txt
