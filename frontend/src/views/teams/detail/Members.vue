@@ -107,6 +107,8 @@ const {
 const alreadyIn = computed(() => !!found.value && teamMembers.value.some((m) => m.user.id === found.value?.id))
 const inviteRoleInput = ref('MEMBER')
 const inviteMessageInput = ref('')
+// 邀请发出去、还没回话：按钮按不动，连点或回车再提交都只发一次。回话了（成功或失败）就放开，失败了能再点。
+const inviting = ref(false)
 
 const joinRequests = ref<TeamMembershipApplication[]>([])
 // 正在批准或拒绝的那条申请：回话之前两个按钮都按不动，连点只发一次。
@@ -255,17 +257,23 @@ useEventListener(document, 'visibilitychange', () => {
 // 拿真假判断会把成功当失败——不提示、不刷新，那一行还挂着，再点一次就是「找不到」。
 const confirmInvite = async () => {
   const invitee = found.value
-  if (!teamData.value || !invitee || alreadyIn.value) {
+  if (!teamData.value || !invitee || alreadyIn.value || inviting.value) {
     return
   }
 
-  const result = await errorHandler.withErrorHandling(async () => {
-    return await TeamsApi.createInvitation(teamData.value!.id, {
-      userId: invitee.id,
-      role: inviteRoleInput.value as any,
-      message: inviteMessageInput.value || undefined,
+  inviting.value = true
+  let result: unknown
+  try {
+    result = await errorHandler.withErrorHandling(async () => {
+      return await TeamsApi.createInvitation(teamData.value!.id, {
+        userId: invitee.id,
+        role: inviteRoleInput.value as any,
+        message: inviteMessageInput.value || undefined,
+      })
     })
-  })
+  } finally {
+    inviting.value = false
+  }
 
   if (result !== undefined) {
     toast.success(t('teams.members.inviteSent'))
@@ -530,6 +538,7 @@ const copyJoinLink = async (url: string) => {
     :found="found"
     :looking-up="lookingUp"
     :lookup-error="lookupError"
+    :inviting="inviting"
     @retry-members="retryMembers"
     @promote="promoteToAdmin"
     @demote="demoteToMember"
