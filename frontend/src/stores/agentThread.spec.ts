@@ -771,6 +771,65 @@ describe('打开正在答的那段对话：一个回答只留一遍', () => {
     expect(said(a)).toEqual([])
   })
 
+  it('signing out while an opened answer is still coming leaves nothing of it, and the next person opens their own', async () => {
+    const stream = held()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [C2] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+      if (url.endsWith('/assistant/conversations/c2') && method === 'GET')
+        return envelope({ ...C2, messages: [{ ...QUESTION, text: '第二个人的问题' }] })
+      if (url.includes('/assistant/conversations/c1/answers/q1')) return stream.response
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    stream.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+
+    a.reset()
+    person = 'second'
+    stream.send('delta', { text: ' gdb。', at: 2 }, '2-0')
+    stream.send('done', { stopped: false }, '3-0')
+    stream.end()
+    await vi.waitFor(() => expect(a.streaming.value).toBeNull())
+
+    expect(a.busy.value).toBe(false)
+    expect(said(a)).toEqual([])
+    await a.load()
+    expect(a.current.value).toBe('c2')
+    expect(said(a)).toEqual([['user', '第二个人的问题']])
+  })
+
+  it('a question asked while a conversation is still being read keeps the conversation it was asked in', async () => {
+    const reply = deferred<object>()
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION, C2] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return envelope(C2, 201)
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET') return envelope(await reply.promise)
+      if (url.endsWith('/assistant/conversations/c2/ask'))
+        return placed(['answering', { id: 'q2' }], ['delta', { text: '好。', at: 0 }, '1-0'], ['done', {}, '2-0'])
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+
+    const showing = a.show('c1')
+    await a.ask('新的问题', '答不上来')
+    reply.resolve({ ...CONVERSATION, messages: [QUESTION], answering: null })
+    await showing
+
+    expect(a.current.value).toBe('c2')
+    expect(said(a)).toEqual([
+      ['user', '新的问题'],
+      ['assistant', '好。'],
+    ])
+  })
+
   it('showing the conversation again once its answer is done reads what the server kept, once', async () => {
     let answering: string | null = 'q1'
     const kept = { role: 'assistant', text: '先会 gdb。', at: '2026-10-01T08:00:05Z' }

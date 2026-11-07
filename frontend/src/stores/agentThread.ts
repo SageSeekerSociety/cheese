@@ -404,8 +404,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
     currentEarlier.value = false
     notice.value = null
     creditRefused.value = false
-    // 退出时还在读的那次打开，读回来的是上一个人的对话，不再摆。
+    // 退出时还在读的那次打开、还在接的那个回答，都是上一个人的，不再摆。
     opening++
+    if (answering) answering.dropped = true
+    answering = null
+    clearTurn()
   }
 
   /** 「新话题」：之前说的留在上面，芝士从下一句话起不再读它们。话题等第一句话发出去才建。 */
@@ -505,6 +508,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
   async function ask(question: string, fallback: string, files: HandedFile[] = [], kept = false) {
     const text = question.trim()
     if ((!text && !files.length) || busy.value) return
+    // 这时还在读的那次打开（刚打开面板、点了「查看对话」）读回来，会把正在问的这段换走。
+    opening++
     notice.value = null
     creditRefused.value = false
     streaming.value = ''
@@ -717,6 +722,24 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
   }
 
+  /** 正在接的那个回答。退出登录时标成不要了：它之后再读到的字不写进面板。答完时的收尾照旧：
+   *  那时眼前已经不是它的话题，收尾什么也不写。 */
+  let answering: { dropped: boolean } | null = null
+
+  /** 收起这一轮正在写的回答和它的步骤。 */
+  function clearTurn() {
+    streaming.value = null
+    tool.value = null
+    queued.value = false
+    steps.value = []
+    edits.value = []
+    published.value = []
+    proposals.value = []
+    handed.value = []
+    rules.value = []
+    subagents.value = []
+  }
+
   /** 读一个问题的回答，直到它答完：连接断了（关了页面、后端重启）就从断的地方接着读，
    *  服务端那边一直在答。答完的回答进对话；没答完的不留半截。交回答着时插进去、芝士
    *  却没听到的话（人按了停止的不算：那是不要它接着做了）。 */
@@ -726,6 +749,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     fallback: string,
     question?: string
   ): Promise<Unheard[]> {
+    const mine = { dropped: false }
+    answering = mine
     streaming.value = ''
     tool.value = null
     queued.value = false
@@ -742,6 +767,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     let done = false
     let unheard: Unheard[] = []
     const onEvent: OnEvent = (event, payload) => {
+      if (mine.dropped) return
       if (event === 'queued') {
         queued.value = true
       } else if (event === 'delta' && typeof payload.text === 'string' && payload.text) {
@@ -775,10 +801,13 @@ export function createAssistant(opts: AssistantOptions = {}) {
         { question }
       )
     } catch (error) {
+      // 退出登录后才断的：那是上一个人的回答，不说它没答上来。
+      if (mine.dropped) return []
       if (error instanceof StreamRefused && !question) throw error
       failed = true
       notice.value = fallback
     } finally {
+      if (answering === mine) answering = null
       settleSteps()
       const did =
         steps.value.length > 0 ||
@@ -805,18 +834,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
           },
         ]
-      if (current.value === conversation) {
-        streaming.value = null
-        tool.value = null
-        queued.value = false
-        steps.value = []
-        edits.value = []
-        published.value = []
-        proposals.value = []
-        handed.value = []
-        rules.value = []
-        subagents.value = []
-      }
+      if (current.value === conversation) clearTurn()
     }
     return stopped || current.value !== conversation ? [] : unheard
   }
