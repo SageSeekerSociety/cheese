@@ -172,7 +172,7 @@ export function useAgentSkills(
     const before = [...carriedNames.value]
     carriedNames.value = next
     saving.value = true
-    // 这一笔写的是「发起时那一场的那一位」：换场之后，回包和它的失败都不属于现在的面板。
+    // 这一笔写的是「发起时那一场的那一位」：换场之后，它的结果不能画到现在的面板上。
     const stillHere = boundTo(pid, subject.id)
     try {
       const updated = await updateProjectAgent(pid, subject.id, {
@@ -185,8 +185,9 @@ export function useAgentSkills(
       // 否则父组件只更新了名单、留着旧 version，下一颗就白撞一次 409。
       if (stillHere()) onSaved?.(subject.id, next, updated.version)
     } catch (e) {
-      if (!stillHere()) return
-      carriedNames.value = before
+      // 名单只在还是这一场时翻回去；没存上这件事照样要说：这一笔是人自己点的，关掉面板或
+      // 换了队友不等于不想知道它失败了。
+      if (stillHere()) carriedNames.value = before
       if (e instanceof ApiError && e.status === 409) {
         onError(t('work.room.skills.stale'))
         // Re-read so the next attempt carries the version that won.

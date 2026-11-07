@@ -335,6 +335,30 @@ describe('队友技能面板', () => {
     expect(panel.carried.value).toEqual(['documents'])
   })
 
+  it('保存还没回来就关掉了面板、保存失败：照样告诉人没存上', async () => {
+    const errors: string[] = []
+    let releaseSave: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseSave = resolve))
+    vi.mocked(updateProjectAgent).mockImplementationOnce(async () => {
+      await held
+      throw new Error('网络断了')
+    })
+    const subject = ref(agent(['wolfram']))
+    const panel = useAgentSkills(
+      () => 'p1',
+      () => subject.value,
+      (m) => errors.push(m)
+    )
+
+    await panel.openSkills()
+    const saving = panel.adoptSkill('documents')
+    await panel.releaseAgent('a1')
+    releaseSave()
+    await saving
+
+    expect(errors).toEqual(['网络断了'])
+  })
+
   it('A→B→A：第一次打开 A 的池子回得晚，不盖住重新打开 A 之后的面板', async () => {
     let releaseFirst: () => void = () => {}
     const held = new Promise<void>((resolve) => (releaseFirst = resolve))
