@@ -1,0 +1,17 @@
+--- alice 交 alice-final.txt，扣住她查资料库的请求
+GET /api/teams/by-handle/alice  （凭据：用户 1）
+--- 页面内退出登录，登录 bobby
+--- bobby 交 bobby-final.txt
+GET /api/teams/by-handle/bobby  （凭据：用户 2）
+POST /api/teams/5/library/uploads  （凭据：用户 2）
+POST /api/teams/5/library/uploads/part  （凭据：用户 2）
+POST /api/teams/5/library  （凭据：用户 2）
+  → 200 /api/teams/5/library
+--- 放行 alice 那次查询
+same page (no reload): never-reloaded
+GET /api/teams/by-handle/alice  （凭据：用户 1）
+GET /api/teams/4/library  （凭据：用户 1）
+alice 的资料库（团队 4）里的 final 文件：无
+GET /api/teams/by-handle/bobby  （凭据：用户 2）
+GET /api/teams/5/library  （凭据：用户 2）
+bobby 的资料库（团队 5）里的 final 文件：bobby-final.txt
