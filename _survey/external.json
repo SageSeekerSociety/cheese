@@ -1,0 +1,129 @@
+{
+  "headline": "「文件头写描述、脚本生成索引、只给一级按需解析」机制成立且有几十年先例；但「schema 化 description」无跨语言标准可依，「每个文件手写描述」这条线被 Go/ESLint 官方先后放弃，且描述会静默腐烂（不一致改动引入 bug 率约 1.5 倍）。建议主干改为「结构索引（SCIP/ctags/tree-sitter，零人工）+ LLM 生成并回填意图描述」，人手写降级为约定。",
+  "verdict": "分三块判断：一是「文件级描述这个位置」成立——各语言都有官方机制（JSDoc @file、Python 模块 docstring、Go package comment、Rust //! 有语言参考级语法、Java package-info.java、TSDoc @packageDocumentation），「写注释、工具聚成索引、只给一级、按需展开」正是 TypeDoc/Sphinx/pdoc/MkDocs/Doxygen 的成熟形态，有几十年先例。二是「schema 化」会出问题——不存在跨语言、机器可读、统一字段的文件级 schema 标准；这些机制里唯一稳定的是自由文本 description，JSDoc 与 TSDoc 连标签名都不通用，做统一 schema 等于自造一套约定。三是「人写描述」这一环会烂——注释与代码不一致导致引入 bug 的概率约为一致改动的 1.5 倍，内核 v6.18-rc1 能查出 869 处引用已消失函数的陈旧注释；而所有「文件必须有描述」的检查（require-file-overview、ruff D100）只判断存在、不判断正确，一段过期多年的 @fileoverview 照过全部检查。另一个硬事实：逐文件强制注释这条线被 Go 的 golint（2021 弃用）和 ESLint 的 require-jsdoc（v9 移除）两个官方先后放弃，理由是不可按项目关闭、产出无信息量填充。结论：机制可行，但要把意图描述从「人手写」改为「LLM 从代码生成并回填」，把强制力花在结构索引上，并接受生成的一级索引只负责指路、不负责讲清用途。",
+  "routes": [
+    {
+      "name": "路线 A：文件头 schema 注释 + 脚本生成索引（原设想）",
+      "how": "每个文件头写结构化注释，description 为必填字段：JS/TS 用 /** @fileoverview ... */，Python 用模块 docstring，Go 用 package 子句上方的 package comment，Rust 用 //!。索引由工具扫注释生成：TypeDoc（--entryPoints + --navigation 生成分层 sidebar）、sphinx-apidoc（脚本生成 RST 骨架 + autodoc 填内容，默认 members,undoc-members,show-inheritance）、pdoc（自动生成 index.html + search.js 总索引）、Doxygen（文件头 \\file + \\brief，brief 汇总进 File List）。强制存在：eslint-plugin-jsdoc 的 require-file-overview（默认 mustExist:true）、ruff 的 D100/D104。",
+      "adoption": "不是新方案。TypeDoc / Sphinx / pdoc / MkDocs(nav 定层级) / docfx(metadata→build 两阶段) 都在「人写注释、工具生成整包索引」这条路上；Doxygen 的 \\file+\\brief 是最贴近的现成用法，官方说明 brief 文本 used in lists and at the start of the documentation page。",
+      "cost": "检查本身极便宜（加一条规则）。真实成本：(a) 每个新建文件都要手写描述，没有就红；(b) 存量一次性补齐；(c) ruff 只覆盖 public 模块，私有模块不报，「每个文件都有」打折扣；(d) 描述会静默过期且无现成工具能发现——要能检测过期，description 必须结构化到可机检（日期/版本/依赖/可解析字段）；(e) 构建期解析会执行代码：sphinx autodoc 在 build 时 import 有副作用的模块、pdoc 动态执行模块、docfx 需 dotnet restore 做 design-time build。",
+      "verdict": "可作为补充，不宜作主干",
+      "items": [
+        {"title": "JSDoc @file / @fileoverview", "url": "https://jsdoc.app/tags-file.html", "what": "「provides a description for a file」，写在文件开头 JSDoc 块里，是文件级一句描述的标准写法"},
+        {"title": "Doxygen \\file + \\brief（File List）", "url": "https://www.doxygen.nl/manual/commands.html", "what": "最贴近的现成机制：\\file 声明注释描述某文件，\\brief 汇总进 File List 与页面开头，开 JAVADOC_AUTOBRIEF 时第一行直接当 brief"},
+        {"title": "TypeDoc 生成 API 文档与导航", "url": "https://typedoc.org/documents/Overview.html", "what": "以 entryPoints 为单位、用 JSDoc/TSDoc 注释，生成带 navigation sidebar 的索引，人不写索引"},
+        {"title": "sphinx-apidoc 脚本生成 RST 骨架", "url": "https://www.sphinx-doc.org/en/master/man/sphinx-apidoc.html", "what": "给定包路径自动生成每模块一个 RST 文件，autodoc 构建时从 docstring 抽内容"},
+        {"title": "pdoc 零配置自动生成索引", "url": "https://pdoc.dev/docs/pdoc.html", "what": "镜像 Python 模块层级，递归写 HTML 外加 index.html 和 search.js 搜索索引"},
+        {"title": "eslint-plugin-jsdoc / require-file-overview", "url": "https://github.com/gajus/eslint-plugin-jsdoc/blob/main/docs/rules/require-file-overview.md", "what": "「每个文件必须有 @fileoverview」的规则，默认 mustExist:true / preventDuplicates:true / initialCommentsOnly:true"},
+        {"title": "ruff D100 undocumented-public-module", "url": "https://docs.astral.sh/ruff/rules/undocumented-public-module/", "what": "要求 public 模块有 docstring，配 lint.select 加 D100 即可"}
+      ]
+    },
+    {
+      "name": "路线 B：逐级上下文文件（AGENTS.md / CLAUDE.md 按目录作用域）",
+      "how": "每个目录放一个 AGENTS.md（或工具 native 名），就近优先，靠目录层级实现「只给一级、深处按需」。agents.md 规范：The closest AGENTS.md to the edited file wins；冲突时显式用户 chat 覆盖一切。跨工具统一用 CLAUDE.md 里 @AGENTS.md 导入或软链。",
+      "adoption": "agents.md 规范 + Claude Code + Cursor（嵌套 AGENTS.md）+ Gemini CLI + Codex；OpenAI 主仓有 88 个 AGENTS.md。",
+      "cost": "加载时机无规范约束，各家实测都在翻车：Claude Code 子目录 CLAUDE.md 不按需加载（issue 24987 已 closed）；触发只认 Read/Edit/Write、不认 Bash/Grep（issue 93403 仍 open），auto 模式会静默漏加载；Cursor 嵌套 AGENTS.md 不加载被员工确认为 bug，根 AGENTS.md 在 2.1.26 也随机失效；反向 Cursor 3.6 起把整仓嵌套 AGENTS.md 当 Always 规则全量加载撑爆上下文。文件名/格式不符会静默失效（Cursor 要 .mdc、Claude Code 不认 AGENTS.override.md、子目录 CLAUDE.md 会压掉同目录 AGENTS.md）。",
+      "verdict": "不推荐作为「按需解析」的实现载体，可作为人和团队约定补充",
+      "items": [
+        {"title": "agents.md 规范（就近优先）", "url": "https://agents.md/", "what": "嵌套为大型 monorepo 用法，closest one takes precedence；规范不规定遍历时机"},
+        {"title": "Codex：启动时沿祖先链合并，不读子树", "url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md", "what": "walks down to cwd、includes at most one file per directory、stops at cwd；不按子树触发"},
+        {"title": "实测：子目录 CLAUDE.md 不按需加载", "url": "https://github.com/anthropics/claude-code/issues/24987", "what": "VS Code 扩展实测 only the root-level CLAUDE.md is loaded，issue closed"},
+        {"title": "实测（关键坑）：触发不认 Bash/Grep", "url": "https://github.com/anthropics/claude-code/issues/93403", "what": "trigger 只对 Read/Edit/Write 生效，用 Bash(cat/sed/grep) 或 Grep 工具读文件不触发，issue open"},
+        {"title": "实测：Cursor 嵌套 AGENTS.md 不加载", "url": "https://forum.cursor.com/t/nested-agents-md-files-not-being-loaded/138411", "what": "员工 deanrie 确认是 nested AGENTS.md 的 bug，临时办法手动 @AGENTS.md"},
+        {"title": "实测（反向坑）：Cursor 3.6 起全仓全量加载", "url": "https://forum.cursor.com/t/cursor-loads-all-rules-from-all-folders-in-monorepo-and-blows-past-context-limits/165337", "what": "员工 kevinn 确认 nested AGENTS.md 被当作 Always 规则，full contents load on every request"}
+      ]
+    },
+    {
+      "name": "路线 C：纯结构摘要，不写注释",
+      "how": "不要求任何注释，索引完全从语法结构生成：tree-sitter 抽 AST（tags.scm 抽 def/ref、@doc 可选）、ctags 生成 tags 文件、SCIP 做跨文件符号关系、aider repo map 用 networkx 个性化 PageRank（节点=文件、边=引用者→定义者）排序后裁到 map_tokens 预算（默认 1024，二分拟合 ok_err=0.15）。产出是「文件→关键符号+被谁引用+重要度排名」，天然支持只给一级+按需深挖。",
+      "adoption": "aider repo map（生产在用）、GitHub code navigation（tree-sitter，只做定义/引用跳转，限 <100k 文件仓库、仅 active branch）、Sourcegraph SCIP（替代 LSIF，gzip 后小约 4x）、Google Kythe、GitHub stack-graphs（已弃维护）。",
+      "cost": "零人工、可脚本化、无注释腐烂问题，工程成熟度高。但它是「指路」不是「讲清用途」：产出全是符号关系与位置，没有任何一个给出「这个文件是干什么的」的自然语言。大仓库会失灵：aider issue #2405 显示 80 万行 monorepo 里纯引用频率的 PageRank 被高频 import/别名主导，图距离 1 的直接 import 都挤不进 map。需每语言维护查询；stack-graphs 被 GitHub 弃维护、GitHub code nav 有仓库规模/分支限制。",
+      "verdict": "推荐作为「一级索引」的主干（负责文件在哪、有哪些符号、谁引用谁，不承诺用途）",
+      "items": [
+        {"title": "aider repo map（符号+依赖图，不含意图）", "url": "https://aider.chat/docs/repomap.html", "what": "每次请求发整仓 concise map，只含 most important identifiers，靠 graph ranking，篇幅由 --map-tokens 控制"},
+        {"title": "aider repomap.py 源码：PageRank + 二分预算", "url": "https://github.com/Aider-AI/aider/blob/main/aider/repomap.py", "what": "nx.pagerank(weight=weight) 个性化排序，二分找能塞进 max_map_tokens 的符号数，map_tokens 默认 1024"},
+        {"title": "aider 已知失效：大 monorepo 被高频符号淹没", "url": "https://github.com/Aider-AI/aider/issues/2405", "what": "800k 行 TS monorepo 里 map 被常用别名/import 主导，5000 token 时连图距离 1 的直接 import 都不在"},
+        {"title": "Sourcegraph SCIP：语言无关索引协议", "url": "https://github.com/sourcegraph/scip", "what": "支撑 go to definition / find references，覆盖多语言，服务导航而非摘要"},
+        {"title": "SCIP 的 documentation 字段可选", "url": "https://raw.githubusercontent.com/sourcegraph/scip/main/scip.proto", "what": "SymbolInformation.documentation 为 optional 但 strongly recommended，用于携带 docstring；不写注释则索引里没有意图字段"},
+        {"title": "tree-sitter 本体只是解析器", "url": "https://tree-sitter.github.io/tree-sitter/", "what": "parser generator + incremental parsing library，产出 CST，无语义、无摘要"},
+        {"title": "tree-sitter tags：@doc 是可选旁挂", "url": "https://tree-sitter.github.io/tree-sitter/4-code-navigation.html", "what": "tags.scm 抽具名实体，tag 带 role 与 kind，docstring 靠可选 @doc capture"},
+        {"title": "ctags：最基础的符号表", "url": "https://docs.ctags.io/en/latest/man/ctags.1.html", "what": "生成本 name/file/ex_cmd 索引，可附 access/typeref/scope/signature/kind/roles；不是编译器、宏会漏"},
+        {"title": "stack-graphs：只做名字解析，已被弃维护", "url": "https://github.com/github/stack-graphs", "what": "纯语法 name resolution，README 标 no longer supported or updated by GitHub"}
+      ]
+    },
+    {
+      "name": "路线 D：结构 + LLM 分层聚合摘要（结构指路，意图由模型生成）",
+      "how": "仍由结构工具（tree-sitter/SCIP）切出单元并排名，但「这个文件/模块是干什么的」由 LLM 生成并回填：学术做法先用语法分析切出函数等小单元、用 local LLM 逐单元摘要、再聚合到 file/package 级，靠 custom prompts that capture the intended purpose 注入领域/业务语境；回填到源码注释，或写进 SCIP SymbolInformation.documentation 这个 optional-but-strongly-recommended 字段。",
+      "adoption": "学术界已有完整 pipeline（arXiv 2501.07857）；工程侧 SCIP proto 明确支持 documentation 字段携带 docstring、tree-sitter tags 有可选 @doc；pydoclint README 提到 AI agent 写的 docstring mostly correct 但会遗漏与幻觉，需与签名的机检补漏。",
+      "cost": "需 LLM 调用（成本/延迟/需本地模型）、需描述质量验收（BLEU/ROUGE 与人类判断相关性差，不能用 n-gram 重叠当验收）。好处是解决了「谁写描述」和「描述腐烂」——生成时点与代码同步，不依赖人记得改。",
+      "verdict": "推荐（唯一能让一级索引带上意图、又不陷入人写描述必然腐烂的路径；与路线 C 组合即结构指路+意图回填）",
+      "items": [
+        {"title": "学术侧：分层聚合 + 领域提示", "url": "https://arxiv.org/abs/2501.07857", "what": "现有摘要方法只聚焦函数等小单元，对 file/package struggle、缺 domain/business context；解法是语法分解+local LLM 摘要+自定义领域提示聚合"},
+        {"title": "SCIP documentation 字段（可选但推荐）", "url": "https://raw.githubusercontent.com/sourcegraph/scip/main/scip.proto", "what": "意图必须源码里先有，结构索引能顺带带上 docstring，纯结构不产生意图"},
+        {"title": "tree-sitter @doc capture（可选旁挂）", "url": "https://tree-sitter.github.io/tree-sitter/4-code-navigation.html", "what": "文档被当作可选附加，默认产出纯结构"},
+        {"title": "pydoclint：查注释与代码对不上", "url": "https://github.com/jsh9/pydoclint", "what": "比对 docstring 与真实签名的参数/返回/yields/raises/类型注解，目标 catch the drift from everyday edits"}
+      ]
+    },
+    {
+      "name": "路线 E：让索引可被检测为过期（把 description 结构化到可机检）",
+      "how": "把「描述」拆成能自动判对的字段：可判定条件写成注释里的机器可读指令（日期 / package.json 版本 / engines / 依赖装-卸(+/-) / 依赖版本 / peer 依赖版本），或用解析器比对外部事实源（pydoclint 比对 docstring 与签名；kinto.js 用 TSDoc 解析器自动比对 JSDoc 与 TS 声明；numpy 用 clang -Wdocumentation）。",
+      "adoption": "ESLint 生态（eslint-plugin-unicorn 的 expiring-todo-comments、no-expired-todo-comments）、pydoclint、Ruby 的 todo_or_die、kinto.js、numpy。",
+      "cost": "只能覆盖「有可判定条件」的部分——自由文本 @fileoverview 里没有这种条件，就没有任何工具能自动发现它过时；编译器/linter 只能抓格式错（@param 指向不存在的参数），抓不到语义层面「描述还对不对」。todo_or_die README 自己警告散布定时炸弹有反噬成本。",
+      "verdict": "可作为补充（给能机检的字段上这类检查，别指望它守护自由文本正确性）",
+      "items": [
+        {"title": "eslint-plugin-unicorn / expiring-todo-comments", "url": "https://github.com/sindresorhus/eslint-plugin-unicorn/blob/main/docs/rules/expiring-todo-comments.md", "what": "给 TODO 加到期条件，六类条件，recommended 默认开但日期检查默认关（需 checkDates:true）"},
+        {"title": "eslint-plugin-no-expired-todo-comments", "url": "https://github.com/maxprilutskiy/eslint-plugin-no-expired-todo-comments", "what": "只抓带已过期日期的 TODO 注释并报错"},
+        {"title": "todo_or_die（Ruby）：运行时自杀的 TODO", "url": "https://github.com/searls/todo_or_die", "what": "到期/条件满足即抛 OverdueError，属运行时而非 lint"},
+        {"title": "pydoclint：查注释与代码对不上", "url": "https://github.com/jsh9/pydoclint", "what": "专治注释过期，覆盖三种风格，有 baseline 模式"},
+        {"title": "kinto.js：手写 JSDoc 与 TS 类型漂移", "url": "https://github.com/Kinto/kinto.js/issues/1755", "what": "发现 JSDoc 与函数签名不一致，解法是用 TSDoc 解析器自动校验而非人工维护"},
+        {"title": "numpy：C 注释批量损坏靠编译器发现", "url": "https://github.com/numpy/numpy/issues/27377", "what": "clang -Wdocumentation 报出上百条参数不存在/空段落等结构错误"}
+      ]
+    }
+  ],
+  "standards": [
+    {"name": "JSDoc @file（别名 @fileoverview、@overview）", "language": "JavaScript", "what": "文件开头 JSDoc 注释里的块标签，作用即 Describe a file；唯一可抽取的是描述文字，无结构化字段", "enforced": "官方标签（jsdoc.app），非强制；可用 eslint-plugin-jsdoc 的 require-file-overview 强制存在（默认 mustExist:true）"},
+    {"name": "TSDoc @packageDocumentation", "language": "TypeScript", "what": "标记描述整个 NPM 包的注释，放入口 .d.ts 且必须是该文件第一个 /** 注释，不得用于单个 API 项", "enforced": "tsdoc.org 正式规范；由 API Extractor 等消费，无独立 lint 规则"},
+    {"name": "模块 docstring（PEP 257）/ 包 docstring", "language": "Python", "what": "文件第一条语句的字符串即模块 docstring，__init__.py 的 docstring 描述包", "enforced": "官方 PEP 但明文自认 conventions, not laws or syntax；可强制：ruff D100（public module）/D104（public package）、interrogate --fail-under（阈值制，默认 80%）"},
+    {"name": "package comment（go/doc）", "language": "Go", "what": "package 子句上方、中间无空行的注释，首句 Package <name>，多文件包只应写一处（多写会被拼接）", "enforced": "官方 go/doc 文档，措辞 should；golint 的 exported 规则已弃用，社区分叉 revive 的 exported 可配置可关"},
+    {"name": "内层文档注释 //! 与 /*! */", "language": "Rust", "what": "附着到所在 crate/module，用于描述占据一个源文件的模块，等价 #![doc=...]；/// 是 outer 附着到后面的项", "enforced": "语言参考里有正式语法定义（最硬）；编译器 lint missing_docs（allow-by-default，#![deny(missing_docs)] 转编译错误）"},
+    {"name": "package 注释 / package-info.java", "language": "Java", "what": "doc comment 只在紧邻 package 声明前被识别；推荐专门的 package-info.java（首选）或 package.html，一个包只能有一个", "enforced": "Javadoc 规范级；javadoc 工具强制，二者只能有一个"},
+    {"name": "Doxygen \\file + \\brief", "language": "多语言", "what": "\\file 声明注释块描述某源/头文件，\\brief 一句话简述并汇总进 File List；文件只能用结构命令文档化", "enforced": "工具约定；开 JAVADOC_AUTOBRIEF 时文件注释第一行直接当 brief"},
+    {"name": "SCIP（索引协议 + scip.proto）", "language": "跨语言", "what": "语言无关的源码索引协议，SymbolInformation.documentation 为 optional/strongly-recommended 可携带 docstring", "enforced": "Sourcegraph 规范；多语言 indexer；LSIF 的替代"},
+    {"name": "ctags tags 格式", "language": "跨语言", "what": "伪标签 !_TAG_FILE_FORMAT 做版本标识；每行 name/file/ex_cmd 可附结构字段", "enforced": "universal-ctags 约定；无 schema 强制"},
+    {"name": "AGENTS.md 就近优先", "language": "跨语言（AI 上下文）", "what": "每个 package 放一个，closest one takes precedence，不规定遍历时机", "enforced": "agents.md 规范是约定；加载行为各家实现不一致（见路线 B 的实测坑）"}
+  ],
+  "pitfalls": [
+    "描述会静默腐烂：注释与代码不一致导致引入 bug 的概率约为一致改动的 1.5 倍，内核 v6.18-rc1 自动查出 869 处引用已消失函数的陈旧注释。",
+    "「存在」检查防不住「过期」：require-file-overview / ruff D100 / missing_docs 只判断标签或 docstring 存在，一段过期多年的 @fileoverview 照过全部检查。",
+    "自由文本无法机检过期：能报「过期」的工具都要求注释里带可判定条件（日期/版本/依赖/可与签名比对的字段），纯 description 没有这种条件，没有工具能自动发现它不符。",
+    "强制注释会产出填充噪音：无信息量、不可关闭 → golint 2021 冻结弃用、ESLint v9 移除 require-jsdoc；用户要「关掉一条规则」被官方拒绝（golang/lint#263），逼出分叉 revive。",
+    "手写 comment 与类型/签名重复必然漂移：kinto.js 发现 JSDoc 与 TS 声明不一致、numpy 靠 clang -Wdocumentation 才批量发现上百条损坏注释。",
+    "粒度选错：JSDoc/Python/Rust 是文件/模块级，Go/Java/TSDoc 是包级——选哪个决定索引的键是路径还是包名；一个文件一个注释的模型更贴近前者，Go/Java 包级先例不能直接套。",
+    "文件头注释有位置约束：Doxygen 里文件只能用 \\file 结构命令文档化（no doc block can precede a file）；TSDoc @packageDocumentation 必须放入口 .d.ts 且是该文件第一个 /** 注释。",
+    "抽取范围陷阱（Doxygen）：全局函数/变量/枚举只有在所属文件被文档化后才出现，除非开 EXTRACT_ALL，文件级注释缺失会连带实体一起消失，索引出现空洞。",
+    "注释当结构化字段时富文本带来歧义：docfx 默认把 C# XML 注释当 Markdown 解析，在不支持处（VS intellisense）渲染出错，需 shouldSkipMarkup。",
+    "构建期解析会执行代码：sphinx autodoc 在 build 时执行有 import 副作用的模块、pdoc 动态执行模块、docfx 需 dotnet restore 做 design-time build。",
+    "纯频率排名在大仓库失灵：aider #2405，80 万行 TS monorepo 里 PageRank 被高频 import/别名主导，图距离 1 的直接 import 都进不了 map。",
+    "把「索引/导航」当「摘要」：SCIP/ctags/tree-sitter tags/stack-graphs 的产出是符号关系与位置，不含用途；docstring 字段是可选，不写注释结构索引不会凭空补出意图。",
+    "「一个脚本搞定所有语言」不成立：tree-sitter 能识别什么 kind 取决于 grammar，跨文件/跨语言要额外层（stack-graphs 的 TSG、SCIP 的 indexer、Kythe 的 indexer），新语言要自己维护查询。",
+    "ctags 是 pattern/贪心解析不是编译前端：宏会漏、同名行会指错、假定语法正确，当可信结构源需额外校验。",
+    "专有工具的可持续性风险：Sourcetrail（16k+ star 源码浏览器）2021 年底被归档、官方博文即 Discontinue Sourcetrail；stack-graphs 被 GitHub 弃维护；mkdocstrings 处于 maintenance mode。",
+    "机制会欠载也会过载：Cursor 3.6 起把整仓嵌套 AGENTS.md 当 Always 规则全量加载撑爆上下文；另一头子目录 CLAUDE.md 又可能从不加载，同一机制两个极端都出现。",
+    "触发绑定具体工具：Claude Code 只认 Read/Edit/Write，Bash(cat/sed/grep)、Grep 工具都不触发（issue 93403，open），auto 模式会静默漏加载子树上下文。",
+    "文件有硬闸门：Claude Code 单个文件超 4 MiB 被跳过、建议 200 行内，超限静默截断；/compact 后嵌套子目录 CLAUDE.md 要重新按需触发。",
+    "「自动生成 = 全部文档」是常见误区：Diátaxis 点名批评，生成式索引只覆盖四类文档之一，仍需解释/任务型内容兜底。",
+    "验收指标会骗人：BLEU/ROUGE（甚至 CodeBLEU）与人类判断相关性差，若用结构+LLM 生成描述，别拿 n-gram 重叠当验收。",
+    "语言自身的边角：Rust //// 与 /*** 都不是文档注释、块文档注释在第一个 */ 处终止、lexer 不认 Markdown；Go 多文件包都写 package comment 会被拼成一个大注释；Java 一个包只能一个 package-info.java 或 package.html。",
+    "工具版本时效：jsdoc/check-examples 只在 ESLint 7 生效；unicorn 的 expiring-todo-comments 日期检查默认关，「开箱即用」不等于「开了你想开的那项」。"
+  ],
+  "openQuestions": [
+    "「每个文件一句」的数据规模对 agent 到底有没有用：需在真实仓库跑「结构索引 vs 结构+LLM 描述」的 A/B，看定位目标文件的命中率/token 消耗是否显著改善——现有材料只能证明结构索引能指路，不能证明文件级一句描述带来增量价值。",
+    "LLM 生成 description 的回填策略：生成时机（提交时 / CI / 按需）、放哪（写回源码注释 vs 只进生成索引）、怎么避免与源码污染，需实测。",
+    "在 monorepo 规模下排名算法要加什么语义信号：aider #2405 证明纯频率失效，但个人化/邻近度/embedding 哪种有效、代价多少，材料未回答。",
+    "「过期」的自动发现能否不依赖机检条件：CCI 检测精度 >90% 是学术结果，工程化成本与误报率需实测。",
+    "跨工具统一事实源的实测效果：用 @AGENTS.md 导入 / 软链能否绕过各工具原生嵌套加载的 bug，需在 Claude Code + Cursor + Gemini CLI 上逐一实测。",
+    "本项目主要语言到底是哪些：决定优先用哪套机制（Rust //!+missing_docs 最硬、Python ruff D100/D104、JS/TS jsdoc/TSDoc），材料无法替本项目定。",
+    "索引的格式选择：复用 SCIP（proto + 多语言 indexer）还是 ctags tags 格式，还是自造，需评估接入成本。",
+    "未读项（明确声明，未据此下结论）：Sourcegraph SCIP design doc（页面 404）、DeepWiki 的 aider repository-mapping 页（429）；关于 SCIP 的结论只基于 README、scip.proto 与 announcement 博文。"
+  ]
+}
