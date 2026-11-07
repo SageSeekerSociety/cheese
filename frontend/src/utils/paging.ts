@@ -54,6 +54,7 @@ export function usePaging<T, P = void, C = number>(
       nextPageStart.value = page.nextStart
       hasMore.value = page.hasMore
       total.value = page.total ?? 0
+      error.value = null
     } catch (e) {
       if (e instanceof Error) {
         error.value = e
@@ -77,6 +78,7 @@ export function usePaging<T, P = void, C = number>(
       nextPageStart.value = page.nextStart
       hasMore.value = page.hasMore
       total.value = page.total ?? 0
+      error.value = null
     } catch (e) {
       if (e instanceof Error) {
         error.value = e
