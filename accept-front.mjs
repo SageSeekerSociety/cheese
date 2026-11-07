@@ -10,7 +10,11 @@ import { readFileSync } from 'node:fs'
 const PANEL = new URL('./panel.js', import.meta.url)
 const TAG = '<script src="/__accept/panel.js"></script>'
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && (req.url === '/' || req.url.startsWith('/?'))) return forward(PROXY, req, res, '/api/__accept/enter')
+  // 只有「打开这个地址」（整页导航）才进开发号入口。应用自己用 fetch('/') 比对入口 HTML 判断是否落后版本，
+  // 那一下必须拿到真正的 index.html，否则它认定页面过期、整页重载，挂起和面板记录全丢。
+  const dest = req.headers['sec-fetch-dest']
+  const isNavigation = dest ? dest === 'document' || dest === 'iframe' : String(req.headers.accept || '').startsWith('text/html')
+  if (req.method === 'GET' && (req.url === '/' || req.url.startsWith('/?')) && isNavigation) return forward(PROXY, req, res, '/api/__accept/enter')
   if (req.url.startsWith('/__accept/panel.js')) { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }); return res.end(readFileSync(PANEL)) }
   // 产品页的 HTML：在 <head> 最前插一行面板脚本（要比应用先包好 fetch），别的原样转
   const accept = String(req.headers.accept || '')

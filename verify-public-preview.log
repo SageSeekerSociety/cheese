@@ -1,0 +1,26 @@
+1s page load #1 https://okcheese.com/robots.txt
+1s page load #2 https://okcheese.com/robots.txt
+24s page load #3 https://preview-eda07fc4b70f498b8ca01d1d6289b971.cheeseusercontent.com/projects/de808b13-ffd2-4b8a-9d1d-fba7babe389f/settings/agents
+24s landed; marker set
+54s idle 30 s; same page: true
+84s idle 60 s; same page: true
+114s idle 90 s; same page: true
+144s idle 120 s; same page: true
+174s idle 150 s; same page: true
+204s idle 180 s; same page: true
+234s idle 210 s; same page: true
+264s idle 240 s; same page: true
+294s idle 270 s; same page: true
+324s idle 300 s; same page: true
+354s idle 330 s; same page: true
+365s ABA pending: #1 占用 测试队友A（已挂 7 秒） 放行·成功放行·失败
+395s ABA hold 30 s; same page: true | pending: #1 占用 测试队友A（已挂 37 秒） 放行·成功放行·失败
+425s ABA hold 60 s; same page: true | pending: #1 占用 测试队友A（已挂 66 秒） 放行·成功放行·失败
+455s ABA hold 90 s; same page: true | pending: #1 占用 测试队友A（已挂 96 秒） 放行·成功放行·失败
+458s ABA released 409; readonly shown on reopened A: 0 | pdf + enabled: true
+468s install pending: #2 占用 测试队友A（已挂 5 秒） 放行·成功放行·失败 | #3 网上装技能 pdf（已挂 3 秒） 放行·成功放行·失败
+498s install hold 30 s; same page: true
+528s install hold 60 s; same page: true
+558s install hold 90 s; same page: true
+561s install released; state: 测试队友A（假）  版本 5  技能 ["documents"] / 测试队友B（假）  版本 5  技能 ["lean"] | saves: （还没有）
+562s END same page: true | extra page loads after landing: 0
