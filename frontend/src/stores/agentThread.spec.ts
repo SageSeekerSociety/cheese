@@ -667,6 +667,47 @@ describe('芝士这一轮做了什么', () => {
       expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[2]])
     })
 
+    it('an older topic opened while it was being read back is not kept above as well', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const reading = a.older()
+      const opening = a.show('c1')
+      await release()
+      await Promise.all([reading, opening])
+
+      expect(a.current.value).toBe('c1')
+      expect(a.earlier.value.map((topic) => topic.id)).not.toContain('c1')
+    })
+
+    it('a page read before the topic was opened again stays off the fresh one', async () => {
+      const held: (() => void)[] = []
+      let latest = { messages: [line(2)], earlier: true }
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [LATEST], next: null })
+        if (url.endsWith('/assistant/conversations/c3')) return envelope({ ...LATEST, answering: null, ...latest })
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (url.endsWith('/assistant/conversations/c3/messages?before=2'))
+          return envelope({ messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.earlierMessages(null)
+      // Said elsewhere meanwhile: opened again, the latest page no longer reaches the one read from.
+      latest = { messages: [line(5), line(6)], earlier: true }
+      await a.show('c3')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      held.splice(0).forEach((go) => go())
+      await reading
+
+      expect(a.messages.value.map((m) => m.seq)).toEqual([5, 6])
+      expect(a.currentEarlier.value).toBe(true)
+    })
+
     it('an older topic that arrives after signing out stays out', async () => {
       const { release } = slowServer()
       const a = createAssistant()

@@ -444,6 +444,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     startNew()
     earlier.value = earlier.value.filter((topic) => topic.id !== id)
     await open(id)
+    // 打开的时候往上翻正好把它读了回来、摆在了上面：眼前就是它，上面那份收掉。
+    if (current.value === id) earlier.value = earlier.value.filter((topic) => topic.id !== id)
     await listConversations().catch(() => undefined)
   }
 
@@ -460,23 +462,30 @@ export function createAssistant(opts: AssistantOptions = {}) {
     return reading
   }
 
+  /** 一个话题（`null` 是当前这个）眼下摆着的消息；不在了（换了话题、收走了）是 `null`。 */
+  function shownOf(id: string | null, conversation: string) {
+    if (id !== null) return earlier.value.find((t) => t.id === id)?.messages ?? null
+    return current.value === conversation ? messages.value : null
+  }
+
+  const firstSeq = (shown: AssistantMessage[] | null) => shown?.find((m) => typeof m.seq === 'number')?.seq
+
   async function readEarlier(id: string | null, conversation: string) {
-    const topic = id === null ? null : earlier.value.find((t) => t.id === id)
-    const shown = topic ? topic.messages : messages.value
-    const first = shown.find((m) => typeof m.seq === 'number')?.seq
+    const first = firstSeq(shownOf(id, conversation))
     if (first === undefined) return
     const at = signedIn
     const data = await request<{ messages: ReadMessage[]; earlier?: boolean }>(
       `/assistant/conversations/${conversation}/messages?before=${first}`
     )
-    if (at !== signedIn) return
+    // 读回来时最上面还是读的那一句才接上：退出登录、换了话题、或者重新打开换成了最新一页，
+    // 这一页都接不上眼前的了。
+    if (at !== signedIn || firstSeq(shownOf(id, conversation)) !== first) return
     const more = shownMessages(data)
-    if (topic)
+    if (id !== null)
       earlier.value = earlier.value.map((t) =>
         t.id === id ? { ...t, messages: [...more, ...t.messages], earlier: data.earlier === true } : t
       )
-    // 读的时候眼前还是这个话题才接上：换了话题（「新话题」、打开别的、退出登录），这一页不是它的。
-    else if (current.value === conversation) {
+    else {
       messages.value = [...more, ...messages.value]
       currentEarlier.value = data.earlier === true
     }
@@ -509,7 +518,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
     if (!next) return
     const data = await read(next.id)
-    if (at !== signedIn) return
+    // 读的时候它已经摆出来了（通知里点开成了眼前这个）：不再摆一遍。
+    if (at !== signedIn || unshown()?.id !== next.id) return
     earlier.value = [
       {
         id: next.id,
