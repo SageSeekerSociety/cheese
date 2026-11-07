@@ -569,4 +569,260 @@ describe('芝士这一轮做了什么', () => {
     expect(a.earlier.value.map((topic) => topic.title)).toEqual(['最早的'])
     expect(a.hasOlder.value).toBe(false)
   })
+
+  describe('reading back twice before the first page arrives reads it once', () => {
+    const line = (seq: number) => ({ seq, role: 'user', text: `第 ${seq} 句`, at: '2026-10-19T08:00:00Z' })
+    const LATEST = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 2 }
+    const OLDEST = { id: 'c1', title: '最早的', lastActiveAt: '2026-10-19T08:00:00Z', questions: 1 }
+
+    /** The server, holding each page back until ``release`` lets it go. ``paged``: the older topic
+     *  is on the second page of topics. ``failing``: that many reads back fail before one works.
+     *  ``whole``: the latest topic has nothing earlier. */
+    function slowServer({ paged = false, failing = 0, whole = false } = {}) {
+      const asked: string[] = []
+      const held: (() => void)[] = []
+      let fails = failing
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations'))
+          return envelope(
+            paged ? { conversations: [LATEST], next: 'p2' } : { conversations: [LATEST, OLDEST], next: null }
+          )
+        if (url.endsWith('/assistant/conversations/c3'))
+          return envelope({ ...LATEST, answering: null, messages: [line(2)], earlier: !whole })
+        asked.push(url)
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (fails > 0) {
+          fails--
+          return envelope(null, 400)
+        }
+        if (url.endsWith('/assistant/conversations?before=p2')) return envelope({ conversations: [OLDEST], next: null })
+        if (url.endsWith('/assistant/conversations/c3/messages?before=2'))
+          return envelope({ messages: [line(1)], earlier: false })
+        if (url.endsWith('/assistant/conversations/c1'))
+          return envelope({ ...OLDEST, answering: null, messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+      const release = async () => {
+        await settle()
+        held.splice(0).forEach((go) => go())
+        await settle()
+      }
+      return { asked, release }
+    }
+
+    it('the earlier page of the open topic', async () => {
+      const { asked, release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+
+      const both = Promise.all([a.earlierMessages(null), a.earlierMessages(null)])
+      await release()
+      await both
+
+      expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2])
+      expect(asked).toEqual([expect.stringContaining('/assistant/conversations/c3/messages?before=2')])
+    })
+
+    it('the earlier page of a topic kept above', async () => {
+      const { asked, release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      a.startNew()
+
+      const both = Promise.all([a.earlierMessages('c3'), a.older()])
+      await release()
+      await both
+
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[1, 2]])
+      expect(asked).toHaveLength(1)
+    })
+
+    it('the older topic read back above', async () => {
+      const { asked, release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+      asked.length = 0
+
+      const both = Promise.all([a.older(), a.older()])
+      await release()
+      await both
+
+      expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
+      expect(asked).toEqual([expect.stringContaining('/assistant/conversations/c1')])
+    })
+
+    it('a page that arrives after the topic was left stays out of the next one', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.earlierMessages(null)
+      a.startNew()
+      await release()
+      await reading
+
+      expect(a.messages.value).toEqual([])
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[2]])
+    })
+
+    it('an older topic opened while it was being read back is not kept above as well', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const reading = a.older()
+      const opening = a.show('c1')
+      await release()
+      await Promise.all([reading, opening])
+
+      expect(a.current.value).toBe('c1')
+      expect(a.earlier.value.map((topic) => topic.id)).not.toContain('c1')
+    })
+
+    it('an older topic still unshown is kept above after the topics were read again meanwhile', async () => {
+      const held: (() => void)[] = []
+      const NEWER = { id: 'c9', title: '别处新开的', lastActiveAt: '2026-10-22T08:00:00Z', questions: 1 }
+      let topics = [LATEST, OLDEST]
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations')) return envelope({ conversations: topics, next: null })
+        if (url.endsWith('/assistant/conversations/c3'))
+          return envelope({ ...LATEST, answering: null, messages: [line(2)], earlier: false })
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (url.endsWith('/assistant/conversations/c1'))
+          return envelope({ ...OLDEST, answering: null, messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.older()
+      // A topic started elsewhere shows up in the list while the older one is on its way.
+      topics = [NEWER, LATEST, OLDEST]
+      await a.heard('c3')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      held.splice(0).forEach((go) => go())
+      await reading
+
+      expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
+    })
+
+    it('a page read before the topic was opened again stays off the fresh one', async () => {
+      const held: (() => void)[] = []
+      let latest = { messages: [line(2)], earlier: true }
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [LATEST], next: null })
+        if (url.endsWith('/assistant/conversations/c3')) return envelope({ ...LATEST, answering: null, ...latest })
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (url.endsWith('/assistant/conversations/c3/messages?before=2'))
+          return envelope({ messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.earlierMessages(null)
+      // Said elsewhere meanwhile: opened again, the latest page no longer reaches the one read from.
+      latest = { messages: [line(5), line(6)], earlier: true }
+      await a.show('c3')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      held.splice(0).forEach((go) => go())
+      await reading
+
+      expect(a.messages.value.map((m) => m.seq)).toEqual([5, 6])
+      expect(a.currentEarlier.value).toBe(true)
+    })
+
+    it('an older topic that arrives after signing out stays out', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const reading = a.older()
+      a.reset()
+      await release()
+      await reading
+
+      expect(a.earlier.value).toEqual([])
+      expect(a.messages.value).toEqual([])
+      expect(a.current.value).toBeNull()
+    })
+
+    it('a page of older topics that arrives after signing out stays out', async () => {
+      const { release } = slowServer({ paged: true })
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const reading = a.older()
+      a.reset()
+      await release()
+      await reading
+
+      expect(a.earlier.value).toEqual([])
+      expect(a.hasOlder.value).toBe(false)
+    })
+
+    it('signing back in reads back afresh, without the page read before signing out', async () => {
+      const { asked, release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      a.startNew()
+
+      const stale = a.earlierMessages('c3')
+      a.reset()
+      await a.load()
+      a.startNew()
+      await release()
+      await stale
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[2]])
+
+      const fresh = a.earlierMessages('c3')
+      await release()
+      await fresh
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[1, 2]])
+      expect(asked).toHaveLength(2)
+    })
+
+    it('a read back that failed can be asked again', async () => {
+      const { asked, release } = slowServer({ failing: 1 })
+      const a = createAssistant()
+      await a.load()
+
+      const failed = a.earlierMessages(null).then(
+        () => 'read',
+        () => 'failed'
+      )
+      await release()
+      expect(await failed).toBe('failed')
+      expect(a.messages.value.map((m) => m.seq)).toEqual([2])
+
+      const again = a.earlierMessages(null)
+      await release()
+      await again
+      expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2])
+      expect(asked).toHaveLength(2)
+    })
+
+    it('an older topic that failed to read can be asked again', async () => {
+      const { release } = slowServer({ failing: 1, whole: true })
+      const a = createAssistant()
+      await a.load()
+
+      const failed = a.older().then(
+        () => 'read',
+        () => 'failed'
+      )
+      await release()
+      expect(await failed).toBe('failed')
+
+      const again = a.older()
+      await release()
+      await again
+      expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
+    })
+  })
 })
