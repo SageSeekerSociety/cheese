@@ -5,8 +5,9 @@ package update
 import "os"
 
 // replace renames over the running executable, which Linux and macOS allow:
-// the old inode stays mapped until the process exits.
-func replace(tmpPath, selfPath string) error { return os.Rename(tmpPath, selfPath) }
+// the old inode stays mapped until the process exits. A variable so that a
+// test can run Windows' replaceAside here.
+var replace = os.Rename
 
-// CleanupReplaced removes what an earlier replace left behind. Nothing here.
-func CleanupReplaced(string) {}
+// removeReplaced removes what an earlier replace moved aside. Nothing here.
+func removeReplaced(string) {}

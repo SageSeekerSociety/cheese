@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/stallwatch"
@@ -101,9 +102,10 @@ var ErrCurrent = errors.New("update: already running the build the server publis
 // runnable binary by executing `<temp> --version` under a timeout. On any failure
 // the temp file is removed and an error is returned — the caller must keep running
 // the current binary unchanged. When the download is byte-identical to the
-// executable it returns ErrCurrent, having removed the temp file. Otherwise it
-// returns the temp file path; the caller replaces the executable with Replace and
-// hands off.
+// executable it returns ErrCurrent, having removed the temp file. When it is a
+// build whose Replace failed within the last failedHold it returns ErrHeld,
+// without downloading it. Otherwise it returns the temp file path; the caller
+// passes it to Replace, which consumes it or removes it, and hands off.
 func Fetch(ctx context.Context, base string) (string, error) {
 	dir, err := PlatformDir()
 	if err != nil {
@@ -164,6 +166,12 @@ func Fetch(ctx context.Context, base string) (string, error) {
 		cleanup()
 		return "", fmt.Errorf("update: download %s: HTTP %d", rawURL, resp.StatusCode)
 	}
+	// The origin names the build in the response headers, so a build that just
+	// failed to install is turned away before its body is read.
+	if err := failed.check(resp.Header.Get("X-Checksum-SHA256")); err != nil {
+		cleanup()
+		return "", err
+	}
 	digest := sha256.New()
 	n, err := stallwatch.Copy(io.MultiWriter(tmp, digest), resp.Body, stallAfter, cancel)
 	if err != nil {
@@ -210,11 +218,108 @@ func verify(ctx context.Context, path string) error {
 // (Fetch guarantees it), so the rename is atomic; replacing a running
 // executable's path is fine on Linux/macOS (the old inode stays mapped until the
 // process exits).
+//
+// tmpPath is gone when Replace returns, either as the new executable or
+// deleted. On failure the build is also remembered, so that Fetch does not
+// download it again for failedHold: a Windows connector whose replace kept
+// failing was told to update on every reconnect and left a 31 MB download
+// behind each time, 2,326 of them in six days on one machine.
 func Replace(tmpPath, selfPath string) error {
-	if err := replace(tmpPath, selfPath); err != nil {
-		return fmt.Errorf("update: replace %s: %w", selfPath, err)
+	err := replace(tmpPath, selfPath)
+	if err == nil {
+		return nil
+	}
+	if digest, derr := fileDigest(tmpPath); derr == nil {
+		failed.hold(digest)
+	}
+	_ = os.Remove(tmpPath)
+	return fmt.Errorf("update: replace %s: %w", selfPath, err)
+}
+
+// replaceAside is Windows' replace, kept portable so that its failure can be
+// tested anywhere. Windows refuses to overwrite or delete a running executable
+// but does let it be renamed, so the running one moves aside first and is
+// removed by the next process (Cleanup). It fails while selfPath+".old" cannot
+// be removed — the image of a process still running from it.
+func replaceAside(tmpPath, selfPath string) error {
+	old := selfPath + ".old"
+	_ = os.Remove(old)
+	if err := os.Rename(selfPath, old); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, selfPath); err != nil {
+		_ = os.Rename(old, selfPath)
+		return err
 	}
 	return nil
+}
+
+// ErrHeld is Fetch's answer for a build whose Replace failed less than
+// failedHold ago. Whatever made the replace fail — on Windows, a process still
+// running the image an earlier update moved aside — is usually still there, so
+// downloading it again only costs the bandwidth and the disk. A process that
+// starts afresh (a manual `cheesehost update`, a restart) holds nothing.
+var ErrHeld = errors.New("update: the published build failed to install moments ago")
+
+// failedHold is how long a build whose replace failed is not downloaded again.
+var failedHold = time.Hour
+
+// failed is the last build whose replace failed in this process, and when.
+var failed failedBuild
+
+type failedBuild struct {
+	mu     sync.Mutex
+	digest string
+	at     time.Time
+}
+
+func (f *failedBuild) hold(digest string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.digest, f.at = digest, time.Now()
+}
+
+func (f *failedBuild) check(digest string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if digest == "" || !strings.EqualFold(digest, f.digest) {
+		return nil
+	}
+	if until := f.at.Add(failedHold); time.Now().Before(until) {
+		return fmt.Errorf("%w; not downloading build %.12s again until %s",
+			ErrHeld, digest, until.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// staleAfter is how old a `.cheese-update-*` file must be before Cleanup
+// deletes it. A live download keeps its file's modification time fresh, and
+// one that stops for stallAfter is abandoned, so an hour-old file is never
+// one some process is still writing.
+var staleAfter = time.Hour
+
+// Cleanup removes what earlier updates left beside selfPath: the executable a
+// Windows replace moved aside, and every `.cheese-update-*` download older than
+// staleAfter. It runs at start, so a machine that collected downloads under an
+// older build frees the space on the first run of this one. A file some
+// process still holds open is skipped, not an error: Windows refuses to delete
+// it, and the next start tries again. It returns how many downloads it removed
+// and their total size.
+func Cleanup(selfPath string) (removed int, bytes int64) {
+	removeReplaced(selfPath)
+	found, _ := filepath.Glob(filepath.Join(filepath.Dir(selfPath), ".cheese-update-*"))
+	cutoff := time.Now().Add(-staleAfter)
+	for _, path := range found {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.ModTime().After(cutoff) {
+			continue
+		}
+		if os.Remove(path) == nil {
+			removed++
+			bytes += info.Size()
+		}
+	}
+	return removed, bytes
 }
 
 // SelfDigest is the hex sha256 of the running executable — this build's identity
@@ -230,7 +335,12 @@ func SelfDigest() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	f, err := os.Open(self)
+	return fileDigest(self)
+}
+
+// fileDigest is the hex sha256 of the file at path.
+func fileDigest(path string) (string, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
