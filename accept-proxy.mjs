@@ -1,5 +1,5 @@
 // #5195 验收代理：挡在本地前端和 okcheese.com 之间。
-// 读：照转生产（登录用验收人自己的账号）。写：除登录/刷新令牌外一律在这里拦下，不到生产。
+// 读：照转生产，一律以平台开发号的身份（/api/__accept/enter 自动登录，令牌到期代理自己续）。写：除登录/刷新令牌外一律在这里拦下，不到生产。
 // 测试对象：名册里多出两位假队友、设备列表换成一台假机器；它们的占用、保存、扫描、安装
 // 回包都由控制页（/api/__accept）决定：延迟几秒、成功还是失败。
 import http from 'node:http'
@@ -14,14 +14,24 @@ const DEV = 'accept-demo-device'
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000))
 
 const DEFAULTS = () => ({
-  hold: { target: 'A', outcome: '409', delay: 4, once: true },
+  hold: { target: 'A', outcome: 'manual', delay: 0, once: true },
   save: { delay: 0, outcome: 'ok' },
   scan: { delay: 0, outcome: 'ok', onceOnly: true },
-  install: { delay: 4, outcome: 'ok' },
+  install: { delay: 0, outcome: 'manual' },
   catalogDropAfterFirst: false,
 })
 let cfg = DEFAULTS()
 let state, log, catalogReads
+// 手动放行：请求挂在这里，等控制台点「放行成功 / 放行失败」
+let pending = new Map(); let pendingSeq = 0
+function hold(what) {
+  const id = String(++pendingSeq)
+  return new Promise((resolve) => { pending.set(id, { id, what, since: Date.now(), resolve }); note(`挂起 #${id}：${what}，等控制台放行`) })
+}
+async function settle(outcome, delay, what) {
+  if (outcome === 'manual') { const as = await hold(what); return as }
+  await sleep(delay); return outcome === 'ok' ? 'ok' : 'fail'
+}
 function reset() {
   state = {
     [A]: { name: '测试队友A（假）', handle: 'accept-a', skills: ['documents'], version: 1 },
@@ -29,6 +39,8 @@ function reset() {
   }
   log = []
   catalogReads = 0
+  if (pending) for (const p of pending.values()) p.resolve('ok')
+  pending = new Map()
   cfg = DEFAULTS()
 }
 reset()
@@ -69,31 +81,50 @@ async function pass(req, res, path, body) {
   } catch (e) { fail(res, 502, `生产读取失败：${e.message}`) }
 }
 
+const PID = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
+const DEV_USER = process.env.DEV_USER, DEV_PASS = process.env.DEV_PASS
+async function devLogin() {
+  const body = Buffer.from(JSON.stringify({ username: DEV_USER, password: DEV_PASS }))
+  const r = await upstream({ method: 'POST', headers: { 'content-type': 'application/json' } }, '/api/users/auth/login', body, { buffer: true })
+  const j = JSON.parse(r.body.toString()); if (!j.data?.accessToken) throw new Error(`开发号登录失败 ${r.status}`)
+  return j.data
+}
+
 function controlPage() {
   const sel = (name, value, opts) => `<select name="${name}">${opts.map(([v, l]) => `<option value="${v}"${String(value) === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`
-  const num = (name, v) => `<input name="${name}" type="number" min="0" max="30" step="0.5" value="${v}" style="width:5em"> 秒`
+  const num = (name, v) => `<input name="${name}" type="number" min="0" max="120" step="1" value="${v}" style="width:4.5em"> 秒`
   return `<!doctype html><meta charset="utf-8"><title>#5195 验收控制台</title>
-<style>body{font:14px/1.6 system-ui,sans-serif;max-width:860px;margin:24px auto;padding:0 16px}fieldset{margin:10px 0}legend{font-weight:600}pre{background:#f5f5f5;padding:8px;max-height:320px;overflow:auto}</style>
+<style>body{font:14px/1.6 system-ui,sans-serif;max-width:900px;margin:20px auto;padding:0 16px}fieldset{margin:8px 0}legend{font-weight:600}pre{background:#f5f5f5;padding:8px;max-height:300px;overflow:auto;white-space:pre-wrap}
+#pending div{display:flex;gap:8px;align-items:center;padding:6px;border:1px solid #f0c36d;background:#fff8e6;margin:4px 0}#pending button{padding:4px 10px}</style>
 <h2>#5195 技能面板验收控制台</h2>
-<p>这里定的是预览里<b>测试队友A/B 与假机器</b>的回包。改完点「保存设置」，再回到 项目设置 → AI 队友 操作。真实队友和其它所有写请求一律被拦下、不会写进生产。</p>
+<p>这里定的是预览里<b>测试队友A/B 与假机器</b>的回包。改完点「保存设置」。真实队友和其它所有写请求一律被代理拦下，不会写进生产。
+选「手动放行」时，那个请求会一直挂着，出现在下面「等放行」里，点按钮才回。</p>
+<h3>等放行（每 1 秒自动刷新）</h3><div id="pending">（没有）</div>
 <form method="post" action="/api/__accept/config">
 <fieldset><legend>占用（打开面板时的「正在编辑」租约）</legend>
 对 ${sel('hold.target', cfg.hold.target, [['A', '测试队友A'], ['B', '测试队友B'], ['both', '两位都']])}
-延迟 ${num('hold.delay', cfg.hold.delay)} 后回 ${sel('hold.outcome', cfg.hold.outcome, [['ok', '成功'], ['409', '409 有人正在编辑']])}
-${sel('hold.once', cfg.hold.once, [['true', '只对下一次生效'], ['false', '每次都这样']])}</fieldset>
+${sel('hold.outcome', cfg.hold.outcome, [['manual', '手动放行'], ['ok', '延迟后成功'], ['409', '延迟后回 409 有人正在编辑']])} 延迟 ${num('hold.delay', cfg.hold.delay)}
+${sel('hold.once', cfg.hold.once, [['true', '只对下一次生效，之后立即成功'], ['false', '每次都这样']])}</fieldset>
 <fieldset><legend>保存技能名单（PUT 队友）</legend>
-延迟 ${num('save.delay', cfg.save.delay)} 后 ${sel('save.outcome', cfg.save.outcome, [['ok', '按版本号校验后成功（版本不对回 409）'], ['409', '一律 409'], ['500', '一律 500']])}</fieldset>
-<fieldset><legend>扫描假机器上的技能</legend>
-延迟 ${num('scan.delay', cfg.scan.delay)} 后 ${sel('scan.outcome', cfg.scan.outcome, [['ok', '成功（空）'], ['500', '失败 500']])}
-${sel('scan.onceOnly', cfg.scan.onceOnly, [['true', '只对下一次生效'], ['false', '每次都这样']])}<br>
+${sel('save.outcome', cfg.save.outcome, [['ok', '延迟后按版本号校验（版本不对回 409）'], ['manual', '手动放行（成功 = 按版本号校验）'], ['409', '一律 409'], ['500', '一律 500']])} 延迟 ${num('save.delay', cfg.save.delay)}</fieldset>
+<fieldset><legend>扫描假机器上的技能（每次打开面板都会扫）</legend>
+${sel('scan.outcome', cfg.scan.outcome, [['ok', '延迟后成功（空）'], ['manual', '手动放行'], ['500', '延迟后失败 500']])} 延迟 ${num('scan.delay', cfg.scan.delay)}
+${sel('scan.onceOnly', cfg.scan.onceOnly, [['true', '只对下一次生效，之后立即成功'], ['false', '每次都这样']])}<br>
 ${sel('catalogDropAfterFirst', cfg.catalogDropAfterFirst, [['false', '技能目录照生产原样'], ['true', '第 2 次起的目录去掉 wolfram（好看出池子错没错）']])}</fieldset>
 <fieldset><legend>从网上装技能（技能市场卡片上的 +）</legend>
-延迟 ${num('install.delay', cfg.install.delay)} 后 ${sel('install.outcome', cfg.install.outcome, [['ok', '装好点的那一颗'], ['500', '失败 500']])}</fieldset>
-<button>保存设置</button> &nbsp; <a href="/api/__accept/reset">全部重置（队友名单、版本号、日志、设置）</a>
+${sel('install.outcome', cfg.install.outcome, [['manual', '手动放行'], ['ok', '延迟后装好点的那一颗'], ['500', '延迟后失败 500']])} 延迟 ${num('install.delay', cfg.install.delay)}</fieldset>
+<button>保存设置</button> &nbsp; <a href="/api/__accept/reset">全部重置（队友名单、版本号、日志、设置、放掉挂起的请求）</a> &nbsp; <a href="/api/__accept/enter" target="_blank">打开预览页（开发号）</a>
 </form>
-<h3>测试队友现在的状态（代理里存的「真值」）</h3>
-<pre>${Object.entries(state).map(([id, s]) => `${s.name}  版本 ${s.version}  技能 ${JSON.stringify(s.skills)}`).join('\n')}</pre>
-<h3>拦下的写请求与模拟回包（新的在上）</h3><pre>${log.join('\n') || '（还没有）'}</pre>`
+<h3>测试队友现在的状态（代理里存的「真值」）</h3><pre id="state"></pre>
+<h3>拦下的写请求与模拟回包（新的在上）</h3><pre id="log"></pre>
+<script>
+async function tick(){try{const j=await (await fetch('/api/__accept/state')).json();
+document.getElementById('state').textContent=j.state.join(String.fromCharCode(10));document.getElementById('log').textContent=j.log.join(String.fromCharCode(10))||'（还没有）';
+const box=document.getElementById('pending');box.innerHTML=j.pending.length?'':'（没有）';
+for(const p of j.pending){const d=document.createElement('div');d.innerHTML='<b>#'+p.id+'</b> '+p.what+' <small>已挂 '+p.age+' 秒</small>';
+for(const [as,label] of [['ok','放行·成功'],['fail','放行·失败']]){const b=document.createElement('button');b.textContent=label;b.onclick=async()=>{await fetch('/api/__accept/release?id='+p.id+'&as='+as);tick()};d.appendChild(b)}box.appendChild(d)}}catch(e){}}
+tick();setInterval(tick,1000)
+</script>`
 }
 
 function parseForm(buf) {
@@ -116,15 +147,32 @@ http.createServer(async (req, res) => {
     if (path === '/api/__accept' || path === '/api/__accept/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(controlPage()) }
     if (path === '/api/__accept/config' && m === 'POST') { cfg = parseForm(body); note(`控制台：设置已更新 ${JSON.stringify(cfg)}`); res.writeHead(303, { location: '/api/__accept' }); return res.end() }
     if (path === '/api/__accept/reset') { reset(); note('控制台：全部重置'); res.writeHead(303, { location: '/api/__accept' }); return res.end() }
+    if (path === '/api/__accept/state') return send(res, 200, {
+      state: Object.values(state).map((s) => `${s.name}  版本 ${s.version}  技能 ${JSON.stringify(s.skills)}`),
+      log, pending: [...pending.values()].map((p) => ({ id: p.id, what: p.what, age: Math.round((Date.now() - p.since) / 1000) })),
+    })
+    if (path.startsWith('/api/__accept/release')) {
+      const q = new URL(path, 'http://x').searchParams; const p = pending.get(q.get('id'))
+      if (p) { pending.delete(p.id); note(`控制台：放行 #${p.id} 为${q.get('as') === 'fail' ? '失败' : '成功'}`); p.resolve(q.get('as') === 'fail' ? 'fail' : 'ok') }
+      return send(res, 200, { ok: !!p })
+    }
+    // 一打开就是开发号：服务器这边登录，把令牌写进页面，再跳到 AI 队友名册
+    if (path.startsWith('/api/__accept/enter')) {
+      const d = await devLogin()
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      return res.end(`<!doctype html><meta charset="utf-8"><title>进入 #5195 验收预览</title><p>正在用开发号进入验收预览…</p><script>
+localStorage.setItem('accessToken', ${JSON.stringify(d.accessToken)});${d.user ? `localStorage.setItem('user', ${JSON.stringify(JSON.stringify(d.user))});` : ''}
+location.replace('/projects/${PID}/settings/agents')</script>`)
+    }
 
-    // 名册：生产那份后面接上两位测试队友
+    // 名册：两位测试队友排在最前，后面是生产那份
     let mm
     if (m === 'GET' && (mm = path.match(/^\/api\/projects\/([^/]+)\/agents(\?.*)?$/))) {
       const r = await upstream(req, path, null, { buffer: true })
       try {
         const j = JSON.parse(r.body.toString())
         const list = j.data?.data
-        if (Array.isArray(list)) { const tpl = list.find((x) => x.is_active) ?? list[0]; j.data.data = [...list, fakeRow(A, tpl), fakeRow(B, tpl)]; j.data.total = j.data.data.length }
+        if (Array.isArray(list)) { const tpl = list.find((x) => x.is_active) ?? list[0]; j.data.data = [fakeRow(A, tpl), fakeRow(B, tpl), ...list]; j.data.total = j.data.data.length }
         return send(res, r.status, j)
       } catch { res.writeHead(r.status, r.headers); return res.end(r.body) }
     }
@@ -136,18 +184,21 @@ http.createServer(async (req, res) => {
       const hit = state[id] && (h.target === 'both' || (h.target === 'A' && id === A) || (h.target === 'B' && id === B))
       if (!hit) { note(`占用 ${who(id)} → 立即成功`); return ok(res, { editing: null }) }
       if (h.once) cfg.hold = { ...h, outcome: 'ok', delay: 0 }
-      note(`占用 ${who(id)} → 等 ${h.delay} 秒后${h.outcome === '409' ? '回 409' : '成功'}（模拟）`)
-      await sleep(h.delay)
-      note(`占用 ${who(id)} 的回包现在送达：${h.outcome === '409' ? '409' : '成功'}`)
-      return h.outcome === '409' ? fail(res, 409, '有人正在编辑这位队友（验收模拟）') : ok(res, { editing: null })
+      if (h.outcome !== 'manual') note(`占用 ${who(id)} → 等 ${h.delay} 秒后${h.outcome === '409' ? '回 409' : '成功'}（模拟）`)
+      const r = await settle(h.outcome === '409' ? 'fail' : h.outcome, h.delay, `占用 ${who(id)}（失败 = 409 有人正在编辑）`)
+      note(`占用 ${who(id)} 的回包现在送达：${r === 'fail' ? '409' : '成功'}`)
+      return r === 'fail' ? fail(res, 409, '有人正在编辑这位队友（验收模拟）') : ok(res, { editing: null })
     }
     // 保存队友
     if ((mm = path.match(/^\/api\/projects\/[^/]+\/agents\/([^/?]+)$/)) && m === 'PUT') {
       const id = mm[1]; const payload = JSON.parse(body?.toString() || '{}'); const skills = payload.configuration?.skills
       if (!state[id]) { note(`拦下：对真实队友 ${who(id)} 的保存（预览里只能改测试队友）`); return fail(res, 403, '验收预览里只能改测试队友A/B，真实队友的写入已被拦下') }
       const s = state[id]
-      note(`保存 ${who(id)} 技能=${JSON.stringify(skills)} 带版本 ${payload.expected_version}，等 ${cfg.save.delay} 秒（模拟）`)
-      await sleep(cfg.save.delay)
+      note(`保存 ${who(id)} 技能=${JSON.stringify(skills)} 带版本 ${payload.expected_version}`)
+      if (cfg.save.outcome === 'manual') {
+        const r = await hold(`保存 ${who(id)} 技能=${JSON.stringify(skills)} 带版本 ${payload.expected_version}（成功 = 按版本号校验；失败 = 500）`)
+        if (r === 'fail') { note(`保存 ${who(id)} → 500（放行为失败）`); return fail(res, 500, '保存失败（验收模拟）') }
+      } else await sleep(cfg.save.delay)
       if (cfg.save.outcome === '500') { note(`保存 ${who(id)} → 500（模拟）`); return fail(res, 500, '保存失败（验收模拟）') }
       if (cfg.save.outcome === '409' || payload.expected_version !== s.version) { note(`保存 ${who(id)} → 409（带的 ${payload.expected_version}，现在是 ${s.version}）`); return fail(res, 409, '别人刚改过这个队友（验收模拟）') }
       s.skills = [...skills]; s.version += 1
@@ -166,17 +217,18 @@ http.createServer(async (req, res) => {
     if (m === 'GET' && path.startsWith(`/connector/my/devices/${DEV}/skills`)) {
       const sc = cfg.scan
       if (sc.onceOnly) cfg.scan = { ...sc, outcome: 'ok', delay: 0 }
-      note(`扫描假机器 → 等 ${sc.delay} 秒后${sc.outcome === '500' ? '失败' : '成功'}（模拟）`)
-      await sleep(sc.delay)
-      note(`扫描假机器的回包现在送达：${sc.outcome === '500' ? '500' : '成功'}`)
-      return sc.outcome === '500' ? fail(res, 500, '机器离线（验收模拟）') : send(res, 200, { skills: [] })
+      if (sc.outcome !== 'manual') note(`扫描假机器 → 等 ${sc.delay} 秒后${sc.outcome === '500' ? '失败' : '成功'}（模拟）`)
+      const r = await settle(sc.outcome === '500' ? 'fail' : sc.outcome, sc.delay, '扫描假机器上的技能（失败 = 500 机器离线）')
+      note(`扫描假机器的回包现在送达：${r === 'fail' ? '500' : '成功'}`)
+      return r === 'fail' ? fail(res, 500, '机器离线（验收模拟）') : send(res, 200, { skills: [] })
     }
     if (m === 'POST' && path.startsWith(`/connector/my/devices/${DEV}/skills/web`)) {
       let skill = 'pdf'; try { skill = (JSON.parse(body.toString()).url || '').split('/').pop() || 'pdf' } catch {}
-      note(`网上装技能 ${skill} → 等 ${cfg.install.delay} 秒（模拟）`)
-      await sleep(cfg.install.delay)
-      note(`网上装技能 ${skill} 的回包现在送达：${cfg.install.outcome === '500' ? '失败' : '装好了'}`)
-      if (cfg.install.outcome === '500') return fail(res, 500, '安装失败（验收模拟）')
+      const ins = cfg.install
+      if (ins.outcome !== 'manual') note(`网上装技能 ${skill} → 等 ${ins.delay} 秒（模拟）`)
+      const r = await settle(ins.outcome === '500' ? 'fail' : ins.outcome, ins.delay, `网上装技能 ${skill}（失败 = 500 安装失败）`)
+      note(`网上装技能 ${skill} 的回包现在送达：${r === 'fail' ? '失败' : '装好了'}`)
+      if (r === 'fail') return fail(res, 500, '安装失败（验收模拟）')
       return send(res, 200, { landed: true, plan: [{ name: skill, description: `${skill}（验收模拟）`, files: ['SKILL.md'] }],
         skills: [{ name: skill, description: `${skill}（验收模拟）`, source_root: `/demo/web-skills/${skill}`, digest: 'x', state: 'seen', adopted: false }], problems: [], roots: [], workspaces: [] })
     }
@@ -189,7 +241,8 @@ http.createServer(async (req, res) => {
     }
     // 其余写请求：登录和令牌刷新照转，别的一律拦下
     if (m !== 'GET' && m !== 'HEAD' && m !== 'OPTIONS') {
-      if (/^\/api\/users\/auth\/(login|refresh|logout)/.test(path)) return pass(req, res, path, body)
+      if (path.startsWith('/api/users/auth/refresh-token')) { const d = await devLogin(); note('令牌到期：代理用开发号重新登录'); return ok(res, { accessToken: d.accessToken, user: d.user }) }
+      if (/^\/api\/users\/auth\/login/.test(path)) return pass(req, res, path, body)
       note(`拦下：${m} ${path.split('?')[0]}（没有转给生产）`)
       return ok(res, {})
     }
