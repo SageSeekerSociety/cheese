@@ -682,6 +682,33 @@ describe('芝士这一轮做了什么', () => {
       expect(a.earlier.value.map((topic) => topic.id)).not.toContain('c1')
     })
 
+    it('an older topic still unshown is kept above after the topics were read again meanwhile', async () => {
+      const held: (() => void)[] = []
+      const NEWER = { id: 'c9', title: '别处新开的', lastActiveAt: '2026-10-22T08:00:00Z', questions: 1 }
+      let topics = [LATEST, OLDEST]
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations')) return envelope({ conversations: topics, next: null })
+        if (url.endsWith('/assistant/conversations/c3'))
+          return envelope({ ...LATEST, answering: null, messages: [line(2)], earlier: false })
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (url.endsWith('/assistant/conversations/c1'))
+          return envelope({ ...OLDEST, answering: null, messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.older()
+      // A topic started elsewhere shows up in the list while the older one is on its way.
+      topics = [NEWER, LATEST, OLDEST]
+      await a.heard('c3')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      held.splice(0).forEach((go) => go())
+      await reading
+
+      expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
+    })
+
     it('a page read before the topic was opened again stays off the fresh one', async () => {
       const held: (() => void)[] = []
       let latest = { messages: [line(2)], earlier: true }

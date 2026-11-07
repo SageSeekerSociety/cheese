@@ -505,9 +505,10 @@ export function createAssistant(opts: AssistantOptions = {}) {
   async function readOlder() {
     const top = earlier.value[0]
     if (top ? top.earlier : currentEarlier.value) return earlierMessages(top ? top.id : null)
+    const shown = () => new Set([current.value, ...earlier.value.map((topic) => topic.id)])
     const unshown = () => {
-      const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
-      return conversations.value.find((c) => !shown.has(c.id))
+      const now = shown()
+      return conversations.value.find((c) => !now.has(c.id))
     }
     const at = signedIn
     let next = unshown()
@@ -519,7 +520,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     if (!next) return
     const data = await read(next.id)
     // 读的时候它已经摆出来了（通知里点开成了眼前这个）：不再摆一遍。
-    if (at !== signedIn || unshown()?.id !== next.id) return
+    if (at !== signedIn || shown().has(next.id)) return
     earlier.value = [
       {
         id: next.id,
