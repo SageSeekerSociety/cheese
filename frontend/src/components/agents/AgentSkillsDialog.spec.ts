@@ -6,12 +6,12 @@
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen } from '@testing-library/vue'
+import { fireEvent, render, screen, within } from '@testing-library/vue'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import AgentSkillsDialog from './AgentSkillsDialog.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 const MARKET = {
   skills: [
@@ -78,6 +78,12 @@ function mount(extra: Record<string, unknown> = {}) {
   })
 }
 
+/** 这几个技能名里，哪些列在「米洛 的技能」那份名单上。 */
+async function listed(...names: string[]) {
+  const board = await screen.findByRole('list', { name: t('work.room.skills.carriedTitle', { name: '米洛' }) })
+  return names.filter((name) => within(board).queryByText(name, { exact: true }))
+}
+
 describe('技能弹窗', () => {
   it('灯板画队友身上的技能：带上的，加上平台与项目给每位队友都发的；机器上没带的不画', async () => {
     mount({
@@ -87,14 +93,7 @@ describe('技能弹窗', () => {
       ],
     })
 
-    expect(await screen.findByText('wolfram')).toBeTruthy()
-    expect(screen.getByText('cheese')).toBeTruthy()
-    expect(screen.queryByText('ponytail')).toBeNull()
-    expect(document.querySelectorAll('.skills__grid .socket')).toHaveLength(2)
-    expect(document.querySelector('.pool')).toBeNull()
-    expect(document.querySelector('.machine')).toBeNull()
-    expect(screen.queryByText(/工作电脑/)).toBeNull()
-    expect(screen.queryByText('添加')).toBeNull()
+    expect(await listed('wolfram', 'cheese', 'ponytail')).toEqual(['wolfram', 'cheese'])
   })
 
   it('什么都没带、只有机器上的 pdf 可加：pdf 不进名单，说「还什么都没带」', async () => {
@@ -104,9 +103,8 @@ describe('技能弹窗', () => {
       market: null,
     })
 
-    expect(await screen.findByText('这个队友还什么都没带。')).toBeTruthy()
-    expect(document.querySelectorAll('.skills__grid .socket')).toHaveLength(0)
-    expect(screen.queryByText('pdf')).toBeNull()
+    expect(await screen.findByText(t('work.room.skills.emptyCarried'))).toBeTruthy()
+    expect(await listed('pdf')).toEqual([])
   })
 
   it('机器上的技能带上了就画，灯照旧只说能不能用', async () => {
@@ -117,11 +115,10 @@ describe('技能弹窗', () => {
       market: null,
     })
 
-    const sockets = [...document.querySelectorAll('.skills__grid .socket')]
-    expect(await screen.findByText('pdf')).toBeTruthy()
-    expect(sockets.map((s) => s.querySelector('.socket__name')?.textContent)).toEqual(['pdf', 'wolfram'])
-    expect(sockets.map((s) => s.classList.contains('socket--on'))).toEqual([true, false])
-    expect(screen.queryByText('这个队友还什么都没带。')).toBeNull()
+    expect(await listed('pdf', 'wolfram')).toEqual(['pdf', 'wolfram'])
+    expect(screen.getByRole('listitem', { name: t('work.room.skills.socketLit', { name: 'pdf' }) })).toBeTruthy()
+    expect(screen.getByRole('listitem', { name: t('work.room.skills.socketUnlit', { name: 'wolfram' }) })).toBeTruthy()
+    expect(screen.queryByText(t('work.room.skills.emptyCarried'))).toBeNull()
   })
 
   it('市场三页签各画各的，MCP 那张没有 +', async () => {
@@ -185,34 +182,39 @@ describe('技能弹窗', () => {
   })
 })
 
-// 已带的那几格能去掉：点一下就是「从这位队友身上拿掉它」，落库与失败回滚在 `useAgentSkills`。
-// 平台和项目给每位队友都发的那几格不在队友的名单上，没有可去掉的，所以不是按钮。
+// 已带的机器技能能去掉：点一下就是「从这位队友身上拿掉它」，落库与失败回滚在 `useAgentSkills`。
+// 平台和项目发给每位队友的那几格去掉了也照样在板上（它们本来就到了每个执行器），点下去看着像
+// 没反应，所以这几格不给按钮，不管它在不在队友的名单上。
+const PDF = { name: 'pdf', description: '读 PDF', source: 'machine' as const }
+
 describe('去掉已带的技能', () => {
-  it('点已带的那一格，把它的名字往上发；平台给大家的那格不能点', async () => {
+  it('点已带的 pdf，把它的名字往上发；平台与项目发给每位队友的那几格没有这颗按钮', async () => {
     const view = mount({
+      carried: [PDF, { name: 'wolfram', description: '算', source: 'platform' as const }],
       available: [{ name: 'cheese', description: '芝士自己的用法', source: 'project' as const }],
       market: null,
     })
 
-    await fireEvent.click(await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' }))
-    expect(view.emitted('remove')).toEqual([['wolfram']])
+    await fireEvent.click(await screen.findByRole('button', { name: '从米洛身上去掉 pdf' }))
+    expect(view.emitted('remove')).toEqual([['pdf']])
+    expect(screen.getByText('wolfram')).toBeTruthy()
     expect(screen.getByText('cheese')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /cheese/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /wolfram|cheese/ })).toBeNull()
   })
 
   it('别人正占着「编辑中」时按不动，什么都不往上发', async () => {
-    const view = mount({ editingBlocked: true, editingBy: 'alice', market: null })
+    const view = mount({ carried: [PDF], editingBlocked: true, editingBy: 'alice', market: null })
 
-    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' })) as HTMLButtonElement
+    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 pdf' })) as HTMLButtonElement
     expect(socket.disabled).toBe(true)
     await fireEvent.click(socket)
     expect(view.emitted('remove')).toBeUndefined()
   })
 
   it('上一笔还在保存时按不动', async () => {
-    mount({ saving: true, market: null })
+    mount({ carried: [PDF], saving: true, market: null })
 
-    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' })) as HTMLButtonElement
+    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 pdf' })) as HTMLButtonElement
     expect(socket.disabled).toBe(true)
   })
 })
