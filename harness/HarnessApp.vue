@@ -68,8 +68,8 @@ const HOLDS = [
         </p>
         <div class="h__row">
           <span class="t-eyebrow">代码版本</span>
-          <a :class="{ on: side === 'before' }" :href="link('before', holdMode)">改前（D 分支头 7a9365013）</a>
-          <a :class="{ on: side === 'after' }" :href="link('after', holdMode)">改后（本 PR）</a>
+          <a :class="{ on: side === 'before' }" :href="link('before', holdMode)">改前（D 分支头 5d59ad5bb）</a>
+          <a :class="{ on: side === 'after' }" :href="link('after', holdMode)">改后（本 PR 80b8d63b5）</a>
         </div>
         <div class="h__row">
           <span class="t-eyebrow">场景</span>

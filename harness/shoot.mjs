@@ -1,6 +1,6 @@
 import { chromium } from 'playwright'
 const [side, hold] = process.argv.slice(2)
-const out = `/tmp/shots79/${side}-${hold}`
+const out = `/tmp/shots79b/${side}-${hold}`
 const browser = await chromium.launch({ executablePath: process.env.CHROME, args: ['--no-sandbox'] })
 const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: 1, locale: 'zh-CN' })
 page.on('pageerror', (e) => console.log('PAGEERROR', e.message))
