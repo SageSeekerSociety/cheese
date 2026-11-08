@@ -198,6 +198,9 @@ export interface AssistantMessage {
   /** 回答被人停下了；`text` 是停下时已经写出的部分。 */
   stopped?: boolean
   at: string
+  /** 这一页刚发、服务端还没收下的那一句：没收下时只收回带着这个号的那一句。读回来的没有，
+   *  同一毫秒说的两句也不会认成一句。 */
+  sent?: number
   /** 随问题交给芝士的文件名：只在这次打开的页面里有。 */
   files?: string[]
   shown?: AssistantShown
@@ -314,6 +317,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const creditRefused = ref(false)
   const loaded = ref(false)
   let editSeq = 0
+  let sentSeq = 0
 
   const busy = computed(() => streaming.value !== null)
 
@@ -497,12 +501,20 @@ export function createAssistant(opts: AssistantOptions = {}) {
     creditRefused.value = false
     streaming.value = ''
     const at = new Date().toISOString()
+    const sent = ++sentSeq
     const asking = opts.asking?.(text)
     const target = opts.target?.() ?? null
     if (!kept)
       messages.value = [
         ...messages.value,
-        { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...asking?.shown },
+        {
+          role: 'user',
+          text,
+          at,
+          sent,
+          ...(files.length ? { files: files.map((f) => f.name) } : {}),
+          ...asking?.shown,
+        },
       ]
     // 面板只留服务端存下的东西：被拒的问题不留那一句。
     let asked = false
@@ -534,7 +546,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         creditRefused.value = isCreditRefusal(error.body)
       } else notice.value = fallback
     } finally {
-      if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+      if (!asked && !kept) messages.value = messages.value.filter((m) => m.sent !== sent)
       streaming.value = null
       await listConversations().catch(() => undefined)
     }
@@ -861,6 +873,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     if (!words && !files.length) return
     if (!id || !busy.value) return ask(words, fallback, files)
     const at = new Date().toISOString()
+    const sent = ++sentSeq
     const asking = opts.asking?.(words)
     // 插进去的话没换页面：只写它带的字和引用，不写「在哪问的」。
     const shown = {
@@ -869,7 +882,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
     messages.value = [
       ...messages.value,
-      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...shown },
+      { role: 'user', text: words, at, sent, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...shown },
     ]
     try {
       await request(`/assistant/conversations/${id}/say`, {
@@ -881,7 +894,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         }),
       })
     } catch {
-      messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+      messages.value = messages.value.filter((m) => m.sent !== sent)
       if (!busy.value) return ask(words, fallback, files)
       notice.value = fallback
     }
