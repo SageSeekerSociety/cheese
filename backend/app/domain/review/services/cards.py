@@ -10,6 +10,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import (
     ConflictError,
     NotFoundError,
@@ -119,6 +122,18 @@ async def _card_or_404(self: pkg.AcceptService, card_id: uuid.UUID) -> AcceptCar
     return card
 
 
+async def _hold_filing(session: AsyncSession, task_id: uuid.UUID) -> None:
+    """同一条任务的递卡排队，到本事务结束为止。
+
+    和 `_hold_deliverable` 一样用事务级 advisory 锁而不是任务行的 FOR UPDATE：
+    递卡这一路要读 forge，持着任务行的锁会把同一时刻改这条任务的别的写（进度、
+    心跳、改名）一起挡住。"""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"accept-card-filing:{task_id}"},
+    )
+
+
 #: 审阅重点的上限：审阅的人要在卡上一眼读完。条数按非空行数，字数按全部条目合计。
 FOCUS_MAX_ITEMS = 3
 FOCUS_MAX_CHARS = 300
@@ -190,6 +205,11 @@ async def create_card(
     else:
         _one_artifact_action(artifact, new_artifact)
     about = artifacts.clean_about(about, subject=subject)
+    # 「有没有未决的卡」和落卡之间隔着一次 forge 读（下面的 comparison），能有好
+    # 几秒。客户端在这几秒里读超时、重试，第二个请求查到的还是「没有」，两边各
+    # 落一张 (FB-108)。所以同一条任务的递卡按任务排队到本事务提交：后到的那次
+    # 等前一张卡落库再查，就会被下面这句挡回去。
+    await _hold_filing(self._session, task.id)
     existing = await self._repo.list_for_task(task.id)
     blocking = next((c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None)
     if blocking is not None:
