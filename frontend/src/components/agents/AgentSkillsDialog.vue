@@ -121,11 +121,11 @@ watch(open, () => {
 // 别人正占着「编辑中」的租约时改不动 —— 那是同一件事的另一半：现在改会撞上他。
 const locked = () => !props.canManage || props.editingBlocked
 
-// 已带的那几格能去掉：格子里铺一颗和格子一样大的按钮，点一下从队友身上拿掉它。格子本身
-// 仍是灯板名单里的一项、仍说灯亮没亮；平台与项目发给每位队友的那几格不在队友的名单上，
-// 没有可去掉的，就没有这颗按钮。
+// 已带的机器技能能去掉：格子里铺一颗和格子一样大的按钮，点一下从队友身上拿掉它。格子本身
+// 仍是灯板名单里的一项、仍说灯亮没亮。平台与项目发给每位队友的那几格即使在队友名单上也
+// 不给按钮：去掉之后它从「还能加」里又回到板上（`shippedToEveryone`），点下去看着像没反应。
 const carriedNames = computed(() => new Set(props.carried.map((skill) => skill.name)))
-const removable = (skill: SkillItem) => carriedNames.value.has(skill.name)
+const removable = (skill: SkillItem) => carriedNames.value.has(skill.name) && !shippedToEveryone(skill)
 </script>
 
 <template>
