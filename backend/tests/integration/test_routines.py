@@ -1,6 +1,7 @@
 """Standing work: a saved rule wakes the room's teammate, once per moment or
 event, and whoever set it hears how each run went."""
 
+import itertools
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -960,8 +961,14 @@ def test_a_teammates_rule_keeps_its_owners_time(client):
     assert made.json()["data"]["timezone"] == "Europe/Berlin"
 
 
+_review_numbers = itertools.count(1000)
+
+
 def _review(client, project, room, title, *, status=None, decided_ago=None):
-    """A task and the review card filed for it — the row both triggers read."""
+    """A task and the review card filed for it — the row both triggers read.
+
+    Its number is picked per row because (project, number) is unique and a
+    test files more than one card in the same project."""
     task_id = uuid.uuid4()
     filed_at = datetime.now(UTC) - timedelta(minutes=10)
 
@@ -972,10 +979,14 @@ def _review(client, project, room, title, *, status=None, decided_ago=None):
                 project_id=uuid.UUID(project),
                 room_id=uuid.UUID(room),
                 title=title,
-                number=1,
+                number=next(_review_numbers),
                 created_at=filed_at,
             )
         )
+        # The task first: the card names it by a foreign key, and SQLAlchemy
+        # orders two pending inserts it cannot relate (the card has no
+        # relationship to the task object, only its id).
+        await session.flush()
         session.add(
             AcceptCard(
                 topic_id=uuid.UUID(room),

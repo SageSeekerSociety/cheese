@@ -1368,7 +1368,7 @@ async def delete_routine(
 
 @router.post(
     "/routines/{routineId}/run-now",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(RoutinePermission.manage)],
     **typed_response(RoutinesOut),
 )
 async def run_routine_now(
