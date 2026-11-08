@@ -57,6 +57,7 @@ from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.state.notices import (
     _TOOL_ACTION,
     CONTEXT_FULL,
+    CONTEXT_FULL_CODE,
     PROVIDER_OUT_OF_CREDIT,
     _turn_failure_notice,
     model_error_notice,
@@ -64,6 +65,7 @@ from app.domain.agent.turn.state.notices import (
 )
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
 from app.domain.agent.turn.store.intervals import turn_credits_refused
+from app.domain.agent.turn.store.session_inputs import abandon_opening
 from app.domain.agent.turn_inputs import mark_session_for_turn
 from app.domain.agent_instance.own.naming import connection_name
 from app.domain.block.models import Block
@@ -129,16 +131,16 @@ async def _turn_ended_noticed(
                 Block.meta["delivery_id"].as_string() == delivery,
             ),
         )
+    # The same event type is not the same line: every failed turn carries
+    # `turn_failed`, `context_full` among them, so an earlier plain failure of
+    # the same delivery must not count as this one having been said — that would
+    # skip the abandonment of an un-compactable conversation for good.
+    said = Block.meta["event_type"].as_string() == meta.get("event_type")
+    if meta.get("code"):
+        said = and_(said, Block.meta["code"].as_string() == meta["code"])
     async with sessions() as session:
         return (
-            await session.scalar(
-                select(Block.id)
-                .where(
-                    said_by,
-                    Block.meta["event_type"].as_string() == meta.get("event_type"),
-                )
-                .limit(1)
-            )
+            await session.scalar(select(Block.id).where(said_by, said).limit(1))
             is not None
         )
 
@@ -513,13 +515,45 @@ class HookEvents:
                 )
                 if attempted is not None:
                     meta = {**meta, "delivery_id": str(attempted[0])}
-                if not recovering and not await _turn_ended_noticed(
+                noticed = recovering or await _turn_ended_noticed(
                     sessions,
                     turn_id,
                     meta,
                     conversation_id=conversation_id,
                     asked=attempted is not None and attempted[1],
+                )
+                if (
+                    not noticed
+                    and not recovering
+                    and meta.get("code") == CONTEXT_FULL_CODE
+                    and seat
+                    and event.harness
                 ):
+                    # The conversation is past its window and the summary that
+                    # would shrink it could not be made. The next turn would
+                    # send the same history and be refused the same way, so this
+                    # one is over: a new session, told the whole project state,
+                    # picks up from here.
+                    #
+                    # Inside this branch on purpose — a report delivered again
+                    # finds its line already there and must not clear a pointer
+                    # a newer turn has since written. Best-effort for the same
+                    # reason the pointer's own write is: this sits on a failure
+                    # path, and a raise here would leave the turn open with no
+                    # line at all.
+                    try:
+                        await abandon_opening(
+                            sessions,
+                            conversation_id=conversation_id,
+                            seat=seat,
+                            harness=event.harness,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "could not abandon the un-compactable conversation of %s",
+                            conversation_id,
+                        )
+                if not noticed:
                     room_meta = dict(meta)
                     if "error" in room_meta:
                         # Startup diagnostics are platform records. The room

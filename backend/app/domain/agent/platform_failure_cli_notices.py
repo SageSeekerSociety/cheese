@@ -171,7 +171,14 @@ _COMPACT_REFUSED = re.compile(
     # failed: <why>`. Kept to one line — the prefix and the phrase are the same
     # sentence, and a whole log is not.
     r"^(?:Prompt is too long\b[^\n]*?\bautomatic compaction failed\b"
-    r"|automatic compaction failed\b)",
+    r"|automatic compaction failed\b"
+    # The same state at the API: the conversation itself was refused for size
+    # before any compaction could shrink it (`ContextWindowExceededError`, or
+    # its `maximum context length is N tokens` wording). This is the shape that
+    # used to reach a room as an invalid request — 「可能有解不开的图片」 — so
+    # it is read here.
+    r"|API Error:\s*400\b[^\n]*\bContextWindowExceededError\b"
+    r"|API Error:\s*400\b[^\n]*\bmaximum context length is\b)",
     re.I,
 )
 
