@@ -80,6 +80,19 @@ describe('新手引导的后半程', () => {
     expect(guide.current.value?.key).toBe('reply')
   })
 
+  it('between the task page and accepting, waits for the preview and moves on once the delivery is in', () => {
+    const guide = useProjectTour()
+    const facts = { ...none, asked: true, answered: true }
+    noteFacts(facts)
+    guide.stop.value = at('preview')
+    guide.settle({ facts, has: onPage('task-page', 'preview-card') })
+    expect(guide.current.value?.key).toBe('preview')
+    // 芝士没摆预览直接交付了，也不会卡在这一站。
+    guide.settle({ facts, has: onPage('task-page', 'accept-card') })
+    expect(guide.current.value?.key).toBe('accept')
+    expect(at('preview')).toBe(at('taskPage') + 1)
+  })
+
   it('once a delivery is accepted, shows where the results went, and is done after that', () => {
     const guide = useProjectTour()
     noteFacts(none)
@@ -164,6 +177,15 @@ describe('导览这一站指哪里', () => {
   it('任务页和按钮都在时，按锚点顺序认任务页', () => {
     const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-page', 'task-open-page'))
     expect(stop?.area).toBe(true)
+  })
+
+  it('预览一站圈芝士摆出来的那份；还没摆出来时落在任务页上等', () => {
+    const shown = resolveGuideStep(GUIDE_STEPS[at('preview')], onPageEls('preview-card', 'task-page'))
+    expect(shown?.target).toBe(el('preview-card'))
+    expect(shown?.text).toBe('text')
+    const waiting = resolveGuideStep(GUIDE_STEPS[at('preview')], onPageEls('task-page'))
+    expect(waiting?.target).toBe(el('task-page'))
+    expect(waiting?.text).toBe('textWaiting')
   })
 
   it('任务还没出现时指着任务卡等，不画圈', () => {

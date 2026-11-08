@@ -1,5 +1,6 @@
-// 新手引导：两问的回答变成第一个项目，项目在点「建好项目」时才建，建好后进它的「综合」，
-// 第一句请求已经写在输入框里（带 @芝士，直接回车芝士不会接）。称呼用账号上的昵称，不再问。
+// 新手引导：两问的回答变成第一个项目。第二问默认领一道新手题（按身份推荐），也可以
+// 自己写第一件事。项目在点按钮时才建，建好后进它的「综合」，第一句请求已经写在输入框里
+// （带 @项目里的默认队友，直接回车队友不会接）。称呼用账号上的昵称，不再问。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -52,7 +53,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
   account.user = { id: 1, username: 'lin', nickname: '林小满', onboarded_at: null, work_role: null, organization: null }
-  finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general' })
+  finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general', teammate: '芝士' })
   history.state = {}
 })
 
@@ -65,6 +66,7 @@ describe('新手引导', () => {
     const view = mount()
     await fireEvent.click(view.getByRole('button', { name: /上课、做课程项目/ }))
     await next(view)
+    await fireEvent.click(view.getByRole('button', { name: '自己写第一件事' }))
     await fireEvent.click(view.getByRole('button', { name: /写课程报告或论文初稿/ }))
     expect(finishOnboarding).not.toHaveBeenCalled()
 
@@ -89,6 +91,7 @@ describe('新手引导', () => {
     const view = mount()
     await fireEvent.click(view.getByRole('button', { name: /教课、带学生/ }))
     await next(view)
+    await fireEvent.click(view.getByRole('button', { name: '自己写第一件事' }))
     expect(view.getByRole('button', { name: /出一道作业题/ })).toBeTruthy()
     expect(view.queryByRole('button', { name: /写课程报告或论文初稿/ })).toBeNull()
   })
@@ -98,12 +101,56 @@ describe('新手引导', () => {
     const view = mount()
     await fireEvent.click(view.getByRole('button', { name: /上课、做课程项目/ }))
     await next(view)
+    await fireEvent.click(view.getByRole('button', { name: '自己写第一件事' }))
     await fireEvent.click(view.getByRole('button', { name: /整理复习资料/ }))
     await fireEvent.click(view.getByRole('button', { name: '建好项目' }))
     await vi.waitFor(() => expect(saveComposerDraft).toHaveBeenCalled())
     const [, draft] = saveComposerDraft.mock.calls[0]
     expect(draft.atts).toEqual([])
     expect(draft.draft).not.toContain('附件')
+  })
+
+  it('offers a starter task for the role picked and takes it in one step', async () => {
+    finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general', teammate: '小芝' })
+    const view = mount()
+    await fireEvent.click(view.getByRole('button', { name: /教课、带学生/ }))
+    await next(view)
+    expect(view.getByRole('button', { name: /把学期总结做成汇报 PPT/ }).getAttribute('aria-pressed')).toBe('true')
+
+    await fireEvent.click(view.getByRole('button', { name: '领这道题' }))
+    await vi.waitFor(() => expect(replace).toHaveBeenCalled())
+    expect(finishOnboarding.mock.calls[0][0]).toMatchObject({ starter: 'slides', work_role: 'teacher' })
+    const [room, draft] = saveComposerDraft.mock.calls[0]
+    expect(room).toBe('general')
+    // 点名的是建好的项目里实际的默认队友，不是写死的芝士。
+    expect(draft.draft.startsWith('@小芝 ')).toBe(true)
+    expect(draft.draft).toContain('三行计划')
+  })
+
+  it('suggests the worked-problem starter to a high-school student, and another can be picked', async () => {
+    const view = mount()
+    await fireEvent.click(view.getByRole('button', { name: /上高中/ }))
+    await next(view)
+    expect(view.getByRole('button', { name: /做一页互动讲题/ }).getAttribute('aria-pressed')).toBe('true')
+
+    await fireEvent.click(view.getByRole('button', { name: /做一个活动主页/ }))
+    await fireEvent.click(view.getByRole('button', { name: '领这道题' }))
+    await vi.waitFor(() => expect(finishOnboarding).toHaveBeenCalled())
+    expect(finishOnboarding.mock.calls[0][0]).toMatchObject({ starter: 'web', work_role: 'highschool' })
+  })
+
+  it('writing your own first task makes no starter claim, and you can go back to the starters', async () => {
+    const view = mount()
+    await fireEvent.click(view.getByRole('button', { name: /上课、做课程项目/ }))
+    await next(view)
+    await fireEvent.click(view.getByRole('button', { name: '自己写第一件事' }))
+    await fireEvent.click(view.getByRole('button', { name: '领一道新手题' }))
+    expect(view.getByRole('button', { name: '领这道题' })).toBeTruthy()
+    await fireEvent.click(view.getByRole('button', { name: '自己写第一件事' }))
+    await fireEvent.click(view.getByRole('button', { name: /写课程报告或论文初稿/ }))
+    await fireEvent.click(view.getByRole('button', { name: '建好项目' }))
+    await vi.waitFor(() => expect(finishOnboarding).toHaveBeenCalled())
+    expect(finishOnboarding.mock.calls[0][0].starter).toBeUndefined()
   })
 
   it('skipping the guide still makes a project and opens it, with nothing written for the person', async () => {
