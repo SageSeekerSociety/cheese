@@ -273,16 +273,17 @@ export function routineRunLabel(s: RoutineRunStatus): string {
   return t(`routines.run.${s}`)
 }
 
-export function routineTriggers(): { value: RoutineTrigger; title: string }[] {
-  const values: RoutineTrigger[] = [
-    'schedule',
-    'library_file_added',
-    'task_closed',
-    'card_accepted',
-    'task_filed',
-    'task_decided',
-  ]
-  return values.map((v) => ({ value: v, title: t(`routines.trigger.${v}`) }))
+/** 条件那几颗，频道那张表用的就是这一份：加一种触发只改这里。 */
+export const EVENT_TRIGGERS = [
+  'library_file_added',
+  'task_closed',
+  'card_accepted',
+  'task_filed',
+  'task_decided',
+] as const satisfies readonly RoutineTrigger[]
+
+export function eventTriggers(): { value: RoutineTrigger; title: string }[] {
+  return EVENT_TRIGGERS.map((value) => ({ value, title: t(`routines.trigger.${value}`) }))
 }
 
 export function routineFreqs(): { value: string; title: string }[] {

@@ -21,7 +21,7 @@ import { computed, reactive, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { routineFreqs, routineWeekdays } from '@/lib/routine'
+import { eventTriggers, routineFreqs, routineWeekdays } from '@/lib/routine'
 import { presetTemplates, routineWhenText } from '@/lib/routineTemplates'
 
 const props = withDefaults(
@@ -145,11 +145,8 @@ const onCondition = computed(() => form.trigger !== '' && form.trigger !== 'sche
 /** 这张表还有没有空格要芝士补：名称取目标的第一句，所以「名称」和「什么时候」
  *  才是那两格。全填上时那句「未填项由它生成」就不该再挂着。 */
 const hasBlank = computed(() => !form.title.trim() || !form.trigger)
-const conditionOptions = computed(() =>
-  (['library_file_added', 'task_closed', 'card_accepted', 'task_filed', 'task_decided'] as RoutineTrigger[]).map(
-    (value) => ({ value, title: t(`routines.trigger.${value}`) })
-  )
-)
+/** 条件那几颗列在 `lib/routine.ts`，和别处读的同一份。 */
+const conditionOptions = computed(() => eventTriggers())
 
 /** 勾「时间」或勾「条件」：换到那一头去，另一颗跟着灭；再点已选中的那颗就取消。 */
 function toggleTime(on: unknown) {
