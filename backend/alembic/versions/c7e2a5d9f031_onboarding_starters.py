@@ -1,7 +1,7 @@
 """the new-user starters: which 题目 the welcome page hands out
 
 Revision ID: c7e2a5d9f031
-Revises: a0f25891015d
+Revises: b7e2c4a91f30
 Create Date: 2026-11-08 12:00:00.000000
 
 A new table, read only by the release this deploy brings in, so the release
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c7e2a5d9f031"
-down_revision: str | Sequence[str] | None = "a0f25891015d"
+down_revision: str | Sequence[str] | None = "b7e2c4a91f30"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
