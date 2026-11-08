@@ -177,3 +177,35 @@ describe('技能弹窗', () => {
     expect(await screen.findByText('有人正在编辑这个队友，等他改完再试')).toBeTruthy()
   })
 })
+
+// 已带的那几格能去掉：点一下就是「从这位队友身上拿掉它」，落库与失败回滚在 `useAgentSkills`。
+// 平台和项目给每位队友都发的那几格不在队友的名单上，没有可去掉的，所以不是按钮。
+describe('去掉已带的技能', () => {
+  it('点已带的那一格，把它的名字往上发；平台给大家的那格不能点', async () => {
+    const view = mount({
+      available: [{ name: 'cheese', description: '芝士自己的用法', source: 'project' as const }],
+      market: null,
+    })
+
+    await fireEvent.click(await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' }))
+    expect(view.emitted('remove')).toEqual([['wolfram']])
+    expect(screen.getByText('cheese')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /cheese/ })).toBeNull()
+  })
+
+  it('别人正占着「编辑中」时按不动，什么都不往上发', async () => {
+    const view = mount({ editingBlocked: true, editingBy: 'alice', market: null })
+
+    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' })) as HTMLButtonElement
+    expect(socket.disabled).toBe(true)
+    await fireEvent.click(socket)
+    expect(view.emitted('remove')).toBeUndefined()
+  })
+
+  it('上一笔还在保存时按不动', async () => {
+    mount({ saving: true, market: null })
+
+    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' })) as HTMLButtonElement
+    expect(socket.disabled).toBe(true)
+  })
+})

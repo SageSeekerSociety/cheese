@@ -528,3 +528,67 @@ describe('技能面板的 409', () => {
     })
   })
 })
+
+// 面板上去掉一颗已带的技能，要真的写回这位队友身上；写不进去就保持原样，别让人以为已经去掉了。
+describe('去掉队友已带的技能', () => {
+  const DEVICE = { device_id: 'dev1', name: '我的电脑', online: true, project_ids: [], team_ids: [], screens: [] }
+  function world(editing: 'free' | 'held' = 'free') {
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a1', configuration: { body: '', skills: ['wolfram', 'pdf'] }, version: 1 })],
+      total: 1,
+    })
+    listSkillCatalog.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
+    listMachineSkills.mockResolvedValue({
+      skills: [{ name: 'pdf', description: '读 PDF', source_root: '/home/u/pdf', digest: 'd1', state: 'adopted' }],
+    })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    fetchSkillMarket.mockResolvedValue(null)
+    if (editing === 'free') setAgentEditing.mockReset().mockResolvedValue({ editing: null })
+    else setAgentEditing.mockReset().mockRejectedValue(new ApiError(409, 'alice 正在编辑'))
+    updateProjectAgent.mockReset()
+  }
+  const removePdf = () => screen.findByRole('button', { name: '从芝士身上去掉 pdf' })
+
+  it('点已带的 pdf：存回去的名单里没有它，版本照带', async () => {
+    world()
+    updateProjectAgent.mockResolvedValue({ version: 2 })
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await fireEvent.click(await removePdf())
+
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    expect(updateProjectAgent.mock.calls[0][1]).toBe('a1')
+    expect(updateProjectAgent.mock.calls[0][2]).toMatchObject({
+      expected_version: 1,
+      configuration: expect.objectContaining({ skills: ['wolfram'] }),
+    })
+    await waitFor(() => expect(screen.queryByRole('button', { name: '从芝士身上去掉 pdf' })).toBeNull())
+    expect(screen.getByRole('button', { name: '从芝士身上去掉 wolfram' })).toBeTruthy()
+  })
+
+  it('没存进去：pdf 还在名单上，还能再点', async () => {
+    world()
+    updateProjectAgent.mockRejectedValue(new Error('boom'))
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await fireEvent.click(await removePdf())
+
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await waitFor(async () => expect(((await removePdf()) as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it('别人正占着这位队友：按不动，也不发保存', async () => {
+    world('held')
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    const socket = (await removePdf()) as HTMLButtonElement
+    await waitFor(() => expect(socket.disabled).toBe(true))
+    await fireEvent.click(socket)
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+  })
+})
