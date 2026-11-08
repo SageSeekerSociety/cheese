@@ -25,6 +25,7 @@ import { t } from '@/i18n'
 import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
+import { identityChanges } from '@/lib/identity'
 import { uploadLibraryFile } from '@/lib/libraryApi'
 import { toast } from '@/lib/toast'
 import { myHandle } from '@/me'
@@ -246,32 +247,52 @@ export interface AgentFile {
 /** 先传上去，下一个问题带上它们。浅的：传完按那一行本身找回它，行不能被换成代理。 */
 export const agentFiles = shallowRef<AgentFile[]>([])
 
-/** 这个人自己的资料库（他名下那个团队的）；问一次就记住。 */
-let ownLibrary: Promise<number> | null = null
+/** 这个人自己的资料库（他名下那个团队的）；问一次就记住，按人分开记——登录换人不会刷新
+ *  页面，记成一份就会把下一个人交的文件送进上一个人的资料库。 */
+const ownLibraries = new Map<string, Promise<number>>()
 function myLibrary(): Promise<number> {
-  ownLibrary ??= TeamsApi.detailByHandle(myHandle()).then(({ team }) => team.id)
-  ownLibrary.catch(() => (ownLibrary = null))
-  return ownLibrary
+  const handle = myHandle()
+  let cached = ownLibraries.get(handle)
+  if (!cached) {
+    cached = TeamsApi.detailByHandle(handle).then(({ team }) => team.id)
+    cached.catch(() => ownLibraries.delete(handle))
+    ownLibraries.set(handle, cached)
+  }
+  return cached
 }
 
-async function keep(file: File): Promise<Pick<AgentFile, 'id' | 'path'>> {
+/** 交文件的那个人还登录着吗：`identityChanges` 在换人（含退出）时加一，开始交时记下它，
+ *  中途变了就是交它的人已经不在了，不能拿下一个人的凭据替他接着传。 */
+const stillSignedIn = (mine: number) => mine === identityChanges.value
+
+async function keep(file: File, mine: number): Promise<Pick<AgentFile, 'id' | 'path'> | null> {
   if (agentContext.value?.attachAsMaterials) {
     const done = await AttachmentsApi.upload({ type: 'file', file })
     return { id: done.id, path: null }
   }
-  const placed = await uploadLibraryFile({ team: await myLibrary() }, file)
+  const team = await myLibrary()
+  if (!stillSignedIn(mine)) return null
+  const placed = await uploadLibraryFile({ team }, file)
   return { id: null, path: placed.path }
 }
 
 export async function attachToAgent(picked: File[]) {
+  const mine = identityChanges.value
   for (const file of picked) {
+    if (!stillSignedIn(mine)) return
     const row: AgentFile = { id: null, path: null, name: file.name, mime: file.type, uploading: true }
     agentFiles.value = [...agentFiles.value, row]
     try {
-      const done = await keep(file)
+      const done = await keep(file, mine)
+      if (!done) {
+        agentFiles.value = agentFiles.value.filter((f) => f !== row)
+        return
+      }
       agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, ...done, uploading: false } : f))
     } catch (error) {
       agentFiles.value = agentFiles.value.filter((f) => f !== row)
+      // 人已经走了，这句报错没人要看。
+      if (!stillSignedIn(mine)) return
       // 服务端说了为什么（资料库满了、文件太大）就照它说。
       toast.error(error instanceof ApiError && error.message ? error.message : t('tasks.assistant.files.failed'))
     }
@@ -288,6 +309,7 @@ export function resetAgent() {
   agentFiles.value = []
   agentSelection.value = null
   agentPicked.value = {}
+  ownLibraries.clear()
   agentThread.reset()
 }
 
