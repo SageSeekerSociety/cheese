@@ -16,13 +16,17 @@ function envelope(data: unknown, status = 200): Response {
 }
 
 function refusal(status: number, name: string, message: string): Response {
-  return new Response(JSON.stringify({ code: status, message, error: { name, message, data: null, retryable: false } }), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  })
+  return new Response(
+    JSON.stringify({ code: status, message, error: { name, message, data: null, retryable: false } }),
+    {
+      status,
+      headers: { 'content-type': 'application/json' },
+    }
+  )
 }
 
-const frame = (event: string, data: object) => new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+const frame = (event: string, data: object) =>
+  new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
 
 /** 一条回答流：先写一段字，`end()` 时才送到 `done`，好让插话落在答完、`done` 未到的空档里。 */
 function openAnswer(text: string) {
@@ -86,9 +90,8 @@ describe('芝士答着时插的话', () => {
 
   it('said in the gap after the answer ended and before its done arrived, it is asked as a new question', async () => {
     const first = openAnswer('先读一遍。')
-    const { asked, says } = serve(
-      [() => first.response, () => finished('好，只看第 3 份。')],
-      async () => refusal(409, 'ConflictError', '芝士现在没有在回答，直接提问即可')
+    const { asked, says } = serve([() => first.response, () => finished('好，只看第 3 份。')], async () =>
+      refusal(409, 'ConflictError', '芝士现在没有在回答，直接提问即可')
     )
     const a = createAssistant()
     await a.load()
