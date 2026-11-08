@@ -265,4 +265,42 @@ describe('发出去的消息立刻显示，没送到能重试', () => {
     await settle()
     expect(container.querySelector('.im-row--pending')?.textContent).toContain('这条是发给 t1 的')
   })
+
+  it('排着的那条在换到别的话题之后就地重试，仍然发给它自己的话题', async () => {
+    // 发不出去：这一条进队列，发件箱等一阵再试。
+    const sent: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST' && String(url).endsWith('/messages')) {
+        sent.push(String(url))
+        throw new TypeError('Failed to fetch')
+      }
+      return answered(url)
+    })
+
+    const { container, rerender } = render(Panel, {
+      props: { topic: topicOf('retry-a'), showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await settle()
+    const box = container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+    box.focus()
+    await fillComposer(box, '这句话是给 retry-a 的')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await settle()
+    expect(sent).toHaveLength(1)
+
+    // 人切到另一个话题，并且等过了第一次重试（1 秒）之后的一段时间。
+    await rerender({ topic: topicOf('retry-b'), showComposer: true })
+    await new Promise((r) => setTimeout(r, 2000))
+
+    // 重试不能借新话题的名义发出去：它属于 retry-a。
+    expect(sent.every((url) => url.includes('retry-a'))).toBe(true)
+
+    // 切回去它才接着送：多了一次尝试，还是发给 retry-a。
+    const beforeReturn = sent.length
+    await rerender({ topic: topicOf('retry-a'), showComposer: true })
+    await settle()
+    expect(sent.length).toBeGreaterThan(beforeReturn)
+    expect(sent.slice(beforeReturn).every((url) => url.includes('retry-a'))).toBe(true)
+  })
 })
