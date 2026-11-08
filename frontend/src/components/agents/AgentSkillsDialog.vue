@@ -84,6 +84,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
+  /** 点了已带的那一格：从这位队友身上去掉它。 */
+  (e: 'remove', name: string): void
   /** 市场目录读失败后点了「重试」。 */
   (e: 'retryMarket'): void
 }>()
@@ -111,6 +113,11 @@ watch(open, () => {
 // 改队友的 userskill 项目里每个人都做得的（后端 `projects_agents.py` 不再要 manager）；
 // 别人正占着「编辑中」的租约时改不动 —— 那是同一件事的另一半：现在改会撞上他。
 const locked = () => !props.canManage || props.editingBlocked
+
+// 已带的那几格是按钮，点一下从队友身上去掉；平台与项目给每位队友都发的那几格不在
+// 队友的名单上，没有可去掉的，照旧只是一格灯。
+const carriedNames = computed(() => new Set(props.carried.map((skill) => skill.name)))
+const removable = (skill: SkillItem) => carriedNames.value.has(skill.name)
 </script>
 
 <template>
@@ -132,19 +139,30 @@ const locked = () => !props.canManage || props.editingBlocked
           </p>
           <p v-else-if="locked()" class="skills__note t-meta-read">{{ t('work.room.skills.managerOnly') }}</p>
           <div class="skills__grid">
-            <div
+            <component
+              :is="removable(s) ? 'button' : 'div'"
               v-for="s in boardSkills"
               :key="s.name"
               class="socket"
               :class="{ 'socket--on': availableNow(s) }"
               :title="s.description || s.name"
+              v-bind="
+                removable(s)
+                  ? {
+                      type: 'button',
+                      disabled: locked() || saving,
+                      'aria-label': t('work.room.skills.remove', { agent: agentName, name: s.name }),
+                    }
+                  : {}
+              "
+              @click="removable(s) && !locked() && !saving && emit('remove', s.name)"
             >
               <span class="socket__hole"
                 ><v-icon size="20">{{ skillIcon(s.name) }}</v-icon></span
               >
               <span class="socket__name t-meta-read">{{ s.name }}</span>
               <span class="socket__desc t-meta-read">{{ s.description }}</span>
-            </div>
+            </component>
           </div>
           <p v-if="!boardSkills.length" class="skills__note t-meta-read">{{ t('work.room.skills.emptyCarried') }}</p>
         </template>
@@ -210,6 +228,8 @@ const locked = () => !props.canManage || props.editingBlocked
   gap: 10px;
 }
 .socket {
+  font: inherit;
+  color: inherit;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -218,6 +238,21 @@ const locked = () => !props.canManage || props.editingBlocked
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
+}
+/* 已带的那几格能点：悬停时底色淡淡一层，键盘停上来有一圈琥珀；按不动时光标照常，
+   灯不变暗 —— 只读时灯说的仍是「能不能用」，不该因为改不了就看着像坏了。 */
+button.socket {
+  cursor: pointer;
+}
+button.socket:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn-ink) 8%, transparent);
+}
+button.socket:focus-visible {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+}
+button.socket:disabled {
+  cursor: default;
 }
 /* 那颗「洞」：底色跟浮层自己的背景走（`--surface`，对话框里重映射成 `--raised`，
    浅色即 #fff），不再用 `--code-bg` 那口近黑的井 —— 两套主题下它都从底上「长」出来，
