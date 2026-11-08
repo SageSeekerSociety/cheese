@@ -495,7 +495,7 @@ describe('reading the member list', () => {
     expect(document.getElementById('team-members')!.querySelector('[role="progressbar"]')).toBeNull()
   })
 
-  it('a reread after a change keeps the list on screen while it runs and when it fails', async () => {
+  it('a reread after a change keeps the list while it runs, and a failed reread still shows the failure', async () => {
     vi.mocked(TeamsApi.getMembers).mockResolvedValueOnce({ members: [qinmo] } as never)
     vi.mocked(TeamsApi.removeMember).mockResolvedValue(true as never)
     mount({ role: 'ADMIN' })
@@ -507,15 +507,44 @@ describe('reading the member list', () => {
     await fireEvent.click(await screen.findByText('移除成员'))
     await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledTimes(2))
 
+    // 在途：名单留在屏上，不换成转圈，也不说暂无。
     const card = document.getElementById('team-members')!
     expect(card.textContent).toContain('qinmo')
     expect(card.querySelector('[role="progressbar"]')).toBeNull()
     expect(screen.queryByText('暂无成员')).toBeNull()
 
+    // 失败：照原样换成失败态加重试，不悄悄留着旧名单。
     reread.reject(new Error('blip'))
-    await new Promise((r) => setTimeout(r, 0))
-    expect(card.textContent).toContain('qinmo')
-    expect(screen.queryByText('无法加载成员')).toBeNull()
+    await screen.findByText('无法加载成员')
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
     expect(screen.queryByText('暂无成员')).toBeNull()
+  })
+
+  it('an older read that answers last does not overwrite the newer list', async () => {
+    const zhaoyu = { user: { id: 10, nickname: 'zhaoyu', username: 'zhaoyu' }, role: 'MEMBER', canRemove: true }
+    dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
+    vi.mocked(TeamsApi.getMembers).mockResolvedValueOnce({ members: [qinmo, zhaoyu] } as never)
+    vi.mocked(TeamsApi.removeMember).mockResolvedValue(true as never)
+    mount({ role: 'ADMIN' })
+    await screen.findByText('zhaoyu')
+
+    const older = pending<{ members: unknown[] }>()
+    const newer = pending<{ members: unknown[] }>()
+    vi.mocked(TeamsApi.getMembers).mockReturnValueOnce(older.promise as never).mockReturnValueOnce(newer.promise as never)
+    await fireEvent.click(await screen.findByRole('button', { name: 'qinmo 的操作' }))
+    await fireEvent.click(await screen.findByText('移除成员'))
+    await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledTimes(2))
+    await fireEvent.click(await screen.findByRole('button', { name: 'zhaoyu 的操作' }))
+    // 上一份菜单还在收起动画里：点刚打开的那一份（最后挂上的）。
+    await fireEvent.click((await screen.findAllByText('移除成员')).at(-1)!)
+    await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledTimes(3))
+    expect(TeamsApi.removeMember).toHaveBeenNthCalledWith(2, 7, 10)
+
+    newer.resolve({ members: [] })
+    await screen.findByText('暂无成员')
+    older.resolve({ members: [zhaoyu] })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText('zhaoyu')).toBeNull()
+    expect(screen.getByText('暂无成员')).toBeTruthy()
   })
 })

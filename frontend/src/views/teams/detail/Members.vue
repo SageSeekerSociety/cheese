@@ -126,32 +126,24 @@ const invitationsError = ref<string | null>(null)
 let invitationsRead = 0
 let invitationsLoaded = false
 
-// quiet：手里已经有一份名单时（升降管理员、移出、批准之后的重读），后台读不换成转圈，
-// 也不因一次瞬断把好好的名单刷成报错；还没读出过名单时照常转圈、照常报错。
+// 每次读都记一个序号：只有最新那一次的回包算数，换了团队之后到的旧回包也不算。
+// 已有名单时重读在途照旧画名单（转圈只在手里还没有名单时出现，见 MembersView）；
+// 读失败不论首次还是重读，都照原样换成失败态加重试。
 let membersRead = 0
-let membersLoaded = false
-const fetchTeamMembers = async (teamId: number, quiet = false) => {
+const fetchTeamMembers = async (teamId: number) => {
   const read = ++membersRead
-  const silent = quiet && membersLoaded
-  if (!silent) {
-    loadingMembers.value = true
-    failedMembers.value = false
-    membersError.value = null
-  }
+  loadingMembers.value = true
+  failedMembers.value = false
+  membersError.value = null
   try {
     const { members } = await TeamsApi.getMembers(teamId)
     if (read !== membersRead || teamData.value?.id !== teamId) return
-    membersLoaded = true
     teamMembers.value = members
-    failedMembers.value = false
-    membersError.value = null
   } catch (error) {
     if (read !== membersRead || teamData.value?.id !== teamId) return
     console.error('Failed to load team members', error)
-    if (!silent) {
-      failedMembers.value = true
-      membersError.value = error instanceof Error && error.message ? error.message : null
-    }
+    failedMembers.value = true
+    membersError.value = error instanceof Error && error.message ? error.message : null
   } finally {
     if (read === membersRead) loadingMembers.value = false
   }
@@ -311,7 +303,7 @@ const promoteToAdmin = async (userId: number) => {
 
   if (result !== undefined) {
     toast.success(t('teams.members.promoteDone'))
-    await fetchTeamMembers(teamData.value!.id, true)
+    await fetchTeamMembers(teamData.value!.id)
   }
 }
 
@@ -329,7 +321,7 @@ const demoteToMember = async (userId: number) => {
 
   if (result !== undefined) {
     toast.success(t('teams.members.demoteDone'))
-    await fetchTeamMembers(teamData.value!.id, true)
+    await fetchTeamMembers(teamData.value!.id)
   }
 }
 
@@ -361,7 +353,7 @@ const removeMember = async (userId: number) => {
 
   if (result !== undefined) {
     toast.success(t('teams.members.removeDone'))
-    await fetchTeamMembers(teamData.value!.id, true)
+    await fetchTeamMembers(teamData.value!.id)
   }
 }
 
@@ -379,7 +371,7 @@ const approveRequest = async (requestId: number) => {
   if (result !== undefined) {
     toast.success(t('teams.members.approveDone'))
     // 刷新数据
-    await Promise.all([fetchJoinRequests(teamData.value!.id, true), fetchTeamMembers(teamData.value!.id, true)])
+    await Promise.all([fetchJoinRequests(teamData.value!.id, true), fetchTeamMembers(teamData.value!.id)])
   }
   answering.value = undefined
 }
