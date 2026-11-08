@@ -66,3 +66,63 @@ def test_a_task_page_says_whether_its_session_is_running(client):
 
     assert page(working["id"])["session_running"] is True
     assert page(quiet["id"])["session_running"] is False
+
+
+def test_every_entry_that_draws_a_task_row_says_whether_its_session_is_running(
+    client,
+):
+    """The channel's first screen draws the task cards from the messages page
+    (`/blocks` → `tasks_under_blocks`), not from `/tasks`. Without the runner's
+    fact there, the card reads 「在做」 as stopped (`taskState.live` false, the
+    still icon) while `/tasks` and the subscription snapshot say it runs: the
+    same task, two looks. All three entries come from one row builder, so all
+    three must carry `session_running` and agree."""
+    from app.api.room_snapshot import room_snapshot
+    from app.domain.agent.harness.driven.lifecycle import RUNNING
+    from app.domain.agent.session_state import SeatKey, declare, register
+    from app.domain.identity.actor import Actor
+    from tests.integration.conftest import session_auth_headers
+
+    project = post_project(client, {"name": "Sessions"}, owner="alice").json()["data"]
+    room = project["root_topic_id"]
+    seat = room_agent_seat(client, room)
+    working = open_task(client, room, "在跑的会话", owner="alice")
+    quiet = open_task(client, room, "没有会话", owner="alice")
+    key = SeatKey(uuid.UUID(working["id"]), seat, "claude-code")
+
+    async def run_it() -> None:
+        await register(client.test_factory, key)
+        async with client.test_factory() as session:
+            await declare(session, key, RUNNING)
+            await session.commit()
+
+    client.portal.call(run_it)
+    headers = session_auth_headers("alice")
+
+    page = client.get(f"/topics/{room}/blocks", headers=headers)
+    assert page.status_code == 200, page.text
+    on_screen = {
+        row["id"]: row
+        for block in page.json()["data"]["data"]
+        for row in block.get("tasks", [])
+    }
+    listed = client.get(f"/topics/{room}/tasks", params={"limit": 0}, headers=headers)
+    assert listed.status_code == 200, listed.text
+    in_list = {row["id"]: row for row in listed.json()["data"]["data"]}
+
+    async def snapshot() -> dict:
+        async with client.test_factory() as session:
+            return await room_snapshot(
+                session, Actor(handle="alice", user_id=2, via="token"), uuid.UUID(room)
+            )
+
+    snap = client.portal.call(snapshot)
+    in_snapshot = {row["id"]: row for row in snap["tasks"]["open"]}
+
+    for entry in (on_screen, in_list, in_snapshot):
+        assert entry[working["id"]]["session_running"] is True
+        assert entry[quiet["id"]]["session_running"] is False
+        assert (
+            entry[working["id"]]["presentation"]
+            == in_list[working["id"]]["presentation"]
+        )
