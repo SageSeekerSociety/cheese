@@ -255,10 +255,13 @@ async def _review_events(
             said_here = f"的审阅被{word}了"
         else:
             said_here = filed_said
+        # A task takes its number when it is first addressed; one filed before
+        # that has none, and «#None» is not a thing to tell a teammate.
+        ref = f"（#{task.number}）" if task.number is not None else ""
         found.append(
             (
                 f"card:{card.id}:{key}",
-                f"任务《{task.title}》（#{task.number}）{said_here}。",
+                f"任务《{task.title}》{ref}{said_here}。",
                 at,
             )
         )
