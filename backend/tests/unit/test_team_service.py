@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import (
     BadRequestError,
@@ -124,6 +125,9 @@ def _build_membership_service(
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = 1
     session.execute.return_value = mock_result
+    # Pending rows are inserted inside a savepoint (`_save_pending`); there is
+    # no database here, so the savepoint only has to be enterable.
+    session.begin_nested = MagicMock(return_value=AsyncMock())
     # `_notify` is patched out in these tests, so the ledger the service was
     # handed is never called; a stand-in keeps the constructor honest.
     svc = TeamMembershipService(
@@ -699,6 +703,70 @@ class TestCancelJoinRequest:
 
         with pytest.raises(NotFoundError, match="Pending request"):
             await svc.cancel_my_join_request(user_id=42, request_id=999)
+
+
+def _lost_the_race() -> IntegrityError:
+    return IntegrityError(
+        "INSERT", {}, Exception("uq_team_membership_application_pending")
+    )
+
+
+class TestARaceForThePendingSlot:
+    """Two submissions both passed the read-then-insert check; the index let
+    one row in. The one that lost is told what the check would have said, and
+    an insert refused for any other reason still fails as itself."""
+
+    @pytest.mark.anyio
+    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
+    async def test_the_losing_invitation_is_a_conflict_and_notifies_nobody(
+        self, mock_publish
+    ):
+        svc, team_repo, app_repo = _build_membership_service()
+        team_repo.is_team_member.return_value = False
+        app_repo.exists_pending_for_user_and_team.side_effect = [False, True]
+        app_repo.save.side_effect = _lost_the_race()
+
+        with pytest.raises(ConflictError):
+            await svc.create_team_invitation(
+                initiator_user_id=42,
+                team_id=1,
+                user_id_to_invite=50,
+                role=None,
+                message=None,
+            )
+        mock_publish.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
+    async def test_the_losing_join_request_is_pending(self, mock_publish):
+        svc, team_repo, app_repo = _build_membership_service()
+        team_repo.is_team_member.return_value = False
+        app_repo.exists_pending_for_user_and_team.side_effect = [False, True]
+        app_repo.save.side_effect = _lost_the_race()
+
+        status = await svc.join(
+            user_id=42, team=_make_team(id=1, join_approval=True), message=None
+        )
+
+        assert status == "pending"
+        mock_publish.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
+    async def test_an_insert_refused_for_another_reason_still_fails(self, mock_publish):
+        svc, team_repo, app_repo = _build_membership_service()
+        team_repo.is_team_member.return_value = False
+        app_repo.exists_pending_for_user_and_team.return_value = False
+        app_repo.save.side_effect = _lost_the_race()
+
+        with pytest.raises(IntegrityError):
+            await svc.create_team_invitation(
+                initiator_user_id=42,
+                team_id=1,
+                user_id_to_invite=50,
+                role=None,
+                message=None,
+            )
 
 
 class TestCreateInvitation:
