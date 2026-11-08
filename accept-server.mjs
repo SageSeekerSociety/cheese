@@ -18,11 +18,13 @@ const ENTRY = process.env.ENTRY_PATH || '/settings'
 
 const DEFAULTS = () => ({ version: 'after', say: '409', autoDone: 0 })
 let cfg = DEFAULTS(), conv, answering, log
+// 每个回答的帧都编号留着：长连接断了能按编号续读，和后端一样。
+const answers = new Map()
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000))
 const note = (s) => { log.unshift(`${new Date().toISOString().slice(11, 19)} UTC  ${s}`); log.length = Math.min(log.length, 200) }
 function reset() {
   if (answering) answering.finish()
-  conv = null; answering = null; log = []
+  conv = null; answering = null; log = []; answers.clear()
 }
 reset()
 
@@ -31,6 +33,21 @@ const ok = (res, data) => send(res, 200, { code: 200, message: 'ok', data })
 const readBody = (req) => new Promise((r) => { const c = []; req.on('data', (d) => c.push(d)); req.on('end', () => r(Buffer.concat(c))) })
 const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 let seq = 0
+function emit(a, event, data) {
+  a.frames.push({ n: a.frames.length + 1, event, data })
+  const f = a.frames[a.frames.length - 1]
+  for (const r of a.subs) r.write(`id: ${f.n}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+}
+function end(a) { a.done = true; for (const r of a.subs) r.end(); a.subs.clear() }
+function attach(a, res, after) {
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+  for (const f of a.frames) if (f.n > after) res.write(`id: ${f.n}\nevent: ${f.event}\ndata: ${JSON.stringify(f.data)}\n\n`)
+  if (a.done) return res.end()
+  a.subs.add(res)
+  // 每 10 秒一行注释，免得网关把闲着的长连接掐掉
+  const beat = setInterval(() => res.write(': keep-alive\n\n'), 10000)
+  res.on('close', () => { clearInterval(beat); if (a.subs.delete(res) && !a.done) note(`回答 ${a.id} 的长连接断了（页面会续读）`) })
+}
 const add = (role, text) => conv.messages.push({ role, text, at: new Date().toISOString(), seq: ++seq })
 
 function upstream(req, path, body, { buffer = false } = {}) {
@@ -80,7 +97,7 @@ async function tick(){try{const j=await (await fetch('/api/__accept/state')).jso
 document.getElementById('msgs').textContent=j.messages.join(String.fromCharCode(10))||'（还没有）';
 document.getElementById('log').textContent=j.log.join(String.fromCharCode(10))||'（还没有）';
 const box=document.getElementById('hold');
-if(j.holding){box.innerHTML='<b>在答：</b>'+j.holding+' — 第一段字已送出，收尾帧还没送 ';const b=document.createElement('button');b.textContent='放行收尾帧';b.onclick=async()=>{await fetch('/api/__accept/done');tick()};box.appendChild(b)}
+if(j.holding){box.innerHTML='<b>在答：</b>'+j.holding+' — 第一段字已送出，收尾帧还没送 ';const b=document.createElement('button');b.textContent='放行收尾帧';b.onclick=async()=>{await fetch('/api/__accept/done');tick()};box.appendChild(b);const c=document.createElement('button');c.textContent='掐断长连接一次';c.style.marginLeft='8px';c.onclick=async()=>{await fetch('/api/__accept/cut');tick()};box.appendChild(c)}
 else box.textContent='（没有挂着的收尾帧）'}catch(e){}}
 tick();setInterval(tick,1000)
 </script>`
@@ -98,6 +115,7 @@ http.createServer(async (req, res) => {
     }
     if (path.startsWith('/api/__accept/set?')) { const q = new URL(path, 'http://x').searchParams; for (const [k, v] of q) cfg[k] = k === 'autoDone' ? Number(v) : v; note(`控制台：设置 ${JSON.stringify(cfg)}`); return send(res, 200, cfg) }
     if (path === '/api/__accept/reset') { reset(); note('控制台：清空'); res.writeHead(303, { location: '/api/__accept' }); return res.end() }
+    if (path === '/api/__accept/cut') { const n = browserStreams.size; note(`控制台：在浏览器那一侧掐断回答的长连接 ${n} 条（模拟网关断线）`); for (const r of browserStreams) r.destroy(); return send(res, 200, { cut: n }) }
     if (path === '/api/__accept/done') { const a = answering; if (a) { note('控制台：放行收尾帧'); a.finish() } return send(res, 200, { ok: !!a }) }
     if (path === '/api/__accept/state') return send(res, 200, { messages: (conv?.messages ?? []).map((x) => `#${x.seq} ${x.role}: ${x.text}`), log, holding: answering?.question ?? null })
     if (path.startsWith('/api/__accept/enter')) {
@@ -120,20 +138,32 @@ location.replace(${JSON.stringify(ENTRY)})</script>`)
       }
       if (p.endsWith('/messages')) return ok(res, { messages: [], earlier: false })
       if (p.endsWith('/looking') || p.endsWith('/stop')) return ok(res, {})
+      // 续读：页面的长连接断了（网关闲置超时等）会按 `after` 从断的地方接着读，和后端一样。
+      if ((mm = p.match(/\/answers\/([^/]+)$/)) && m === 'GET') {
+        const a = answers.get(mm[1])
+        if (!a) return send(res, 404, { message: 'no such answer' })
+        const after = Number(new URL(path, 'http://x').searchParams.get('after') || 0)
+        note(`续读回答 ${mm[1]}（从第 ${after} 帧之后）`)
+        return attach(a, res, after)
+      }
       if (p.endsWith('/ask') && m === 'POST') {
         const q = JSON.parse(body.toString()).question
         add('user', q)
-        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+        const qid = `q${seq}`
+        const a = { id: qid, question: q, frames: [], subs: new Set(), done: false }
+        answers.set(qid, a)
         if (answering === null && conv.messages.filter((x) => x.role === 'user').length === 1) {
           const text = '先把三份报告各读一遍，再按评分表逐项打分。'
           note(`问「${q}」：送出第一段字，收尾帧挂着（服务端这一轮已答完）`)
-          res.write(frame('answering', { id: 'q1' })); res.write(frame('delta', { text, at: 0 }))
-          answering = { question: q, finish() { answering = null; add('assistant', text); res.write(frame('done', {})); res.end(); note('收尾帧送达') } }
-          return
+          emit(a, 'answering', { id: qid }); emit(a, 'delta', { text, at: 0 })
+          answering = a
+          a.finish = () => { answering = null; add('assistant', text); emit(a, 'done', {}); end(a); note('收尾帧送达') }
+          return attach(a, res, 0)
         }
         const text = `收到，按你后来说的「${q}」来。`
         note(`问「${q}」：直接答完`)
-        res.write(frame('answering', { id: `q${seq}` })); res.write(frame('delta', { text, at: 0 })); add('assistant', text); res.write(frame('done', {})); return res.end()
+        emit(a, 'answering', { id: qid }); emit(a, 'delta', { text, at: 0 }); add('assistant', text); emit(a, 'done', {}); a.done = true
+        return attach(a, res, 0)
       }
       if (p.endsWith('/say') && m === 'POST') {
         const t = JSON.parse(body.toString()).text
@@ -155,7 +185,10 @@ location.replace(${JSON.stringify(ENTRY)})</script>`)
 }).listen(3418, '127.0.0.1', () => console.log('proxy on 3418'))
 
 // ---- 3419 门口 ----
+// 门口转给浏览器的回答长连接：「掐断长连接一次」在这一侧掐，像预览网关闲置超时那样，浏览器当场知道断了。
+const browserStreams = new Set()
 const forward = (target, req, res, path = req.url) => {
+  if (/\/assistant\/conversations\/[^/]+\/(ask|answers\/)/.test(req.url)) { browserStreams.add(res); res.on('close', () => browserStreams.delete(res)) }
   const p = http.request({ ...target, path, method: req.method, headers: req.headers }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res) })
   p.on('error', (e) => { res.writeHead(502); res.end(String(e)) }); req.pipe(p)
 }
