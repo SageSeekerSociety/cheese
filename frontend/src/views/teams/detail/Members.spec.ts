@@ -530,7 +530,9 @@ describe('reading the member list', () => {
 
     const older = pending<{ members: unknown[] }>()
     const newer = pending<{ members: unknown[] }>()
-    vi.mocked(TeamsApi.getMembers).mockReturnValueOnce(older.promise as never).mockReturnValueOnce(newer.promise as never)
+    vi.mocked(TeamsApi.getMembers)
+      .mockReturnValueOnce(older.promise as never)
+      .mockReturnValueOnce(newer.promise as never)
     await fireEvent.click(await screen.findByRole('button', { name: 'qinmo 的操作' }))
     await fireEvent.click(await screen.findByText('移除成员'))
     await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledTimes(2))
