@@ -37,7 +37,9 @@ import errorHandler from '@/services/ErrorHandler'
 const route = useRoute()
 const isInviteDialogActive = ref(false)
 const teamMembers = ref<TeamMember[]>([])
-// 读失败和「还没有成员」是两件事：失败替换掉这一格的内容，空状态才说「暂无」。
+// 读成员有三种样子：在读、没读出来、读出来了（可能是空的）。只有读出来是空的才说「暂无」；
+// 第一次还在读时画转圈，没读出来时这一格换成失败态。
+const loadingMembers = ref(false)
 const failedMembers = ref(false)
 const membersError = ref<string | null>(null)
 const teamData = inject(teamDataInjectionKey, ref())
@@ -124,16 +126,34 @@ const invitationsError = ref<string | null>(null)
 let invitationsRead = 0
 let invitationsLoaded = false
 
-const fetchTeamMembers = async (teamId: number) => {
-  failedMembers.value = false
-  membersError.value = null
+// quiet：手里已经有一份名单时（升降管理员、移出、批准之后的重读），后台读不换成转圈，
+// 也不因一次瞬断把好好的名单刷成报错；还没读出过名单时照常转圈、照常报错。
+let membersRead = 0
+let membersLoaded = false
+const fetchTeamMembers = async (teamId: number, quiet = false) => {
+  const read = ++membersRead
+  const silent = quiet && membersLoaded
+  if (!silent) {
+    loadingMembers.value = true
+    failedMembers.value = false
+    membersError.value = null
+  }
   try {
     const { members } = await TeamsApi.getMembers(teamId)
+    if (read !== membersRead || teamData.value?.id !== teamId) return
+    membersLoaded = true
     teamMembers.value = members
+    failedMembers.value = false
+    membersError.value = null
   } catch (error) {
+    if (read !== membersRead || teamData.value?.id !== teamId) return
     console.error('Failed to load team members', error)
-    failedMembers.value = true
-    membersError.value = error instanceof Error && error.message ? error.message : null
+    if (!silent) {
+      failedMembers.value = true
+      membersError.value = error instanceof Error && error.message ? error.message : null
+    }
+  } finally {
+    if (read === membersRead) loadingMembers.value = false
   }
 }
 
@@ -291,7 +311,7 @@ const promoteToAdmin = async (userId: number) => {
 
   if (result !== undefined) {
     toast.success(t('teams.members.promoteDone'))
-    await fetchTeamMembers(teamData.value!.id)
+    await fetchTeamMembers(teamData.value!.id, true)
   }
 }
 
@@ -309,7 +329,7 @@ const demoteToMember = async (userId: number) => {
 
   if (result !== undefined) {
     toast.success(t('teams.members.demoteDone'))
-    await fetchTeamMembers(teamData.value!.id)
+    await fetchTeamMembers(teamData.value!.id, true)
   }
 }
 
@@ -341,7 +361,7 @@ const removeMember = async (userId: number) => {
 
   if (result !== undefined) {
     toast.success(t('teams.members.removeDone'))
-    await fetchTeamMembers(teamData.value!.id)
+    await fetchTeamMembers(teamData.value!.id, true)
   }
 }
 
@@ -359,7 +379,7 @@ const approveRequest = async (requestId: number) => {
   if (result !== undefined) {
     toast.success(t('teams.members.approveDone'))
     // 刷新数据
-    await Promise.all([fetchJoinRequests(teamData.value!.id, true), fetchTeamMembers(teamData.value!.id)])
+    await Promise.all([fetchJoinRequests(teamData.value!.id, true), fetchTeamMembers(teamData.value!.id, true)])
   }
   answering.value = undefined
 }
@@ -516,6 +536,7 @@ const copyJoinLink = async (url: string) => {
     :can-bring-people-in="canBringPeopleIn"
     :already-in="alreadyIn"
     :members="teamMembers"
+    :loading-members="loadingMembers"
     :failed-members="failedMembers"
     :members-error="membersError"
     :join-requests="joinRequests"

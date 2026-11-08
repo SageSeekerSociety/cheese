@@ -31,6 +31,8 @@ const props = defineProps<{
   /** 读者能往团队里带人（管理员以上，且不是自己名下那种单人小队）：邀请按钮与两张页签。 */
   canBringPeopleIn: boolean
   members: TeamMember[]
+  /** 成员还在读：手里还没有名单时画转圈，不画成「还没有成员」。 */
+  loadingMembers: boolean
   /** 成员这一格没读出来：这一格换成失败态，不画成「还没有成员」。 */
   failedMembers: boolean
   membersError: string | null
@@ -324,8 +326,11 @@ const getStatusText = (status: string) => {
         {{ t('home.nav.teamMembers') }}
         <span v-if="members.length" class="members-card__count">{{ members.length }}</span>
       </h2>
+      <div v-if="loadingMembers && !members.length" class="members-card__loading">
+        <v-progress-circular indeterminate size="24" color="primary" :aria-label="t('work.teamLink.loading')" />
+      </div>
       <BaseLoadError
-        v-if="failedMembers"
+        v-else-if="failedMembers"
         class="members-card__error"
         :title="t('teams.members.loadMembersFailed')"
         :error="membersError"
