@@ -916,7 +916,9 @@ async def test_a_route_marked_without_mid_conversation_system_launches_without_i
     """A gateway model marked ``supports_mid_conversation_system: false`` loses
     the system messages Claude Code puts mid-conversation (the skill listing
     among them), so a launch on it asks for them in the first user message. A
-    model nobody marked keeps Claude Code's default."""
+    model nobody marked keeps Claude Code's default. The marked model is also a
+    subagent the session on the unmarked one can start, so that launch carries
+    its mark too (FB-105)."""
     from app.domain.agent import gateway_catalog
     from app.domain.agent.gateway import GatewayModel
 
@@ -948,14 +950,13 @@ async def test_a_route_marked_without_mid_conversation_system_launches_without_i
     finally:
         gateway_catalog.reset()
 
-    assert "CLAUDE_CODE_MODEL_CAPABILITIES" not in unmarked["env"]
-    assert (
-        marked["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"] == "loses-it=-mid_conv_system"
-    )
-    # A screen launched before the mark is reopened with it.
-    assert (
-        marked["env"]["CHEESE_AGENT_CONFIG"] != unmarked["env"]["CHEESE_AGENT_CONFIG"]
-    )
+    for launch in (unmarked, marked):
+        assert (
+            launch["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"]
+            == "loses-it=-mid_conv_system"
+        )
+    assert unmarked["env"]["ANTHROPIC_MODEL"] == "keeps-it"
+    assert marked["env"]["ANTHROPIC_MODEL"] == "loses-it"
 
 
 @pytest.mark.anyio
