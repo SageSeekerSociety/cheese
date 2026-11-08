@@ -959,6 +959,60 @@ async def test_a_route_marked_without_mid_conversation_system_launches_without_i
 
 
 @pytest.mark.anyio
+async def test_a_subagent_on_a_marked_catalogue_model_launches_without_it(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """A session can start a subagent on any gateway model the project lists
+    (FB-105). When that model is marked as losing mid-conversation system
+    messages, the session is launched with the mark for it, even though neither
+    the main model nor the default subagent model carries it; the main and
+    default subagent models are launched unchanged."""
+    from app.domain.agent import gateway_catalog
+    from app.domain.agent.gateway import GatewayModel
+
+    monkeypatch.setattr(settings, "agent_model", "keeps-it")
+
+    def catalogue(third_marked: bool):
+        class Catalog:
+            async def models(self):
+                return [
+                    GatewayModel("keeps-it", "Keeps it", True, True),
+                    GatewayModel(
+                        "third-model",
+                        "Third",
+                        True,
+                        True,
+                        mid_conversation_system=not third_marked,
+                    ),
+                ]
+
+        return Catalog()
+
+    gateway_catalog.reset()
+    try:
+        await gateway_catalog.refresh(catalogue(third_marked=False))
+        svc, _factory, pid, _tid = await _mk_service(
+            business_db_factory, tmp_path, FakeGateway()
+        )
+        before, _ = await svc._model_kwargs(pid, _in_this_process())
+        await gateway_catalog.refresh(catalogue(third_marked=True))
+        after, _ = await svc._model_kwargs(pid, _in_this_process())
+    finally:
+        gateway_catalog.reset()
+
+    assert "model-third-model.md" in json.loads(after["env"]["CHEESE_MODEL_AGENTS"])
+    assert "CLAUDE_CODE_MODEL_CAPABILITIES" not in before["env"]
+    assert (
+        after["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"] == "third-model=-mid_conv_system"
+    )
+    for key in ("ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"):
+        assert after["env"][key] == before["env"][key] == "keeps-it"
+    assert after["model"] == before["model"] == "keeps-it"
+    # A screen launched before the mark is reopened with it.
+    assert after["env"]["CHEESE_AGENT_CONFIG"] != before["env"]["CHEESE_AGENT_CONFIG"]
+
+
+@pytest.mark.anyio
 async def test_cache_reads_the_gateway_reports_reach_the_ledger_row(
     business_db_factory, tmp_path
 ):

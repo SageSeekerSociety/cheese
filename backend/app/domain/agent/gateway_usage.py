@@ -174,6 +174,27 @@ def window_env(model: str | None) -> dict[str, str]:
     return {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(window)} if window else {}
 
 
+def _agent_choices(project_settings: dict | None) -> list[tuple[str, dict]]:
+    """The catalogue rows a session can start a subagent on, with the agent name
+    each is defined under (`model_agents`)."""
+    rows: list[tuple[str, dict]] = []
+    for choice in catalog(project_settings).values():
+        if choice["supply"] != GATEWAY:
+            continue
+        # Agent names are stricter than model ids; the id itself rides `model`.
+        name = re.sub(r"[^a-z0-9._-]+", "-", choice["id"].lower()).strip("-.")
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
+            rows.append((name, choice))
+    return rows
+
+
+def _agent_model_ids(project_settings: dict | None) -> list[str]:
+    """The model ids the subagent definitions name (`model_agents`): a session
+    may send a request to any of them, so each needs its capabilities at launch
+    (`model_capabilities`) as much as the main and default subagent models do."""
+    return [choice["id"] for _name, choice in _agent_choices(project_settings)]
+
+
 def model_agents(project_settings: dict | None) -> dict[str, str]:
     """The project's models as Claude Code subagent definitions, by file name.
 
@@ -191,13 +212,7 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     it is next reopened, at a task boundary.
     """
     agents: dict[str, str] = {}
-    for choice in catalog(project_settings).values():
-        if choice["supply"] != GATEWAY:
-            continue
-        # Agent names are stricter than model ids; the id itself rides `model`.
-        name = re.sub(r"[^a-z0-9._-]+", "-", choice["id"].lower()).strip("-.")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
-            continue
+    for name, choice in _agent_choices(project_settings):
         # The line the main agent reads in the Agent tool's list of types.
         description = (
             f"在 {choice['label']}（{choice['id']}）上跑一个分身。要用这个模型派活，"
@@ -375,7 +390,11 @@ async def _model_kwargs(
         child_model = binding.resolve(
             None, child_choices, default_model=child_default
         ).wire_model
-    capabilities = model_capabilities(model, child_model)
+    # Every model the session may call: its own, the default subagent's, and
+    # each one a subagent definition names (FB-105).
+    capabilities = model_capabilities(
+        model, child_model, *_agent_model_ids(project.settings)
+    )
     window = window_env(model)
     agent_types = model_agents(project.settings)
     config_hash = hashlib.sha256(
