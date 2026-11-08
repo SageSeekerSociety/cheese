@@ -175,34 +175,39 @@ describe('技能弹窗', () => {
   })
 })
 
-// 已带的那几格能去掉：点一下就是「从这位队友身上拿掉它」，落库与失败回滚在 `useAgentSkills`。
-// 平台和项目给每位队友都发的那几格不在队友的名单上，没有可去掉的，所以不是按钮。
+// 已带的机器技能能去掉：点一下就是「从这位队友身上拿掉它」，落库与失败回滚在 `useAgentSkills`。
+// 平台和项目发给每位队友的那几格去掉了也照样在板上（它们本来就到了每个执行器），点下去看着像
+// 没反应，所以这几格不给按钮，不管它在不在队友的名单上。
+const PDF = { name: 'pdf', description: '读 PDF', source: 'machine' as const }
+
 describe('去掉已带的技能', () => {
-  it('点已带的那一格，把它的名字往上发；平台给大家的那格不能点', async () => {
+  it('点已带的 pdf，把它的名字往上发；平台与项目发给每位队友的那几格没有这颗按钮', async () => {
     const view = mount({
+      carried: [PDF, { name: 'wolfram', description: '算', source: 'platform' as const }],
       available: [{ name: 'cheese', description: '芝士自己的用法', source: 'project' as const }],
       market: null,
     })
 
-    await fireEvent.click(await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' }))
-    expect(view.emitted('remove')).toEqual([['wolfram']])
+    await fireEvent.click(await screen.findByRole('button', { name: '从米洛身上去掉 pdf' }))
+    expect(view.emitted('remove')).toEqual([['pdf']])
+    expect(screen.getByText('wolfram')).toBeTruthy()
     expect(screen.getByText('cheese')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /cheese/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /wolfram|cheese/ })).toBeNull()
   })
 
   it('别人正占着「编辑中」时按不动，什么都不往上发', async () => {
-    const view = mount({ editingBlocked: true, editingBy: 'alice', market: null })
+    const view = mount({ carried: [PDF], editingBlocked: true, editingBy: 'alice', market: null })
 
-    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' })) as HTMLButtonElement
+    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 pdf' })) as HTMLButtonElement
     expect(socket.disabled).toBe(true)
     await fireEvent.click(socket)
     expect(view.emitted('remove')).toBeUndefined()
   })
 
   it('上一笔还在保存时按不动', async () => {
-    mount({ saving: true, market: null })
+    mount({ carried: [PDF], saving: true, market: null })
 
-    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 wolfram' })) as HTMLButtonElement
+    const socket = (await screen.findByRole('button', { name: '从米洛身上去掉 pdf' })) as HTMLButtonElement
     expect(socket.disabled).toBe(true)
   })
 })

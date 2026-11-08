@@ -565,8 +565,8 @@ describe('去掉队友已带的技能', () => {
       expected_version: 1,
       configuration: expect.objectContaining({ skills: ['wolfram'] }),
     })
-    await waitFor(() => expect(screen.queryByRole('button', { name: '从芝士身上去掉 pdf' })).toBeNull())
-    expect(screen.getByRole('button', { name: '从芝士身上去掉 wolfram' })).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('pdf')).toBeNull())
+    expect(screen.getByText('wolfram')).toBeTruthy()
   })
 
   it('没存进去：pdf 还在名单上，还能再点', async () => {
