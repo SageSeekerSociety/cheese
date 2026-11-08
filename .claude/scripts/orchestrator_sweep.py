@@ -887,7 +887,7 @@ def heartbeat_of(last_msg, last_event):
 def session_running(task):
     """Whether the platform says a session of the task's AI teammate is running in it
     right now: the row's `session_running`, which the session protocol declares
-    (`room_task_rows.with_session_running`). The board's phrase is not that: it says what
+    (`room_task_rows.task_rows`). The board's phrase is not that: it says what
     the teammate reported about its work. None when the row does not carry the field (a
     platform deployed before it)."""
     value = task.get("session_running")
