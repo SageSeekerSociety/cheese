@@ -15,6 +15,7 @@ import type { RefNames } from '../../lib/refChip'
 import { computed, ref } from 'vue'
 
 import { useMessageFold } from '../../composables/useMessageFold'
+import { askAsksViewer } from '../../lib/askGroups'
 import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
@@ -27,6 +28,7 @@ import {
 import { fileIcon, hasPagePreview, previewCanShowInRoom, suffixOf } from '../../lib/fileKind'
 import { MCP_APP_MIME } from '../../lib/mcpAppBridge'
 import { toldByMessage } from '../../lib/refChip'
+import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import AttachmentVideo from '../AttachmentVideo.vue'
@@ -235,6 +237,11 @@ const {
 // edited, so each one told its person (drawn as the @chip), unless a
 // members-only channel could not reach them.
 const told = computed(() => toldByMessage(props.refs))
+
+// 这道题问的是别人、不是我：频道里收成一行，点开才是整张卡。问到我自己的照整张卡
+// 画——我正要作答。判据在 `lib/askGroups`，和谁答得上这道题是同一条。
+const askForOthers = computed(() => !!askOptions(props.block) && !askAsksViewer(props.block, props.viewer))
+const askOpen = ref(false)
 </script>
 
 <template>
@@ -426,21 +433,37 @@ const told = computed(() => toldByMessage(props.refs))
       />
       <!-- 芝士问的一道题：题目本身就是卡片的标题，和选项、末行的输入框收在同一张卡里，
            不再是上一条消息的最后一段。卡片页头写谁问的；这一条是一串的第一条时，名字
-           那一行就在卡片正上方，页头不再说一遍名字（「问你」而不是「芝士 问你」）。 -->
-      <AskQuickReplies
-        v-else-if="askOptions(block)"
-        :block="block"
-        :asker="runStart ? undefined : authorName"
-        :names="refs.mentionNames"
-        :closed="askClosed"
-        :answering="askAnswering"
-        :viewer="viewer"
-        @reply="emit('ask-reply', block, $event)"
-        @withdraw="emit('ask-withdraw', block)"
-        @skip="emit('ask-skip', block)"
-      >
-        <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
-      </AskQuickReplies>
+           那一行就在卡片正上方，页头不再说一遍名字（「问你」而不是「芝士 问你」）。
+
+           问到别人的题收成一行（`AskFoldLine`）：整张卡占满一栏，而频道里大部分题不是
+           问看的人的。点开才长出下面那句题目和整张卡；问到我自己的照整张卡画。 -->
+      <template v-else-if="askOptions(block)">
+        <AskFoldLine
+          v-if="askForOthers"
+          :blocks="[block]"
+          :asker="runStart ? undefined : authorName"
+          :names="refs.mentionNames"
+          :refs="refs"
+          :expanded="askOpen"
+          :closed="askClosed"
+          :viewer="viewer"
+          @toggle="askOpen = !askOpen"
+        />
+        <AskQuickReplies
+          v-if="askOpen || !askForOthers"
+          :block="block"
+          :asker="runStart ? undefined : authorName"
+          :names="refs.mentionNames"
+          :closed="askClosed"
+          :answering="askAnswering"
+          :viewer="viewer"
+          @reply="emit('ask-reply', block, $event)"
+          @withdraw="emit('ask-withdraw', block)"
+          @skip="emit('ask-skip', block)"
+        >
+          <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
+        </AskQuickReplies>
+      </template>
       <template v-else>
         <div
           ref="foldEl"

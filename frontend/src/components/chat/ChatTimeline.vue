@@ -25,6 +25,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
+import { askAsksViewer } from '../../lib/askGroups'
 import { replySnippet } from '../../lib/blockDisplay'
 import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
@@ -33,6 +34,7 @@ import { noticeLine } from '../../lib/noticeLine'
 import { rowKeys } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
+import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
@@ -194,6 +196,20 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+// 组头 id → 这一组现在点开了没有。一次问的几道题问到别人时收成一行，点开才是那张
+// 卡；点开只活在这一屏里，切走再回来又是收起的（和单题的折叠一样）。
+const openAskGroups = ref<Set<string>>(new Set())
+function toggleAskGroup(id: string) {
+  const next = new Set(openAskGroups.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  openAskGroups.value = next
+}
+/** 这一组里有没有一道题问到了看的人：问到就整组照卡画，一道都没问到才收成一行。 */
+function askGroupForOthers(blocks: Block[]): boolean {
+  return !!props.viewer && blocks.length > 0 && !blocks.some((b) => askAsksViewer(b, props.viewer))
+}
 
 // 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
 // 来一条时，人点开的那一串不被换成一行新的、收起来的。上一次的名字只在这里读写，
@@ -627,7 +643,32 @@ const rowLabels = computed(() =>
               tabindex="-1"
               :aria-label="rowLabels[i]"
             >
+              <!-- 问的是别人：整组收成一行，点开才是那张卡。问到我了就照整张卡画。 -->
+              <template v-if="askGroupForOthers(askGroups!.get(m.id)!)">
+                <AskFoldLine
+                  :blocks="askGroups!.get(m.id)!"
+                  :asker="displayName(m)"
+                  :names="refs.mentionNames"
+                  :refs="refs"
+                  :expanded="openAskGroups.has(m.id)"
+                  :closed="askClosed"
+                  :viewer="viewer"
+                  @toggle="toggleAskGroup(m.id)"
+                />
+                <AskGroupCard
+                  v-if="openAskGroups.has(m.id)"
+                  :blocks="askGroups!.get(m.id)!"
+                  :asker="displayName(m)"
+                  :names="refs.mentionNames"
+                  :viewer="viewer"
+                  :closed="askClosed"
+                  :busy="askGroupBusy"
+                  :failure="askGroupFailure"
+                  @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+                />
+              </template>
               <AskGroupCard
+                v-else
                 :blocks="askGroups!.get(m.id)!"
                 :asker="displayName(m)"
                 :names="refs.mentionNames"

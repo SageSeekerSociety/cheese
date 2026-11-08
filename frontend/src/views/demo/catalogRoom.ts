@@ -23,6 +23,7 @@ import type { TaskLine } from '@/lib/channelTasks'
 import type { TaskState } from '@/lib/taskState'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import AskFoldLine from '../../components/ask/AskFoldLine.vue'
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
@@ -755,6 +756,57 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '解析不出 handle 的那一瞬间不接受点击：少一个入口，好过一个点了不算数的入口。',
         props: { ...SUMMON_BASE, ready: false },
         expectSelector: '.summon__btn[disabled]',
+      },
+    ],
+  },
+
+  {
+    id: 'ask-fold-line',
+    title: 'AskFoldLine',
+    about:
+      '问别人的一道题在频道里收成的那一行：谁问、问谁、题目一句、等没等到答案（或已经答了什么）。点开才是整张提问卡，再点收起。问到你自己的题不走这一件——照整张卡画，因为你正要作答。',
+    file: 'src/components/ask/AskFoldLine.vue',
+    component: AskFoldLine,
+    needs: UI_T,
+    states: [
+      {
+        name: '收起来了',
+        note: '一行 13px：谁问谁、题目、还没有回答。没有外框，箭头在右端；点整行展开。',
+        props: {
+          blocks: [askBlock([])],
+          asker: AGENT_NAME,
+          names: { alice: 'Alice' },
+          refs: { mentionNames: { alice: 'Alice' }, topicTitles: {} },
+          expanded: false,
+          viewer: 'bob',
+        },
+        expectSelector: '.ask-fold__chevron',
+      },
+      {
+        name: '点开了',
+        note: '上面的那一行还在（收的作用），下面接的是问 alice 的那张完整的卡：选项、末行的输入框都在，灰着——问的不是看的人。',
+        props: {
+          blocks: [askBlock([])],
+          asker: AGENT_NAME,
+          names: { alice: 'Alice' },
+          refs: { mentionNames: { alice: 'Alice' }, topicTitles: {} },
+          expanded: true,
+          viewer: 'bob',
+        },
+        expectSelector: '.ask-fold',
+      },
+      {
+        name: '已经有人答了',
+        note: '状态那一格换成是谁答的、答了什么；题目还在一行里。',
+        props: {
+          blocks: [askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }])],
+          asker: AGENT_NAME,
+          names: { alice: 'Alice' },
+          refs: { mentionNames: { alice: 'Alice' }, topicTitles: {} },
+          expanded: false,
+          viewer: 'bob',
+        },
+        expect: 'Alice：按部门',
       },
     ],
   },
