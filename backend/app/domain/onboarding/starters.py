@@ -33,12 +33,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity.services import IdentityService
 from app.domain.onboarding.models import OnboardingStarter
-from app.domain.space.member_repositories import SpaceMemberRepository
-from app.domain.space.repositories import (
-    SpaceAdminRelationRepository,
-    SpaceCategoryRepository,
-    SpaceRepository,
-)
 from app.domain.space.services import SpaceService
 from app.domain.task import package
 from app.domain.task.inputs import APPROVE_APPROVED, START_DIRECT, SUBMITTER_USER
@@ -306,8 +300,8 @@ async def starter_task(session: AsyncSession, key: StarterKey) -> Task:
 async def seat_on_board(session: AsyncSession, task: Task, user_id: int) -> None:
     """Make the taker a member of the starters' board, so the 题目 and its
     materials read for them as for any member. Idempotent."""
-    await SpaceMemberRepository(session).add_member(
-        space_id=task.space_id, user_id=user_id
+    await SpaceService.for_routes(session).add_member(
+        space_id=task.space_id, target_user_id=user_id
     )
 
 
@@ -320,7 +314,7 @@ async def _live_task(session: AsyncSession, key: StarterKey) -> Task | None:
         return None
     # Deleting a board leaves its 题目 alive; a starter on a deleted board is
     # missing too, and is made again on a new one.
-    if await SpaceRepository(session=session).get_by_id(task.space_id) is None:
+    if await SpaceService.for_routes(session).get_space(task.space_id) is None:
         return None
     return task
 
@@ -331,23 +325,19 @@ async def _board(session: AsyncSession, *, author_id: int) -> tuple[int, int]:
     after a board is deleted, the first starter remade moves its row to a new
     board while the others still point at the deleted one, and the next starter
     remade must land on that new board, not make a third."""
-    spaces = SpaceRepository(session=session)
+    spaces = SpaceService.for_routes(session)
     space = None
     for space_id in await session.scalars(
         select(OnboardingStarter.space_id)
         .group_by(OnboardingStarter.space_id)
         .order_by(func.max(OnboardingStarter.created_at).desc())
     ):
-        space = await spaces.get_by_id(space_id)
+        space = await spaces.get_space(space_id)
         if space is not None:
             break
     if space is None:
         # 芝士 owns it, so the board has an owner like any other.
-        space = await SpaceService(
-            repo=spaces,
-            category_repo=SpaceCategoryRepository(session=session),
-            admin_repo=SpaceAdminRelationRepository(session=session),
-        ).create_space(
+        space = await spaces.create_space(
             name=BOARD_NAME,
             intro=BOARD_INTRO,
             description=BOARD_DESCRIPTION,
