@@ -5,13 +5,14 @@
 // 告诉它，关哪一格、去哪儿由它定。
 //
 // 调用点：工作面板自由区里的资料库文档页签（`components/WorkPanel.vue`）。
-import type { RouteLocationRaw } from 'vue-router'
+import type { NavTarget } from '../../lib/navTarget'
 
 import { ref } from 'vue'
 
 import { useDocumentMove } from '../../composables/useDocumentMove'
 import { useDocumentShare } from '../../composables/useDocumentShare'
 import { useLibraryDocuments } from '../../composables/useLibraryDocuments'
+
 import DocMoveDialog from './DocMoveDialog.vue'
 import DocShareDialog from './DocShareDialog.vue'
 
@@ -24,7 +25,7 @@ const emit = defineEmits<{
   /** 删掉了：这份文档已经不在了。 */
   removed: [documentId: string]
   /** 挪走了：`to` 是它的新地址。 */
-  moved: [documentId: string, to: RouteLocationRaw]
+  moved: [documentId: string, to: NavTarget]
 }>()
 
 const dialog = useDialog()

@@ -28,9 +28,9 @@ import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
+import type { NavTarget } from '../lib/navTarget'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
-import type { RouteLocationRaw } from 'vue-router'
 import type { TabDef, TabKey } from './panels/panelTabList'
 import type PanelDocHostComponent from './work/PanelDocHost.vue'
 
@@ -169,7 +169,7 @@ const emit = defineEmits<{
   // 随行带那张合成图。
   (e: 'locate', payload: PreviewLocate): void
   // 自由区里的文档被挪到别处：去它的新地址（地址是页面的事，见 `tab`）。
-  (e: 'navigate', to: RouteLocationRaw): void
+  (e: 'navigate', to: NavTarget): void
 }>()
 
 // 有哪几格、各叫什么、挂哪个图标在 `panels/panelTabList.ts`：文档里的演示照着
@@ -771,7 +771,7 @@ function documentRemoved(id: string) {
 }
 
 // 挪走了：它已经不在这个项目里，这一格关掉，再像资料库那一页一样去它的新地址。
-async function documentMoved(id: string, to: RouteLocationRaw) {
+async function documentMoved(id: string, to: NavTarget) {
   await closeFile(DOC_TAB + id)
   emit('navigate', to)
 }
@@ -924,8 +924,8 @@ defineExpose({
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoomFilesPanelHost
             v-if="mounted.has('files')"
-            ref="roomFilesRef"
             v-show="shown('files')"
+            ref="roomFilesRef"
             :class="[enterClass('files'), sideClass('files')]"
             :topic-id="taskId ?? topicId"
             :seats-only="!!topic?.members_only"
@@ -979,7 +979,7 @@ defineExpose({
               class="panel-skill"
               :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
             >
-              <slot name="skill" :id="f.skill.id" />
+              <slot :id="f.skill.id" name="skill" />
             </div>
             <PanelPreviewHost
               v-else-if="mounted.has(fileKey(f.path))"
