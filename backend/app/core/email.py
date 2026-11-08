@@ -21,12 +21,25 @@ EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 # address it can be recovered through.
 PLACEHOLDER_EMAIL_DOMAINS = frozenset({"placeholder.internal", "oauth.ruc.local"})
 
+# Top-level domains reserved so that no address under them can ever exist
+# (RFC 2606, RFC 6761). The seeded demo accounts live on one (``demo.test``), and
+# the notification digest kept mailing them: the SMTP server cannot deliver it,
+# and a failed attempt reaches the alert channel as a fault of ours.
+RESERVED_TOP_LEVEL_DOMAINS = frozenset({"test", "example", "invalid", "localhost"})
+
 
 def is_placeholder_email(email: str | None) -> bool:
     """An address nobody reads: never mailed, and never proof of anything."""
     if not email or "@" not in email:
         return True
     return email.rsplit("@", 1)[1].strip().lower() in PLACEHOLDER_EMAIL_DOMAINS
+
+
+def _undeliverable(email: str) -> bool:
+    domain = email.rsplit("@", 1)[-1].strip().lower().rstrip(".")
+    return is_placeholder_email(email) or (
+        domain.rsplit(".", 1)[-1] in RESERVED_TOP_LEVEL_DOMAINS
+    )
 
 
 class EmailSender:
@@ -60,17 +73,20 @@ class EmailSender:
         subject: str,
         body_html: str,
         body_text: str | None = None,
+        last_attempt: bool = True,
     ) -> bool:
+        """``last_attempt=False`` is a sender with another account behind it:
+        its failure is not yet the mail's, so it is a warning, not an error."""
         if not self.is_configured:
             logger.warning("Email not configured, skipping send to %s", to)
             return False
 
         recipients = [to] if isinstance(to, str) else list(to)
         # Every mail leaves through here, so this is the one place that keeps
-        # a placeholder address from ever being handed to the SMTP server.
-        dropped = [r for r in recipients if is_placeholder_email(r)]
+        # an address nobody can receive at from ever being handed to SMTP.
+        dropped = [r for r in recipients if _undeliverable(r)]
         if dropped:
-            logger.warning("Not sending to placeholder addresses %s", dropped)
+            logger.warning("Not sending to undeliverable addresses %s", dropped)
             recipients = [r for r in recipients if r not in dropped]
         if not recipients:
             return False
@@ -98,7 +114,12 @@ class EmailSender:
             logger.debug("Email sent to %s: %s", recipients, subject)
             return True
         except Exception:
-            logger.exception("Failed to send email to %s", recipients)
+            logger.log(
+                logging.ERROR if last_attempt else logging.WARNING,
+                "Failed to send email to %s",
+                recipients,
+                exc_info=True,
+            )
             return False
 
 
@@ -132,7 +153,11 @@ class FallbackEmailSender:
             "body_html": body_html,
             "body_text": body_text,
         }
-        if await self._primary.send(**message):
+        # A primary failure the fallback recovers from is not a failed mail;
+        # logged as one, every such send alerted though the code arrived.
+        if await self._primary.send(
+            **message, last_attempt=not self._fallback.is_configured
+        ):
             return True
         logger.warning("Primary SMTP failed for %s; trying the fallback", to)
         return await self._fallback.send(**message)
