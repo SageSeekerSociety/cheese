@@ -143,3 +143,36 @@ def test_backend_idle_wait_is_pushed_back_by_traffic():
         return time.monotonic() - started
 
     assert asyncio.run(scenario()) >= 0.6
+
+
+class _VanishedCaller:
+    """A caller whose connection died without a close frame: reads never
+    return, and closing the socket finds the peer gone (1006)."""
+
+    def __init__(self, token: str) -> None:
+        self.headers = {"authorization": f"Bearer {token}"}
+
+    async def accept(self) -> None:
+        return None
+
+    async def receive_bytes(self) -> bytes:
+        await asyncio.Event().wait()
+        return b""
+
+    async def send_bytes(self, _data: bytes) -> None:
+        return None
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        raise WebSocketDisconnect(code=1006)
+
+
+def test_cutting_a_silent_tunnel_whose_caller_is_gone_is_not_an_error(
+    silent_meter, monkeypatch
+):
+    """Silence usually means the caller is already gone; the cut still ends the
+    tunnel cleanly instead of surfacing as an exception in the ASGI app."""
+    monkeypatch.setattr(llm_tunnel, "IDLE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(llm_tunnel, "_IDLE_CHECK_S", 0.02)
+    token = mint_scoped_token(project_id="7c9e6679-7425-40de-944b-e07fc1f90ae7")
+
+    asyncio.run(asyncio.wait_for(llm_tunnel.tunnel(_VanishedCaller(token)), 5))

@@ -79,8 +79,30 @@ def _from_a_dev_server(origin: str | None) -> bool:
     return True
 
 
+# A browser extension runs its own script inside our page, and the page's
+# `unhandledrejection` handler hears that script's failures too: a wallet
+# extension's "func sseError not found" (2026-11-06) was alerted as ours. The
+# first frame of the stack says whose code threw.
+_FRAME_URL_RE = re.compile(r"\b([a-z][a-z0-9+.-]*)://")
+_EXTENSION_SCHEMES = frozenset(
+    {"chrome-extension", "moz-extension", "safari-web-extension", "safari-extension"}
+)
+
+
+def _from_an_extension(err: "FrontendErrorIn") -> bool:
+    for line in (err.stack or "").splitlines():
+        found = _FRAME_URL_RE.search(line)
+        if found:
+            return found.group(1).lower() in _EXTENSION_SCHEMES
+    return False
+
+
 def worth_alerting(err: "FrontendErrorIn", origin: str | None) -> bool:
-    return not (_from_a_dev_server(origin) or _STALE_BUILD_RE.search(err.message))
+    return not (
+        _from_a_dev_server(origin)
+        or _STALE_BUILD_RE.search(err.message)
+        or _from_an_extension(err)
+    )
 
 
 class FrontendErrorIn(BaseModel):
