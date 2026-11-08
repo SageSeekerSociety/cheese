@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 技能面板：带什么、还能从哪儿加。黄底一块灯板，一颗一颗「洞」按下去就亮。
 //
-// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。
+// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。灯只说能不能用，
+// 不说带没带：带没带由哪些格子在板上决定。
 //
 // 只管画、只往上发：池子、机器索引、落库都在 `useAgentSkills` 里。桌面上是居中
 // 弹窗，手机上是一整页 —— 外壳由 AdaptiveDialog 决定，这一块在两边都是同一张灯板。
@@ -91,9 +92,15 @@ const emit = defineEmits<{
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
 const availableNow = (skill: SkillItem) => (skill.source === 'platform' ? status(skill.name) === 'ok' : true)
 
+// 灯板画的是这位队友身上真有的：带上的，加上平台与项目发给每位队友的那几条（它们本来
+// 就到了每个执行器，见后端 `project_skills.py` 技能目录那段）。机器上的技能要带上才跟着
+// 走，`available` 里机器那几条只是「还能加」，不进这份名单 —— 不然一个什么都没带的队友
+// 会被画成带着 pdf。
+const shippedToEveryone = (skill: SkillItem) => skill.source !== 'machine'
+
 const boardSkills = computed(() => {
   const seen = new Set<string>()
-  return [...props.carried, ...props.available].filter((skill) => {
+  return [...props.carried, ...props.available.filter(shippedToEveryone)].filter((skill) => {
     if (seen.has(skill.name)) return false
     seen.add(skill.name)
     return true
