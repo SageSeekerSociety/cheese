@@ -337,12 +337,25 @@ export function createAssistant(opts: AssistantOptions = {}) {
     nextPage.value = data.next ?? null
   }
 
+  /** 第几次登录：退出登录、换了一个人时加一。往上读的那几次读回来时已经换过人，读到的是
+   *  上一个人的话题和消息，不再摆。 */
+  let signedIn = 0
+
+  /** 正在往上读的话题和它那一次读：连点、翻到顶和点按钮撞在一起时只读一次，
+   *  不然两次都从同一句往前读，同一页接上去两遍。 */
+  const readingEarlier = new Map<string, Promise<void>>()
+
+  /** 正在读的那一次往上翻：没读完再翻，等的还是这一次，同一个话题不会摆上去两遍。 */
+  let readingOlder: Promise<void> | null = null
+
   /** 接着读下一页更早的话题。 */
   async function morePage() {
     if (nextPage.value === null) return
+    const at = signedIn
     const data = await request<ConversationPage>(
       `/assistant/conversations?before=${encodeURIComponent(nextPage.value)}`
     )
+    if (at !== signedIn) return
     const known = new Set(conversations.value.map((c) => c.id))
     conversations.value = [...conversations.value, ...(data.conversations ?? []).filter((c) => !known.has(c.id))]
     nextPage.value = data.next ?? null
@@ -400,6 +413,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   /** 换了一个人（退出登录）：之前的对话一样不留。 */
   function reset() {
+    signedIn++
+    readingEarlier.clear()
+    readingOlder = null
     loaded.value = false
     conversations.value = []
     nextPage.value = null
@@ -447,21 +463,44 @@ export function createAssistant(opts: AssistantOptions = {}) {
     startNew()
     earlier.value = earlier.value.filter((topic) => topic.id !== id)
     await open(id)
+    // 打开的时候往上翻正好把它读了回来、摆在了上面：眼前就是它，上面那份收掉。
+    if (current.value === id) earlier.value = earlier.value.filter((topic) => topic.id !== id)
     await listConversations().catch(() => undefined)
   }
 
   /** 一个话题（`null` 是当前这个）更早的那一页消息：读回来接在它最上面。 */
-  async function earlierMessages(id: string | null) {
-    const topic = id === null ? null : earlier.value.find((t) => t.id === id)
+  function earlierMessages(id: string | null): Promise<void> {
     const conversation = id ?? current.value
-    const shown = topic ? topic.messages : messages.value
-    const first = shown.find((m) => typeof m.seq === 'number')?.seq
-    if (!conversation || first === undefined) return
+    if (!conversation) return Promise.resolve()
+    const running = readingEarlier.get(conversation)
+    if (running) return running
+    const reading = readEarlier(id, conversation).finally(() => {
+      if (readingEarlier.get(conversation) === reading) readingEarlier.delete(conversation)
+    })
+    readingEarlier.set(conversation, reading)
+    return reading
+  }
+
+  /** 一个话题（`null` 是当前这个）眼下摆着的消息；不在了（换了话题、收走了）是 `null`。 */
+  function shownOf(id: string | null, conversation: string) {
+    if (id !== null) return earlier.value.find((t) => t.id === id)?.messages ?? null
+    return current.value === conversation ? messages.value : null
+  }
+
+  const firstSeq = (shown: AssistantMessage[] | null) => shown?.find((m) => typeof m.seq === 'number')?.seq
+
+  async function readEarlier(id: string | null, conversation: string) {
+    const first = firstSeq(shownOf(id, conversation))
+    if (first === undefined) return
+    const at = signedIn
     const data = await request<{ messages: ReadMessage[]; earlier?: boolean }>(
       `/assistant/conversations/${conversation}/messages?before=${first}`
     )
+    // 读回来时最上面还是读的那一句才接上：退出登录、换了话题、或者重新打开换成了最新一页，
+    // 这一页都接不上眼前的了。
+    if (at !== signedIn || firstSeq(shownOf(id, conversation)) !== first) return
     const more = shownMessages(data)
-    if (topic)
+    if (id !== null)
       earlier.value = earlier.value.map((t) =>
         t.id === id ? { ...t, messages: [...more, ...t.messages], earlier: data.earlier === true } : t
       )
@@ -473,20 +512,34 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   /** 往上翻：最上面那个话题还有更早的消息，先读它的；读完了，再把还没摆出来的、最近的那个
    *  更早的话题读回来，摆在最上面。读过的那几页里没有了，就接着读下一页话题。 */
-  async function older() {
+  function older(): Promise<void> {
+    if (readingOlder) return readingOlder
+    const reading = readOlder().finally(() => {
+      if (readingOlder === reading) readingOlder = null
+    })
+    readingOlder = reading
+    return reading
+  }
+
+  async function readOlder() {
     const top = earlier.value[0]
     if (top ? top.earlier : currentEarlier.value) return earlierMessages(top ? top.id : null)
+    const shown = () => new Set([current.value, ...earlier.value.map((topic) => topic.id)])
     const unshown = () => {
-      const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
-      return conversations.value.find((c) => !shown.has(c.id))
+      const now = shown()
+      return conversations.value.find((c) => !now.has(c.id))
     }
+    const at = signedIn
     let next = unshown()
     while (!next && nextPage.value !== null) {
       await morePage()
+      if (at !== signedIn) return
       next = unshown()
     }
     if (!next) return
     const data = await read(next.id)
+    // 读的时候它已经摆出来了（通知里点开成了眼前这个）：不再摆一遍。
+    if (at !== signedIn || shown().has(next.id)) return
     earlier.value = [
       {
         id: next.id,
