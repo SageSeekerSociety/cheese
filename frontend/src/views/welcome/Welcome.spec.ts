@@ -53,7 +53,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
   account.user = { id: 1, username: 'lin', nickname: '林小满', onboarded_at: null, work_role: null, organization: null }
-  finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general' })
+  finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general', teammate: '芝士' })
   history.state = {}
 })
 

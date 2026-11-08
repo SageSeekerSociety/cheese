@@ -36,7 +36,7 @@ async function finish({ answers, skipAll, draft, files }: WelcomeFinish) {
       const atts = []
       for (const file of files) atts.push(await uploadAttachment(room, file))
       // 第一句点名建好的项目里实际的默认队友：直接回车只发给成员，没被点名的队友不会接。
-      const said = draft ? `@${done.teammate || t('work.room.defaultAgentName')} ${draft}` : ''
+      const said = draft ? `@${done.teammate} ${draft}` : ''
       if (said || atts.length) saveComposerDraft(room, { draft: said, reply: null, atts })
     }
     await refreshProjects()

@@ -26,13 +26,15 @@ export interface OnboardingAnswers {
   intent: string
   work_role?: WorkRole | null
   organization?: string
-  starter?: 'web' | 'slides' | 'lesson'
+  starter?: StarterKey
 }
+/** 三道新手题，和后端 `app/domain/onboarding/starters.py` 的 `StarterKey` 一致。 */
+export type StarterKey = 'web' | 'slides' | 'lesson'
 export type WorkRole = 'student' | 'highschool' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
 
 export function finishOnboarding(
   answers: OnboardingAnswers
-): Promise<{ project_id: string; root_topic_id: string | null; teammate?: string | null }> {
+): Promise<{ project_id: string; root_topic_id: string | null; teammate: string }> {
   return request('/users/me/onboarding', { method: 'POST', body: JSON.stringify(answers) })
 }
 

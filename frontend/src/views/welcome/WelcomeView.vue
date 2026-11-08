@@ -7,6 +7,8 @@
 // 回到原来那一问：挑一件或自己写一句。每个回答都有去处，右边的「你的项目」随回答
 // 长出来；点按钮才把回答交出去（`finish`）。称呼用注册时填的昵称，邀请队友和换电脑都
 // 在项目里做，这里不问。建项目、进「综合」由页面做（Welcome.vue），这里只画两问。
+import type { StarterKey } from '@/api'
+
 import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -14,7 +16,6 @@ import BrandLockup from '@/components/common/BrandLockup.vue'
 import { t } from '@/i18n'
 
 export type WorkRole = 'student' | 'highschool' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
-export type StarterKey = 'web' | 'slides' | 'lesson'
 
 /** 「建好项目」交出去的东西：建项目要的回答，加上建好以后要做的事。 */
 export interface WelcomeFinish {
@@ -121,6 +122,10 @@ const starterOrder = computed(() => [recommended.value, ...STARTERS.filter((k) =
 const starterText = (key: StarterKey, part: 'label' | 'hint' | 'yields' | 'name' | 'brief' | 'files') =>
   t(`welcome.starter.${key}.${part}`)
 const taking = computed(() => mode.value === 'starter')
+const finishLabel = computed(() => {
+  if (props.busy) return t('welcome.finishing')
+  return taking.value ? t('welcome.starter.take') : t('welcome.finish')
+})
 const own = ref('')
 const files = ref<File[]>([])
 const picker = ref<HTMLInputElement | null>(null)
@@ -337,7 +342,7 @@ function finish(skipAll = false) {
               {{ t('welcome.next') }}
             </BaseButton>
             <BaseButton v-else kind="primary" :loading="busy" @click="finish()">
-              {{ busy ? t('welcome.finishing') : taking ? t('welcome.starter.take') : t('welcome.finish') }}
+              {{ finishLabel }}
             </BaseButton>
           </span>
         </div>
