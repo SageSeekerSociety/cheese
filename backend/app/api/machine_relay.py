@@ -109,9 +109,12 @@ KEEPALIVE_S = 2.0
 def over_http(origin: str) -> Handler:
     # An address inside the deployment: never through an outbound proxy the
     # environment may name, which would also be handed the secret.
-    client = httpx.AsyncClient(
-        trust_env=False, limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S)
+    # The connection caps are httpx's defaults, spelled out: a Limits built
+    # with only keepalive_expiry would leave both caps unlimited.
+    limits = httpx.Limits(
+        max_connections=100, max_keepalive_connections=20, keepalive_expiry=KEEPALIVE_S
     )
+    client = httpx.AsyncClient(trust_env=False, limits=limits)
     return forwarder(client, origin)
 
 
