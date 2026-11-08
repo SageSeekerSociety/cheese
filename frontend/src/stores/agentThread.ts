@@ -314,6 +314,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const creditRefused = ref(false)
   const loaded = ref(false)
   let editSeq = 0
+  /** 退出登录过几次。读到一半、问到一半、回答接到一半时退出了，之后读回来的都是上一个人的，
+   *  不再碰面板：不摆话题、不建话题、不问、不写字、不收尾。 */
+  let signedOut = 0
   /** 插进去却被拒了的话：服务端已经答完，页面还没收到 `done`（`say`）。话照旧摆着，这一轮
    *  收尾后合成一个新问题问（`askHeldBack`）。`line` 是摆着的那一行本身。 */
   let heldBack: { conversation: string; line: AssistantMessage; text: string; files: HandedFile[] }[] = []
@@ -330,7 +333,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   /** 读最近的一页话题，替换掉之前读的。 */
   async function listConversations() {
+    const out = signedOut
     const data = await request<ConversationPage>('/assistant/conversations')
+    if (out !== signedOut) return
     conversations.value = data.conversations ?? []
     nextPage.value = data.next ?? null
   }
@@ -361,8 +366,16 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const shownMessages = (data: { messages: ReadMessage[] }) =>
     data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
 
+  /** 第几次打开：读回来时已经又打开了一次（连点两下、点了别的又点回来）、开了新话题或
+   *  退出了登录，这一次读到的不再摆。 */
+  let opening = 0
+
   async function open(id: string) {
+    const turn = ++opening
     const data = await read(id)
+    // 读的时候已经接上了一个回答（另一次打开、或这里刚问了一句）：它会把回答写进来，
+    // 这一次再摆、再接一遍，同一个回答就进来两遍。
+    if (turn !== opening || busy.value) return
     current.value = id
     messages.value = shownMessages(data)
     currentEarlier.value = data.earlier === true
@@ -399,12 +412,17 @@ export function createAssistant(opts: AssistantOptions = {}) {
     currentEarlier.value = false
     notice.value = null
     creditRefused.value = false
+    // 退出时还在读的那次打开、还在接的那个回答，都是上一个人的，不再摆。
+    opening++
+    signedOut++
+    clearTurn()
     heldBack = []
   }
 
   /** 「新话题」：之前说的留在上面，芝士从下一句话起不再读它们。话题等第一句话发出去才建。 */
   function startNew() {
     if (busy.value) return
+    opening++
     if (current.value) {
       const at = conversations.value.find((c) => c.id === current.value)
       earlier.value = [
@@ -427,8 +445,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 打开指定的一段对话（通知、设置页里的「查看对话」）：眼前这段收到上面，像「新话题」一样。 */
   async function show(id: string) {
     loaded.value = true
-    if (current.value === id) return open(id)
+    // 正在答着就不动：眼前要么就是这一段、回答正写进来，要么是别的一段、答完之前不换走。
     if (busy.value) return
+    if (current.value === id) return open(id)
     startNew()
     earlier.value = earlier.value.filter((topic) => topic.id !== id)
     await open(id)
@@ -486,7 +505,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   async function ensureConversation(): Promise<string> {
     if (current.value) return current.value
+    const out = signedOut
     const data = await request<AssistantConversation>('/assistant/conversations', { method: 'POST' })
+    if (out !== signedOut) return data.id
     conversations.value = [data, ...conversations.value]
     current.value = data.id
     return data.id
@@ -497,6 +518,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
   async function ask(question: string, fallback: string, files: HandedFile[] = [], kept = false) {
     const text = question.trim()
     if ((!text && !files.length) || busy.value) return
+    // 这时还在读的那次打开（刚打开面板、点了「查看对话」）读回来，会把正在问的这段换走。
+    opening++
+    const out = signedOut
     notice.value = null
     creditRefused.value = false
     streaming.value = ''
@@ -513,7 +537,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
     let unheard: Unheard[] = []
     try {
       const prepared = await target?.prepare?.()
+      if (out !== signedOut) return
       const id = await ensureConversation()
+      if (out !== signedOut) return
       const page = target?.on ? prepared || target.page : null
       unheard = await follow(
         id,
@@ -533,16 +559,21 @@ export function createAssistant(opts: AssistantOptions = {}) {
         fallback
       )
     } catch (error) {
+      if (out !== signedOut) return
       if (error instanceof StreamRefused) {
         notice.value = refusalText(error.body, error.body.message || fallback)
         creditRefused.value = isCreditRefusal(error.body)
       } else notice.value = fallback
     } finally {
-      if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
-      streaming.value = null
-      await listConversations().catch(() => undefined)
+      // 退出登录后，面板上已经是下一个人的了：不替它删、不替它收，也不替它重读话题。
+      if (out === signedOut) {
+        if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+        streaming.value = null
+        await listConversations().catch(() => undefined)
+      }
     }
-    await askUnheard(unheard, fallback)
+    // 上一个人插的话不替下一个人问。
+    if (out === signedOut) await askUnheard(unheard, fallback)
   }
 
   /** 插进那一轮的话，那一轮结束前芝士没听到：合成一个问题接着问。 */
@@ -727,6 +758,20 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
   }
 
+  /** 收起这一轮正在写的回答和它的步骤。 */
+  function clearTurn() {
+    streaming.value = null
+    tool.value = null
+    queued.value = false
+    steps.value = []
+    edits.value = []
+    published.value = []
+    proposals.value = []
+    handed.value = []
+    rules.value = []
+    subagents.value = []
+  }
+
   /** 读一个问题的回答，直到它答完：连接断了（关了页面、后端重启）就从断的地方接着读，
    *  服务端那边一直在答。答完的回答进对话；没答完的不留半截。交回答着时插进去、芝士
    *  却没听到的话（人按了停止的不算：那是不要它接着做了）。 */
@@ -736,6 +781,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     fallback: string,
     question?: string
   ): Promise<Unheard[]> {
+    const out = signedOut
     streaming.value = ''
     tool.value = null
     queued.value = false
@@ -752,6 +798,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     let done = false
     let unheard: Unheard[] = []
     const onEvent: OnEvent = (event, payload) => {
+      if (out !== signedOut) return
       if (event === 'queued') {
         queued.value = true
       } else if (event === 'delta' && typeof payload.text === 'string' && payload.text) {
@@ -785,50 +832,44 @@ export function createAssistant(opts: AssistantOptions = {}) {
         { question }
       )
     } catch (error) {
+      // 退出登录后才断的：那是上一个人的回答，不说它没答上来。
+      if (out !== signedOut) return []
       if (error instanceof StreamRefused && !question) throw error
       failed = true
       notice.value = fallback
     } finally {
-      settleSteps()
-      const did =
-        steps.value.length > 0 ||
-        edits.value.length > 0 ||
-        published.value.length > 0 ||
-        proposals.value.length > 0 ||
-        handed.value.length > 0 ||
-        rules.value.length > 0
-      if (current.value === conversation && ((answer && !failed && done) || stopped || did))
-        messages.value = [
-          ...messages.value,
-          {
-            role: 'assistant',
-            text: answer.trim(),
-            stopped,
-            at: new Date().toISOString(),
-            steps: steps.value,
-            edits: edits.value,
-            published: published.value,
-            proposals: proposals.value,
-            handed: handed.value,
-            rules: rules.value,
-            ...(subagents.value.length ? { subagents: subagents.value } : {}),
-            ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
-          },
-        ]
-      if (current.value === conversation) {
-        streaming.value = null
-        tool.value = null
-        queued.value = false
-        steps.value = []
-        edits.value = []
-        published.value = []
-        proposals.value = []
-        handed.value = []
-        rules.value = []
-        subagents.value = []
+      // 退出登录后才答完的：面板上已经是下一个人的这一轮，不去动它。
+      if (out === signedOut) {
+        settleSteps()
+        const did =
+          steps.value.length > 0 ||
+          edits.value.length > 0 ||
+          published.value.length > 0 ||
+          proposals.value.length > 0 ||
+          handed.value.length > 0 ||
+          rules.value.length > 0
+        if (current.value === conversation && ((answer && !failed && done) || stopped || did))
+          messages.value = [
+            ...messages.value,
+            {
+              role: 'assistant',
+              text: answer.trim(),
+              stopped,
+              at: new Date().toISOString(),
+              steps: steps.value,
+              edits: edits.value,
+              published: published.value,
+              proposals: proposals.value,
+              handed: handed.value,
+              rules: rules.value,
+              ...(subagents.value.length ? { subagents: subagents.value } : {}),
+              ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
+            },
+          ]
+        if (current.value === conversation) clearTurn()
       }
     }
-    return stopped || current.value !== conversation ? [] : unheard
+    return out !== signedOut || stopped || current.value !== conversation ? [] : unheard
   }
 
   /** 一件起草的事现在怎样了（人发出了，或说不用了）：面板照着改那张卡。 */
@@ -881,6 +922,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   async function say(text: string, fallback: string, files: HandedFile[] = []) {
     const words = text.trim()
     const id = current.value
+    const out = signedOut
     if (!words && !files.length) return
     if (!id || !busy.value) return ask(words, fallback, files)
     const at = new Date().toISOString()
@@ -908,6 +950,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
         }),
       })
     } catch (error) {
+      // 退出登录后才没发出去：那是上一个人的话，不替下一个人问。
+      if (out !== signedOut) return
       const answered = error instanceof ApiError && error.status === 409
       if (answered && busy.value && current.value === id) {
         heldBack = [...heldBack, { conversation: id, line, text: words, files }]
