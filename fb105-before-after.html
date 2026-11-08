@@ -1,0 +1,65 @@
+<!doctype html><html lang=zh><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>FB-105 改前/改后</title>
+<style>
+body{font:14px/1.55 system-ui,"Noto Sans CJK SC",sans-serif;margin:0;padding:20px;background:#f6f7f9;color:#1d2330}
+h1{font-size:20px;margin:0 0 6px} h2{font-size:16px;margin:0 0 8px}
+.meta{background:#fff;border:1px solid #dde1e6;border-radius:8px;padding:12px 14px;margin-bottom:14px}
+.meta li{margin:2px 0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px}
+.card{background:#fff;border:1px solid #dde1e6;border-radius:8px;padding:14px;min-width:0}
+.card.before{border-top:4px solid #c62828} .card.after{border-top:4px solid #2e7d32}
+table{border-collapse:collapse;width:100%;margin:6px 0 12px;font-size:13px}
+td,th{border:1px solid #e3e6ea;padding:4px 6px;text-align:left;vertical-align:top;word-break:break-all}
+th{background:#f1f3f5;font-weight:600} .kv th{width:44%}
+tr.bad td{background:#fdecea} tr.ok td{background:#e8f5e9}
+.neg{color:#c62828} .pos{color:#2e7d32}
+.verdict{font-weight:700;font-size:15px;margin:4px 0 10px}
+code{background:#f1f3f5;padding:0 3px;border-radius:3px}
+</style>
+<h1>FB-105：目录里第三个模型的分身漏传能力标记 · 改前 / 改后</h1>
+<div class=meta><ul>
+<li>改前版本：main <code>37767844d</code>；改后版本：PR #5205 分支 <code>task/67f5fdfc</code> 头 <code>6d2b47074</code></li>
+<li>来源：启动环境由两棵树各自的 <code>_model_kwargs</code> 实算（同一份集成测试夹具）；会话用仓库钉住的真 Claude Code <b>2.1.316</b> 跑。</li>
+<li><b>模拟条件</b>：网关目录两个模型 <code>keeps-it</code>（未标记）与 <code>third-model</code>（标 <code>mid_conversation_system=False</code>）；主模型、默认子模型都是 keeps-it。上游是本地假服务，<b>模仿</b>「遇到对话中间的 system 角色消息就回 400 System messages are not allowed」；主模型第一步派 subagent_type=third-model 的分身。</li>
+<li><b>没测</b>：真实 gpt-6-sol / gpt-6-astra 当前网关是否标 False、真实上游是否就是这个 400；分身流中断的重试（不在本次范围）。</li>
+</ul></div>
+<div class=cols>
+<div class="card before"><h2>改前 · main 37767844d</h2>
+<div class="verdict neg">分身请求带对话中间的 system 消息，6 次全被拒 400</div>
+<table class=kv>
+<tr><th>主模型 ANTHROPIC_MODEL</th><td>keeps-it</td></tr>
+<tr><th>默认子模型 CLAUDE_CODE_SUBAGENT_MODEL</th><td>keeps-it</td></tr>
+<tr><th>可启动分身 CHEESE_MODEL_AGENTS</th><td>model-keeps-it.md, model-third-model.md</td></tr>
+<tr><th>CLAUDE_CODE_MODEL_CAPABILITIES</th><td><b class=neg>（没有这个变量）</b></td></tr>
+<tr><th>配置 hash 打标记前 → 后</th><td>35f43787685c → 35f43787685c <b class=neg>（没变：已开着的会话不会重开）</b></td></tr>
+</table>
+<b>假上游收到的请求</b>（模型 · 消息角色 · 状态）
+<table><tr><th>model</th><th>messages 角色</th><th>状态</th></tr><tr class=ok><td>keeps-it</td><td>user · system</td><td>200</td></tr>
+<tr class=bad><td>third-model</td><td>user · system</td><td>400</td></tr>
+<tr class=bad><td>third-model</td><td>user · system</td><td>400</td></tr>
+<tr class=bad><td>third-model</td><td>user · system</td><td>400</td></tr>
+<tr class=ok><td>keeps-it</td><td>user · system · assistant · user</td><td>200</td></tr>
+<tr class=bad><td>third-model</td><td>user · system</td><td>400</td></tr>
+<tr class=bad><td>third-model</td><td>user · system</td><td>400</td></tr>
+<tr class=bad><td>third-model</td><td>user · system</td><td>400</td></tr>
+<tr class=ok><td>keeps-it</td><td>user · system · assistant · user</td><td>200</td></tr></table>
+<b>分身拿到的结果</b><br><code>System messages are not allowed (error type unknown, HTTP 400, model sent to the API: third-model)</code>
+</div>
+<div class="card after"><h2>改后 · PR #5205 6d2b47074</h2>
+<div class="verdict pos">分身请求不再带 system 角色消息，一次成功</div>
+<table class=kv>
+<tr><th>主模型 ANTHROPIC_MODEL</th><td>keeps-it</td></tr>
+<tr><th>默认子模型 CLAUDE_CODE_SUBAGENT_MODEL</th><td>keeps-it</td></tr>
+<tr><th>可启动分身 CHEESE_MODEL_AGENTS</th><td>model-keeps-it.md, model-third-model.md</td></tr>
+<tr><th>CLAUDE_CODE_MODEL_CAPABILITIES</th><td>third-model=-mid_conv_system</td></tr>
+<tr><th>配置 hash 打标记前 → 后</th><td>35f43787685c → 9e9b052e5933 <b class=pos>（变了：下个任务边界重开）</b></td></tr>
+</table>
+<b>假上游收到的请求</b>（模型 · 消息角色 · 状态）
+<table><tr><th>model</th><th>messages 角色</th><th>状态</th></tr><tr class=ok><td>keeps-it</td><td>user · system</td><td>200</td></tr>
+<tr class=ok><td>third-model</td><td>user</td><td>200</td></tr>
+<tr class=ok><td>keeps-it</td><td>user · system · assistant · user</td><td>200</td></tr>
+<tr class=ok><td>keeps-it</td><td>user · system · assistant · user</td><td>200</td></tr></table>
+<b>分身拿到的结果</b><br><code>OK from third-model</code>
+</div></div>
+<p style="color:#5b6472;font-size:12px">主模型 keeps-it 的请求两边都照旧带 system 角色消息、都是 200：本次改动不改主模型和默认子模型的行为。</p>
+</html>
