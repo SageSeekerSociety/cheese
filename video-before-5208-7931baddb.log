@@ -1,0 +1,14 @@
+{
+ "label": "before-5208",
+ "url": "http://127.0.0.1:47815/?v=%E6%94%B9%E5%89%8D%EF%BC%9A%235208%20head%207931baddb%20%E7%9A%84%20agentThread.ts%EF%BC%88%E4%BB%8D%E6%8C%89%E6%97%B6%E9%97%B4%E6%88%B3%E6%94%B6%E5%9B%9E%EF%BC%89",
+ "log": [
+  " 3.39s page shows 旧的一句",
+  " 6.37s typed 补一句",
+  " 7.22s request POST /api/assistant/conversations/c1/say",
+  " 7.22s pressed Enter",
+  " 7.96s while waiting: users=「旧的一句」、「补一句」",
+  " 9.73s response 500 /api/assistant/conversations/c1/say",
+  "10.11s after 500: users=（无） verdict=「旧的一句」被一起删掉了"
+ ],
+ "errors": []
+}

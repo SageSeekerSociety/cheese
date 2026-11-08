@@ -1,0 +1,14 @@
+{
+ "label": "after",
+ "url": "http://127.0.0.1:47815/?v=%E6%94%B9%E5%90%8E%EF%BC%9APR%20%235213%20%E5%BD%93%E5%89%8D%20head%205009db940%EF%BC%88%E6%9C%AC%E9%A1%B9%E4%B8%8E%E4%BA%B2%E9%AA%8C%E7%9A%84%208f0baa4e%20%E7%9B%B8%E5%90%8C%EF%BC%89",
+ "log": [
+  " 2.90s page shows 旧的一句",
+  " 5.96s typed 补一句",
+  " 6.81s request POST /api/assistant/conversations/c1/say",
+  " 6.82s pressed Enter",
+  " 7.56s while waiting: users=「旧的一句」、「补一句」",
+  " 9.32s response 500 /api/assistant/conversations/c1/say",
+  " 9.73s after 500: users=「旧的一句」 verdict=「旧的一句」还在（正确）"
+ ],
+ "errors": []
+}

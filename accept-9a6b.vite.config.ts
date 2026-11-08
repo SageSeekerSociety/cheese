@@ -33,7 +33,11 @@ export default {
             return
           }
           // 插话失败（服务端出错）。
-          if (p === '/api/assistant/conversations/c1/say') return send(res, { code: 500, message: '服务端出错（替身）' }, 500)
+          // 插话失败（服务端出错）：晚 2.5 秒才回，好让刚发的那句先临时显示一会儿。
+          if (p === '/api/assistant/conversations/c1/say') {
+            setTimeout(() => send(res, { code: 500, message: '服务端出错（替身）' }, 500), 2500)
+            return
+          }
           if (p.startsWith('/api/')) return send(res, { code: 200, data: null })
           next()
         })

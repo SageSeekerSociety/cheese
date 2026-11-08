@@ -27,6 +27,8 @@ class FrozenDate extends RealDate {
 }
 ;(globalThis as { Date: DateConstructor }).Date = FrozenDate as unknown as DateConstructor
 
+const VERSION = new URLSearchParams(location.search).get('v') ?? ''
+
 const App = defineComponent({
   setup() {
     const log = ref<string[]>([])
@@ -35,7 +37,7 @@ const App = defineComponent({
     const ok = computed(() => users.value.includes('旧的一句'))
     void agentThread.load().then(() => note('打开对话 c1：读回「旧的一句」（服务端存的，时间 ' + NOW + '），芝士正在答'))
     async function send(text: string) {
-      note(`发送「${text}」：芝士在答，走插话（/say），替身回 500`)
+      note(`发送「${text}」：芝士在答，走插话（/say），先临时显示；替身 2.5 秒后回 500`)
       await askAgent(text)
       note(`插话失败后，面板上人说的话：${users.value.map((u) => `「${u}」`).join('、') || '（无）'}`)
     }
@@ -47,7 +49,8 @@ const App = defineComponent({
       h('div', { style: 'display:flex;gap:16px;padding:16px;height:100vh;box-sizing:border-box;font:13px/1.6 system-ui,sans-serif' }, [
         h('div', { style: 'width:340px;flex:none' }, [
           h('h3', { style: 'margin:0 0 6px' }, '乐观消息回滚误删 · 验收'),
-          h('div', { style: 'color:#666;margin-bottom:8px' }, '右边是真的助手面板。在输入框里随便说一句发出去：芝士在答，这句走插话，替身让它失败。页面时钟冻在「旧的一句」那一毫秒。'),
+          VERSION ? h('div', { id: 'acc-version', style: 'margin:0 0 6px;padding:4px 8px;border-radius:6px;background:#eef3ff;font-weight:600' }, VERSION) : null,
+          h('div', { style: 'color:#666;margin-bottom:8px' }, '右边是真的助手面板。「旧的一句」是服务端存下的历史。在输入框里说一句发出去：芝士在答，这句走插话，先临时显示在面板上；替身 2.5 秒后让插话接口回 500，面板收回没被收下的那句。页面时钟冻在「旧的一句」那一毫秒。'),
           h('button', { id: 'acc-send', onClick: () => void send('补一句'), style: 'margin:0 6px 6px 0;padding:4px 10px;border:1px solid #c9a24b;border-radius:6px;background:#fff8e6;cursor:pointer' }, '代我发「补一句」'),
           h('button', { id: 'acc-reset', onClick: reset, style: 'margin:0 6px 6px 0;padding:4px 10px;border:1px solid #c9a24b;border-radius:6px;background:#fff8e6;cursor:pointer' }, '重置'),
           h('div', { style: 'margin-top:10px' }, ['人说的话：', h('b', { id: 'acc-users' }, users.value.map((u) => `「${u}」`).join('、') || '（无）')]),
