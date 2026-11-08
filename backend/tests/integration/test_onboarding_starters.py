@@ -231,14 +231,19 @@ def test_after_the_board_is_deleted_every_starter_is_remade_on_one_new_board(
         await db_session.flush()
 
     _portal.call(delete)
+    # The starter made first is remade first: its row is not the newest one.
     a = _space_of(
         api_client,
         t2,
-        _take(api_client, t2, "slides")["project_id"],
+        _take(api_client, t2, "web")["project_id"],
         db_session,
         _portal,
     )
     b = _space_of(
-        api_client, t3, _take(api_client, t3, "web")["project_id"], db_session, _portal
+        api_client,
+        t3,
+        _take(api_client, t3, "slides")["project_id"],
+        db_session,
+        _portal,
     )
     assert a.id == b.id != old.id
