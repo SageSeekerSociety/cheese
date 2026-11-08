@@ -290,6 +290,16 @@ _BLOCKED_BY_CARD_MESSAGES = {
 #: Refusal when the branch genuinely holds nothing the base does not. This is
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
+#: Refusal for a filing that arrives while another filing for the same task is
+#: still being handled (FB-108). Its reader is usually an agent whose first call
+#: timed out on the client side and is retrying: that first call may still land
+#: a card, so the answer is to look, not to file again.
+_FILING_IN_PROGRESS = (
+    "这条任务的另一次递卡还在处理中（常见于上一次调用在客户端超时、服务端还没做完），"
+    "不要再递：等几秒用 cheese_session(action=status) 看卡有没有出来，"
+    "没有再递一次"
+)
+
 #: Refusal for a card filed with no commit subject at all. The reader is an
 #: agent one turn away from re-filing, so it says where the right format comes
 #: from — the repository's own convention — rather than only "缺少 subject".

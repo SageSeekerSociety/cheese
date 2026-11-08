@@ -11,14 +11,17 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.errors import ValidationError
+from app.core.errors import ConflictError, ValidationError
 from app.domain.agent.announce import announce
 from app.domain.agent_instance.adapters import project_team
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.services import AcceptService
-from app.domain.review.services._shared import _BLOCKED_BY_CARD_MESSAGES
+from app.domain.review.services._shared import (
+    _BLOCKED_BY_CARD_MESSAGES,
+    _FILING_IN_PROGRESS,
+)
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_tree_sealing_and_quick_check import (
     _admits_anyone,
@@ -79,7 +82,7 @@ def _open_task(client) -> tuple[uuid.UUID, uuid.UUID]:
     return room, client.portal.call(run)
 
 
-def test_a_second_filing_while_the_first_reads_the_branch_is_refused(
+def test_a_second_filing_while_the_first_is_in_flight_is_refused(
     client, app_world, monkeypatch
 ):
     room, task_id = _open_task(client)
@@ -114,9 +117,9 @@ def test_a_second_filing_while_the_first_reads_the_branch_is_refused(
     first, second = client.portal.call(race)
 
     assert isinstance(first, AcceptCard)
-    assert isinstance(second, ValidationError)
-    assert _BLOCKED_BY_CARD_MESSAGES[AcceptStatus.pending] in str(second)
-    # 被挡住的那次没走到 forge：它是在第一张卡提交之后才查的。
+    # 后到的那次当场被拒，告诉它先看看第一次有没有落卡；没有走到 forge。
+    assert isinstance(second, ConflictError)
+    assert _FILING_IN_PROGRESS in str(second)
     assert not second_at_forge.is_set()
     pending = client.portal.call(_pending_cards, client, task_id)
     assert [c.id for c in pending] == [first.id]
