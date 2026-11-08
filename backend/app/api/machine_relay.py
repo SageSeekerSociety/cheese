@@ -96,10 +96,23 @@ def forwarder(client: httpx.AsyncClient, base: str) -> Handler:
     return answer
 
 
+#: How long an idle connection to the backend is kept for the next request.
+#: The backend's uvicorn closes a connection idle for 5 s (its default
+#: ``--timeout-keep-alive``), and httpx's own default here is also 5 s, so a
+#: request could go out on a socket the backend was closing at that instant
+#: and fail before any answer: "Server disconnected without sending a
+#: response" or a connection reset, logged as "machine stream ... failed".
+#: Letting go well before the backend does leaves no such moment.
+KEEPALIVE_S = 2.0
+
+
 def over_http(origin: str) -> Handler:
     # An address inside the deployment: never through an outbound proxy the
     # environment may name, which would also be handed the secret.
-    return forwarder(httpx.AsyncClient(trust_env=False), origin)
+    client = httpx.AsyncClient(
+        trust_env=False, limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S)
+    )
+    return forwarder(client, origin)
 
 
 def in_process(app) -> Handler:
