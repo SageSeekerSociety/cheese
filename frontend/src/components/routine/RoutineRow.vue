@@ -70,7 +70,13 @@ const emit = defineEmits<{
 }>()
 
 /** 这条规则此刻怎么了：图形和颜色都跟着它走。 */
-const kind = computed<RoutineStateKind>(() => routineStateKind(props.routine))
+const kind = computed<RoutineStateKind>(() =>
+  routineStateKind({
+    state: props.routine.state,
+    lastRunStatus: props.routine.last_run_status,
+    trigger: props.routine.trigger,
+  })
+)
 /**
  * 「什么时候跑」。停着的规则说它为什么停（话题归档了，没有下一回）；其余照后端那句话，
  * 只是把括号里的时区换成人读的说法（见 `routineWhenLine`）。

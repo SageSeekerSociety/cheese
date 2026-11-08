@@ -15,7 +15,9 @@
     "schedule": "按时间",
     "library_file_added": "资料库新增文件时",
     "task_closed": "任务关闭时",
-    "card_accepted": "成果被采纳时"
+    "card_accepted": "成果被采纳时",
+    "task_filed": "任务提交审阅时",
+    "task_decided": "任务的审阅有结果时"
   },
   "freq": {
     "daily": "每天",
@@ -28,7 +30,8 @@
     "paused": "已暂停",
     "queued": "排队中，这就跑",
     "missed": "上一次没能执行",
-    "filling": "芝士生成中"
+    "filling": "芝士生成中",
+    "done": "已完成"
   },
   "line": {
     "chip": "例行 · {title}",
@@ -153,7 +156,10 @@
     "time": "几点",
     "minute": "分钟",
     "day": "日期",
-    "timezone": "时区"
+    "timezone": "时区",
+    "outcomeEither": "采纳或退回都算",
+    "outcomeAccepted": "只看采纳",
+    "outcomeRejected": "只看退回"
   },
   "deleteTitle": "删除「{title}」",
   "deleteBody": "删除后不再执行，执行记录也一起删除；已经放进频道的结果文件保留",

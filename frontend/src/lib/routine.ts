@@ -62,7 +62,13 @@ export interface Routine {
   updated_at: string
 }
 
-export type RoutineTrigger = 'schedule' | 'library_file_added' | 'task_closed' | 'card_accepted'
+export type RoutineTrigger =
+  | 'schedule'
+  | 'library_file_added'
+  | 'task_closed'
+  | 'card_accepted'
+  | 'task_filed'
+  | 'task_decided'
 export type RoutineState = 'active' | 'paused'
 export type RoutineRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
 
@@ -130,14 +136,38 @@ export function routineRoomTarget(r: Pick<Routine, 'project_id' | 'topic_id'>): 
  * 沙漏、上一次没跑成的那条要画红叉，这两档得看最近一次执行（`last_run_status`）。
  * 停着的规则先说话：它不会跑了，最近那次跑成什么样都是过去的事。
  */
-export type RoutineStateKind = 'active' | 'paused' | 'queued' | 'missed' | 'filling'
+export type RoutineStateKind = 'active' | 'paused' | 'queued' | 'missed' | 'filling' | 'done'
 
-export function routineStateKind(r: Pick<Routine, 'state' | 'last_run_status' | 'trigger'>): RoutineStateKind {
+/** The two sides spell their own row's state differently — a channel rule is
+ *  `active|paused` with the last run's status beside it, a person's is
+ *  `active|paused|filling|done` with why it paused. Both reach the same six
+ *  kinds here, so one row component can draw either. */
+export interface RowState {
+  state: string
+  /** A channel rule's latest run, when the row is one of those. */
+  lastRunStatus?: RoutineRunStatus | null
+  /** A person's rule: whether it waits for one thing only. */
+  once?: boolean
+  /** 空着 = 还没定什么时候跑（只有个人那套会这么存）。 */
+  trigger?: string
+}
+
+/**
+ * 一条规则在行上说的那一件事 —— 那颗图形。
+ *
+ * 好几档不在规则自己身上：规则只知道「启用中 / 已暂停 / 已完成」，而正在排队的那条要
+ * 画沙漏、上一次没跑成的那条要画红叉，这两档得看最近一次执行。停着的规则先说话：
+ * 它不会跑了，最近那次跑成什么样都是过去的事。
+ */
+export function routineStateKind(r: RowState): RoutineStateKind {
+  if (r.state === 'done') return 'done'
   // 建的时候留了空、芝士正在补：它没在跑，也停不了，和「已暂停」不是一回事。
-  if (r.state === 'active' && !r.trigger) return 'filling'
+  if (r.state === 'filling') return 'filling'
+  if (r.state === 'active' && r.trigger === '') return 'filling'
   if (r.state === 'paused') return 'paused'
-  if (r.last_run_status === 'queued' || r.last_run_status === 'running') return 'queued'
-  if (r.last_run_status === 'failed' || r.last_run_status === 'skipped') return 'missed'
+  const last = r.lastRunStatus
+  if (last === 'queued' || last === 'running') return 'queued'
+  if (last === 'failed' || last === 'skipped') return 'missed'
   return 'active'
 }
 
@@ -159,6 +189,8 @@ const STATE_ICONS: Record<RoutineStateKind, string> = {
   missed: 'mdi-close',
   // 补全中：一个转圈，点不动（它没在跑，也停不了）。
   filling: 'mdi-loading',
+  // 只做一次的跑完了：它不再有下一次，一颗勾说这个。
+  done: 'mdi-check',
 }
 
 export function routineStateIcon(kind: RoutineStateKind): string {
@@ -242,7 +274,14 @@ export function routineRunLabel(s: RoutineRunStatus): string {
 }
 
 export function routineTriggers(): { value: RoutineTrigger; title: string }[] {
-  const values: RoutineTrigger[] = ['schedule', 'library_file_added', 'task_closed', 'card_accepted']
+  const values: RoutineTrigger[] = [
+    'schedule',
+    'library_file_added',
+    'task_closed',
+    'card_accepted',
+    'task_filed',
+    'task_decided',
+  ]
   return values.map((v) => ({ value: v, title: t(`routines.trigger.${v}`) }))
 }
 
