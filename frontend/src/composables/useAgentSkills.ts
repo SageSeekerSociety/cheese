@@ -33,6 +33,8 @@ export interface SkillItem {
   name: string
   description: string
   source: SkillSource
+  /** 带着、但这一次在池子里查不到（机器离线、扫描失败、项目技能停用）：来源是猜的。 */
+  unresolved?: boolean
 }
 
 function dedupe(items: SkillItem[]): SkillItem[] {
@@ -91,10 +93,12 @@ export function useAgentSkills(
 
   const carried = computed<string[]>(() => carriedNames.value)
 
-  /** 带上的技能，连池子里查不到的也画出来（名字认得、说明欠奉），从格子里消失更糟。 */
+  /** 带上的技能，连池子里查不到的也画出来（名字认得、说明欠奉），从格子里消失更糟。
+   *  查不到的标上 `unresolved`：来源只是猜的，面板别拿它当「平台发给每位队友」。 */
   const carriedItems = computed<SkillItem[]>(() =>
     carriedNames.value.map(
-      (name) => pool.value.find((p) => p.name === name) ?? { name, description: '', source: 'platform' }
+      (name) =>
+        pool.value.find((p) => p.name === name) ?? { name, description: '', source: 'platform', unresolved: true }
     )
   )
 
