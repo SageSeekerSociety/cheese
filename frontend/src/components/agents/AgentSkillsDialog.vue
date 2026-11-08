@@ -138,12 +138,17 @@ const locked = () => !props.canManage || props.editingBlocked
             }}
           </p>
           <p v-else-if="locked()" class="skills__note t-meta-read">{{ t('work.room.skills.managerOnly') }}</p>
-          <div class="skills__grid">
+          <!-- The board is a list named after the teammate; each socket says whether it is lit, so the light is not colour alone. -->
+          <div class="skills__grid" role="list" :aria-label="t('work.room.skills.carriedTitle', { name: agentName })">
             <div
               v-for="s in boardSkills"
               :key="s.name"
               class="socket"
               :class="{ 'socket--on': availableNow(s) }"
+              role="listitem"
+              :aria-label="
+                t(availableNow(s) ? 'work.room.skills.socketLit' : 'work.room.skills.socketUnlit', { name: s.name })
+              "
               :title="s.description || s.name"
             >
               <span class="socket__hole"
