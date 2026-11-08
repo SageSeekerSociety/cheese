@@ -35,7 +35,9 @@ async function finish({ answers, skipAll, draft, files }: WelcomeFinish) {
     if (room) {
       const atts = []
       for (const file of files) atts.push(await uploadAttachment(room, file))
-      if (draft || atts.length) saveComposerDraft(room, { draft, reply: null, atts })
+      // 第一句点名建好的项目里实际的默认队友：直接回车只发给成员，没被点名的队友不会接。
+      const said = draft ? `@${done.teammate || t('work.room.defaultAgentName')} ${draft}` : ''
+      if (said || atts.length) saveComposerDraft(room, { draft: said, reply: null, atts })
     }
     await refreshProjects()
     await router.replace(

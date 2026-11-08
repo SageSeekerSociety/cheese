@@ -14,6 +14,7 @@ import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
 
+import { vGuideAnchor } from '../../composables/useGuideAnchors'
 import { useMessageFold } from '../../composables/useMessageFold'
 import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
@@ -179,6 +180,8 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
+// 新手浮窗「预览」一站圈的是芝士摆出来的那份；人自己发的附件不算。
+const previewAnchor = computed(() => (props.block.kind === 'artifact' ? 'preview-card' : ''))
 const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
 /** 芝士摆出来的「正在跑的应用」：内容是一句说明，不是文件路径。 */
 const APP_MIME = 'application/x-cheesex-app'
@@ -329,12 +332,14 @@ const told = computed(() => toldByMessage(props.refs))
         />
         <!-- 芝士摆出来给人看的一份东西（`cheese show`），或对话里发来的可预览文档附件：
            点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+        <!-- 芝士摆出来的那份（artifact）登记成新手浮窗「预览」一站的目标（`previewAnchor`）。 -->
         <template v-else-if="canOpenFile">
           <!-- 能翻页的文档（PDF、Word、幻灯片）和表格画成富卡片（封面、版本、改过没有，
                底下自带打开/展开/下载）；芝士摆出来的应用画成带运行状态的卡片；其余（网页、
                markdown、代码）照旧一颗小卡片。 -->
           <MessageFileCard
             v-if="richFileCard"
+            v-guide-anchor="previewAnchor"
             :topic-id="topicId"
             :path="block.content"
             :name="artifactName(block)"
@@ -346,6 +351,7 @@ const told = computed(() => toldByMessage(props.refs))
           />
           <MessageAppCard
             v-else-if="block.mime_type === APP_MIME"
+            v-guide-anchor="previewAnchor"
             :conversation-id="block.conversation_id || topicId"
             :block-id="block.id"
             :description="block.content"
@@ -353,6 +359,7 @@ const told = computed(() => toldByMessage(props.refs))
           />
           <button
             v-else
+            v-guide-anchor="previewAnchor"
             type="button"
             class="im-artifact"
             :title="t('work.room.message.openFile', { name: artifactName(block) })"
