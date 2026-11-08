@@ -513,6 +513,7 @@ void openPlace()
             @update:tab="onPanelTab"
             @viewing="viewingPath = $event"
             @locate="onLocate"
+            @navigate="router.push($event)"
           >
             <!-- 页签栏右端：铺满（专注模式）和收起面板。只在桌面上并排的时候有。 -->
             <template v-if="mdAndUp && docked" #tab-actions>

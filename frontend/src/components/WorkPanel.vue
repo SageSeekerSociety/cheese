@@ -30,6 +30,7 @@ import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
+import type { RouteLocationRaw } from 'vue-router'
 import type { TabDef, TabKey } from './panels/panelTabList'
 import type PanelDocHostComponent from './work/PanelDocHost.vue'
 
@@ -47,6 +48,7 @@ import { tabFile } from '../lib/viewingContext'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
+import DocumentActions from './library/DocumentActions.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的「例行事务」）。这个文件里 `panelTabs` 已经
 // 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
 import { workPanelTabs } from './panels/panelTabList'
@@ -166,6 +168,8 @@ const emit = defineEmits<{
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层；图上画过东西时
   // 随行带那张合成图。
   (e: 'locate', payload: PreviewLocate): void
+  // 自由区里的文档被挪到别处：去它的新地址（地址是页面的事，见 `tab`）。
+  (e: 'navigate', to: RouteLocationRaw): void
 }>()
 
 // 有哪几格、各叫什么、挂哪个图标在 `panels/panelTabList.ts`：文档里的演示照着
@@ -746,6 +750,32 @@ async function closeFile(path: string) {
   setTab(origin && tabs.value.some((t) => t.key === origin) ? origin : defaultTab.value)
 }
 
+// 自由区文档「⋯」里的分享、移动、删除：和资料库那一页同一套框和动作。
+const docActions = ref<InstanceType<typeof DocumentActions> | null>(null)
+const roomFilesRef = ref<InstanceType<typeof RoomFilesPanelHost> | null>(null)
+
+// 删掉了：这一格关掉，别的房间里记着的那一格也拿掉（回去时不该再开出一份已经没有的
+// 文档），「文件」那一格重新取一遍。
+function documentRemoved(id: string) {
+  const path = DOC_TAB + id
+  const here = conversationId.value
+  for (const [tid, files] of filesByTopic) {
+    if (tid !== here && files.some((f) => f.path === path))
+      filesByTopic.set(
+        tid,
+        files.filter((f) => f.path !== path)
+      )
+  }
+  void closeFile(path)
+  void roomFilesRef.value?.reload()
+}
+
+// 挪走了：它已经不在这个项目里，这一格关掉，再像资料库那一页一样去它的新地址。
+async function documentMoved(id: string, to: RouteLocationRaw) {
+  await closeFile(DOC_TAB + id)
+  emit('navigate', to)
+}
+
 function setFiles(next: OpenFileTab[]) {
   openFiles.value = next
   const tid = conversationId.value
@@ -894,6 +924,7 @@ defineExpose({
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoomFilesPanelHost
             v-if="mounted.has('files')"
+            ref="roomFilesRef"
             v-show="shown('files')"
             :class="[enterClass('files'), sideClass('files')]"
             :topic-id="taskId ?? topicId"
@@ -926,6 +957,9 @@ defineExpose({
               :members="members"
               :topic-list="topicList"
               @titled="retitle(f.document!.id, $event)"
+              @share="docActions?.share(f.document!.id)"
+              @move="docActions?.move(f.document!.id)"
+              @delete="docActions?.remove(f.document!)"
               @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
               @mention-click="emit('mention-click', $event)"
             />
@@ -967,6 +1001,12 @@ defineExpose({
           </template>
         </div>
       </ErrorBoundary>
+      <DocumentActions
+        ref="docActions"
+        :project-id="projectId ?? topic?.project_id ?? ''"
+        @removed="documentRemoved"
+        @moved="documentMoved"
+      />
     </template>
   </div>
 </template>
