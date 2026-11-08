@@ -176,7 +176,9 @@ export function useAgentSkills(
   async function saveCarried(next: string[]) {
     const pid = projectId()
     const subject = agent()
-    if (!pid || !subject || saving.value) return
+    // 只读的这一轮不写名单：面板上灰掉的按钮挡不住所有路径（比如先点了「装」、占用的回答
+    // 后到），写入口自己也要守住。
+    if (!pid || !subject || saving.value || editingBlocked.value) return
     const before = [...carriedNames.value]
     carriedNames.value = next
     saving.value = true
@@ -257,7 +259,8 @@ export function useAgentSkills(
     const device = deviceId.value
     const pid = projectId()
     const subject = agent()
-    if (!device || !pid || !subject || scanning.value) return
+    // 只读的这一轮连机器也不碰：装上去的技能收不回来，而面板说的是「这一轮只读」。
+    if (!device || !pid || !subject || scanning.value || editingBlocked.value) return
     // 装到机器上要等一阵：装完人已经换场了，就不能把它装备给现在面板上的那一位。技能已经
     // 落在机器上，下次打开面板会在池子里看到。
     const stillHere = boundTo(pid, subject.id)

@@ -607,4 +607,51 @@ describe('队友技能面板', () => {
     expect(fail).toHaveBeenCalledWith('skillWebSpec')
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
   })
+
+  it('别人正占着、面板只读：网上取技能既不落到机器上，也不写队友的名单', async () => {
+    vi.mocked(setAgentEditing).mockRejectedValue(new ApiError(409, 'conflict'))
+    const s = skills()
+    await s.openSkills()
+    await s.holdAgent('a1')
+    expect(s.editingBlocked.value).toBe(true)
+
+    await s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
+
+    expect(fetchMachineSkill).not.toHaveBeenCalled()
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+    expect(s.carried.value).toEqual(['wolfram'])
+    expect(s.scanning.value).toBe(false)
+  })
+
+  it('取到一半才得知别人正占着：落盘那一步收不回，名单照样不写', async () => {
+    let releaseScan: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseScan = resolve))
+    vi.mocked(fetchMachineSkill).mockImplementationOnce(async () => {
+      await held
+      return {
+        landed: true,
+        plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
+        skills: [
+          { name: 'pdf', description: '读 PDF', source_root: '/w/pdf', digest: 'x', state: 'seen', adopted: false },
+        ],
+        problems: [],
+        roots: [],
+        workspaces: [],
+      } as never
+    })
+    let refuse: (e: unknown) => void = () => {}
+    vi.mocked(setAgentEditing).mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)))
+    const s = skills()
+    await s.openSkills()
+    const holding = s.holdAgent('a1')
+    const installing = s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
+    refuse(new ApiError(409, 'conflict'))
+    await holding
+    releaseScan()
+    await installing
+
+    expect(fetchMachineSkill).toHaveBeenCalledTimes(1)
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+    expect(s.carried.value).toEqual(['wolfram'])
+  })
 })

@@ -103,6 +103,13 @@ describe('技能市场（共享）', () => {
     expect(button.getAttribute('title')).toBe(t('work.room.skills.noMachine'))
   })
 
+  it('宿主说这一轮只读时 + 按不动，机器在也一样', async () => {
+    mount({ deviceId: 'dev1', disabled: true })
+
+    const button = await screen.findByLabelText(t('work.room.skills.marketInstall'))
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('目录没读出来：失败留在这块并给重试，点了往上发 retry', async () => {
     const { emitted } = mount({ market: null, failed: true, failureReason: 'offline' })
 

@@ -171,6 +171,13 @@ describe('技能弹窗', () => {
     expect(document.querySelector('.socket--on')).toBeTruthy()
   })
 
+  it('别人正占着「编辑中」：市场卡片上的 + 也按不动', async () => {
+    mount({ editingBlocked: true, editingBy: 'alice' })
+
+    const button = await screen.findByLabelText('装到这台机器上')
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('占着的那位没留下名字：说什么都不假造一个名字', async () => {
     mount({ editingBlocked: true })
 

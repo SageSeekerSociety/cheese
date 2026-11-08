@@ -181,6 +181,7 @@ const removable = (skill: SkillItem) => carriedNames.value.has(skill.name)
       :failed="marketFailed"
       :failure-reason="marketFailureReason"
       :forbidden="marketForbidden"
+      :disabled="locked()"
       @install="emit('install', $event)"
       @retry="emit('retryMarket')"
     />

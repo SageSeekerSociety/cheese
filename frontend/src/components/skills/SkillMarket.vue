@@ -51,6 +51,8 @@ const props = withDefaults(
     failureReason?: string | null
     /** 目录读失败是 401/403：说没权限、不给重试（BaseLoadError 的 forbidden）。 */
     forbidden?: boolean
+    /** 宿主说这一轮只读（例如别人正占着队友的「编辑中」）：+ 按不动，原因由宿主说。 */
+    disabled?: boolean
   }>(),
   {
     market: null,
@@ -62,6 +64,7 @@ const props = withDefaults(
     failed: false,
     failureReason: null,
     forbidden: false,
+    disabled: false,
   }
 )
 
@@ -159,7 +162,7 @@ const cards = computed(() => {
             v-if="card.kind !== 'mcp' && card.url !== ''"
             type="button"
             class="mcard__add"
-            :disabled="scanning || !deviceId || saving"
+            :disabled="disabled || scanning || !deviceId || saving"
             :aria-label="t('work.room.skills.marketInstall')"
             :title="deviceId ? t('work.room.skills.marketInstall') : t('work.room.skills.noMachine')"
             @click="emit('install', { url: card.url, kind: card.kind as 'skill' | 'plugin' })"
