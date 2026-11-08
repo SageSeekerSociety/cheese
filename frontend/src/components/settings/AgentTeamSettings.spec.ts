@@ -581,6 +581,23 @@ describe('去掉队友已带的技能', () => {
     await waitFor(async () => expect(((await removePdf()) as HTMLButtonElement).disabled).toBe(false))
   })
 
+  // 机器离线、扫描失败时 pdf 在池子里查不到：名字照样画在板上，也照样能去掉 —— 不然
+  // 一个关了机的笔记本上的技能就永远摘不下来。
+  it('机器读不到时，已带的 pdf 照样能去掉', async () => {
+    world()
+    listMachineSkills.mockRejectedValue(new Error('offline'))
+    updateProjectAgent.mockResolvedValue({ version: 2 })
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await fireEvent.click(await removePdf())
+
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    expect(updateProjectAgent.mock.calls[0][2]).toMatchObject({
+      configuration: expect.objectContaining({ skills: ['wolfram'] }),
+    })
+  })
+
   it('别人正占着这位队友：按不动，也不发保存', async () => {
     world('held')
     mountPage()
