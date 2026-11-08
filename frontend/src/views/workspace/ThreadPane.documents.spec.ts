@@ -177,6 +177,7 @@ async function mountThread(threadId: string, block: Block, start?: RouteLocation
         members: [],
         topicList: [topic],
         memberNames: {},
+        toTask: async () => {},
       }),
   })
 

@@ -1,5 +1,5 @@
-// 频道页上点开一段对话去哪：支线和任务都在右半边，任务页由那里的「整页打开」进；
-// 转为任务之后接着显示哪一段。
+// 频道页上点开一段对话去哪：支线在右半边；任务（支线原地转成的、另开的、新建的）去任务页，
+// 和侧栏任务行点开的是同一处。转为任务之后接着去那件任务的任务页。
 import type { Router } from 'vue-router'
 import type { Block } from '@/cx_types'
 
@@ -23,9 +23,11 @@ export function useConversationOpening(opts: {
     void opts.router.push({ name: 'workspace-thread', params: { projectId, topicId, threadId } })
   }
 
-  // 主线上一条消息的支线：有就打开，没有就先开一条。
+  // 主线上一条消息的支线：有就打开，没有就先开一条。已经原地转成任务的，去任务页。
   async function onOpenThread(block: Block) {
-    if (block.thread?.id) return showThread(block.thread.id)
+    const thread = block.thread
+    if (thread?.tasks?.some((task) => task.id === thread.id)) return openTaskPage(thread.id)
+    if (thread?.id) return showThread(thread.id)
     try {
       showThread((await openThread(block.id)).id)
     } catch (e) {
@@ -33,28 +35,31 @@ export function useConversationOpening(opts: {
     }
   }
 
-  // 任务有自己的页面，浏览器的返回退回频道。
-  function openTaskPage(taskId: string) {
-    const { projectId, topicId } = opts.place()
-    void opts.router.push({ name: 'workspace-task', params: { projectId, topicId, taskId } })
+  // 地址里只有任务的编号，它所在的频道由路由的 `addressProps` 补上。
+  function taskPage(taskId: string) {
+    return { name: 'workspace-task', params: { projectId: opts.place().projectId, taskId } }
   }
 
-  // 任务在频道页右半边打开，和支线一样；任务页由那里的「整页打开」进。已经在任务页上
-  // 时（那里没有右半边），点到的任务换成它的任务页。
-  function onOpenCard(taskId: string) {
-    if (!opts.place().taskId) return showThread(taskId)
-    openTaskPage(taskId)
+  // 任务有自己的页面，浏览器的返回退回原来那一页。
+  function openTaskPage(taskId: string) {
+    return opts.router.push(taskPage(taskId))
+  }
+
+  // 地址上这条支线就是这件任务（原地转成了它）：地址换成任务页，不再留一条支线的记录——
+  // 退回到那一条，它又会转到这里。
+  function showAsTask(taskId: string) {
+    return opts.router.replace(taskPage(taskId))
   }
 
   // 转为任务：主线上的一条消息（或支线页头那颗），是它的支线原地转成任务；支线里的一条
-  // 回复是另开一件。都在右半边接着显示。
+  // 回复是另开一件。都接着去那件任务的任务页，不等侧栏的清单重取回来。
   async function upgradeMessage(messageId: string) {
     const made = await store.upgradeMessage(messageId)
     if (!made) return
-    if (opts.place().taskId) return openTaskPage(made.id)
-    await queryClient.invalidateQueries({ queryKey: keys.roomThread(made.id) })
-    if (opts.place().threadId !== made.id) showThread(made.id)
+    // 手上那份支线还写着没转：作废，之后再点开它读回来的是任务。
+    void queryClient.invalidateQueries({ queryKey: keys.roomThread(made.id) })
+    await (opts.place().threadId === made.id ? showAsTask(made.id) : openTaskPage(made.id))
   }
 
-  return { showThread, onOpenThread, openTaskPage, onOpenCard, upgradeMessage }
+  return { showThread, onOpenThread, openTaskPage, showAsTask, upgradeMessage }
 }

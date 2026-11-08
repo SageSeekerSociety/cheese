@@ -43,7 +43,7 @@ export function useTopicActions(opts: {
   /** 支线：打开一条、开任务页、把一条消息转成任务。 */
   opening: {
     onOpenThread: (block: Block) => void
-    onOpenCard: (taskId: string) => void
+    openTaskPage: (taskId: string) => void
     upgradeMessage: (messageId: string) => void
   }
   openTopic: (topicId: string) => void
@@ -96,7 +96,7 @@ export function useTopicActions(opts: {
     'upgrade-message': opts.opening.upgradeMessage,
     'open-thread': opts.opening.onOpenThread,
     'open-topic': opts.openTopic,
-    'open-card': opts.opening.onOpenCard,
+    'open-card': opts.opening.openTaskPage,
     review: opts.onReview,
   }
 

@@ -60,6 +60,15 @@ describe('新手引导的后半程', () => {
     expect(guide.current.value?.key).toBe('taskPage')
   })
 
+  it('a thread already turned into a task opens on the task page, and the reply step still moves on there', () => {
+    const guide = useProjectTour()
+    const facts = { ...none, asked: true }
+    noteFacts(facts)
+    guide.stop.value = at('reply')
+    guide.settle({ facts, has: onPage('task-page') })
+    expect(guide.current.value?.key).toBe('confirm')
+  })
+
   it('stays on the reply while 芝士 could not reply, even with the thread open', () => {
     const guide = useProjectTour()
     const facts = { ...none, asked: true }
@@ -161,21 +170,15 @@ describe('导览这一站指哪里', () => {
     (name: string) =>
       anchors.includes(name) ? el(name) : null
 
+  it('确认那一站：支线已经转成任务、人在任务页上时，浮窗落在任务页上，不丢', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('confirm')], onPageEls('task-page'))
+    expect(stop?.target).toBe(el('task-page'))
+  })
+
   it('到了任务页就是整块区域：不画圈，浮窗落在页面上', () => {
     const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-page'))
     expect(stop?.target).toBe(el('task-page'))
     expect(stop?.text).toBe('text')
-    expect(stop?.area).toBe(true)
-  })
-
-  it('还只在支线右半边时，圈的是「整页打开」那颗按钮', () => {
-    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-open-page'))
-    expect(stop?.target).toBe(el('task-open-page'))
-    expect(stop?.area).toBe(false)
-  })
-
-  it('任务页和按钮都在时，按锚点顺序认任务页', () => {
-    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-page', 'task-open-page'))
     expect(stop?.area).toBe(true)
   })
 
