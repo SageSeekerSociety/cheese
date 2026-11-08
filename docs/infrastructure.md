@@ -676,10 +676,12 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   named rather than averaged away. It says so in Feishu when
   `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either way. Listing
   runners needs Administration (read) on the repository, which the workflow
-  token can never hold, so the job reads the `CI_POOL_RUNNERS_TOKEN` secret (a
-  fine-grained token or GitHub App token with only that permission, on this
-  repository only); while the secret is unset the job leaves a notice that the
-  pool was not checked and sends nothing.
+  token can never hold, so the job reads the `CI_POOL_RUNNERS_TOKEN` secret: a
+  fine-grained personal access token with only that permission, on this
+  repository only. A GitHub App installation token expires within the hour, so
+  using an App means adding a step that mints one per run, not storing one.
+  While the secret is unset the job leaves a notice that the pool was not
+  checked, sends nothing and stays green.
   `box-heartbeat.yml`'s `ci-pool` job remains as the "can the pool still run
   anything at all" check.
 - Liveness (on demand): `box-diag.yml`'s `ci-pool` job prints hostname, disk,
