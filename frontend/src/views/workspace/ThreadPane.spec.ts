@@ -1,5 +1,5 @@
-/** 打开一条支线就算读过它；页头一行写它说的事，「转为任务」把这条支线原地转成任务，转成以后
- *  页头写任务名、状态、负责人和「整页打开」。从这里另开的几件任务列在挂着的那条消息下面。 */
+/** 打开一条支线就算读过它；页头一行写它说的事，「转为任务」把这条支线原地转成任务。读回来
+ *  是一件任务时不在这里画，交给外面换成任务页。从这里另开的几件任务列在挂着的那条消息下面。 */
 import type { Component } from 'vue'
 import type { Block, RoomTask, Topic } from '@/cx_types'
 import type { ThreadSummary } from '@/types/threads'
@@ -114,9 +114,11 @@ const CHAT_PANEL_STUB = {
     '<div data-testid="chat-scroll"><slot name="timeline-start" /><slot name="timeline-end" /><slot name="above-composer" /></div>',
 }
 
+const toTask = vi.fn<(blockId: string) => Promise<void>>(async () => {})
+
 function mount() {
   return render(ThreadPane as Component, {
-    props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
+    props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' }, toTask },
     global: {
       plugins: [vuetify],
       stubs: {
@@ -136,6 +138,9 @@ function mount() {
 
 beforeEach(() => {
   markRead.mockClear()
+  toTask.mockReset()
+  toTask.mockImplementation(async () => {})
+  queryClient.clear()
   getThread.mockReset()
   roomTasks.value = []
 })
@@ -178,9 +183,27 @@ describe('支线', () => {
   it('「转为任务」转的是它挂着的那条消息：这条支线原地转', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     roomTasks.value = [task('task9', 'b1')]
-    const { findByTestId, emitted } = mount()
+    const { findByTestId } = mount()
     await fireEvent.click(await findByTestId('thread-to-task'))
-    expect(emitted()['to-task']).toEqual([['b1']])
+    expect(toTask).toHaveBeenCalledWith('b1')
+  })
+
+  it('「转为任务」按下去到请求回来之前按不动第二下；回来了没转成，马上能再按', async () => {
+    getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    let settle = () => {}
+    toTask.mockImplementation(() => new Promise<void>((resolve) => (settle = resolve)))
+    const { findByTestId } = mount()
+    const button = await findByTestId('thread-to-task')
+    await fireEvent.click(button)
+    // 请求慢：过了好几秒还没回来，按钮仍在忙，第二下不再发一次。
+    await new Promise((resolve) => setTimeout(resolve, 1600))
+    await fireEvent.click(button)
+    expect(toTask).toHaveBeenCalledTimes(1)
+    // 回来了（没转成，页面没走）：按钮回来，立刻能再按。
+    settle()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await fireEvent.click(button)
+    expect(toTask).toHaveBeenCalledTimes(2)
   })
 
   it('页头只有一行，写那条消息说的事，开头点的名不写', async () => {
@@ -196,8 +219,7 @@ describe('支线', () => {
     await waitFor(() => expect(heading.textContent).toBe('登录要不要加手机验证码？'))
   })
 
-  it('转成任务以后，页头写任务名、状态和负责人，整页打开去任务页', async () => {
-    roomTasks.value = [{ ...task('th1', 'b1', '登录验证码'), presentation: { column: 'building', phrase: 'running' } }]
+  it('读回来是一件任务（原地转成的、另开的、新建的）：交给外面换成任务页', async () => {
     getThread.mockResolvedValue({
       id: 'th1',
       room_id: 'r1',
@@ -206,38 +228,15 @@ describe('支线', () => {
       root: root(),
       task: 'th1',
     })
-    const { findByRole, findByTestId, queryByTestId, getByText, emitted } = mount()
-    const heading = await findByRole('heading', { level: 2 })
-    await waitFor(() => expect(heading.textContent).toBe('登录验证码'))
-    expect(getByText('李安 负责')).toBeTruthy()
-    expect(queryByTestId('thread-to-task')).toBeNull()
-    // 这条支线自己转成的那件写在页头，不在下面再列一遍。
-    expect(queryByTestId('task-card')).toBeNull()
-    await fireEvent.click(await findByTestId('thread-open-page'))
-    expect(emitted()['open-page']).toEqual([['th1']])
+    const { emitted } = mount()
+    await waitFor(() => expect(emitted()['as-task']).toEqual([['th1']]))
   })
 
-  // 任务都在右半边打开：等人审阅的那一条（采纳框）在这里也看得见，不用先去整页。
-  it('打开的是任务时，输入框上方有这件任务的审阅那一条；支线没有', async () => {
-    roomTasks.value = [task('th1', 'b1', '登录验证码')]
-    getThread.mockResolvedValue({
-      id: 'th1',
-      room_id: 'r1',
-      root_block_id: 'b1',
-      reply_count: 2,
-      root: root(),
-      task: 'th1',
-    })
-    const asTask = mount()
-    await waitFor(() => expect(asTask.container.querySelector('topic-accept-card-stub')).not.toBeNull())
-    expect(asTask.container.querySelector('topic-accept-card-stub')?.getAttribute('taskid')).toBe('th1')
-    asTask.unmount()
-
+  it('支线的输入框上方没有审阅那一条', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
-    queryClient.clear()
-    const asThread = mount()
-    await asThread.findByTestId('thread-to-task')
-    expect(asThread.container.querySelector('topic-accept-card-stub')).toBeNull()
+    const { container, findByTestId } = mount()
+    await findByTestId('thread-to-task')
+    expect(container.querySelector('topic-accept-card-stub')).toBeNull()
   })
 
   it('从这里另开的任务都列着，点开去那件任务', async () => {

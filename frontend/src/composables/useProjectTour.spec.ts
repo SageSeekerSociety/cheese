@@ -168,17 +168,6 @@ describe('导览这一站指哪里', () => {
     expect(stop?.area).toBe(true)
   })
 
-  it('还只在支线右半边时，圈的是「整页打开」那颗按钮', () => {
-    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-open-page'))
-    expect(stop?.target).toBe(el('task-open-page'))
-    expect(stop?.area).toBe(false)
-  })
-
-  it('任务页和按钮都在时，按锚点顺序认任务页', () => {
-    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-page', 'task-open-page'))
-    expect(stop?.area).toBe(true)
-  })
-
   it('预览一站圈芝士摆出来的那份；还没摆出来时落在任务页上等', () => {
     const shown = resolveGuideStep(GUIDE_STEPS[at('preview')], onPageEls('preview-card', 'task-page'))
     expect(shown?.target).toBe(el('preview-card'))

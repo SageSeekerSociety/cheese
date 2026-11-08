@@ -57,14 +57,14 @@ export const GUIDE_STEPS: GuideStep[] = [
     key: 'task',
     anchors: ['task-card', 'task-row'],
     waiting: ['timeline', 'thread-pane'],
-    // 支线转成的任务在右半边打开，任务页由那里的「整页打开」进。
-    done: (c) => c.has('task-page') || c.has('task-pane'),
+    // 转成的任务在任务页上打开。
+    done: (c) => c.has('task-page'),
   },
   // 任务页是一整块区域：正文可能还是空的，只圈标题栏那一条什么也说明不了，浮窗就落在
-  // 页面上。还只在支线右半边时圈的是「整页打开」那颗按钮，那是颗要点的控件，照常画圈。
+  // 页面上。
   {
     key: 'taskPage',
-    anchors: ['task-page', 'task-open-page'],
+    anchors: ['task-page'],
     areas: ['task-page'],
     waiting: ['task-card', 'task-row'],
   },
