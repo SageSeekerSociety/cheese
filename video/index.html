@@ -1,0 +1,74 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FB-105 临时验收入口</title>
+<style>
+:root{--bd:#dde1e6;--mut:#5b6472;--bad:#c62828;--ok:#2e7d32}
+body{font:14px/1.55 system-ui,"Noto Sans CJK SC",sans-serif;margin:0;background:#f6f7f9;color:#1d2330}
+header{background:#fff;border-bottom:1px solid var(--bd);padding:14px 20px}
+h1{font-size:18px;margin:0} .mut{color:var(--mut);font-size:12.5px}
+main{padding:16px 20px;max-width:1280px}
+.box{background:#fff;border:1px solid var(--bd);border-radius:8px;padding:12px 14px;margin-bottom:14px;min-width:0}
+.box h2{font-size:15px;margin:0 0 8px}
+.box ul{margin:4px 0;padding-left:20px}
+.ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button{font:inherit;padding:8px 16px;border-radius:6px;border:1px solid var(--bd);background:#fff;cursor:pointer}
+button.before{border-color:var(--bad);color:var(--bad)} button.after{border-color:var(--ok);color:var(--ok)}
+button:disabled{opacity:.45;cursor:default}
+.banner{padding:10px 12px;border-radius:6px;font-weight:700;margin:6px 0 10px}
+.banner.success{background:#e8f5e9;color:var(--ok)} .banner.failure{background:#fdecea;color:var(--bad)}
+.banner.run{background:#eef3fb;color:#1f4e8c} .banner.error,.banner.inconclusive{background:#fff4e5;color:#8a5300}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:4px 0 8px}
+td,th{border:1px solid #e3e6ea;padding:4px 6px;text-align:left;vertical-align:top;word-break:break-all}
+th{background:#f1f3f5} tr.s400 td{background:#fdecea} tr.s200 td{background:#e8f5e9}
+.kv th{width:36%}
+pre{background:#0f1720;color:#d8dee9;padding:10px;border-radius:6px;overflow:auto;max-height:420px;font-size:12px;white-space:pre-wrap;word-break:break-all;margin:4px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+code{background:#f1f3f5;padding:0 3px;border-radius:3px}
+.hist span{display:inline-block;margin:2px 6px 2px 0;padding:2px 8px;border-radius:10px;border:1px solid var(--bd);cursor:pointer;font-size:12px}
+</style>
+<header><h1>FB-105 临时验收入口 · 目录里第三个模型的分身能力标记</h1>
+<div class="mut">临时页面，只为 PR #5205 验收用，不进产品。每点一次都是新的一轮：现场实算启动环境，再真起一个 Claude Code 进程。</div></header>
+<main>
+<div class="box"><h2>范围与判定</h2><ul>
+<li><b>改前</b> = main 树（本页启动时为 <code id="h-before">…</code>）；<b>改后</b> = PR #5205 分支树（<code id="h-after">…</code>）。两边各自现场跑一次 <code>_model_kwargs</code>，算出这一轮的启动环境。</li>
+<li><b>模拟条件</b>：网关目录里有两个模型，<code>keeps-it</code> 不带标记，<code>third-model</code> 标了 <code>mid_conversation_system=False</code>；主模型和默认子模型都是 keeps-it。主模型第一步把活派给 subagent_type=third-model 的分身。</li>
+<li><b>模型名说明</b>：<code>third-model</code> 只是本地模拟上游用的模型名，不是真实模型。FB-105 原报告里被拒的是 gpt-6-sol / gpt-6-astra；它们当时那次 400 的根因<b>尚未证实</b>，本页不能证明它。</li>
+<li><b>上游是本地模拟的</b>：third-model 收到对话中间的 system 角色消息就回 400「System messages are not allowed」，其余请求都回 200。真实网关、真实 gpt-6-sol/astra 都没碰。</li>
+<li><b>请求 ID</b>：每一轮有自己的 ID，Claude Code 在每个上游请求的 <code>x-fb105-run</code> 头里带上它；下面的上游日志只列带这个 ID 的请求。</li>
+<li><b>成功</b>：这一轮发给 third-model 的请求全是 200（消息角色里没有 system），Claude Code 输出里有 <code>OK from third-model</code>。<b>失败</b>：有 third-model 请求回 400，输出里是 <code>System messages are not allowed</code>。</li>
+<li>所有写入都在 <code>/tmp/fb105app/runs/&lt;请求 ID&gt;</code>（Claude Code 的家目录和配置目录也在里面）；不连真网关、不写产品数据库。</li>
+</ul></div>
+<div class="box"><div class="ctl">
+<button class="before" id="b-before" onclick="go('before')">运行改前（main）</button>
+<button class="after" id="b-after" onclick="go('after')">运行改后（PR #5205）</button>
+<span class="mut">一轮大约 15–40 秒；同一时刻只跑一轮。</span></div>
+<div class="hist mut" id="hist" style="margin-top:8px"></div></div>
+<div id="run"></div>
+</main>
+<script>
+let cur=null,timer=null;
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function go(side){const r=await fetch('/api/run?side='+side,{method:'POST'});const j=await r.json();cur=j.id;poll();}
+function show(id){cur=id;poll();}
+async function hist(){const l=await (await fetch('/api/runs')).json();document.getElementById('hist').innerHTML=l.length?'本页已跑：'+l.map(x=>`<span onclick="show('${x.id}')">${x.side==='before'?'改前':'改后'} ${x.id} · ${x.verdict??x.stage}</span>`).join(''):'';}
+function summarize(lines){const out=[];for(const l of lines){let e;try{e=JSON.parse(l)}catch{out.push(l);continue}
+ if(e.type==='system'&&e.subtype==='init')out.push(`[init] Claude Code ${e.claude_code_version} · model=${e.model} · agents=${(e.agents||[]).join(',')}`);
+ else if(e.type==='assistant'){for(const b of e.message?.content||[]){if(b.type==='text')out.push(`[${e.parent_tool_use_id?'分身':'主'} 回复] ${b.text}`);if(b.type==='tool_use')out.push(`[主 调用工具] ${b.name} ${JSON.stringify(b.input)}`)}}
+ else if(e.type==='user'){for(const b of e.message?.content||[]){if(b.type==='tool_result'){const c=typeof b.content==='string'?b.content:(b.content||[]).map(x=>x.text||'').join(' ');out.push(`[工具结果${b.is_error?' 错误':''}] ${c.slice(0,600)}`)}}}
+ else if(e.type==='result')out.push(`[结束] ${e.subtype} · is_error=${e.is_error} · ${String(e.result??'').slice(0,300)}`);
+ else if(e.type==='system'&&e.subtype==='api_retry')out.push(`[重试] ${JSON.stringify(e).slice(0,300)}`);
+}return out.join('\n');}
+async function poll(){clearTimeout(timer);if(!cur)return;const s=await (await fetch('/api/run/'+cur)).json();hist();
+ const running=!s.finished;['b-before','b-after'].forEach(i=>document.getElementById(i).disabled=running);
+ const cls=running?'run':s.verdict;const txt=running?`进行中：${s.stage}`:{success:'成功：分身请求不带 system 消息，third-model 回 200',failure:'失败：third-model 请求被上游拒 400（System messages are not allowed）',inconclusive:'没有结论：这一轮没有请求到 third-model',error:'出错：'+(s.error||'')}[s.verdict];
+ const ups=(s.upstream||[]).map(u=>`<tr class="s${u.status}"><td>${u.t}</td><td>${u.model}</td><td>${u.roles.join(' · ')}</td><td>${u.status}</td><td>${esc(u.reply)}</td></tr>`).join('');
+ const env=s.env?Object.entries(s.env).map(([k,v])=>`<tr><th>${k}</th><td>${v==null?'<b style="color:var(--bad)">（没有这个变量）</b>':esc(Array.isArray(v)?v.join(', '):v)}</td></tr>`).join(''):'';
+ document.getElementById('run').innerHTML=`<div class="box"><h2>这一轮 · ${s.side==='before'?'改前（main）':'改后（PR #5205）'} · 请求 ID <code>${s.id}</code></h2>
+ <div class="banner ${cls}">${esc(txt)}</div>
+ <table class="kv"><tr><th>树的 head</th><td>${esc(s.head||'…')}</td></tr><tr><th>Claude Code 版本</th><td>${esc(s.version||'…')}</td></tr><tr><th>开始 / 结束</th><td>${s.started} / ${s.finished||'…'}</td></tr><tr><th>命令</th><td>${esc(s.cmd||'…')}</td></tr><tr><th>退出码</th><td>${s.exit??'…'}</td></tr></table></div>
+ <div class="grid"><div class="box"><h2>这一轮实算的启动环境</h2><table class="kv">${env||'<tr><td>计算中…</td></tr>'}</table>
+ <h2>本次请求日志（假上游，只含 x-fb105-run=${s.id}）</h2><table><tr><th>时间</th><th>model</th><th>messages 角色</th><th>状态</th><th>上游回的</th></tr>${ups||'<tr><td colspan=5>还没有请求</td></tr>'}</table></div>
+ <div class="box"><h2>Claude Code 实际执行输出（摘要）</h2><pre>${esc(summarize(s.out||[]))||'…'}</pre>
+ <details><summary class="mut">原始 stream-json（${(s.out||[]).length} 行）</summary><pre>${esc((s.out||[]).join('\n'))}</pre></details></div></div>`;
+ if(running)timer=setTimeout(poll,1500);}
+fetch('/api/heads').then(r=>r.json()).then(h=>{document.getElementById('h-before').textContent=h.before;document.getElementById('h-after').textContent=h.after});hist();
+</script></html>
