@@ -23,6 +23,7 @@ from app.domain.project.models import (
     ProjectStarterPush,
 )
 from app.domain.project.ports import (
+    AcceptedTerms,
     Claim,
     ComputeCredits,
     DefaultTeammate,
@@ -748,10 +749,39 @@ class ProjectService:
         await self._seed_default_teammate(
             project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
         )
-        if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
+        if terms.model and not (project.settings or {}).get("default_model"):
+            # The pack names the model its 题目 was tuned on (the new-user
+            # starters run on DeepSeek V4.1 Flash); a project that picked its
+            # own keeps it. A whole new dict, so the JSON column sees a change.
+            project.settings = {
+                **(project.settings or {}),
+                "default_model": terms.model,
+            }
+        if terms.compute_credits > 0 and await self._earmark_due(
+            project, task_id, terms
+        ):
             await self._grant_earmark(
                 project, task_id, credits_total=terms.compute_credits
             )
+
+    async def _earmark_due(
+        self, project: Project, task_id: int, terms: AcceptedTerms
+    ) -> bool:
+        """Whether this project should get the 题目's pack now: never twice for
+        one project, and for a once-per-person pack never when the person's
+        team already holds one from any 题目 that shares it. A personal claim's
+        projects all sit on the claimant's personal team, so asking the team is
+        asking the person, and a deleted project's pack still counts."""
+        if await self._has_earmark(project, task_id):
+            return False
+        if not terms.shared_with:
+            return True
+        if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("compute_credits was not handed in")
+        return not await self._compute_credits.team_has_earmark(
+            project.team_id, terms.shared_with
+        )
 
     async def activate_participation(self, *, task: TaskBrief, claim: Claim) -> None:
         """Release the task's resources to its workspace after approval."""

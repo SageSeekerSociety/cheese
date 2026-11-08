@@ -15,6 +15,13 @@ answers here in one request:
 * `onboarded_at` is stamped the first time, so the guide is not shown again on
   any device. Opening it again from the help menu makes another project.
 
+Or, with ``starter``, the person takes one of the platform's new-user starters
+(`app.domain.onboarding.starters`) instead of describing a project: they join
+the starters' board, the 题目 is claimed and started at once, and the project
+is the one taking a 题目 makes (requirements as its brief, materials under
+「题目/」, the pack's model and credits). Taking the same starter again answers
+with the project already made, which is also what a retry gets.
+
 The page picks the project id once per pass through the guide, so a retry after
 a lost answer finishes the same project instead of making a second one.
 
@@ -32,6 +39,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, typed_response
+from app.api.task_claims import start_claim
+from app.api.task_deps import get_task_membership_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -39,6 +48,7 @@ from app.core.errors import NotFoundError
 from app.db.session import get_db
 from app.domain.agent_instance.adapters import default_teammate
 from app.domain.living_doc.overview import seed_overview
+from app.domain.onboarding.starters import StarterKey, seat_on_board, starter_task
 from app.domain.project.protection import BRANCH_PROTECTION_KEY
 from app.domain.project.services import ProjectService
 from app.domain.usage import referrals
@@ -56,6 +66,9 @@ class OnboardingIn(BaseModel):
     intent: str = Field(default="", max_length=2000)
     work_role: WorkRole | None = None
     organization: str | None = Field(default=None, max_length=100)
+    #: Take this new-user starter instead of making a project from ``intent``;
+    #: ``project_id``, ``project_name`` and ``intent`` are then not used.
+    starter: StarterKey | None = None
 
 
 class OnboardingOut(BaseModel):
@@ -85,12 +98,35 @@ async def finish_onboarding(
     projects = ProjectService(
         session, default_teammate=default_teammate, overview=seed_overview
     )
-    project = await projects.create(
-        name=payload.project_name,
-        owner_handle=user.username,
-        intent=payload.intent,
-        project_id=payload.project_id,
-    )
+    if payload.starter is not None:
+        task = await starter_task(session, payload.starter)
+        await seat_on_board(session, task, user.id)
+        memberships = await get_task_membership_service(db=session)
+        membership = await memberships.create_membership(
+            task=task,
+            member_id=user.id,
+            is_team=False,
+            email=None,
+            phone=None,
+            apply_reason=None,
+            personal_advantage=None,
+            remark=None,
+        )
+        # A starter has no mentors, so there is nothing to agree to.
+        project = await start_claim(
+            session,
+            task=task,
+            membership=membership,
+            acting_user_id=user.id,
+            agreed_mentors=False,
+        )
+    else:
+        project = await projects.create(
+            name=payload.project_name,
+            owner_handle=user.username,
+            intent=payload.intent,
+            project_id=payload.project_id,
+        )
     await projects.lock_settings(project)
     settings = {**(project.settings or {})}
     rules = settings.get(BRANCH_PROTECTION_KEY)
