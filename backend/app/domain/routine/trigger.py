@@ -15,7 +15,23 @@ def describe_trigger(routine: Routine) -> NoticeText | str:
         RoutineTrigger.library_file_added: say("routineTriggerLibraryFile"),
         RoutineTrigger.task_closed: say("routineTriggerTaskClosed"),
         RoutineTrigger.card_accepted: say("routineTriggerCardAccepted"),
+        RoutineTrigger.task_filed: say("routineTriggerTaskFiled"),
+        RoutineTrigger.task_decided: say("routineTriggerTaskDecided"),
     }
+    if trigger is RoutineTrigger.task_decided:
+        outcome = routine.spec.get("outcome")
+        if outcome in ("accepted", "rejected"):
+            labels = {
+                **labels,
+                trigger: say(
+                    "routineTriggerTaskDecidedAs",
+                    outcome=say(
+                        "routineTriggerTaskAccepted"
+                        if outcome == "accepted"
+                        else "routineTriggerTaskRejected"
+                    ),
+                ),
+            }
     scope = (
         say("routineTriggerRoom")
         if routine.spec.get("scope") == "room"

@@ -184,7 +184,84 @@ async def _events_for(
                     card.decided_at,
                 )
             )
+    elif trigger in (RoutineTrigger.task_filed, RoutineTrigger.task_decided):
+        found.extend(
+            await _review_events(
+                session, routine, trigger, in_room=in_room, since=since
+            )
+        )
     found.sort(key=lambda item: item[2])
+    return found
+
+
+async def _review_events(
+    session: AsyncSession,
+    routine: Routine,
+    trigger: RoutineTrigger,
+    *,
+    in_room: bool,
+    since: datetime,
+) -> list[tuple[str, str, datetime]]:
+    """A task's review, read off the cards that recorded it.
+
+    A filing is a card that appeared, a decision is one that was decided — the
+    same rows ``card_accepted`` already reads, so a rule waiting on a review and
+    a rule waiting on an acceptance cannot disagree about what happened. (The
+    personal side reads the same moments from ``happenings``, which that side
+    consumes; a channel rule must not, or the two would take each other's.)
+    """
+    if trigger is RoutineTrigger.task_filed:
+        query = (
+            select(AcceptCard, Task)
+            .join(Task, Task.id == AcceptCard.task_id)
+            .where(
+                Task.project_id == routine.project_id,
+                AcceptCard.created_at >= since,
+            )
+        )
+        if in_room:
+            query = query.where(AcceptCard.topic_id == routine.topic_id)
+        key = "filed"
+        filed_said = "提交审阅了"
+    else:
+        query = (
+            select(AcceptCard, Task)
+            .join(Task, Task.id == AcceptCard.task_id)
+            .where(
+                Task.project_id == routine.project_id,
+                AcceptCard.status.in_([AcceptStatus.accepted, AcceptStatus.rejected]),
+                AcceptCard.decided_at.is_not(None),
+                AcceptCard.decided_at >= since,
+            )
+        )
+        if routine.spec.get("outcome") == "accepted":
+            query = query.where(AcceptCard.status == AcceptStatus.accepted)
+        elif routine.spec.get("outcome") == "rejected":
+            query = query.where(AcceptCard.status == AcceptStatus.rejected)
+        if in_room:
+            query = query.where(AcceptCard.topic_id == routine.topic_id)
+        key = "decided"
+    found: list[tuple[str, str, datetime]] = []
+    for card, task in (await session.execute(query.order_by(AcceptCard.id))).all():
+        at = (
+            card.decided_at
+            if trigger is RoutineTrigger.task_decided
+            else card.created_at
+        )
+        if at is None:  # pragma: no cover - filtered above, kept for the type
+            continue
+        if trigger is RoutineTrigger.task_decided:
+            word = "采纳" if card.status == AcceptStatus.accepted else "退回"
+            said_here = f"的审阅被{word}了"
+        else:
+            said_here = filed_said
+        found.append(
+            (
+                f"card:{card.id}:{key}",
+                f"任务《{task.title}》（#{task.number}）{said_here}。",
+                at,
+            )
+        )
     return found
 
 

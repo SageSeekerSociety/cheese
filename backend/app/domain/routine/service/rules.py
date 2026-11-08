@@ -77,7 +77,14 @@ def validate_spec(trigger: str, spec: dict, tz: str) -> dict:
         raise ValidationError(say("routineEventScopeInvalid"))
     if kind is RoutineTrigger.library_file_added:
         scope = "project"
-    return {"scope": scope}
+    kept: dict = {"scope": scope}
+    if kind is RoutineTrigger.task_decided:
+        outcome = (spec or {}).get("outcome")
+        if outcome not in (None, "", "accepted", "rejected"):
+            raise ValidationError(say("routineTriggerInvalid"))
+        if outcome:
+            kept["outcome"] = outcome
+    return kept
 
 
 async def _check_feedback_batch(

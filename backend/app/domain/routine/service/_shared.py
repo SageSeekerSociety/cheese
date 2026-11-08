@@ -47,6 +47,8 @@ EVENT_TRIGGERS = frozenset(
         RoutineTrigger.library_file_added,
         RoutineTrigger.task_closed,
         RoutineTrigger.card_accepted,
+        RoutineTrigger.task_filed,
+        RoutineTrigger.task_decided,
     }
 )
 
@@ -55,6 +57,8 @@ TRIGGER_LABELS = {
     RoutineTrigger.library_file_added: "资料库新增文件",
     RoutineTrigger.task_closed: "任务关闭",
     RoutineTrigger.card_accepted: "成果被采纳",
+    RoutineTrigger.task_filed: "任务提交审阅",
+    RoutineTrigger.task_decided: "任务的审阅有结果",
 }
 
 

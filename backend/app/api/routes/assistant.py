@@ -1364,3 +1364,31 @@ async def delete_routine(
     await db.delete(await _routine(db, auth.user_id, routine_id))
     await db.commit()
     return ok(await _routines_out(db, auth.user_id))
+
+
+@router.post(
+    "/routines/{routineId}/run-now",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutinesOut),
+)
+async def run_routine_now(
+    routine_id: Annotated[uuid.UUID, Path(alias="routineId")],
+    db: DbSession,
+    auth: AuthUser,
+    people: People,
+    questions: Questions,
+) -> dict:
+    """「立即执行一次」: one run now, as if its moment had come.
+
+    The run is written here and started here, not left for the sweep: the
+    person clicked and is watching the row. Nothing is written when a run is
+    already queued or going — pressing twice is not two runs.
+    """
+    row = await _routine(db, auth.user_id, routine_id)
+    queued = await routine_personal.run_now(db, row)
+    await db.commit()
+    if queued:
+        await routine_personal.react(
+            async_session_factory, people, questions, get_redis_client
+        )
+    return ok(await _routines_out(db, auth.user_id))
