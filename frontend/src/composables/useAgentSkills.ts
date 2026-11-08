@@ -240,8 +240,9 @@ export function useAgentSkills(
         editingBlocked.value = true
         editingBy.value = agent()?.editing ?? null
         onError(e.message || t('work.room.skills.editingBlocked'))
-      } else {
-        onError(e instanceof Error ? e.message : t('work.room.skills.editingBlocked'))
+      } else if (e instanceof Error) {
+        // 没有说法的失败不提示：「有人正在编辑」在这里是假话，而租约本来只是提示。
+        onError(e.message)
       }
     }
   }
