@@ -233,10 +233,16 @@ export function useAgentSkills(
       editingBy.value = got.editing?.handle ?? null
     } catch (e) {
       if (!stillHere()) return
-      // 409 = 别人正拿着。名字从打开时那一行读，并如实说一声 —— 面板这一轮只读。
-      editingBlocked.value = true
-      editingBy.value = agent()?.editing ?? null
-      onError(e instanceof Error ? e.message : t('work.room.skills.editingBlocked'))
+      // 只有 409 才是别人正拿着：名字从打开时那一行读，并如实说一声 —— 面板这一轮只读。
+      // 占用请求自己失败（断网、5xx）不说明有人在改，租约本来只是礼貌提示：报一声，面板照常
+      // 可改，丢更新照旧由保存带的 expected_version 拦。
+      if (e instanceof ApiError && e.status === 409) {
+        editingBlocked.value = true
+        editingBy.value = agent()?.editing ?? null
+        onError(e.message || t('work.room.skills.editingBlocked'))
+      } else {
+        onError(e instanceof Error ? e.message : t('work.room.skills.editingBlocked'))
+      }
     }
   }
 

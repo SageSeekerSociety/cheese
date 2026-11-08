@@ -654,4 +654,40 @@ describe('队友技能面板', () => {
     expect(updateProjectAgent).not.toHaveBeenCalled()
     expect(s.carried.value).toEqual(['wolfram'])
   })
+
+  it('别人正占着、面板只读：去掉一颗也不写队友的名单', async () => {
+    vi.mocked(setAgentEditing).mockRejectedValue(new ApiError(409, 'conflict'))
+    const s = skills(() => {}, undefined, ['wolfram', 'documents'])
+    await s.openSkills()
+    await s.holdAgent('a1')
+
+    await s.removeSkill('documents')
+
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+    expect(s.carried.value).toEqual(['wolfram', 'documents'])
+  })
+
+  it('占用请求自己失败（不是别人占着）：说一声，面板照常可改，装上的技能照样带上', async () => {
+    const fail = vi.fn()
+    vi.mocked(setAgentEditing).mockRejectedValue(new ApiError(503, 'unavailable'))
+    vi.mocked(fetchMachineSkill).mockResolvedValue({
+      landed: true,
+      plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
+      skills: [
+        { name: 'pdf', description: '读 PDF', source_root: '/w/pdf', digest: 'x', state: 'seen', adopted: false },
+      ],
+      problems: [],
+      roots: [],
+      workspaces: [],
+    } as never)
+    const s = skills(fail)
+    await s.openSkills()
+    await s.holdAgent('a1')
+
+    expect(fail).toHaveBeenCalled()
+    expect(s.editingBlocked.value).toBe(false)
+    await s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
+    expect(updateProjectAgent).toHaveBeenCalledWith('p1', 'a1', expect.objectContaining({ expected_version: 1 }))
+    expect(s.carried.value).toEqual(['wolfram', 'pdf'])
+  })
 })
