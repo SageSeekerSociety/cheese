@@ -9,9 +9,9 @@
 // （定数，页面用它覆盖预览；服务端记下了它，撤销按它的编号来），`published` 是它发布了一份草稿，
 // `proposal` 是它替人起草了一条要发到项目里的消息、或一个要开的任务（人确认后才发出），`error` 是没答上来的
 // 原因，`done` 收尾。回答在服务端答到底，跟这条连接无关：连接断了就从断的地方接着读。
-import { computed, ref } from 'vue'
+import { computed, ref, toRaw } from 'vue'
 
-import { type AgentChange, AgentChangesApi, type AssistantCall, request } from '@/api'
+import { type AgentChange, AgentChangesApi, ApiError, type AssistantCall, request } from '@/api'
 import { followEventStream, getEventStream, type OnEvent, postEventStream, StreamRefused } from '@/api/eventStream'
 import { t } from '@/i18n'
 import { isCreditRefusal } from '@/lib/creditUsage'
@@ -314,6 +314,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const creditRefused = ref(false)
   const loaded = ref(false)
   let editSeq = 0
+  /** 插进去却被拒了的话：服务端已经答完，页面还没收到 `done`（`say`）。话照旧摆着，这一轮
+   *  收尾后合成一个新问题问（`askHeldBack`）。`line` 是摆着的那一行本身。 */
+  let heldBack: { conversation: string; line: AssistantMessage; text: string; files: HandedFile[] }[] = []
 
   const busy = computed(() => streaming.value !== null)
 
@@ -396,6 +399,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     currentEarlier.value = false
     notice.value = null
     creditRefused.value = false
+    heldBack = []
   }
 
   /** 「新话题」：之前说的留在上面，芝士从下一句话起不再读它们。话题等第一句话发出去才建。 */
@@ -542,17 +546,35 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   /** 插进那一轮的话，那一轮结束前芝士没听到：合成一个问题接着问。 */
+  /** 每一轮收尾都走到这里：先问这一轮没听到的；都问完了，再问插话被拒、留着的那几句。 */
   async function askUnheard(unheard: Unheard[], fallback: string) {
-    if (!unheard.length) return
     const text = unheard
       .map((u) => u.text ?? '')
       .filter(Boolean)
       .join('\n\n')
+    const files = unheard.flatMap((u) => u.files ?? [])
+    // 这一问收尾时又会走到这里，留着的那几句到时再问。
+    if (text || files.length) return ask(text, fallback, files, true)
+    await askHeldBack(fallback)
+  }
+
+  /** 插话被拒、留着的那几句：从摆着的地方拿下来，合成一个新问题问，像没在答时说的一样。
+   *  那几句服务端没存过，所以不是 `kept`。 */
+  async function askHeldBack(fallback: string) {
+    if (busy.value) return
+    const held = heldBack.filter((h) => h.conversation === current.value)
+    heldBack = []
+    if (!held.length) return
+    const lines = new Set(held.map((h) => h.line))
+    // 读回来的是代理，比的是它底下那一行本身。
+    messages.value = messages.value.filter((m) => !lines.has(toRaw(m)))
     await ask(
-      text,
+      held
+        .map((h) => h.text)
+        .filter(Boolean)
+        .join('\n\n'),
       fallback,
-      unheard.flatMap((u) => u.files ?? []),
-      true
+      held.flatMap((h) => h.files)
     )
   }
 
@@ -854,7 +876,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   /** 芝士正在答时，人又说了一句：存进对话，插进正在答的这一轮，芝士下一步之前读到。
-   *  这时恰好答完了，就当作一个新问题问。 */
+   *  这时恰好答完了（服务端回 409，页面可能还没收到 `done`），就当作一个新问题问：还在收尾
+   *  就等它收完。别的失败不重发：服务端可能已经存下了这句。 */
   async function say(text: string, fallback: string, files: HandedFile[] = []) {
     const words = text.trim()
     const id = current.value
@@ -867,10 +890,14 @@ export function createAssistant(opts: AssistantOptions = {}) {
       ...(asking?.shown.selection ? { selection: asking.shown.selection } : {}),
       ...(asking?.shown.cited ? { cited: asking.shown.cited } : {}),
     }
-    messages.value = [
-      ...messages.value,
-      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...shown },
-    ]
+    const line: AssistantMessage = {
+      role: 'user',
+      text: words,
+      at,
+      ...(files.length ? { files: files.map((f) => f.name) } : {}),
+      ...shown,
+    }
+    messages.value = [...messages.value, line]
     try {
       await request(`/assistant/conversations/${id}/say`, {
         method: 'POST',
@@ -880,9 +907,14 @@ export function createAssistant(opts: AssistantOptions = {}) {
           ...(asking?.body.selection ? { selection: asking.body.selection } : {}),
         }),
       })
-    } catch {
+    } catch (error) {
+      const answered = error instanceof ApiError && error.status === 409
+      if (answered && busy.value && current.value === id) {
+        heldBack = [...heldBack, { conversation: id, line, text: words, files }]
+        return
+      }
       messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
-      if (!busy.value) return ask(words, fallback, files)
+      if (answered) return ask(words, fallback, files)
       notice.value = fallback
     }
   }
