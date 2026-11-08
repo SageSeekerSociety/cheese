@@ -750,20 +750,28 @@ class ProjectService:
             project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
         )
         if terms.model:
-            # The pack names the model its 题目 was tuned on (the new-user
-            # starters run on DeepSeek V4.1 Flash); a project that picked its
-            # own keeps it. Read under the settings lock so the check and the
-            # write see the same blob.
-            await self._repo.lock_settings(project)
-            if not (project.settings or {}).get("default_model"):
-                await self._repo.merge_settings(
-                    project, {"default_model": terms.model}, locked=True
-                )
+            await self._seed_default_model(project, terms.model)
         if terms.compute_credits > 0 and await self._earmark_due(
             project, task_id, terms
         ):
             await self._grant_earmark(
                 project, task_id, credits_total=terms.compute_credits
+            )
+
+    async def _seed_default_model(self, project: Project, model: str) -> None:
+        """The model the 题目's pack names (the new-user starters run on
+        DeepSeek V4.1 Flash), as the project's starting ``default_model``.
+
+        ``default_model`` is a member setting, and a member's change of it goes
+        through `change_member_settings`, which says it in the 综合. This is
+        not a change anyone made: it fills the key only while it is unset, as
+        part of the configuration the project takes from its 题目, the way the
+        default teammate's persona is. A project that picked its own keeps it.
+        Read under the settings lock so the check and the write see one blob."""
+        await self._repo.lock_settings(project)
+        if not (project.settings or {}).get("default_model"):
+            await self._repo.merge_settings(
+                project, {"default_model": model}, locked=True
             )
 
     async def _earmark_due(
