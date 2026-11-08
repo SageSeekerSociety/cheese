@@ -48,11 +48,13 @@ export const GUIDE_STEPS: GuideStep[] = [
     failed: 'reply-failed',
     // 芝士还在回：指着那一行等，不说「回复了」。
     waiting: ['reply-coming', 'timeline'],
-    // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。
-    done: (c) => c.has('thread-pane') && !c.has('reply-failed') && !c.has('reply-coming'),
+    // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。支线已经原地转成任务时，
+    // 点开它进的是任务页，同一段对话在那里读。
+    done: (c) => (c.has('thread-pane') || c.has('task-page')) && !c.has('reply-failed') && !c.has('reply-coming'),
   },
-  // 圈支线的输入框本身：要人在那里回一句，浮窗就不能压着它。
-  { key: 'confirm', anchors: ['thread-composer'], waiting: ['reply-thread'] },
+  // 圈支线的输入框本身：要人在那里回一句，浮窗就不能压着它。支线已经转成任务、人在任务页上
+  // 时，浮窗落在任务页上，「下一步」照常往下走。
+  { key: 'confirm', anchors: ['thread-composer'], waiting: ['reply-thread', 'task-page'] },
   {
     key: 'task',
     anchors: ['task-card', 'task-row'],
