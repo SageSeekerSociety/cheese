@@ -569,4 +569,797 @@ describe('芝士这一轮做了什么', () => {
     expect(a.earlier.value.map((topic) => topic.title)).toEqual(['最早的'])
     expect(a.hasOlder.value).toBe(false)
   })
+
+  describe('reading back twice before the first page arrives puts it on screen once', () => {
+    const line = (seq: number) => ({ seq, role: 'user', text: `第 ${seq} 句`, at: '2026-10-19T08:00:00Z' })
+    const LATEST = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 2 }
+    const OLDEST = { id: 'c1', title: '最早的', lastActiveAt: '2026-10-19T08:00:00Z', questions: 1 }
+
+    /** The server, holding each page back until ``release`` lets it go. ``paged``: the older topic
+     *  is on the second page of topics. ``failing``: that many reads back fail before one works.
+     *  ``whole``: the latest topic has nothing earlier. */
+    function slowServer({ paged = false, failing = 0, whole = false } = {}) {
+      const held: (() => void)[] = []
+      let fails = failing
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations'))
+          return envelope(
+            paged ? { conversations: [LATEST], next: 'p2' } : { conversations: [LATEST, OLDEST], next: null }
+          )
+        if (url.endsWith('/assistant/conversations/c3'))
+          return envelope({ ...LATEST, answering: null, messages: [line(2)], earlier: !whole })
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (fails > 0) {
+          fails--
+          return envelope(null, 400)
+        }
+        if (url.endsWith('/assistant/conversations?before=p2')) return envelope({ conversations: [OLDEST], next: null })
+        if (url.endsWith('/assistant/conversations/c3/messages?before=2'))
+          return envelope({ messages: [line(1)], earlier: false })
+        if (url.endsWith('/assistant/conversations/c1'))
+          return envelope({ ...OLDEST, answering: null, messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+      const release = async () => {
+        await settle()
+        held.splice(0).forEach((go) => go())
+        await settle()
+      }
+      return { release }
+    }
+
+    it('the earlier page of the open topic', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+
+      const both = Promise.all([a.earlierMessages(null), a.earlierMessages(null)])
+      await release()
+      await both
+
+      expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2])
+      expect(a.currentEarlier.value).toBe(false)
+    })
+
+    it('the earlier page of a topic kept above', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      a.startNew()
+
+      const both = Promise.all([a.earlierMessages('c3'), a.older()])
+      await release()
+      await both
+
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[1, 2]])
+      expect(a.earlier.value[0].earlier).toBe(false)
+    })
+
+    it('the older topic read back above', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const both = Promise.all([a.older(), a.older()])
+      await release()
+      await both
+
+      expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
+      expect(a.earlier.value[0].messages.map((m) => m.seq)).toEqual([1])
+      expect(a.hasOlder.value).toBe(false)
+    })
+
+    it('a page that arrives after the topic was left stays out of the next one', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.earlierMessages(null)
+      a.startNew()
+      await release()
+      await reading
+
+      expect(a.messages.value).toEqual([])
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[2]])
+    })
+
+    it('an older topic opened while it was being read back is not kept above as well', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const reading = a.older()
+      const opening = a.show('c1')
+      await release()
+      await Promise.all([reading, opening])
+
+      expect(a.current.value).toBe('c1')
+      expect(a.earlier.value.map((topic) => topic.id)).not.toContain('c1')
+    })
+
+    it('an older topic still unshown is kept above after the topics were read again meanwhile', async () => {
+      const held: (() => void)[] = []
+      const NEWER = { id: 'c9', title: '别处新开的', lastActiveAt: '2026-10-22T08:00:00Z', questions: 1 }
+      let topics = [LATEST, OLDEST]
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations')) return envelope({ conversations: topics, next: null })
+        if (url.endsWith('/assistant/conversations/c3'))
+          return envelope({ ...LATEST, answering: null, messages: [line(2)], earlier: false })
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (url.endsWith('/assistant/conversations/c1'))
+          return envelope({ ...OLDEST, answering: null, messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.older()
+      // A topic started elsewhere shows up in the list while the older one is on its way.
+      topics = [NEWER, LATEST, OLDEST]
+      await a.heard('c3')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      held.splice(0).forEach((go) => go())
+      await reading
+
+      expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
+    })
+
+    it('a page read before the topic was opened again stays off the fresh one', async () => {
+      const held: (() => void)[] = []
+      let latest = { messages: [line(2)], earlier: true }
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [LATEST], next: null })
+        if (url.endsWith('/assistant/conversations/c3')) return envelope({ ...LATEST, answering: null, ...latest })
+        await new Promise<void>((resolve) => held.push(resolve))
+        if (url.endsWith('/assistant/conversations/c3/messages?before=2'))
+          return envelope({ messages: [line(1)], earlier: false })
+        return new Response('not found', { status: 404 })
+      })
+      const a = createAssistant()
+      await a.load()
+
+      const reading = a.earlierMessages(null)
+      // Said elsewhere meanwhile: opened again, the latest page no longer reaches the one read from.
+      latest = { messages: [line(5), line(6)], earlier: true }
+      await a.show('c3')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      held.splice(0).forEach((go) => go())
+      await reading
+
+      expect(a.messages.value.map((m) => m.seq)).toEqual([5, 6])
+      expect(a.currentEarlier.value).toBe(true)
+    })
+
+    it('an older topic that arrives after signing out stays out', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const reading = a.older()
+      a.reset()
+      await release()
+      await reading
+
+      expect(a.earlier.value).toEqual([])
+      expect(a.messages.value).toEqual([])
+      expect(a.current.value).toBeNull()
+    })
+
+    it('a page of older topics that arrives after signing out stays out', async () => {
+      const { release } = slowServer({ paged: true })
+      const a = createAssistant()
+      await a.load()
+      await Promise.all([a.earlierMessages(null), release()])
+
+      const reading = a.older()
+      a.reset()
+      await release()
+      await reading
+
+      expect(a.earlier.value).toEqual([])
+      expect(a.hasOlder.value).toBe(false)
+    })
+
+    it('signing back in reads back afresh, without the page read before signing out', async () => {
+      const { release } = slowServer()
+      const a = createAssistant()
+      await a.load()
+      a.startNew()
+
+      const stale = a.earlierMessages('c3')
+      a.reset()
+      await a.load()
+      a.startNew()
+      await release()
+      await stale
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[2]])
+
+      const fresh = a.earlierMessages('c3')
+      await release()
+      await fresh
+      expect(a.earlier.value.map((topic) => topic.messages.map((m) => m.seq))).toEqual([[1, 2]])
+    })
+
+    it('a read back that failed can be asked again', async () => {
+      const { release } = slowServer({ failing: 1 })
+      const a = createAssistant()
+      await a.load()
+
+      const failed = a.earlierMessages(null).then(
+        () => 'read',
+        () => 'failed'
+      )
+      await release()
+      expect(await failed).toBe('failed')
+      expect(a.messages.value.map((m) => m.seq)).toEqual([2])
+
+      const again = a.earlierMessages(null)
+      await release()
+      await again
+      expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2])
+    })
+
+    it('an older topic that failed to read can be asked again', async () => {
+      const { release } = slowServer({ failing: 1, whole: true })
+      const a = createAssistant()
+      await a.load()
+
+      const failed = a.older().then(
+        () => 'read',
+        () => 'failed'
+      )
+      await release()
+      expect(await failed).toBe('failed')
+
+      const again = a.older()
+      await release()
+      await again
+      expect(a.earlier.value.map((topic) => topic.id)).toEqual(['c1'])
+    })
+  })
+})
+
+/** A stream the test writes into frame by frame, and ends when it says. */
+function held() {
+  const encoder = new TextEncoder()
+  let push!: ReadableStreamDefaultController<Uint8Array>
+  const body = new ReadableStream<Uint8Array>({ start: (c) => void (push = c) })
+  return {
+    response: new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    send(event: string, data: object, id?: string) {
+      push.enqueue(encoder.encode(`${id ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+    },
+    end: () => push.close(),
+  }
+}
+
+/** A reply the test lets go when it says. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+describe('打开正在答的那段对话：一个回答只留一遍', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const QUESTION = { role: 'user', text: '要先会什么？', at: '2026-10-01T08:00:00Z' }
+  const C2 = { ...CONVERSATION, id: 'c2' }
+
+  /** The server: c1 and c2 as `read` gives them, each answer stream from `answer`. */
+  function serveTopics(opts: {
+    read: (id: string) => Promise<object> | object
+    answer?: (id: string, question: string) => Response
+    ask?: () => Response
+  }) {
+    const followed: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION, C2] })
+      const topic = /\/assistant\/conversations\/(c\d)$/.exec(url)?.[1]
+      if (topic && method === 'GET') return envelope(await opts.read(topic))
+      if (url.endsWith('/assistant/conversations/c1/ask') && opts.ask) return opts.ask()
+      const answer = /\/assistant\/conversations\/(c\d)\/answers\/([^/?]+)/.exec(url)
+      if (answer && opts.answer) {
+        followed.push(`${answer[1]}/${answer[2]}`)
+        return opts.answer(answer[1], answer[2])
+      }
+      return new Response('not found', { status: 404 })
+    })
+    return followed
+  }
+
+  const said = (a: ReturnType<typeof createAssistant>) => a.messages.value.map((m) => [m.role, m.text])
+
+  it('showing the conversation being asked in, twice, keeps its answer once', async () => {
+    const stream = held()
+    let asked = false
+    const followed = serveTopics({
+      read: () =>
+        asked ? { ...CONVERSATION, messages: [QUESTION], answering: 'q1' } : { ...CONVERSATION, messages: [] },
+      ask: () => ((asked = true), stream.response),
+      answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+    await a.load()
+    const asking = a.ask('要先会什么？', '答不上来')
+    stream.send('answering', { id: 'q1' })
+    stream.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+
+    await a.show('c1')
+    await a.show('c1')
+    stream.send('delta', { text: ' gdb。', at: 2 }, '2-0')
+    stream.send('done', { stopped: false }, '3-0')
+    stream.end()
+    await asking
+
+    expect(followed).toEqual([])
+    expect(said(a)).toEqual([
+      ['user', '要先会什么？'],
+      ['assistant', '先会 gdb。'],
+    ])
+    expect(a.busy.value).toBe(false)
+  })
+
+  it('showing a conversation opened mid-answer, twice, reads the answer on once', async () => {
+    const stream = held()
+    const followed = serveTopics({
+      read: () => ({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' }),
+      answer: () => stream.response,
+    })
+    const a = createAssistant()
+    await a.load()
+    stream.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+
+    await a.show('c1')
+    await a.show('c1')
+    stream.send('delta', { text: ' gdb。', at: 2 }, '2-0')
+    stream.send('done', { stopped: false }, '3-0')
+    stream.end()
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+
+    expect(followed).toEqual(['c1/q1'])
+    expect(said(a)).toEqual([
+      ['user', '要先会什么？'],
+      ['assistant', '先会 gdb。'],
+    ])
+  })
+
+  it('two shows of a conversation still answering, both reading at once, read the answer on once', async () => {
+    const reads: ReturnType<typeof deferred<object>>[] = []
+    const followed = serveTopics({
+      read: () => {
+        const reply = deferred<object>()
+        reads.push(reply)
+        return reply.promise
+      },
+      answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+
+    const first = a.show('c1')
+    const second = a.show('c1')
+    await vi.waitFor(() => expect(reads).toHaveLength(2))
+    for (const reply of reads) reply.resolve({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+    await Promise.all([first, second])
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+
+    expect(followed).toEqual(['c1/q1'])
+    expect(said(a)).toEqual([
+      ['user', '要先会什么？'],
+      ['assistant', '先会 gdb。'],
+    ])
+  })
+
+  it('switching to c2 and straight back to c1 shows c1 and reads on only its answer', async () => {
+    const reads: Record<string, ReturnType<typeof deferred<object>>> = {}
+    const followed = serveTopics({
+      read: (id) => {
+        reads[id] = deferred<object>()
+        return reads[id].promise
+      },
+      answer: (id) => placed(['delta', { text: `${id} 的回答`, at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+
+    const toC2 = a.show('c2')
+    await vi.waitFor(() => expect(reads.c2).toBeDefined())
+    const toC1 = a.show('c1')
+    await vi.waitFor(() => expect(reads.c1).toBeDefined())
+    reads.c1.resolve({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+    await toC1
+    reads.c2.resolve({ ...C2, messages: [{ ...QUESTION, text: 'c2 的问题' }], answering: 'q2' })
+    await toC2
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+
+    expect(a.current.value).toBe('c1')
+    expect(followed).toEqual(['c1/q1'])
+    expect(said(a)).toEqual([
+      ['user', '要先会什么？'],
+      ['assistant', 'c1 的回答'],
+    ])
+  })
+
+  it('a new topic started while a conversation is still being read stays the new topic', async () => {
+    const reply = deferred<object>()
+    const followed = serveTopics({
+      read: () => reply.promise,
+      answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+
+    const showing = a.show('c1')
+    a.startNew()
+    reply.resolve({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+    await showing
+
+    expect(a.current.value).toBeNull()
+    expect(followed).toEqual([])
+    expect(said(a)).toEqual([])
+  })
+
+  it('signing out while a conversation is still being read leaves nothing of the last person on the panel', async () => {
+    const reply = deferred<object>()
+    const followed = serveTopics({
+      read: () => reply.promise,
+      answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+
+    const showing = a.show('c1')
+    a.reset()
+    reply.resolve({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+    await showing
+
+    expect(a.current.value).toBeNull()
+    expect(followed).toEqual([])
+    expect(said(a)).toEqual([])
+  })
+
+  it('signing out while an opened answer is still coming leaves nothing of it, and the next person opens their own', async () => {
+    const stream = held()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [C2] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+      if (url.endsWith('/assistant/conversations/c2') && method === 'GET')
+        return envelope({ ...C2, messages: [{ ...QUESTION, text: '第二个人的问题' }] })
+      if (url.includes('/assistant/conversations/c1/answers/q1')) return stream.response
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    stream.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+
+    a.reset()
+    person = 'second'
+    stream.send('delta', { text: ' gdb。', at: 2 }, '2-0')
+    stream.send('done', { stopped: false }, '3-0')
+    stream.end()
+    await vi.waitFor(() => expect(a.streaming.value).toBeNull())
+
+    expect(a.busy.value).toBe(false)
+    expect(said(a)).toEqual([])
+    await a.load()
+    expect(a.current.value).toBe('c2')
+    expect(said(a)).toEqual([['user', '第二个人的问题']])
+  })
+
+  it("the last person's answer ending after sign-out does not touch the next person's answer", async () => {
+    const first = held()
+    const second = held()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [C2] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [QUESTION], answering: 'q1' })
+      if (url.endsWith('/assistant/conversations/c2') && method === 'GET')
+        return envelope({ ...C2, messages: [{ ...QUESTION, text: '第二个人的问题' }], answering: 'q2' })
+      if (url.includes('/assistant/conversations/c1/answers/q1')) return first.response
+      if (url.includes('/assistant/conversations/c2/answers/q2')) return second.response
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    first.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+    a.reset()
+    person = 'second'
+    await a.load()
+    second.send('tool', { name: 'cheese_read', call: 'r1', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.steps.value.map((s) => [s.call, s.state])).toEqual([['r1', 'run']]))
+
+    first.send('done', { stopped: false }, '2-0')
+    first.end()
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(a.steps.value.map((s) => [s.call, s.state])).toEqual([['r1', 'run']])
+    second.send('tool_done', { call: 'r1' }, '2-0')
+    second.send('delta', { text: '读完了。', at: 0 }, '3-0')
+    second.send('done', { stopped: false }, '4-0')
+    second.end()
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    expect(said(a)).toEqual([
+      ['user', '第二个人的问题'],
+      ['assistant', '读完了。'],
+    ])
+  })
+
+  it("the last person's question ending after sign-out leaves the next person's answer coming", async () => {
+    const first = held()
+    const second = held()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [C2] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/assistant/conversations/c2') && method === 'GET')
+        return envelope({ ...C2, messages: [{ ...QUESTION, text: '第二个人的问题' }], answering: 'q2' })
+      if (url.endsWith('/assistant/conversations/c1/ask')) return first.response
+      if (url.includes('/assistant/conversations/c2/answers/q2')) return second.response
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    const asking = a.ask('要先会什么？', '答不上来')
+    first.send('answering', { id: 'q1' })
+    first.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+    a.reset()
+    person = 'second'
+    await a.load()
+    second.send('delta', { text: '第二个人的', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('第二个人的'))
+
+    first.send('done', { stopped: false }, '2-0')
+    first.end()
+    await asking
+
+    expect(a.busy.value).toBe(true)
+    expect(a.streaming.value).toBe('第二个人的')
+    second.send('done', { stopped: false }, '2-0')
+    second.end()
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    expect(said(a)).toEqual([
+      ['user', '第二个人的问题'],
+      ['assistant', '第二个人的'],
+    ])
+  })
+
+  it('signing out while a question is still creating its conversation asks nothing and keeps nothing', async () => {
+    const created = deferred<Response>()
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET') return envelope({ conversations: [] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return created.promise
+      if (url.endsWith('/ask')) {
+        asked.push(url)
+        return placed(['answering', { id: 'q1' }], ['delta', { text: '好。', at: 0 }, '1-0'], ['done', {}, '2-0'])
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+
+    const asking = a.ask('上一个人的问题', '答不上来')
+    await vi.waitFor(() => expect(a.busy.value).toBe(true))
+    a.reset()
+    created.resolve(envelope(CONVERSATION, 201))
+    await asking
+
+    expect(asked).toEqual([])
+    expect(a.current.value).toBeNull()
+    expect(a.conversations.value).toEqual([])
+    expect(said(a)).toEqual([])
+    expect(a.busy.value).toBe(false)
+  })
+
+  it("the last person's question ending while the next person's question is being set up leaves it asking", async () => {
+    const first = held()
+    const created = deferred<Response>()
+    let person = 'first'
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: person === 'first' ? [CONVERSATION] : [] })
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return created.promise
+      if (url.endsWith('/assistant/conversations/c1/ask')) return first.response
+      if (url.endsWith('/assistant/conversations/c2/ask'))
+        return placed(
+          ['answering', { id: 'q2' }],
+          ['delta', { text: '第二个人的回答', at: 0 }, '1-0'],
+          ['done', {}, '2-0']
+        )
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    const firstAsking = a.ask('上一个人的问题', '答不上来')
+    first.send('answering', { id: 'q1' })
+    first.send('delta', { text: '先会', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先会'))
+    a.reset()
+    person = 'second'
+    const secondAsking = a.ask('第二个人的问题', '答不上来')
+    await vi.waitFor(() => expect(a.streaming.value).toBe(''))
+
+    first.send('done', { stopped: false }, '2-0')
+    first.end()
+    await firstAsking
+
+    expect(a.busy.value).toBe(true)
+    created.resolve(envelope(C2, 201))
+    await secondAsking
+    expect(said(a)).toEqual([
+      ['user', '第二个人的问题'],
+      ['assistant', '第二个人的回答'],
+    ])
+  })
+
+  it('words the last person said mid-answer are not asked for the next person after sign-out', async () => {
+    const listed = deferred<Response>()
+    let lists = 0
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return ++lists === 1
+          ? envelope({ conversations: [CONVERSATION] })
+          : lists === 2
+            ? listed.promise
+            : envelope({ conversations: [] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return envelope(C2, 201)
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/ask')) {
+        asked.push(JSON.parse(String(init?.body)).question)
+        if (asked.length > 1) return placed(['answering', { id: 'q2' }], ['done', {}, '1-0'])
+        return placed(
+          ['answering', { id: 'q1' }],
+          ['delta', { text: '先读一遍。', at: 0 }, '1-0'],
+          ['unheard', { said: [{ text: '只看第 3 份' }] }],
+          ['done', {}, '2-0']
+        )
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+
+    const asking = a.ask('把报告打分', '答不上来')
+    await vi.waitFor(() => expect(lists).toBe(2))
+    a.reset()
+    listed.resolve(envelope({ conversations: [] }))
+    await asking
+
+    expect(asked).toEqual(['把报告打分'])
+    expect(said(a)).toEqual([])
+  })
+
+  it("a topic list read before sign-out does not come back as the next person's topics", async () => {
+    const listed = deferred<Response>()
+    let lists = 0
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return ++lists === 1 ? envelope({ conversations: [] }) : listed.promise
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+
+    const hearing = a.heard('c1')
+    await vi.waitFor(() => expect(lists).toBe(2))
+    a.reset()
+    listed.resolve(envelope({ conversations: [CONVERSATION] }))
+    await hearing
+
+    expect(a.conversations.value).toEqual([])
+  })
+
+  it('words said mid-answer whose sending fails after sign-out are not asked for the next person', async () => {
+    const stream = held()
+    const said: string[] = []
+    const asked: string[] = []
+    let refuse!: () => void
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return envelope(C2, 201)
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET')
+        return envelope({ ...CONVERSATION, messages: [] })
+      if (url.endsWith('/say')) {
+        said.push(JSON.parse(String(init?.body)).text)
+        return new Promise<Response>((r) => (refuse = () => r(new Response('gone', { status: 500 }))))
+      }
+      if (url.endsWith('/ask')) {
+        asked.push(JSON.parse(String(init?.body)).question)
+        return asked.length === 1 ? stream.response : placed(['answering', { id: 'q2' }], ['done', {}, '1-0'])
+      }
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    const asking = a.ask('把报告打分', '答不上来')
+    stream.send('answering', { id: 'q1' })
+    stream.send('delta', { text: '先读', at: 0 }, '1-0')
+    await vi.waitFor(() => expect(a.streaming.value).toBe('先读'))
+
+    const saying = a.say('只看第 3 份', '答不上来')
+    await vi.waitFor(() => expect(said).toEqual(['只看第 3 份']))
+    a.reset()
+    stream.send('done', { stopped: false }, '2-0')
+    stream.end()
+    await asking
+    refuse()
+    await saying
+
+    expect(asked).toEqual(['把报告打分'])
+  })
+
+  it('a question asked while a conversation is still being read keeps the conversation it was asked in', async () => {
+    const reply = deferred<object>()
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.endsWith('/assistant/conversations') && method === 'GET')
+        return envelope({ conversations: [CONVERSATION, C2] })
+      if (url.endsWith('/assistant/conversations') && method === 'POST') return envelope(C2, 201)
+      if (url.endsWith('/assistant/conversations/c1') && method === 'GET') return envelope(await reply.promise)
+      if (url.endsWith('/assistant/conversations/c2/ask'))
+        return placed(['answering', { id: 'q2' }], ['delta', { text: '好。', at: 0 }, '1-0'], ['done', {}, '2-0'])
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+
+    const showing = a.show('c1')
+    await a.ask('新的问题', '答不上来')
+    reply.resolve({ ...CONVERSATION, messages: [QUESTION], answering: null })
+    await showing
+
+    expect(a.current.value).toBe('c2')
+    expect(said(a)).toEqual([
+      ['user', '新的问题'],
+      ['assistant', '好。'],
+    ])
+  })
+
+  it('showing the conversation again once its answer is done reads what the server kept, once', async () => {
+    let answering: string | null = 'q1'
+    const kept = { role: 'assistant', text: '先会 gdb。', at: '2026-10-01T08:00:05Z' }
+    const followed = serveTopics({
+      read: () => ({ ...CONVERSATION, messages: answering ? [QUESTION] : [QUESTION, kept], answering }),
+      answer: () => placed(['delta', { text: '先会 gdb。', at: 0 }, '1-0'], ['done', { stopped: false }, '2-0']),
+    })
+    const a = createAssistant()
+    await a.load()
+    await vi.waitFor(() => expect(a.busy.value).toBe(false))
+    answering = null
+
+    await a.show('c1')
+
+    expect(followed).toEqual(['c1/q1'])
+    expect(said(a)).toEqual([
+      ['user', '要先会什么？'],
+      ['assistant', '先会 gdb。'],
+    ])
+  })
 })
