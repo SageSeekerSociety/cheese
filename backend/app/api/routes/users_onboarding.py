@@ -75,8 +75,9 @@ class OnboardingIn(BaseModel):
 class OnboardingOut(BaseModel):
     project_id: uuid.UUID
     root_topic_id: uuid.UUID | None
-    #: The name of the project's default teammate, as its roster shows it: the
-    #: page writes the first request to them, and a name nobody on the roster
+    #: The stored name of the project's default teammate, the one an ``@名字``
+    #: in a message is matched against on the roster (``expand_mention_names``):
+    #: the page writes the first request to it, and a name nobody on the roster
     #: carries would leave that request unanswered.
     teammate: str
 

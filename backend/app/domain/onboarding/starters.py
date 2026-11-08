@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final, Literal
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity.services import IdentityService
@@ -296,7 +296,9 @@ async def starter_task(session: AsyncSession, key: StarterKey) -> Task:
             )
         )
     else:
+        # Stamped again: the newest row names the board starters are made on.
         row.space_id, row.task_id = space_id, task.id
+        row.created_at = datetime.now(UTC)
     await session.flush()
     return task
 
@@ -324,17 +326,21 @@ async def _live_task(session: AsyncSession, key: StarterKey) -> Task | None:
 
 
 async def _board(session: AsyncSession, *, author_id: int) -> tuple[int, int]:
-    """The starters' board and its 分组: the one an earlier starter is on, or a
-    new one."""
-    space_ids = list(
-        await session.scalars(
-            select(OnboardingStarter.space_id)
-            .order_by(OnboardingStarter.created_at.desc())
-            .limit(1)
-        )
-    )
+    """The starters' board and its 分组: a live board an earlier starter is on,
+    or a new one. Every board the starters were ever on is asked, newest first:
+    after a board is deleted, the first starter remade moves its row to a new
+    board while the others still point at the deleted one, and the next starter
+    remade must land on that new board, not make a third."""
     spaces = SpaceRepository(session=session)
-    space = await spaces.get_by_id(space_ids[0]) if space_ids else None
+    space = None
+    for space_id in await session.scalars(
+        select(OnboardingStarter.space_id)
+        .group_by(OnboardingStarter.space_id)
+        .order_by(func.max(OnboardingStarter.created_at).desc())
+    ):
+        space = await spaces.get_by_id(space_id)
+        if space is not None:
+            break
     if space is None:
         # 芝士 owns it, so the board has an owner like any other.
         space = await SpaceService(

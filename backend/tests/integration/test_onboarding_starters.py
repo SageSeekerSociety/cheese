@@ -212,3 +212,33 @@ def test_a_project_that_chose_its_model_keeps_it(api_client, user_client):
     assert resp.status_code == 200, resp.text
     _take(api_client, token, "web")
     assert api_client.get(url, headers=_headers(token)).json()["data"]["model"] == other
+
+
+def test_after_the_board_is_deleted_every_starter_is_remade_on_one_new_board(
+    api_client, user_client, db_session, _portal
+):
+    from datetime import UTC, datetime
+
+    first, second, third = (user_client.create_user() for _ in range(3))
+    t1, t2, t3 = (_token(api_client, p) for p in (first, second, third))
+    old = _space_of(
+        api_client, t1, _take(api_client, t1, "web")["project_id"], db_session, _portal
+    )
+    _take(api_client, t1, "slides")
+
+    async def delete():
+        old.deleted_at = datetime.now(UTC)
+        await db_session.flush()
+
+    _portal.call(delete)
+    a = _space_of(
+        api_client,
+        t2,
+        _take(api_client, t2, "slides")["project_id"],
+        db_session,
+        _portal,
+    )
+    b = _space_of(
+        api_client, t3, _take(api_client, t3, "web")["project_id"], db_session, _portal
+    )
+    assert a.id == b.id != old.id
