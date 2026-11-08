@@ -970,7 +970,9 @@ def _review(client, project, room, title, *, status=None, decided_ago=None):
     Its number is picked per row because (project, number) is unique and a
     test files more than one card in the same project."""
     task_id = uuid.uuid4()
-    filed_at = datetime.now(UTC) - timedelta(minutes=10)
+    # Now, not earlier: a rule reads what happened after it was made, and its
+    # cursor starts at that moment.
+    filed_at = datetime.now(UTC)
 
     async def go(session):
         session.add(
