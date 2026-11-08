@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 技能面板：带什么、还能从哪儿加。黄底一块灯板，一颗一颗「洞」按下去就亮。
 //
-// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。
+// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。灯只说能不能用，
+// 不说带没带：带没带由哪些格子在板上决定。
 //
 // 只管画、只往上发：池子、机器索引、落库都在 `useAgentSkills` 里。桌面上是居中
 // 弹窗，手机上是一整页 —— 外壳由 AdaptiveDialog 决定，这一块在两边都是同一张灯板。
@@ -93,9 +94,15 @@ const emit = defineEmits<{
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
 const availableNow = (skill: SkillItem) => (skill.source === 'platform' ? status(skill.name) === 'ok' : true)
 
+// 灯板画的是这位队友身上真有的：带上的，加上平台与项目发给每位队友的那几条（它们本来
+// 就到了每个执行器，见后端 `project_skills.py` 技能目录那段）。机器上的技能要带上才跟着
+// 走，`available` 里机器那几条只是「还能加」，不进这份名单 —— 不然一个什么都没带的队友
+// 会被画成带着 pdf。
+const shippedToEveryone = (skill: SkillItem) => skill.source !== 'machine'
+
 const boardSkills = computed(() => {
   const seen = new Set<string>()
-  return [...props.carried, ...props.available].filter((skill) => {
+  return [...props.carried, ...props.available.filter(shippedToEveryone)].filter((skill) => {
     if (seen.has(skill.name)) return false
     seen.add(skill.name)
     return true
@@ -114,8 +121,9 @@ watch(open, () => {
 // 别人正占着「编辑中」的租约时改不动 —— 那是同一件事的另一半：现在改会撞上他。
 const locked = () => !props.canManage || props.editingBlocked
 
-// 已带的那几格是按钮，点一下从队友身上去掉；平台与项目给每位队友都发的那几格不在
-// 队友的名单上，没有可去掉的，照旧只是一格灯。
+// 已带的那几格能去掉：格子里铺一颗和格子一样大的按钮，点一下从队友身上拿掉它。格子本身
+// 仍是灯板名单里的一项、仍说灯亮没亮；平台与项目发给每位队友的那几格不在队友的名单上，
+// 没有可去掉的，就没有这颗按钮。
 const carriedNames = computed(() => new Set(props.carried.map((skill) => skill.name)))
 const removable = (skill: SkillItem) => carriedNames.value.has(skill.name)
 </script>
@@ -138,31 +146,34 @@ const removable = (skill: SkillItem) => carriedNames.value.has(skill.name)
             }}
           </p>
           <p v-else-if="locked()" class="skills__note t-meta-read">{{ t('work.room.skills.managerOnly') }}</p>
-          <div class="skills__grid">
-            <component
-              :is="removable(s) ? 'button' : 'div'"
+          <!-- The board is a list named after the teammate; each socket says whether it is lit, so the light is not colour alone. -->
+          <div class="skills__grid" role="list" :aria-label="t('work.room.skills.carriedTitle', { name: agentName })">
+            <div
               v-for="s in boardSkills"
               :key="s.name"
               class="socket"
               :class="{ 'socket--on': availableNow(s) }"
-              :title="s.description || s.name"
-              v-bind="
-                removable(s)
-                  ? {
-                      type: 'button',
-                      disabled: locked() || saving,
-                      'aria-label': t('work.room.skills.remove', { agent: agentName, name: s.name }),
-                    }
-                  : {}
+              role="listitem"
+              :aria-label="
+                t(availableNow(s) ? 'work.room.skills.socketLit' : 'work.room.skills.socketUnlit', { name: s.name })
               "
-              @click="removable(s) && !locked() && !saving && emit('remove', s.name)"
+              :title="s.description || s.name"
             >
               <span class="socket__hole"
                 ><v-icon size="20">{{ skillIcon(s.name) }}</v-icon></span
               >
               <span class="socket__name t-meta-read">{{ s.name }}</span>
               <span class="socket__desc t-meta-read">{{ s.description }}</span>
-            </component>
+              <button
+                v-if="removable(s)"
+                type="button"
+                class="socket__remove"
+                :disabled="locked() || saving"
+                :aria-label="t('work.room.skills.remove', { agent: agentName, name: s.name })"
+                :title="s.description || s.name"
+                @click="!locked() && !saving && emit('remove', s.name)"
+              />
+            </div>
           </div>
           <p v-if="!boardSkills.length" class="skills__note t-meta-read">{{ t('work.room.skills.emptyCarried') }}</p>
         </template>
@@ -228,8 +239,7 @@ const removable = (skill: SkillItem) => carriedNames.value.has(skill.name)
   gap: 10px;
 }
 .socket {
-  font: inherit;
-  color: inherit;
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -239,19 +249,25 @@ const removable = (skill: SkillItem) => carriedNames.value.has(skill.name)
   border-radius: var(--radius-md);
   background: transparent;
 }
-/* 已带的那几格能点：悬停时底色淡淡一层，键盘停上来有一圈琥珀；按不动时光标照常，
+/* 铺满已带那一格的按钮：悬停时整格淡淡一层，键盘停上来有一圈琥珀；按不动时光标照常，
    灯不变暗 —— 只读时灯说的仍是「能不能用」，不该因为改不了就看着像坏了。 */
-button.socket {
+.socket__remove {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
   cursor: pointer;
 }
-button.socket:hover:not(:disabled) {
+.socket__remove:hover:not(:disabled) {
   background: color-mix(in srgb, var(--warn-ink) 8%, transparent);
 }
-button.socket:focus-visible {
+.socket__remove:focus-visible {
   outline: 2px solid var(--warn);
   outline-offset: 2px;
 }
-button.socket:disabled {
+.socket__remove:disabled {
   cursor: default;
 }
 /* 那颗「洞」：底色跟浮层自己的背景走（`--surface`，对话框里重映射成 `--raised`，
