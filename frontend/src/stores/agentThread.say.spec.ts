@@ -53,29 +53,47 @@ function finished(text: string): Response {
   })
 }
 
-/** 服务端：`answers` 依次回每一次 ask，`said` 回插话。记下每次 ask 的请求体、每次插话的字。 */
-function serve(answers: (() => Response)[], said: (text: string) => Promise<Response>) {
+interface More {
+  /** 读话题列表之前先等它：好让一轮收尾停在「回答已收、列表还在读」的那一刻。 */
+  list?: () => Promise<void> | undefined
+  /** 打开别的话题时读回来的样子，按 id。 */
+  conversations?: Record<string, object>
+}
+
+/** 服务端：`answers` 依次回每一次 ask，`said` 回插话。记下每个请求、每次 ask 的请求体（带它问在哪段
+ *  对话里）、每次插话的字。 */
+function serve(answers: (() => Response)[], said: (text: string) => Promise<Response>, more: More = {}) {
   const asked: Record<string, unknown>[] = []
   const says: string[] = []
+  const requests: string[] = []
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     const method = (init?.method ?? 'GET').toUpperCase()
-    if (url.endsWith('/assistant/conversations') && method === 'GET')
+    const path = new URL(url, 'http://x').pathname.replace(/^\/api/, '')
+    requests.push(`${method} ${path}`)
+    if (path === '/assistant/conversations' && method === 'GET') {
+      await more.list?.()
       return envelope({ conversations: asked.length ? [CONVERSATION] : [] })
-    if (url.endsWith('/assistant/conversations') && method === 'POST') return envelope(CONVERSATION, 201)
-    if (url.endsWith('/assistant/conversations/c1/ask')) {
-      asked.push(JSON.parse(String(init?.body)))
+    }
+    if (path === '/assistant/conversations' && method === 'POST') return envelope(CONVERSATION, 201)
+    const ask = path.match(/^\/assistant\/conversations\/([^/]+)\/ask$/)
+    if (ask) {
+      asked.push({ ...JSON.parse(String(init?.body)), conversation: ask[1] })
       const next = answers.shift()
       return next ? next() : new Response('', { status: 500 })
     }
-    if (url.endsWith('/assistant/conversations/c1/say')) {
+    if (path === '/assistant/conversations/c1/say') {
       const text = JSON.parse(String(init?.body)).text as string
       says.push(text)
       return said(text)
     }
+    const read = path.match(/^\/assistant\/conversations\/([^/]+)$/)
+    if (read && more.conversations?.[read[1]]) return envelope(more.conversations[read[1]])
     return new Response('not found', { status: 404 })
   })
-  return { asked, says }
+  return { asked, says, requests }
 }
+
+const notAnswering = () => refusal(409, 'ConflictError', '芝士现在没有在回答，直接提问即可')
 
 /** 等到 `check` 成立，最多两秒（机器忙时流和请求要多转几圈）。 */
 const until = async (check: () => boolean) => {
@@ -148,6 +166,114 @@ describe('芝士答着时插的话', () => {
       ['user', '把报告打分'],
       ['assistant', '先读一遍。'],
     ])
+    expect(a.notice.value).toBe('回答失败')
+    expect(a.busy.value).toBe(false)
+  })
+
+  it('the moment the answer settles and the held words are not yet asked, a new topic waits for them', async () => {
+    const first = openAnswer('先读一遍。')
+    let gate: Promise<void> | undefined
+    let openGate!: () => void
+    let listing = false
+    const { asked } = serve([() => first.response, () => finished('好，只看第 3 份。')], async () => notAnswering(), {
+      list: () => {
+        if (gate) listing = true
+        return gate
+      },
+    })
+    const a = createAssistant()
+    await a.load()
+
+    const asking = a.ask('把报告打分', '答不上来')
+    await until(() => a.streaming.value === '先读一遍。')
+    await a.say('只看第 3 份', '回答失败')
+    gate = new Promise((resolve) => (openGate = resolve))
+    first.end()
+    // 回答收了，话题列表还在读：留着的那句还没问出去。
+    await until(() => listing && a.streaming.value === null)
+    a.startNew()
+    expect(a.current.value).toBe('c1')
+    gate = undefined
+    openGate()
+    await asking
+    await until(() => !a.busy.value && a.messages.value.length === 4)
+
+    expect(asked.map((b) => [b.conversation, b.question])).toEqual([
+      ['c1', '把报告打分'],
+      ['c1', '只看第 3 份'],
+    ])
+    expect(a.messages.value.map((m) => [m.role, m.text])).toEqual([
+      ['user', '把报告打分'],
+      ['assistant', '先读一遍。'],
+      ['user', '只看第 3 份'],
+      ['assistant', '好，只看第 3 份。'],
+    ])
+  })
+
+  it('words refused only after sign-out stay with that person: not shown, not asked, no conversation made', async () => {
+    const first = openAnswer('先读一遍。')
+    let refuse: (() => void) | undefined
+    const { asked, requests } = serve(
+      [() => first.response],
+      () => new Promise<Response>((resolve) => (refuse = () => resolve(notAnswering())))
+    )
+    const a = createAssistant()
+    await a.load()
+
+    const asking = a.ask('把报告打分', '答不上来')
+    await until(() => a.streaming.value === '先读一遍。')
+    const saying = a.say('只看第 3 份', '回答失败')
+    await until(() => refuse !== undefined)
+    a.reset()
+    const before = requests.length
+    first.end()
+    await asking
+    refuse?.()
+    await saying
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(a.current.value).toBeNull()
+    expect(a.messages.value).toEqual([])
+    expect(requests.slice(before).filter((r) => !r.startsWith('GET'))).toEqual([])
+    expect(asked.map((b) => b.question)).toEqual(['把报告打分'])
+    expect(a.busy.value).toBe(false)
+  })
+
+  it('a refusal that arrives after the person opened another conversation is not asked there', async () => {
+    const first = openAnswer('先读一遍。')
+    let refuse: (() => void) | undefined
+    const other = {
+      id: 'c2',
+      title: '另一段',
+      lastActiveAt: '2026-10-02T08:00:00Z',
+      messages: [{ role: 'user', text: '别的事', at: '2026-10-02T08:00:00Z', seq: 1 }],
+      answering: null,
+      earlier: false,
+    }
+    const { asked } = serve(
+      [() => first.response],
+      () => new Promise<Response>((resolve) => (refuse = () => resolve(notAnswering()))),
+      { conversations: { c2: other } }
+    )
+    const a = createAssistant()
+    await a.load()
+
+    const asking = a.ask('把报告打分', '答不上来')
+    await until(() => a.streaming.value === '先读一遍。')
+    const saying = a.say('只看第 3 份', '回答失败')
+    await until(() => refuse !== undefined)
+    first.end()
+    await asking
+    await a.show('c2')
+    expect(a.current.value).toBe('c2')
+    refuse?.()
+    await saying
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(asked.map((b) => [b.conversation, b.question])).toEqual([['c1', '把报告打分']])
+    expect(a.messages.value.map((m) => m.text)).toEqual(['别的事'])
+    // 那句没发出去：上面那段里也不留着它，像发出去了一样。
+    expect(a.earlier.value.flatMap((topic) => topic.messages.map((m) => m.text))).toEqual(['把报告打分', '先读一遍。'])
     expect(a.notice.value).toBe('回答失败')
     expect(a.busy.value).toBe(false)
   })
