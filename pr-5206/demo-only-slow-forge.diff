@@ -1,0 +1,17 @@
+diff --git a/backend/app/domain/repository/forge_files.py b/backend/app/domain/repository/forge_files.py
+index e1dca0a30..e4b02db3b 100644
+--- a/backend/app/domain/repository/forge_files.py
++++ b/backend/app/domain/repository/forge_files.py
+@@ -445,6 +445,12 @@ class ProjectFiles:
+         return base, head
+ 
+     async def comparison(self, refs: tuple[str, str] | None = None):
++        # FB108-DEMO-ONLY: simulate a slow forge read (never committed)
++        import pathlib as _pl, asyncio as _aio
++        _flag = _pl.Path("/tmp/fb108-forge-delay")
++        if _flag.exists():
++            await _aio.sleep(float(_flag.read_text().strip() or "5"))
++            return {"total_commits": 1, "files": [{"filename": "demo.txt"}]}
+         refs = refs or await self._refs()
+         if refs is None:
+             return None
