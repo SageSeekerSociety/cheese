@@ -1,0 +1,80 @@
+{
+ "fontOk": true,
+ "base": "http://127.0.0.1:13481",
+ "side": "before",
+ "url": "http://127.0.0.1:13481/projects/chwncfow/channels/1",
+ "shownAt": 19.819,
+ "endAt": 30.006,
+ "box": {
+  "x": 947.5,
+  "y": 512.5,
+  "width": 72,
+  "height": 19
+ },
+ "samples": [
+  {
+   "t": 19676,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 20961,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 22056,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 23147,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 24175,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 25285,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 26376,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 27472,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  },
+  {
+   "t": 28571,
+   "transform": "none",
+   "animation": "none",
+   "live": false,
+   "cls": "mdi-progress-clock"
+  }
+ ],
+ "recordedAt": "2026-11-08T23:47:20.450Z"
+}

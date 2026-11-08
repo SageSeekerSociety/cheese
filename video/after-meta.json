@@ -1,0 +1,80 @@
+{
+ "fontOk": true,
+ "base": "http://127.0.0.1:13480",
+ "side": "after",
+ "url": "http://127.0.0.1:13480/projects/chwncfow/channels/1",
+ "shownAt": 42.288,
+ "endAt": 53.487,
+ "box": {
+  "x": 947.5,
+  "y": 512.5,
+  "width": 72,
+  "height": 19
+ },
+ "samples": [
+  {
+   "t": 42297,
+   "transform": "matrix(0.642923, 0.765931, -0.765931, 0.642923, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 44061,
+   "transform": "matrix(0.70674, -0.707473, 0.707473, 0.70674, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 45161,
+   "transform": "matrix(-0.499637, 0.866235, -0.866235, -0.499637, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 46365,
+   "transform": "matrix(0.499406, -0.866368, 0.866368, 0.499406, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 47402,
+   "transform": "matrix(-0.0862916, 0.99627, -0.99627, -0.0862916, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 48590,
+   "transform": "matrix(0.0860986, -0.996287, 0.996287, 0.0860986, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 49689,
+   "transform": "matrix(0.217295, 0.976106, -0.976106, 0.217295, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 50883,
+   "transform": "matrix(-0.217622, -0.976033, 0.976033, -0.217622, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  },
+  {
+   "t": 51980,
+   "transform": "matrix(0.46305, 0.886332, -0.886332, 0.46305, 0, 0)",
+   "animation": "task-state-turn-d57716c8",
+   "live": true,
+   "cls": "mdi-timelapse"
+  }
+ ],
+ "recordedAt": "2026-11-08T23:52:17.167Z"
+}
