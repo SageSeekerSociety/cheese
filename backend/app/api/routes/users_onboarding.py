@@ -47,6 +47,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError
 from app.db.session import get_db
 from app.domain.agent_instance.adapters import default_teammate
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.living_doc.overview import seed_overview
 from app.domain.onboarding.starters import StarterKey, seat_on_board, starter_task
 from app.domain.project.protection import BRANCH_PROTECTION_KEY
@@ -74,6 +75,10 @@ class OnboardingIn(BaseModel):
 class OnboardingOut(BaseModel):
     project_id: uuid.UUID
     root_topic_id: uuid.UUID | None
+    #: The name of the project's default teammate, as its roster shows it: the
+    #: page writes the first request to them, and a name nobody on the roster
+    #: carries would leave that request unanswered.
+    teammate: str
 
 
 @router.post(
@@ -138,6 +143,7 @@ async def finish_onboarding(
 
     if user.onboarded_at is None:
         user.onboarded_at = datetime.now(UTC)
+    teammate = (await AgentInstanceService(session).for_project(project)).display_name
     # An invited newcomer's first project pays their 50 credits; anyone else's
     # finish leaves the invitation ledger alone.
     await referrals.on_onboarded(session, user.id)
@@ -148,5 +154,6 @@ async def finish_onboarding(
         OnboardingOut(
             project_id=project.id,
             root_topic_id=project.root_topic_id,
+            teammate=teammate,
         ).model_dump(mode="json")
     )

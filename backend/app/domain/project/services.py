@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -749,14 +749,16 @@ class ProjectService:
         await self._seed_default_teammate(
             project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
         )
-        if terms.model and not (project.settings or {}).get("default_model"):
+        if terms.model:
             # The pack names the model its 题目 was tuned on (the new-user
             # starters run on DeepSeek V4.1 Flash); a project that picked its
-            # own keeps it. A whole new dict, so the JSON column sees a change.
-            project.settings = {
-                **(project.settings or {}),
-                "default_model": terms.model,
-            }
+            # own keeps it. Read under the settings lock so the check and the
+            # write see the same blob.
+            await self._repo.lock_settings(project)
+            if not (project.settings or {}).get("default_model"):
+                await self._repo.merge_settings(
+                    project, {"default_model": terms.model}, locked=True
+                )
         if terms.compute_credits > 0 and await self._earmark_due(
             project, task_id, terms
         ):
@@ -779,6 +781,13 @@ class ProjectService:
         if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("compute_credits was not handed in")
+        # The claim lock is per (题目, team), so one person starting two
+        # starters at once holds two different locks; this one, per team and
+        # to the end of the transaction, makes the check and the grant one step.
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"once-per-person-pack:{project.team_id}"},
+        )
         return not await self._compute_credits.team_has_earmark(
             project.team_id, terms.shared_with
         )

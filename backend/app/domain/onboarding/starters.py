@@ -34,7 +34,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.identity.services import IdentityService
 from app.domain.onboarding.models import OnboardingStarter
 from app.domain.space.member_repositories import SpaceMemberRepository
-from app.domain.space.repositories import SpaceCategoryRepository, SpaceRepository
+from app.domain.space.repositories import (
+    SpaceAdminRelationRepository,
+    SpaceCategoryRepository,
+    SpaceRepository,
+)
 from app.domain.space.services import SpaceService
 from app.domain.task import package
 from app.domain.task.inputs import APPROVE_APPROVED, START_DIRECT, SUBMITTER_USER
@@ -312,18 +316,31 @@ async def _live_task(session: AsyncSession, key: StarterKey) -> Task | None:
     task = await session.get(Task, row.task_id)
     if task is None or task.deleted_at is not None:
         return None
+    # Deleting a board leaves its 题目 alive; a starter on a deleted board is
+    # missing too, and is made again on a new one.
+    if await SpaceRepository(session=session).get_by_id(task.space_id) is None:
+        return None
     return task
 
 
 async def _board(session: AsyncSession, *, author_id: int) -> tuple[int, int]:
     """The starters' board and its 分组: the one an earlier starter is on, or a
     new one."""
-    space_ids = list(await session.scalars(select(OnboardingStarter.space_id).limit(1)))
+    space_ids = list(
+        await session.scalars(
+            select(OnboardingStarter.space_id)
+            .order_by(OnboardingStarter.created_at.desc())
+            .limit(1)
+        )
+    )
     spaces = SpaceRepository(session=session)
     space = await spaces.get_by_id(space_ids[0]) if space_ids else None
-    if space is None or space.deleted_at is not None:
+    if space is None:
+        # 芝士 owns it, so the board has an owner like any other.
         space = await SpaceService(
-            repo=spaces, category_repo=SpaceCategoryRepository(session=session)
+            repo=spaces,
+            category_repo=SpaceCategoryRepository(session=session),
+            admin_repo=SpaceAdminRelationRepository(session=session),
         ).create_space(
             name=BOARD_NAME,
             intro=BOARD_INTRO,
