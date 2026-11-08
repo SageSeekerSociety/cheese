@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>团队成员加载状态 · 隔离亲验</title>
+<style>body{font:15px/1.7 system-ui;max-width:720px;margin:40px auto;padding:0 16px;color:#222}a{margin-right:12px}td{padding:4px 10px;border-bottom:1px solid #eee}</style></head><body>
+<h2>团队成员页加载状态 · 隔离亲验入口</h2>
+<p>两份都挂真的团队成员页组件；只有成员接口和移出确认框换成替身，不连任何后端、不写任何数据。</p>
+<table><tr><th>场景</th><th>改前（main 37767844d）</th><th>改后（任务分支 f6b0cb8d3）</th></tr>
+<tr><td>手动放行（推荐亲手点）</td><td><a href="before.html?s=manual">打开</a></td><td><a href="after.html?s=manual">打开</a></td></tr>
+<tr><td>首次读取在途</td><td><a href="before.html?s=pending">打开</a></td><td><a href="after.html?s=pending">打开</a></td></tr>
+<tr><td>读回真实空名单</td><td><a href="before.html?s=empty">打开</a></td><td><a href="after.html?s=empty">打开</a></td></tr>
+<tr><td>首次读取失败</td><td><a href="before.html?s=failed">打开</a></td><td><a href="after.html?s=failed">打开</a></td></tr>
+<tr><td>移出后重读在途（自动点）</td><td><a href="before.html?s=reread">打开</a></td><td><a href="after.html?s=reread">打开</a></td></tr>
+<tr><td>移出后重读失败（自动点）</td><td><a href="before.html?s=reread-fail">打开</a></td><td><a href="after.html?s=reread-fail">打开</a></td></tr></table>
+<p>手动放行怎么点：打开后先看到第一次读停住（改前显示「暂无成员」，改后转圈）→ 点「回名单」→ 点 qinmo 行的「⋯」→「移除成员」→ 第二次读停住，名单应保持在屏上 → 点「回失败」，改前整格换成「无法加载成员」，改后名单不动。</p>
+</body></html>
