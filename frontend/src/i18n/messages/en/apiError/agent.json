@@ -7,6 +7,7 @@
   "agentHandleFormat": "An AI teammate's username can only contain lowercase letters, digits and .-_, and must start with a letter or digit",
   "agentHandleReserved": "{handle} is the placeholder for an unidentified caller and can't be used as an AI teammate's username",
   "agentHandleTaken": "This project already has an AI teammate with the username {handle}",
+  "agentIdenticalExists": "This project already has an AI teammate with the same name and configuration: {name}. Change the name or the configuration to tell them apart",
   "agentNameRequired": "The name can't be empty",
   "agentNameTooLong": "The name can be at most 64 characters",
   "agentNotFound": "AI teammate not found",
