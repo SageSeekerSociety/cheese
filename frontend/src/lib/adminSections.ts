@@ -64,6 +64,14 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     group: 'pending',
   },
   {
+    to: '/admin/tasks',
+    name: 'AdminTasks',
+    icon: 'mdi-clipboard-check-outline',
+    labelKey: 'navigation.admin.tasks',
+    badge: false,
+    group: 'pending',
+  },
+  {
     to: '/admin/overview',
     name: 'AdminOverview',
     icon: 'mdi-heart-pulse',

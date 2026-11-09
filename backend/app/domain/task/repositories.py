@@ -9,7 +9,7 @@ from app.core.request_facts import recall, remember
 from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
-from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
+from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED, APPROVE_NONE
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
@@ -495,6 +495,24 @@ class TaskRepository:
         self._session.add(task)
         await self._session.flush()
         return task
+
+    async def list_unreviewed(self, *, limit: int, offset: int = 0) -> list[Task]:
+        """题目 waiting for review in every space, oldest first: the platform
+        admin's queue (``/admin/tasks``), in the order a space's own queue reads."""
+        stmt = (
+            select(Task)
+            .where(Task.deleted_at.is_(None), Task.approved == APPROVE_NONE)
+            .order_by(Task.created_at.asc(), Task.id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def count_unreviewed(self) -> int:
+        stmt = select(func.count(Task.id)).where(
+            Task.deleted_at.is_(None), Task.approved == APPROVE_NONE
+        )
+        return int((await self._session.execute(stmt)).scalar_one())
 
     async def has_prior_pending_task_for_creator(self, task: Task) -> bool:
         stmt = select(Task.id).where(

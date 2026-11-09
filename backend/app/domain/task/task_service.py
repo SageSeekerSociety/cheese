@@ -6,12 +6,15 @@ stays under its size cap; the class is re-exported from ``services``, so
 """
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import BadRequestError
+from app.core.sentences import say
 from app.domain.tag.models import Tag
 from app.domain.task import stages
+from app.domain.task.inputs import APPROVE_APPROVED, map_approve_type
 from app.domain.task.models import (
     Task,
     TaskRubricItem,
@@ -148,6 +151,40 @@ class TaskService:
 
     async def has_prior_pending_task_for_creator(self, task: Task) -> bool:
         return await self._repo.has_prior_pending_task_for_creator(task)
+
+    async def list_unreviewed(self, *, limit: int, offset: int = 0) -> list[Task]:
+        return await self._repo.list_unreviewed(limit=limit, offset=offset)
+
+    async def count_unreviewed(self) -> int:
+        return await self._repo.count_unreviewed()
+
+    async def review(
+        self,
+        task: Task,
+        *,
+        approved: str | None,
+        reject_reason: str | None,
+        reviewer_id: int,
+    ) -> None:
+        """Pass ``task`` onto its board or send it back, as ``reviewer_id``. The
+        caller has already decided they may (``PATCH /tasks/{id}`` for whoever
+        teaches the space, ``/admin/tasks`` for a platform admin) and saves."""
+        if approved is not None:
+            next_approved = map_approve_type(approved)
+            if next_approved == APPROVE_APPROVED and task.approved != APPROVE_APPROVED:
+                if await self.has_prior_pending_task_for_creator(task):
+                    raise BadRequestError(say("taskEarlierPending"))
+                if task.published_at is None:
+                    task.published_at = datetime.now(UTC)
+            task.approved = next_approved
+        if reject_reason is not None:
+            task.reject_reason = reject_reason
+        # 审核痕迹只在这里写：过了调用方那道门才落，通过和驳回是同一次写入，落的是
+        # 审核人与此刻（出题人自己审时就是出题人）。驳回后作者重新提交、再被审时覆盖
+        # 成最新一次 —— 「审没审过」看 approved，这两列说的是「上一次是谁、什么时候
+        # 点的」。
+        task.reviewed_by = reviewer_id
+        task.reviewed_at = datetime.now(UTC)
 
     async def save(self, task: Task) -> Task:
         return await self._repo.save(task)
