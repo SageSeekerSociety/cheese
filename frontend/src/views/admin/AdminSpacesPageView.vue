@@ -14,6 +14,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -27,6 +28,18 @@ import { relTime } from '@/lib/relTime'
 defineOptions({ name: 'AdminSpacesPageView' })
 
 const { t } = useI18n()
+
+/**
+ * 已经开起来的空间点名字就进去：平台管理员管每一块板（成员、设置、删除）。一条开放
+ * 申请说的是一块已有的空间；新建申请要等通过了，空间才在。
+ */
+function opens(item: SpaceApplication): boolean {
+  return item.kind === 'open' || item.reviewStatus === 'APPROVED'
+}
+
+function spaceAt(item: SpaceApplication) {
+  return { name: 'SpacesDetail', params: { spaceId: String(item.id) } }
+}
 
 const props = defineProps<{
   status: string
@@ -154,7 +167,11 @@ function avatarUrl(avatarId: number | null | undefined): string {
                       kind="org"
                     />
                   </span>
-                  <span class="asp__name" :title="item.name">{{ item.name }}</span>
+                  <!-- A space that is up opens at its own address: platform admins manage every space. -->
+                  <NavLink v-if="opens(item)" class="asp__name asp__name--link" :to="spaceAt(item)" :title="item.name">
+                    {{ item.name }}
+                  </NavLink>
+                  <span v-else class="asp__name" :title="item.name">{{ item.name }}</span>
                   <span v-if="item.reviewStatus !== 'PENDING'" class="asp__chip">
                     {{ item.reviewStatus === 'APPROVED' ? t('spaces.review.APPROVED') : t('spaces.review.REJECTED') }}
                   </span>
@@ -317,6 +334,14 @@ function avatarUrl(avatarId: number | null | undefined): string {
   line-height: var(--lh-14);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.asp__name--link {
+  text-decoration: none;
+}
+
+.asp__name--link:hover {
+  text-decoration: underline;
 }
 
 /* 状态徽章：只在看「已通过 / 已驳回」这两堆时出现 —— 待审核那一堆每一条都是待审核，

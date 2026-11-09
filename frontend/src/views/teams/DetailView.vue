@@ -47,8 +47,9 @@ defineSlots<{ default?: () => unknown }>()
 </script>
 
 <template>
-  <!-- 没加入的人看到小队的对外一面，不进成员工作区，也不去拉只有成员读得到的东西。 -->
-  <v-container v-if="teamData && !isMember" class="fill-height justify-center pa-4" fluid>
+  <!-- 没加入的人看到小队的对外一面，不进成员工作区，也不去拉只有成员读得到的东西。
+       设置那一层除外：给了 `settings` 就是他管得了这个团队（平台管理员）。 -->
+  <v-container v-if="teamData && !isMember && !settings" class="fill-height justify-center pa-4" fluid>
     <TeamProfile :team="teamData" :join="join" />
   </v-container>
   <v-container v-else-if="notFound" class="fill-height justify-center pa-4" fluid>

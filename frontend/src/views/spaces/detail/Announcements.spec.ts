@@ -47,7 +47,7 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
   }
 })
 
-// 谁看得到那些按钮，是拿登录的人跟 `space.admins` 对出来的（空间 store 的 `isManager`）。
+// 谁看得到那些按钮，看服务端说登录的人能做什么（`space.viewerPermissions`，空间 store 的 `isManager`）。
 vi.mock('@/services/account', () => ({
   default: { _user: { value: null as { id: number } | null } },
 }))
@@ -147,6 +147,11 @@ beforeEach(() => {
       admins: [{ user: { id: OWNER_ID, nickname: '林夏' }, role: 'OWNER' }],
       taskTemplates: '[]',
       classificationTopics: [],
+      // What the server says the signed-in reader may do here.
+      viewerPermissions:
+        AccountService._user.value?.id === OWNER_ID
+          ? ['view', 'publish', 'teach', 'edit_settings', 'announce', 'manage_admins']
+          : ['view', 'publish'],
     },
   }))
   listAnnouncements.mockImplementation(async () => ({ current: CURRENT, expired: EXPIRED, notifyCount: 3 }))

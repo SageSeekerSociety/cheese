@@ -1,7 +1,8 @@
 import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
 /**
- * `/spaces/:spaceId/manage/*` 的门：只有这个空间的所有者与管理员能进。
+ * `/spaces/:spaceId/manage/*` 的门：只有管得了这个空间的人能进 —— 所有者、管理员，
+ * 以及不占席位的平台管理员。
  *
  * 在这之前管理那一段（待审核、成员、数据、设置）没有任何守卫 —— 非管理员把地址
  * 直接敲进来就进得去，页面自己去拉只有管理员能读的接口，换回来一个 403，屏幕上
@@ -9,9 +10,9 @@ import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from '
  * 画的是一扇说清楚「为什么进不去、下一步去哪」的门（和项目页那扇同一个形状，
  * 组件是 `components/common/AccessNotice.vue`）。
  *
- * 判据是这个空间的管理员名单（`useSpaceStore` 的 `isManager`，和侧栏「管理」那一栏
- * 的显隐同源，不是另抄一份）。名单随这块板的详情一起来，所以这里按需先取一次 ——
- * 和页面外壳（`views/spaces/Detail.vue`）取的是同一份、同一条路
+ * 判据是服务端说读者能做什么（`useSpaceStore` 的 `isManager`，读 `viewerPermissions`，
+ * 和侧栏「管理」那一栏的显隐同源，不是另抄一份）。它随这块板的详情一起来，所以这里
+ * 按需先取一次 —— 和页面外壳（`views/spaces/Detail.vue`）取的是同一份、同一条路
  * （`useSpaceData.fetchSpace`）。取数失败它自己会提示；这里只按「没拿到 = 不是
  * 管理员」往下判，于是不存在、也不属于我的板同样进不了管理那一段。
  *
@@ -29,7 +30,7 @@ export async function spaceManageGuard(to: RouteLocationNormalized): Promise<Rou
     import('@/services/account'),
   ])
   // 「我是谁」在冷打开、访问令牌过期时要等会话恢复完才落定；不等的话，一个真管理员
-  // 会被自己刚打开的那一页挡在门外。恢复完好后 `isManager` 才读得到正确的名单比对。
+  // 会被自己刚打开的那一页挡在门外。
   await account.sessionRestored
   const store = useSpaceStore()
   if (store.currentSpace?.id !== spaceId) await useSpaceData().fetchSpace(spaceId)

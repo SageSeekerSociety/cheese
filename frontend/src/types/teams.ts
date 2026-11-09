@@ -8,6 +8,18 @@ export type TeamVisibility = 'public' | 'stealth'
 // 当前登录者和这个小队的关系：已加入 / 申请审批中 / 都不是。
 export type TeamJoinStatus = 'member' | 'pending' | 'none'
 
+// One thing a person may do to a team (backend `app/domain/team/permissions.py`).
+export type TeamPermission =
+  | 'view_members'
+  | 'edit_settings'
+  | 'manage_members'
+  | 'change_roles'
+  | 'manage_machines'
+  | 'manage_documents'
+  | 'recruit'
+  | 'disband'
+  | 'transfer'
+
 export interface TeamMember {
   role: TeamMemberRoleType
   user: User
@@ -32,6 +44,10 @@ export interface Team {
   joinStatus?: TeamJoinStatus
   // true = 加入要 owner/admin 批准（申请）；false = 确认即加入。
   joinApproval?: boolean
+  // Present on a team read by id or handle, and on what a settings change answers:
+  // what the reader may do to it (backend `app/domain/team/permissions.py`). Not
+  // only its members hold any — a platform admin manages every shared team.
+  viewerPermissions?: TeamPermission[]
   owner: User
   admins: {
     total: number

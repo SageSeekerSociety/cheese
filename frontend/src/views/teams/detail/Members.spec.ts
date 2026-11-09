@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { Team } from '@/types'
+import type { Team, TeamPermission } from '@/types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -84,16 +84,25 @@ afterEach(() => {
   dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
 })
 
+/** What the server says each seat may do to the team (`app/domain/team/permissions.py`). */
+function held(role: Team['role']): TeamPermission[] {
+  if (role === 'OWNER')
+    return ['view_members', 'edit_settings', 'manage_members', 'change_roles', 'recruit', 'disband', 'transfer']
+  if (role === 'ADMIN') return ['view_members', 'edit_settings', 'manage_members', 'recruit']
+  return role === 'MEMBER' ? ['view_members'] : []
+}
+
 function mount(overrides: Partial<Team>) {
   setLocale('zh-CN')
   const team = ref({
+    viewerPermissions: held(overrides.role),
     id: 7,
     handle: 'crew',
     name: 'Cheese 核心组',
     intro: '',
     avatarId: 1,
     owner: { id: 1 },
-    // 第 4 个管理员不在 examples 里：只剩 role 能说明他是管理员。
+    // 第 4 个管理员不在 examples 里：只剩服务端说的权限能说明他是管理员。
     admins: { total: 4, examples: [] },
     members: { total: 0, examples: [] },
     visibility: 'public',
@@ -138,6 +147,7 @@ describe('who the join link is read for', () => {
     expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
 
     team.value.role = 'ADMIN'
+    team.value.viewerPermissions = held('ADMIN')
 
     await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledWith(7))
     await screen.findByText('加入方式')
@@ -149,6 +159,7 @@ describe('who the join link is read for', () => {
     await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1))
 
     team.value.role = 'MEMBER'
+    team.value.viewerPermissions = held('MEMBER')
 
     await waitFor(() => expect(screen.queryByText('加入方式')).toBeNull())
     expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1)
@@ -378,7 +389,7 @@ describe('answering a join request', () => {
     for (const fn of inboxListeners) fn()
     expect(TeamsApi.listTeamJoinRequests).not.toHaveBeenCalled()
 
-    team.value = { ...team.value, role: 'ADMIN' }
+    team.value = { ...team.value, role: 'ADMIN', viewerPermissions: held('ADMIN') }
     await waitFor(() => expect(TeamsApi.listTeamJoinRequests).toHaveBeenCalledWith(7))
   })
 })

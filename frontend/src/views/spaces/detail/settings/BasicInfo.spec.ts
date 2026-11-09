@@ -88,6 +88,14 @@ const Page = defineComponent({
 
 async function mountPage(currentUserId: number | null) {
   AccountService.user = currentUserId === null ? null : ({ id: currentUserId, nickname: '管理员' } as never)
+  // What the server says this reader may do: the creator owns it, anyone else only reads.
+  spacesDetail.mockResolvedValue({
+    space: {
+      ...SPACE,
+      viewerPermissions:
+        currentUserId === OWNER_ID ? ['view', 'edit_settings', 'manage_admins', 'delete'] : ['view', 'publish'],
+    },
+  })
 
   const router = createRouter({
     history: createMemoryHistory(),
