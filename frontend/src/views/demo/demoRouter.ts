@@ -28,6 +28,7 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
 const catalogTargets = [
   { path: '/home', name: 'HomeHub', component: blank },
   { path: '/account/signin', name: 'SignIn', component: blank },
+  { path: '/spaces/:spaceId', name: 'SpacesDetail', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
   // 空间设置那一层的六条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
   // `router/spaces.ts` 的 `manage/settings` 子树）。目录左边的链接按这些名字指路。

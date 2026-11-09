@@ -29,9 +29,9 @@ import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { onInboxChange } from '@/lib/inboxLive'
+import { teamAllows } from '@/lib/teamPermissions'
 import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
-import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 
 const route = useRoute()
@@ -45,15 +45,10 @@ const dialog = useDialog()
 
 const activeTab = ref('members')
 
-const isSelfOwner = computed(() => {
-  if (!teamData.value) {
-    return false
-  }
-  return AccountService.user?.id === teamData.value.owner.id
-})
-
-// 看服务端给的 role，不看 admins.examples：那份名单最多只有 3 个人，第 4 个管理员会被当成普通成员。
-const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
+// 看服务端说读者能做什么（`viewerPermissions`），不看 admins.examples：那份名单最多只有
+// 3 个人；也不看 role：平台管理员不在这个团队里，照样管它。
+const isSelfOwner = computed(() => teamAllows(teamData.value, 'change_roles'))
+const isSelfAdmin = computed(() => teamAllows(teamData.value, 'manage_members'))
 
 // 邀请、加入链接、加入申请：把人带进团队的几样。移出成员不在其内：那是往外走，不是往里进。
 const canBringPeopleIn = computed(() => isSelfAdmin.value && !teamData.value?.personal)
@@ -217,7 +212,8 @@ onMounted(() => {
 
   updateActiveTabFromRoute()
 })
-watch(() => route.query.invite, updateActiveTabFromRoute)
+// 侧栏的缓存行不带 `viewerPermissions`，整份团队到了才知道能不能邀请：那时再看一次 `invite=1`。
+watch([() => route.query.invite, canBringPeopleIn], updateActiveTabFromRoute)
 
 watch(
   () => route.query,

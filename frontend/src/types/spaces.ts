@@ -23,7 +23,26 @@ export type Space = {
   openScope?: string[] | null
   /** 最近一次「设为开放空间」的申请；只有管理员读得到，没申请过是 `null`。 */
   openRequest?: SpaceOpenRequest | null
+  /**
+   * 读者在这块板上能做的事（服务端 `app/domain/space/permissions.py` 的 `Permission`）。
+   * 管理这块板的不一定在 `admins` 里：平台管理员不占席位也管每一块板。
+   */
+  viewerPermissions?: SpacePermission[]
 }
+
+/** 一块板上的一样权限，服务端 `app/domain/space/permissions.py` 的 `Permission`。 */
+export type SpacePermission =
+  | 'view'
+  | 'publish'
+  | 'teach'
+  | 'edit_settings'
+  | 'manage_members'
+  | 'announce'
+  | 'manage_materials'
+  | 'view_analytics'
+  | 'manage_admins'
+  | 'delete'
+  | 'resubmit'
 
 /** 把空间设为开放空间（或扩大范围）的申请，平台审核通过前空间保持原样。 */
 export type SpaceOpenRequest = {

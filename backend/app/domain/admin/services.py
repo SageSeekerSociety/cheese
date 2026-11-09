@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.admin import repositories as repo
 from app.domain.identity.services import IdentityService
@@ -19,6 +20,7 @@ from app.domain.user.services import (
     faces_by_handle,
     search_accounts,
     user_by_handle,
+    user_by_id,
     users_by_handle,
 )
 
@@ -31,6 +33,33 @@ def root_admin_handles() -> frozenset[str]:
     `Settings._require_platform_admins_on_deployment`）保证它不会空。
     """
     return frozenset(settings.platform_admin_handles)
+
+
+async def is_platform_admin(session: AsyncSession, user_id: int) -> bool:
+    """这个账号是不是平台管理员 —— `app.core.policy.oversees` 问的就是它
+    （`app.main` 在启动时登记），平台管理员凭它管理每一块板、每个小队。
+
+    判据仍是 `AdminService.is_admin`；名单上的 agent 不算（管理动作 agent 不能
+    做，`require_platform_admin` 同样拒它）。一个请求里只读一次：一页上的每张卡
+    都要问一遍权限。
+    """
+    key = ("platform_admin", user_id)
+    found, cached = recall(session, key)
+    if found:
+        return cached
+    user = await user_by_id(session, user_id)
+    answer = (
+        user is not None
+        and await AdminService(session).is_admin(user.username)
+        and not await IdentityService(session).is_agent(user.username)
+    )
+    remember(
+        session,
+        key,
+        answer,
+        tables=frozenset({"platform_admins", "user", "agent_bindings"}),
+    )
+    return answer
 
 
 class AdminService:
