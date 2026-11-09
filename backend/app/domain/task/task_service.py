@@ -152,12 +152,6 @@ class TaskService:
     async def has_prior_pending_task_for_creator(self, task: Task) -> bool:
         return await self._repo.has_prior_pending_task_for_creator(task)
 
-    async def list_unreviewed(self, *, limit: int, offset: int = 0) -> list[Task]:
-        return await self._repo.list_unreviewed(limit=limit, offset=offset)
-
-    async def count_unreviewed(self) -> int:
-        return await self._repo.count_unreviewed()
-
     async def review(
         self,
         task: Task,

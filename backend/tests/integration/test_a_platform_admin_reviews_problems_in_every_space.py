@@ -105,3 +105,14 @@ def test_someone_who_is_not_a_platform_admin_neither_sees_nor_reviews_the_queue(
         assert refused.status_code == 403, refused.text
     task = client.get(f"/tasks/{task_id}", headers=owner).json()["data"]["task"]
     assert task["approved"] == "NONE"
+
+
+def test_a_problem_whose_space_was_deleted_leaves_the_queue(client, people):
+    owner, _stranger, admin = people
+    space_id = _space(client, owner)
+    task_id = _publish(client, owner, space_id, "空间删了的题")
+    assert task_id in _queue(client, admin)
+
+    deleted = client.delete(f"/spaces/{space_id}", headers=owner)
+    assert deleted.status_code in (200, 204), deleted.text
+    assert task_id not in _queue(client, admin)

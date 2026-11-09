@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.task_deps import get_task_service
 from app.api.task_serialization import (
     _enrich_task_models,
@@ -21,13 +21,33 @@ from app.api.task_serialization import (
     _enrich_task_topics,
     _task_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import PLATFORM_ADMIN
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
+from app.domain.space import task_review_queue as review_queue
 from app.domain.task.services import TaskService
 from app.domain.user.services import user_by_handle
 
-router = APIRouter(prefix="/admin/tasks", tags=["admin"], dependencies=[ROUTE_DECIDES])
+router = APIRouter(prefix="/admin/tasks", tags=["admin"], dependencies=[PLATFORM_ADMIN])
+
+
+class QueuePage(BaseModel):
+    pageStart: str
+    pageSize: int
+    hasMore: bool
+    nextStart: str | None
+    total: int
+
+
+class UnreviewedTasksOut(BaseModel):
+    """A page of the queue; each task in the shape ``GET /tasks`` lists it."""
+
+    tasks: list[dict]
+    page: QueuePage
+
+
+class ReviewedTaskOut(BaseModel):
+    task: dict
 
 
 class ReviewTaskRequest(BaseModel):
@@ -50,18 +70,17 @@ async def _task_models(db, tasks) -> list[dict]:
     return items
 
 
-@router.get("")
+@router.get("", **typed_response(UnreviewedTasksOut))
 async def list_unreviewed_tasks(
     db: DbSession,
     handle: PlatformAdminDep,
-    service: Annotated[TaskService, Depends(get_task_service)],
     pageStart: str | None = Query(default=None),
     pageSize: int = Query(default=20, ge=1, le=100),
 ) -> dict:
     offset = int(pageStart) if pageStart and pageStart.isdigit() else 0
-    tasks = await service.list_unreviewed(limit=pageSize, offset=offset)
+    tasks = await review_queue.unreviewed_tasks(db, limit=pageSize, offset=offset)
     items = await _task_models(db, tasks)
-    total = await service.count_unreviewed()
+    total = await review_queue.count_unreviewed(db)
     has_more = offset + len(items) < total
     return ok(
         {
@@ -77,7 +96,7 @@ async def list_unreviewed_tasks(
     )
 
 
-@router.post("/{taskId}/review")
+@router.post("/{taskId}/review", **typed_response(ReviewedTaskOut))
 async def review_unreviewed_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     body: ReviewTaskRequest,
