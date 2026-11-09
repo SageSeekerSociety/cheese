@@ -212,7 +212,8 @@ onMounted(() => {
 
   updateActiveTabFromRoute()
 })
-watch(() => route.query.invite, updateActiveTabFromRoute)
+// 侧栏的缓存行不带 `viewerPermissions`，整份团队到了才知道能不能邀请：那时再看一次 `invite=1`。
+watch([() => route.query.invite, canBringPeopleIn], updateActiveTabFromRoute)
 
 watch(
   () => route.query,

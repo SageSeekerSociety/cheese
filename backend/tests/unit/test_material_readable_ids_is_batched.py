@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.core import policy
 from app.domain.space import material_service
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.models import (
@@ -82,14 +81,6 @@ class _CountingSession:
         return _Result(
             [SimpleNamespace(space_id=b) for b in managed] if whole_row else managed
         )
-
-
-@pytest.fixture(autouse=True)
-def _nobody_oversees(monkeypatch: pytest.MonkeyPatch) -> None:
-    """这份假会话里没有平台管理员：判据只剩板子自己的管理员。``app.main`` 在
-    同一个进程里被别的测试导入过时，它登记的那位（``policy.oversee_with``）会去
-    读一张这里没有的表。"""
-    monkeypatch.setattr(policy, "_overseer", None)
 
 
 def _service(session: _CountingSession) -> SpaceMaterialService:

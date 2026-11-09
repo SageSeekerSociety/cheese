@@ -118,6 +118,19 @@ function mount(overrides: Partial<Team>) {
   return { ...view, team }
 }
 
+describe('the invite shortcut from the sidebar (?invite=1)', () => {
+  it('opens the invite box once the full team says the owner may invite', async () => {
+    route.query = { invite: '1' }
+    // 侧栏的缓存行先到：它不带 viewerPermissions，这时还不知道能不能邀请。
+    const { team } = mount({ role: 'OWNER', viewerPermissions: undefined })
+    await screen.findByRole('heading', { level: 2, name: '成员' })
+    expect(screen.queryByLabelText('用户名或邮箱')).toBeNull()
+
+    team.value = { ...team.value, viewerPermissions: held('OWNER') }
+    expect(await screen.findByLabelText('用户名或邮箱')).toBeTruthy()
+  })
+})
+
 describe('who manages the team link', () => {
   it('an admin who is not among the listed examples', async () => {
     mount({ role: 'ADMIN' })
