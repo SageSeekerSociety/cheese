@@ -360,6 +360,19 @@ def test_a_platform_admin_cannot_ask_to_join_a_stealth_team_they_only_oversee(
     assert OVERSEER not in _roster(client, people, team)
 
 
+def test_a_platform_admin_does_not_open_a_stealth_team_to_join_it(client, people, team):
+    """Making the team findable is a way in too: public, with no approval asked,
+    anyone who finds it joins."""
+    opened = client.patch(
+        f"/teams/{team}", json={"visibility": "public"}, headers=people[OVERSEER]
+    )
+    _refused_as_way_in(opened)
+
+    asked = client.post(f"/teams/{team}/join", headers=people[OVERSEER])
+    assert asked.status_code == 404, asked.text
+    assert OVERSEER not in _roster(client, people, team)
+
+
 def test_a_platform_admin_does_not_answer_their_own_request_to_join(client, people):
     team_id = team_of(client, owner=T_OWNER, admins=(T_ADMIN,), members=(T_MEMBER,))
     asking = client.patch(

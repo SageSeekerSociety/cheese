@@ -186,9 +186,7 @@ class TeamService:
         team = await self._repo.get_by_id(team_id)
         if team is not None and await TEAM.visible(self._repo._session, team, user_id):
             return team
-        raise NotFoundError(
-            "Resource team not found", data={"type": "team", "id": team_id}
-        )
+        raise NotFoundError.for_resource("team", team_id)
 
     async def teams_of_seen_by(self, user_id: int, viewer_id: int | None) -> list[Team]:
         """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of

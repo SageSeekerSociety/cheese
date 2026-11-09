@@ -714,6 +714,12 @@ async def patch_team(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
+    if payload.visibility is not None:
+        # Who can find the team and ask to join it is a way in, like its link:
+        # a platform admin who only oversees the team leaves it as the team set it.
+        await team_seats.TEAM.refuse_way_in(
+            db, team_id, auth_user.user_id, TeamPermission.edit_settings
+        )
     team = await service.update_team(
         team_id=team_id,
         name=payload.name,
