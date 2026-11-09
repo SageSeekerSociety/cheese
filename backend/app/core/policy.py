@@ -36,6 +36,9 @@ from typing import Any, ClassVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ForbiddenError
+from app.core.sentences import say
+
 #: What names an object of some kind: its number, or its UUID.
 ObjectId = int | uuid.UUID
 
@@ -114,6 +117,55 @@ class Policy[O, P: enum.StrEnum](ABC):
         if await self.visible(session, obj, user_id):
             return True
         return bool(self.overseen) and await self.overseen_by(session, obj, user_id)
+
+    async def only_overseen(
+        self, session: AsyncSession, obj: O, user_id: int, permission: P
+    ) -> bool:
+        """Whether the person holds ``permission`` on the object only as a
+        platform admin, and not by who they are to it.
+
+        Such a hold manages the object for others; it never seats the person
+        themselves (adding, inviting, promoting or handing it to themselves,
+        answering their own request to join) nor hands them a way in (a join
+        link, an invite code). A seat reads what the object's people keep to
+        themselves, which oversight never does. The routes that could seat the
+        caller ask this and refuse."""
+        return (
+            permission in self.overseen
+            and not await self.decide(session, obj, user_id, permission)
+            and await self.overseen_by(session, obj, user_id)
+        )
+
+    async def refuse_own_seat(
+        self,
+        session: AsyncSession,
+        on: ObjectId,
+        user_id: int,
+        permission: P,
+        *,
+        seats: int | None,
+    ) -> None:
+        """403 when the person would seat ``seats`` — add, invite, promote,
+        hand the object to, or admit them — and that is themselves, holding
+        ``permission`` only through oversight (:meth:`only_overseen`)."""
+        if seats is None or seats != user_id:
+            return
+        obj = await self.load(session, on)
+        if obj is not None and await self.only_overseen(
+            session, obj, user_id, permission
+        ):
+            raise ForbiddenError(say("overseerNoOwnSeat"))
+
+    async def refuse_way_in(
+        self, session: AsyncSession, on: ObjectId, user_id: int, permission: P
+    ) -> None:
+        """403 when the person would read or renew a way in — a join link, an
+        invite code — holding ``permission`` only through oversight."""
+        obj = await self.load(session, on)
+        if obj is not None and await self.only_overseen(
+            session, obj, user_id, permission
+        ):
+            raise ForbiddenError(say("overseerNoWayIn"))
 
     async def overseen_by(self, session: AsyncSession, obj: O, user_id: int) -> bool:
         """Whether the person holds this object's :attr:`overseen` permissions

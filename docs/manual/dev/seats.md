@@ -61,9 +61,11 @@ covers:
 |---|---|---|
 | 空间（`SPACE`） | `view`、`teach`、`edit_settings`、`manage_members`、`announce`、`manage_materials`、`view_analytics`、`manage_admins`、`delete`、`resubmit` | `publish`：发题是成员的事，不是管理 |
 | 团队（`TEAM`） | `view_members`、`edit_settings`、`manage_members`、`change_roles`、`recruit`、`disband`、`transfer` | `manage_machines`（设备、模型连接、Claude 登录是凭据）；`manage_documents`（成员自己的文档）；个人团队整个不在内，它只属于主人 |
-| 题目（`TASK`） | `view`、`teach`、`approve`、`download` | `take_up` |
+| 题目（`TASK`） | `view`、`teach`、`approve`、`download`。`teach` 让他读到交到空间题目上的作业和评分：那是交给教这道题的人的东西 | `take_up` |
 
-问答、回答、报名和个人自动化不在内。移出团队成员时，平台管理员高于除所有者以外的每个位置（`may_remove` 的 `oversees`）；所有者只能转交，这是团队自己的规则。私有频道、私聊、个人的芝士对话和团队文档不经过这几类策略，平台管理员照旧读不到。空间和团队的详情返回 `viewerPermissions`（读者持有的权限），前端据此画管理入口，不再拿管理员名单比对。平台管理员的列表里不会多出别人的空间和团队，按编号打开就行。
+问答、回答、报名和个人自动化不在内。
+
+平台管理员从不凭管理权限给自己席位：只靠管理权限持有某项权限时（`Policy.only_overseen`：这类对象自己的规则不准，`overseen` 准），把自己加为成员、邀请自己、给自己升角色、把团队或空间转给自己、批准自己的加入申请，都得到 403（`refuse_own_seat`，`overseerNoOwnSeat`）；读取、修改或重置加入链接也是 403（`refuse_way_in`，`overseerNoWayIn`），链接就是一条进来的路。席位能读到这里的人留给自己的东西（团队的项目和文档、只对成员开放的空间），管理权限不能。他照样能加、移出别人，改别人的角色，转给另一位成员。按编号申请加入团队用团队自己的可见规则（`TeamService.team_to_join`，`TEAM.visible`），所以隐身团队对他仍是 404。移出团队成员时，平台管理员高于除所有者以外的每个位置（`may_remove` 的 `oversees`）；所有者只能转交，这是团队自己的规则。私有频道、私聊、个人的芝士对话和团队文档不经过这几类策略，平台管理员照旧读不到。空间和团队的详情返回 `viewerPermissions`（读者持有的权限），前端据此画管理入口，不再拿管理员名单比对。平台管理员的列表里不会多出别人的空间和团队，按编号打开就行。
 
 ## 路由怎么声明权限 {#declaring}
 

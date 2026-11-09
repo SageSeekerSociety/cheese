@@ -455,6 +455,13 @@ async def add_space_member(
         raise NotFoundError(
             "User not found", data={"type": "user", "id": payload.user_id}
         )
+    await space_seats.SPACE.refuse_own_seat(
+        db,
+        space_id,
+        auth_user.user_id,
+        SpacePermission.manage_members,
+        seats=payload.user_id,
+    )
     member = await service.add_member(
         space_id=space_id,
         target_user_id=payload.user_id,

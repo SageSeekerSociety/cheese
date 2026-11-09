@@ -26,6 +26,7 @@ from app.domain.team.models import (
     TeamMemberRole,
     TeamMembershipApplication,
 )
+from app.domain.team.permissions import TEAM, Permission
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
@@ -431,6 +432,13 @@ class TeamMembershipService:
         await check_team_locking_status(self._session, team_id)
 
         requester_id = app.user_id
+        await TEAM.refuse_own_seat(
+            self._session,
+            team_id,
+            approver_user_id,
+            Permission.manage_members,
+            seats=requester_id,
+        )
         if await self._team_repo.is_team_member(team_id, requester_id):
             raise BadRequestError("Cannot approve request, user is already a member.")
 

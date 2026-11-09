@@ -277,3 +277,168 @@ def test_a_personal_team_stays_its_owners_alone(client, people):
         f"/teams/{personal['id']}", json={"intro": "改了"}, headers=people[OVERSEER]
     )
     assert refused.status_code == 404, refused.text
+
+
+# -- oversight never seats the overseer -----------------------------------------
+#
+# A seat reads what a place's people keep to themselves (a team's projects and
+# documents, a space's members-only board). Oversight manages a place for its
+# people; it never puts the overseer in it, nor hands them a way in.
+
+
+def _refused_as_own_seat(resp) -> None:
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["i18n"]["key"] == "overseerNoOwnSeat", resp.text
+
+
+def _refused_as_way_in(resp) -> None:
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["i18n"]["key"] == "overseerNoWayIn", resp.text
+
+
+def test_a_platform_admin_does_not_add_invite_promote_or_hand_a_team_to_themselves(
+    client, people, team
+):
+    me = _id_of(client, people, OVERSEER)
+    base = f"/teams/{team}"
+    as_me = people[OVERSEER]
+
+    _refused_as_own_seat(
+        client.post(f"{base}/members", json={"userId": me}, headers=as_me)
+    )
+    _refused_as_own_seat(
+        client.post(f"{base}/invitations", json={"userId": me}, headers=as_me)
+    )
+    _refused_as_own_seat(
+        client.patch(f"{base}/members/{me}", json={"role": "ADMIN"}, headers=as_me)
+    )
+    _refused_as_own_seat(
+        client.put(f"{base}/owner", json={"userId": me}, headers=as_me)
+    )
+    assert OVERSEER not in _roster(client, people, team)
+
+
+def test_a_platform_admin_still_seats_and_moves_other_people_on_a_team(
+    client, people, team
+):
+    outsider = _id_of(client, people, OUTSIDER)
+    member = _id_of(client, people, T_MEMBER)
+
+    added = client.post(
+        f"/teams/{team}/members",
+        json={"userId": outsider},
+        headers=people[OVERSEER],
+    )
+    assert added.status_code == 201, added.text
+    promoted = client.patch(
+        f"/teams/{team}/members/{member}",
+        json={"role": "ADMIN"},
+        headers=people[OVERSEER],
+    )
+    assert promoted.status_code == 200, promoted.text
+    roster = _roster(client, people, team)
+    assert (roster[OUTSIDER], roster[T_MEMBER]) == ("MEMBER", "ADMIN")
+
+
+def test_a_platform_admin_gets_no_team_join_link(client, people, team):
+    base = f"/teams/{team}/join-link"
+
+    _refused_as_way_in(client.get(base, headers=people[OVERSEER]))
+    _refused_as_way_in(client.post(f"{base}/reset", headers=people[OVERSEER]))
+    _refused_as_way_in(
+        client.patch(base, json={"approval": False}, headers=people[OVERSEER])
+    )
+    assert client.get(base, headers=people[T_OWNER]).status_code == 200
+
+
+def test_a_platform_admin_cannot_ask_to_join_a_stealth_team_they_only_oversee(
+    client, people, team
+):
+    asked = client.post(f"/teams/{team}/join", headers=people[OVERSEER])
+
+    assert asked.status_code == 404, asked.text
+    assert OVERSEER not in _roster(client, people, team)
+
+
+def test_a_platform_admin_does_not_answer_their_own_request_to_join(client, people):
+    team_id = team_of(client, owner=T_OWNER, admins=(T_ADMIN,), members=(T_MEMBER,))
+    asking = client.patch(
+        f"/teams/{team_id}/join-link", json={"approval": True}, headers=people[T_OWNER]
+    )
+    assert asking.status_code == 200, asking.text
+    asked = client.post(f"/teams/{team_id}/join", headers=people[OVERSEER])
+    assert asked.json()["data"]["team"]["joinStatus"] == "pending", asked.text
+    waiting = client.get(
+        f"/teams/{team_id}/requests",
+        params={"status": "PENDING"},
+        headers=people[T_OWNER],
+    ).json()["data"]["applications"]
+    (request_id,) = [a["id"] for a in waiting]
+
+    _refused_as_own_seat(
+        client.post(
+            f"/teams/{team_id}/join-requests/{request_id}/approve",
+            headers=people[OVERSEER],
+        )
+    )
+    assert OVERSEER not in _roster(client, people, team_id)
+
+
+def test_a_platform_admin_does_not_seat_themselves_in_a_space(client, people):
+    space_id = _space(client, people)
+    me = _id_of(client, people, OVERSEER)
+    base = f"/spaces/{space_id}"
+    as_me = people[OVERSEER]
+
+    _refused_as_own_seat(
+        client.post(f"{base}/members", json={"userId": me}, headers=as_me)
+    )
+    _refused_as_own_seat(
+        client.post(
+            f"{base}/managers", json={"userId": me, "role": "ADMIN"}, headers=as_me
+        )
+    )
+    _refused_as_own_seat(
+        client.patch(f"{base}/managers/{me}", json={"role": "OWNER"}, headers=as_me)
+    )
+    assert me not in _members(client, people, space_id)
+    held = client.get(base, headers=as_me).json()["data"]["space"]
+    assert me not in {a["user"]["id"] for a in held["admins"]}
+
+
+def test_a_platform_admin_gets_no_space_join_link(client, people):
+    space_id = _space(client, people)
+    base = f"/spaces/{space_id}/join-link"
+
+    _refused_as_way_in(client.get(base, headers=people[OVERSEER]))
+    _refused_as_way_in(client.post(f"{base}/reset", headers=people[OVERSEER]))
+    assert client.get(base, headers=people[OWNER]).status_code == 200
+
+
+def test_a_platform_admin_does_not_answer_their_own_request_to_join_a_space(
+    client, people
+):
+    space_id = _space(client, people)
+    link = client.patch(
+        f"/spaces/{space_id}/join-link",
+        json={"approval": True},
+        headers=people[OWNER],
+    )
+    assert link.status_code == 200, link.text
+    token = link.json()["data"]["token"]
+    asked = client.post(f"/space-invites/{token}/join", headers=people[OVERSEER])
+    assert asked.status_code == 200, asked.text
+    waiting = client.get(
+        f"/spaces/{space_id}/join-requests", headers=people[OWNER]
+    ).json()["data"]["requests"]
+    (request_id,) = [r["id"] for r in waiting]
+
+    _refused_as_own_seat(
+        client.post(
+            f"/spaces/{space_id}/join-requests/{request_id}/approve",
+            headers=people[OVERSEER],
+        )
+    )
+    still = client.get(f"/spaces/{space_id}/join-requests", headers=people[OWNER])
+    assert [r["id"] for r in still.json()["data"]["requests"]] == [request_id]
+    assert _id_of(client, people, OVERSEER) not in _members(client, people, space_id)

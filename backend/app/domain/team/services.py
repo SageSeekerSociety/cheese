@@ -178,6 +178,18 @@ class TeamService:
             "Resource team not found", data={"type": "team", "id": team_id}
         )
 
+    async def team_to_join(self, team_id: int, user_id: int) -> Team:
+        """The team ``user_id`` may ask to join by id, or 404: one they find by
+        who they are (``TEAM.visible``). A platform admin sees every shared
+        team, but oversight is not a way in — a stealth team stays reachable
+        only through its join link."""
+        team = await self._repo.get_by_id(team_id)
+        if team is not None and await TEAM.visible(self._repo._session, team, user_id):
+            return team
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "id": team_id}
+        )
+
     async def teams_of_seen_by(self, user_id: int, viewer_id: int | None) -> list[Team]:
         """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of
         :meth:`visible_team`: the ones the viewer is also in, and the public

@@ -498,7 +498,9 @@ async def join_team(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    team = await service.visible_team(team_id, auth_user.user_id)
+    # Asking to join is the person acting for themselves: the team must be
+    # one they find by who they are, not one only their oversight shows them.
+    team = await service.team_to_join(team_id, auth_user.user_id)
     await membership_service.join(
         user_id=auth_user.user_id,
         team=team,
@@ -520,7 +522,11 @@ async def get_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await team_seats.TEAM.refuse_way_in(
+        db, team_id, auth_user.user_id, TeamPermission.edit_settings
+    )
     team = await service.join_link(team_id=team_id)
     return _join_link_payload(team)
 
@@ -535,7 +541,11 @@ async def update_team_join_link(
     payload: JoinLinkSettings,
     service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await team_seats.TEAM.refuse_way_in(
+        db, team_id, auth_user.user_id, TeamPermission.edit_settings
+    )
     team = await service.join_link(team_id=team_id, approval=payload.approval)
     return _join_link_payload(team)
 
@@ -549,7 +559,11 @@ async def reset_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await team_seats.TEAM.refuse_way_in(
+        db, team_id, auth_user.user_id, TeamPermission.edit_settings
+    )
     team = await service.join_link(team_id=team_id, reset=True)
     return _join_link_payload(team)
 
@@ -795,6 +809,9 @@ async def patch_team_member_role(
     db=Depends(get_db),
 ) -> dict:
     mapped_role = _parse_role(payload.role, allow_owner=False)
+    await team_seats.TEAM.refuse_own_seat(
+        db, team_id, auth_user.user_id, TeamPermission.change_roles, seats=user_id
+    )
 
     await service.update_team_member_role(
         team_id=team_id,
@@ -837,6 +854,13 @@ async def put_team_owner(
     db=Depends(get_db),
 ) -> dict:
     """把团队交给另一位成员：他成为所有者，原所有者降为管理员。只有所有者能交。"""
+    await team_seats.TEAM.refuse_own_seat(
+        db,
+        team_id,
+        auth_user.user_id,
+        TeamPermission.transfer,
+        seats=payload.user_id,
+    )
     await service.transfer_team_owner(
         team_id=team_id, new_owner_user_id=payload.user_id
     )
@@ -882,6 +906,9 @@ async def add_team_member_entry(
         raise BadRequestError(f"Invalid role: {role_str}. Must be MEMBER or ADMIN")
 
     team_id = team.id
+    await team_seats.TEAM.refuse_own_seat(
+        db, team_id, auth_user.user_id, TeamPermission.manage_members, seats=user_id
+    )
     if role_val == TeamMemberRole.ADMIN:
         await _refuse_admin_grant(db, team_id, auth_user.user_id)
 
@@ -1054,6 +1081,13 @@ async def create_team_invitation(
     db=Depends(get_db),
 ) -> dict:
     role = _parse_role(payload.role, allow_owner=False)
+    await team_seats.TEAM.refuse_own_seat(
+        db,
+        team_id,
+        auth_user.user_id,
+        TeamPermission.manage_members,
+        seats=payload.user_id,
+    )
     if role == TeamMemberRole.ADMIN:
         await _refuse_admin_grant(db, team_id, auth_user.user_id)
     app = await membership_service.create_team_invitation(

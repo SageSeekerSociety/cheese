@@ -373,6 +373,13 @@ async def add_space_admin(
     role = SpaceService.admin_role_from_name(role_value)
     if role is None:
         raise BadRequestError(f"Invalid role: {role_value}")
+    await space_seats.SPACE.refuse_own_seat(
+        db,
+        space.id,
+        auth_user.user_id,
+        SpacePermission.manage_admins,
+        seats=payload.user_id,
+    )
     await service.add_admin(
         space_id=space.id,
         target_user_id=payload.user_id,
@@ -415,6 +422,9 @@ async def patch_space_manager(
     new_role = SpaceService.admin_role_from_name(payload.role)
     if new_role is None:
         raise BadRequestError(f"Invalid role: {payload.role}. Must be OWNER or ADMIN")
+    await space_seats.SPACE.refuse_own_seat(
+        db, space.id, auth_user.user_id, SpacePermission.manage_admins, seats=user_id
+    )
     await service.update_admin_role(
         space_id=space.id,
         target_user_id=user_id,
