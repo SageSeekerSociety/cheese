@@ -295,7 +295,9 @@ function jump(i: number) {
   i = Math.max(0, Math.min(STEPS.length - 1, i))
   reset()
   for (let j = 0; j < i; j++) instant(j)
+  // Fast-forwarding replays the earlier steps' toasts; none of them belongs to this step.
   S.morph = false
+  S.toast = ''
   void playFrom(i)
 }
 
@@ -322,7 +324,9 @@ async function only(i: number) {
   stop()
   reset()
   for (let j = 0; j < i; j++) instant(j)
+  // Fast-forwarding replays the earlier steps' toasts; none of them belongs to this step.
   S.morph = false
+  S.toast = ''
   const my = ++run
   playing.value = true
   idx.value = i
