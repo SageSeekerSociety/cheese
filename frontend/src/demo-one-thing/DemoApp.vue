@@ -18,18 +18,27 @@ const H = 800
 // ---- scale: the workspace keeps its desktop layout and shrinks to fit ----
 const viewport = ref<HTMLElement | null>(null)
 const scale = ref(1)
+const offset = ref(0)
+// The whole workspace stays on screen: it shrinks to the width and to the height left under the controls,
+// so the composers at its bottom are never cut off.
 function fit() {
   if (!viewport.value) return
-  scale.value = Math.min(1, viewport.value.clientWidth / W)
+  const room = window.innerHeight - viewport.value.getBoundingClientRect().top - 12
+  scale.value = Math.min(1, viewport.value.clientWidth / W, Math.max(0.4, room / H))
+  offset.value = Math.max(0, (viewport.value.clientWidth - W * scale.value) / 2)
 }
 let ro: ResizeObserver | null = null
 onMounted(() => {
   fit()
   viewport.value?.addEventListener('click', onUserClick, true)
+  window.addEventListener('resize', fit)
   ro = new ResizeObserver(fit)
   if (viewport.value) ro.observe(viewport.value)
 })
-onBeforeUnmount(() => ro?.disconnect())
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  window.removeEventListener('resize', fit)
+})
 
 // ---- theme ----
 const theme = ref<'light' | 'dark'>(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
@@ -115,6 +124,8 @@ const ripples = ref<{ id: number; x: number; y: number }[]>([])
 const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 let run = 0
 const idx = ref(-1)
+/** The step on screen now (or last), for 上一步 / 下一步; -1 before the first. */
+const shown = ref(-1)
 const playing = ref(false)
 
 function wait(ms: number) {
@@ -275,6 +286,7 @@ async function playFrom(i: number) {
   try {
     for (idx.value = i; idx.value < STEPS.length; idx.value++) {
       if (my !== run) return
+      shown.value = idx.value
       await STEPS[idx.value]!()
     }
   } catch {
@@ -316,6 +328,7 @@ function restart() {
   stop()
   reset()
   idx.value = -1
+  shown.value = -1
   Object.assign(caption, { n: '演示', text: '点「播放演示」走一遍；「显示说明」在界面上标出每一块是什么。' })
 }
 
@@ -330,12 +343,17 @@ async function only(i: number) {
   const my = ++run
   playing.value = true
   idx.value = i
+  shown.value = i
   try {
     await STEPS[i]!()
   } catch {
     return
   }
-  if (my === run) playing.value = false
+  if (my !== run) return
+  playing.value = false
+  // 继续播放 picks up at the next step; after the last one the button offers to play it all again.
+  idx.value = i + 1 < STEPS.length ? i + 1 : -1
+  cursor.shown = false
   Object.assign(window, { __oneThingDemoDone: i })
 }
 
@@ -355,8 +373,8 @@ function onUserClick(e: MouseEvent) {
       <BaseButton kind="primary" size="sm" :prepend-icon="playing ? 'mdi-pause' : 'mdi-play'" @click="togglePlay">{{
         playLabel()
       }}</BaseButton>
-      <BaseButton kind="secondary" size="sm" @click="jump((idx < 0 ? 0 : idx) - 1)">上一步</BaseButton>
-      <BaseButton kind="secondary" size="sm" @click="jump((idx < 0 ? 0 : idx) + 1)">下一步</BaseButton>
+      <BaseButton kind="secondary" size="sm" :disabled="shown <= 0" @click="only(shown - 1)">上一步</BaseButton>
+      <BaseButton kind="secondary" size="sm" :disabled="shown >= N - 1" @click="only(shown + 1)">下一步</BaseButton>
       <BaseButton kind="secondary" size="sm" :class="{ 'ot-top__on': notesOn }" @click="toggleNotes">{{
         notesOn ? '隐藏说明' : '显示说明'
       }}</BaseButton>
@@ -372,7 +390,7 @@ function onUserClick(e: MouseEvent) {
     </div>
 
     <div ref="viewport" class="ot-viewport" :style="{ height: `${H * scale}px` }">
-      <div class="ot-scaler" :style="{ transform: `scale(${scale})` }">
+      <div class="ot-scaler" :style="{ transform: `scale(${scale})`, left: `${offset}px` }">
         <Workspace :notes="notes">
           <div
             v-show="cursor.shown"

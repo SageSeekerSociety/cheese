@@ -66,6 +66,14 @@ function hover(e: MouseEvent) {
   bar.top = row.offsetTop
   bar.shown = true
 }
+// A person's face or name opens who they are, as the product's name card does.
+function person(e: MouseEvent) {
+  const el = (e.target as HTMLElement).closest<HTMLElement>('.im-person')
+  if (!el) return
+  const row = el.closest<HTMLElement>('[data-line]')
+  const who = row ? byId.value.get(row.dataset.line!)?.who : undefined
+  if (who) toast(`${NAMES[who]} · @${who}${who === 'cheese' ? ' · AI 队友' : ''}`)
+}
 function leave() {
   bar.shown = false
   picker.value = null
@@ -105,8 +113,8 @@ watch(
 
 <template>
   <!-- The hover bar follows the pointer, as in the product timeline; keyboard users reach the same actions on the row itself. -->
-  <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -->
-  <div ref="content" class="ot-tl" @mouseover="hover" @mouseleave="leave">
+  <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions, vuejs-accessibility/click-events-have-key-events -->
+  <div ref="content" class="ot-tl" @mouseover="hover" @mouseleave="leave" @click="person">
     <RoomHoverBar
       :block="barBlock"
       :shown="bar.shown && !!barBlock"

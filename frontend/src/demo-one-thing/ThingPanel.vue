@@ -9,7 +9,7 @@ import type { Block, TodoItem } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { ChatLine, MarkLine } from './state'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { CHANNELS, ME, NAMES, PLAN, RESULTS_MD, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
@@ -152,6 +152,16 @@ const siteRecords = computed<Block[]>(() => {
   return siteBlocks(t.id, OTHER_SITE[t.id] ?? [], plus(t.at, -20))
 })
 const site = siteBundle({ transcript: siteRecords })
+// The session strip at the top of 现场 says who is connected: 芝士 while the task runs, nobody after.
+watch(
+  () => thing.value.status === 'run',
+  (on) => {
+    site.inspector.state.value = on
+      ? ({ id: `${thing.value.id}-session`, connected: true, tasks: {} } as typeof site.inspector.state.value)
+      : null
+  },
+  { immediate: true }
+)
 const working = computed(() => thing.value.status === 'run')
 const running = computed(() => (working.value ? { [`${thing.value.id}-turn`]: Date.now() - 60_000 } : {}))
 const memberNames = NAMES
@@ -169,7 +179,7 @@ const activity = computed<MemberActivityLine[]>(() =>
           handle: 'cheese',
           name: '芝士',
           kind: 'working',
-          since: Math.floor(Date.parse(S.askAt || thing.value.at) / 1000) + 120,
+          since: Math.floor(Date.parse(thing.value.at) / 1000),
           step: ours.value ? STEP_NOW[Math.min(S.live, 4)] ?? null : '执行命令 eval.retrieval',
         },
       ]

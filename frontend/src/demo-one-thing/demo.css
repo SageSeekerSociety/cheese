@@ -136,8 +136,8 @@ body {
 
 /* The 一件事 open in the right panel: its card in the channel is outlined. */
 .task-card.ot-sel {
-  outline: 2px solid var(--ink);
-  outline-offset: -1px;
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
 }
 
 /* 「等你采纳」 is the one state that waits on a person: the only amber status. */
