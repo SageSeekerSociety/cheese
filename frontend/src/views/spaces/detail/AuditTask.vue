@@ -30,6 +30,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import AuditTaskView from './AuditTaskView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { toast } from '@/lib/toast'
@@ -83,7 +84,8 @@ const approveTask = async (taskId: number) => {
     toast.success(t('spaces.detail.auditTasks.operationSuccess'))
   } catch (error) {
     console.error(error)
-    toast.error(t('spaces.detail.auditTasks.operationFailed'))
+    // 服务端说了为什么不行（如「先审核更早的题」）就照说，没说才用那句泛泛的。
+    toast.error(axiosErrorMessage(error, t('spaces.detail.auditTasks.operationFailed')))
   } finally {
     await refresh()
     spaceData.fetchPendingAuditCount()
@@ -111,7 +113,7 @@ const rejectTask = async (taskId: number) => {
       return
     }
     console.error(error)
-    toast.error(t('spaces.detail.auditTasks.operationFailed'))
+    toast.error(axiosErrorMessage(error, t('spaces.detail.auditTasks.operationFailed')))
   } finally {
     await refresh()
     spaceData.fetchPendingAuditCount()

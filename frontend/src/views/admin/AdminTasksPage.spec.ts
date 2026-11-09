@@ -11,6 +11,8 @@ import { describe, expect, it, vi } from 'vitest'
  */
 const queue = vi.hoisted(() => ({
   pending: new Map<number, { id: number; name: string; space: { id: number; name: string } }>(),
+  /** Set: the server refuses every review with this sentence. */
+  refusal: '' as string,
 }))
 const promptAnswer = vi.hoisted(() => ({ value: '' }))
 
@@ -42,6 +44,8 @@ vi.mock('@/api/taskBoard', () => ({
       return { tasks, page: { hasMore: false, nextStart: null, total: tasks.length } }
     },
     reviewAsPlatformAdmin: async (taskId: number, data: { approved: string; rejectReason?: string }) => {
+      const { ApiError } = await import('@/api/http')
+      if (queue.refusal) throw new ApiError(400, queue.refusal)
       if (data.approved === 'DISAPPROVED' && !data.rejectReason) throw new Error('a rejection needs a reason')
       queue.pending.delete(taskId)
       return { task: {} }
@@ -57,6 +61,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
 })
+
+import { toast as sonner } from 'vuetify-sonner'
 
 import AdminTasksPage from './AdminTasksPage.vue'
 
@@ -100,6 +106,19 @@ describe('题目审核', () => {
     promptAnswer.value = '说明不完整'
     await fireEvent.click(view.getByRole('button', { name: 'spaces.detail.auditTasks.reject' }))
     await waitFor(() => expect(view.queryByText('要退回的题')).toBeNull())
+    view.unmount()
+  })
+
+  it('通过被服务端拒绝时，提示里是服务端说的原因，题留在队列里', async () => {
+    queue.pending = new Map([[4, task(4, '后发的题', '丁空间')]])
+    queue.refusal = '这位出题人还有更早的题目在等审核，先审核那些'
+    const view = mountPage()
+    await fireEvent.click(await view.findByText('后发的题'))
+    await fireEvent.click(view.getByRole('button', { name: 'spaces.detail.auditTasks.approve' }))
+
+    await waitFor(() => expect(sonner.error).toHaveBeenCalledWith('这位出题人还有更早的题目在等审核，先审核那些'))
+    expect(view.getByText('后发的题')).toBeTruthy()
+    queue.refusal = ''
     view.unmount()
   })
 })
