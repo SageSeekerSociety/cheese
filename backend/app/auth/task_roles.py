@@ -7,7 +7,9 @@ are to it.
   (``app.domain.space.permissions``, ``teach``). They edit and delete it, grade
   what is handed in, and manage who takes part.
 - **Approving it**, taking it up on the board, is for whoever teaches the space,
-  never its own setter.
+  its setter included when they teach it too; a setter who does not cannot.
+  The platform's admins review it from their own queue (``/admin/tasks``),
+  not through this policy.
 - **Seeing it** depends on three things. An unapproved problem is seen only by
   those who teach it. Otherwise the person must see it on the board: in the
   space, and on its access list when the problem has one

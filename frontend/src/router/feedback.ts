@@ -213,6 +213,13 @@ export default [
         meta: { titleKey: 'navigation.admin.spaces', isFullPage: true },
       },
       {
+        // 题目审核：所有空间里等审核的题，平台管理员不在那个空间里也能通过或驳回。
+        path: 'tasks',
+        name: 'AdminTasks',
+        component: () => import('@/views/admin/AdminTasksPage.vue'),
+        meta: { titleKey: 'navigation.admin.tasks', isFullPage: true },
+      },
+      {
         // 老地址，见文件头。指向的是同一个队列组件，所以标题也跟它一致 —— 顶栏上那行字
         // 不该因为用户是从哪个链接进来的而变。
         path: 'feedback',
