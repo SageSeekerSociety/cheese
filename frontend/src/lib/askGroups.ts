@@ -5,7 +5,7 @@
 // 单题（组里只有它自己）不分组，照旧的卡片长。
 import type { Block } from '../cx_types'
 
-import { askOptions } from './blockDisplay'
+import { askClosedByAsker, askOptions } from './blockDisplay'
 
 /**
  * 一道题的答案：选了哪些选项，或者自己写的一句话。两个都空 = 这题没答。
@@ -30,6 +30,26 @@ export function askHeader(block: Block): string {
 /** 这道题可以选多项。缺省是单选。 */
 export function askMultiSelect(block: Block): boolean {
   return (block.meta as Record<string, unknown> | null)?.multi_select === true
+}
+
+/** 提问方把它收回去了：这道题在频道里整行不画（它已经不等人答，也没人答得上）。 */
+export function askWithdrawn(block: Block): boolean {
+  return askClosedByAsker(block) === 'withdrawn'
+}
+
+/**
+ * 这道题有没有问到 `viewer`。问所有人、没点名（平台发起的那一轮里问的）都算问到；
+ * 点名叫人时，只有名单上有他。
+ *
+ * 频道里没问到自己的题收成一行，问到的照整张卡画：一张卡占一整栏，而频道主线大部分
+ * 时间不是在问你。名单与服务和 `block.asked.may_answer` 是同一条。
+ */
+export function askAsksViewer(block: Block, viewer: string | null | undefined): boolean {
+  // 不知道看的人是谁（还没登录、名册没到）：不替他判断，照整张卡画。
+  if (!viewer) return true
+  const meta = (block.meta ?? {}) as { asked?: unknown; asked_all?: boolean }
+  const asked = Array.isArray(meta.asked) ? meta.asked : typeof meta.asked === 'string' ? [meta.asked] : []
+  return asked.length === 0 || !!meta.asked_all || asked.includes(viewer)
 }
 
 /**

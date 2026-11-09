@@ -4,7 +4,7 @@ import type { Block } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
-import { askGroupKey, askHeader, askMultiSelect, groupAskBlocks } from './askGroups'
+import { askAsksViewer, askGroupKey, askHeader, askMultiSelect, askWithdrawn, groupAskBlocks } from './askGroups'
 
 function ask(id: string, notice: string | null, extra: Record<string, unknown> = {}): Block {
   return {
@@ -91,5 +91,27 @@ describe('askGroups', () => {
     expect(askMultiSelect(bare)).toBe(false)
     expect(askGroupKey(bare)).toBe('g')
     expect(askGroupKey(plain('x'))).toBeNull()
+  })
+
+  it('问到没问到：点名时只看名单，问所有人、没点名都算问到', () => {
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'] }), 'alice')).toBe(true)
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'] }), 'bob')).toBe(false)
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice', 'bob'] }), 'bob')).toBe(true)
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'], asked_all: true }), 'bob')).toBe(true)
+    // 没点名（平台发起的那一轮里问的）：频道里谁都答得上。
+    expect(askAsksViewer(ask('a', 'g', { asked: [] }), 'bob')).toBe(true)
+    // 还不知道看的人是谁：不替他判断。
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'] }), null)).toBe(true)
+  })
+
+  it('撤回的题整行不画；过期的还画（它还能答）', () => {
+    const withdrawn = ask('a', 'g', {
+      answer_log: [{ kind: 'withdrawn', by: 'cheese', at: '2026-10-22T00:01:00Z' }],
+    })
+    const expired = ask('b', 'g', { answer_log: [{ kind: 'expired', by: 'cheese', at: '2026-10-22T00:01:00Z' }] })
+
+    expect(askWithdrawn(withdrawn)).toBe(true)
+    expect(askWithdrawn(expired)).toBe(false)
+    expect(askWithdrawn(ask('c', 'g'))).toBe(false)
   })
 })
