@@ -179,7 +179,7 @@ const STEPS: (() => Promise<void>)[] = [
     await wait(1800)
     reply(2, '陈思远：COCO 要用 5K 测试集')
     await wait(1400)
-    reply(3, '芝士：好，计划是……')
+    reply(3, '芝士：好，先对齐预处理，再统一脚本、跑两个测试集')
     await wait(1600)
     await click('.ot-thing .tabbar__tab[title="资料"]')
     S.rtab = 'sources'
@@ -197,11 +197,10 @@ const STEPS: (() => Promise<void>)[] = [
     await wait(2800)
   },
   async () => {
-    cap(5, '「现场」：一步步打勾，下面是芝士的终端，只看。')
+    cap(5, '「现场」：计划一步步打勾，下面是芝士每一步做了什么、跑出了什么。')
     for (let i = 1; i <= 4; i++) {
-      await wait(700)
+      await wait(900)
       S.live = i
-      S.term = i
     }
     await wait(600)
   },
@@ -253,14 +252,11 @@ function instant(k: number) {
   }
   if (k === 2) {
     openThing('t4')
-    reply(3, '芝士：好，计划是……')
+    reply(3, '芝士：好，先对齐预处理，再统一脚本、跑两个测试集')
     S.rtab = 'sources'
   }
   if (k === 3) confirmKick()
-  if (k === 4) {
-    S.live = 4
-    S.term = 4
-  }
+  if (k === 4) S.live = 4
   if (k === 5) {
     finish()
     S.rtab = 'changes'
@@ -321,8 +317,26 @@ function restart() {
   Object.assign(caption, { n: '演示', text: '点「播放演示」走一遍；「显示说明」在界面上标出每一块是什么。' })
 }
 
+/** Play step `i` alone from its start state and stop at its end (the screenshot run uses it). */
+async function only(i: number) {
+  stop()
+  reset()
+  for (let j = 0; j < i; j++) instant(j)
+  S.morph = false
+  const my = ++run
+  playing.value = true
+  idx.value = i
+  try {
+    await STEPS[i]!()
+  } catch {
+    return
+  }
+  if (my === run) playing.value = false
+  Object.assign(window, { __oneThingDemoDone: i })
+}
+
 // Lets a browser check play any one step on its own (the screenshot run in the PR uses it).
-Object.assign(window, { __oneThingDemo: { jump } })
+Object.assign(window, { __oneThingDemo: { jump, only } })
 
 // A person's click inside the workspace takes over from the script.
 function onUserClick(e: MouseEvent) {

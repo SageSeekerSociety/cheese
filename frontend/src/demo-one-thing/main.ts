@@ -7,6 +7,7 @@
  */
 import '@/styles/content.scss'
 import '@/styles/fonts.css'
+import '@/styles/docBlocks.css'
 import '@/style.css'
 import './demo.css'
 

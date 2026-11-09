@@ -1,24 +1,28 @@
 <script setup lang="ts">
-// The 1280×800 workspace: project rail, sidebar, the center column (always the
-// channel, or 需要我的 / 项目文件 / 设置) and the right panel (the open 一件事,
-// or a file's 待定改动 and 历史). The scripted cursor, the notes overlay and the
-// toast sit on top of it.
-import { computed } from 'vue'
+// The 1280×800 workspace: the product's project rail, the sidebar, the center
+// column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
+// panel (the open 一件事, the channel's 概览, or a file's 待定改动 and 历史).
+// The scripted cursor, the notes overlay and the toast sit on top of it.
+import type { MenuAction } from '@/components/common/menuAction'
+import type { NavGenericItem } from '@/components/common/Navigation/types'
+
+import { computed, ref } from 'vue'
 
 import ChannelCenter from './ChannelCenter.vue'
-import { CHANNELS } from './data'
+import ChannelPanel from './ChannelPanel.vue'
+import { ME, NAMES, OTHER_PROJECTS, PROJECT } from './data'
 import FilesCenter from './FilesCenter.vue'
 import FilesPanel from './FilesPanel.vue'
 import InboxCenter from './InboxCenter.vue'
 import SettingsCenter from './SettingsCenter.vue'
-import { ownerName, taskLine } from './shapes'
 import SideNav from './SideNav.vue'
-import { openThing, S, thingById } from './state'
+import { go, S, thingById, toast } from './state'
 import ThingPanel from './ThingPanel.vue'
 
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import RailItem from '@/components/common/Navigation/RailItem.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import TaskCard from '@/components/room/TaskCard.vue'
 
 defineProps<{
   notes: {
@@ -36,27 +40,112 @@ defineProps<{
 
 const right = computed<'thing' | 'files' | 'chan' | null>(() => {
   if (S.center === 'files') return 'files'
-  if (S.center === 'chan') return S.thing && thingById(S.thing) ? 'thing' : 'chan'
+  if (S.center === 'chan') {
+    if (S.thing && thingById(S.thing)) return 'thing'
+    return S.chanPanel ? 'chan' : null
+  }
   return null
 })
 
-const wide = computed(() => right.value === 'thing' && S.thing === 't4' && thingById('t4')?.status !== 'talk')
+const wide = computed(() => right.value === 'thing' && thingById(S.thing)?.status !== 'talk')
 const cols = computed(() => {
-  const r = right.value === null ? '0px' : right.value === 'files' ? '320px' : wide.value ? '560px' : '440px'
-  return `52px 232px minmax(0, 1fr) ${r}`
+  if (right.value === 'thing' && S.focus) return '64px 228px 0px minmax(0, 1fr)'
+  const r = right.value === null ? '0px' : right.value === 'files' ? '320px' : wide.value ? '560px' : '420px'
+  return `64px 228px minmax(0, 1fr) ${r}`
 })
 
-const chanThings = computed(() => S.things.filter((t) => t.chan === S.chan))
-const chanTitle = computed(() => CHANNELS.find((c) => c.id === S.chan)?.title)
+const waiting = computed(() => S.things.filter((t) => t.status === 'wait' && t.owner === ME).length)
+const unread = computed(() => Object.values(S.unread).reduce((a, b) => a + b, 0))
+
+const rail = computed<NavGenericItem[]>(() => [
+  {
+    key: 'Home',
+    type: 'item',
+    title: '首页',
+    icon: 'cheese',
+    badge: 12 + waiting.value,
+    action: () => go('inbox'),
+    match: () => S.center === 'inbox',
+  },
+  { key: 'divider', type: 'divider' },
+  {
+    key: 'p-mm',
+    type: 'item',
+    title: PROJECT.name,
+    projectId: 'p-mm',
+    shortcut: 1,
+    badge: unread.value,
+    action: () => go('chan'),
+    match: () => true,
+  },
+  ...OTHER_PROJECTS.map((p, i) => ({
+    key: p.id,
+    type: 'item' as const,
+    title: p.name,
+    projectId: p.id,
+    shortcut: i + 2,
+    badge: p.badge,
+    action: () => toast(`演示里只有「${PROJECT.name}」这一个项目`),
+  })),
+  {
+    key: 'add',
+    type: 'item',
+    title: '新建项目',
+    icon: 'mdi-plus',
+    add: true,
+    action: () => toast('新建项目：起个名字、选团队，就有了第一个频道「综合」'),
+  },
+])
+
+const userOpen = ref(false)
+const userActions: MenuAction[] = [
+  { key: 'profile', label: '个人主页', icon: 'mdi-account-outline', onSelect: () => toast('个人主页') },
+  {
+    key: 'settings',
+    label: '个人设置',
+    icon: 'mdi-cog-outline',
+    onSelect: () => go('settings', { settingsSection: 'me' }),
+  },
+  {
+    key: 'usage',
+    label: '用量',
+    icon: 'mdi-chart-box-outline',
+    onSelect: () => go('settings', { settingsSection: 'usage' }),
+  },
+  { key: 'out', label: '退出登录', icon: 'mdi-logout', divider: true, onSelect: () => toast('演示里不登录') },
+]
 </script>
 
 <template>
-  <div id="ot-app" class="ot-app" :style="{ gridTemplateColumns: cols }">
-    <div class="ot-rail">
-      <UserAvatar kind="org" name="多模态检索" seed="proj-mm" :size="32" class="ot-rail__on" />
-      <UserAvatar kind="org" name="知识图谱" seed="proj-kg" :size="32" />
-      <UserAvatar kind="org" name="数据清洗" seed="proj-data" :size="32" />
-    </div>
+  <div
+    id="ot-app"
+    class="ot-app"
+    :class="{ 'ot-app--focus': S.focus && right === 'thing' }"
+    :style="{ gridTemplateColumns: cols }"
+  >
+    <nav class="ot-rail app-rail" aria-label="项目">
+      <div class="ot-rail__list">
+        <RailItem v-for="item in rail" :key="item.key" :item="item" />
+      </div>
+      <div class="ot-rail__end">
+        <button
+          type="button"
+          class="ot-rail__btn"
+          title="问芝士"
+          aria-label="问芝士"
+          @click="toast('问芝士：项目之外的事也可以问它')"
+        >
+          <CheeseAvatar :size="32" name="芝士" handle="cheese" />
+        </button>
+        <AdaptiveMenu v-model="userOpen" :actions="userActions" location="top start" :title="NAMES[ME]">
+          <template #activator="{ props: menuProps }">
+            <button v-bind="menuProps" type="button" class="ot-rail__btn" :aria-label="NAMES[ME]" :title="NAMES[ME]">
+              <UserAvatar :name="NAMES[ME]" :seed="ME" :size="32" />
+            </button>
+          </template>
+        </AdaptiveMenu>
+      </div>
+    </nav>
     <SideNav />
     <main class="ot-pane">
       <ChannelCenter v-if="S.center === 'chan'" />
@@ -67,23 +156,7 @@ const chanTitle = computed(() => CHANNELS.find((c) => c.id === S.chan)?.title)
     <div class="ot-right">
       <ThingPanel v-if="right === 'thing'" :key="S.thing ?? ''" />
       <FilesPanel v-else-if="right === 'files'" />
-      <aside v-else-if="right === 'chan'" class="ot-chanthings" data-zone="right">
-        <header class="ot-chanthings__head"># {{ chanTitle }} 的事</header>
-        <div class="ot-chanthings__body">
-          <template v-if="chanThings.length">
-            <TaskCard
-              v-for="t in chanThings"
-              :key="t.id"
-              :task="taskLine(t)"
-              :owner-name="ownerName(t)"
-              class="ot-chanthings__card"
-              @open="openThing"
-            />
-          </template>
-          <BaseEmptyState v-else size="compact" icon="mdi-checkbox-blank-outline" title="暂无事" />
-          <p class="ot-chanthings__hint">点开一件事，它在右栏打开，频道留在中间。</p>
-        </div>
-      </aside>
+      <ChannelPanel v-else-if="right === 'chan'" />
     </div>
 
     <div v-if="notes.length" class="ot-notes" aria-hidden="true">
@@ -121,24 +194,54 @@ const chanTitle = computed(() => CHANNELS.find((c) => c.id === S.chan)?.title)
 .ot-rail {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   align-items: center;
-  padding: 12px 0;
+  min-height: 0;
+  padding: 8px 0 12px;
   background: var(--canvas);
 }
 
-.ot-rail__on {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.ot-rail__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  min-height: 0;
+}
+
+.ot-rail__end {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.ot-rail__btn {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: 50%;
+}
+
+.ot-rail__btn:hover {
+  opacity: 0.85;
 }
 
 /* Content area: one surface with a hairline against the canvas and a 12px corner at its top-left. */
 .ot-pane {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--surface);
   border-left: 1px solid var(--line);
   border-top-left-radius: var(--radius-lg);
+}
+
+.ot-app--focus .ot-pane {
+  border: 0;
 }
 
 .ot-right {
@@ -147,43 +250,6 @@ const chanTitle = computed(() => CHANNELS.find((c) => c.id === S.chan)?.title)
   overflow: hidden;
   background: var(--surface);
   border-left: 1px solid var(--line);
-}
-
-.ot-chanthings {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.ot-chanthings__head {
-  display: flex;
-  align-items: center;
-  height: 48px;
-  padding: 0 16px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-  border-bottom: 1px solid var(--line);
-}
-
-.ot-chanthings__body {
-  flex: 1;
-  padding: 16px;
-  overflow: auto;
-}
-
-.ot-chanthings__card + .ot-chanthings__card {
-  margin-top: 12px;
-}
-
-.ot-chanthings__hint {
-  padding: 8px 12px;
-  margin: 16px 0 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  border: 1px dashed var(--line-2);
-  border-radius: var(--radius-md);
 }
 
 .ot-notes {
@@ -216,9 +282,10 @@ const chanTitle = computed(() => CHANNELS.find((c) => c.id === S.chan)?.title)
   margin-bottom: 2px;
 }
 
+/* The product's toasts drop in at the top centre, clear of the composer. */
 .ot-toast {
   position: absolute;
-  bottom: 84px;
+  top: 16px;
   left: 50%;
   z-index: var(--z-shell);
   padding: 8px 16px;
@@ -234,7 +301,9 @@ const chanTitle = computed(() => CHANNELS.find((c) => c.id === S.chan)?.title)
 }
 
 .ot-toast-enter-active {
-  transition: opacity var(--dur-base) var(--ease-out);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
 .ot-toast-leave-active {

@@ -26,7 +26,7 @@ const chanName = (id: string) => CHANNELS.find((c) => c.id === id)?.title ?? ''
   <section class="ot-inbox" data-zone="center">
     <header class="ot-head">
       <h2 class="ot-head__title">需要我的</h2>
-      <span class="ot-head__sub">等你采纳的在最上面</span>
+      <span class="ot-head__sub">{{ S.things.length }} 件</span>
     </header>
     <div class="ot-inbox__body">
       <section v-for="g in groups" :key="g.status" class="ot-inbox__group">

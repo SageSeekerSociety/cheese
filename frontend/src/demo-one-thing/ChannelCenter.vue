@@ -1,84 +1,129 @@
 <script setup lang="ts">
-// The center column while a channel is open: its header, the main line drawn
-// by the product's message rows, a 一件事 card under the message that opened it,
-// and the product's composer.
-import { computed, nextTick, ref, watch } from 'vue'
+// The center column while a channel is open: the product's channel header row
+// (title and description, the roster, the bell, 概览, ⋯), the conversation and
+// the composer.
+import type { MenuAction } from '@/components/common/menuAction'
+import type { ProjectMemberRow, TopicMemberRow, TopicNotifyLevel } from '@/cx_types'
+import type { ChatLine } from './state'
 
-import { CHANNELS, NAMES } from './data'
-import { block, ownerName, REFS, taskLine } from './shapes'
-import { openThing, S, send, thingById } from './state'
+import { computed, ref, watch } from 'vue'
 
-import ComposerActions from '@/components/room/ComposerActions.vue'
-import ComposerEditor from '@/components/room/ComposerEditor.vue'
-import RoomMessage from '@/components/room/RoomMessage.vue'
-import TaskCard from '@/components/room/TaskCard.vue'
+import { CHANNELS, ME, NAMES, PEOPLE } from './data'
+import DemoComposer from './DemoComposer.vue'
+import DemoTimeline from './DemoTimeline.vue'
+import { S, send, toast } from './state'
+
+import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
+import PanelToggle from '@/components/room/PanelToggle.vue'
+import TopicMembers from '@/components/TopicMembers.vue'
+import { answer } from '@/views/demo/demoBackend'
 
 const channel = computed(() => CHANNELS.find((c) => c.id === S.chan)!)
 const lines = computed(() => S.chat[S.chan] ?? [])
-const scroller = ref<HTMLElement | null>(null)
 
-watch(
-  () => lines.value.length,
-  async () => {
-    await nextTick()
-    scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: 'smooth' })
-  }
-)
-
-function runStart(i: number): boolean {
-  return i === 0 || lines.value[i - 1]!.who !== lines.value[i]!.who
+// The roster the header reads comes from the room's members endpoint: answer it
+// for every channel, so the product's own TopicMembers draws the avatar stack.
+for (const c of CHANNELS) {
+  const rows: TopicMemberRow[] = [...c.members, 'cheese'].map((h, i) => ({
+    topic_id: c.id,
+    member_handle: h,
+    role: i === 0 ? 'owner' : 'member',
+    name: NAMES[h],
+    agent: h === 'cheese',
+    instance_handle: h === 'cheese' ? 'cheese' : undefined,
+    avatar_id: null,
+  }))
+  answer(`/topics/${c.id}/members`, () => ({ data: rows, total: rows.length }))
 }
+const projectMembers: ProjectMemberRow[] = PEOPLE.map((p) => ({
+  user_handle: p.handle,
+  name: p.name,
+  source: p.agent ? 'agent' : p.handle === ME ? 'owner' : 'team',
+}))
+
+const notify = ref<Record<string, { level: TopicNotifyLevel; until: string | null }>>({})
+const level = computed(() => notify.value[S.chan] ?? { level: 'all' as TopicNotifyLevel, until: null })
+function setNotify(l: TopicNotifyLevel, until: string | null) {
+  notify.value = { ...notify.value, [S.chan]: { level: l, until } }
+  toast(l === 'mute' ? '这个频道静音了' : l === 'all' ? '每条消息都会通知你' : '只在 @ 你时通知')
+}
+
+const membersOpen = ref(false)
+const menuOpen = ref(false)
+const actions = computed<MenuAction[]>(() => [
+  { key: 'details', label: '频道详情', icon: 'mdi-information-outline', onSelect: () => (S.chanPanel = true) },
+  { key: 'pins', label: '置顶的消息', icon: 'mdi-pin-outline', onSelect: () => toast('这个频道还没有置顶的消息') },
+  { key: 'search', label: '在频道里搜索', icon: 'mdi-magnify', onSelect: () => toast('⌘K 搜索消息、文件和一件事') },
+  { key: 'link', label: '复制频道链接', icon: 'mdi-link-variant', onSelect: () => toast('已复制链接') },
+  {
+    key: 'leave',
+    label: '退出频道',
+    icon: 'mdi-exit-to-app',
+    danger: true,
+    divider: true,
+    onSelect: () => toast('演示里不能退出频道'),
+  },
+])
+
+const replyLine = computed(() => lines.value.find((l) => l.id === S.replyTo) ?? null)
+const replyLabel = computed(() =>
+  replyLine.value
+    ? `回复 ${NAMES[replyLine.value.who]}：${replyLine.value.text.replace(/<@cheese>/g, '@芝士').slice(0, 40)}`
+    : null
+)
+function onReply(line: ChatLine) {
+  S.replyTo = line.id
+}
+watch(
+  () => S.chan,
+  () => (S.replyTo = null)
+)
 </script>
 
 <template>
   <section class="ot-chan" data-zone="center">
-    <header class="ot-head">
-      <h2 class="ot-head__title"># {{ channel.title }}</h2>
-      <span class="ot-head__sub">{{ channel.about }}</span>
-      <span class="ot-head__gap" />
-      <span class="ot-head__sub">4 人 · 芝士</span>
+    <header class="topic-header">
+      <div class="topic-header__text">
+        <button type="button" class="topic-header__title t-title" :title="channel.title" @click="S.chanPanel = true">
+          {{ channel.title }}
+        </button>
+        <span class="topic-header__description" :title="channel.about">{{ channel.about }}</span>
+      </div>
+      <TopicMembers
+        :key="S.chan"
+        v-model:open="membersOpen"
+        :topic-id="S.chan"
+        project-id="demo"
+        :project-members="projectMembers"
+        :me="ME"
+        :can-manage="true"
+        :can-invite="true"
+        :joined="true"
+        :general="S.chan === 'c-general'"
+      />
+      <ChannelNotifyMenu :level="level.level" :muted-until="level.until" @set="setNotify" />
+      <PanelToggle
+        :open="S.chanPanel || !!S.thing"
+        @toggle="S.thing ? (S.thing = null) : (S.chanPanel = !S.chanPanel)"
+      />
+      <AdaptiveMenu v-model="menuOpen" :actions="actions" title="更多">
+        <template #activator="{ props: menuProps }">
+          <BaseButton v-bind="menuProps" icon="mdi-dots-horizontal" size="sm" title="更多" aria-label="更多" />
+        </template>
+      </AdaptiveMenu>
     </header>
-    <div ref="scroller" class="ot-chan__lines">
-      <div v-for="(line, i) in lines" :key="line.id" class="ot-chan__line">
-        <RoomMessage
-          :block="block(line)"
-          :parent="null"
-          :parent-name="null"
-          :run-start="runStart(i)"
-          :mine="line.who === 'linxiao'"
-          :topic-id="null"
-          :author-name="NAMES[line.who] ?? line.who"
-          :avatar="null"
-          :is-agent="line.who === 'cheese'"
-          :time="line.time"
-          :refs="REFS"
-          viewer="linxiao"
-          :ask-busy="false"
-        />
-        <div v-if="line.thing && thingById(line.thing)" class="ot-chan__card">
-          <TaskCard
-            :id="`card-${line.thing}`"
-            :class="{ 'ot-sel': S.thing === line.thing, 'ot-flash': S.morph && line.thing === 't4' }"
-            :task="taskLine(thingById(line.thing)!)"
-            :owner-name="ownerName(thingById(line.thing)!)"
-            @open="openThing"
-          />
-        </div>
-      </div>
+    <div class="ot-chan__lines">
+      <DemoTimeline :lines="lines" :conversation="S.chan" cards @reply="onReply" />
     </div>
-    <div class="ot-composer">
-      <div class="ot-composer__box" data-zone="composer">
-        <ComposerEditor v-model="S.typing" :names="REFS" placeholder="说点什么，@芝士 就开一个讨论" />
-        <ComposerActions
-          :uploading="false"
-          :can-send="true"
-          :show-image-picker="false"
-          :enter-sends="true"
-          :can-voice="false"
-          @send="send"
-        />
-      </div>
-    </div>
+    <DemoComposer
+      v-model="S.typing"
+      placeholder="输入消息，@芝士 交给它处理"
+      :reply-label="replyLabel"
+      @clear-reply="S.replyTo = null"
+      @send="send"
+    />
   </section>
 </template>
 
@@ -91,30 +136,57 @@ function runStart(i: number): boolean {
   height: 100%;
 }
 
+.topic-header {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+  height: var(--app-page-header-height, 48px);
+  padding: 0 12px 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.topic-header__text {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.topic-header__title {
+  flex: none;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+.topic-header__title:hover {
+  color: var(--accent-ink);
+}
+
+.topic-header__description {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ot-chan__lines {
   flex: 1;
   min-height: 0;
-  padding: 16px 0 8px;
+  padding: 8px 0;
   overflow: auto;
-}
-
-.ot-chan__card {
-  /* Under the message text: lines up with the message body, past the avatar column. */
-  padding: 4px 16px 8px 60px;
-}
-
-.ot-composer {
-  padding: 8px 16px 12px;
-}
-
-.ot-composer__box {
-  padding: 4px 6px 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  transition: border-color var(--dur-quick) var(--ease-standard);
-}
-
-.ot-composer__box:focus-within {
-  border-color: var(--faint);
 }
 </style>

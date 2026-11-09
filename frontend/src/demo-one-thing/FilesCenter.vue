@@ -8,105 +8,130 @@ import type { FileRow } from '@/lib/changesTree'
 import type { FileDiff } from '@/lib/diff'
 import type { OfficeComparison } from '@/types/reviewComment'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import {
-  CRITERIA_DOC_HTML,
+  asContext,
+  CODE,
+  DOC_HTML,
   FILES,
   MINUTES_DOC,
   minutesHtml,
-  preprocessFile,
   RESULTS_MD,
-  retrievalFile,
   TASK_DIFFS,
   WORD_COMPARISON,
 } from './data'
 import DemoDoc from './DemoDoc.vue'
-import { S, t4 } from './state'
+import { S, t4, toast } from './state'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
 import OfficeCompare from '@/components/review/OfficeCompare.vue'
 import { buildFileRows } from '@/lib/changesTree'
+import { fileIcon } from '@/lib/fileKind'
 
 const accepted = computed(() => t4()?.status === 'done')
+const collapsed = ref(new Set<string>())
 
+const shown = computed(() => FILES.filter((f) => f.kind !== 'result' || accepted.value))
 const rows = computed<FileRow[]>(() => {
-  const files = FILES.filter((f) => f.kind !== 'result' || accepted.value).map((f) => ({ path: f.path, bytes: 2048 }))
   const diffByPath = new Map<string, FileDiff>()
   // Only the result is new to the official version; the code files are simply its current text.
   const result = TASK_DIFFS.find((d) => d.status === 'added')
   if (accepted.value && result) diffByPath.set(result.path, result)
-  return buildFileRows({ files, diffByPath, collapsedDirs: new Set() })
+  return buildFileRows({
+    files: shown.value.map((f) => ({ path: f.path, bytes: f.bytes })),
+    diffByPath,
+    collapsedDirs: collapsed.value,
+  })
 })
 
-const entry = computed(() => FILES.find((f) => f.path === S.file)!)
+const entry = computed(() => FILES.find((f) => f.path === S.file) ?? FILES[1]!)
 
 const minutes = computed(() => {
-  const html = minutesHtml(S.suggAccepted)
+  const html = S.suggRejected
+    ? minutesHtml(false)
+        .replace(/<ins[^>]*>.*?<\/ins>/, '')
+        .replace(/<del[^>]*>(.*?)<\/del>/, '$1')
+    : minutesHtml(S.suggAccepted)
   return S.typed ? html.replace('<li><p></p></li>', `<li><p>${S.typed}</p></li>`) : html
 })
 
-const code = computed(() =>
-  S.file === 'eval/preprocess.py' ? preprocessFile(accepted.value) : retrievalFile(accepted.value)
-)
+const code = computed(() => {
+  const c = CODE[entry.value.path]
+  if (!c) return []
+  return asContext(entry.value.path, accepted.value && c.after ? c.after : c.before)
+})
 
 function select(path: string) {
   if (FILES.some((f) => f.path === path)) S.file = path
 }
+function toggleDir(path: string) {
+  const next = new Set(collapsed.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  collapsed.value = next
+}
+const crumbs = computed(() => entry.value.path.split('/'))
+const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`)
 </script>
 
 <template>
   <section class="ot-files" data-zone="center">
     <header class="ot-head">
       <h2 class="ot-head__title">项目文件</h2>
-      <span class="ot-head__sub">只有一份正式版：文档实时合，代码做完再合</span>
+      <span class="ot-head__sub">{{ shown.length }} 个文件</span>
+      <span class="ot-head__gap" />
+      <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="toast('新建：文档、表格或文件夹')"
+        >新建</BaseButton
+      >
+      <BaseButton kind="ghost" size="sm" prepend-icon="mdi-upload-outline" @click="toast('上传：拖进来或从电脑里选')"
+        >上传</BaseButton
+      >
     </header>
     <div class="ot-files__split">
       <div class="ot-files__tree" data-zone="tree">
         <ChangesFileTree
           :rows="rows"
-          :collapsed-dirs="new Set()"
+          :collapsed-dirs="collapsed"
           :active-path="S.file"
           :reveal-tick="0"
           empty-label="暂无文件"
           :width="224"
           @select="select"
+          @toggle-dir="toggleDir"
         />
       </div>
       <div class="ot-files__body">
         <div class="ot-files__bar">
-          <span class="ot-files__path">{{ S.file }}</span>
+          <v-icon size="16" :icon="fileIcon(entry.path)" class="ot-files__icon" />
+          <span class="ot-files__path">
+            <template v-for="(c, i) in crumbs" :key="i">
+              <span v-if="i" class="ot-files__slash">/</span>
+              <span :class="{ 'ot-files__leaf': i === crumbs.length - 1 }">{{ c }}</span>
+            </template>
+          </span>
+          <span class="ot-files__size">{{ sizeOf(entry.bytes) }}</span>
           <span class="ot-head__gap" />
-          <span v-if="entry.kind === 'code'" class="ot-files__tag">正式版 · 只读</span>
-          <span v-else-if="entry.kind === 'word'" class="ot-files__tag">在线编辑 · 芝士的修订 2 处</span>
-          <span v-else-if="entry.kind === 'doc'" class="ot-files__tag">正式版 · 直接改</span>
+          <span v-if="entry.kind === 'code'" class="ot-files__tag">只读</span>
+          <span v-else-if="entry.kind === 'word'" class="ot-files__tag">修订 2 处</span>
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            icon="mdi-download-outline"
+            title="下载"
+            aria-label="下载"
+            @click="toast(`下载 ${entry.path.split('/').pop()}`)"
+          />
         </div>
-        <div class="ot-files__view">
-          <template v-if="S.file === MINUTES_DOC">
-            <DemoDoc :html="minutes" peer :typing="S.typed.length > 0" />
-            <p class="ot-hint">
-              文档直接改：你打的字马上进正式版，王磊也在改。标出来的那段是芝士的建议，还没生效，在右栏接受。
-            </p>
-          </template>
-          <DemoDoc v-else-if="entry.kind === 'doc'" :html="CRITERIA_DOC_HTML" />
-          <template v-else-if="entry.kind === 'word'">
-            <p class="ot-hint ot-hint--top">
-              在线用 Word 编辑器打开。你直接改；芝士的改动以 Word 修订显示，逐条接受或拒绝。
-            </p>
-            <OfficeCompare :comparison="WORD_COMPARISON as OfficeComparison" />
-          </template>
-          <template v-else-if="entry.kind === 'code'">
-            <div class="ot-files__code"><ChangesDiff :lines="code" inline /></div>
-            <p class="ot-hint">
-              代码做完验证再合：要改就开一件事，在任务的那份里改，采纳后合进正式版。改个错字这类小事可以直接改。
-            </p>
-          </template>
-          <template v-else>
-            <MarkdownView :source="RESULTS_MD" />
-            <p class="ot-hint">任务采纳时直接进了项目文件，不用再「保存」。</p>
-          </template>
+        <div class="ot-files__view" :class="{ 'ot-files__view--code': entry.kind === 'code' }">
+          <DemoDoc v-if="entry.path === MINUTES_DOC" :html="minutes" peer :typing="S.typed.length > 0" />
+          <DemoDoc v-else-if="entry.kind === 'doc'" :key="entry.path" :html="DOC_HTML[entry.path] ?? ''" />
+          <OfficeCompare v-else-if="entry.kind === 'word'" :comparison="WORD_COMPARISON as OfficeComparison" />
+          <div v-else-if="entry.kind === 'code'" class="ot-files__code"><ChangesDiff :lines="code" inline /></div>
+          <MarkdownView v-else :source="RESULTS_MD" />
         </div>
       </div>
     </div>
@@ -136,6 +161,10 @@ function select(path: string) {
   border-right: 1px solid var(--line);
 }
 
+.ot-files__tree :deep(.file-mark) {
+  margin-left: 6px;
+}
+
 .ot-files__body {
   display: flex;
   flex: 1;
@@ -146,24 +175,49 @@ function select(path: string) {
 
 .ot-files__bar {
   display: flex;
+  flex: none;
   gap: 8px;
   align-items: center;
-  height: 36px;
-  padding: 0 16px;
+  height: 40px;
+  padding: 0 8px 0 16px;
   border-bottom: 1px solid var(--line);
 }
 
+.ot-files__icon {
+  color: var(--muted);
+}
+
 .ot-files__path {
-  font-family: var(--font-mono);
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-files__slash {
+  margin: 0 4px;
+  color: var(--faint);
+}
+
+.ot-files__leaf {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ot-files__size {
   font-size: 12px;
-  color: var(--text);
+  color: var(--faint);
+  white-space: nowrap;
 }
 
 .ot-files__tag {
   padding: 0 8px;
   font-size: 12px;
-  line-height: var(--lh-12);
+  line-height: 20px;
   color: var(--muted);
+  white-space: nowrap;
   background: var(--fill);
   border-radius: var(--radius-sm);
 }
@@ -171,14 +225,12 @@ function select(path: string) {
 .ot-files__view {
   flex: 1;
   min-height: 0;
-  padding: 16px 24px;
+  padding: 16px 32px;
   overflow: auto;
 }
 
-.ot-files__code {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+.ot-files__view--code {
+  padding: 0;
 }
 
 .ot-files__code :deep(.diff-line--hunk) {
@@ -190,17 +242,7 @@ function select(path: string) {
   display: none;
 }
 
-.ot-hint {
-  padding: 8px 12px;
-  margin: 16px 0 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  border: 1px dashed var(--line-2);
-  border-radius: var(--radius-md);
-}
-
-.ot-hint--top {
-  margin: 0 0 16px;
+.ot-files__code :deep(.diff-line__text) {
+  white-space: pre;
 }
 </style>

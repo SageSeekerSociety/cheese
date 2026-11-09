@@ -8,6 +8,8 @@ import type { ChatLine, Status, Thing } from './state'
 
 import { ME, NAMES } from './data'
 
+import { clockTime } from '@/lib/dateText'
+
 export const REFS: RefNames = { mentionNames: NAMES, topicTitles: {}, notified: true }
 
 export function block(line: ChatLine, conversation = 'demo'): Block {
@@ -18,9 +20,13 @@ export function block(line: ChatLine, conversation = 'demo'): Block {
     author_type: 'participant',
     author: line.who,
     content: line.text,
-    created_at: '2026-11-09T02:00:00Z',
+    created_at: line.at,
+    reactions: line.reactions,
   }
 }
+
+/** The clock on a message row: 09:05, in the viewer's zone. */
+export const hhmm = (iso: string) => clockTime(Date.parse(iso))
 
 export const STATUS_LABEL: Record<Status, string> = {
   talk: '讨论中',

@@ -1,16 +1,18 @@
 <script setup lang="ts">
-// The project sidebar: 需要我的 on top, the channels in a fixed order, then
-// 项目文件, and 设置 at the bottom. Rows are the product's own sidebar rows.
+// The project sidebar: the product's project header (team, project menu,
+// search), 需要我的 on top, the channels in a fixed order, then 项目文件, and
+// 设置 at the bottom. Rows are the product's own sidebar rows.
+import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { VisibleRow } from '@/lib/topicTree'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
-import { CHANNELS, ME, NAMES, PROJECT } from './data'
-import { go, S } from './state'
+import { CHANNELS, ME, PROJECT } from './data'
+import { go, S, toast } from './state'
 
-import UserAvatar from '@/components/common/UserAvatar.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
+import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 import i18n from '@/i18n'
@@ -20,8 +22,15 @@ const TERMS = { project: '项目', topic: '频道' }
 // The pinned rows translate their labels; the demo's three live under its own keys.
 i18n.global.mergeLocaleMessage('zh-CN', { demoOneThing: { inbox: '需要我的', files: '项目文件', settings: '设置' } })
 
-const waiting = computed(() => S.things.filter((t) => t.status === 'wait').length)
-const filesPending = computed(() => (S.suggAccepted ? 0 : 1))
+const MENU_PAGES = [
+  { key: 'project-tasks', label: 'navigation.project.tasks', icon: 'mdi-format-list-checks' },
+  { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+  { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
+  { key: 'project-skills', label: 'navigation.project.skills', icon: 'mdi-book-cog-outline' },
+]
+
+const waiting = computed(() => S.things.filter((t) => t.status === 'wait' && t.owner === ME).length)
+const filesPending = computed(() => (S.suggAccepted || S.suggRejected ? 0 : 1))
 
 function row(c: (typeof CHANNELS)[number]): VisibleRow<Topic> {
   return {
@@ -30,7 +39,7 @@ function row(c: (typeof CHANNELS)[number]): VisibleRow<Topic> {
       project_id: 'p1',
       parent_id: null,
       title: c.title,
-      kind: 'topic',
+      kind: c.id === 'c-general' ? 'root' : 'topic',
       status: 'active',
       created_at: '2026-11-01T00:00:00Z',
     } as Topic,
@@ -45,61 +54,121 @@ function row(c: (typeof CHANNELS)[number]): VisibleRow<Topic> {
   }
 }
 
+const menuFor = ref<string | null>(null)
+function actions(topic: Topic): MenuCommand[] {
+  const unread = !!S.unread[topic.id]
+  return [
+    {
+      id: 'read',
+      title: '标为已读',
+      icon: 'mdi-check-all',
+      disabled: !unread,
+      run: () => {
+        delete S.unread[topic.id]
+      },
+    },
+    { id: 'mute', title: '静音这个频道', icon: 'mdi-bell-off-outline', run: () => toast(`「${topic.title}」静音了`) },
+    {
+      id: 'details',
+      title: '频道详情',
+      icon: 'mdi-information-outline',
+      run: () => go('chan', { chan: topic.id, chanPanel: true }),
+    },
+    { id: 'link', title: '复制链接', icon: 'mdi-link-variant', run: () => toast('已复制链接') },
+  ]
+}
+
 function openPage(key: string) {
   if (key === 'inbox' || key === 'files' || key === 'settings') go(key)
+  else if (key === 'project-settings') go('settings', { settingsSection: 'project' })
+  else if (key === 'project-members') go('settings', { settingsSection: 'members' })
+  else toast('演示里只有频道、项目文件和设置这几页')
 }
 </script>
 
 <template>
   <nav class="ot-side" data-zone="side">
-    <div class="ot-side__project">
-      <span class="ot-side__team">{{ PROJECT.team }}</span>
-      <span class="ot-side__name">{{ PROJECT.name }}</span>
+    <TopicRailHeader
+      :page="false"
+      :column="false"
+      :project-name="PROJECT.name"
+      :team="{ label: PROJECT.team, handle: PROJECT.teamHandle }"
+      :private-unread-total="0"
+      search-title="搜索和跳转（⌘K）"
+      :menu-open="false"
+      :menu-pages="MENU_PAGES"
+      :docs-active="false"
+      :route-name="S.center === 'settings' ? 'project-settings' : null"
+      :terms="TERMS"
+      :project-selected="true"
+      :can-transfer="true"
+      :can-leave="false"
+      @open-page="openPage"
+      @select-docs="go('files', { file: 'README.md', ftab: 'history' })"
+      @open-palette="toast('⌘K：搜索频道、文件和一件事')"
+      @open-transfer="toast('演示里不能转让项目')"
+    />
+
+    <div class="ot-side__scroll">
+      <div class="ot-side__row" data-nav="inbox">
+        <TopicRailPinnedRows
+          :pages="[{ key: 'inbox', label: 'demoOneThing.inbox', icon: 'mdi-inbox-arrow-down-outline' }]"
+          :route-name="S.center"
+          :terms="TERMS"
+          :page="false"
+          @open-page="openPage"
+        />
+        <TopicRailBadge v-if="waiting" class="ot-side__badge" :count="waiting" />
+      </div>
+
+      <div class="ot-side__sec">
+        <span class="t-eyebrow-read">频道</span>
+        <button
+          type="button"
+          class="ot-side__add"
+          title="新建频道"
+          aria-label="新建频道"
+          @click="toast('新建频道：起个名字，选谁能进')"
+        >
+          <v-icon size="16" icon="mdi-plus" />
+        </button>
+      </div>
+      <div v-for="c in CHANNELS" :key="c.id" class="ot-side__row" :data-chan="c.id">
+        <TopicRailRow
+          :row="row(c)"
+          :selected="S.center === 'chan' && S.chan === c.id"
+          :page="false"
+          :renaming="false"
+          :menu-open="menuFor === c.id"
+          :stalled="false"
+          toggle-title="收起"
+          :light="null"
+          :actions="actions"
+          :fresh="!!S.unread[c.id]"
+          @update:menu-open="(open: boolean) => (menuFor = open ? c.id : null)"
+          @select="go('chan', { chan: c.id, thing: null })"
+        />
+        <TopicRailBadge
+          v-if="S.unread[c.id] && menuFor !== c.id"
+          class="ot-side__badge ot-side__badge--quiet"
+          :count="S.unread[c.id]!"
+        />
+      </div>
+
+      <div class="ot-side__sec"><span class="t-eyebrow-read">项目</span></div>
+      <div class="ot-side__row" data-nav="files">
+        <TopicRailPinnedRows
+          :pages="[{ key: 'files', label: 'demoOneThing.files', icon: 'mdi-folder-outline' }]"
+          :route-name="S.center"
+          :terms="TERMS"
+          :page="false"
+          @open-page="openPage"
+        />
+        <TopicRailBadge v-if="filesPending" class="ot-side__badge ot-side__badge--quiet" :count="filesPending" />
+      </div>
     </div>
 
-    <div class="ot-side__row" data-nav="inbox">
-      <TopicRailPinnedRows
-        :pages="[{ key: 'inbox', label: 'demoOneThing.inbox', icon: 'mdi-inbox-arrow-down-outline' }]"
-        :route-name="S.center"
-        :terms="TERMS"
-        :page="false"
-        @open-page="openPage"
-      />
-      <TopicRailBadge v-if="waiting" class="ot-side__badge" :count="waiting" />
-    </div>
-
-    <div class="ot-side__sec t-eyebrow-read">频道</div>
-    <div v-for="c in CHANNELS" :key="c.id" class="ot-side__row" :data-chan="c.id">
-      <TopicRailRow
-        :row="row(c)"
-        :selected="S.center === 'chan' && S.chan === c.id"
-        :page="false"
-        :renaming="false"
-        :menu-open="false"
-        :stalled="false"
-        toggle-title="收起"
-        :light="null"
-        :actions="() => []"
-        :fresh="!!S.unread[c.id]"
-        @select="go('chan', { chan: c.id })"
-      />
-      <TopicRailBadge v-if="S.unread[c.id]" class="ot-side__badge ot-side__badge--quiet" :count="S.unread[c.id]!" />
-    </div>
-
-    <div class="ot-side__sec t-eyebrow-read">项目</div>
-    <div class="ot-side__row" data-nav="files">
-      <TopicRailPinnedRows
-        :pages="[{ key: 'files', label: 'demoOneThing.files', icon: 'mdi-folder-outline' }]"
-        :route-name="S.center"
-        :terms="TERMS"
-        :page="false"
-        @open-page="openPage"
-      />
-      <TopicRailBadge v-if="filesPending" class="ot-side__badge ot-side__badge--quiet" :count="filesPending" />
-    </div>
-
-    <div class="ot-side__fill" />
-    <div class="ot-side__row" data-nav="settings">
+    <div class="ot-side__row ot-side__foot" data-nav="settings">
       <TopicRailPinnedRows
         :pages="[{ key: 'settings', label: 'demoOneThing.settings', icon: 'mdi-cog-outline' }]"
         :route-name="S.center"
@@ -107,10 +176,6 @@ function openPage(key: string) {
         :page="false"
         @open-page="openPage"
       />
-    </div>
-    <div class="ot-side__me">
-      <UserAvatar :name="NAMES[ME]" :seed="ME" :size="24" />
-      <span>{{ NAMES[ME] }}</span>
     </div>
   </nav>
 </template>
@@ -120,37 +185,40 @@ function openPage(key: string) {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 0 8px;
+  min-height: 0;
   background: var(--canvas);
 }
 
-.ot-side__project {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  height: 48px;
-  padding: 0 8px;
-  margin-bottom: 8px;
-}
-
-.ot-side__team {
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-}
-
-.ot-side__name {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ot-side__scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 8px 0;
+  overflow: auto;
 }
 
 .ot-side__sec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 12px 8px 4px;
+}
+
+.ot-side__add {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.ot-side__add:hover {
+  color: var(--ink);
+  background: var(--fill);
 }
 
 .ot-side__row {
@@ -166,6 +234,10 @@ function openPage(key: string) {
   pointer-events: none;
 }
 
+.ot-side__row:hover .ot-side__badge--quiet {
+  visibility: hidden;
+}
+
 /* A channel's count is not the amber "等你" signal: only 需要我的 carries that. */
 .ot-side__row .ot-side__badge--quiet {
   color: var(--muted);
@@ -175,18 +247,8 @@ function openPage(key: string) {
   background: transparent;
 }
 
-.ot-side__fill {
-  flex: 1;
-}
-
-.ot-side__me {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  height: 48px;
-  padding: 0 8px;
-  font-size: 13px;
-  color: var(--ink);
+.ot-side__foot {
+  padding: 4px 8px 8px;
   border-top: 1px solid var(--line);
 }
 </style>
