@@ -90,7 +90,8 @@ from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance import editing
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.identical import own_source, refuse_identical
+from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
@@ -223,7 +224,12 @@ async def create_project_agent(
     body: AgentInstanceCreate,
     db: DbSession,
 ) -> dict:
-    """Add an agent to this project. It starts with an empty memory pool."""
+    """Add an agent to this project. It starts with an empty memory pool.
+
+    Not checked for an identical active teammate (``identical``): the screen
+    adds teammates through ``/own-agents`` and only edits here, and this
+    route is the one scripts and fixtures use to seat several unnamed agents.
+    """
     project_id = at.project.id
     service = AgentInstanceService(db, models=model_choices)
     instance = await service.create(
@@ -261,6 +267,21 @@ async def update_project_agent(
     service = AgentInstanceService(db, models=model_choices)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     fields = body.model_fields_set
+    if instance.is_active:
+        own = await db.get(OwnAgent, instance.id)
+        name = (
+            body.display_name
+            if "display_name" in fields and body.display_name is not None
+            else instance.display_name
+        )
+        await refuse_identical(
+            db,
+            project_id=project_id,
+            display_name=None if own is not None else name,
+            configuration=body.configuration or instance.configuration,
+            source=own_source(own),
+            exclude=instance.id,
+        )
     if "display_name" in fields and body.display_name is not None:
         await service.rename(instance, body.display_name)
     if body.configuration is not None:

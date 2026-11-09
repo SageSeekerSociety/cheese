@@ -7,6 +7,7 @@
   "agentHandleFormat": "AI 队友的用户名只能包含小写字母、数字和 .-_，且以字母或数字开头",
   "agentHandleReserved": "{handle} 是「认不出是谁」的占位身份，不能用作 AI 队友的用户名",
   "agentHandleTaken": "这个项目里已经有用户名为 {handle} 的 AI 队友",
+  "agentIdenticalExists": "这个项目里已经有一位名字和配置都一样的 AI 队友：{name}。改个名字或换个配置，才能和它区分开",
   "agentNameRequired": "名字不能为空",
   "agentNameTooLong": "名字最多 64 个字",
   "agentNotFound": "没有这位 AI 队友",
