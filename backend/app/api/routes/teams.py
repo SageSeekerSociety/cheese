@@ -425,6 +425,17 @@ async def get_my_teams(
     return ok({"teams": items})
 
 
+async def _viewer_permissions(db, team_id: int, user_id: int) -> list[str]:
+    """What the person asking may do to the team (``viewerPermissions``): its
+    settings are offered to whoever holds them, and that is not always someone
+    on it — a platform admin manages every shared team without a seat."""
+    return [
+        permission.value
+        for permission in TeamPermission
+        if await team_seats.TEAM.allows(db, team_id, user_id, permission)
+    ]
+
+
 async def _team_profile(
     team: Team,
     user_id: int,
@@ -443,6 +454,7 @@ async def _team_profile(
         profiles_map=profiles_map,
         avatars_map=avatars_map,
     )
+    data["viewerPermissions"] = await _viewer_permissions(db, team.id, user_id)
     if not data.get("joined"):
         data["joinStatus"] = await membership_service.join_status(team.id, user_id)
     return ok({"team": data})
@@ -601,6 +613,10 @@ async def get_team_members(
     viewer = team_seats.seat_named(
         next((r.role for r in relations if r.user_id == auth_user.user_id), None)
     )
+    team = await team_seats.TEAM.load(db, team_id)
+    overseer = team is not None and await team_seats.TEAM.overseen_by(
+        db, team, auth_user.user_id
+    )
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, relations)
     members = [
         {
@@ -611,7 +627,9 @@ async def get_team_members(
                 avatars_map=avatars_map,
             ),
             "canRemove": rel.user_id != auth_user.user_id
-            and team_seats.may_remove(viewer, _seat(rel.role), own=False),
+            and team_seats.may_remove(
+                viewer, _seat(rel.role), own=False, oversees=overseer
+            ),
         }
         for rel in relations
     ]
@@ -693,18 +711,18 @@ async def patch_team(
     )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return ok(
-        {
-            "team": _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=auth_user.user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        }
+    data = _team_to_api_model(
+        team,
+        members=members,
+        current_user_id=auth_user.user_id,
+        users_map=users_map,
+        profiles_map=profiles_map,
+        avatars_map=avatars_map,
     )
+    data["viewerPermissions"] = await _viewer_permissions(
+        db, team_id, auth_user.user_id
+    )
+    return ok({"team": data})
 
 
 @router.delete(
@@ -742,14 +760,20 @@ async def delete_team_member(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> Response:
-    # The caller is on the team (``Can`` above), so the roster is theirs to
-    # read and asking about the target tells them nothing new.
+    # The caller reads the roster (``Can`` above), so asking about the target
+    # tells them nothing new.
+    team = await team_seats.TEAM.load(db, team_id)
     actor = await team_seats.seat_of(db, team_id, auth_user.user_id)
     target = await team_seats.seat_of(db, team_id, user_id)
-    if target is None:
+    if team is None or target is None:
         raise NotFoundError.for_resource("team_member", f"{team_id}/{user_id}")
     can.refuse_unless(
-        team_seats.may_remove(actor, target, own=user_id == auth_user.user_id),
+        team_seats.may_remove(
+            actor,
+            target,
+            own=user_id == auth_user.user_id,
+            oversees=await team_seats.TEAM.overseen_by(db, team, auth_user.user_id),
+        ),
         TeamPermission.manage_members,
         team_id,
     )
@@ -786,18 +810,18 @@ async def patch_team_member_role(
         )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return ok(
-        {
-            "team": _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=auth_user.user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        }
+    data = _team_to_api_model(
+        team,
+        members=members,
+        current_user_id=auth_user.user_id,
+        users_map=users_map,
+        profiles_map=profiles_map,
+        avatars_map=avatars_map,
     )
+    data["viewerPermissions"] = await _viewer_permissions(
+        db, team_id, auth_user.user_id
+    )
+    return ok({"team": data})
 
 
 @router.put(
@@ -823,18 +847,18 @@ async def put_team_owner(
         )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return ok(
-        {
-            "team": _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=auth_user.user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        }
+    data = _team_to_api_model(
+        team,
+        members=members,
+        current_user_id=auth_user.user_id,
+        users_map=users_map,
+        profiles_map=profiles_map,
+        avatars_map=avatars_map,
     )
+    data["viewerPermissions"] = await _viewer_permissions(
+        db, team_id, auth_user.user_id
+    )
+    return ok({"team": data})
 
 
 @router.post(

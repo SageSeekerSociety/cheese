@@ -122,8 +122,8 @@ async def list_space_categories(
         space_id=space_id, include_archived=includeArchived
     )
     # 私有指导只对这块板的管理员可见（#944 第二种可见性）：成员读到的是公开那一份。
-    may_manage = auth_user.user_id > 0 and await space_seats.runs(
-        db, space_id, auth_user.user_id
+    may_manage = await space_seats.SPACE.allows(
+        db, space_id, auth_user.user_id, SpacePermission.edit_settings
     )
     items = [_category_to_api_model(c, include_private=may_manage) for c in cats]
     return ok({"categories": items})
@@ -197,8 +197,8 @@ async def get_space_category(
     category = await service.get_category_detail(
         space_id=space_id, category_id=category_id
     )
-    may_manage = auth_user.user_id > 0 and await space_seats.runs(
-        db, space_id, auth_user.user_id
+    may_manage = await space_seats.SPACE.allows(
+        db, space_id, auth_user.user_id, SpacePermission.edit_settings
     )
     return ok(
         {"category": _category_to_api_model(category, include_private=may_manage)}
@@ -378,7 +378,9 @@ async def add_space_admin(
         target_user_id=payload.user_id,
         role=role,
     )
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, viewer_id=auth_user.user_id
+    )
     return ok({"space": space_data})
 
 
@@ -418,5 +420,7 @@ async def patch_space_manager(
         target_user_id=user_id,
         new_role=new_role,
     )
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, viewer_id=auth_user.user_id
+    )
     return ok({"space": space_data})

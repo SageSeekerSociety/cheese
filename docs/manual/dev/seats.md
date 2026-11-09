@@ -31,13 +31,13 @@ covers:
 
 一个人在团队里坐哪个位置、这个位置能做什么，由 `backend/app/domain/team/permissions.py` 回答：所有者、管理员、成员三个位置，每个位置一组固定的权限（看成员、改设置和加入链接、管成员、改角色、管设备和模型连接、管团队文档、发招募帖、解散、转交）。只能移出位置比自己低的人，自己可以离开，所有者只能转交。
 
-看不到这个团队的人（不在隐身团队里）得到 404，看得到但权限不够得到 403。团队的服务只管团队自己的规则，例如个人团队不能解散，不再判断调用者是谁。
+看不到这个团队的人（不在隐身团队里）得到 404，看得到但权限不够得到 403。团队的服务只管团队自己的规则，例如个人团队不能解散，不再判断调用者是谁。平台管理员管理每个共享团队，见[平台管理员管理每个空间和团队](#oversight)。
 
 ## 空间 {#spaces}
 
 空间有自己的位置：所有者（建空间的人）、管理员（课程里就是教师）和成员。每个位置能做什么由 `backend/app/domain/space/permissions.py` 回答：成员看得到空间和里面的内容；管理员还能改设置和分类、管成员和加入链接、发公告、管资料、看数据分析；设置和撤销管理员、删除空间、被驳回后重新提交审核只有所有者能做。所有权可以转交，转交后旧所有者降为管理员。
 
-不在空间里的人得到 404，在空间里但位置不够得到 403。「这人是不是这门课的教师」就是空间的 `teach` 权限（所有者和管理员有），`runs()` 回答「是不是所有者或管理员」。
+不在空间里的人得到 404，在空间里但位置不够得到 403。「这人是不是这门课的教师」就是空间的 `teach` 权限（所有者、管理员和平台管理员有），`runs()` 只回答「是不是所有者或管理员」这个席位事实。平台管理员管理每个空间，见[平台管理员管理每个空间和团队](#oversight)。
 
 ## 题目 {#problems}
 
@@ -46,18 +46,28 @@ covers:
 - `view`：看题和它的附属内容。没审核通过的题只有教它的人看得到；其余的要在板上看得见（在空间里、在题目的可见范围里、没超出每位出题人的上限）。
 - `take_up`：领题，在板上看得见就能领，审核状态由路由另说。
 - `teach`：改题、删题、批改、管报名，出题人和教这个空间的人都有。
-- `approve`：审核通过或退回，只有教这个空间的人有，出题人不能审自己的题。
+- `approve`：审核通过或退回，教这个空间的人有；出题人自己也教这个空间时审自己的题，不教就审不了。
 - `download`：下载题目文件，教它的人和报名已通过的人有。
+
+平台管理员在每个空间里有 `view`、`teach`、`approve`、`download`，没有 `take_up`：领题是参与者的事。
 
 报名（`ClaimPolicy`，同一个文件）是另一类对象：看提交和批改是教这道题的人和报名者本人，交作业是报名者本人或报名团队的成员，撤回报名是个人报名者本人或教这道题的人。看不到题的人一律 404，包括还没审核通过的题。
 
-## 问答 {#questions}
+## 平台管理员管理每个空间和团队 {#oversight}
 
-问答里看、答、关注、投票、评论，登录的人都能做。改问题本身是提问人的事：改、删、设悬赏、采纳答案或撤销采纳、撤回邀请（`backend/app/domain/questions/permissions.py`）；改、删回答是回答作者的事（`backend/app/domain/answers/permissions.py`）。已删除或不存在的问题、回答得到 404。
+[平台管理员](/dev/admins)不占席位，也持有每个空间和每个共享团队的管理权限：成员和管理员、审核、设置、归档和删除。判定只在一处：`backend/app/core/policy.py` 的 `Policy.may` 先问这类对象自己的规则，不准时，再看这项权限在不在这类对象的 `overseen` 里、这个人是不是平台管理员（`oversees`）；`sees` 同理，`overseen` 非空的那类对象对平台管理员都存在。各类策略不能引用管理员领域（领域之间不能成环），所以「谁是平台管理员」由 `app/main.py` 在启动时用 `oversee_with` 登记 `app.domain.admin.services.is_platform_admin`（一个请求只读一次）；没登记时没有人是。
+
+| 对象 | 平台管理员持有 | 不持有 |
+|---|---|---|
+| 空间（`SPACE`） | `view`、`teach`、`edit_settings`、`manage_members`、`announce`、`manage_materials`、`view_analytics`、`manage_admins`、`delete`、`resubmit` | `publish`：发题是成员的事，不是管理 |
+| 团队（`TEAM`） | `view_members`、`edit_settings`、`manage_members`、`change_roles`、`recruit`、`disband`、`transfer` | `manage_machines`（设备、模型连接、Claude 登录是凭据）；`manage_documents`（成员自己的文档）；个人团队整个不在内，它只属于主人 |
+| 题目（`TASK`） | `view`、`teach`、`approve`、`download` | `take_up` |
+
+问答、回答、报名和个人自动化不在内。移出团队成员时，平台管理员高于除所有者以外的每个位置（`may_remove` 的 `oversees`）；所有者只能转交，这是团队自己的规则。私有频道、私聊、个人的芝士对话和团队文档不经过这几类策略，平台管理员照旧读不到。空间和团队的详情返回 `viewerPermissions`（读者持有的权限），前端据此画管理入口，不再拿管理员名单比对。平台管理员的列表里不会多出别人的空间和团队，按编号打开就行。
 
 ## 路由怎么声明权限 {#declaring}
 
-每类对象一个策略（`backend/app/core/policy.py` 的 `Policy`，按身份分权限的用 `SeatPolicy`，只属于一个人的用 `OwnerPolicy`）：它说这类对象的权限有哪些、路径里哪个参数是它的编号、怎么读出来、这个人能不能做某件事、对他存不存在。`backend/app/auth/can.py` 的 `POLICIES` 按权限的类型找到策略。
+每类对象一个策略（`backend/app/core/policy.py` 的 `Policy`，按身份分权限的用 `SeatPolicy`，只属于一个人的用 `OwnerPolicy`）：它说这类对象的权限有哪些、路径里哪个参数是它的编号、怎么读出来、这个人凭自己和对象的关系能不能做某件事（`decide`）、对他存不存在（`visible`），以及平台管理员持有哪些（`overseen`）。调用方只问 `may` / `sees` / `allows`。`backend/app/auth/can.py` 的 `POLICIES` 按权限的类型找到策略。
 
 对象的编号默认是数字；主键是 UUID 的那类写 `id_type = uuid.UUID`，路由的路径参数就按它校验，声明在依赖里的路径参数也是（如个人自动化的 `ROUTINE`，见 `app/domain/assistant/permissions.py`）。
 
@@ -73,7 +83,7 @@ async def patch_team(team: Annotated[TeamView, Can(TeamPermission.edit_settings)
 
 ## 问答 {#questions}
 
-问答里看、答、关注、投票、评论，登录的人都能做。改问题本身是提问人的事：改、删、设悬赏、采纳答案或撤销采纳、撤回邀请（`backend/app/domain/questions/permissions.py`）；改、删回答是回答作者的事（`backend/app/domain/answers/permissions.py`）。路由声明 `needs(QuestionPermission.manage, on="question_id")` 或 `needs(AnswerPermission.manage, on="answer_id")`，已删除或不存在的问题、回答得到 404。
+问答里看、答、关注、投票、评论，登录的人都能做。改问题本身是提问人的事：改、删、设悬赏、采纳答案或撤销采纳、撤回邀请（`backend/app/domain/questions/permissions.py`）；改、删回答是回答作者的事（`backend/app/domain/answers/permissions.py`）。已删除或不存在的问题、回答得到 404。
 
 团队、空间、题目、问答四类对象都由 `backend/app/auth/can.py` 判定，旧的「角色 × 动作 × 资源」表（`app/auth/domains`）已经删除。
 
