@@ -106,7 +106,7 @@ watch(
       <ChannelNotifyMenu :level="level.level" :muted-until="level.until" @set="setNotify" />
       <PanelToggle
         :open="S.chanPanel || !!S.thing"
-        @toggle="S.thing ? (S.thing = null) : (S.chanPanel = !S.chanPanel)"
+        @toggle="S.chanPanel || S.thing ? ((S.thing = null), (S.chanPanel = false)) : (S.chanPanel = true)"
       />
       <AdaptiveMenu v-model="menuOpen" :actions="actions" title="更多">
         <template #activator="{ props: menuProps }">

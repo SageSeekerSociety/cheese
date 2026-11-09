@@ -222,6 +222,8 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
     <header class="ot-thing__head" :class="{ 'ot-flash': S.morph }">
       <v-icon size="18" class="ot-thing__icon" :icon="talk ? 'mdi-forum-outline' : 'mdi-checkbox-marked-outline'" />
       <span v-if="S.focus" class="ot-thing__chan"># {{ chanTitle }} /</span>
+      <!-- 退回频道概况，不是关掉右栏：收起右栏只在概况那一层，免得同一颗 ✕ 点两次是两件事。 -->
+      <BaseButton kind="ghost" size="sm" prepend-icon="mdi-arrow-left" title="回到频道概况" @click="closeThing">概况</BaseButton>
       <h2 class="ot-thing__title" :title="thing.title">{{ thing.title }}</h2>
       <TaskStateMark :state="stateOf(thing)" :size="15" :class="{ 'ot-wait': thing.status === 'wait' }" />
       <span class="ot-head__gap" />
@@ -240,7 +242,6 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
         :aria-label="S.focus ? '退出专注' : '专注模式'"
         @click="S.focus = !S.focus"
       />
-      <BaseButton kind="ghost" size="sm" icon="mdi-close" aria-label="关闭" title="关闭" @click="closeThing" />
     </header>
 
     <div class="ot-stages">

@@ -64,14 +64,9 @@ function save() {
   <aside class="ot-cp" data-zone="right">
     <div class="ot-cp__bar">
       <PanelTabs :tabs="tabs" :active="tab" class="ot-cp__tabs" @select="tab = $event" />
-      <BaseButton
-        kind="ghost"
-        size="sm"
-        icon="mdi-close"
-        title="收起概览"
-        aria-label="收起概览"
-        @click="S.chanPanel = false"
-      />
+      <BaseButton kind="ghost" size="sm" append-icon="mdi-chevron-double-right" title="收起右栏" @click="S.chanPanel = false">
+        收起
+      </BaseButton>
     </div>
     <div class="ot-cp__body">
       <template v-if="tab === 'overview'">
