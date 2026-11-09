@@ -627,10 +627,14 @@ async def get_team_members(
     viewer = team_seats.seat_named(
         next((r.role for r in relations if r.user_id == auth_user.user_id), None)
     )
-    team = await team_seats.TEAM.load(db, team_id)
-    overseer = team is not None and await team_seats.TEAM.overseen_by(
-        db, team, auth_user.user_id
-    )
+    # The owner already removes everyone below; oversight is asked only of
+    # whoever it could add to (one read fewer for the owner's own page).
+    overseer = False
+    if viewer is not team_seats.Seat.owner:
+        team = await team_seats.TEAM.load(db, team_id)
+        overseer = team is not None and await team_seats.TEAM.overseen_by(
+            db, team, auth_user.user_id
+        )
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, relations)
     members = [
         {
