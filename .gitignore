@@ -133,3 +133,4 @@ frontend/public/downloads/
 frontend/.docs-island-build/
 frontend/dist-dashboard-proto/
 frontend/dist-one-thing-demo/
+frontend/dist-one-thing-demo-single/
