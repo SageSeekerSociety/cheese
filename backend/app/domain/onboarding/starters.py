@@ -10,8 +10,7 @@ pays for the run. Three things set these apart, all in the pack
 * ``model``: the project runs on DeepSeek V4.1 Flash unless it chose otherwise;
 * ``once_per_person``: an account gets one starter's credits, however many
   starters it takes;
-* ``compute_credits``: a placeholder until each starter has been run ten times
-  and its average cost is known.
+* ``compute_credits``: 50 per starter (see ``STARTER_CREDITS``).
 
 The board is made the first time anyone takes a starter, by 芝士 (the platform's
 own agent account), and a 题目 that is missing is made again then. After that
@@ -45,8 +44,11 @@ StarterKey = Literal["web", "slides", "lesson"]
 #: took about six minutes on it, with a layout on a par with the Claude run).
 STARTER_MODEL: Final = "deepseek-flash"
 
-#: Credits per starter. A placeholder: each starter is run ten times before
-#: launch, and this becomes about twice the average cost.
+#: Credits per starter, decided 2026-11-08 by 马霄宇 after nine runs on dev
+#: (three per starter, one round of changes each): a run cost 9 to 21 credits
+#: (web page about 13, slides about 17, worked problem about 11), so 50 leaves
+#: room for a newcomer to ask for several more changes before their own
+#: credits are touched.
 STARTER_CREDITS: Final = 50
 
 BOARD_NAME: Final = "新手题"
