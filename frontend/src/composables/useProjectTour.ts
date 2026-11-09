@@ -48,23 +48,25 @@ export const GUIDE_STEPS: GuideStep[] = [
     failed: 'reply-failed',
     // 芝士还在回：指着那一行等，不说「回复了」。
     waiting: ['reply-coming', 'timeline'],
-    // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。
-    done: (c) => c.has('thread-pane') && !c.has('reply-failed') && !c.has('reply-coming'),
+    // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。支线已经原地转成任务时，
+    // 点开它进的是任务页，同一段对话在那里读。
+    done: (c) => (c.has('thread-pane') || c.has('task-page')) && !c.has('reply-failed') && !c.has('reply-coming'),
   },
-  // 圈支线的输入框本身：要人在那里回一句，浮窗就不能压着它。
-  { key: 'confirm', anchors: ['thread-composer'], waiting: ['reply-thread'] },
+  // 圈支线的输入框本身：要人在那里回一句，浮窗就不能压着它。支线已经转成任务、人在任务页上
+  // 时，浮窗落在任务页上，「下一步」照常往下走。
+  { key: 'confirm', anchors: ['thread-composer'], waiting: ['reply-thread', 'task-page'] },
   {
     key: 'task',
     anchors: ['task-card', 'task-row'],
     waiting: ['timeline', 'thread-pane'],
-    // 支线转成的任务在右半边打开，任务页由那里的「整页打开」进。
-    done: (c) => c.has('task-page') || c.has('task-pane'),
+    // 转成的任务在任务页上打开。
+    done: (c) => c.has('task-page'),
   },
   // 任务页是一整块区域：正文可能还是空的，只圈标题栏那一条什么也说明不了，浮窗就落在
-  // 页面上。还只在支线右半边时圈的是「整页打开」那颗按钮，那是颗要点的控件，照常画圈。
+  // 页面上。
   {
     key: 'taskPage',
-    anchors: ['task-page', 'task-open-page'],
+    anchors: ['task-page'],
     areas: ['task-page'],
     waiting: ['task-card', 'task-row'],
   },

@@ -170,7 +170,7 @@ const {
   showThread,
   onOpenThread,
   openTaskPage,
-  onOpenCard,
+  showAsTask,
   upgradeMessage,
   newThreadOpen,
   creatingThread,
@@ -236,7 +236,7 @@ const { working, activity, agentControl, siteTurns, activityTick, roomConnected 
 const { handleWorking, handleTurnDone, handleStateChanged } = live
 
 // ---- 页头和这一页的标题（见 topicView/header.ts）----
-const { taskHeaderBinding, topicHeaderBinding, setDynamicTitle } = useTopicHeader({
+const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   place: here,
   room: () => selectedTopic.value,
   task: taskPage.task,
@@ -305,7 +305,7 @@ const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } 
   onReview,
   reloadAccept,
   loadSkills,
-  opening: { onOpenThread, onOpenCard, upgradeMessage },
+  opening: { onOpenThread, openTaskPage, upgradeMessage },
   openTopic,
   panelRef,
   chatColumn,
@@ -384,11 +384,10 @@ void openPlace()
         :members="store.members"
         :topic-list="store.topics"
         :member-names="memberNames"
-        @title="(title: string) => setDynamicTitle(title, 'workspace-thread')"
+        :to-task="upgradeMessage"
         @close="backToRoom"
-        @open-task="onOpenCard"
-        @open-page="openTaskPage"
-        @to-task="upgradeMessage"
+        @open-task="openTaskPage"
+        @as-task="showAsTask"
         @open-file="(path: string) => panelRef?.openFile?.(path)"
         @open-topic="openTopic"
         @mention-click="handleMentionClick"
@@ -474,10 +473,10 @@ void openPlace()
             :members="store.members"
             :topic-list="store.topics"
             :member-names="memberNames"
+            :to-task="upgradeMessage"
             @close="backToRoom"
-            @open-task="onOpenCard"
-            @open-page="openTaskPage"
-            @to-task="upgradeMessage"
+            @open-task="openTaskPage"
+            @as-task="showAsTask"
             @open-file="(path: string) => panelRef?.openFile?.(path)"
             @open-topic="openTopic"
             @mention-click="handleMentionClick"
@@ -508,11 +507,12 @@ void openPlace()
             :member-names="memberNames"
             :threads-new="channelThreads.hasNew.value"
             @open-topic="openTopic"
-            @open-card="onOpenCard"
+            @open-card="openTaskPage"
             @mention-click="handleMentionClick"
             @update:tab="onPanelTab"
             @viewing="viewingPath = $event"
             @locate="onLocate"
+            @navigate="router.push($event)"
           >
             <!-- 页签栏右端：铺满（专注模式）和收起面板。只在桌面上并排的时候有。 -->
             <template v-if="mdAndUp && docked" #tab-actions>
@@ -588,7 +588,7 @@ void openPlace()
                   (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
                 "
                 @jump="jumpTo"
-                @open-task="onOpenCard"
+                @open-task="openTaskPage"
                 @open-all="router.push({ name: 'project-tasks', params: { projectId }, query: { channel: topicId } })"
                 @mention-click="handleMentionClick"
               />
@@ -605,7 +605,7 @@ void openPlace()
                 :fmt-time="threadTime"
                 :can-create="canOpenThread"
                 @open="showThread"
-                @open-task="onOpenCard"
+                @open-task="openTaskPage"
                 @new="newThreadOpen = true"
                 @restore="restoreAThread"
               />
