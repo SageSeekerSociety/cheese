@@ -1,0 +1,212 @@
+/* The demo page around the workspace, and the few classes the demo's own panes share. */
+html,
+body {
+  background: var(--fill-2);
+}
+
+.ot-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  padding: 16px;
+}
+
+.ot-top,
+.ot-viewport,
+.ot-caption,
+.ot-model {
+  width: 100%;
+  max-width: 1280px;
+}
+
+.ot-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ot-top__title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: var(--lh-18);
+  color: var(--ink);
+}
+
+.ot-top__on {
+  background: var(--line-2) !important;
+}
+
+.ot-viewport {
+  position: relative;
+}
+
+.ot-scaler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1280px;
+  height: 800px;
+  transform-origin: 0 0;
+}
+
+.ot-caption {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  min-height: 52px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.ot-caption__n {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  white-space: nowrap;
+}
+
+.ot-caption__t {
+  min-width: 0;
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
+  color: var(--ink);
+}
+
+.ot-model {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.ot-model > div {
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.ot-model b {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+/* Pane headers: the same 48px line as the product's page head. */
+.ot-head {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ot-head__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.ot-head__sub {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ot-head__gap {
+  flex: 1;
+}
+
+/* The 一件事 open in the right panel: its card in the channel is outlined. */
+.task-card.ot-sel {
+  outline: 2px solid var(--ink);
+  outline-offset: -1px;
+}
+
+/* 「等你采纳」 is the one state that waits on a person: the only amber status. */
+.ot-wait .task-state__label,
+.ot-wait .task-state__icon {
+  color: var(--accent-ink) !important;
+}
+
+.ot-flash {
+  animation: ot-flash 1.6s var(--ease-out);
+}
+
+@keyframes ot-flash {
+  0% {
+    background-color: var(--accent-wash);
+    box-shadow: 0 0 0 3px var(--accent-wash);
+  }
+
+  100% {
+    box-shadow: none;
+  }
+}
+
+.ot-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: var(--z-shell);
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px var(--overlay));
+  transition: transform 700ms cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+
+.ot-cursor__shape {
+  fill: var(--surface);
+  stroke: var(--ink);
+}
+
+.ot-ripple {
+  position: absolute;
+  z-index: var(--z-shell);
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  animation: ot-ripple 500ms var(--ease-out) forwards;
+}
+
+@keyframes ot-ripple {
+  from {
+    opacity: 1;
+    transform: scale(0.3);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ot-cursor {
+    transition: none;
+  }
+
+  .ot-flash {
+    animation: none;
+  }
+}
