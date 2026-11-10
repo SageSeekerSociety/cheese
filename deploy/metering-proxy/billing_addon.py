@@ -83,7 +83,7 @@ from cheese_billing_core import (  # noqa: E402
     ChatGPTUsageLimits,
     CodexBody,
     Egress,
-    GatewayFallbacks,
+    FallbackModels,
     Meter,
     ModelRewrite,
     PlatformCredential,
@@ -429,10 +429,12 @@ def _write_bound_model_buffered(flow: http.HTTPFlow, model: str) -> None:
     flow.request.content = out
 
 
-def _drop_gateway_fallbacks(flow: http.HTTPFlow) -> None:
-    """Take the members LiteLLM routes fallbacks by out of this gateway request
-    (`GatewayFallbacks`), after the bound model has been written in."""
-    members = GatewayFallbacks()
+def _drop_fallback_models(flow: http.HTTPFlow) -> None:
+    """Take every member that names a model to run on instead of ``model``
+    (`FallbackModels`) out of this ``/v1/messages`` body, after the bound
+    model has been written in, so the request runs on that model and no other,
+    whichever pool it goes to."""
+    members = FallbackModels()
     if flow.request.stream is False:
         flow.request.content = members.feed(flow.request.content or b"")
         return
@@ -1453,7 +1455,7 @@ def _route(
                     _write_bound_model_buffered(flow, verdict.model)
                 else:
                     _write_bound_model(flow, verdict.model)
-                _drop_gateway_fallbacks(flow)
+                _drop_fallback_models(flow)
                 return
 
     # Everything from here goes to Anthropic, on the platform's credential.
@@ -1513,6 +1515,11 @@ def _route(
                 _write_bound_model_buffered(flow, verdict.model)
             else:
                 _write_bound_model(flow, verdict.model, keep_haiku=keep_haiku)
+        # With no verdict, or one that bound no model (admission unconfigured,
+        # unreachable), nothing chose a model here and the body's own runs; a
+        # fallback would still pick a second one past it, so it goes too. The
+        # request then runs the same way whether or not admission answered.
+        _drop_fallback_models(flow)
 
     # A stale x-api-key would override the session's bearer upstream.
     flow.request.headers.pop("x-api-key", None)

@@ -908,7 +908,7 @@ def test_a_gateway_turn_never_carries_the_sessions_credential(
 _COMPACTION_MEMBERS = {
     "model": "deepseek-flash",
     "messages": [{"role": "user", "content": 'quote: "fallbacks":[{"model":"x"}]'}],
-    "system": [{"type": "text", "text": "summarise"}],
+    "system": [{"type": "text", "text": "summarise " + "x" * 200}],
     "max_tokens": 32000,
     "context_management": {"edits": []},
     "stream": True,
@@ -916,52 +916,159 @@ _COMPACTION_MEMBERS = {
 _FALLBACKS = [{"model": "claude-opus-5"}]
 
 
+def _with_fallbacks(members: dict, *, first: bool, model_last: bool) -> bytes:
+    """`members` with `fallbacks` before or after everything else, and the
+    `model` member first or last (so it arrives chunks after the body began)."""
+    members = dict(members)
+    model = members.pop("model")
+    ordered = {} if model_last else {"model": model}
+    if first:
+        ordered["fallbacks"] = _FALLBACKS
+    ordered.update(members)
+    if not first:
+        ordered["fallbacks"] = _FALLBACKS
+    if model_last:
+        ordered["model"] = model
+    return json.dumps(ordered).encode()
+
+
+def _forward(mod, flow, body: bytes, *, deferred: bool) -> bytes:
+    """Drive `flow` through the addon's hooks with `body` and return what it
+    sends upstream: in 7-byte chunks when the body streams, whole when the
+    deferred road buffered it."""
+    flow.request.headers["content-length"] = str(len(body))
+    asyncio.run(mod.requestheaders(flow))
+    if flow.request.stream is False:
+        assert deferred, "only a deferred subagent turn buffers its body"
+        flow.request.content = body
+        asyncio.run(mod.request(flow))
+        return flow.request.content
+    chunks = [body[i : i + 7] for i in range(0, len(body), 7)] + [b""]
+    return b"".join(flow.request.stream(c) for c in chunks)
+
+
+_POOLS = {
+    # pool: (the bound model, the host the turn must leave for)
+    "gateway": ("deepseek-flash", "litellm.invalid"),
+    "subscription, session's own login": ("claude-sonnet-5", "api.anthropic.com"),
+    "subscription, platform's login": ("claude-sonnet-5", "api.anthropic.com"),
+}
+
+
 @pytest.mark.parametrize(
-    "deferred", [False, True], ids=["header-time turn", "deferred subagent turn"]
+    "pool,deferred",
+    [
+        (pool, deferred)
+        for pool in _POOLS
+        for deferred in (False, True)
+        # A deferred turn on the platform's login is tee'd for a 429 retry from
+        # mitmproxy's raw_content, which the stub flow does not carry.
+        if not (deferred and pool == "subscription, platform's login")
+    ],
+    ids=lambda v: v if isinstance(v, str) else ("deferred" if v else "header-time"),
 )
 @pytest.mark.parametrize("fallbacks_first", [False, True], ids=["after", "first"])
-def test_a_gateway_turn_names_no_model_but_the_bound_one(
-    monkeypatch, tmp_path, deferred, fallbacks_first
+@pytest.mark.parametrize("model_last", [False, True], ids=["model-first", "model-last"])
+def test_a_turn_names_no_model_but_the_bound_one_on_every_pool(
+    monkeypatch, tmp_path, pool, deferred, fallbacks_first, model_last
 ):
-    """A gateway request runs on the model admission bound and on no other:
-    a `fallbacks` member naming one the gateway does not serve made LiteLLM
-    refuse the whole request ("Model is blocked"), which is how every
-    compaction of a long conversation failed."""
-    members = dict(_COMPACTION_MEMBERS)
-    if fallbacks_first:
-        members = {"fallbacks": _FALLBACKS, **members}
-    else:
-        members["fallbacks"] = _FALLBACKS
-    body = json.dumps(members).encode()
+    """A turn runs on the model admission bound and on no other, whichever
+    pool serves it. On the gateway a `fallbacks` member naming a model it does
+    not serve made LiteLLM refuse the whole request ("Model is blocked"), which
+    is how every compaction of a long conversation failed; on the
+    subscription the same member has Anthropic answer a declined request with
+    a model admission never bound."""
+    bound, host = _POOLS[pool]
     secret = "s3cr3t"
-    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    mod = _load_addon(
+        monkeypatch,
+        tmp_path,
+        scoped_secret=secret,
+        credential="sk-ant-oat01-PLATFORM-SETUP"
+        if pool == "subscription, platform's login"
+        else None,
+    )
     monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
     _recording_admission(
         mod,
         monkeypatch,
-        _verdict(pool="gateway", key="sk-virtual-project-key", model="deepseek-flash"),
+        _verdict(pool="gateway", key="sk-virtual-project-key", model=bound)
+        if pool == "gateway"
+        else _verdict(pool="subscription", model=bound, fail_open=False),
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(
+        conn="c1",
+        bearer=core.NO_LOGIN_PLACEHOLDER
+        if pool == "subscription, platform's login"
+        else SESSION_CREDENTIAL,
+    )
+    flow.request.headers["x-claude-code-request-class"] = (
+        "subagent" if deferred else "compaction"
+    )
+    body = _with_fallbacks(
+        _COMPACTION_MEMBERS, first=fallbacks_first, model_last=model_last
+    )
+
+    sent = _forward(mod, flow, body, deferred=deferred)
+
+    assert flow.response is None, "a routed turn must not be refused"
+    assert flow.request.host == host
+    assert json.loads(sent) == {**_COMPACTION_MEMBERS, "model": bound}
+
+
+def test_the_subscription_leaves_a_background_haiku_request_on_haiku_without_its_fallbacks(
+    monkeypatch, tmp_path
+):
+    """The CLI's own small requests (session titles, path suggestions) stay on
+    the haiku family the subscription serves; only a member naming a second
+    model goes."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _recording_admission(
+        mod,
+        monkeypatch,
+        _verdict(pool="subscription", model="claude-sonnet-5", fail_open=False),
     )
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
     flow = _session_flow(conn="c1")
-    flow.request.headers["x-claude-code-request-class"] = (
-        "subagent" if deferred else "compaction"
-    )
-    flow.request.headers["content-length"] = str(len(body))
-    asyncio.run(mod.requestheaders(flow))
-    if deferred:
-        flow.request.content = body
-        asyncio.run(mod.request(flow))
-        sent = flow.request.content
-    else:
-        chunks = [body[i : i + 7] for i in range(0, len(body), 7)] + [b""]
-        sent = b"".join(flow.request.stream(c) for c in chunks)
+    members = {**_COMPACTION_MEMBERS, "model": "claude-haiku-4-5"}
+    body = _with_fallbacks(members, first=False, model_last=False)
 
-    assert flow.response is None, "a routed turn must not be refused"
-    assert flow.request.host == "litellm.invalid"
-    expected = dict(_COMPACTION_MEMBERS)
-    assert json.loads(sent) == expected
+    sent = _forward(mod, flow, body, deferred=False)
+
+    assert flow.response is None
+    assert json.loads(sent) == members
+
+
+@pytest.mark.parametrize(
+    "admission", ["no admission configured", "admission unreachable (fail-open)"]
+)
+def test_a_turn_no_admission_bound_still_runs_only_on_the_model_it_names(
+    monkeypatch, tmp_path, admission
+):
+    """Nothing chose a model when admission did not answer, so the body's own
+    stays; a fallback would still choose a second one, and goes as it does
+    when admission answers."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    _admitted_as(mod, monkeypatch, admission)
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(conn="c1")
+    flow.request.headers["x-claude-code-request-class"] = "compaction"
+    body = _with_fallbacks(_COMPACTION_MEMBERS, first=True, model_last=True)
+
+    sent = _forward(mod, flow, body, deferred=False)
+
+    assert flow.response is None
+    assert flow.request.host == "api.anthropic.com"
+    assert json.loads(sent) == _COMPACTION_MEMBERS
 
 
 def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path):
