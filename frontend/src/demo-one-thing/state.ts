@@ -2,14 +2,16 @@
 // every click (a person's or the scripted cursor's) goes through the actions
 // below, so playing, stepping and clicking by hand always agree.
 import type { ReactionAgg } from '@/cx_types'
+import type { Submission } from './course'
 
 import { reactive } from 'vue'
 
-import { ASK, CODE, dayAt, ME, minsAgo, MINUTES_DOC, NAMES } from './data'
+import { COURSE_CHAT, judge, problemById, runSamples, seedSubmissions, TUTOR_SEED, tutorAnswer } from './course'
+import { ASK, CHAN_DOCS, channelsOf, CODE, dayAt, ME, minsAgo, MINUTES_DOC, NAMES, type ProjectKey } from './data'
 
 export type Status = 'talk' | 'run' | 'wait' | 'done'
-export type Center = 'inbox' | 'chan' | 'files' | 'settings'
-export type ChanView = 'summary' | 'talk'
+export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'problem'
+export type ChanView = 'doc' | 'talk'
 
 /** One thing said: in a channel, or inside a 一件事. */
 export interface ChatLine {
@@ -57,8 +59,35 @@ export const PHASE: Record<Status, number> = { talk: 0, run: 1, wait: 2, done: 3
 
 const rx = (emoji: string, ...authors: string[]): ReactionAgg => ({ emoji, count: authors.length, authors })
 
+/** A 一件事 that is already finished: asked, started, accepted. */
+function doneThing(id: string, title: string, owner: string, ask: string, answer: string, at: string): Thing {
+  const t = Date.parse(at)
+  const back = (m: number) => new Date(t - m * 60_000).toISOString()
+  return {
+    id,
+    title,
+    chan: 'c-exp',
+    owner,
+    status: 'done',
+    replies: 2,
+    last: '已采纳 · 合进正式版',
+    at,
+    talk: [
+      { id: `${id}a`, who: owner, at: back(50), text: `<@cheese> ${ask}` },
+      { id: `${id}k`, mark: `${NAMES[owner]} 开工 · 交给芝士`, at: back(48) },
+      { id: `${id}b`, who: 'cheese', at: back(4), text: answer },
+      { id: `${id}c`, mark: `${NAMES[owner]} 采纳 · 已合进正式版`, at, ok: true },
+    ],
+    result: answer,
+  }
+}
+
 function initial() {
   return {
+    /** Which space on the rail is open: the research project (the tour runs here) or the course. */
+    project: 'research' as ProjectKey,
+    /** The channel each space was last on, so switching back lands where you were. */
+    chanOf: { research: 'c-exp', course: 'k-general' } as Record<ProjectKey, string>,
     center: 'chan' as Center,
     chan: 'c-exp',
     thing: null as string | null,
@@ -66,14 +95,16 @@ function initial() {
     /** 频道详情 is a popover on the channel title; the right panel holds only an opened 一件事. */
     chanDetails: false,
     /** Each channel's center view. Unset until the channel is first entered: a channel
-     *  with a backlog (unread ≥ 2) opens on 芝士's 摘要, any other on 对话. */
+     *  with a backlog (unread ≥ 2) opens on its 文档, any other on 对话. */
     chanView: { 'c-exp': 'talk' } as Record<string, ChanView>,
-    /** A message to bring into view and flash in the channel's 对话 (from 摘要's ↗ or a 一件事's 来自). */
+    /** The part of each channel's 文档 people wrote: a person's edit applies at once. */
+    chanDocs: structuredClone(CHAN_DOCS),
+    /** A message to bring into view and flash in the channel's 对话 (from 文档's ↗ or a 一件事's 来自). */
     jumpId: null as string | null,
     jumpTick: 0,
     /** 专注：the open 一件事 takes the center column too. */
     focus: false,
-    unread: { 'c-papers': 2, 'c-general': 1 } as Record<string, number>,
+    unread: { 'c-papers': 2, 'c-general': 1, 'k-general': 1, 'k-qa': 3 } as Record<string, number>,
     sheet: false,
     morph: false,
     typing: '',
@@ -101,8 +132,24 @@ function initial() {
     codeDraft: null as { path: string; text: string } | null,
     /** When the scripted ask went out (the 一件事's own clock counts from it). */
     askAt: '',
-    /** What 林晓 said by hand inside each 一件事, after the script's lines. */
-    extra: {} as Record<string, ChatLine[]>,
+    /** What 林晓 said by hand inside each 一件事, after the script's lines; and each
+     *  题目's 问芝士 conversation, under `ask:<题目>`. */
+    extra: Object.fromEntries(
+      Object.entries(structuredClone(TUTOR_SEED)).map(([id, lines]) => [`ask:${id}`, lines])
+    ) as Record<string, ChatLine[]>,
+    // ---- the course ----
+    problem: 'p-bitxor',
+    /** The open 题目's right-panel tab: 题面 / 评测记录 / 问芝士. */
+    ptab: 'statement',
+    /** My own copy of each 题目's code. */
+    code: {} as Record<string, string>,
+    subs: seedSubmissions() as Record<string, Submission[]>,
+    /** The 题目 being judged right now, if any. */
+    judging: null as string | null,
+    /** 运行样例's output under the editor, per 题目. */
+    sampleOut: {} as Record<string, string>,
+    sampling: false,
+    askTyping: '',
     history: [
       { who: 'wanglei', what: '改了《组会纪要 11-07》', at: minsAgo(9) },
       { who: 'chensiyuan', what: '采纳了任务「补长描述截断实验」：改了 2 个文件', at: dayAt(1, 17, 42) },
@@ -194,6 +241,62 @@ function initial() {
         result:
           '**report/组会-11-07.pdf**，7 页：\n\n1. 本周进展\n2. CLIP 零样本检索结果\n3. 和论文的差距\n4. 长描述截断实验设计\n5. 下周计划',
       },
+      {
+        id: 't5',
+        title: '长描述：截到 77 还是分段编码',
+        chan: 'c-exp',
+        owner: 'chensiyuan',
+        status: 'talk',
+        replies: 2,
+        last: '芝士：两种都能做，分段编码要多算约 2.3 倍',
+        at: minsAgo(63),
+        talk: [
+          {
+            id: 't5a',
+            who: 'chensiyuan',
+            at: minsAgo(64),
+            text: '<@cheese> 超过 77 个 token 的描述，直接截断和分段编码再平均，哪个更合理？',
+          },
+          {
+            id: 't5b',
+            who: 'cheese',
+            at: minsAgo(63),
+            text: '两种都能做。截断最简单，和论文一致；分段编码再平均能用上后半句，但要多算约 2.3 倍。建议先用截断出主表，分段编码做一组对照。',
+          },
+        ],
+      },
+      doneThing(
+        't6',
+        '对齐 Flickr30K 1K 测试集划分',
+        'zhaoyutong',
+        '按 Karpathy split 把 Flickr30K 的 1K 测试集整理出来',
+        '整理好了：`data/flickr30k/test_1k.json`，1000 张图、5000 条描述，和论文用的划分一致。',
+        dayAt(2, 15, 30)
+      ),
+      doneThing(
+        't7',
+        'CLIP ViT-B/32 零样本基线',
+        'wanglei',
+        '用 ViT-B/32 跑一遍 Flickr30K 零样本检索',
+        'Flickr30K 1K 上 R@1 = 78.2，论文是 79.3。结果在 `results/clip_zeroshot.md`。',
+        dayAt(1, 16, 38)
+      ),
+      doneThing(
+        't8',
+        '下载 COCO 2017 并校验',
+        'zhouke',
+        '把 COCO 2017 的 val 和标注下载下来，校验一下 md5',
+        '下载完了，放在 `/data/coco2017`，两个压缩包的 md5 都对得上。',
+        dayAt(3, 11, 2)
+      ),
+      doneThing(
+        't9',
+        '画 R@K 曲线的脚本',
+        'chensiyuan',
+        '写个脚本，把结果表画成 R@1/5/10 的曲线',
+        '写好了：`scripts/plot_recall.py`，读 `results/` 下的表，一张图一个测试集。',
+        dayAt(4, 14, 20)
+      ),
     ] as Thing[],
     chat: {
       'c-exp': [
@@ -231,6 +334,13 @@ function initial() {
           reactions: [rx('😂', 'wanglei', 'zhaoyutong'), rx('👀', 'linxiao')],
         },
         { id: 'e7', who: 'zhaoyutong', at: minsAgo(78), text: '<@cheese> 统计一下 COCO 描述的长度分布', thing: 't1' },
+        {
+          id: 'e8',
+          who: 'chensiyuan',
+          at: minsAgo(64),
+          text: '<@cheese> 超过 77 个 token 的描述，直接截断和分段编码再平均，哪个更合理？',
+          thing: 't5',
+        },
       ],
       'c-papers': [
         {
@@ -287,6 +397,7 @@ function initial() {
         },
         { id: 'z4', who: 'linxiao', at: minsAgo(20), text: '中期报告下周三交，<@zhaoyutong> 记得把数据那节补上' },
       ],
+      ...structuredClone(COURSE_CHAT),
     } as Record<string, ChatLine[]>,
     showNotes: false,
   }
@@ -315,11 +426,29 @@ export function go(center: Center, extra: Partial<typeof S> = {}): void {
     S.focus = false
   }
   if (center === 'chan') {
-    // Decided on entry, before the unread count is cleared: a backlog lands on 摘要.
-    S.chanView[S.chan] ??= (S.unread[S.chan] ?? 0) >= 2 ? 'summary' : 'talk'
+    // Decided on entry, before the unread count is cleared: a backlog lands on 文档.
+    S.chanView[S.chan] ??= (S.unread[S.chan] ?? 0) >= 2 ? 'doc' : 'talk'
     delete S.unread[S.chan]
   }
 }
+
+/** The rail: switch to the other space, back on the channel it was last on. */
+export function switchProject(p: ProjectKey): void {
+  if (S.project === p) {
+    go('chan', { chan: S.chan, thing: null })
+    return
+  }
+  if (S.center === 'chan') S.chanOf[S.project] = S.chan
+  // What was half-typed belongs to the channel it was typed in, not to the other space.
+  S.typing = ''
+  S.replyTo = null
+  S.project = p
+  S.settingsSection = p === 'course' ? 'course' : 'project'
+  go('chan', { chan: S.chanOf[p], thing: null })
+}
+
+/** Unread messages in one space's channels (the rail's count). */
+export const unreadIn = (p: ProjectKey) => channelsOf(p).reduce((n, c) => n + (S.unread[c.id] ?? 0), 0)
 
 export function openThing(id: string): void {
   const t = thingById(id)
@@ -346,6 +475,21 @@ export function jumpTo(chan: string, lineId: string): void {
   // Leaving 专注 animates the center column back in; scroll once it has its width.
   if (wasFocus) setTimeout(fire, 450)
   else fire()
+}
+
+/** Put an open question from a channel's 文档 into the channel's composer as an @芝士 message:
+ *  sending it opens the 讨论 the normal way. */
+export function startFromDoc(chan: string, text: string): void {
+  go('chan', { chan, thing: null })
+  S.chanView[chan] = 'talk'
+  S.typing = `<@cheese> ${text.replace(/`/g, '')}`
+}
+
+/** A person's edit to the part of a channel's 文档 people wrote: it applies at once. */
+export function editChanDoc(chan: string, html: string): void {
+  const doc = S.chanDocs[chan]
+  if (!doc || doc.html === html) return
+  Object.assign(doc, { html, by: ME, at: new Date().toISOString() })
 }
 
 /** The channel message a 一件事 was opened from. */
@@ -564,4 +708,52 @@ export function undo(index: number): void {
   if (h.what.startsWith('拒绝了芝士对')) S.suggRejected = false
   if (h.who === ME && h.what.startsWith('改了 ')) delete S.codeEdits[h.what.slice(3)]
   toast(`已撤回：${h.what}`)
+}
+
+// ---- the course: 题目 ----
+
+export function openProblem(id: string): void {
+  go('problem', { problem: id })
+  if (!S.code[id]) S.code[id] = problemById(id)?.starter ?? ''
+}
+
+/** 运行样例: the statement's samples on my copy, after a short wait. */
+export function runProblemSamples(): void {
+  const p = problemById(S.problem)
+  if (!p || S.sampling) return
+  S.sampling = true
+  delete S.sampleOut[p.id]
+  const text = S.code[p.id] ?? p.starter
+  setTimeout(() => {
+    S.sampling = false
+    S.sampleOut[p.id] = runSamples(p, text)
+  }, 700)
+}
+
+/** 提交评测: the judge runs on my copy as it is now, and its record goes to 评测记录. */
+export function submitProblem(): void {
+  const p = problemById(S.problem)
+  if (!p || S.judging) return
+  S.judging = p.id
+  const text = S.code[p.id] ?? p.starter
+  setTimeout(() => {
+    S.judging = null
+    const r = judge(p, text)
+    ;(S.subs[p.id] ??= []).unshift({ ...r, id: nextId('s'), at: new Date().toISOString() })
+    S.ptab = 'subs'
+    toast(r.score === r.total ? `已通过：${p.title}` : `${r.score}/${r.total}，没有全部通过`)
+  }, 1500)
+}
+
+/** 问芝士 in a 题目: what I ask lands there; 芝士 answers with a hint (course setting 只给提示). */
+export function askTutor(): void {
+  const p = problemById(S.problem)
+  const text = S.askTyping.trim()
+  if (!p || !text) return
+  S.askTyping = ''
+  const list = (S.extra[`ask:${p.id}`] ??= [])
+  list.push({ id: nextId('x'), who: ME, at: new Date().toISOString(), text: text.replace(/<@cheese>\s?/g, '') })
+  setTimeout(() => {
+    list.push({ id: nextId('x'), who: 'cheese', at: new Date().toISOString(), text: tutorAnswer(p, text) })
+  }, 1200)
 }

@@ -1,9 +1,12 @@
 <script setup lang="ts">
 // 设置: the one place. A table of contents on the left and the section on the
-// right, drawn with the product's settings rows.
+// right, drawn with the product's settings rows. In the course, 课程 holds the
+// switches that make it a course: code one copy per person, 芝士 a tutor inside
+// a 题目, judging on submit. The demo shows the student's settings page; who may
+// change these (the teacher) is not part of it.
 import { computed, ref } from 'vue'
 
-import { CHANNELS, ME, NAMES, PEOPLE, PROJECT } from './data'
+import { channelOf, COURSE, COURSE_PEOPLE, ME, NAMES, PEOPLE, PROJECT } from './data'
 import { S, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -12,10 +15,13 @@ import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
-const chanTitle = computed(() => CHANNELS.find((c) => c.id === S.chan)?.title ?? '')
+const course = computed(() => S.project === 'course')
+const chanTitle = computed(() => channelOf(S.chan)?.title ?? '')
 const SECTIONS = computed(() => [
   { key: 'channel', label: `频道 · ${chanTitle.value}`, icon: 'mdi-pound' },
-  { key: 'project', label: '项目', icon: 'mdi-folder-cog-outline' },
+  course.value
+    ? { key: 'course', label: '课程', icon: 'mdi-school-outline' }
+    : { key: 'project', label: '项目', icon: 'mdi-folder-cog-outline' },
   { key: 'members', label: '成员', icon: 'mdi-account-group-outline' },
   { key: 'cheese', label: '芝士', icon: 'mdi-robot-outline' },
   { key: 'env', label: '环境', icon: 'mdi-server-outline' },
@@ -24,12 +30,18 @@ const SECTIONS = computed(() => [
   { key: 'usage', label: '用量', icon: 'mdi-chart-box-outline' },
 ])
 const title = computed(() => SECTIONS.value.find((s) => s.key === S.settingsSection)?.label ?? '')
+const people = computed(() => (course.value ? COURSE_PEOPLE : PEOPLE))
+const fixed = () => toast('课程的这几项由老师设置')
 
 const chanName = ref(chanTitle.value)
 const projName = ref(PROJECT.name)
 const model = ref('sonnet')
 const theme = ref(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
 const ROLES: Record<string, string> = {
+  zhanglaoshi: '老师',
+  lizhujiao: '助教',
+  zhouzihan: '学生',
+  wuhao: '学生',
   linxiao: '所有者',
   wanglei: '成员',
   chensiyuan: '成员',
@@ -93,6 +105,42 @@ const USAGE = [
           </SettingsRow>
         </template>
 
+        <template v-else-if="S.settingsSection === 'course'">
+          <SettingsRow label="课程名称" :description="`${COURSE.team} · 张老师`" width="select">
+            <span class="ot-set__value">{{ COURSE.name }}</span>
+          </SettingsRow>
+          <SettingsRow
+            label="代码"
+            description="每人一份，直接改，只有本人和老师看得到；项目式是大家改同一份正式版，改动要采纳"
+            width="select-wide"
+          >
+            <SegmentedControl
+              :model-value="'each'"
+              :options="[
+                { value: 'each', label: '每人一份，直接改' },
+                { value: 'one', label: '一份正式版' },
+              ]"
+              label="代码"
+              @update:model-value="fixed"
+            />
+          </SettingsRow>
+          <SettingsRow label="芝士在题目里" description="问芝士时它能说到哪一步" width="select-wide">
+            <SegmentedControl
+              :model-value="'hint'"
+              :options="[
+                { value: 'hint', label: '只给提示' },
+                { value: 'answer', label: '可以给答案' },
+                { value: 'off', label: '关闭' },
+              ]"
+              label="芝士在题目里"
+              @update:model-value="fixed"
+            />
+          </SettingsRow>
+          <SettingsRow label="评测" description="提交后自动评测，结果和分数记进评测记录" width="select">
+            <v-switch :model-value="true" color="primary" density="compact" hide-details inset @click.prevent="fixed" />
+          </SettingsRow>
+        </template>
+
         <template v-else-if="S.settingsSection === 'project'">
           <SettingsRow label="项目名称" for="ot-proj-name">
             <v-text-field
@@ -128,7 +176,7 @@ const USAGE = [
         </template>
 
         <div v-else-if="S.settingsSection === 'members'" class="ot-set__members">
-          <div v-for="p in PEOPLE" :key="p.handle" class="ot-set__member">
+          <div v-for="p in people" :key="p.handle" class="ot-set__member">
             <CheeseAvatar v-if="p.agent" :size="28" name="芝士" handle="cheese" />
             <UserAvatar v-else :size="28" :name="p.name" :seed="p.handle" />
             <span class="ot-set__mname"
@@ -136,7 +184,7 @@ const USAGE = [
             >
             <span class="ot-set__handle">@{{ p.handle }}</span>
             <span class="ot-head__gap" />
-            <span class="ot-set__role">{{ ROLES[p.handle] }}</span>
+            <span class="ot-set__role">{{ course && p.handle === ME ? '学生' : ROLES[p.handle] }}</span>
           </div>
           <BaseButton
             kind="secondary"

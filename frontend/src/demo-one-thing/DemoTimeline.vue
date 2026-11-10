@@ -132,7 +132,7 @@ function restore() {
 }
 let ro: ResizeObserver | null = null
 
-// 摘要's ↗ and a 一件事's 来自 ask for one message: if it is in this timeline,
+// A channel 文档's ↗ and a 一件事's 来自 ask for one message: if it is in this timeline,
 // centre it in the scroller (not scrollIntoView, which would also scroll the
 // clipped workspace around it) and flash the row.
 function jumpHere(): boolean {

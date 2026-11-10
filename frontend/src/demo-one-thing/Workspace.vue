@@ -2,7 +2,9 @@
 // The 1280×800 workspace: the product's project rail, the sidebar, the center
 // column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
 // panel, which holds one selected thing: the open 一件事, or beside 项目文件
-// the open file's 待定改动 and 历史. With nothing selected it is folded away.
+// the open file's 待定改动 and 历史, or in the course the open 题目. With
+// nothing selected it is folded away. The rail switches between the research
+// project (where the tour runs) and the course; the other projects are inert.
 // The scripted cursor, the notes overlay and the toast sit on top of it.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavGenericItem } from '@/components/common/Navigation/types'
@@ -10,13 +12,15 @@ import type { NavGenericItem } from '@/components/common/Navigation/types'
 import { computed, ref } from 'vue'
 
 import ChannelCenter from './ChannelCenter.vue'
-import { ME, NAMES, OTHER_PROJECTS, PROJECT } from './data'
+import { COURSE, ME, NAMES, OTHER_PROJECTS, PROJECT } from './data'
 import FilesCenter from './FilesCenter.vue'
 import FilesPanel from './FilesPanel.vue'
 import InboxCenter from './InboxCenter.vue'
+import ProblemCenter from './ProblemCenter.vue'
+import ProblemPanel from './ProblemPanel.vue'
 import SettingsCenter from './SettingsCenter.vue'
 import SideNav from './SideNav.vue'
-import { go, S, thingById, toast } from './state'
+import { go, S, switchProject, thingById, toast, unreadIn } from './state'
 import ThingPanel from './ThingPanel.vue'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
@@ -38,8 +42,9 @@ defineProps<{
   }[]
 }>()
 
-const right = computed<'thing' | 'files' | null>(() => {
+const right = computed<'thing' | 'files' | 'problem' | null>(() => {
   if (S.center === 'files') return 'files'
+  if (S.center === 'problem') return 'problem'
   if (S.center === 'chan' && S.thing && thingById(S.thing)) return 'thing'
   return null
 })
@@ -52,7 +57,6 @@ const cols = computed(() => {
 })
 
 const waiting = computed(() => S.things.filter((t) => t.status === 'wait' && t.owner === ME).length)
-const unread = computed(() => Object.values(S.unread).reduce((a, b) => a + b, 0))
 
 const rail = computed<NavGenericItem[]>(() => [
   {
@@ -71,18 +75,28 @@ const rail = computed<NavGenericItem[]>(() => [
     title: PROJECT.name,
     projectId: 'p-mm',
     shortcut: 1,
-    badge: unread.value,
-    action: () => go('chan'),
-    match: () => true,
+    badge: unreadIn('research'),
+    action: () => switchProject('research'),
+    match: () => S.project === 'research',
+  },
+  {
+    key: 'p-ics',
+    type: 'item',
+    title: COURSE.name,
+    projectId: 'p-ics',
+    shortcut: 2,
+    badge: unreadIn('course'),
+    action: () => switchProject('course'),
+    match: () => S.project === 'course',
   },
   ...OTHER_PROJECTS.map((p, i) => ({
     key: p.id,
     type: 'item' as const,
     title: p.name,
     projectId: p.id,
-    shortcut: i + 2,
+    shortcut: i + 3,
     badge: p.badge,
-    action: () => toast(`演示里只有「${PROJECT.name}」这一个项目`),
+    action: () => toast(`演示里能进的是「${PROJECT.name}」和「${COURSE.name}」`),
   })),
   {
     key: 'add',
@@ -148,11 +162,13 @@ const userActions: MenuAction[] = [
       <ChannelCenter v-if="S.center === 'chan'" />
       <InboxCenter v-else-if="S.center === 'inbox'" />
       <FilesCenter v-else-if="S.center === 'files'" />
+      <ProblemCenter v-else-if="S.center === 'problem'" />
       <SettingsCenter v-else />
     </main>
     <div class="ot-right">
       <ThingPanel v-if="right === 'thing'" :key="S.thing ?? ''" />
       <FilesPanel v-else-if="right === 'files'" />
+      <ProblemPanel v-else-if="right === 'problem'" />
     </div>
 
     <div v-if="notes.length" class="ot-notes" aria-hidden="true">

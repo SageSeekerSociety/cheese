@@ -8,7 +8,7 @@ import type { ChatLine, Status, Thing } from './state'
 
 import { ME, NAMES } from './data'
 
-import { clockTime } from '@/lib/dateText'
+import { calendarDaysAgo, clockTime, dayTimeText } from '@/lib/dateText'
 
 export const REFS: RefNames = { mentionNames: NAMES, topicTitles: {}, notified: true }
 
@@ -27,6 +27,19 @@ export function block(line: ChatLine, conversation = 'demo'): Block {
 
 /** The clock on a message row: 09:05, in the viewer's zone. */
 export const hhmm = (iso: string) => clockTime(Date.parse(iso))
+
+/** A moment with its day: 「17:12」 today, 「昨天 17:12」, then 「前天 …」 / a date (the product's dayTimeText). */
+export function whenText(iso: string): string {
+  const at = Date.parse(iso)
+  const days = calendarDaysAgo(at)
+  return days === 0 ? clockTime(at) : days === 1 ? `昨天 ${clockTime(at)}` : dayTimeText(at)
+}
+
+/** A 一件事's status in a few words, naming who it waits on. */
+export function statusText(thing: Thing): string {
+  if (thing.status === 'wait') return `等${thing.owner === ME ? '你' : NAMES[thing.owner]}采纳`
+  return thing.status === 'talk' ? '讨论中' : thing.status === 'run' ? '在做' : '已完成'
+}
 
 export const STATUS_LABEL: Record<Status, string> = {
   talk: '讨论中',

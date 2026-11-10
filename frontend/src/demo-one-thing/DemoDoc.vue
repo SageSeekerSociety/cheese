@@ -2,7 +2,8 @@
 // A living document on the official version: the product's document editor
 // (DocEditor with the doc schema, drawn by DocProse), so 芝士's pending
 // suggestion is the editor's own suggestion marks, and 王磊's caret is the
-// product's caret. What 林晓 types in the script lands in item 4.
+// product's caret. What 林晓 types in the script lands in item 4. A person's
+// typing is reported as `update` (a channel's 文档 keeps it).
 import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { onBeforeUnmount, shallowRef, watch } from 'vue'
@@ -19,6 +20,7 @@ import { renderCaret } from '@/lib/docCaret'
 import { docExtensions } from '@/lib/docSchema'
 
 const props = defineProps<{ html: string; peer?: boolean; typing?: boolean }>()
+const emit = defineEmits<{ (e: 'update', html: string): void }>()
 
 const PEER = { handle: 'wanglei', name: '王磊', color: avatarColor('wanglei') }
 
@@ -78,6 +80,9 @@ const editor = shallowRef(
     editorProps: { attributes: { class: 'doc-prose' } },
   })
 )
+
+// Only the editor's own transactions: setContent below is told not to emit.
+editor.value.on('update', ({ editor: ed }) => emit('update', ed.getHTML()))
 
 watch(
   () => [props.html, props.peer, props.typing] as const,

@@ -161,7 +161,7 @@ body {
   }
 }
 
-/* A message shown from 摘要 or a 一件事's 来自: held long enough to find, then fades. */
+/* A message shown from a channel 文档's ↗ or a 一件事's 来自: held long enough to find, then fades. */
 .ot-line-flash {
   animation: ot-line-flash 2.2s var(--ease-out);
 }

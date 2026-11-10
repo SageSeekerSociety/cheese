@@ -3,13 +3,15 @@
 // library; a document opens in the product's document editor, a Word file shows
 // 芝士's 修订 in the product's Word comparison, code shows the official version
 // (the product's diff viewer, every line as context) and 改代码 edits it on the
-// person's own copy, and a result is rendered Markdown.
+// person's own copy, and a result is rendered Markdown. docs/频道/ holds each
+// channel's 文档: the same document the channel shows, live block and all.
 import type { FileRow } from '@/lib/changesTree'
 import type { FileDiff } from '@/lib/diff'
 import type { OfficeComparison } from '@/types/reviewComment'
 
 import { computed, ref, watch } from 'vue'
 
+import ChannelDoc from './ChannelDoc.vue'
 import { asContext, DOC_HTML, FILES, MINUTES_DOC, minutesHtml, RESULTS_MD, TASK_DIFFS, WORD_COMPARISON } from './data'
 import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
@@ -125,8 +127,9 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
             @click="toast(`下载 ${entry.path.split('/').pop()}`)"
           />
         </div>
-        <div class="ot-files__view" :class="{ 'ot-files__view--code': entry.kind === 'code' }">
+        <div class="ot-files__view" :class="{ 'ot-files__view--flush': entry.kind === 'code' || entry.chan }">
           <DemoDoc v-if="entry.path === MINUTES_DOC" :html="minutes" peer :typing="S.typed.length > 0" />
+          <ChannelDoc v-else-if="entry.chan" :key="entry.chan" :chan="entry.chan" />
           <DemoDoc v-else-if="entry.kind === 'doc'" :key="entry.path" :html="DOC_HTML[entry.path] ?? ''" />
           <OfficeCompare v-else-if="entry.kind === 'word'" :comparison="WORD_COMPARISON as OfficeComparison" />
           <DemoCodeEdit v-else-if="editing" />
@@ -225,7 +228,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
   overflow: auto;
 }
 
-.ot-files__view--code {
+.ot-files__view--flush {
   padding: 0;
 }
 

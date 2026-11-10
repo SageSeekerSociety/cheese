@@ -1,15 +1,18 @@
 <script setup lang="ts">
 // The project sidebar: the product's project header (team, project menu,
 // search), 需要我的 on top, the channels in a fixed order, then 项目文件, and
-// 设置 at the bottom. Rows are the product's own sidebar rows.
+// 设置 at the bottom. Rows are the product's own sidebar rows. In the course,
+// 项目文件 gives way to 题目: each with where it stands for me and, when it is
+// due soon, a deadline chip.
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { VisibleRow } from '@/lib/topicTree'
 
 import { computed, ref } from 'vue'
 
-import { CHANNELS, ME, PROJECT } from './data'
-import { go, S, toast } from './state'
+import { dueChip, PROBLEMS, standing } from './course'
+import { type Channel, channelsOf, COURSE, ME, PROJECT } from './data'
+import { go, openProblem, S, toast } from './state'
 
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
@@ -29,10 +32,32 @@ const MENU_PAGES = [
   { key: 'project-skills', label: 'navigation.project.skills', icon: 'mdi-book-cog-outline' },
 ]
 
-const waiting = computed(() => S.things.filter((t) => t.status === 'wait' && t.owner === ME).length)
+const course = computed(() => S.project === 'course')
+const space = computed(() => (course.value ? COURSE : PROJECT))
+const channels = computed(() => channelsOf(S.project))
+
+const problems = computed(() =>
+  PROBLEMS.map((p) => {
+    const subs = S.subs[p.id]
+    const st = standing(subs)
+    return {
+      ...p,
+      st,
+      label: st === 'passed' ? '已通过' : st === 'trying' ? `尝试中（${subs!.length} 次）` : '未开始',
+      chip: st === 'passed' ? null : dueChip(p.due),
+    }
+  })
+)
+
+// 需要我的: a 一件事 waiting on me; in the course, a 题目 due soon that I have not passed.
+const waiting = computed(() =>
+  course.value
+    ? problems.value.filter((p) => p.chip).length
+    : S.things.filter((t) => t.status === 'wait' && t.owner === ME).length
+)
 const filesPending = computed(() => (S.suggAccepted || S.suggRejected ? 0 : 1))
 
-function row(c: (typeof CHANNELS)[number]): VisibleRow<Topic> {
+function row(c: Channel): VisibleRow<Topic> {
   return {
     topic: {
       id: c.id,
@@ -83,8 +108,9 @@ function actions(topic: Topic): MenuCommand[] {
 }
 
 function openPage(key: string) {
-  if (key === 'inbox' || key === 'files' || key === 'settings') go(key)
-  else if (key === 'project-settings') go('settings', { settingsSection: 'project' })
+  if (key === 'inbox' || (key === 'files' && !course.value)) go(key)
+  else if (key === 'settings') go('settings', course.value ? { settingsSection: 'course' } : {})
+  else if (key === 'project-settings') go('settings', { settingsSection: course.value ? 'course' : 'project' })
   else if (key === 'project-members') go('settings', { settingsSection: 'members' })
   else toast('演示里只有频道、项目文件和设置这几页')
 }
@@ -95,8 +121,8 @@ function openPage(key: string) {
     <TopicRailHeader
       :page="false"
       :column="false"
-      :project-name="PROJECT.name"
-      :team="{ label: PROJECT.team, handle: PROJECT.teamHandle }"
+      :project-name="space.name"
+      :team="{ label: space.team, handle: space.teamHandle }"
       :private-unread-total="0"
       search-title="搜索和跳转（⌘K）"
       :menu-open="false"
@@ -108,7 +134,9 @@ function openPage(key: string) {
       :can-transfer="true"
       :can-leave="false"
       @open-page="openPage"
-      @select-docs="go('files', { file: 'README.md', ftab: 'history' })"
+      @select-docs="
+        course ? toast('课程里代码每人一份，在各自的题目里') : go('files', { file: 'README.md', ftab: 'history' })
+      "
       @open-palette="toast('⌘K：搜索频道、文件和一件事')"
       @open-transfer="toast('演示里不能转让项目')"
     />
@@ -137,7 +165,7 @@ function openPage(key: string) {
           <v-icon size="16" icon="mdi-plus" />
         </button>
       </div>
-      <div v-for="c in CHANNELS" :key="c.id" class="ot-side__row" :data-chan="c.id">
+      <div v-for="c in channels" :key="c.id" class="ot-side__row" :data-chan="c.id">
         <TopicRailRow
           :row="row(c)"
           :selected="S.center === 'chan' && S.chan === c.id"
@@ -159,8 +187,29 @@ function openPage(key: string) {
         />
       </div>
 
-      <div class="ot-side__sec"><span class="t-eyebrow-read">项目</span></div>
-      <div class="ot-side__row" data-nav="files">
+      <template v-if="course">
+        <div class="ot-side__sec"><span class="t-eyebrow-read">题目</span></div>
+        <button
+          v-for="p in problems"
+          :key="p.id"
+          type="button"
+          class="ot-side__prob"
+          :class="{ 'is-active': S.center === 'problem' && S.problem === p.id }"
+          :data-problem="p.id"
+          @click="openProblem(p.id)"
+        >
+          <span class="ot-side__prob-title">{{ p.title }}</span>
+          <span class="ot-side__prob-meta">
+            <span class="ot-side__prob-st" :class="`is-${p.st}`"
+              ><v-icon v-if="p.st === 'passed'" size="13" icon="mdi-check" />{{ p.label }}</span
+            >
+            <span v-if="p.chip" class="ot-side__chip">{{ p.chip }}</span>
+          </span>
+        </button>
+      </template>
+
+      <div v-if="!course" class="ot-side__sec"><span class="t-eyebrow-read">项目</span></div>
+      <div v-if="!course" class="ot-side__row" data-nav="files">
         <TopicRailPinnedRows
           :pages="[{ key: 'files', label: 'demoOneThing.files', icon: 'mdi-folder-outline' }]"
           :route-name="S.center"
@@ -249,6 +298,63 @@ function openPage(key: string) {
 
 .ot-side :deep(.v-list) {
   background: transparent;
+}
+
+.ot-side__prob {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px 6px 12px;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+.ot-side__prob:hover {
+  background: var(--fill-2);
+}
+
+.ot-side__prob.is-active {
+  background: var(--line-2);
+}
+
+.ot-side__prob-title {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-side__prob-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+
+.ot-side__prob-st {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.ot-side__prob-st.is-passed {
+  color: var(--ok-ink);
+}
+
+/* Due soon: the same amber as anything else that waits on me. */
+.ot-side__chip {
+  padding: 0 6px;
+  color: var(--accent-ink);
+  background: var(--accent-wash);
+  border-radius: var(--radius-sm);
 }
 
 .ot-side__foot {

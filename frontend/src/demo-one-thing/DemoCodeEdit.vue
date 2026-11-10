@@ -2,13 +2,11 @@
 // 改代码: a person edits a code file directly, on their own copy of the official
 // version, runs it, and merges it. A person's edit takes effect when merged
 // (芝士's wait for a person's 采纳); with 代码受保护 on, it waits for someone
-// else's 采纳 too. No 一件事 is opened for it.
-//
-// A plain textarea with a line-number gutter, not the product's Monaco editor:
-// Monaco needs web workers and several MB, and the demo page runs as one file
-// in a null-origin sandbox.
+// else's 采纳 too. No 一件事 is opened for it. The editing surface is
+// DemoCodeArea (why it is not Monaco is said there).
 import { computed, ref } from 'vue'
 
+import DemoCodeArea from './DemoCodeArea.vue'
 import { changedLines, mergeCode, S } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -73,24 +71,7 @@ function cancel() {
         {{ S.settingsProtectCode ? '请人采纳' : '合进正式版' }}
       </BaseButton>
     </div>
-    <div class="ot-ced__scroll">
-      <div
-        class="ot-ced__gutter"
-        :style="{ width: `calc(${String(lines.length).length}ch + 20px)` }"
-        aria-hidden="true"
-      >
-        <span v-for="(_, i) in lines" :key="i">{{ i + 1 }}</span>
-      </div>
-      <textarea
-        v-model="S.codeDraft!.text"
-        class="ot-ced__text"
-        :rows="lines.length"
-        wrap="off"
-        spellcheck="false"
-        autocomplete="off"
-        :aria-label="`编辑 ${draft.path}`"
-      />
-    </div>
+    <DemoCodeArea v-model="S.codeDraft!.text" :label="`编辑 ${draft.path}`" />
     <div v-if="running || output" class="ot-ced__out" role="status">
       <template v-if="output">
         <div class="ot-ced__cmd">$ {{ output.cmd }}</div>
@@ -135,48 +116,6 @@ function cancel() {
 
 .ot-ced__bar > :not(.ot-ced__copy, .ot-head__gap) {
   flex: none;
-}
-
-/* The same type and rhythm as the read-only view (ChangesDiff): 12px mono, 1.55, gutter, 12px gaps. */
-.ot-ced__scroll {
-  display: flex;
-  flex: 1;
-  align-items: flex-start;
-  min-height: 0;
-  padding: 6px 0;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.ot-ced__gutter {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  color: var(--faint);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  user-select: none;
-}
-
-.ot-ced__text {
-  flex: 1;
-  min-width: 0;
-  padding: 0 12px 0 0;
-  /* The read-only view prints a diff marker column (a space) before each line: start where its text starts. */
-  margin: 0 0 0 19px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  font: inherit;
-  line-height: inherit;
-  color: var(--text);
-  white-space: pre;
-  resize: none;
-  background: none;
-  border: 0;
-  outline: none;
-  caret-color: var(--ink);
 }
 
 .ot-ced__out {

@@ -4,14 +4,14 @@
 // only the one 一件事 that is open.
 import { computed, ref } from 'vue'
 
-import { CHANNELS, NAMES } from './data'
+import { channelOf, NAMES } from './data'
 import { S, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
-const channel = computed(() => CHANNELS.find((c) => c.id === S.chan)!)
+const channel = computed(() => channelOf(S.chan)!)
 
 const about = ref<Record<string, string>>({})
 const editing = ref(false)

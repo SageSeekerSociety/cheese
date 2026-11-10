@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // The center column while a channel is open: the product's channel header row
-// (title and description, 摘要 / 对话, the roster, the bell, 进行中, ⋯), then
-// either 芝士's 摘要 of the channel or the conversation and its composer. The
-// title opens 频道详情 as a popover; the right panel stays folded until a 一件事
-// is opened, from a card, from 摘要 or from the 进行中 menu.
+// (title and description, 文档 / 对话, the roster, the bell, 进行中, ⋯), then
+// either the channel's 文档 or the conversation and its composer. The title
+// opens 频道详情 as a popover; the right panel stays folded until a 一件事 is
+// opened, from a card, from the 文档 or from the 进行中 menu. The course's
+// channels are drawn by the same column.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, TopicMemberRow, TopicNotifyLevel } from '@/cx_types'
 import type { ChatLine } from './state'
@@ -11,10 +12,11 @@ import type { ChatLine } from './state'
 import { computed, ref, watch } from 'vue'
 
 import ChannelDetails from './ChannelDetails.vue'
-import ChannelSummary from './ChannelSummary.vue'
-import { CHANNELS, ME, NAMES, PEOPLE } from './data'
+import ChannelDoc from './ChannelDoc.vue'
+import { channelOf, CHANNELS, COURSE_CHANNELS, COURSE_PEOPLE, ME, NAMES, PEOPLE } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
+import { statusText } from './shapes'
 import { type ChanView, openThing, S, send, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -24,20 +26,20 @@ import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import { answer } from '@/views/demo/demoBackend'
 
-const channel = computed(() => CHANNELS.find((c) => c.id === S.chan)!)
+const channel = computed(() => channelOf(S.chan)!)
 const lines = computed(() => S.chat[S.chan] ?? [])
 const view = computed<ChanView>({
   get: () => S.chanView[S.chan] ?? 'talk',
   set: (v) => (S.chanView[S.chan] = v),
 })
 const VIEWS = [
-  { value: 'summary' as const, label: '摘要' },
+  { value: 'doc' as const, label: '文档' },
   { value: 'talk' as const, label: '对话' },
 ]
 
 // The roster the header reads comes from the room's members endpoint: answer it
 // for every channel, so the product's own TopicMembers draws the avatar stack.
-for (const c of CHANNELS) {
+for (const c of [...CHANNELS, ...COURSE_CHANNELS]) {
   const rows: TopicMemberRow[] = [...c.members, 'cheese'].map((h, i) => ({
     topic_id: c.id,
     member_handle: h,
@@ -49,11 +51,13 @@ for (const c of CHANNELS) {
   }))
   answer(`/topics/${c.id}/members`, () => ({ data: rows, total: rows.length }))
 }
-const projectMembers: ProjectMemberRow[] = PEOPLE.map((p) => ({
-  user_handle: p.handle,
-  name: p.name,
-  source: p.agent ? 'agent' : p.handle === ME ? 'owner' : 'team',
-}))
+const projectMembers = computed<ProjectMemberRow[]>(() =>
+  (S.project === 'course' ? COURSE_PEOPLE : PEOPLE).map((p) => ({
+    user_handle: p.handle,
+    name: p.name,
+    source: p.agent ? 'agent' : p.handle === ME ? 'owner' : 'team',
+  }))
+)
 
 const notify = ref<Record<string, { level: TopicNotifyLevel; until: string | null }>>({})
 const level = computed(() => notify.value[S.chan] ?? { level: 'all' as TopicNotifyLevel, until: null })
@@ -85,14 +89,13 @@ const actions = computed<MenuAction[]>(() => [
   },
 ])
 
-const STATUS_TEXT = { talk: '讨论中', run: '在做', wait: '等采纳', done: '已完成' } as const
 const busy = computed(() => S.things.filter((t) => t.chan === S.chan && t.status !== 'done'))
 const busyOpen = ref(false)
 const busyActions = computed<MenuAction[]>(() => {
   const done = S.things.filter((t) => t.chan === S.chan && t.status === 'done')
   return [...busy.value, ...done].map((t, i) => ({
     key: t.id,
-    label: `${t.title} · ${STATUS_TEXT[t.status]}`,
+    label: `${t.title} · ${statusText(t)}`,
     icon: t.status === 'done' ? 'mdi-check' : t.status === 'talk' ? 'mdi-forum-outline' : 'mdi-checkbox-marked-outline',
     divider: i === busy.value.length && i > 0,
     onSelect: () => openThing(t.id),
@@ -165,7 +168,7 @@ watch(
         </template>
       </AdaptiveMenu>
     </header>
-    <ChannelSummary v-if="view === 'summary'" :key="S.chan" class="ot-chan__summary" />
+    <ChannelDoc v-if="view === 'doc'" :key="S.chan" :chan="S.chan" class="ot-chan__doc" />
     <div v-else class="ot-chan__lines">
       <DemoTimeline :lines="lines" :conversation="S.chan" cards @reply="onReply" />
     </div>
@@ -240,7 +243,7 @@ watch(
   flex: none;
 }
 
-.ot-chan__summary {
+.ot-chan__doc {
   flex: 1;
   min-height: 0;
 }

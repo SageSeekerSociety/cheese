@@ -27,7 +27,19 @@ export const PEOPLE: Person[] = [
   { handle: 'cheese', name: '芝士', agent: true },
 ]
 
-export const NAMES: Record<string, string> = Object.fromEntries(PEOPLE.map((p) => [p.handle, p.name]))
+/** The course's people (林晓 takes the course as a student). */
+export const COURSE_PEOPLE: Person[] = [
+  { handle: 'linxiao', name: '林晓' },
+  { handle: 'zhanglaoshi', name: '张老师' },
+  { handle: 'lizhujiao', name: '李助教' },
+  { handle: 'zhouzihan', name: '周子涵' },
+  { handle: 'wuhao', name: '吴昊' },
+  { handle: 'cheese', name: '芝士', agent: true },
+]
+
+export const NAMES: Record<string, string> = Object.fromEntries(
+  [...PEOPLE, ...COURSE_PEOPLE].map((p) => [p.handle, p.name])
+)
 
 export const CHANNELS = [
   {
@@ -58,7 +70,32 @@ export const CHANNELS = [
 
 export const PROJECT = { team: '视觉语言组', teamHandle: 'vl-group', name: '多模态检索论文复现' }
 
-/** The other projects on the rail: name, unread count. */
+/** The second project on the rail, a course: its code is one copy per person and its 题目 are judged. */
+export const COURSE = { team: '计算机学院', teamHandle: 'cs-school', name: '计算机系统基础（ICS 2026）' }
+
+export const COURSE_CHANNELS = [
+  {
+    id: 'k-general',
+    title: '综合',
+    about: '课程通知和作业安排',
+    members: ['zhanglaoshi', 'lizhujiao', 'linxiao', 'zhouzihan', 'wuhao'],
+  },
+  {
+    id: 'k-qa',
+    title: '答疑',
+    about: '作业和课上的问题，助教每天晚上看',
+    members: ['lizhujiao', 'zhanglaoshi', 'linxiao', 'zhouzihan', 'wuhao'],
+  },
+]
+
+export type ProjectKey = 'research' | 'course'
+export type Channel = (typeof CHANNELS)[number]
+
+export const channelsOf = (p: ProjectKey): Channel[] => (p === 'course' ? COURSE_CHANNELS : CHANNELS)
+export const channelOf = (id: string): Channel | undefined =>
+  CHANNELS.find((c) => c.id === id) ?? COURSE_CHANNELS.find((c) => c.id === id)
+
+/** The other projects on the rail: name, unread count. They are not in the demo. */
 export const OTHER_PROJECTS = [
   { id: 'p-kg', name: '知识图谱问答', badge: 3 },
   { id: 'p-data', name: '数据清洗流水线', badge: 0 },
@@ -246,6 +283,8 @@ export interface FileEntry {
   path: string
   kind: 'doc' | 'word' | 'code' | 'result'
   bytes: number
+  /** A channel's own document: the same one the channel shows under 文档. */
+  chan?: string
 }
 
 export const FILES: FileEntry[] = [
@@ -254,6 +293,7 @@ export const FILES: FileEntry[] = [
   { path: 'docs/评测口径说明.md', kind: 'doc', bytes: 906 },
   { path: 'docs/papers/BLIP-精读.md', kind: 'doc', bytes: 4410 },
   { path: 'docs/papers/CLIP-精读.md', kind: 'doc', bytes: 5127 },
+  ...CHANNELS.map((c) => ({ path: `docs/频道/${c.title}.md`, kind: 'doc' as const, bytes: 1200, chan: c.id })),
   { path: 'report/中期报告.docx', kind: 'word', bytes: 48_211 },
   { path: 'configs/clip_vit_b32.yaml', kind: 'code', bytes: 236 },
   { path: 'eval/preprocess.py', kind: 'code', bytes: 312 },
@@ -319,27 +359,73 @@ export const WORD_COMPARISON = {
   ],
 }
 
-// ---- 摘要 ----
+// ---- 频道文档 ----
 
-export type SummaryKind = 'decided' | 'found' | 'doing' | 'open'
+/** The part of a channel's document people wrote themselves: its text, who edited it last and when. */
+export const CHAN_DOCS: Record<string, { html: string; by: string; at: string }> = {
+  'c-exp': {
+    by: 'zhaoyutong',
+    at: dayAt(1, 17, 12),
+    html: `<h3>评测口径</h3>
+<p>检索统一报 R@1 / R@5 / R@10，表里默认写文→图。Flickr30K 用 1K 测试集，COCO 用 5K，不用 1K。细节见 <code>docs/评测口径说明.md</code>。</p>
+<h3>待办</h3>
+<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>对齐 Flickr30K 1K 的测试集划分</p></li><li data-type="taskItem" data-checked="false"><p>三份评测脚本合成一份</p></li><li data-type="taskItem" data-checked="false"><p>长描述截断实验（陈思远）</p></li><li data-type="taskItem" data-checked="false"><p>中期报告的数据一节（赵雨桐）</p></li></ul>`,
+  },
+  'c-papers': {
+    by: 'wanglei',
+    at: dayAt(2, 20, 40),
+    html: `<h3>读的顺序</h3>
+<ol><li><p>CLIP（读完，笔记在 <code>docs/papers/CLIP-精读.md</code>）</p></li><li><p>BLIP（这周）</p></li><li><p>ALBEF</p></li><li><p>BLIP-2</p></li></ol>
+<p>每篇读完把笔记放进 <code>docs/papers</code>，周五组会讲 10 分钟。</p>`,
+  },
+  'c-meeting': {
+    by: 'linxiao',
+    at: dayAt(1, 18, 20),
+    html: `<h3>组会</h3>
+<p>每周五下午，地点见频道最新消息。每人 10 分钟：做了什么、数字、下周做什么。</p>
+<h3>轮值</h3>
+<ul><li><p>本周：王磊（BLIP 基线）</p></li><li><p>下周：陈思远（截断实验）</p></li></ul>`,
+  },
+  'c-general': {
+    by: 'zhouke',
+    at: dayAt(1, 9, 50),
+    html: `<h3>机器</h3>
+<ul><li><p>A100 × 1：数据在 <code>/data</code>，新硬盘在 <code>/data2</code></p></li><li><p>跑长任务前在这里说一声</p></li></ul>`,
+  },
+  'k-general': {
+    by: 'zhanglaoshi',
+    at: dayAt(3, 8, 40),
+    html: `<h3>成绩</h3>
+<ul><li><p>五个 Lab 占 50%，期末 50%</p></li><li><p>以截止前最后一次提交为准，迟交不收</p></li></ul>
+<h3>答疑时间</h3>
+<p>周二、周四晚 7 点到 9 点，李助教在 # 答疑。</p>`,
+  },
+  'k-qa': {
+    by: 'lizhujiao',
+    at: dayAt(2, 19, 0),
+    html: `<h3>提问之前</h3>
+<ul><li><p>先搜一下这个频道，很多问题问过</p></li><li><p>贴报错和你试过什么，不要贴整段答案代码</p></li></ul>`,
+  },
+}
+
+// ---- 芝士整理 ----
+
+export type SummaryKind = 'decided' | 'found' | 'open'
 
 export const SUMMARY_LABELS: Record<SummaryKind, string> = {
   decided: '定了',
   found: '发现',
-  doing: '在做',
   open: '没定',
 }
 
-/** One sentence of a channel's 摘要, pointing at the message it rests on. A 在做
- *  item names its 一件事 instead of a sentence: the title and status are read live. */
+/** One sentence of 芝士's part of a channel's document, pointing at the message it rests on. */
 export interface SummaryItem {
   kind: SummaryKind
   line: string
-  text?: string
-  thing?: string
+  text: string
 }
 
-/** 芝士's 摘要 of each channel, as of the message `upto` (later messages are not in it). */
+/** 芝士's part of each channel's document, as of the message `upto` (later messages are not in it). */
 export const SUMMARY: Record<string, { upto: string; items: SummaryItem[] }> = {
   'c-exp': {
     upto: 'e7',
@@ -350,7 +436,6 @@ export const SUMMARY: Record<string, { upto: string; items: SummaryItem[] }> = {
         line: 'e5',
         text: '和论文差 1.1 个点，可能是 `eval/preprocess.py` 只做了 Resize(256)、没有 center crop',
       },
-      { kind: 'doing', line: 'e7', thing: 't1' },
       { kind: 'open', line: 'e6', text: '手上有三份评测脚本，合成哪一份还没人认领' },
     ],
   },
@@ -363,7 +448,6 @@ export const SUMMARY: Record<string, { upto: string; items: SummaryItem[] }> = {
         line: 'p1',
         text: 'BLIP 笔记在 `docs/papers/BLIP-精读.md`：要点是 CapFilt 洗数据，文本端一份参数三种用法',
       },
-      { kind: 'doing', line: 'p2', thing: 't2' },
       { kind: 'open', line: 'p4', text: 'ITM 的 hard negative 按相似度从 batch 里采，我们复现时要不要照做，还没人回' },
     ],
   },
@@ -372,7 +456,6 @@ export const SUMMARY: Record<string, { upto: string; items: SummaryItem[] }> = {
     items: [
       { kind: 'decided', line: 'g3', text: '周五组会改到下午 3 点，在 302' },
       { kind: 'found', line: 'g2', text: '周珂周五请假，回来看纪要' },
-      { kind: 'doing', line: 'g1', thing: 't3' },
     ],
   },
   'c-general': {
@@ -381,6 +464,22 @@ export const SUMMARY: Record<string, { upto: string; items: SummaryItem[] }> = {
       { kind: 'decided', line: 'z1', text: 'A100 周三晚 10 点停机维护约两小时，之前存好 checkpoint' },
       { kind: 'found', line: 'z3', text: '新的 4T 硬盘挂在 `/data2`，COCO 原图已经拷过去了' },
       { kind: 'open', line: 'z4', text: '中期报告下周三交，数据那一节还等赵雨桐补' },
+    ],
+  },
+  'k-general': {
+    upto: 'n5',
+    items: [
+      { kind: 'decided', line: 'n1', text: '每道题可以反复提交，以截止前最后一次为准' },
+      { kind: 'decided', line: 'n3', text: 'Cache Lab 分两部分，Part A 先截止' },
+      { kind: 'found', line: 'n2', text: 'Data Lab 只能用题面里列的运算符，`dlc` 超了就是 0 分' },
+    ],
+  },
+  'k-qa': {
+    upto: 'q5',
+    items: [
+      { kind: 'found', line: 'q2', text: 'bitXor 的方向是德摩根：把「或」换成 `~` 和 `&`（助教不给式子）' },
+      { kind: 'found', line: 'q5', text: 'Cache Lab 的 trace 在 `traces/` 下，`./test-csim` 会和参考实现对比' },
+      { kind: 'open', line: 'q3', text: 'logicalNeg 不用 `!` 怎么做，还没人给出完整思路' },
     ],
   },
 }
