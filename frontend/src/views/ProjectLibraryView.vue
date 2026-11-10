@@ -134,12 +134,14 @@ const pages = useLibraryPages(
 const { rows: entries, loading, loadFailed, loadReason } = pages
 
 // 项目文件那一行：项目里有提交才有（`listProjectChanges` 问到最近一次）。资料库不等它，
-// 问不到——还没有提交、代码托管服务慢或断了——就不画这一行，资料库照常。
+// 问不到——还没有提交、代码托管服务慢或断了——就不画这一行，资料库照常。整页开着一份
+// 文档时不画列表，也就不问。
 const projectFilesLatest = ref<ProjectChange | null>(null)
 watch(
-  () => props.projectId,
+  () => (props.docId ? null : props.projectId),
   async (projectId) => {
     projectFilesLatest.value = null
+    if (!projectId) return
     try {
       const [latest] = await listProjectChanges(projectId, { limit: 1 })
       if (props.projectId === projectId) projectFilesLatest.value = latest ?? null

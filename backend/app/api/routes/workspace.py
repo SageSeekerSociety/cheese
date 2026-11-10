@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import BaseModel
 
 from app.api.auth import (
     ActorResolverDep,
@@ -17,7 +18,7 @@ from app.api.deps import get_chat_service
 from app.api.doc_access import require_role
 from app.api.place import rooms_seen
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
 from app.core.errors import (
@@ -280,7 +281,29 @@ async def write_file(
     )
 
 
-@router.get("/{project_id}/history", dependencies=[Depends(require_project_access)])
+class LandedTaskOut(BaseModel):
+    id: str
+    title: str
+    room_id: str
+
+
+class ProjectChangeOut(BaseModel):
+    sha: str
+    subject: str
+    author: str
+    at: str
+    task: LandedTaskOut | None
+
+
+class ProjectHistoryOut(BaseModel):
+    commits: list[ProjectChangeOut]
+
+
+@router.get(
+    "/{project_id}/history",
+    dependencies=[Depends(require_project_access)],
+    **typed_response(ProjectHistoryOut),
+)
 async def project_history(
     project_id: uuid.UUID,
     db: DbSession,
