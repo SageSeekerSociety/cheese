@@ -1,13 +1,14 @@
 <script setup lang="ts">
-// The code editing surface shared by 改代码 (DemoCodeEdit) and a 题目's editor
-// (ProblemCenter): a line-number gutter and a plain textarea in the read-only
-// view's type and rhythm.
+// The code editing surface of the code view (DemoCodeEdit): a line-number
+// gutter and a plain textarea in the read-only view's type and rhythm.
 //
 // A plain textarea, not the product's Monaco editor: Monaco needs web workers
 // and several MB, and the demo page runs as one file in a null-origin sandbox.
 import { computed } from 'vue'
 
 defineProps<{ label: string }>()
+/** ⌘S / Ctrl+S inside the editor. */
+const emit = defineEmits<{ (e: 'save'): void }>()
 const text = defineModel<string>({ required: true })
 const lines = computed(() => text.value.split('\n'))
 </script>
@@ -29,6 +30,8 @@ const lines = computed(() => text.value.split('\n'))
       spellcheck="false"
       autocomplete="off"
       :aria-label="label"
+      @keydown.meta.s.prevent="emit('save')"
+      @keydown.ctrl.s.prevent="emit('save')"
     />
   </div>
 </template>

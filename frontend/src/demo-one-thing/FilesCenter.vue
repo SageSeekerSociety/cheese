@@ -1,47 +1,61 @@
 <script setup lang="ts">
-// 项目文件: the one official version. The tree reads like the product's file
+// 项目文件: the project's files. The tree reads like the product's file
 // library; a document opens in the product's document editor, a Word file shows
-// 芝士's 修订 in the product's Word comparison, code shows the official version
-// (the product's diff viewer, every line as context) and 改代码 edits it on the
-// person's own copy, and a result is rendered Markdown. docs/频道/ holds each
-// channel's 文档: the same document the channel shows, live block and all.
+// 芝士's 修订 in the product's Word comparison, a code file opens in the code
+// view (DemoCodeEdit: the code, 运行 and my own terminal), and a result is
+// rendered Markdown. docs/频道/ holds each channel's 文档. In a project claimed
+// from the course, what the 题目 brought in: the 题面 (or the 题单 document)
+// pinned on top, and the starter code, folded by problem.
 import type { FileRow } from '@/lib/changesTree'
 import type { FileDiff } from '@/lib/diff'
 import type { OfficeComparison } from '@/types/reviewComment'
 
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 
 import ChannelDoc from './ChannelDoc.vue'
-import { asContext, DOC_HTML, FILES, MINUTES_DOC, minutesHtml, RESULTS_MD, TASK_DIFFS, WORD_COMPARISON } from './data'
+import { PROJECT_FILES } from './course'
+import { DOC_HTML, FILES, isClaim, MINUTES_DOC, minutesHtml, RESULTS_MD, TASK_DIFFS, WORD_COMPARISON } from './data'
 import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
 import FileTree from './FileTree.vue'
-import { editCode, officialCode, S, t4, toast } from './state'
+import ProblemSetDoc from './ProblemSetDoc.vue'
+import { editCode, fkey, isUnsaved, openFile, S, t4, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
-import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import OfficeCompare from '@/components/review/OfficeCompare.vue'
 import { buildFileRows } from '@/lib/changesTree'
 import { fileIcon } from '@/lib/fileKind'
 
-const accepted = computed(() => t4()?.status === 'done')
-const collapsed = ref(new Set<string>())
+interface Entry {
+  path: string
+  kind: string
+  bytes: number
+  chan?: string
+  pinned?: boolean
+  html?: string
+}
 
-const shown = computed(() => FILES.filter((f) => f.kind !== 'result' || accepted.value))
+const accepted = computed(() => t4()?.status === 'done')
+const collapsed = computed(() => new Set(S.collapsed[S.project] ?? []))
+
+const all = computed<Entry[]>(() =>
+  isClaim(S.project) ? PROJECT_FILES[S.project] : FILES.filter((f) => f.kind !== 'result' || accepted.value)
+)
+const pinnedFiles = computed(() => all.value.filter((f) => f.pinned))
 const rows = computed<FileRow[]>(() => {
   const diffByPath = new Map<string, FileDiff>()
   // Only the result is new to the official version; the code files are simply its current text.
   const result = TASK_DIFFS.find((d) => d.status === 'added')
-  if (accepted.value && result) diffByPath.set(result.path, result)
+  if (S.project === 'research' && accepted.value && result) diffByPath.set(result.path, result)
   return buildFileRows({
-    files: shown.value.map((f) => ({ path: f.path, bytes: f.bytes })),
+    files: all.value.filter((f) => !f.pinned).map((f) => ({ path: f.path, bytes: f.bytes })),
     diffByPath,
     collapsedDirs: collapsed.value,
   })
 })
 
-const entry = computed(() => FILES.find((f) => f.path === S.file) ?? FILES[1]!)
+const entry = computed(() => all.value.find((f) => f.path === S.file) ?? all.value[0]!)
 
 const minutes = computed(() => {
   const html = S.suggRejected
@@ -52,22 +66,22 @@ const minutes = computed(() => {
   return S.typed ? html.replace('<li><p></p></li>', `<li><p>${S.typed}</p></li>`) : html
 })
 
-const code = computed(() => asContext(entry.value.path, officialCode(entry.value.path)))
 const editing = computed(() => S.codeDraft?.path === entry.value.path)
-// A copy belongs to the file it was opened on; moving to another file drops it.
+// A research copy belongs to the file it was opened on; moving to another file drops it.
 watch(
   () => S.file,
   () => (S.codeDraft = null)
 )
+const pending = computed(() => S.project === 'research' && !!S.codePending[entry.value.path])
 
 function select(path: string) {
-  if (FILES.some((f) => f.path === path)) S.file = path
+  if (all.value.some((f) => f.path === path)) openFile(path, { ftab: S.ftab })
 }
 function toggleDir(path: string) {
-  const next = new Set(collapsed.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  collapsed.value = next
+  const list = (S.collapsed[S.project] ??= [])
+  const i = list.indexOf(path)
+  if (i >= 0) list.splice(i, 1)
+  else list.push(path)
 }
 const crumbs = computed(() => entry.value.path.split('/'))
 const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`)
@@ -77,7 +91,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
   <section class="ot-files" data-zone="center">
     <header class="ot-head">
       <h2 class="ot-head__title">项目文件</h2>
-      <span class="ot-head__sub">{{ shown.length }} 个文件</span>
+      <span class="ot-head__sub">{{ all.length }} 个文件</span>
       <span class="ot-head__gap" />
       <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="toast('新建：文档、表格或文件夹')"
         >新建</BaseButton
@@ -88,6 +102,22 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
     </header>
     <div class="ot-files__split">
       <div class="ot-files__tree" data-zone="tree">
+        <div v-if="pinnedFiles.length" class="ot-files__pins">
+          <span class="t-eyebrow-read ot-files__pinlabel">置顶</span>
+          <button
+            v-for="f in pinnedFiles"
+            :key="f.path"
+            type="button"
+            class="ot-files__pin"
+            :class="{ 'is-active': S.file === f.path }"
+            :title="f.path"
+            @click="select(f.path)"
+          >
+            <v-icon size="16" :icon="f.kind === 'list' ? 'mdi-format-list-checks' : 'mdi-text-box-outline'" />
+            <span>{{ f.kind === 'list' ? '题单' : '题面' }}</span>
+            <span class="ot-files__pinpath">{{ f.path }}</span>
+          </button>
+        </div>
         <FileTree
           :rows="rows"
           :collapsed-dirs="collapsed"
@@ -107,9 +137,11 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           </span>
           <span class="ot-files__size">{{ sizeOf(entry.bytes) }}</span>
           <span class="ot-head__gap" />
-          <span v-if="entry.kind === 'code' && S.codePending[entry.path]" class="ot-files__tag">你的改动等人采纳</span>
+          <span v-if="entry.pinned" class="ot-files__tag">置顶</span>
+          <span v-if="entry.kind === 'code' && isUnsaved(S.project, entry.path)" class="ot-files__tag">没保存</span>
+          <span v-if="pending" class="ot-files__tag">你的改动等人采纳</span>
           <BaseButton
-            v-if="entry.kind === 'code' && !editing"
+            v-if="S.project === 'research' && entry.kind === 'code' && !editing"
             id="b-edit-code"
             kind="secondary"
             size="sm"
@@ -127,13 +159,20 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
             @click="toast(`下载 ${entry.path.split('/').pop()}`)"
           />
         </div>
-        <div class="ot-files__view" :class="{ 'ot-files__view--flush': entry.kind === 'code' || entry.chan }">
+        <div
+          class="ot-files__view"
+          :class="{ 'ot-files__view--flush': entry.kind === 'code' || entry.kind === 'list' || entry.chan }"
+        >
           <DemoDoc v-if="entry.path === MINUTES_DOC" :html="minutes" peer :typing="S.typed.length > 0" />
           <ChannelDoc v-else-if="entry.chan" :key="entry.chan" :chan="entry.chan" />
-          <DemoDoc v-else-if="entry.kind === 'doc'" :key="entry.path" :html="DOC_HTML[entry.path] ?? ''" />
+          <ProblemSetDoc v-else-if="entry.kind === 'list'" />
+          <DemoDoc
+            v-else-if="entry.kind === 'doc'"
+            :key="fkey(S.project, entry.path)"
+            :html="entry.html ?? DOC_HTML[entry.path] ?? ''"
+          />
           <OfficeCompare v-else-if="entry.kind === 'word'" :comparison="WORD_COMPARISON as OfficeComparison" />
-          <DemoCodeEdit v-else-if="editing" />
-          <div v-else-if="entry.kind === 'code'" class="ot-files__code"><ChangesDiff :lines="code" inline /></div>
+          <DemoCodeEdit v-else-if="entry.kind === 'code'" :key="fkey(S.project, entry.path)" />
           <MarkdownView v-else :source="RESULTS_MD" />
         </div>
       </div>
@@ -159,6 +198,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
 .ot-files__tree {
   display: flex;
   flex: none;
+  flex-direction: column;
   width: 224px;
   min-height: 0;
   border-right: 1px solid var(--line);
@@ -232,16 +272,62 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
   padding: 0;
 }
 
-.ot-files__code :deep(.diff-line--hunk) {
-  display: none;
+.ot-files__tree > :deep(.ot-ftree) {
+  flex: 1;
+  min-height: 0;
 }
 
-/* The official version has one line number per line: hide the "before" column of the diff gutter. */
-.ot-files__code :deep(.diff-line > .diff-line__num:first-of-type) {
-  display: none;
+.ot-files__pins {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--line);
 }
 
-.ot-files__code :deep(.diff-line__text) {
-  white-space: pre;
+.ot-files__pinlabel {
+  padding: 0 6px 2px;
+}
+
+/* A pinned document: the tree's row, with its role in the project as the name. */
+.ot-files__pin {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 30px;
+  padding: 0 8px 0 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+.ot-files__pin:hover {
+  background: var(--fill);
+}
+
+.ot-files__pin.is-active {
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--line-2);
+}
+
+.ot-files__pin .v-icon {
+  color: var(--muted);
+}
+
+.ot-files__pinpath {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

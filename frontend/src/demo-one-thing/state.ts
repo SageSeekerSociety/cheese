@@ -6,11 +6,46 @@ import type { Submission } from './course'
 
 import { reactive } from 'vue'
 
-import { COURSE_CHAT, judge, problemById, runSamples, seedSubmissions, TUTOR_SEED, tutorAnswer } from './course'
-import { ASK, CHAN_DOCS, channelsOf, CODE, dayAt, ME, minsAgo, MINUTES_DOC, NAMES, type ProjectKey } from './data'
+import {
+  COURSE_CHAT,
+  dueChip,
+  hintFor,
+  PROJECT_FILES,
+  SET,
+  topicById,
+  TOPICS,
+  UNITS,
+  versionOf,
+  welcome,
+} from './course'
+import {
+  ASK,
+  CHAN_DOCS,
+  channelsOf,
+  CLAIMED,
+  type ClaimKey,
+  CODE,
+  dayAt,
+  FILES,
+  isClaim,
+  ME,
+  minsAgo,
+  MINUTES_DOC,
+  NAMES,
+  type ProjectKey,
+  projectOfChan,
+} from './data'
+
+import { monthDayTime } from '@/lib/dateText'
 
 export type Status = 'talk' | 'run' | 'wait' | 'done'
-export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'problem'
+export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'space'
+/** The bottom panel's 输出 for one file. */
+export type Out =
+  | { kind: 'running' }
+  | { kind: 'run'; cmd: string; out: string }
+  | { kind: 'judging'; version: string }
+  | { kind: 'judge'; sub: string }
 export type ChanView = 'doc' | 'talk'
 
 /** One thing said: in a channel, or inside a 一件事. */
@@ -52,6 +87,11 @@ export interface HistoryEntry {
   what: string
   at: string
   fresh?: boolean
+  /** A code save: the file and the text 正式版 had before it, which 撤回 puts back. */
+  file?: string
+  prev?: string
+  /** Nothing to take back (领取 itself). */
+  fixed?: boolean
 }
 
 export const PHASES = ['讨论', '在做', '等你采纳', '完成'] as const
@@ -86,8 +126,15 @@ function initial() {
   return {
     /** Which space on the rail is open: the research project (the tour runs here) or the course. */
     project: 'research' as ProjectKey,
-    /** The channel each space was last on, so switching back lands where you were. */
-    chanOf: { research: 'c-exp', course: 'k-general' } as Record<ProjectKey, string>,
+    /** The channel each project was last on, so switching back lands where you were. */
+    chanOf: { research: 'c-exp', course: 'k-general', datalab: 'dl-general', week3: 'w3-general' } as Record<
+      ProjectKey,
+      string
+    >,
+    /** The file each project's 项目文件 was last on. */
+    fileOf: { research: MINUTES_DOC } as Record<string, string>,
+    /** The projects 林晓 has claimed from the course, in the order they were claimed (the rail's order). */
+    claimed: [] as ClaimKey[],
     center: 'chan' as Center,
     chan: 'c-exp',
     thing: null as string | null,
@@ -105,6 +152,8 @@ function initial() {
     /** 专注：the open 一件事 takes the center column too. */
     focus: false,
     unread: { 'c-papers': 2, 'c-general': 1, 'k-general': 1, 'k-qa': 3 } as Record<string, number>,
+    /** 项目文件's folded folders, per project (a 题单 folds by problem). */
+    collapsed: {} as Record<string, string[]>,
     sheet: false,
     morph: false,
     typing: '',
@@ -124,38 +173,43 @@ function initial() {
     settingsProtectCode: false,
     settingsNotify: 'mentions',
     settingsRuntime: 'a100',
-    /** Code a person merged into the official version by hand: path → its lines. */
+    /** Code a person merged into the research project's official version by hand: path → its lines. */
     codeEdits: {} as Record<string, string[]>,
     /** Edits sent for someone else's 采纳 while 代码受保护 is on: path → its lines. */
     codePending: {} as Record<string, string[]>,
-    /** The code file open in the editor, on the person's own copy. */
+    /** The research code file open in the editor, on the person's own copy. */
     codeDraft: null as { path: string; text: string } | null,
+    /** A claimed project's code files as they are now, keyed by fkey. */
+    official: {} as Record<string, string>,
+    /** What is typed in a claimed project's editor and not saved yet, keyed by fkey. */
+    unsaved: {} as Record<string, string>,
+    /** The code view's bottom panel: which tab, and each file's 输出. */
+    outTab: 'out' as 'out' | 'term',
+    out: {} as Record<string, Out>,
+    /** Each project's terminal transcript (the person's own environment). */
+    term: {} as Record<string, { cmd: string; out: string }[]>,
+    /** Every 提交评测 in each claimed project, newest first. */
+    subs: { datalab: [], week3: [] } as Record<ClaimKey, Submission[]>,
+    /** The file being judged right now (fkey), if any. */
+    judging: null as string | null,
+    /** A submission whose pinned version is open (read-only) in the code view. */
+    viewSub: null as string | null,
     /** When the scripted ask went out (the 一件事's own clock counts from it). */
     askAt: '',
-    /** What 林晓 said by hand inside each 一件事, after the script's lines; and each
-     *  题目's 问芝士 conversation, under `ask:<题目>`. */
-    extra: Object.fromEntries(
-      Object.entries(structuredClone(TUTOR_SEED)).map(([id, lines]) => [`ask:${id}`, lines])
-    ) as Record<string, ChatLine[]>,
-    // ---- the course ----
-    problem: 'p-bitxor',
-    /** The open 题目's right-panel tab: 题面 / 评测记录 / 问芝士. */
-    ptab: 'statement',
-    /** My own copy of each 题目's code. */
-    code: {} as Record<string, string>,
-    subs: seedSubmissions() as Record<string, Submission[]>,
-    /** The 题目 being judged right now, if any. */
-    judging: null as string | null,
-    /** 运行样例's output under the editor, per 题目. */
-    sampleOut: {} as Record<string, string>,
-    sampling: false,
-    askTyping: '',
-    history: [
-      { who: 'wanglei', what: '改了《组会纪要 11-07》', at: minsAgo(9) },
-      { who: 'chensiyuan', what: '采纳了任务「补长描述截断实验」：改了 2 个文件', at: dayAt(1, 17, 42) },
-      { who: 'zhaoyutong', what: '上传了 report/中期报告.docx', at: dayAt(1, 11, 5) },
-      { who: 'wanglei', what: '采纳了任务「BLIP 精读笔记」：新增 docs/papers/BLIP-精读.md', at: dayAt(3, 15, 20) },
-    ] as HistoryEntry[],
+    /** What 林晓 said by hand inside each 一件事, after the script's lines. */
+    extra: {} as Record<string, ChatLine[]>,
+    /** Each project's 历史: every change that took effect on its 正式版. */
+    history: {
+      course: [],
+      datalab: [],
+      week3: [],
+      research: [
+        { who: 'wanglei', what: '改了《组会纪要 11-07》', at: minsAgo(9) },
+        { who: 'chensiyuan', what: '采纳了任务「补长描述截断实验」：改了 2 个文件', at: dayAt(1, 17, 42) },
+        { who: 'zhaoyutong', what: '上传了 report/中期报告.docx', at: dayAt(1, 11, 5) },
+        { who: 'wanglei', what: '采纳了任务「BLIP 精读笔记」：新增 docs/papers/BLIP-精读.md', at: dayAt(3, 15, 20) },
+      ],
+    } as Record<ProjectKey, HistoryEntry[]>,
     things: [
       {
         id: 't1',
@@ -405,8 +459,16 @@ function initial() {
 
 export const S = reactive(initial())
 
+/** Bumped on every reset, so a timer started before it does not land in the fresh state. */
+let gen = 0
+const later = (ms: number, fn: () => void) => {
+  const my = gen
+  setTimeout(() => my === gen && fn(), ms)
+}
+
 export function reset(): void {
   const keep = S.showNotes
+  gen++
   Object.assign(S, initial())
   S.showNotes = keep
 }
@@ -432,19 +494,24 @@ export function go(center: Center, extra: Partial<typeof S> = {}): void {
   }
 }
 
-/** The rail: switch to the other space, back on the channel it was last on. */
+/** The rail: switch to another project, back on the channel it was last on. The course
+ *  space opens on its own page, the 题目 list. */
 export function switchProject(p: ProjectKey): void {
-  if (S.project === p) {
-    go('chan', { chan: S.chan, thing: null })
-    return
+  if (S.project !== p) {
+    if (S.center === 'chan') S.chanOf[S.project] = S.chan
+    S.fileOf[S.project] = S.file
+    // What was half-typed belongs to the channel it was typed in, not to the other project.
+    S.typing = ''
+    S.replyTo = null
+    S.viewSub = null
+    S.codeDraft = null
+    S.project = p
+    S.file = S.fileOf[p] ?? S.file
+    S.ftab = isClaim(p) ? 'subs' : 'pending'
+    S.settingsSection = p === 'course' ? 'course' : 'project'
   }
-  if (S.center === 'chan') S.chanOf[S.project] = S.chan
-  // What was half-typed belongs to the channel it was typed in, not to the other space.
-  S.typing = ''
-  S.replyTo = null
-  S.project = p
-  S.settingsSection = p === 'course' ? 'course' : 'project'
-  go('chan', { chan: S.chanOf[p], thing: null })
+  if (p === 'course') go('space', { chan: S.chanOf.course })
+  else go('chan', { chan: S.chanOf[p], thing: null })
 }
 
 /** Unread messages in one space's channels (the rail's count). */
@@ -453,6 +520,7 @@ export const unreadIn = (p: ProjectKey) => channelsOf(p).reduce((n, c) => n + (S
 export function openThing(id: string): void {
   const t = thingById(id)
   if (!t) return
+  if (projectOfChan(t.chan) !== S.project) switchProject(projectOfChan(t.chan))
   go('chan', { chan: t.chan, thing: id, rtab: 'chat' })
 }
 
@@ -501,16 +569,69 @@ export function sourceOf(thingId: string): ChatLine | null {
   return null
 }
 
-// ---- code on the official version ----
+// ---- code ----
+//
+// The research project keeps its own flow: 改代码 edits a copy of the official
+// version, 合进正式版 puts it in (or 请人采纳 while 代码受保护 is on). In a
+// project claimed from the course, a person's edit is saved straight into the
+// project's files; every save is a 历史 entry with 撤回.
 
-/** The official text of a code file: a person's merged edit, else the task's version once accepted. */
+/** The key of one project's file in the per-file records. */
+export const fkey = (p: ProjectKey, path: string) => `${p}:${path}`
+
+/** The official text of a research code file: a person's merged edit, else the task's version once accepted. */
 export function officialCode(path: string): string[] {
   const c = CODE[path]
   if (!c) return []
   return S.codeEdits[path] ?? (t4()?.status === 'done' && c.after ? c.after : c.before)
 }
 
-/** How many lines a copy changes against the official version (lines only on one side, the larger side). */
+/** A code file as it is now, in any project. */
+export function officialText(p: ProjectKey, path: string): string {
+  return p === 'research' ? officialCode(path).join('\n') : S.official[fkey(p, path)] ?? ''
+}
+
+/** What the editor shows: the research copy being edited, or a claimed file with what is typed and not saved. */
+export function draftText(p: ProjectKey, path: string): string {
+  if (p === 'research') return S.codeDraft?.path === path ? S.codeDraft.text : officialText(p, path)
+  return S.unsaved[fkey(p, path)] ?? officialText(p, path)
+}
+
+export function typeCode(p: ProjectKey, path: string, text: string): void {
+  if (p === 'research') {
+    if (S.codeDraft?.path === path) S.codeDraft.text = text
+    return
+  }
+  const k = fkey(p, path)
+  if (text === officialText(p, path)) delete S.unsaved[k]
+  else S.unsaved[k] = text
+}
+
+export const isUnsaved = (p: ProjectKey, path: string) => fkey(p, path) in S.unsaved
+
+/** The judged unit a file belongs to (Data Lab's bits.c, a 题单 problem's main.cpp), if any. */
+export const unitOf = (p: ProjectKey, path: string) =>
+  isClaim(p) ? PROJECT_FILES[p].find((f) => f.path === path)?.unit : undefined
+
+function log(p: ProjectKey, who: string, what: string, extra: Partial<HistoryEntry> = {}): void {
+  const list = S.history[p]
+  for (const h of list) h.fresh = false
+  list.unshift({ who, what, at: new Date().toISOString(), fresh: true, ...extra })
+}
+
+/** 保存 (⌘S) in a claimed project: the file changes, and 历史 records it with what it read before. */
+export function saveCode(p: ProjectKey, path: string, quiet = false): void {
+  const k = fkey(p, path)
+  const text = S.unsaved[k]
+  if (text === undefined || p === 'research') return
+  const prev = officialText(p, path)
+  S.official[k] = text
+  delete S.unsaved[k]
+  log(p, ME, `改了 ${path}`, { file: path, prev })
+  if (!quiet) toast(`已保存：${path}`)
+}
+
+/** How many lines a research copy changes against the official version (lines only on one side, the larger side). */
 export function changedLines(path: string, lines: string[]): number {
   const count = (xs: string[]) => xs.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map<string, number>())
   const diff = (a: Map<string, number>, b: Map<string, number>) =>
@@ -537,9 +658,166 @@ export function mergeCode(): void {
   }
   S.codeEdits[d.path] = lines
   delete S.codePending[d.path]
-  for (const h of S.history) h.fresh = false
-  S.history.unshift({ who: ME, what: `改了 ${d.path}`, at: new Date().toISOString(), fresh: true })
+  log('research', ME, `改了 ${d.path}`)
   toast('已合进正式版')
+}
+
+// ---- 运行 and the terminal: the person's own environment ----
+
+/** The research project's files, run on the copy as it now reads: a short, plausible run. */
+function researchRun(path: string, text: string): { cmd: string; out: string } {
+  if (path === 'eval/preprocess.py') {
+    const crop = /CenterCrop\(\s*224\s*\)/.test(text)
+    const size = /Resize\(\s*(\d+)/.exec(text)?.[1] ?? '256'
+    const shape = crop ? '[3, 224, 224]' : `[3, ${size}, ${Math.round((Number(size) * 4) / 3)}]`
+    return {
+      cmd: 'python -c "from eval.preprocess import preprocess; ..." data/coco/val2017/000000000139.jpg',
+      out: `torch.Size(${shape})  dtype=torch.float32\n${crop ? '和模型输入 224×224 一致' : '注意：不是 224×224，模型会在里面再缩放一次'}`,
+    }
+  }
+  if (path === 'eval/retrieval.py') {
+    const all = text.includes('recall_at_k')
+    return {
+      cmd: 'python -m eval.retrieval --data flickr30k --split 1k --limit 100',
+      out: `encoding 100 images, 500 captions … done (3.8s)\n${all ? 'R@1 79.0  R@5 94.0  R@10 97.0' : 'R@1 78.0'}   （只抽了前 100 张，快速检查）`,
+    }
+  }
+  if (path.endsWith('.yaml')) {
+    const bs = /batch_size:\s*(\d+)/.exec(text)?.[1] ?? '?'
+    return {
+      cmd: `python -c "import yaml; print(yaml.safe_load(open('${path}'))['data'])"`,
+      out: `{'flickr30k': '/data/flickr30k', 'coco': '/data/coco2017', 'batch_size': ${bs}, 'num_workers': 8}`,
+    }
+  }
+  return { cmd: `bash -n ${path}`, out: '语法检查通过（只检查，不下载）' }
+}
+
+function runOf(p: ProjectKey, path: string, text: string) {
+  const unit = unitOf(p, path)
+  return unit ? UNITS[unit]!.run(text) : researchRun(path, text)
+}
+
+/** 运行: on my copy, in my own environment; the output lands in the bottom panel and the terminal. */
+export function runCode(p: ProjectKey, path: string): void {
+  const k = fkey(p, path)
+  const text = draftText(p, path)
+  S.out[k] = { kind: 'running' }
+  S.outTab = 'out'
+  later(800, () => {
+    const r = runOf(p, path, text)
+    S.out[k] = { kind: 'run', ...r }
+    ;(S.term[p] ??= []).push(r)
+  })
+}
+
+/** A command typed into the terminal. */
+export function termRun(p: ProjectKey, path: string, cmd: string): void {
+  const list = (S.term[p] ??= [])
+  const c = cmd.trim()
+  if (!c) return
+  if (c === 'clear') {
+    list.splice(0)
+    return
+  }
+  const files = isClaim(p) ? PROJECT_FILES[p].map((f) => f.path) : FILES.map((f) => f.path)
+  if (c === 'ls') {
+    list.push({ cmd: c, out: [...new Set(files.map((f) => f.split('/')[0]))].join('  ') })
+    return
+  }
+  const cat = /^cat\s+(\S+)$/.exec(c)
+  if (cat) {
+    const f = cat[1]!
+    const code = isClaim(p) ? PROJECT_FILES[p].find((x) => x.path === f)?.kind === 'code' : !!CODE[f]
+    list.push({
+      cmd: c,
+      out: code ? draftText(p, f) : files.includes(f) ? '（文档，在项目文件里打开）' : `cat: ${f}: 没有这个文件`,
+    })
+    return
+  }
+  if (/^(make|\.\/|g\+\+|python|bash)/.test(c)) {
+    list.push({ cmd: c, out: runOf(p, path, draftText(p, path)).out })
+    return
+  }
+  list.push({ cmd: c, out: `${c.split(/\s/)[0]}：演示里的终端只认 ls、cat、clear 和运行命令` })
+}
+
+// ---- 提交评测: the judge runs on a pinned version of 正式版 ----
+
+let seqSub = 0
+
+/** 提交评测 on a judged file: the file as it is now is pinned (its version id) and judged. */
+export function submitCode(p: ProjectKey, path: string): void {
+  const unit = unitOf(p, path)
+  if (!unit || !isClaim(p) || S.judging) return
+  // What is typed is saved first, so the judged version is the file as it reads now.
+  saveCode(p, path, true)
+  const k = fkey(p, path)
+  const text = officialText(p, path)
+  const version = versionOf(text)
+  S.judging = k
+  S.out[k] = { kind: 'judging', version }
+  S.outTab = 'out'
+  later(1500, () => {
+    S.judging = null
+    const v = UNITS[unit]!.judge(text)
+    const n = S.subs[p].filter((x) => x.unit === unit).length + 1
+    const sub: Submission = { ...v, id: `s${seqSub++}`, unit, n, at: new Date().toISOString(), version, code: text }
+    S.subs[p].unshift(sub)
+    S.out[k] = { kind: 'judge', sub: sub.id }
+    S.ftab = 'subs'
+    toast(v.score === v.total ? `通过了：${UNITS[unit]!.title}` : `${v.score}/${v.total} · 第 ${n} 次提交`)
+  })
+}
+
+/** The latest submission of each unit decides where it stands (以截止前最后一次为准). */
+export const latestOf = (p: ClaimKey, unit: string) => S.subs[p].find((x) => x.unit === unit)
+
+// ---- 项目文件 ----
+
+/** Open a file in 项目文件, unfolding its folder. */
+export function openFile(path: string, extra: Partial<typeof S> = {}): void {
+  const dir = path.includes('/') ? path.slice(0, path.indexOf('/')) : null
+  const list = S.collapsed[S.project]
+  if (dir && list?.includes(dir)) list.splice(list.indexOf(dir), 1)
+  go('files', { file: path, viewSub: null, ...extra })
+}
+
+/** Open the exact version a submission judged, read-only. */
+export function openVersion(id: string): void {
+  if (!isClaim(S.project)) return
+  const sub = S.subs[S.project].find((x) => x.id === id)
+  if (!sub) return
+  openFile(UNITS[sub.unit]!.path, { viewSub: id, ftab: 'subs' })
+}
+
+// ---- 领取: a 题目 becomes a project of my own ----
+
+export function claim(topicId: string): void {
+  const t = topicById(topicId)
+  if (!t?.project) {
+    toast('演示里能领取的是 Data Lab 和第 3 周题单')
+    return
+  }
+  const p = t.project
+  if (!S.claimed.includes(p)) {
+    S.claimed.push(p)
+    const files = PROJECT_FILES[p]
+    for (const f of files) if (f.kind === 'code') S.official[fkey(p, f.path)] = f.starter!
+    S.chat[CLAIMED[p].chan] = welcome(p, monthDayTime(Date.parse(t.due)))
+    S.chanView[CLAIMED[p].chan] = 'talk'
+    S.collapsed[p] = p === 'week3' ? SET.map((x) => x.id) : []
+    S.fileOf[p] = files[0]!.path
+    S.history[p] = [
+      {
+        who: ME,
+        what: `领取了「${t.title}」：新建了 ${p === 'datalab' ? 'README.md 和 bits.c' : '题单.md 和 5 道题的文件'}`,
+        at: new Date().toISOString(),
+        fixed: true,
+      },
+    ]
+    toast(`领取了「${t.title}」：你的项目「${CLAIMED[p].name}」建好了`)
+  }
+  switchProject(p)
 }
 
 let seq = 0
@@ -551,6 +829,24 @@ export function send(): void {
   if (!text) return
   S.typing = ''
   const at = new Date().toISOString()
+  // In the course and its projects 芝士 only gives hints, in the channel: no 一件事 is opened there.
+  // A plain 「@芝士」 counts too: a viewer typing it by hand need not pick it from the mention list.
+  if (/<@cheese>|@芝士/.test(text) && S.project !== 'research') {
+    const id = nextId('u')
+    const chan = S.chan
+    S.chat[chan]!.push({ id, who: ME, at, text, replyTo: S.replyTo ?? undefined })
+    S.replyTo = null
+    later(1200, () =>
+      S.chat[chan]!.push({
+        id: nextId('c'),
+        who: 'cheese',
+        at: new Date().toISOString(),
+        text: hintFor(text),
+        replyTo: id,
+      })
+    )
+    return
+  }
   if (text.includes('<@cheese>') && !t4()) {
     const scripted = text === ASK
     S.askAt = at
@@ -664,96 +960,88 @@ export function accept(): void {
   t.last = '已采纳 · 合进正式版'
   t.at = new Date().toISOString()
   S.rtab = 'result'
-  for (const h of S.history) h.fresh = false
-  S.history.unshift({
-    who: 'linxiao',
-    what: '采纳了任务「统一评测脚本」：改了 2 个文件，新增 results/eval_results.md',
-    at: new Date().toISOString(),
-    fresh: true,
-  })
+  log('research', ME, '采纳了任务「统一评测脚本」：改了 2 个文件，新增 results/eval_results.md')
   toast('已采纳：合进项目文件的正式版')
 }
 
 export function suggAccept(): void {
   if (S.suggAccepted) return
   S.suggAccepted = true
-  for (const h of S.history) h.fresh = false
-  S.history.unshift({
-    who: 'linxiao',
-    what: '接受了芝士对《组会纪要 11-07》的建议',
-    at: new Date().toISOString(),
-    fresh: true,
-  })
+  log('research', ME, '接受了芝士对《组会纪要 11-07》的建议')
   toast('建议已接受，进了正式版')
 }
 
 export function suggReject(): void {
   if (S.suggAccepted || S.suggRejected) return
   S.suggRejected = true
-  for (const h of S.history) h.fresh = false
-  S.history.unshift({
-    who: 'linxiao',
-    what: '拒绝了芝士对《组会纪要 11-07》的建议',
-    at: new Date().toISOString(),
-    fresh: true,
-  })
+  log('research', ME, '拒绝了芝士对《组会纪要 11-07》的建议')
   toast('建议已拒绝，正式版不变')
 }
 
+/** 撤回 one entry of the open project's 历史: a code save puts back the text the file had before it. */
 export function undo(index: number): void {
-  const h = S.history[index]
-  if (!h) return
-  S.history.splice(index, 1)
+  const list = S.history[S.project]
+  const h = list[index]
+  if (!h || h.fixed) return
+  list.splice(index, 1)
   if (h.what.startsWith('接受了芝士对')) S.suggAccepted = false
   if (h.what.startsWith('拒绝了芝士对')) S.suggRejected = false
-  if (h.who === ME && h.what.startsWith('改了 ')) delete S.codeEdits[h.what.slice(3)]
-  toast(`已撤回：${h.what}`)
+  if (h.file && h.prev !== undefined) S.official[fkey(S.project, h.file)] = h.prev
+  else if (S.project === 'research' && h.who === ME && h.what.startsWith('改了 ')) delete S.codeEdits[h.what.slice(3)]
+  toast(`已撤回：${NAMES[h.who]} ${h.what}`)
 }
 
-// ---- the course: 题目 ----
+// ---- 需要我的: deadlines across every project ----
 
-export function openProblem(id: string): void {
-  go('problem', { problem: id })
-  if (!S.code[id]) S.code[id] = problemById(id)?.starter ?? ''
+export interface Deadline {
+  id: string
+  title: string
+  sub: string
+  chip: string
+  open: () => void
 }
 
-/** 运行样例: the statement's samples on my copy, after a short wait. */
-export function runProblemSamples(): void {
-  const p = problemById(S.problem)
-  if (!p || S.sampling) return
-  S.sampling = true
-  delete S.sampleOut[p.id]
-  const text = S.code[p.id] ?? p.starter
-  setTimeout(() => {
-    S.sampling = false
-    S.sampleOut[p.id] = runSamples(p, text)
-  }, 700)
-}
-
-/** 提交评测: the judge runs on my copy as it is now, and its record goes to 评测记录. */
-export function submitProblem(): void {
-  const p = problemById(S.problem)
-  if (!p || S.judging) return
-  S.judging = p.id
-  const text = S.code[p.id] ?? p.starter
-  setTimeout(() => {
-    S.judging = null
-    const r = judge(p, text)
-    ;(S.subs[p.id] ??= []).unshift({ ...r, id: nextId('s'), at: new Date().toISOString() })
-    S.ptab = 'subs'
-    toast(r.score === r.total ? `已通过：${p.title}` : `${r.score}/${r.total}，没有全部通过`)
-  }, 1500)
-}
-
-/** 问芝士 in a 题目: what I ask lands there; 芝士 answers with a hint (course setting 只给提示). */
-export function askTutor(): void {
-  const p = problemById(S.problem)
-  const text = S.askTyping.trim()
-  if (!p || !text) return
-  S.askTyping = ''
-  const list = (S.extra[`ask:${p.id}`] ??= [])
-  list.push({ id: nextId('x'), who: ME, at: new Date().toISOString(), text: text.replace(/<@cheese>\s?/g, '') })
-  setTimeout(() => {
-    list.push({ id: nextId('x'), who: 'cheese', at: new Date().toISOString(), text: tutorAnswer(p, text) })
-  }, 1200)
+/** A 题目 due within a week that is not done: not claimed yet, not submitted, or problems still open. */
+export function deadlines(): Deadline[] {
+  const out: Deadline[] = []
+  for (const t of TOPICS) {
+    const chip = dueChip(t.due)
+    if (!chip) continue
+    const p = t.project
+    if (!p || !S.claimed.includes(p)) {
+      out.push({ id: t.id, title: `${t.title} ${chip}`, sub: '还没领取', chip, open: () => switchProject('course') })
+      continue
+    }
+    if (p === 'datalab') {
+      const last = latestOf(p, 'datalab')
+      if (last && last.score === last.total) continue
+      out.push({
+        id: t.id,
+        title: `${t.title} ${chip}`,
+        sub: last ? `最近一次 ${last.score}/${last.total}` : '还没提交',
+        chip,
+        open: () => {
+          switchProject(p)
+          openFile('bits.c')
+        },
+      })
+    } else {
+      const left = SET.filter((x) => {
+        const last = latestOf(p, x.id)
+        return !last || last.score < last.total
+      }).length
+      if (!left) continue
+      out.push({
+        id: t.id,
+        title: `${t.title}：还差 ${left} 题`,
+        sub: `${SET.length - left}/${SET.length} 题通过`,
+        chip,
+        open: () => {
+          switchProject(p)
+          openFile('题单.md')
+        },
+      })
+    }
+  }
+  return out
 }

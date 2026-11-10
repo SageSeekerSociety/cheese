@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // 设置: the one place. A table of contents on the left and the section on the
-// right, drawn with the product's settings rows. In the course, 课程 holds the
-// switches that make it a course: code one copy per person, 芝士 a tutor inside
-// a 题目, judging on submit. The demo shows the student's settings page; who may
-// change these (the teacher) is not part of it.
+// right, drawn with the product's settings rows. The course 空间's settings are
+// the teacher's switches (芝士 only hints / may answer / off, judging on
+// submit, one project per student), shown read-only to the student. A project
+// claimed from a 题目 shows the rules the 题目 brought: 芝士 only hints, the
+// deadline, the code rule. Every project can be opened in a local editor.
 import { computed, ref } from 'vue'
 
-import { channelOf, COURSE, COURSE_PEOPLE, ME, NAMES, PEOPLE, PROJECT } from './data'
+import { topicOf } from './course'
+import { channelOf, COURSE, COURSE_PEOPLE, gitUrl, isClaim, ME, NAMES, PEOPLE, PROJECT, projectMeta } from './data'
 import { S, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -14,13 +16,21 @@ import SettingsRow from '@/components/base/SettingsRow.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { monthDayTime } from '@/lib/dateText'
 
 const course = computed(() => S.project === 'course')
+const claimed = computed(() => isClaim(S.project))
+const topic = computed(() => (isClaim(S.project) ? topicOf(S.project) : null))
+const url = computed(() => gitUrl(S.project))
+function copyUrl() {
+  void navigator.clipboard?.writeText(`git clone ${url.value}`).catch(() => undefined)
+  toast('已复制 git clone 命令')
+}
 const chanTitle = computed(() => channelOf(S.chan)?.title ?? '')
 const SECTIONS = computed(() => [
   { key: 'channel', label: `频道 · ${chanTitle.value}`, icon: 'mdi-pound' },
   course.value
-    ? { key: 'course', label: '课程', icon: 'mdi-school-outline' }
+    ? { key: 'course', label: '空间', icon: 'mdi-school-outline' }
     : { key: 'project', label: '项目', icon: 'mdi-folder-cog-outline' },
   { key: 'members', label: '成员', icon: 'mdi-account-group-outline' },
   { key: 'cheese', label: '芝士', icon: 'mdi-robot-outline' },
@@ -30,11 +40,13 @@ const SECTIONS = computed(() => [
   { key: 'usage', label: '用量', icon: 'mdi-chart-box-outline' },
 ])
 const title = computed(() => SECTIONS.value.find((s) => s.key === S.settingsSection)?.label ?? '')
-const people = computed(() => (course.value ? COURSE_PEOPLE : PEOPLE))
+const people = computed(() =>
+  course.value ? COURSE_PEOPLE : claimed.value ? PEOPLE.filter((p) => p.handle === ME || p.agent) : PEOPLE
+)
 const fixed = () => toast('课程的这几项由老师设置')
 
 const chanName = ref(chanTitle.value)
-const projName = ref(PROJECT.name)
+const projName = ref(projectMeta(S.project).name)
 const model = ref('sonnet')
 const theme = ref(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
 const ROLES: Record<string, string> = {
@@ -109,22 +121,8 @@ const USAGE = [
           <SettingsRow label="课程名称" :description="`${COURSE.team} · 张老师`" width="select">
             <span class="ot-set__value">{{ COURSE.name }}</span>
           </SettingsRow>
-          <SettingsRow
-            label="代码"
-            description="每人一份，直接改，只有本人和老师看得到；项目式是大家改同一份正式版，改动要采纳"
-            width="select-wide"
-          >
-            <SegmentedControl
-              :model-value="'each'"
-              :options="[
-                { value: 'each', label: '每人一份，直接改' },
-                { value: 'one', label: '一份正式版' },
-              ]"
-              label="代码"
-              @update:model-value="fixed"
-            />
-          </SettingsRow>
-          <SettingsRow label="芝士在题目里" description="问芝士时它能说到哪一步" width="select-wide">
+          <p class="ot-set__fixed"><v-icon size="14" icon="mdi-lock-outline" />这几项由老师设置，你看得到、改不了</p>
+          <SettingsRow label="芝士在学生的项目里" description="学生问芝士时，它能说到哪一步" width="select-wide">
             <SegmentedControl
               :model-value="'hint'"
               :options="[
@@ -132,12 +130,56 @@ const USAGE = [
                 { value: 'answer', label: '可以给答案' },
                 { value: 'off', label: '关闭' },
               ]"
-              label="芝士在题目里"
+              label="芝士在学生的项目里"
               @update:model-value="fixed"
             />
           </SettingsRow>
-          <SettingsRow label="评测" description="提交后自动评测，结果和分数记进评测记录" width="select">
+          <SettingsRow
+            label="提交后自动评测"
+            description="提交评测时评测机马上跑，结果和分数记进评测记录"
+            width="select"
+          >
             <v-switch :model-value="true" color="primary" density="compact" hide-details inset @click.prevent="fixed" />
+          </SettingsRow>
+          <SettingsRow
+            label="每人一个项目"
+            description="领取题目时给每个学生建一个自己的项目；关掉就是小组领取"
+            width="select"
+          >
+            <v-switch :model-value="true" color="primary" density="compact" hide-details inset @click.prevent="fixed" />
+          </SettingsRow>
+        </template>
+
+        <template v-else-if="S.settingsSection === 'project' && claimed && topic">
+          <SettingsRow label="项目名称" :description="`来自题目「${topic.title}」 · ${COURSE.name}`" width="select">
+            <span class="ot-set__value">{{ projectMeta(S.project).name }}</span>
+          </SettingsRow>
+          <p class="ot-set__fixed"><v-icon size="14" icon="mdi-lock-outline" />下面三条是题目带来的规则，由老师设置</p>
+          <SettingsRow label="芝士在这个项目里" description="可以问思路，它不会写出答案" width="select">
+            <span class="ot-set__value" data-rule="cheese">只给提示</span>
+          </SettingsRow>
+          <SettingsRow label="截止" description="以截止前最后一次提交评测为准" width="select">
+            <span class="ot-set__value" data-rule="due">{{ monthDayTime(Date.parse(topic.due)) }}</span>
+          </SettingsRow>
+          <SettingsRow label="代码" description="每次保存都记进历史，可以撤回" width="select-wide">
+            <span class="ot-set__value" data-rule="code">只有你一个人，改动直接生效</span>
+          </SettingsRow>
+          <SettingsRow
+            label="用本地编辑器打开"
+            description="从你自己的编辑器推上来的改动，也一样记进历史"
+            width="select-wide"
+          >
+            <span class="ot-set__clone">
+              <code>{{ url }}</code>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-content-copy"
+                title="复制"
+                aria-label="复制"
+                @click="copyUrl"
+              />
+            </span>
           </SettingsRow>
         </template>
 
@@ -169,6 +211,23 @@ const USAGE = [
           </SettingsRow>
           <SettingsRow label="代码受保护" description="打开后，人的代码改动也要别人采纳才生效" width="select">
             <v-switch v-model="S.settingsProtectCode" color="primary" density="compact" hide-details inset />
+          </SettingsRow>
+          <SettingsRow
+            label="用本地编辑器打开"
+            description="从你自己的编辑器推上来的改动，也一样记进历史"
+            width="select-wide"
+          >
+            <span class="ot-set__clone">
+              <code>{{ url }}</code>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-content-copy"
+                title="复制"
+                aria-label="复制"
+                @click="copyUrl"
+              />
+            </span>
           </SettingsRow>
           <SettingsRow label="所属团队" :description="PROJECT.team" width="select">
             <BaseButton kind="secondary" size="sm" @click="toast('转到另一个团队：成员和文件一起走')">转移</BaseButton>
@@ -400,5 +459,31 @@ const USAGE = [
   font-family: var(--font-mono);
   font-size: 13px;
   text-align: right;
+}
+.ot-set__fixed {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ot-set__clone {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ot-set__clone code {
+  min-width: 0;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
 }
 </style>

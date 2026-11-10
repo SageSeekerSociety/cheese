@@ -18,7 +18,7 @@ import type { SummaryKind } from './data'
 
 import { computed, ref } from 'vue'
 
-import { channelOf, NAMES, SUMMARY, SUMMARY_LABELS } from './data'
+import { channelOf, NAMES, projectOfChan, SUMMARY, SUMMARY_LABELS } from './data'
 import DemoDoc from './DemoDoc.vue'
 import { hhmm, stateOf, statusText, whenText } from './shapes'
 import { editChanDoc, jumpTo, openThing, S, startFromDoc } from './state'
@@ -31,6 +31,8 @@ import { relTime } from '@/lib/relTime'
 const props = defineProps<{ chan: string }>()
 
 const channel = computed(() => channelOf(props.chan)!)
+/** 一件事 exist only where work is handed to 芝士: not in the course or the projects claimed from it. */
+const hasThings = computed(() => projectOfChan(props.chan) === 'research')
 const doc = computed(() => S.chanDocs[props.chan] ?? { html: '', by: '', at: '' })
 
 // ---- 这个频道的事 ----
@@ -85,7 +87,7 @@ const pieces = (text: string) => text.split(/`([^`]+)`/).map((t, i) => ({ t, cod
         </span>
       </header>
 
-      <section class="ot-cdoc__block" data-zone="chan-things">
+      <section v-if="hasThings" class="ot-cdoc__block" data-zone="chan-things">
         <div class="ot-cdoc__blockhead">
           <h2 class="ot-cdoc__h">这个频道的事</h2>
           <span class="ot-cdoc__note">实时 · 讨论和任务</span>

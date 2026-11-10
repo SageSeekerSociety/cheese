@@ -70,7 +70,7 @@ export const CHANNELS = [
 
 export const PROJECT = { team: '视觉语言组', teamHandle: 'vl-group', name: '多模态检索论文复现' }
 
-/** The second project on the rail, a course: its code is one copy per person and its 题目 are judged. */
+/** The course 空间 on the rail: its 题目 and the course-wide discussion (课程讨论). It is not a project. */
 export const COURSE = { team: '计算机学院', teamHandle: 'cs-school', name: '计算机系统基础（ICS 2026）' }
 
 export const COURSE_CHANNELS = [
@@ -88,12 +88,51 @@ export const COURSE_CHANNELS = [
   },
 ]
 
-export type ProjectKey = 'research' | 'course'
+/** The projects 领取 creates: one per student per 题目, an ordinary project. */
+export type ClaimKey = 'datalab' | 'week3'
+export const CLAIMS: ClaimKey[] = ['datalab', 'week3']
+export type ProjectKey = 'research' | 'course' | ClaimKey
+
+export const CLAIMED: Record<ClaimKey, { name: string; railId: string; chan: string; slug: string }> = {
+  datalab: { name: 'Data Lab · 林晓', railId: 'p-dl', chan: 'dl-general', slug: 'datalab-linxiao' },
+  week3: { name: '第 3 周题单 · 林晓', railId: 'p-w3', chan: 'w3-general', slug: 'week3-linxiao' },
+}
+
+const claimedChannel = (k: ClaimKey) => ({
+  id: CLAIMED[k].chan,
+  title: '综合',
+  about: '这个项目里的事；芝士在这里只给提示',
+  members: ['linxiao'],
+})
+
+export const isClaim = (p: ProjectKey): p is ClaimKey => p === 'datalab' || p === 'week3'
+
+/** The header of a project's sidebar: team (for a claimed project, the course it came from) and name. */
+export function projectMeta(p: ProjectKey) {
+  if (p === 'research') return PROJECT
+  if (p === 'course') return COURSE
+  return { team: COURSE.name, teamHandle: 'ics2026', name: CLAIMED[p].name }
+}
+
+/** The clone address for 用本地编辑器打开. */
+export const gitUrl = (p: ProjectKey) =>
+  p === 'research'
+    ? 'https://okcheese.com/git/vl-group/mm-retrieval.git'
+    : `https://okcheese.com/git/ics2026/${isClaim(p) ? CLAIMED[p].slug : 'course'}.git`
+
 export type Channel = (typeof CHANNELS)[number]
 
-export const channelsOf = (p: ProjectKey): Channel[] => (p === 'course' ? COURSE_CHANNELS : CHANNELS)
-export const channelOf = (id: string): Channel | undefined =>
-  CHANNELS.find((c) => c.id === id) ?? COURSE_CHANNELS.find((c) => c.id === id)
+export const channelsOf = (p: ProjectKey): Channel[] =>
+  p === 'research' ? CHANNELS : p === 'course' ? COURSE_CHANNELS : [claimedChannel(p)]
+export const ALL_CHANNELS: Channel[] = [...CHANNELS, ...COURSE_CHANNELS, ...CLAIMS.map(claimedChannel)]
+export const channelOf = (id: string): Channel | undefined => ALL_CHANNELS.find((c) => c.id === id)
+/** Which project or space a channel belongs to. */
+export const projectOfChan = (id: string): ProjectKey =>
+  CHANNELS.some((c) => c.id === id)
+    ? 'research'
+    : COURSE_CHANNELS.some((c) => c.id === id)
+      ? 'course'
+      : CLAIMS.find((k) => CLAIMED[k].chan === id) ?? 'research'
 
 /** The other projects on the rail: name, unread count. They are not in the demo. */
 export const OTHER_PROJECTS = [

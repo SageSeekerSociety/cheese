@@ -4,7 +4,8 @@
 // either the channel's 文档 or the conversation and its composer. The title
 // opens 频道详情 as a popover; the right panel stays folded until a 一件事 is
 // opened, from a card, from the 文档 or from the 进行中 menu. The course's
-// channels are drawn by the same column.
+// channels and the channels of a project claimed from it are drawn by the same
+// column; there 芝士 only gives hints, in the conversation, and no 一件事 opens.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, TopicMemberRow, TopicNotifyLevel } from '@/cx_types'
 import type { ChatLine } from './state'
@@ -13,7 +14,7 @@ import { computed, ref, watch } from 'vue'
 
 import ChannelDetails from './ChannelDetails.vue'
 import ChannelDoc from './ChannelDoc.vue'
-import { channelOf, CHANNELS, COURSE_CHANNELS, COURSE_PEOPLE, ME, NAMES, PEOPLE } from './data'
+import { ALL_CHANNELS, channelOf, COURSE_PEOPLE, ME, NAMES, PEOPLE } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
 import { statusText } from './shapes'
@@ -39,7 +40,7 @@ const VIEWS = [
 
 // The roster the header reads comes from the room's members endpoint: answer it
 // for every channel, so the product's own TopicMembers draws the avatar stack.
-for (const c of [...CHANNELS, ...COURSE_CHANNELS]) {
+for (const c of ALL_CHANNELS) {
   const rows: TopicMemberRow[] = [...c.members, 'cheese'].map((h, i) => ({
     topic_id: c.id,
     member_handle: h,
@@ -52,7 +53,12 @@ for (const c of [...CHANNELS, ...COURSE_CHANNELS]) {
   answer(`/topics/${c.id}/members`, () => ({ data: rows, total: rows.length }))
 }
 const projectMembers = computed<ProjectMemberRow[]>(() =>
-  (S.project === 'course' ? COURSE_PEOPLE : PEOPLE).map((p) => ({
+  (S.project === 'course'
+    ? COURSE_PEOPLE
+    : S.project === 'research'
+      ? PEOPLE
+      : PEOPLE.filter((p) => p.handle === ME || p.agent)
+  ).map((p) => ({
     user_handle: p.handle,
     name: p.name,
     source: p.agent ? 'agent' : p.handle === ME ? 'owner' : 'team',
@@ -175,7 +181,7 @@ watch(
     <DemoComposer
       v-if="view === 'talk'"
       v-model="S.typing"
-      placeholder="输入消息，@芝士 交给它处理"
+      :placeholder="S.project === 'research' ? '输入消息，@芝士 交给它处理' : '输入消息，@芝士 问思路（它只给提示）'"
       :reply-label="replyLabel"
       @clear-reply="S.replyTo = null"
       @send="send"

@@ -1,18 +1,18 @@
 <script setup lang="ts">
 // The project sidebar: the product's project header (team, project menu,
 // search), 需要我的 on top, the channels in a fixed order, then 项目文件, and
-// 设置 at the bottom. Rows are the product's own sidebar rows. In the course,
-// 项目文件 gives way to 题目: each with where it stands for me and, when it is
-// due soon, a deadline chip.
+// 设置 at the bottom. Rows are the product's own sidebar rows. A project
+// claimed from the course is an ordinary project and gets the same sidebar.
+// The course 空间 is not a project: its sidebar has 课程主页 (the 题目 list),
+// the course-wide channels under 课程讨论, and the space's 设置.
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { VisibleRow } from '@/lib/topicTree'
 
 import { computed, ref } from 'vue'
 
-import { dueChip, PROBLEMS, standing } from './course'
-import { type Channel, channelsOf, COURSE, ME, PROJECT } from './data'
-import { go, openProblem, S, toast } from './state'
+import { type Channel, channelsOf, projectMeta } from './data'
+import { deadlines, go, S, toast } from './state'
 
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
@@ -23,7 +23,9 @@ import i18n from '@/i18n'
 const TERMS = { project: '项目', topic: '频道' }
 
 // The pinned rows translate their labels; the demo's three live under its own keys.
-i18n.global.mergeLocaleMessage('zh-CN', { demoOneThing: { inbox: '需要我的', files: '项目文件', settings: '设置' } })
+i18n.global.mergeLocaleMessage('zh-CN', {
+  demoOneThing: { inbox: '需要我的', files: '项目文件', settings: '设置', space: '课程主页' },
+})
 
 const MENU_PAGES = [
   { key: 'project-tasks', label: 'navigation.project.tasks', icon: 'mdi-format-list-checks' },
@@ -33,29 +35,14 @@ const MENU_PAGES = [
 ]
 
 const course = computed(() => S.project === 'course')
-const space = computed(() => (course.value ? COURSE : PROJECT))
+const space = computed(() => projectMeta(S.project))
 const channels = computed(() => channelsOf(S.project))
 
-const problems = computed(() =>
-  PROBLEMS.map((p) => {
-    const subs = S.subs[p.id]
-    const st = standing(subs)
-    return {
-      ...p,
-      st,
-      label: st === 'passed' ? '已通过' : st === 'trying' ? `尝试中（${subs!.length} 次）` : '未开始',
-      chip: st === 'passed' ? null : dueChip(p.due),
-    }
-  })
+// 需要我的: every 一件事 waiting on me, and every deadline across my projects.
+const waiting = computed(
+  () => S.things.filter((t) => t.status === 'wait' && t.owner === 'linxiao').length + deadlines().length
 )
-
-// 需要我的: a 一件事 waiting on me; in the course, a 题目 due soon that I have not passed.
-const waiting = computed(() =>
-  course.value
-    ? problems.value.filter((p) => p.chip).length
-    : S.things.filter((t) => t.status === 'wait' && t.owner === ME).length
-)
-const filesPending = computed(() => (S.suggAccepted || S.suggRejected ? 0 : 1))
+const filesPending = computed(() => (S.project !== 'research' || S.suggAccepted || S.suggRejected ? 0 : 1))
 
 function row(c: Channel): VisibleRow<Topic> {
   return {
@@ -109,6 +96,7 @@ function actions(topic: Topic): MenuCommand[] {
 
 function openPage(key: string) {
   if (key === 'inbox' || (key === 'files' && !course.value)) go(key)
+  else if (key === 'space') go('space')
   else if (key === 'settings') go('settings', course.value ? { settingsSection: 'course' } : {})
   else if (key === 'project-settings') go('settings', { settingsSection: course.value ? 'course' : 'project' })
   else if (key === 'project-members') go('settings', { settingsSection: 'members' })
@@ -134,9 +122,7 @@ function openPage(key: string) {
       :can-transfer="true"
       :can-leave="false"
       @open-page="openPage"
-      @select-docs="
-        course ? toast('课程里代码每人一份，在各自的题目里') : go('files', { file: 'README.md', ftab: 'history' })
-      "
+      @select-docs="course ? go('space') : go('files', { ftab: 'history' })"
       @open-palette="toast('⌘K：搜索频道、文件和一件事')"
       @open-transfer="toast('演示里不能转让项目')"
     />
@@ -153,8 +139,18 @@ function openPage(key: string) {
         <TopicRailBadge v-if="waiting" class="ot-side__badge" :count="waiting" />
       </div>
 
+      <div v-if="course" class="ot-side__row" data-nav="space">
+        <TopicRailPinnedRows
+          :pages="[{ key: 'space', label: 'demoOneThing.space', icon: 'mdi-school-outline' }]"
+          :route-name="S.center"
+          :terms="TERMS"
+          :page="false"
+          @open-page="openPage"
+        />
+      </div>
+
       <div class="ot-side__sec">
-        <span class="t-eyebrow-read">频道</span>
+        <span class="t-eyebrow-read">{{ course ? '课程讨论' : '频道' }}</span>
         <button
           type="button"
           class="ot-side__add"
@@ -186,27 +182,6 @@ function openPage(key: string) {
           :count="S.unread[c.id]!"
         />
       </div>
-
-      <template v-if="course">
-        <div class="ot-side__sec"><span class="t-eyebrow-read">题目</span></div>
-        <button
-          v-for="p in problems"
-          :key="p.id"
-          type="button"
-          class="ot-side__prob"
-          :class="{ 'is-active': S.center === 'problem' && S.problem === p.id }"
-          :data-problem="p.id"
-          @click="openProblem(p.id)"
-        >
-          <span class="ot-side__prob-title">{{ p.title }}</span>
-          <span class="ot-side__prob-meta">
-            <span class="ot-side__prob-st" :class="`is-${p.st}`"
-              ><v-icon v-if="p.st === 'passed'" size="13" icon="mdi-check" />{{ p.label }}</span
-            >
-            <span v-if="p.chip" class="ot-side__chip">{{ p.chip }}</span>
-          </span>
-        </button>
-      </template>
 
       <div v-if="!course" class="ot-side__sec"><span class="t-eyebrow-read">项目</span></div>
       <div v-if="!course" class="ot-side__row" data-nav="files">
@@ -298,63 +273,6 @@ function openPage(key: string) {
 
 .ot-side :deep(.v-list) {
   background: transparent;
-}
-
-.ot-side__prob {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 6px 8px 6px 12px;
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-md);
-}
-
-.ot-side__prob:hover {
-  background: var(--fill-2);
-}
-
-.ot-side__prob.is-active {
-  background: var(--line-2);
-}
-
-.ot-side__prob-title {
-  overflow: hidden;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ot-side__prob-meta {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-
-.ot-side__prob-st {
-  display: inline-flex;
-  gap: 2px;
-  align-items: center;
-  color: var(--muted);
-}
-
-.ot-side__prob-st.is-passed {
-  color: var(--ok-ink);
-}
-
-/* Due soon: the same amber as anything else that waits on me. */
-.ot-side__chip {
-  padding: 0 6px;
-  color: var(--accent-ink);
-  background: var(--accent-wash);
-  border-radius: var(--radius-sm);
 }
 
 .ot-side__foot {
