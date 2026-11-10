@@ -14,9 +14,22 @@ import { computed, ref, watch } from 'vue'
 import { CHANNELS, ME, NAMES, PLAN, RESULTS_MD, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
-import { stateOf } from './shapes'
+import { hhmm, stateOf } from './shapes'
 import { siteBlocks, type SiteStep, T4_STEPS } from './site'
-import { accept, closeThing, confirmKick, go, kickoff, PHASE, PHASES, S, sayInThing, thingById } from './state'
+import {
+  accept,
+  closeThing,
+  confirmKick,
+  go,
+  jumpTo,
+  kickoff,
+  PHASE,
+  PHASES,
+  S,
+  sayInThing,
+  sourceOf,
+  thingById,
+} from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -34,6 +47,8 @@ const thing = computed(() => thingById(S.thing)!)
 const talk = computed(() => thing.value.status === 'talk')
 const ours = computed(() => thing.value.id === 't4')
 const chanTitle = computed(() => CHANNELS.find((c) => c.id === thing.value.chan)?.title ?? '')
+/** The channel message this 一件事 was opened under: 来自 points back at it. */
+const source = computed(() => sourceOf(thing.value.id))
 
 const plus = (iso: string, min: number) => new Date(Date.parse(iso) + min * 60_000).toISOString()
 
@@ -42,7 +57,12 @@ const scripted = computed<(ChatLine | MarkLine)[]>(() => {
   const t = thing.value
   const at = S.askAt || t.at
   const out: (ChatLine | MarkLine)[] = [
-    { id: 'r1', who: ME, at, text: '<@cheese> 把大家的评测脚本统一一下，固定输出 R@1 / R@5 / R@10' },
+    {
+      id: 'r1',
+      who: ME,
+      at,
+      text: source.value?.text ?? '<@cheese> 把大家的评测脚本统一一下，固定输出 R@1 / R@5 / R@10',
+    },
     {
       id: 'r2',
       who: 'cheese',
@@ -256,6 +276,17 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
           >{{ p }}</span
         >
       </template>
+      <span class="ot-head__gap" />
+      <button
+        v-if="source"
+        type="button"
+        class="ot-from"
+        title="在频道里看这条消息"
+        @click="jumpTo(thing.chan, source.id)"
+      >
+        来自 # {{ chanTitle }} · {{ NAMES[source.who] }} {{ hhmm(source.at) }}
+        <v-icon size="13" icon="mdi-arrow-top-right" />
+      </button>
     </div>
 
     <Transition name="ot-sheet">
@@ -433,6 +464,32 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
   line-height: var(--lh-12);
   color: var(--faint);
   border-bottom: 1px solid var(--line);
+}
+
+.ot-stages > :not(.ot-from, .ot-head__gap) {
+  flex: none;
+}
+
+/* Where this came from: quiet, the same grey as the steps behind it, darker on hover. */
+.ot-from {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  font: inherit;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.ot-from:hover {
+  color: var(--ink);
+  background: var(--fill);
 }
 
 .ot-stages__sep {

@@ -132,10 +132,32 @@ function restore() {
 }
 let ro: ResizeObserver | null = null
 
-// Rows grow after mount (markdown renders lazily), so settle at the end once more after they do.
+// 摘要's ↗ and a 一件事's 来自 ask for one message: if it is in this timeline,
+// centre it in the scroller (not scrollIntoView, which would also scroll the
+// clipped workspace around it) and flash the row.
+function jumpHere(): boolean {
+  const sc = scrollerOf()
+  const row = S.jumpId ? content.value?.querySelector<HTMLElement>(`[data-line="${CSS.escape(S.jumpId)}"]`) : null
+  if (!sc || !row) return false
+  S.jumpId = null
+  const top = row.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop
+  sc.scrollTo({ top: Math.max(0, top - (sc.clientHeight - row.offsetHeight) / 2), behavior: 'smooth' })
+  row.classList.remove('ot-line-flash')
+  void row.offsetWidth
+  row.classList.add('ot-line-flash')
+  setTimeout(() => row.classList.remove('ot-line-flash'), 2300)
+  return true
+}
+watch(
+  () => S.jumpTick,
+  () => void nextTick(jumpHere)
+)
+
+// Rows grow after mount (markdown renders lazily), so settle at the end once more after they do,
+// or, when this timeline was opened to show one message, show that one once they have.
 onMounted(() => {
   void toEnd('instant')
-  setTimeout(() => void toEnd('instant'), 400)
+  setTimeout(() => jumpHere() || void toEnd('instant'), 400)
   const sc = scrollerOf()
   if (!sc || !content.value) return
   // The browser's own scroll anchoring would move the view first and leave remember() a moved position.

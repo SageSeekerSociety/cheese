@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The 1280×800 workspace: the product's project rail, the sidebar, the center
 // column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
-// panel (the open 一件事, 频道详情 when asked for, or a file's 待定改动 and 历史).
+// panel, which holds one selected thing: the open 一件事, or beside 项目文件
+// the open file's 待定改动 and 历史. With nothing selected it is folded away.
 // The scripted cursor, the notes overlay and the toast sit on top of it.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavGenericItem } from '@/components/common/Navigation/types'
@@ -9,7 +10,6 @@ import type { NavGenericItem } from '@/components/common/Navigation/types'
 import { computed, ref } from 'vue'
 
 import ChannelCenter from './ChannelCenter.vue'
-import ChannelPanel from './ChannelPanel.vue'
 import { ME, NAMES, OTHER_PROJECTS, PROJECT } from './data'
 import FilesCenter from './FilesCenter.vue'
 import FilesPanel from './FilesPanel.vue'
@@ -38,12 +38,9 @@ defineProps<{
   }[]
 }>()
 
-const right = computed<'thing' | 'files' | 'chan' | null>(() => {
+const right = computed<'thing' | 'files' | null>(() => {
   if (S.center === 'files') return 'files'
-  if (S.center === 'chan') {
-    if (S.thing && thingById(S.thing)) return 'thing'
-    return S.chanPanel ? 'chan' : null
-  }
+  if (S.center === 'chan' && S.thing && thingById(S.thing)) return 'thing'
   return null
 })
 
@@ -156,7 +153,6 @@ const userActions: MenuAction[] = [
     <div class="ot-right">
       <ThingPanel v-if="right === 'thing'" :key="S.thing ?? ''" />
       <FilesPanel v-else-if="right === 'files'" />
-      <ChannelPanel v-else-if="right === 'chan'" />
     </div>
 
     <div v-if="notes.length" class="ot-notes" aria-hidden="true">

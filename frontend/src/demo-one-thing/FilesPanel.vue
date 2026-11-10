@@ -1,13 +1,14 @@
 <script setup lang="ts">
 // The right panel beside 项目文件: 待定改动 (芝士's suggestions waiting on a
-// person, accepted with one click) and 历史 (every change that took effect,
-// the accepted task included, each one undoable).
+// person, accepted with one click, and a person's own code copy while it is
+// being edited or waits for 采纳) and 历史 (every change that took effect, the
+// accepted task included, each one undoable).
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 
 import { computed } from 'vue'
 
 import { MINUTES_DOC, NAMES } from './data'
-import { S, suggAccept, suggReject, undo } from './state'
+import { changedLines, S, suggAccept, suggReject, undo } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -18,6 +19,13 @@ import PanelTabs from '@/components/panels/PanelTabs.vue'
 import { relTime } from '@/lib/relTime'
 
 const pending = computed(() => (S.suggAccepted || S.suggRejected ? 0 : 1))
+/** A person's code copies: the one open in the editor, and any sent for 采纳 under 代码受保护. */
+const copies = computed(() => [
+  ...(S.codeDraft
+    ? [{ path: S.codeDraft.path, n: changedLines(S.codeDraft.path, S.codeDraft.text.split('\n')), note: '还在改' }]
+    : []),
+  ...Object.entries(S.codePending).map(([path, lines]) => ({ path, n: changedLines(path, lines), note: '等人采纳' })),
+])
 const tabs = computed<PanelTab[]>(() => [
   {
     key: 'pending',
@@ -38,6 +46,11 @@ const tabs = computed<PanelTab[]>(() => [
     <PanelTabs :tabs="tabs" :active="S.ftab" @select="S.ftab = $event" />
     <div class="ot-fp__body">
       <template v-if="S.ftab === 'pending'">
+        <div v-for="c in copies" :key="c.path + c.note" class="ot-fp__copy">
+          <v-icon size="16" icon="mdi-source-branch" />
+          <span>你的副本：{{ c.path }} 改了 {{ c.n }} 行</span>
+          <span class="ot-fp__copy-note">{{ c.note }}</span>
+        </div>
         <template v-if="pending">
           <p v-if="S.file !== MINUTES_DOC" class="ot-fp__other">这个文件没有待定的改动。其他文件：</p>
           <div class="ot-fp__card" data-zone="suggestion">
@@ -55,7 +68,7 @@ const tabs = computed<PanelTab[]>(() => [
             />
           </div>
         </template>
-        <BaseEmptyState v-else size="compact" icon="mdi-check-all" title="暂无待定的改动" />
+        <BaseEmptyState v-else-if="!copies.length" size="compact" icon="mdi-check-all" title="暂无待定的改动" />
       </template>
       <ol v-else class="ot-hist">
         <li v-for="(h, i) in S.history" :key="h.what + h.at" class="ot-hist__row" :class="{ 'ot-flash': h.fresh }">
@@ -104,6 +117,31 @@ const tabs = computed<PanelTab[]>(() => [
   font-size: 12px;
   color: var(--faint);
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-fp__copy {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.ot-fp__copy .v-icon {
+  flex: none;
+  color: var(--muted);
+}
+
+.ot-fp__copy-note {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
   white-space: nowrap;
 }
 

@@ -96,18 +96,24 @@ function drawNotes() {
     out.push({ key: sel, x: r.x + 3, y: r.y + 3, w: r.w - 6, h: r.h - 6, title, text, nx: r.x + dx, ny: r.y + dy })
   }
   zone('.ot-side', '左栏：去哪儿', '需要我的、频道（顺序固定）、项目文件、设置。', 12, 340)
-  zone('.ot-pane', '中间：频道或文件', '一直是频道，不会被一件事挤走；打开项目文件时是文件树和编辑器。', 20, 70)
+  zone(
+    '.ot-pane',
+    '中间：频道或文件',
+    '频道有两种看法：对话，和芝士整理的摘要（定了、发现、在做、没定）。一直是频道，不会被一件事挤走；打开项目文件时是文件树和编辑器。',
+    20,
+    70
+  )
   zone(
     '.ot-right [data-zone="right"]',
-    '右栏：点开的那件事',
-    '讨论：对话、资料；开工后：对话、现场、改动、成果。打开文件时：待定改动、历史。',
+    '右栏：选中的那一件',
+    '只放一样东西。频道里是点开的那件事：讨论有对话、资料，开工后多出现场、改动、成果；什么都没点开就收起。打开文件时是它的待定改动和历史。',
     20,
     110
   )
   notes.value = out
 }
 watch(
-  () => [S.center, S.thing, S.chan, S.things.map((t) => t.status).join()],
+  () => [S.center, S.thing, S.chan, S.chanView[S.chan], S.things.map((t) => t.status).join()],
   async () => {
     await nextTick()
     setTimeout(drawNotes, 380)
@@ -170,7 +176,7 @@ const STEPS: (() => Promise<void>)[] = [
     reset()
     cap(
       1,
-      '中间是频道，右栏平时收起，点开一件事才出现。左边：需要我的、频道（顺序固定，「论文精读」有新消息只加粗）、项目文件、设置。'
+      '中间是频道：「对话」，或芝士整理的「摘要」（积了几条没读的，进去先看摘要）。右栏只放点开的那一件事，平时收起。左边：需要我的、频道（顺序固定）、项目文件、设置。'
     )
     await wait(4000)
   },
@@ -247,9 +253,12 @@ const STEPS: (() => Promise<void>)[] = [
     await wait(3000)
   },
   async () => {
-    await click('.file-item[title^="eval/preprocess.py"]')
+    await click('.ot-ftree__row[title="eval/preprocess.py"]')
     S.file = 'eval/preprocess.py'
-    cap(9, '代码在正式版上只读，已经是采纳后的新版本（224）。要改就开一件事，在任务那份里改，做完再合。')
+    cap(
+      9,
+      '代码已经是采纳后的新版本（224）。人也能直接改：「改代码」在自己的副本上改，运行一下，合进正式版。芝士的改动才要人采纳。'
+    )
     await wait(3600)
     cursor.shown = false
   },
@@ -435,7 +444,7 @@ function onUserClick(e: MouseEvent) {
       </div>
       <div>
         <b>布局：中间频道，右边那件事</b
-        >中间一直是频道，点开的讨论或任务在右栏。打开项目文件时，中间是文件，右栏是它的待定改动和历史。
+        >中间一直是频道，可以看对话，也可以看芝士整理的摘要，每句都能跳回原消息。右栏只放选中的那一件：点开的讨论或任务；打开项目文件时，是文件的待定改动和历史。
       </div>
     </div>
   </div>

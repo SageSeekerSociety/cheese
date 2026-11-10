@@ -72,7 +72,11 @@ function actions(topic: Topic): MenuCommand[] {
       id: 'details',
       title: '频道详情',
       icon: 'mdi-information-outline',
-      run: () => go('chan', { chan: topic.id, chanPanel: true }),
+      run: () => {
+        go('chan', { chan: topic.id, thing: null })
+        // After the row menu has closed, so its outside click does not shut the popover.
+        setTimeout(() => (S.chanDetails = true), 60)
+      },
     },
     { id: 'link', title: '复制链接', icon: 'mdi-link-variant', run: () => toast('已复制链接') },
   ]

@@ -1,33 +1,24 @@
 <script setup lang="ts">
-// 项目文件: the one official version. The tree is the product's file tree; a
-// document opens in the product's document editor, a Word file shows 芝士's
-// 修订 in the product's Word comparison, code is read-only on the official
-// version (the product's diff viewer, every line as context), and a result is
-// rendered Markdown.
+// 项目文件: the one official version. The tree reads like the product's file
+// library; a document opens in the product's document editor, a Word file shows
+// 芝士's 修订 in the product's Word comparison, code shows the official version
+// (the product's diff viewer, every line as context) and 改代码 edits it on the
+// person's own copy, and a result is rendered Markdown.
 import type { FileRow } from '@/lib/changesTree'
 import type { FileDiff } from '@/lib/diff'
 import type { OfficeComparison } from '@/types/reviewComment'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-import {
-  asContext,
-  CODE,
-  DOC_HTML,
-  FILES,
-  MINUTES_DOC,
-  minutesHtml,
-  RESULTS_MD,
-  TASK_DIFFS,
-  WORD_COMPARISON,
-} from './data'
+import { asContext, DOC_HTML, FILES, MINUTES_DOC, minutesHtml, RESULTS_MD, TASK_DIFFS, WORD_COMPARISON } from './data'
+import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
-import { S, t4, toast } from './state'
+import FileTree from './FileTree.vue'
+import { editCode, officialCode, S, t4, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
-import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
 import OfficeCompare from '@/components/review/OfficeCompare.vue'
 import { buildFileRows } from '@/lib/changesTree'
 import { fileIcon } from '@/lib/fileKind'
@@ -59,11 +50,13 @@ const minutes = computed(() => {
   return S.typed ? html.replace('<li><p></p></li>', `<li><p>${S.typed}</p></li>`) : html
 })
 
-const code = computed(() => {
-  const c = CODE[entry.value.path]
-  if (!c) return []
-  return asContext(entry.value.path, accepted.value && c.after ? c.after : c.before)
-})
+const code = computed(() => asContext(entry.value.path, officialCode(entry.value.path)))
+const editing = computed(() => S.codeDraft?.path === entry.value.path)
+// A copy belongs to the file it was opened on; moving to another file drops it.
+watch(
+  () => S.file,
+  () => (S.codeDraft = null)
+)
 
 function select(path: string) {
   if (FILES.some((f) => f.path === path)) S.file = path
@@ -93,13 +86,10 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
     </header>
     <div class="ot-files__split">
       <div class="ot-files__tree" data-zone="tree">
-        <ChangesFileTree
+        <FileTree
           :rows="rows"
           :collapsed-dirs="collapsed"
           :active-path="S.file"
-          :reveal-tick="0"
-          empty-label="暂无文件"
-          :width="224"
           @select="select"
           @toggle-dir="toggleDir"
         />
@@ -115,7 +105,16 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           </span>
           <span class="ot-files__size">{{ sizeOf(entry.bytes) }}</span>
           <span class="ot-head__gap" />
-          <span v-if="entry.kind === 'code'" class="ot-files__tag">只读</span>
+          <span v-if="entry.kind === 'code' && S.codePending[entry.path]" class="ot-files__tag">你的改动等人采纳</span>
+          <BaseButton
+            v-if="entry.kind === 'code' && !editing"
+            id="b-edit-code"
+            kind="secondary"
+            size="sm"
+            prepend-icon="mdi-pencil-outline"
+            @click="editCode(entry.path)"
+            >改代码</BaseButton
+          >
           <span v-else-if="entry.kind === 'word'" class="ot-files__tag">修订 2 处</span>
           <BaseButton
             kind="ghost"
@@ -130,6 +129,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           <DemoDoc v-if="entry.path === MINUTES_DOC" :html="minutes" peer :typing="S.typed.length > 0" />
           <DemoDoc v-else-if="entry.kind === 'doc'" :key="entry.path" :html="DOC_HTML[entry.path] ?? ''" />
           <OfficeCompare v-else-if="entry.kind === 'word'" :comparison="WORD_COMPARISON as OfficeComparison" />
+          <DemoCodeEdit v-else-if="editing" />
           <div v-else-if="entry.kind === 'code'" class="ot-files__code"><ChangesDiff :lines="code" inline /></div>
           <MarkdownView v-else :source="RESULTS_MD" />
         </div>
@@ -159,10 +159,6 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
   width: 224px;
   min-height: 0;
   border-right: 1px solid var(--line);
-}
-
-.ot-files__tree :deep(.file-mark) {
-  margin-left: 6px;
 }
 
 .ot-files__body {

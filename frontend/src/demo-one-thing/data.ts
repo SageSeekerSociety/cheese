@@ -318,3 +318,69 @@ export const WORD_COMPARISON = {
     { op: 'same', text: '复现 BLIP 基线；做长描述截断对检索的影响。' },
   ],
 }
+
+// ---- 摘要 ----
+
+export type SummaryKind = 'decided' | 'found' | 'doing' | 'open'
+
+export const SUMMARY_LABELS: Record<SummaryKind, string> = {
+  decided: '定了',
+  found: '发现',
+  doing: '在做',
+  open: '没定',
+}
+
+/** One sentence of a channel's 摘要, pointing at the message it rests on. A 在做
+ *  item names its 一件事 instead of a sentence: the title and status are read live. */
+export interface SummaryItem {
+  kind: SummaryKind
+  line: string
+  text?: string
+  thing?: string
+}
+
+/** 芝士's 摘要 of each channel, as of the message `upto` (later messages are not in it). */
+export const SUMMARY: Record<string, { upto: string; items: SummaryItem[] }> = {
+  'c-exp': {
+    upto: 'e7',
+    items: [
+      { kind: 'decided', line: 'e4', text: '评测统一用 `eval/retrieval.py`，COCO 用 5K 口径' },
+      {
+        kind: 'found',
+        line: 'e5',
+        text: '和论文差 1.1 个点，可能是 `eval/preprocess.py` 只做了 Resize(256)、没有 center crop',
+      },
+      { kind: 'doing', line: 'e7', thing: 't1' },
+      { kind: 'open', line: 'e6', text: '手上有三份评测脚本，合成哪一份还没人认领' },
+    ],
+  },
+  'c-papers': {
+    upto: 'p4',
+    items: [
+      { kind: 'decided', line: 'p3', text: '和 BLIP 表 5 对数时，COCO 按 5K 测试集比，不和 1K 混' },
+      {
+        kind: 'found',
+        line: 'p1',
+        text: 'BLIP 笔记在 `docs/papers/BLIP-精读.md`：要点是 CapFilt 洗数据，文本端一份参数三种用法',
+      },
+      { kind: 'doing', line: 'p2', thing: 't2' },
+      { kind: 'open', line: 'p4', text: 'ITM 的 hard negative 按相似度从 batch 里采，我们复现时要不要照做，还没人回' },
+    ],
+  },
+  'c-meeting': {
+    upto: 'g3',
+    items: [
+      { kind: 'decided', line: 'g3', text: '周五组会改到下午 3 点，在 302' },
+      { kind: 'found', line: 'g2', text: '周珂周五请假，回来看纪要' },
+      { kind: 'doing', line: 'g1', thing: 't3' },
+    ],
+  },
+  'c-general': {
+    upto: 'z4',
+    items: [
+      { kind: 'decided', line: 'z1', text: 'A100 周三晚 10 点停机维护约两小时，之前存好 checkpoint' },
+      { kind: 'found', line: 'z3', text: '新的 4T 硬盘挂在 `/data2`，COCO 原图已经拷过去了' },
+      { kind: 'open', line: 'z4', text: '中期报告下周三交，数据那一节还等赵雨桐补' },
+    ],
+  },
+}

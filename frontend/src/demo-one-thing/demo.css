@@ -161,6 +161,22 @@ body {
   }
 }
 
+/* A message shown from 摘要 or a 一件事's 来自: held long enough to find, then fades. */
+.ot-line-flash {
+  animation: ot-line-flash 2.2s var(--ease-out);
+}
+
+@keyframes ot-line-flash {
+  0%,
+  45% {
+    background-color: var(--accent-wash);
+  }
+
+  100% {
+    background-color: transparent;
+  }
+}
+
 .ot-cursor {
   position: absolute;
   top: 0;
@@ -206,7 +222,12 @@ body {
     transition: none;
   }
 
-  .ot-flash {
+  .ot-flash,
+  .ot-line-flash {
     animation: none;
+  }
+
+  .ot-line-flash {
+    background-color: var(--accent-wash);
   }
 }

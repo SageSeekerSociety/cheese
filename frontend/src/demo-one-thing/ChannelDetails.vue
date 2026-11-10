@@ -1,15 +1,15 @@
 <script setup lang="ts">
-// 频道详情: what the channel is for and who is in it. The right panel shows it
-// only when asked for (the channel name, or 频道详情 in ⋯); the things going on
-// in the channel are the header's 进行中 menu, and project files are 项目文件.
+// 频道详情: what the channel is for and who is in it, as a popover card on the
+// channel title (also 频道详情 in ⋯). It is not a panel: the right panel holds
+// only the one 一件事 that is open.
 import { computed, ref } from 'vue'
 
 import { CHANNELS, NAMES } from './data'
 import { S, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const channel = computed(() => CHANNELS.find((c) => c.id === S.chan)!)
 
@@ -28,10 +28,17 @@ function save() {
 </script>
 
 <template>
-  <aside class="ot-cp" data-zone="right">
+  <div class="ot-cp" data-zone="details">
     <div class="ot-cp__bar">
-      <h2 class="ot-cp__title t-title">频道详情</h2>
-      <BaseButton kind="ghost" size="sm" icon="mdi-close" title="关闭" aria-label="关闭" @click="S.chanPanel = false" />
+      <h2 class="ot-cp__title">频道详情</h2>
+      <BaseButton
+        kind="ghost"
+        size="sm"
+        icon="mdi-close"
+        title="关闭"
+        aria-label="关闭"
+        @click="S.chanDetails = false"
+      />
     </div>
     <div class="ot-cp__body">
       <section class="ot-cp__sec">
@@ -68,41 +75,51 @@ function save() {
         </div>
       </section>
     </div>
-  </aside>
+  </div>
 </template>
 
 <style scoped>
 .ot-cp {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  width: 320px;
+  max-height: 480px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
 }
 
 .ot-cp__bar {
   display: flex;
   flex: none;
   align-items: center;
-  height: var(--app-page-header-height, 48px);
-  padding: 0 8px 0 16px;
-  border-bottom: 1px solid var(--line);
+  height: 40px;
+  padding: 0 4px 0 16px;
 }
 
 .ot-cp__title {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .ot-cp__body {
   flex: 1;
   min-height: 0;
-  padding: 8px 16px 16px;
+  padding: 0 16px 12px;
   overflow: auto;
 }
 
 .ot-cp__sec {
-  padding: 12px 0;
+  padding: 8px 0;
+}
+
+.ot-cp__sec + .ot-cp__sec {
+  border-top: 1px solid var(--line);
 }
 
 .ot-cp__head {

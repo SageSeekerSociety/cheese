@@ -5,10 +5,11 @@ import type { ReactionAgg } from '@/cx_types'
 
 import { reactive } from 'vue'
 
-import { ASK, dayAt, ME, minsAgo, MINUTES_DOC, NAMES } from './data'
+import { ASK, CODE, dayAt, ME, minsAgo, MINUTES_DOC, NAMES } from './data'
 
 export type Status = 'talk' | 'run' | 'wait' | 'done'
 export type Center = 'inbox' | 'chan' | 'files' | 'settings'
+export type ChanView = 'summary' | 'talk'
 
 /** One thing said: in a channel, or inside a 一件事. */
 export interface ChatLine {
@@ -62,9 +63,14 @@ function initial() {
     chan: 'c-exp',
     thing: null as string | null,
     rtab: 'chat',
-    /** 频道详情 in the right panel, opened only from the channel name or ⋯. With
-     *  no 一件事 open the right panel is folded away. */
-    chanPanel: false,
+    /** 频道详情 is a popover on the channel title; the right panel holds only an opened 一件事. */
+    chanDetails: false,
+    /** Each channel's center view. Unset until the channel is first entered: a channel
+     *  with a backlog (unread ≥ 2) opens on 芝士's 摘要, any other on 对话. */
+    chanView: { 'c-exp': 'talk' } as Record<string, ChanView>,
+    /** A message to bring into view and flash in the channel's 对话 (from 摘要's ↗ or a 一件事's 来自). */
+    jumpId: null as string | null,
+    jumpTick: 0,
     /** 专注：the open 一件事 takes the center column too. */
     focus: false,
     unread: { 'c-papers': 2, 'c-general': 1 } as Record<string, number>,
@@ -87,6 +93,12 @@ function initial() {
     settingsProtectCode: false,
     settingsNotify: 'mentions',
     settingsRuntime: 'a100',
+    /** Code a person merged into the official version by hand: path → its lines. */
+    codeEdits: {} as Record<string, string[]>,
+    /** Edits sent for someone else's 采纳 while 代码受保护 is on: path → its lines. */
+    codePending: {} as Record<string, string[]>,
+    /** The code file open in the editor, on the person's own copy. */
+    codeDraft: null as { path: string; text: string } | null,
     /** When the scripted ask went out (the 一件事's own clock counts from it). */
     askAt: '',
     /** What 林晓 said by hand inside each 一件事, after the script's lines. */
@@ -302,19 +314,88 @@ export function go(center: Center, extra: Partial<typeof S> = {}): void {
     S.thing = null
     S.focus = false
   }
-  if (center === 'chan') delete S.unread[S.chan]
+  if (center === 'chan') {
+    // Decided on entry, before the unread count is cleared: a backlog lands on 摘要.
+    S.chanView[S.chan] ??= (S.unread[S.chan] ?? 0) >= 2 ? 'summary' : 'talk'
+    delete S.unread[S.chan]
+  }
 }
 
 export function openThing(id: string): void {
   const t = thingById(id)
   if (!t) return
-  go('chan', { chan: t.chan, thing: id, rtab: 'chat', chanPanel: false })
+  go('chan', { chan: t.chan, thing: id, rtab: 'chat' })
 }
 
 export function closeThing(): void {
   S.thing = null
-  S.chanPanel = false
   S.focus = false
+}
+
+/** Show one message of a channel in its 对话: the timeline scrolls it into view and flashes it. */
+export function jumpTo(chan: string, lineId: string): void {
+  const wasFocus = S.focus && !!S.thing
+  S.focus = false
+  if (S.center !== 'chan' || S.chan !== chan)
+    go('chan', { chan, thing: S.thing && thingById(S.thing)?.chan === chan ? S.thing : null })
+  S.chanView[chan] = 'talk'
+  const fire = () => {
+    S.jumpId = lineId
+    S.jumpTick++
+  }
+  // Leaving 专注 animates the center column back in; scroll once it has its width.
+  if (wasFocus) setTimeout(fire, 450)
+  else fire()
+}
+
+/** The channel message a 一件事 was opened from. */
+export function sourceOf(thingId: string): ChatLine | null {
+  for (const lines of Object.values(S.chat)) {
+    const l = lines.find((x) => x.thing === thingId)
+    if (l) return l
+  }
+  return null
+}
+
+// ---- code on the official version ----
+
+/** The official text of a code file: a person's merged edit, else the task's version once accepted. */
+export function officialCode(path: string): string[] {
+  const c = CODE[path]
+  if (!c) return []
+  return S.codeEdits[path] ?? (t4()?.status === 'done' && c.after ? c.after : c.before)
+}
+
+/** How many lines a copy changes against the official version (lines only on one side, the larger side). */
+export function changedLines(path: string, lines: string[]): number {
+  const count = (xs: string[]) => xs.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map<string, number>())
+  const diff = (a: Map<string, number>, b: Map<string, number>) =>
+    [...a].reduce((n, [k, v]) => n + Math.max(0, v - (b.get(k) ?? 0)), 0)
+  const a = count(officialCode(path))
+  const b = count(lines)
+  return Math.max(diff(a, b), diff(b, a))
+}
+
+export function editCode(path: string): void {
+  S.codeDraft = { path, text: officialCode(path).join('\n') }
+}
+
+/** 合进正式版: a person's edit takes effect at once, unless the project has 代码受保护 on. */
+export function mergeCode(): void {
+  const d = S.codeDraft
+  if (!d) return
+  const lines = d.text.replace(/\n+$/, '').split('\n')
+  S.codeDraft = null
+  if (S.settingsProtectCode) {
+    S.codePending[d.path] = lines
+    toast('已请人采纳：别人采纳之后才进正式版')
+    return
+  }
+  S.codeEdits[d.path] = lines
+  delete S.codePending[d.path]
+  for (const h of S.history) h.fresh = false
+  S.history.unshift({ who: ME, what: `改了 ${d.path}`, at: new Date().toISOString(), fresh: true })
+  toast('已合进正式版')
 }
 
 let seq = 0
@@ -481,5 +562,6 @@ export function undo(index: number): void {
   S.history.splice(index, 1)
   if (h.what.startsWith('接受了芝士对')) S.suggAccepted = false
   if (h.what.startsWith('拒绝了芝士对')) S.suggRejected = false
+  if (h.who === ME && h.what.startsWith('改了 ')) delete S.codeEdits[h.what.slice(3)]
   toast(`已撤回：${h.what}`)
 }
