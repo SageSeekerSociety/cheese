@@ -34,6 +34,14 @@ const body = scripts
     return `<script src="./${name}"></script>`
   })
   .join('\n')
+// What shows until app.js has downloaded and Vue mounts over it: the host can
+// take tens of seconds to send a few MB, and a blank page reads as broken.
+const boot =
+  '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;height:100vh;font:14px/1.6 system-ui,sans-serif;color:#6b7280">' +
+  '<div style="width:22px;height:22px;border:2px solid #e5e7eb;border-top-color:#f57f17;border-radius:50%;animation:ot-boot-spin .8s linear infinite"></div>' +
+  `<div>正在加载演示（约 ${(fs.statSync(path.join(outDir, 'app.js')).size / 1e6).toFixed(1)} MB），第一次打开可能要十几秒…</div>` +
+  '<style>@keyframes ot-boot-spin{to{transform:rotate(360deg)}}</style></div>'
+html = html.replace(/<div id="app"><\/div>/, () => `<div id="app">${boot}</div>`)
 // A function, so `$&` and friends inside the bundle are not read as replacement patterns.
 html = html.replace(/<\/body>/i, () => body + '\n</body>')
 fs.writeFileSync(out, html)
