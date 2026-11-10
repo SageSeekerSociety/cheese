@@ -197,6 +197,16 @@ export const workspaceRoutes: RouteRecordRaw = {
       },
     },
     {
+      // 资料库 › 项目文件：项目当前版本里的文件（已采纳的那一版），一棵目录树加一份文件。
+      // 挂在资料库下面，而不是 `?dir=`：那是资料库里人建的文件夹，一个叫「项目文件」的
+      // 文件夹不该和它撞上。
+      name: 'project-library-files',
+      path: 'library/files',
+      component: () => import('@/views/library/ProjectFiles.vue'),
+      props: addressProps,
+      meta: { titleKey: 'work.library.projectFiles.name', hideTabs: true, backTo: 'project-library' },
+    },
+    {
       // 全部频道：项目里我能看到的频道，找、加入、新建（新建侧栏那颗 ＋ 也能开）。
       // 侧栏只列我加入的频道。
       name: 'project-channels',

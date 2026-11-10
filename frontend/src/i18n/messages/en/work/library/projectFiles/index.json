@@ -1,0 +1,22 @@
+{
+  "name": "Project files",
+  "latestAccepted": "Last accepted",
+  "latestChanged": "Last changed",
+  "updated": "Updated {when}",
+  "history": "History",
+  "historyTitle": "Project file history",
+  "fileHistoryTitle": "History of “{name}”",
+  "historyLoading": "Loading history",
+  "historyFailed": "Couldn't load the history",
+  "historyEmpty": "No changes yet",
+  "openTask": "Open task",
+  "note": "This is the project's current version. It changes when a task is accepted.",
+  "newTask": "Start a task to change it",
+  "search": "Search file names",
+  "noMatch": "No matching files",
+  "empty": "No files yet",
+  "loadError": "Couldn't read the project files",
+  "openInLibrary": "Open in library",
+  "backToTree": "Back to project files",
+  "taskTitle": "“{title}”"
+}
