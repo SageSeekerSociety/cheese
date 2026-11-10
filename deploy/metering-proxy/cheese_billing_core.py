@@ -704,32 +704,22 @@ def _fill(value, project: str, topic: str):
     return value
 
 
-_CODEX_STRING_END = re.compile(rb'["\\]')
-_CODEX_STRUCTURE = re.compile(rb'["{}\[\],]')
+_MEMBER_STRING_END = re.compile(rb'["\\]')
+_MEMBER_STRUCTURE = re.compile(rb'["{}\[\],]')
 
 
-class CodexBody:
-    """Reshape a streamed Responses body into what ChatGPT's Codex backend takes.
-
-    The backend refuses a request that does not say ``store: false`` ("Store
-    must be set to false") and one that carries ``max_output_tokens``, ``user``
-    or ``temperature`` ("Unsupported parameter"). The gateway's translation from
-    Anthropic's Messages never writes the first, always writes
-    ``max_output_tokens``, writes ``user`` whenever the caller sent
-    ``metadata.user_id``, and passes ``temperature`` on whenever the caller set
-    one — Claude Code does on its own small requests, such as reading a web
-    page. So the body goes out opening with ``"store":false``, and any
-    top-level ``store``, ``max_output_tokens``, ``user`` or ``temperature``
-    member of its own is left out.
+class TopLevelMembers:
+    """Leave named top-level members out of a streamed JSON object body.
 
     Streamed, never buffered (see `_write_bound_model` for why that matters):
     only a member's key is held, while the member it opens is decided on; its
     value, however large, passes through as it arrives. A body that does not
-    start with an object passes untouched.
+    start with an object passes untouched. ``_OPENING`` is what the object is
+    opened with, and a subclass may put members of its own in it.
     """
 
-    DROPPED = frozenset({"store", "max_output_tokens", "user", "temperature"})
-    _OPENING = b'{"store":false'
+    DROPPED: frozenset[str] = frozenset()
+    _OPENING = b"{"
 
     def __init__(self) -> None:
         # before: ahead of the opening brace. key: between members, or inside a
@@ -740,6 +730,8 @@ class CodexBody:
         self._depth = 0  # nesting inside the current value
         self._in_string = False
         self._escaped = False
+        # Whether a member is already out, so the next one kept needs a comma.
+        self._wrote = self._OPENING != b"{"
 
     def feed(self, chunk: bytes) -> bytes:
         """The next piece of the body; ``b""`` marks its end."""
@@ -770,7 +762,8 @@ class CodexBody:
                     name = json.loads(self._key)
                     self._keep = name not in self.DROPPED
                     if self._keep:
-                        out += b"," + self._key
+                        out += (b"," if self._wrote else b"") + self._key
+                        self._wrote = True
                     self._key = b""
                     self._state = "value"
                     self._depth = 0
@@ -789,7 +782,7 @@ class CodexBody:
                 if self._in_string:
                     j = self._string_end(chunk, i)
                 else:
-                    m = _CODEX_STRUCTURE.search(chunk, i)
+                    m = _MEMBER_STRUCTURE.search(chunk, i)
                     j = m.start() if m else n
                 if self._keep:
                     out += chunk[i:j]
@@ -824,7 +817,7 @@ class CodexBody:
                 self._escaped = False
                 i += 1
                 continue
-            m = _CODEX_STRING_END.search(chunk, i)
+            m = _MEMBER_STRING_END.search(chunk, i)
             if not m:
                 return n
             i = m.start() + 1
@@ -834,6 +827,50 @@ class CodexBody:
                 self._in_string = False
                 return i
         return n
+
+
+class CodexBody(TopLevelMembers):
+    """Reshape a streamed Responses body into what ChatGPT's Codex backend takes.
+
+    The backend refuses a request that does not say ``store: false`` ("Store
+    must be set to false") and one that carries ``max_output_tokens``, ``user``
+    or ``temperature`` ("Unsupported parameter"). The gateway's translation from
+    Anthropic's Messages never writes the first, always writes
+    ``max_output_tokens``, writes ``user`` whenever the caller sent
+    ``metadata.user_id``, and passes ``temperature`` on whenever the caller set
+    one — Claude Code does on its own small requests, such as reading a web
+    page. So the body goes out opening with ``"store":false``, and any
+    top-level ``store``, ``max_output_tokens``, ``user`` or ``temperature``
+    member of its own is left out.
+    """
+
+    DROPPED = frozenset({"store", "max_output_tokens", "user", "temperature"})
+    _OPENING = b'{"store":false'
+
+
+class GatewayFallbacks(TopLevelMembers):
+    """Leave out of a gateway-bound ``/v1/messages`` body every member that
+    names a model to fall back to.
+
+    Admission is the one place a request's model is chosen (结论 46), and
+    ``ModelRewrite`` writes its answer into ``model``. LiteLLM also reads these
+    members as models the request may be routed to instead, and before routing
+    it checks every one of them: Claude Code 2.1.316 puts
+    ``"fallbacks":[{"model":"claude-opus-5"}]`` (Anthropic's server-side
+    fallback, beta ``server-side-fallback-2026-06-01``) on the request that
+    compacts a conversation, the gateway serves no claude-* model, and the
+    request is refused with "Model is blocked", read by the CLI as a 401. Left
+    in, they would also let a caller name a model admission never bound.
+    """
+
+    DROPPED = frozenset(
+        {
+            "fallbacks",
+            "context_window_fallbacks",
+            "content_policy_fallbacks",
+            "router_settings_override",
+        }
+    )
 
 
 class ModelRewrite:
