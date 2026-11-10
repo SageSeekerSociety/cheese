@@ -5,7 +5,7 @@
 // 单题（组里只有它自己）不分组，照旧的卡片长。
 import type { Block } from '../cx_types'
 
-import { askClosedByAsker, askOptions } from './blockDisplay'
+import { askAnswers, askClosedByAsker, askOptions } from './blockDisplay'
 
 /**
  * 一道题的答案：选了哪些选项，或者自己写的一句话。两个都空 = 这题没答。
@@ -35,6 +35,26 @@ export function askMultiSelect(block: Block): boolean {
 /** 提问方把它收回去了：这道题在频道里整行不画（它已经不等人答，也没人答得上）。 */
 export function askWithdrawn(block: Block): boolean {
   return askClosedByAsker(block) === 'withdrawn'
+}
+
+/** 已经有人答过这道题了（跳过不算答）。答过的题不再等人答，卡片收成答案的样子。 */
+export function askAnswered(block: Block): boolean {
+  return askAnswers(block).some((a) => !a.skipped)
+}
+
+/**
+ * 这一组题在频道里收不收成一行。
+ *
+ * 问到看的人自己的题，还没答时照整张卡画（他正要作答）；整组答完就收成一行，点开
+ * 才看逐题答案和「改答案」。一道都没问到他的，也收成一行。只答了一部分的不收：还有
+ * 题在等他答。
+ */
+export function askGroupFolds(blocks: Block[], viewer: string | null | undefined): boolean {
+  if (!blocks.length) return false
+  // 撤回的那几道不用再答，不挡着整组收起来。
+  const waiting = blocks.filter((b) => !askWithdrawn(b))
+  if (!waiting.length || waiting.every((b) => askAnswered(b))) return true
+  return !blocks.some((b) => askAsksViewer(b, viewer))
 }
 
 /**

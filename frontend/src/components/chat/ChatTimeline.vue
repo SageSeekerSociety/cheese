@@ -25,7 +25,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
-import { askAsksViewer } from '../../lib/askGroups'
+import { askGroupFolds } from '../../lib/askGroups'
 import { replySnippet } from '../../lib/blockDisplay'
 import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
@@ -206,9 +206,9 @@ function toggleAskGroup(id: string) {
   else next.add(id)
   openAskGroups.value = next
 }
-/** 这一组里有没有一道题问到了看的人：问到就整组照卡画，一道都没问到才收成一行。 */
+/** 这一组收不收成一行（判据在 `lib/askGroups`）：没问到看的人，或整组已经答完。 */
 function askGroupForOthers(blocks: Block[]): boolean {
-  return !!props.viewer && blocks.length > 0 && !blocks.some((b) => askAsksViewer(b, props.viewer))
+  return askGroupFolds(blocks, props.viewer)
 }
 
 // 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
