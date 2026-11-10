@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.api.auth import (
     ActorResolverDep,
@@ -15,6 +15,7 @@ from app.api.auth import (
 )
 from app.api.deps import get_chat_service
 from app.api.doc_access import require_role
+from app.api.place import rooms_seen
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.write_access import ROUTE_DECIDES
@@ -35,6 +36,7 @@ from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review import forge_clients
+from app.domain.review.landed import tasks_that_landed
 from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
@@ -276,6 +278,52 @@ async def write_file(
             **({"content": saved["content"]} if saved["merged"] else {}),
         }
     )
+
+
+@router.get("/{project_id}/history", dependencies=[Depends(require_project_access)])
+async def project_history(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    path: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 30,
+) -> dict:
+    """The project's current version, change by change, newest first: when each
+    landed, whose name it carries, and the task it came from. With ``path``,
+    the changes to that one file.
+
+    A task is named only when an accept in this project merged the commit
+    (`review.landed`) and the reader can see the channel the task is in: a
+    private channel's task is not named to someone outside it, so that change
+    reads as one with no task."""
+    await ProjectService(db).get_or_404(project_id)
+    commits = await ProjectFiles(db, project_id, None, release_session=True).commits(
+        path, limit
+    )
+    landed = await tasks_that_landed(db, project_id, [c["sha"] for c in commits])
+    seen: set[uuid.UUID] = set()
+    if landed:
+        actor = await resolver.resolve(project_id=project_id)
+        seen = await rooms_seen(db, resolver, actor, project_id)
+    out = []
+    for commit in commits:
+        task = landed.get(commit["sha"])
+        shown = task is not None and task.room_id in seen
+        out.append(
+            {
+                **commit,
+                "task": (
+                    {
+                        "id": str(task.id),
+                        "title": task.title,
+                        "room_id": str(task.room_id),
+                    }
+                    if shown
+                    else None
+                ),
+            }
+        )
+    return ok({"commits": out})
 
 
 @router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])

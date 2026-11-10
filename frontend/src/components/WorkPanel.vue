@@ -972,6 +972,7 @@ defineExpose({
               :path="f.path"
               :lines="f.project.lines"
               @open-task="emit('open-card', $event)"
+              @navigate="emit('navigate', $event)"
             />
             <div
               v-else-if="f.skill && mounted.has(fileKey(f.path))"

@@ -42,6 +42,11 @@ KIND_SUFFIXES: dict[str, tuple[str, ...]] = {
     "sheet": ("xls", "xlsx", "csv", "ods", "numbers"),
     "pdf": ("pdf",),
     "image": ("png", "jpg", "jpeg", "gif", "webp", "svg", "heic"),
+    "code": (
+        "py", "ipynb", "r", "m", "js", "ts", "jsx", "tsx", "vue", "html", "css",
+        "c", "cpp", "h", "java", "go", "rs", "sh", "sql", "json", "yaml", "yml",
+        "toml", "typ", "tex", "bib",
+    ),
 }  # fmt: skip
 KINDS = (*KIND_SUFFIXES, "other")
 
