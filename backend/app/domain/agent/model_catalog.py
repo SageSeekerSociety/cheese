@@ -31,6 +31,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
 from app.domain.agent_instance.configuration import Effort
+from app.domain.project.ports import PACK_MODELS_KEY
 from app.domain.policy import gate
 
 #: What each subscription model honours: Claude Code reads Claude's own
@@ -80,6 +81,27 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "overseas": item.overseas,
         }
         for item in gateway_catalog.offerable()
+    )
+    # Models off the menu that this project's 资源包 gave it
+    # (``PACK_MODELS_KEY``, written when the project accepted its 题目's
+    # protocol): an institution's own supply, offered only where it was granted.
+    offered_ids = {item["id"] for item in choices}
+    choices.extend(
+        {
+            "id": item.id,
+            "label": item.label,
+            "description": "题目资源包提供",
+            # The platform's default is on the menu, so never one of these.
+            "default": False,
+            "supply": GATEWAY,
+            "tier": item.tier,
+            "efforts": list(item.efforts),
+            "overseas": item.overseas,
+        }
+        for item in gateway_catalog.granted(
+            (project_settings or {}).get(PACK_MODELS_KEY)
+        )
+        if item.id not in offered_ids
     )
     choices = list({item["id"]: item for item in choices}.values())
     # Models an operator named for a harness that brings its own list, and that

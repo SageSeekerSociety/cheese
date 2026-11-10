@@ -102,6 +102,7 @@ class TaskTerms:
             compute_credits=protocol.compute_credits,
             pack_prompt=protocol.pack_prompt,
             model=protocol.model,
+            models=protocol.models,
             shared_with=shared_with,
         )
 

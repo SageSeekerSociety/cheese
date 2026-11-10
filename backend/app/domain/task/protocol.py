@@ -239,8 +239,9 @@ class Protocol:
     """The effective terms for one 赛题."""
 
     #: 资源包: the compute the institution provides, `{"compute_credits": N}`,
-    #: issued as a grant restricted to the project. Nothing else rides in it —
-    #: what the AI teammates are told and carry is `teaching`.
+    #: issued as a grant restricted to the project, and the models it provides
+    #: (`model`, `models`). Nothing else rides in it — what the AI teammates
+    #: are told and carry is `teaching`.
     resource_pack: dict[str, Any] = field(default_factory=dict)
     #: What the project accepts, e.g.
     #: ``{"required_topic": "结题答辩", "reviewer_role": "mentor"}``.
@@ -290,6 +291,17 @@ class Protocol:
         It becomes the project's ``default_model`` only when the project has
         not chosen one; None leaves the deployment's default."""
         return _text(self.resource_pack.get("model"))
+
+    @property
+    def models(self) -> tuple[str, ...]:
+        """The models the pack gives a project opened from it
+        (``resource_pack["models"]``, catalog ids). A model kept off the
+        platform's menu reaches only the projects a pack gave it to: how an
+        institution's own model supply (tokens paid for one course) serves that
+        course and nobody else. ``model`` is only a default and grants nothing,
+        so a pack whose default is off the menu names it here too. Empty: the
+        pack gives no model."""
+        return tuple(_texts(self.resource_pack.get("models")))
 
     @property
     def once_per_person(self) -> bool:

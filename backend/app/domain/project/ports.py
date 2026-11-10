@@ -287,6 +287,14 @@ class Claim:
     approved: bool
 
 
+#: The ``Project.settings`` key holding the models the project's 资源包 gave it
+#: (``AcceptedTerms.models``). The catalogue offers them to this project even
+#: when they are kept off the menu (``agent.model_catalog``). Only accepting a
+#: 题目's protocol writes it (``ProjectService._grant_pack_models``); it is no
+#: member setting, and no settings route takes it.
+PACK_MODELS_KEY = "pack_models"
+
+
 @dataclass(frozen=True)
 class AcceptedTerms:
     """审过一道报名之后，项目要照着落的那两样。
@@ -305,6 +313,9 @@ class AcceptedTerms:
     #: The model the project runs on unless it already chose one (``None``:
     #: the deployment's default).
     model: str | None = None
+    #: The models the pack gives the project, on the menu or not, kept under
+    #: ``PACK_MODELS_KEY``. ``model`` is only a default and grants nothing.
+    models: tuple[str, ...] = ()
     #: When the pack goes out once per person: the 题目 whose packs count as
     #: this one's (this one included). A team that holds a pack from any of
     #: them gets none. Empty: once per project, the default.

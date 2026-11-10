@@ -29,7 +29,7 @@ covers:
 | `visible_task_limit` | 对成员露出前几道题（`None` = 不限） |
 | `task_templates` | 声明式数据，一组发题模板 |
 
-**机构协议（#370）落在 `SpaceCategory` 上**，不在 `Space` 上：`resource_pack` / `conditions` / `default_role` 和壳的 `shell` 在分组上声明一次，下面每道题目继承，题目可以整键覆盖（`Task.protocol_override`）。理由是「一门课为『作业』整体说一次条件，不是每道题说一次」。它们只能通过 `app.domain.task.protocol.resolve`（壳走 `app.domain.shell.service`）读，**永远不要直接读列**。
+**机构协议（#370）落在 `SpaceCategory` 上**，不在 `Space` 上：`resource_pack` / `conditions` / `default_role` 和壳的 `shell` 在分组上声明一次，下面每道题目继承，题目可以整键覆盖（`Task.protocol_override`）。理由是「一门课为『作业』整体说一次条件，不是每道题说一次」。它们只能通过 `app.domain.task.protocol.resolve`（壳走 `app.domain.shell.service`）读，**永远不要直接读列**。资源包除了额度（`compute_credits`）和起始默认模型（`model`），还可以列出这门课的项目才能用的模型（`models`），见[只给一门课的模型](/dev/gateway#pack-models)。
 
 ## 谁能看见，谁能管理 {#membership}
 

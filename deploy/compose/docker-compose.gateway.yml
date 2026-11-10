@@ -121,6 +121,11 @@ services:
       - RUC_DEEPSEEK_API_KEY_9=${RUC_DEEPSEEK_API_KEY_9:-}
       - MIMO_TOKEN_PLAN_API_KEY=${MIMO_TOKEN_PLAN_API_KEY:-}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:?set MOONSHOT_API_KEY}
+      # 模力方舟 (moark.com), an organisation token a course paid for. Its rows
+      # are kept off the menu and reach only the projects a 资源包 gives them
+      # to (docs/manual/dev/gateway.md, "只给一门课的模型"). Unset: those rows
+      # error, nothing else does.
+      - MOARK_API_KEY=${MOARK_API_KEY:-}
       # Alibaba Bailian (Beijing), for qwen-audio-asr. Unset: that model errors,
       # nothing else does. A workspace with its own dedicated endpoint sets
       # DASHSCOPE_API_BASE in .env; unset, the shared DashScope domain is used.

@@ -23,6 +23,7 @@ from app.domain.project.models import (
     ProjectStarterPush,
 )
 from app.domain.project.ports import (
+    PACK_MODELS_KEY,
     AcceptedTerms,
     Claim,
     ComputeCredits,
@@ -749,6 +750,8 @@ class ProjectService:
         await self._seed_default_teammate(
             project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
         )
+        if terms.models:
+            await self._grant_pack_models(project, terms.models)
         if terms.model:
             await self._seed_default_model(project, terms.model)
         if terms.compute_credits > 0 and await self._earmark_due(
@@ -772,6 +775,22 @@ class ProjectService:
         if not (project.settings or {}).get("default_model"):
             await self._repo.merge_settings(
                 project, {"default_model": model}, locked=True
+            )
+
+    async def _grant_pack_models(
+        self, project: Project, models: tuple[str, ...]
+    ) -> None:
+        """Add the models the 题目's pack gives to the project's
+        ``PACK_MODELS_KEY``, keeping any an earlier pack gave. The catalogue
+        offers them to this project, on the menu or not; a model the pack
+        later stops naming stays granted, as the pack's credits stay issued."""
+        await self._repo.lock_settings(project)
+        held = (project.settings or {}).get(PACK_MODELS_KEY)
+        held = [m for m in held if isinstance(m, str)] if isinstance(held, list) else []
+        merged = list(dict.fromkeys([*held, *models]))
+        if merged != held:
+            await self._repo.merge_settings(
+                project, {PACK_MODELS_KEY: merged}, locked=True
             )
 
     async def _earmark_due(

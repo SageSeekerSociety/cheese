@@ -73,6 +73,11 @@ class GatewayModel:
     # Only teams a platform administrator approved may use it
     # (``cheese_overseas: true``): Claude, GPT, Gemini.
     overseas: bool = False
+    # At least one row of it is not paused. ``selectable`` already implies it;
+    # a model kept off the menu needs it said on its own, because a 资源包 may
+    # still hand that model to the projects it is given to
+    # (``gateway_catalog.granted``).
+    live: bool = True
     # The most input the model's route admits, in tokens (``max_input_tokens``,
     # LiteLLM's own key). None: the gateway does not say.
     context_window: int | None = None
@@ -264,6 +269,7 @@ class LlmGateway:
                     overseas=info.get("cheese_overseas") is True,
                     context_window=_tokens(info.get("max_input_tokens")),
                     compact_window=_tokens(info.get("cheese_auto_compact_window")),
+                    live=bool(live),
                 )
             )
         return out

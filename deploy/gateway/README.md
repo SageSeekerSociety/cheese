@@ -124,6 +124,14 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
+Models on 模力方舟 (moark.com) use its native Messages endpoint: protocol
+`anthropic`, `api_base` `https://api.moark.com`. Set `MOARK_API_KEY` in
+`$HOME/gateway/compose/.env`; its rows name it as `os.environ/MOARK_API_KEY`.
+The key is an organisation token one course paid for, so its rows are kept off
+the menu (`cheese_selectable` off) and reach only the projects whose 题目's
+resource pack lists them (`resource_pack["models"]`); their spend cap holds
+them under the token's own cap. How: `docs/manual/dev/gateway.md`, "只给一门课的模型".
+
 Gemini 4 Argon runs on Google AI Studio. Its row's `api_key` is
 `os.environ/GEMINI_API_KEY`, so `GEMINI_API_KEY` stays in the same `.env`.
 Its prices are Google's rates from 2026-12-01 ($4 in, $20 out, $0.20 cache

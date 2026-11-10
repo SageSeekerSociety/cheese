@@ -416,3 +416,23 @@ def test_a_teammate_and_the_gateway_name_the_same_efforts():
     from app.domain.agent_instance.configuration import Effort
 
     assert get_args(Effort) == gw.EFFORTS
+
+
+def test_a_model_off_the_menu_is_offered_only_where_a_pack_gave_it(monkeypatch):
+    """An institution's own supply (moark tokens for one course) is kept off the
+    menu and reaches only the projects whose 资源包 gave it."""
+    monkeypatch.setattr(settings, "agent_model", "glm-5.2")
+    _gateway_reports(
+        _routes("glm-5.2"),
+        _routes("course-model", offered=False),
+        _routes("unpriced-course-model", offered=False, priced=False),
+    )
+    granted = {"pack_models": ["course-model", "unpriced-course-model", "glm-5.2"]}
+
+    assert "course-model" not in _offered({})
+    assert "course-model" in _pool_models(granted)
+    # Unpriced is not offered, as on the menu: its tokens would meter at zero.
+    assert "unpriced-course-model" not in _offered(granted)
+    # A granted menu model is listed once, and stays the default.
+    assert [c["id"] for c in model_choices(granted)].count("glm-5.2") == 1
+    assert [c["id"] for c in model_choices(granted) if c["default"]] == ["glm-5.2"]

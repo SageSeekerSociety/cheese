@@ -94,6 +94,20 @@ def offerable() -> list[GatewayModel]:
     return picked or _floor()
 
 
+def granted(model_ids: object) -> list[GatewayModel]:
+    """The models among ``model_ids`` that a 资源包 can hand a project: ones
+    the gateway routes, prices and has not paused, whether or not they are on
+    the menu. Off the menu is the point: a model an institution paid for
+    (moark's tokens for one course) is kept off every other project's menu and
+    reaches only the projects whose 题目 gave it (``model_catalog``). The price
+    condition is ``offerable``'s, for the same reason. Ids the gateway does not
+    report are dropped: a pack naming a model nobody routes grants nothing."""
+    if not isinstance(model_ids, list):
+        return []
+    wanted = {m for m in model_ids if isinstance(m, str) and m}
+    return [m for m in snapshot() if m.id in wanted and m.live and m.priced]
+
+
 def sees_pictures(model: str) -> bool:
     """Whether ``model`` reads pictures, as the gateway last said. A model it
     has not described, or before it has answered at all, is shown text only:

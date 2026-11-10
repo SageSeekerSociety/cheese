@@ -109,3 +109,16 @@ def test_a_negative_or_zero_pack_grants_nothing() -> None:
             category=_category(resource_pack={"compute_credits": value}), task=_task()
         )
         assert got.compute_credits == 0
+
+
+def test_a_pack_grants_only_the_models_it_lists() -> None:
+    """``model`` is a default; only ``models`` gives a project a model."""
+    got = resolve(
+        category=_category(
+            resource_pack={"model": "a", "models": ["b", " b ", "", 3, "c"]}
+        ),
+        task=_task(),
+    )
+    assert got.model == "a"
+    assert got.models == ("b", "c")
+    assert resolve(category=_category(), task=_task()).models == ()
