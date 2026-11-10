@@ -308,21 +308,14 @@ async def project_history(
     out = []
     for commit in commits:
         task = landed.get(commit["sha"])
-        shown = task is not None and task.room_id in seen
-        out.append(
-            {
-                **commit,
-                "task": (
-                    {
-                        "id": str(task.id),
-                        "title": task.title,
-                        "room_id": str(task.room_id),
-                    }
-                    if shown
-                    else None
-                ),
+        named = None
+        if task is not None and task.room_id in seen:
+            named = {
+                "id": str(task.id),
+                "title": task.title,
+                "room_id": str(task.room_id),
             }
-        )
+        out.append({**commit, "task": named})
     return ok({"commits": out})
 
 
