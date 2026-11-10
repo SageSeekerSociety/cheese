@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The center column while a channel is open: the product's channel header row
-// (title and description, the roster, the bell, 概览, ⋯), the conversation and
-// the composer.
+// (title and description, the roster, the bell, 进行中, ⋯), the conversation and
+// the composer. The right panel stays folded until a 一件事 is opened, from a
+// card in the conversation or from the 进行中 menu.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, TopicMemberRow, TopicNotifyLevel } from '@/cx_types'
 import type { ChatLine } from './state'
@@ -11,12 +12,11 @@ import { computed, ref, watch } from 'vue'
 import { CHANNELS, ME, NAMES, PEOPLE } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
-import { S, send, toast } from './state'
+import { openThing, S, send, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
-import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import { answer } from '@/views/demo/demoBackend'
 
@@ -53,7 +53,7 @@ function setNotify(l: TopicNotifyLevel, until: string | null) {
 const membersOpen = ref(false)
 const menuOpen = ref(false)
 const actions = computed<MenuAction[]>(() => [
-  { key: 'details', label: '频道详情', icon: 'mdi-information-outline', onSelect: () => (S.chanPanel = true) },
+  { key: 'details', label: '频道详情', icon: 'mdi-information-outline', onSelect: () => ((S.thing = null), (S.chanPanel = true)) },
   { key: 'pins', label: '置顶的消息', icon: 'mdi-pin-outline', onSelect: () => toast('这个频道还没有置顶的消息') },
   { key: 'search', label: '在频道里搜索', icon: 'mdi-magnify', onSelect: () => toast('⌘K 搜索消息、文件和一件事') },
   { key: 'link', label: '复制频道链接', icon: 'mdi-link-variant', onSelect: () => toast('已复制链接') },
@@ -66,6 +66,20 @@ const actions = computed<MenuAction[]>(() => [
     onSelect: () => toast('演示里不能退出频道'),
   },
 ])
+
+const STATUS_TEXT = { talk: '讨论中', run: '在做', wait: '等采纳', done: '已完成' } as const
+const busy = computed(() => S.things.filter((t) => t.chan === S.chan && t.status !== 'done'))
+const busyOpen = ref(false)
+const busyActions = computed<MenuAction[]>(() => {
+  const done = S.things.filter((t) => t.chan === S.chan && t.status === 'done')
+  return [...busy.value, ...done].map((t, i) => ({
+    key: t.id,
+    label: `${t.title} · ${STATUS_TEXT[t.status]}`,
+    icon: t.status === 'done' ? 'mdi-check' : t.status === 'talk' ? 'mdi-forum-outline' : 'mdi-checkbox-marked-outline',
+    divider: i === busy.value.length && i > 0,
+    onSelect: () => openThing(t.id),
+  }))
+})
 
 const replyLine = computed(() => lines.value.find((l) => l.id === S.replyTo) ?? null)
 const replyLabel = computed(() =>
@@ -86,7 +100,7 @@ watch(
   <section class="ot-chan" data-zone="center">
     <header class="topic-header">
       <div class="topic-header__text">
-        <button type="button" class="topic-header__title t-title" :title="channel.title" @click="S.chanPanel = true">
+        <button type="button" class="topic-header__title t-title" :title="channel.title" @click="(S.thing = null), (S.chanPanel = true)">
           {{ channel.title }}
         </button>
         <span class="topic-header__description" :title="channel.about">{{ channel.about }}</span>
@@ -104,10 +118,13 @@ watch(
         :general="S.chan === 'c-general'"
       />
       <ChannelNotifyMenu :level="level.level" :muted-until="level.until" @set="setNotify" />
-      <PanelToggle
-        :open="S.chanPanel || !!S.thing"
-        @toggle="S.chanPanel || S.thing ? ((S.thing = null), (S.chanPanel = false)) : (S.chanPanel = true)"
-      />
+      <AdaptiveMenu v-if="busy.length" v-model="busyOpen" :actions="busyActions" title="这个频道的事">
+        <template #activator="{ props: menuProps }">
+          <BaseButton v-bind="menuProps" kind="ghost" size="sm" prepend-icon="mdi-checkbox-marked-outline" title="这个频道里进行中的事">
+            进行中 {{ busy.length }}
+          </BaseButton>
+        </template>
+      </AdaptiveMenu>
       <AdaptiveMenu v-model="menuOpen" :actions="actions" title="更多">
         <template #activator="{ props: menuProps }">
           <BaseButton v-bind="menuProps" icon="mdi-dots-horizontal" size="sm" title="更多" aria-label="更多" />

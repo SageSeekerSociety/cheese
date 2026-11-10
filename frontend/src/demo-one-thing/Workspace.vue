@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The 1280×800 workspace: the product's project rail, the sidebar, the center
 // column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
-// panel (the open 一件事, the channel's 概览, or a file's 待定改动 and 历史).
+// panel (the open 一件事, 频道详情 when asked for, or a file's 待定改动 and 历史).
 // The scripted cursor, the notes overlay and the toast sit on top of it.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavGenericItem } from '@/components/common/Navigation/types'

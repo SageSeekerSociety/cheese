@@ -62,8 +62,9 @@ function initial() {
     chan: 'c-exp',
     thing: null as string | null,
     rtab: 'chat',
-    /** The channel's own right panel: open (概览) or folded away. */
-    chanPanel: true,
+    /** 频道详情 in the right panel, opened only from the channel name or ⋯. With
+     *  no 一件事 open the right panel is folded away. */
+    chanPanel: false,
     /** 专注：the open 一件事 takes the center column too. */
     focus: false,
     unread: { 'c-papers': 2, 'c-general': 1 } as Record<string, number>,
@@ -307,11 +308,12 @@ export function go(center: Center, extra: Partial<typeof S> = {}): void {
 export function openThing(id: string): void {
   const t = thingById(id)
   if (!t) return
-  go('chan', { chan: t.chan, thing: id, rtab: 'chat' })
+  go('chan', { chan: t.chan, thing: id, rtab: 'chat', chanPanel: false })
 }
 
 export function closeThing(): void {
   S.thing = null
+  S.chanPanel = false
   S.focus = false
 }
 
