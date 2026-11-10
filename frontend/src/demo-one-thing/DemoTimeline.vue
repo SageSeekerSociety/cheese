@@ -7,7 +7,7 @@
 import type { Block } from '@/cx_types'
 import type { ChatLine, MarkLine } from './state'
 
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { ME, NAMES } from './data'
 import { block, hhmm, ownerName, REFS, taskLine } from './shapes'
@@ -96,10 +96,59 @@ async function toEnd(behavior: 'instant' | 'smooth') {
   const scroller = content.value?.parentElement
   scroller?.scrollTo({ top: scroller.scrollHeight, behavior })
 }
+// The scroller narrows or widens when the right panel opens or closes, and the
+// rows rewrap to a new height. Keep what the reader was looking at where it was:
+// the newest message if they were at the end, otherwise the first row in view
+// at the same height on screen.
+let anchor = { atEnd: true, id: null as string | null, off: 0 }
+const scrollerOf = () => content.value?.parentElement ?? null
+// restore()'s own scroll event lands a frame later, when the panel's open
+// animation has already made the rows taller again: reading it would record
+// "no longer at the end". rAF set in a ResizeObserver callback runs after the
+// next frame's scroll events, so the flag covers exactly that event.
+let own = false
+function remember() {
+  const sc = scrollerOf()
+  if (!sc || own) return
+  const top = sc.getBoundingClientRect().top
+  const row = [...sc.querySelectorAll<HTMLElement>('[data-line]')].find((r) => r.getBoundingClientRect().bottom > top)
+  anchor = {
+    atEnd: sc.scrollHeight - sc.scrollTop - sc.clientHeight < 8,
+    id: row?.dataset.line ?? null,
+    off: row ? row.getBoundingClientRect().top - top : 0,
+  }
+}
+function restore() {
+  const sc = scrollerOf()
+  if (!sc) return
+  own = true
+  requestAnimationFrame(() => (own = false))
+  if (anchor.atEnd) {
+    sc.scrollTop = sc.scrollHeight
+    return
+  }
+  const row = anchor.id ? sc.querySelector<HTMLElement>(`[data-line="${CSS.escape(anchor.id)}"]`) : null
+  if (row) sc.scrollTop += row.getBoundingClientRect().top - sc.getBoundingClientRect().top - anchor.off
+}
+let ro: ResizeObserver | null = null
+
 // Rows grow after mount (markdown renders lazily), so settle at the end once more after they do.
 onMounted(() => {
   void toEnd('instant')
   setTimeout(() => void toEnd('instant'), 400)
+  const sc = scrollerOf()
+  if (!sc || !content.value) return
+  // The browser's own scroll anchoring would move the view first and leave remember() a moved position.
+  sc.style.overflowAnchor = 'none'
+  sc.addEventListener('scroll', remember, { passive: true })
+  // The rows rewrap (content) and the composer under the scroller can change height (scroller).
+  ro = new ResizeObserver(restore)
+  ro.observe(content.value)
+  ro.observe(sc)
+})
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  scrollerOf()?.removeEventListener('scroll', remember)
 })
 watch(
   () => props.conversation,
