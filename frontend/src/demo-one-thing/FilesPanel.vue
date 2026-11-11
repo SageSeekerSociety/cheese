@@ -9,12 +9,15 @@
 // question and the answer land in the channel too). In a project claimed from
 // the course there is no 芝士 change to wait on, so 待定改动 is not there; and
 // no submission record either: submissions belong to the 题目 and are listed
-// on it in the space, so this panel is the same as in any project.
+// on it in the space. Under 方案 C of 提交入口 such a project gets one more tab,
+// 题目: the 题目 it came from (TopicDetail, the same view as in the space,
+// narrower), with its 提交记录 and 「提交」, and 「在空间里打开」.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 
 import { computed } from 'vue'
 
-import { channelOf, MINUTES_DOC, NAMES, TASK_DIFFS } from './data'
+import { topicOf } from './course'
+import { channelOf, isClaim, MINUTES_DOC, NAMES, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
 import { hhmm } from './shapes'
 import {
@@ -31,6 +34,8 @@ import {
   t4,
   undo,
 } from './state'
+import TopicDetail from './TopicDetail.vue'
+import { V } from './variants'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -43,6 +48,8 @@ import { parseDiffLines } from '@/lib/diff'
 import { relTime } from '@/lib/relTime'
 
 const research = computed(() => S.project === 'research')
+/** 方案 C: the 题目 this project was claimed from, shown in its own tab. */
+const origin = computed(() => (V.submit === 'C' && isClaim(S.project) ? topicOf(S.project) : null))
 const suggestion = computed(() => (!research.value || S.suggAccepted || S.suggRejected ? 0 : 1))
 /** 芝士's task change to this file, while the task waits for 采纳. */
 const taskDiff = computed(() =>
@@ -78,9 +85,14 @@ const tabs = computed<PanelTab[]>(() => [
     icon: 'mdi-message-outline',
     signal: mentions.value.length ? { kind: 'count' as const, count: mentions.value.length } : undefined,
   },
+  ...(origin.value ? [{ key: 'topic', label: '题目', icon: 'mdi-flag-checkered' }] : []),
 ])
 const tab = computed(() =>
-  S.ftab === 'history' || S.ftab === 'talk' ? S.ftab : research.value ? 'pending' : 'history'
+  S.ftab === 'history' || S.ftab === 'talk' || (S.ftab === 'topic' && origin.value)
+    ? S.ftab
+    : research.value
+      ? 'pending'
+      : 'history'
 )
 /** A message as one plain paragraph: names for mentions, no Markdown marks, code blocks left out. */
 const plain = (t: string) =>
@@ -142,6 +154,7 @@ function undoAt(i: number) {
         </template>
         <BaseEmptyState v-else-if="!taskDiff && !onBranch" size="compact" icon="mdi-check-all" title="暂无待定的改动" />
       </template>
+      <TopicDetail v-else-if="tab === 'topic' && origin" :topic-id="origin.id" embedded />
       <template v-else-if="tab === 'talk'">
         <div class="ot-talk" data-zone="file-talk">
           <p v-if="!mentions.length" class="ot-fp__other">频道里还没人提到这个文件。在下面问芝士，问题会发到频道里。</p>

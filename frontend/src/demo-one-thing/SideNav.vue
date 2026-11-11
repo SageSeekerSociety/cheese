@@ -2,12 +2,14 @@
 // The project sidebar: the product's project header (the team that owns it,
 // project menu, search), 需要我的 on top, the channels in a fixed order, then
 // 项目文件, and 设置 at the bottom. Rows are the product's own sidebar rows. A
-// project claimed from a 题目 is an ordinary project and gets the same sidebar,
-// with one card under the header: the 题目 it came from. Its name opens that
-// 题目 in the space; under it the deadline, how it is graded, where my (or my
-// team's) latest submission stands, and 「提交」. Submitting is the 题目's
-// business, so it lives here and not in the code editor, which is the same in
-// every project.
+// project claimed from a 题目 is an ordinary project and gets the same sidebar.
+// Where it leads back to its 题目 is an open question (方案 提交入口, variants.ts):
+// under A one quiet line under the header, 「来自 ICS 2026 · Data Lab ›」,
+// opening the 题目 in the space, where submitting happens; under D a card: the
+// 题目's name (back to the space), the deadline, how it is graded, where my (or
+// my team's) latest submission stands, and 「提交」. B and C put the way back
+// in the center's header or the right panel and leave this sidebar alone.
+// Either way the code editor has no 提交: it is the same in every project.
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { VisibleRow } from '@/lib/topicTree'
@@ -17,6 +19,7 @@ import { computed, ref } from 'vue'
 import { dueChip, GRADING_TEXT, topicOf } from './course'
 import { type Channel, channelsOf, isClaim, projectMeta, SPACE } from './data'
 import { deadlines, go, myStatus, openSubmit, S, showTopic, toast } from './state'
+import { V } from './variants'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
@@ -133,7 +136,20 @@ function openPage(key: string) {
       @open-transfer="toast('演示里不能转让项目')"
     />
 
-    <section v-if="origin && mine" class="ot-orig" data-origin aria-label="来自的题目">
+    <button
+      v-if="origin && V.submit === 'A'"
+      type="button"
+      class="ot-from"
+      data-origin-line
+      :title="`来自 ${SPACE.name} · ${origin.title}：在空间里打开`"
+      @click="showTopic(origin.id)"
+    >
+      <span class="ot-from__lead">来自</span>
+      <span class="ot-from__text">{{ SPACE.brief }} · {{ origin.title }}</span>
+      <v-icon size="14" icon="mdi-chevron-right" />
+    </button>
+
+    <section v-if="origin && mine && V.submit === 'D'" class="ot-orig" data-origin aria-label="来自的题目">
       <div class="ot-orig__space"><v-icon size="13" icon="mdi-school-outline" />{{ SPACE.name }}</div>
       <div class="ot-orig__head">
         <button
@@ -247,7 +263,48 @@ function openPage(key: string) {
   background: var(--canvas);
 }
 
-/* The 题目 this project came from: one compact card, its name leading back to the space. */
+/* 方案 A: where the project came from, one muted line that reads as part of the header. */
+.ot-from {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 6px;
+  margin: 0 10px 2px;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.ot-from__lead {
+  flex: none;
+}
+
+.ot-from__text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-from .v-icon {
+  flex: none;
+  margin-left: -2px;
+}
+
+.ot-from:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+/* 方案 D: the 题目 this project came from: one compact card, its name leading back to the space. */
 .ot-orig {
   display: flex;
   flex-direction: column;

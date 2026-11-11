@@ -3,14 +3,16 @@
 // block (the same pattern as a channel 文档's 这个频道的事) has one row per
 // problem read from the 题目's submissions, so a submission a moment ago is
 // already here: 通过 or not, how many tries, the latest score. A row opens that
-// problem's main.cpp, and its 「提交」 submits that one problem to the 题目: the
-// 题单 is the 题目's own content, so submitting from its rows is submitting to
-// the 题目. Under it, the teacher's few lines about the 题单.
+// problem's main.cpp. Under 方案 D its 「提交」 submits that one problem to the
+// 题目 from here; under the others the document only reads, and each problem
+// is submitted from the 题单's page in the space (TopicDetail). Under it, the
+// teacher's few lines about the 题单.
 import { computed } from 'vue'
 
 import { SET, topicOf, WEEK3_INTRO } from './course'
 import DemoDoc from './DemoDoc.vue'
 import { latestOf, openFile, openSubmit, passed as ok, resultOf, S } from './state'
+import { V } from './variants'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { monthDayTime } from '@/lib/dateText'
@@ -44,8 +46,8 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
           <h2 class="ot-cdoc__h">这个题单</h2>
           <span class="ot-cdoc__note">实时 · 通过 {{ passed }}/{{ rows.length }}</span>
         </div>
-        <div class="ot-pset__cols t-eyebrow-read">
-          <span>题目</span><span>状态</span><span>尝试</span><span>最近得分</span>
+        <div class="ot-pset__cols t-eyebrow-read" :class="{ 'ot-pset__cols--bare': V.submit !== 'D' }">
+          <span>题目</span><span>状态</span><span class="ot-pset__tries">尝试</span><span>最近得分</span>
         </div>
         <div v-for="r in rows" :key="r.id" class="ot-pset__row" :data-set="r.id">
           <button type="button" class="ot-cdoc__row" @click="openFile(`${r.id}/main.cpp`)">
@@ -57,10 +59,15 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
                 r.passed ? '通过' : r.last?.verdict ? '没通过' : r.last ? '评测中' : '未提交'
               }}
             </span>
-            <span class="ot-pset__n">{{ r.tries ? `${r.tries} 次` : '—' }}</span>
+            <span class="ot-pset__n ot-pset__tries">{{ r.tries ? `${r.tries} 次` : '—' }}</span>
             <span class="ot-pset__n">{{ r.result }}</span>
           </button>
-          <BaseButton kind="secondary" size="sm" class="ot-pset__submit" @click="openSubmit('week3', r.id)"
+          <BaseButton
+            v-if="V.submit === 'D'"
+            kind="secondary"
+            size="sm"
+            class="ot-pset__submit"
+            @click="openSubmit('week3', r.id)"
             >提交</BaseButton
           >
         </div>
@@ -77,6 +84,7 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
 .ot-cdoc {
   height: 100%;
   overflow: auto;
+  container-type: inline-size;
 }
 
 .ot-cdoc__page {
@@ -159,6 +167,11 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
   margin: 8px 0 2px;
 }
 
+/* No 提交 beside the rows: the columns line up with the row's own padding. */
+.ot-pset__cols--bare {
+  padding-right: 8px;
+}
+
 /* The row opens the problem's file; its 提交 sits beside it, outside the row's button. */
 .ot-pset__row {
   display: flex;
@@ -225,6 +238,13 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
+}
+
+/* Beside a wide right panel the column is narrow: the problem's name keeps its room, 尝试 gives way. */
+@container (max-width: 440px) {
+  .ot-pset__tries {
+    display: none;
+  }
 }
 
 .ot-cdoc__people {

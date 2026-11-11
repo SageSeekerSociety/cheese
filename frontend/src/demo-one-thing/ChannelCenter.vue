@@ -6,6 +6,7 @@
 // opened, from a card, from the 文档 or from the 进行中 menu. The course's
 // channels and the channels of a project claimed from it are drawn by the same
 // column; there 芝士 only gives hints, in the conversation, and no 一件事 opens.
+// Under 方案 B the title is followed by the way back to the 题目 (OriginChip).
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, TopicMemberRow, TopicNotifyLevel } from '@/cx_types'
 import type { ChatLine } from './state'
@@ -17,6 +18,7 @@ import ChannelDoc from './ChannelDoc.vue'
 import { ALL_CHANNELS, channelOf, ME, NAMES, PEOPLE, peopleOf } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
+import OriginChip from './OriginChip.vue'
 import { statusText } from './shapes'
 import { type ChanView, openThing, S, send, toast } from './state'
 
@@ -134,6 +136,7 @@ watch(
           </template>
           <ChannelDetails />
         </v-menu>
+        <OriginChip />
         <span class="topic-header__description" :title="channel.about">{{ channel.about }}</span>
       </div>
       <SegmentedControl v-model="view" :options="VIEWS" label="频道视图" class="topic-header__views" />

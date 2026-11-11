@@ -41,6 +41,82 @@ body {
   background: var(--line-2) !important;
 }
 
+/* 「方案」: the design questions still open, one variant picked per question. */
+.ot-variants {
+  width: 340px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.ot-variants__q + .ot-variants__q {
+  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.ot-variants__title {
+  margin: 4px 8px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.ot-variants__opt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+.ot-variants__opt:hover {
+  background: var(--fill);
+}
+
+.ot-variants__opt .v-icon {
+  flex: none;
+  margin-top: 2px;
+}
+
+.ot-variants__opt.is-on .v-icon {
+  color: var(--ink);
+}
+
+.ot-variants__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+}
+
+.ot-variants__main b {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
+  color: var(--ink);
+}
+
+.ot-variants__foot {
+  padding: 8px 8px 2px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
 .ot-viewport {
   position: relative;
 }

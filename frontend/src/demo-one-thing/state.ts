@@ -39,6 +39,7 @@ import {
   projectTeam,
   teamOf,
 } from './data'
+import { V } from './variants'
 
 import { monthDayTime } from '@/lib/dateText'
 
@@ -1398,10 +1399,7 @@ export function deadlines(): Deadline[] {
         title: `${t.title}：还差 ${left} 题`,
         sub: `${SET.length - left}/${SET.length} 题通过`,
         chip,
-        open: () => {
-          switchProject(p)
-          openFile('题单.md')
-        },
+        open: () => openDue(t.id, '题单.md'),
       })
       continue
     }
@@ -1414,11 +1412,16 @@ export function deadlines(): Deadline[] {
       title: `${t.title} ${chip}`,
       sub: last ? `最近一次 ${resultOf(last).text}` : '还没提交',
       chip,
-      open: () => {
-        switchProject(p)
-        openFile(file)
-      },
+      open: () => openDue(t.id, file),
     })
   }
   return out
+}
+
+/** A deadline row of a claimed 题目 opens where the 方案 puts submitting: the 题目 in the space (A, B),
+ *  the project with its 题目 tab (C), or the project's own file under its origin card (D). */
+function openDue(topicId: string, file: string): void {
+  if (V.submit === 'A' || V.submit === 'B') return showTopic(topicId)
+  switchProject(topicById(topicId)!.project!)
+  openFile(file, V.submit === 'C' ? { ftab: 'topic' } : {})
 }

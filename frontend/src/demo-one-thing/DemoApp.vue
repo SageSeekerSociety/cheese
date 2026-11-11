@@ -1,11 +1,14 @@
 <script setup lang="ts">
 // The demo page: controls, the workspace scaled to the window, the caption
 // under it and the three model cards. The nine scripted steps drive the same
-// actions a click does; clicking by hand stops the script at any point.
+// actions a click does; clicking by hand stops the script at any point. The
+// controls' 「方案」 menu switches the variants of the design questions still
+// open (variants.ts); a switch redraws in place and keeps where the demo is.
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { ASK } from './data'
 import { accept, confirmKick, finish, go, kickoff, openThing, reply, reset, S, send, suggAccept } from './state'
+import { QUESTIONS, setVariant, V } from './variants'
 import Workspace from './Workspace.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -39,6 +42,8 @@ onBeforeUnmount(() => {
   ro?.disconnect()
   window.removeEventListener('resize', fit)
 })
+
+const variantsOpen = ref(false)
 
 // ---- theme ----
 const theme = ref<'light' | 'dark'>(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
@@ -79,6 +84,13 @@ function rel(el: Element) {
 }
 
 // ---- notes overlay ----
+/** What a claimed project's sidebar note says about the way back to its 题目, per 方案. */
+const ORIGIN_NOTE: Record<string, string> = {
+  A: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。标题下一行写着它来自哪道题，点它回到空间里的这道题，在那里提交、看提交记录。',
+  B: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。它来自哪道题写在中间的顶栏上，点它回到空间里的这道题，在那里提交。',
+  C: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。它来自的题目在右栏「题目」里：要求、截止、提交记录、「提交」。',
+  D: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片是它来自的题目：截止、交到哪了、「提交」；点题目名回到空间里的这道题。',
+}
 const notesOn = ref(false)
 const notes = ref<
   { key: string; x: number; y: number; w: number; h: number; title: string; text: string; nx: number; ny: number }[]
@@ -132,13 +144,7 @@ function drawNotes() {
     return
   }
   if (S.project !== 'research') {
-    zone(
-      '.ot-side',
-      '左栏：普通的项目',
-      '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片是它来自的题目：截止、交到哪了、「提交」；点题目名回到空间里的这道题。',
-      12,
-      340
-    )
+    zone('.ot-side', '左栏：普通的项目', ORIGIN_NOTE[V.submit], 12, 340)
     zone(
       '.ot-pane',
       '中间：频道或文件',
@@ -148,8 +154,10 @@ function drawNotes() {
     )
     zone(
       '.ot-right [data-zone="right"]',
-      '右栏：历史和对话',
-      '每次改动都在历史里，能撤回；提交时可以挑历史里的任何一版。提交记录不在这里，在空间里的题目上。',
+      V.submit === 'C' ? '右栏：历史、对话和题目' : '右栏：历史和对话',
+      V.submit === 'C'
+        ? '每次改动都在历史里，能撤回；提交时可以挑历史里的任何一版。「题目」是它来自的题目：要求、提交记录和「提交」，和空间里那一页是同一个。'
+        : '每次改动都在历史里，能撤回；提交时可以挑历史里的任何一版。提交记录不在这里，在空间里的题目上。',
       20,
       110
     )
@@ -185,6 +193,9 @@ watch(
     S.chan,
     S.chanView[S.chan],
     S.things.map((t) => t.status).join(),
+    S.ftab,
+    V.submit,
+    V.space,
   ],
   async () => {
     await nextTick()
@@ -460,6 +471,41 @@ function onUserClick(e: MouseEvent) {
         notesOn ? '隐藏说明' : '显示说明'
       }}</BaseButton>
       <BaseButton kind="secondary" size="sm" @click="restart">重来</BaseButton>
+      <v-menu v-model="variantsOpen" :close-on-content-click="false" location="bottom end" :offset="6">
+        <template #activator="{ props: menuProps }">
+          <BaseButton
+            v-bind="menuProps"
+            kind="secondary"
+            size="sm"
+            append-icon="mdi-chevron-down"
+            data-variants
+            title="还没定的设计：每个问题挑一个方案看"
+            >方案 {{ V.submit }} · {{ V.space }}</BaseButton
+          >
+        </template>
+        <div class="ot-variants" role="dialog" aria-label="方案">
+          <section v-for="q in QUESTIONS" :key="q.key" class="ot-variants__q" :data-question="q.key">
+            <h3 class="ot-variants__title">{{ q.title }}</h3>
+            <button
+              v-for="o in q.options"
+              :key="o.key"
+              type="button"
+              class="ot-variants__opt"
+              :class="{ 'is-on': V[q.key] === o.key }"
+              :aria-pressed="V[q.key] === o.key"
+              :data-variant="`${q.key}:${o.key}`"
+              @click="setVariant(q.key, o.key)"
+            >
+              <v-icon size="16" :icon="V[q.key] === o.key ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" />
+              <span class="ot-variants__main">
+                <b>{{ o.label }}</b>
+                <span>{{ o.note }}</span>
+              </span>
+            </button>
+          </section>
+          <p class="ot-variants__foot">切换不会重来，演示停在哪就还在哪。地址栏的链接带着当前方案。</p>
+        </div>
+      </v-menu>
       <BaseButton
         kind="ghost"
         size="sm"

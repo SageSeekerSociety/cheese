@@ -5,13 +5,17 @@
 // the open file's 待定改动, 历史 and 对话. With nothing selected it is
 // folded away. The rail's first item, 首页, opens the home list (待办, my
 // teams and their projects, the 空间 I belong to). Under it, each space I
-// belong to has its own icon, Discord-server style: the course's color and
-// initials with a cap mark, so it does not read as a project; it opens the same
-// view as 首页's 空间 list does. Below a divider, the projects: the research
+// belong to has its own icon; it opens the same view as 首页's 空间 list does.
+// How that icon looks is an open question (方案 空间在侧栏的样子, variants.ts):
+// 1 a white tile with the course's color only as its border and initials, and
+// a cap mark; 2 a circle filled with the course's color, Discord-server style;
+// 3 a tile filled with the course's color, with a cap mark. Below a divider, the projects: the research
 // project (where the tour runs), each project claimed from a 题目 (mine, and
 // my team's), which appears on 领取, and the other projects, which are inert.
 // A claimed project stays among the projects: it belongs to a team, not to
 // the space.
+// Under 方案 C of 提交入口 the right panel beside a claimed project's files
+// widens while its 题目 tab is open.
 // The 提交 dialog, the scripted cursor, the notes overlay and the toast sit on top of it.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavGenericItem } from '@/components/common/Navigation/types'
@@ -21,7 +25,7 @@ import { computed, ref } from 'vue'
 import { avatarColor } from '@/utils/avatar'
 
 import ChannelCenter from './ChannelCenter.vue'
-import { CLAIMED, ME, NAMES, OTHER_PROJECTS, PROJECT, SPACE } from './data'
+import { CLAIMED, isClaim, ME, NAMES, OTHER_PROJECTS, PROJECT, SPACE } from './data'
 import FilesCenter from './FilesCenter.vue'
 import FilesPanel from './FilesPanel.vue'
 import HomeSide from './HomeSide.vue'
@@ -34,6 +38,7 @@ import { deadlines, go, openHome, openSpace, S, switchProject, thingById, toast,
 import SubmitDialog from './SubmitDialog.vue'
 import TeamCenter from './TeamCenter.vue'
 import ThingPanel from './ThingPanel.vue'
+import { V } from './variants'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -64,7 +69,17 @@ const right = computed<'thing' | 'files' | null>(() => {
 const wide = computed(() => right.value === 'thing' && thingById(S.thing)?.status !== 'talk')
 const cols = computed(() => {
   if (right.value === 'thing' && S.focus) return '64px 228px 0px minmax(0, 1fr)'
-  const r = right.value === null ? '0px' : right.value === 'files' ? '320px' : wide.value ? '560px' : '420px'
+  const topicTab = right.value === 'files' && V.submit === 'C' && isClaim(S.project) && S.ftab === 'topic'
+  const r =
+    right.value === null
+      ? '0px'
+      : topicTab
+        ? '400px'
+        : right.value === 'files'
+          ? '320px'
+          : wide.value
+            ? '560px'
+            : '420px'
   return `64px 228px minmax(0, 1fr) ${r}`
 })
 
@@ -172,6 +187,7 @@ const userActions: MenuAction[] = [
           :key="sp.id"
           type="button"
           class="app-rail-item ot-rail__space"
+          :class="`ot-rail__space--v${V.space}`"
           :aria-label="sp.badge ? `${sp.name}（${sp.badge} 个快截止）` : sp.name"
           :aria-current="sp.here ? 'page' : undefined"
           :data-space="sp.id"
@@ -182,8 +198,10 @@ const userActions: MenuAction[] = [
               <span class="rail-flyout__name">{{ sp.name }}</span>
             </div>
           </v-tooltip>
-          <span class="ot-rail__space-face" :style="{ background: sp.color }">{{ sp.short }}</span>
-          <span class="ot-rail__space-mark" aria-hidden="true"><v-icon size="11" icon="mdi-school" /></span>
+          <span class="ot-rail__space-face" :style="{ '--space-color': sp.color }">{{ sp.short }}</span>
+          <span v-if="V.space !== '2'" class="ot-rail__space-mark" aria-hidden="true"
+            ><v-icon size="11" icon="mdi-school"
+          /></span>
           <span v-if="sp.badge" class="app-rail-item__badge" aria-hidden="true">{{ sp.badge }}</span>
         </button>
         <RailItem v-for="item in rail" :key="item.key" :item="item" />
@@ -281,7 +299,7 @@ const userActions: MenuAction[] = [
   align-items: center;
 }
 
-/* A space's tile: the same 48px slot and 「you are here」 bar as a project's, but its face is the
+/* A space's tile: the same 48px slot and 「you are here」 bar as a project's. 方案 3: its face is the
    course's color with its initials, a rounder square, and a cap mark in the corner. */
 .app-rail-item.ot-rail__space,
 .app-rail-item.ot-rail__space:hover {
@@ -305,9 +323,32 @@ const userActions: MenuAction[] = [
   transition: border-radius var(--dur-quick) var(--ease-standard);
 }
 
+.ot-rail__space--v3 .ot-rail__space-face {
+  background: var(--space-color);
+}
+
 .ot-rail__space:hover .ot-rail__space-face,
 .ot-rail__space[aria-current] .ot-rail__space-face {
   border-radius: 12px;
+}
+
+/* 方案 1: no fill a project could have; the course's color is only the border and the initials. */
+.ot-rail__space--v1 .ot-rail__space-face {
+  color: var(--space-color);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 2px var(--space-color);
+}
+
+/* 方案 2: a circle, the one round tile on the rail, filled with the course's color. */
+.app-rail-item.ot-rail__space--v2,
+.ot-rail__space--v2 .ot-rail__space-face,
+.ot-rail__space--v2:hover .ot-rail__space-face,
+.ot-rail__space--v2[aria-current] .ot-rail__space-face {
+  border-radius: 50%;
+}
+
+.ot-rail__space--v2 .ot-rail__space-face {
+  background: var(--space-color);
 }
 
 .ot-rail__space-mark {

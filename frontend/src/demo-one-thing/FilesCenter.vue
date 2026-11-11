@@ -6,7 +6,8 @@
 // rendered Markdown. A code file opens editable on 正式版, like a document.
 // docs/频道/ holds each channel's 文档. In a project claimed
 // from the course, what the 题目 brought in: the 题面 (or the 题单 document)
-// pinned on top, and the starter code, folded by problem.
+// pinned on top, and the starter code, folded by problem; under 方案 B the
+// header also carries the way back to that 题目 (OriginChip).
 import type { FileRow } from '@/lib/changesTree'
 import type { FileDiff } from '@/lib/diff'
 import type { OfficeComparison } from '@/types/reviewComment'
@@ -19,6 +20,7 @@ import { DOC_HTML, FILES, isClaim, MINUTES_DOC, minutesHtml, RESULTS_MD, TASK_DI
 import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
 import FileTree from './FileTree.vue'
+import OriginChip from './OriginChip.vue'
 import ProblemSetDoc from './ProblemSetDoc.vue'
 import { fkey, isSaving, onBranch, openFile, S, t4, toast } from './state'
 
@@ -85,6 +87,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
     <header class="ot-head">
       <h2 class="ot-head__title">项目文件</h2>
       <span class="ot-head__sub">{{ all.length }} 个文件</span>
+      <OriginChip />
       <span class="ot-head__gap" />
       <BaseButton kind="ghost" size="sm" prepend-icon="mdi-plus" @click="toast('新建：文档、表格或文件夹')"
         >新建</BaseButton
