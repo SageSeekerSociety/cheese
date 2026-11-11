@@ -113,7 +113,7 @@ const claimedChannel = (k: ClaimKey) => ({
 
 export const isClaim = (p: ProjectKey): p is ClaimKey => p === 'datalab' || p === 'week3' || p === 'shelllab'
 
-/** A project with more than one person in it: people edit 正式版 together and can open a branch. */
+/** A project with more than one person in it: people edit 正式版 together, and can try something apart in a 一件事. */
 export const isShared = (p: ProjectKey) => p === 'research' || (isClaim(p) && !teamOf(CLAIMED[p].team).personal)
 
 /** The people in a project: its team's members (芝士 is added where a list needs it). */

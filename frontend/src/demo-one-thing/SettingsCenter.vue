@@ -3,8 +3,9 @@
 // right, drawn with the product's settings rows. A project claimed from a
 // 题目 says which 题目 and space it came from and which team owns it, and
 // shows the rules the 题目 brought: 芝士 only hints, the deadline, the code
-// rule (a team's project is edited together, with branches and 正式版受保护 as
-// in the research project). Every project can be opened in a local editor.
+// rule (a team's project is edited together; anything tried apart is a
+// 一件事, and 正式版受保护 makes every change one, as in the research project).
+// Every project can be opened in a local editor.
 import { computed, ref } from 'vue'
 
 import { topicOf } from './course'
@@ -133,11 +134,11 @@ const USAGE = [
           <SettingsRow label="代码" description="每次改动自动记进历史，可以撤回" width="select-wide">
             <span class="ot-set__value" data-rule="code">{{
               shared
-                ? `${people.length - 1} 个人一起改正式版，改动直接生效；想隔离就开分支`
+                ? `${people.length - 1} 个人一起改正式版，改动直接生效；想单独试就开一件事`
                 : '只有你一个人，改动直接生效'
             }}</span>
           </SettingsRow>
-          <SettingsRow v-if="shared" label="正式版受保护" description="人也要走分支，合之前要别人看过" width="select">
+          <SettingsRow v-if="shared" label="正式版受保护" description="改动都要走一件事，正式版只读" width="select">
             <v-switch
               v-model="protect"
               data-setting="protect-main"
@@ -179,20 +180,20 @@ const USAGE = [
           </SettingsRow>
           <SettingsRow
             label="芝士的改动"
-            description="默认先待定，你一键接受；改成直接生效后随时可撤回"
+            description="默认在一件事里等你采纳；改成直接生效后随时可撤回"
             width="select-wide"
           >
             <SegmentedControl
               :model-value="S.settingsAgentDirect ? 'direct' : 'pending'"
               :options="[
-                { value: 'pending', label: '先待定' },
+                { value: 'pending', label: '等采纳' },
                 { value: 'direct', label: '直接生效' },
               ]"
               label="芝士的改动"
               @update:model-value="S.settingsAgentDirect = $event === 'direct'"
             />
           </SettingsRow>
-          <SettingsRow label="正式版受保护" description="人也要走分支，合之前要别人看过" width="select">
+          <SettingsRow label="正式版受保护" description="改动都要走一件事，正式版只读" width="select">
             <v-switch
               v-model="protect"
               data-setting="protect-main"

@@ -1,22 +1,23 @@
 <script setup lang="ts">
-// A project's code view, in every project: the code, 运行, and a bottom panel
-// bound to my own environment (输出 and 终端, only I can see it; it is my
-// terminal, not 芝士's). Opening a code file opens it editable on 正式版, as a
-// document is: what is typed is the file, a teammate's caret shows where they
-// are in it, and each pause in typing becomes one 历史 entry with 撤回. There is
-// no 「改代码」 switch: a read-only first view would be a mode documents do not
-// have, and 撤回 already makes a slip cheap. The editor is read-only only when
-// a shared project has 正式版受保护 on and no branch is open.
-// 芝士 never types into 正式版 either. Asked from the file's 对话 to change it,
-// 芝士 opens a 一件事 and works on its own copy; the bar then says so in one
-// quiet chip (芝士在改它那份 / 芝士那份等你采纳) that opens 待定改动,
-// where its diff waits for a person's 采纳.
-// 开分支 (in a project with more than one person: the research project, a team's
-// 题目) gives a person a copy of their own; the bar then names the
-// branch, with 请人看一下 and 合回正式版. The editor is the same in every
-// project and has no course control: a submission is made to the 题目 (the
-// origin card in the sidebar), not from here. A submission opened from its
-// 题目's 提交记录 shows here read-only: the version it pinned.
+// A project's code view, in every project: a place to read and edit files.
+// Opening a code file opens it editable on 正式版, as a document is: what is
+// typed is the file, a teammate's caret shows where they are in it, and each
+// pause in typing becomes one 历史 entry with 撤回. There is no 「改代码」
+// switch: a read-only first view would be a mode documents do not have, and
+// 撤回 already makes a slip cheap.
+// Every other change is a 一件事, and the editor only leads into one. With
+// lines selected, 「在频道里问芝士」 takes them into the file's channel, where an
+// @芝士 opens a 讨论 like any other. 「开一件事自己做」 (on the file's bar above,
+// FilesCenter) opens a 一件事 that I do: the editor then types into its copy,
+// under a banner 「你在「…」的副本里改 · 回到正式版」. Review and 采纳 happen in
+// the 一件事, never here: while one changes this file the bar only says so
+// (「有 1 件事在改这个文件 ›」, which opens it on 改动). With 正式版受保护 on,
+// 正式版 is read-only and the bar offers 「开一件事来改」.
+// 运行 follows 方案「运行在哪」 (variants.ts): T1 runs in the project's one
+// environment and the bottom panel is labelled 项目环境; T2 has no 运行, only a
+// hint; T3 is my own terminal (输出 / 终端, only I can see it). The editor has
+// no course control: a submission is made to the 题目 (the origin card in the
+// sidebar). A submission opened from its 题目's 提交记录 shows here read-only.
 // The editing surface is DemoCodeArea (why it is not Monaco is said there).
 import type { Peer } from './DemoCodeArea.vue'
 
@@ -24,29 +25,27 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { avatarColor } from '@/utils/avatar'
 
-import { asContext, isClaim, isShared, NAMES } from './data'
+import { asContext, isClaim } from './data'
 import DemoCodeArea from './DemoCodeArea.vue'
 import {
-  askReview,
-  branchChanges,
-  canMerge,
+  askInChannel,
   codeText,
-  copyThingFor,
-  dropBranch,
   fkey,
   isSaving,
+  leaveCopy,
   lockedMain,
-  mergeBranch,
-  onBranch,
-  openBranch,
+  myCopy,
+  openOwnThing,
+  openThing,
   resultOf,
-  reviewerOf,
   runCode,
   S,
   snapshot,
   termRun,
+  thingsOnFile,
   typeCode,
 } from './state'
+import { V } from './variants'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
@@ -55,19 +54,18 @@ import DocPresence from '@/components/panels/doc/DocPresence.vue'
 const p = computed(() => S.project)
 const path = computed(() => S.file)
 const k = computed(() => fkey(p.value, path.value))
-const shared = computed(() => isShared(p.value))
-const reviewer = computed(() => NAMES[reviewerOf(p.value)])
-const branch = computed(() => (onBranch(p.value) ? S.branch : null))
+/** The 一件事 whose copy I am typing in. */
+const copy = computed(() => myCopy(p.value))
 const locked = computed(() => lockedMain(p.value))
 const text = computed({
   get: () => codeText(p.value, path.value),
   set: (v: string) => typeCode(p.value, path.value, v),
 })
 const saving = computed(() => isSaving(p.value, path.value))
-const changes = computed(() => branchChanges())
 const mark = computed(() => (S.codeAt?.path === path.value ? S.codeAt : null))
-/** A 一件事 working on its own copy of this file. */
-const cheese = computed(() => copyThingFor(p.value, path.value))
+const sel = computed(() => (S.codeSel?.path === path.value ? S.codeSel : null))
+/** The 一件事 changing this file (other than the one I am typing in). */
+const others = computed(() => thingsOnFile(p.value, path.value).filter((t) => t.id !== copy.value?.id))
 // Leaving the file closes its burst of typing into 历史 (this view is keyed to one file: by
 // unmount time S.file already names the next one).
 const mine = { p: S.project, path: S.file }
@@ -109,7 +107,7 @@ const peer = computed(() => PEER_AT[p.value])
 const spot = ref(0)
 const peerTimer = window.setInterval(() => (spot.value = (spot.value + 1) % 5), 2200)
 onBeforeUnmount(() => window.clearInterval(peerTimer))
-const peerHere = computed(() => !!peer.value && !branch.value && path.value === peer.value.path)
+const peerHere = computed(() => !!peer.value && !copy.value && path.value === peer.value.path)
 const peers = computed<Peer[]>(() => {
   if (!peerHere.value) return []
   const n = text.value.split('\n').length
@@ -139,7 +137,11 @@ const sub = computed(() =>
 )
 const pinned = computed(() => (sub.value ? asContext(path.value, sub.value.code.replace(/\n$/, '').split('\n')) : []))
 
-// ---- the bottom panel ----
+// ---- 运行 and the bottom panel, per 方案「运行在哪」 ----
+/** T2: people have no 运行. */
+const noRun = computed(() => V.run === 'T2')
+/** T3: my own terminal beside 输出. */
+const ownTerm = computed(() => V.run === 'T3')
 const open = ref(true)
 const out = computed(() => S.out[k.value])
 const term = computed(() => S.term[p.value] ?? [])
@@ -163,6 +165,10 @@ function run() {
   open.value = true
   runCode(p.value, path.value)
 }
+const PTABS = [
+  { key: 'out', label: '输出' },
+  { key: 'term', label: '终端' },
+] as const
 function showTab(t: 'out' | 'term') {
   S.outTab = t
   open.value = true
@@ -186,84 +192,82 @@ function showTab(t: 'out' | 'term') {
     </template>
 
     <template v-else>
-      <div v-if="branch" class="ot-ced__bar ot-ced__bar--branch" data-zone="branch">
-        <v-icon size="15" icon="mdi-source-branch" class="ot-ced__mark" />
-        <b class="ot-ced__branch">分支：{{ branch.name }}</b>
-        <!-- Once someone has looked, 「看过了」 says more than the count, and the bar has no room for both. -->
-        <span v-if="!branch.approved" class="ot-ced__copy">{{
-          changes.length ? `改了 ${changes.length} 个文件` : '还没改，正式版不受影响'
-        }}</span>
-        <span v-else class="ot-ced__ok"><v-icon size="14" icon="mdi-check" />{{ reviewer }}看过了</span>
+      <div v-if="copy" class="ot-ced__bar ot-ced__bar--copy" data-zone="copy">
+        <v-icon size="15" icon="mdi-source-fork" class="ot-ced__mark" />
+        <span class="ot-ced__copy" :title="`你在「${copy.title}」的副本里改`"
+          >你在「<b>{{ copy.title }}</b
+          >」的副本里改</span
+        >
+        <button id="b-leave-copy" type="button" class="ot-ced__back" @click="leaveCopy">· 回到正式版</button>
         <span class="ot-head__gap" />
-        <!-- The branch's own actions need the room: 放弃 and 运行 are icons here. -->
+        <!-- The banner's own words need the room: 看这件事 and 运行 are icons here. -->
         <BaseButton
+          id="b-see-thing"
           kind="ghost"
           size="sm"
-          icon="mdi-close"
-          title="放弃这个分支"
-          aria-label="放弃这个分支"
-          @click="dropBranch"
+          icon="mdi-checkbox-marked-outline"
+          title="看这件事"
+          aria-label="看这件事"
+          @click="openThing(copy.id, 'changes')"
         />
-        <BaseButton id="b-run" kind="ghost" size="sm" icon="mdi-play" title="运行" aria-label="运行" @click="run" />
         <BaseButton
-          v-if="!branch.approved"
-          id="b-review"
-          kind="secondary"
+          v-if="!noRun"
+          id="b-run"
+          kind="ghost"
           size="sm"
-          :disabled="!changes.length || branch.asked"
-          @click="askReview"
-          >{{ branch.asked ? `等${reviewer}看…` : '请人看一下' }}</BaseButton
-        >
-        <BaseButton
-          id="b-merge-branch"
-          kind="primary"
-          size="sm"
-          :disabled="!canMerge()"
-          :title="S.protectMain[p] && !branch.approved ? '正式版受保护：要别人看过才能合' : ''"
-          @click="mergeBranch"
-          >合回正式版</BaseButton
-        >
-      </div>
-      <div v-else-if="locked" class="ot-ced__bar" data-zone="locked">
-        <v-icon size="15" icon="mdi-shield-lock-outline" class="ot-ced__mark" />
-        <span class="ot-ced__copy">正式版受保护 · 人也要走分支，合之前要别人看过</span>
-        <span class="ot-head__gap" />
-        <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
-        <BaseButton id="b-branch" kind="primary" size="sm" prepend-icon="mdi-source-branch" @click="openBranch"
-          >开分支</BaseButton
-        >
+          icon="mdi-play"
+          title="运行这份副本"
+          aria-label="运行这份副本"
+          @click="run"
+        />
       </div>
       <div v-else class="ot-ced__bar">
-        <v-icon size="15" icon="mdi-file-code-outline" class="ot-ced__mark" />
-        <span class="ot-ced__copy" data-zone="saved" title="改了就生效；每次改动自动记进历史，能撤回">{{
-          cheese ? '正式版' : saving ? '正式版 · 正在改…' : '正式版 · 改了就生效'
-        }}</span>
+        <v-icon size="15" :icon="locked ? 'mdi-shield-lock-outline' : 'mdi-file-code-outline'" class="ot-ced__mark" />
+        <span
+          class="ot-ced__copy"
+          data-zone="saved"
+          :title="locked ? '改动都要走一件事，正式版只读' : '改了就生效；每次改动自动记进历史，能撤回'"
+          >{{ locked ? '正式版受保护' : saving ? '正式版 · 正在改…' : '正式版' }}</span
+        >
         <DocPresence v-if="faces.length" :peers="faces" class="ot-ced__faces" />
         <button
-          v-if="cheese"
+          v-if="others.length"
           type="button"
-          class="ot-ced__cheese"
-          :class="{ 'is-wait': cheese.status === 'wait' }"
-          data-cheese-copy
-          title="在右栏「待定改动」里看"
-          @click="S.ftab = 'pending'"
+          class="ot-ced__things"
+          data-things-on-file
+          title="在那件事的「改动」里看"
+          @click="openThing(others[0]!.id, 'changes')"
         >
-          <v-icon size="14" icon="mdi-source-fork" />{{
-            cheese.status === 'wait' ? '芝士那份等你采纳' : '芝士在改它那份'
-          }}
+          有 {{ others.length }} 件事在改这个文件 ›
         </button>
         <span class="ot-head__gap" />
         <BaseButton
-          v-if="shared"
-          id="b-branch"
+          v-if="sel"
+          id="b-ask-chan"
           kind="ghost"
           size="sm"
-          prepend-icon="mdi-source-branch"
-          title="在自己的分支上改，改好了再合回正式版"
-          @click="openBranch"
-          >开分支</BaseButton
+          prepend-icon="mdi-message-text-outline"
+          :title="`带着第 ${sel.start}${sel.end > sel.start ? `–${sel.end}` : ''} 行去频道里问`"
+          @click="askInChannel"
+          >在频道里问芝士</BaseButton
         >
-        <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
+        <BaseButton
+          v-if="locked"
+          id="b-own"
+          kind="primary"
+          size="sm"
+          prepend-icon="mdi-checkbox-marked-outline"
+          @click="openOwnThing"
+          >开一件事来改</BaseButton
+        >
+        <span
+          v-if="noRun"
+          class="ot-ced__norun"
+          data-zone="no-run"
+          :title="isClaim(p) ? '这门课里芝士只给提示，不替你运行' : '选中代码，在频道里问芝士，它在一件事里跑'"
+          ><v-icon size="14" icon="mdi-play-off" />{{ isClaim(p) ? '没有运行' : '运行交给芝士' }}</span
+        >
+        <BaseButton v-else id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
       </div>
       <div class="ot-ced__edit">
         <DemoCodeArea
@@ -279,23 +283,39 @@ function showTab(t: 'out' | 'term') {
       </div>
     </template>
 
-    <div class="ot-ced__panel" :class="{ 'is-open': open }" data-zone="terminal">
+    <p v-if="noRun" class="ot-ced__runhint" data-zone="terminal">
+      <v-icon size="14" icon="mdi-information-outline" />{{
+        isClaim(p)
+          ? '这里没有「运行」，这门课里芝士也只给提示：代码要等提交后由评测机跑。'
+          : '这里没有「运行」：选中代码，在频道里问芝士，它在一件事里跑，输出在那件事的「现场」。'
+      }}
+    </p>
+    <div v-else class="ot-ced__panel" :class="{ 'is-open': open }" data-zone="terminal">
       <div class="ot-ced__ptabs">
-        <button
-          v-for="t in [
-            { key: 'out', label: '输出' },
-            { key: 'term', label: '终端' },
-          ] as const"
-          :key="t.key"
-          type="button"
-          class="ot-ced__ptab"
-          :class="{ 'is-on': S.outTab === t.key && open }"
-          @click="showTab(t.key)"
-        >
-          {{ t.label }}
+        <template v-if="ownTerm">
+          <button
+            v-for="t in PTABS"
+            :key="t.key"
+            type="button"
+            class="ot-ced__ptab"
+            :class="{ 'is-on': S.outTab === t.key && open }"
+            @click="showTab(t.key)"
+          >
+            {{ t.label }}
+          </button>
+        </template>
+        <button v-else type="button" class="ot-ced__ptab" :class="{ 'is-on': open }" @click="showTab('out')">
+          输出
         </button>
         <span class="ot-head__gap" />
-        <span class="ot-ced__mine"><v-icon size="13" icon="mdi-lock-outline" />你的环境 · 只有你能看到</span>
+        <span v-if="ownTerm" class="ot-ced__mine"
+          ><v-icon size="13" icon="mdi-lock-outline" />你的环境 · 只有你能看到</span
+        >
+        <span v-else class="ot-ced__mine" data-zone="project-env"
+          ><v-icon size="13" icon="mdi-server-outline" />项目环境{{
+            copy ? ` · 「${copy.title}」的副本` : ' · 芝士做事也在这里'
+          }}</span
+        >
         <BaseButton
           kind="ghost"
           size="sm"
@@ -305,8 +325,12 @@ function showTab(t: 'out' | 'term') {
           @click="open = !open"
         />
       </div>
-      <div v-if="open && S.outTab === 'out'" class="ot-ced__pbody" role="status">
-        <div v-if="!out" class="ot-ced__hint">点「运行」，在你自己的环境里跑这份代码</div>
+      <div v-if="open && (S.outTab === 'out' || !ownTerm)" class="ot-ced__pbody" role="status">
+        <div v-if="!out" class="ot-ced__hint">
+          {{
+            ownTerm ? '点「运行」，在你自己的环境里跑这份代码' : '点「运行」，在项目环境里跑这份代码；每次运行记进历史'
+          }}
+        </div>
         <div v-else-if="out.kind === 'running'" class="ot-ced__cmd">运行中…</div>
         <template v-else>
           <div class="ot-ced__cmd">$ {{ out.cmd }}</div>
@@ -357,34 +381,43 @@ function showTab(t: 'out' | 'term') {
   color: var(--muted);
 }
 
-.ot-ced__bar--branch {
+/* In a 一件事's copy: the bar says so in the accent wash, the way a 一件事 being worked on reads. */
+.ot-ced__bar--copy {
+  gap: 6px;
+  padding-left: 12px;
   background: var(--accent-wash);
 }
 
-.ot-ced__bar--branch .ot-ced__mark {
+.ot-ced__bar--copy .ot-ced__mark {
   color: var(--accent-ink);
 }
 
-.ot-ced__branch {
+.ot-ced__copy b {
   font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
 }
 
-.ot-ced__ok {
-  display: inline-flex;
-  gap: 2px;
-  align-items: center;
-  font-size: 12px;
-  color: var(--ok-ink);
+.ot-ced__back {
+  padding: 0;
+  font: inherit;
+  color: var(--accent-ink);
   white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 0;
 }
 
-.ot-ced__cheese {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
+.ot-ced__back:hover {
+  text-decoration: underline;
+}
+
+/* A 一件事 changing this file: a quiet note, not an action; it opens the 一件事. With lines selected
+   the bar also holds 在频道里问芝士, and the note gives way first. */
+.ot-ced__things {
+  flex: 0 1 auto;
+  min-width: 0;
   height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 0 8px;
   font: inherit;
   font-size: 12px;
@@ -396,18 +429,35 @@ function showTab(t: 'out' | 'term') {
   border-radius: var(--radius-sm);
 }
 
-.ot-ced__cheese:hover {
+.ot-ced__things:hover {
   color: var(--ink);
 }
 
-/* Waiting on me: the same amber as anything else that does. */
-.ot-ced__cheese.is-wait {
-  color: var(--accent-ink);
-  border-color: var(--accent-ink);
+.ot-ced__norun {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ot-ced__runhint {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 16px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
 }
 
 .ot-ced__copy {
-  min-width: 0;
+  /* 「正式版」 always reads in full; a longer label gives way after it. */
+  min-width: 3em;
   overflow: hidden;
   color: var(--ink);
   text-overflow: ellipsis;
@@ -419,7 +469,7 @@ function showTab(t: 'out' | 'term') {
   font-size: 12px;
 }
 
-.ot-ced__bar > :not(.ot-ced__copy, .ot-head__gap) {
+.ot-ced__bar > :not(.ot-ced__copy, .ot-head__gap, .ot-ced__things) {
   flex: none;
 }
 

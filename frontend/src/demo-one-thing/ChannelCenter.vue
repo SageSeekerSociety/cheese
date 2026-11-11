@@ -6,6 +6,8 @@
 // opened, from a card, from the 文档 or from the 进行中 menu. The course's
 // channels and the channels of a project claimed from it are drawn by the same
 // column; there 芝士 only gives hints, in the conversation, and no 一件事 opens.
+// Lines brought from a code file (在频道里问芝士) sit in the composer as a chip
+// and go out with the message; an @芝士 with them opens a 讨论, as any does.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, TopicMemberRow, TopicNotifyLevel } from '@/cx_types'
 import type { ChatLine } from './state'
@@ -18,7 +20,7 @@ import { ALL_CHANNELS, channelOf, ME, NAMES, PEOPLE, peopleOf } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
 import { statusText } from './shapes'
-import { type ChanView, openThing, S, send, toast } from './state'
+import { type ChanView, openThing, refText, S, send, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -178,7 +180,9 @@ watch(
       v-model="S.typing"
       :placeholder="S.project === 'research' ? '输入消息，@芝士 交给它处理' : '输入消息，@芝士 问思路（它只给提示）'"
       :reply-label="replyLabel"
+      :ref-label="S.chanRef ? refText(S.chanRef) : null"
       @clear-reply="S.replyTo = null"
+      @clear-ref="S.chanRef = null"
       @send="send"
     />
   </section>

@@ -2,11 +2,12 @@
 // The demo page: controls, the workspace scaled to the window, the caption
 // under it and the three model cards. Two guided tours share the same
 // mechanics: 「演示一：频道和一件事」 (STEPS, nine steps: a channel, a 一件事 from
-// 讨论 to 采纳, 项目文件) and 「演示二：改代码」 (CODE_STEPS, eight steps: the
-// code editor, a person editing 正式版 directly next to 王磊, 运行 in my own
-// terminal, a branch merged back, then 芝士 asked to change a file: it works in
-// its own copy inside a 一件事, the change waits as a 待定改动, and only a
-// person's 采纳 puts it into 正式版). Each step drives the same actions a click
+// 讨论 to 采纳, 项目文件) and 「演示二：改代码」 (CODE_STEPS, nine steps, the
+// same one model for code: a person edits 正式版 directly next to 王磊, as in
+// a document; 运行 as the 方案「运行在哪」 now picks it; selected lines are taken
+// to the channel, where @芝士 opens a 讨论, 开工 sends 芝士 to work on the
+// 一件事's own copy, and its 改动 is 采纳ed in the 一件事; a person's own try is
+// a 一件事 too (开一件事自己做), 采纳ed the same way). Each step drives the same actions a click
 // does; clicking by hand stops the script at any point, and switching tours
 // starts the other one from a fresh state. In a project claimed from a 题目
 // the top bar also has 「模拟：离截止不到 24 小时」, which moves only the clock
@@ -15,28 +16,27 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { CLOCK } from './course'
-import { ASK, isClaim } from './data'
+import { ASK, isClaim, ME } from './data'
 import {
   accept,
   acceptCopy,
-  askAboutFile,
-  askReview,
+  askInChannel,
   codeText,
   confirmKick,
-  copyThingFor,
   finish,
   finishCopy,
   go,
   kickoff,
-  mergeBranch,
-  openBranch,
+  markDone,
   openFile,
+  openOwnThing,
   openThing,
   reply,
   reset,
   runCode,
   S,
   send,
+  settle,
   snapshot,
   suggAccept,
   typeCode,
@@ -182,13 +182,13 @@ function drawNotes() {
     zone(
       '.ot-pane',
       '中间：频道或文件',
-      '题面置顶在项目文件里，代码打开就能改、改了就生效，编辑器上只有「运行」。底下是你自己的终端，只有你看得到。',
+      '题面置顶在项目文件里，代码打开就能改、改了就生效。「运行」在哪儿跑，看「方案」里的「运行在哪」。',
       20,
       70
     )
     zone(
       '.ot-right [data-zone="right"]',
-      '右栏：历史和对话',
+      '右栏：历史',
       '每次改动都在历史里，能撤回；提交时可以挑历史里的任何一版。提交记录不在这里，在空间里的题目上。',
       20,
       110
@@ -207,7 +207,7 @@ function drawNotes() {
   zone(
     '.ot-right [data-zone="right"]',
     '右栏：选中的那一件',
-    '只放一样东西。频道里是点开的那件事：讨论有对话、资料，开工后多出现场、改动、成果；什么都没点开就收起。打开文件时是它的历史、待定改动，和频道里提到它的对话（可以带着它问芝士）。',
+    '只放一样东西。频道里是点开的那件事：讨论有对话、资料，开工后多出现场、改动、成果；什么都没点开就收起。打开文件时是它的历史，和正在改它的事（点开就是那件事）。',
     20,
     110
   )
@@ -225,7 +225,6 @@ watch(
     S.chan,
     S.chanView[S.chan],
     S.things.map((t) => t.status).join(),
-    S.ftab,
     Object.values(V).join(),
   ],
   async () => {
@@ -376,8 +375,11 @@ const STEPS: (() => Promise<void>)[] = [
   },
   async () => {
     await click('[data-nav="files"] .v-list-item')
-    go('files', { file: 'docs/组会纪要-11-07.md', ftab: 'pending' })
-    cap(8, '项目文件：文档、Word、代码、成果都在这一处。文档直接改，王磊也在改；标出来的那段是芝士的建议，还没生效。')
+    go('files', { file: 'docs/组会纪要-11-07.md' })
+    cap(
+      8,
+      '项目文件：文档、Word、代码、成果都在这一处。文档直接改，王磊也在改；标出来的那段是芝士的建议，卡片就在文档上面，还没生效。'
+    )
     await wait(2800)
     await typeInto(TYPED_NOTE, (v) => (S.typed = v))
     await wait(800)
@@ -385,9 +387,8 @@ const STEPS: (() => Promise<void>)[] = [
     suggAccept()
     cap(8, '接受芝士的建议，它才进正式版。')
     await wait(1800)
-    await click('.ot-fp .tabbar__tab[title="历史"]')
-    S.ftab = 'history'
-    cap(8, '「历史」：每次生效记一条，包括刚才的采纳，每条都能撤回。')
+    await moveTo('.ot-fp .ot-hist')
+    cap(8, '右栏「历史」：每次生效记一条，包括刚才的采纳，每条都能撤回。')
     await wait(3000)
   },
   async () => {
@@ -395,7 +396,7 @@ const STEPS: (() => Promise<void>)[] = [
     S.file = 'eval/preprocess.py'
     cap(
       9,
-      '代码已经是采纳后的新版本（224）。人直接改正式版，和文档一样：打开就能改，王磊也在这个文件里，每次改动自动记进历史、能撤回。想隔离就「开分支」。芝士的改动才要人采纳。'
+      '代码已经是采纳后的新版本（224）。人直接改正式版，和文档一样：打开就能改，王磊也在这个文件里，每次改动自动记进历史、能撤回。别的改动都是一件事，芝士做的、自己想单独试的，都在那件事里看改动、采纳。'
     )
     await wait(3600)
     cursor.shown = false
@@ -421,7 +422,7 @@ function instantOne(k: number) {
   }
   if (k === 6) accept()
   if (k === 7) {
-    go('files', { file: 'docs/组会纪要-11-07.md', ftab: 'history' })
+    go('files', { file: 'docs/组会纪要-11-07.md' })
     S.typed = TYPED_NOTE
     suggAccept()
   }
@@ -432,40 +433,49 @@ const PRE = 'eval/preprocess.py'
 const RET = 'eval/retrieval.py'
 /** 林晓's own fix on 正式版: the size the model takes, and the crop the paper uses. */
 const fixed = (t: string) => t.replace('T.Resize(256),', 'T.Resize(224),\n        T.CenterCrop(224),')
-/** What she writes on her branch first: a line saying what the input is. */
+/** Her own try, in a 一件事's copy: a line saying what evaluate returns. */
 const documented = (t: string) =>
-  t.replace('def preprocess(img):', 'def preprocess(img):\n    """CLIP 的输入：224×224，和论文一样 center crop。"""')
+  t.replace('def evaluate(model, loader):', 'def evaluate(model, loader):\n    """返回 R@1 / R@5 / R@10，单位是 %。"""')
 const CODE_ASK = '改成一次出 R@1 / R@5 / R@10'
 /** The line 林晓 selects before asking: `return recall_at_1(sims)`. */
 const RET_LINE = 18
-const selectLine = (path: string, line: number) =>
-  (S.codeAt = { path, start: line, end: line, tick: (S.codeAt?.tick ?? 0) + 1 })
+function selectLine(path: string, line: number) {
+  S.codeAt = { path, start: line, end: line, tick: (S.codeAt?.tick ?? 0) + 1 }
+  S.codeSel = { path, start: line, end: line }
+}
+/** The 讨论 opened by asking about the selected line, and 林晓's own try. */
+const asked = () => S.things.find((t) => t.doer === 'cheese' && !!t.copy?.[RET]) ?? null
+const ownTry = () => S.things.find((t) => t.doer === ME && !!t.copy) ?? null
+const toFiles = async (path: string) => {
+  await click('[data-nav="files"] .v-list-item')
+  openFile(path)
+}
 
-const VS =
-  '<span class="ot-vs"><span><b>人</b>直接改正式版，改了大家马上看到<br>每次停顿记进历史，能撤回<br>想单独试，就开分支，看过再合回去</span>' +
-  '<span><b>芝士</b>在一件事自己的那份上改，不碰正式版<br>改完是一份待定改动，人采纳了才进正式版<br>同样记进历史，能撤回</span></span>'
+const END = '改东西只有两种：直接改正式版（像改文档）；或者开一件事——芝士做还是人做，都在这件事里改、看改动、采纳。'
 
 const CODE_STEPS: (() => Promise<void>)[] = [
   async () => {
     reset()
-    cap(1, '项目文件里打开一个代码文件。它就是<b>正式版</b>，打开就能改，没有「改代码」这一步。')
+    cap(1, '项目文件里打开一个代码文件。它就是<b>正式版</b>，打开就能改，像改文档，没有「改代码」这一步。')
     await click('[data-nav="files"] .v-list-item')
-    go('files', { ftab: 'history' })
+    go('files')
     await click(`.ot-ftree__row[title="${PRE}"]`)
-    openFile(PRE, { ftab: 'history' })
+    openFile(PRE)
     await wait(1800)
-    await moveTo('.ot-ftree')
-    cap(1, '左边是文件树：文档、代码、成果都在这一处。')
-    await wait(1900)
     await moveTo('.ot-ced__faces')
-    cap(1, '中间是编辑器。王磊也开着这个文件，他的光标带着名字。')
+    cap(1, '王磊也开着这个文件，他的光标带着名字。')
     await wait(2200)
-    await moveTo('#b-run')
-    cap(1, '「运行」在编辑器上方；底下是<b>输出</b>和<b>终端</b>，都是你自己的环境，只有你看得到。')
-    await wait(2400)
-    await moveTo('.ot-fp .tabbar')
-    cap(1, '右栏是这个文件的「历史」「待定改动」「对话」：谁改过、芝士有什么还没生效的改动、频道里谁提到它。')
-    await wait(3000)
+    await moveTo('#b-own')
+    cap(
+      1,
+      V.run === 'T2'
+        ? '文件上方是「开一件事自己做」；编辑器上没有「运行」（方案 T2）。没有分支，也没有审核。'
+        : '文件上方是「开一件事自己做」，编辑器上是「运行」。没有分支，也没有审核。'
+    )
+    await wait(2600)
+    await moveTo('.ot-fp')
+    cap(1, '右栏只有这个文件的「历史」，谁改过、什么时候。这里不采纳任何东西。')
+    await wait(2800)
   },
   async () => {
     cap(2, '林晓直接在正式版上改：<code>Resize(256)</code> 改成 224，再加一行 <code>CenterCrop(224)</code>。')
@@ -478,107 +488,176 @@ const CODE_STEPS: (() => Promise<void>)[] = [
     await wait(2800)
   },
   async () => {
+    if (V.run === 'T2') {
+      await moveTo('[data-zone="no-run"]')
+      cap(3, '「运行」不在这里（方案 T2）：人不运行代码。')
+      await wait(2400)
+      await moveTo('[data-zone="terminal"]')
+      cap(3, '要跑，就选中代码在频道里问芝士：它在一件事里跑，输出在那件事的「现场」。')
+      await wait(3000)
+      return
+    }
     await click('#b-run')
     snapshot('research', PRE)
     runCode('research', PRE)
-    cap(3, '「运行」：在你自己的环境里跑正式版现在这份代码。')
+    if (V.run === 'T3') {
+      cap(3, '「运行」（方案 T3）：在你自己的环境里跑。')
+      await wait(1800)
+      await moveTo('[data-zone="terminal"] .ot-ced__mine')
+      cap(3, '输出和终端是你自己的，王磊看不到，芝士也不用它。跑出来正好 224×224。')
+      await wait(3000)
+      return
+    }
+    cap(3, '「运行」（方案 T1）：在<b>项目环境</b>里跑。项目只有这一个环境，芝士在一件事里做事也用它。')
     await wait(1800)
-    await moveTo('[data-zone="terminal"] .ot-ced__mine')
-    cap(3, '输出和终端是你自己的，王磊看不到，芝士也不用它。跑出来正好 224×224。')
-    await wait(3000)
-  },
-  async () => {
-    await click('#b-branch')
-    openBranch()
-    cap(4, '想先单独试试：「开分支」。编辑器顶上写着分支名，在这里改不影响正式版，王磊看到的还是正式版。')
-    await wait(2600)
-    await moveTo('.ot-carea__gutter span:nth-child(5)', 220)
-    await typeCodeTo(PRE, documented(codeText('research', PRE)))
-    await wait(900)
-    await click('#b-review')
-    askReview()
-    cap(4, '改好了「请人看一下」：王磊看过，分支栏上写着「王磊看过了」。')
-    await wait(2600)
-    await click('#b-merge-branch')
-    mergeBranch()
-    cap(4, '「合回正式版」：分支上的改动作为一条历史进了正式版，同样能撤回。')
-    await wait(3000)
+    await moveTo('[data-zone="project-env"]')
+    cap(3, '输出标着「项目环境」，跑出来正好 224×224。')
+    await wait(2200)
+    await moveTo('.ot-fp .ot-hist__row--run')
+    cap(3, '这次运行也记进历史：「林晓 运行了 eval/preprocess.py」，收成一行，没有撤回。')
+    await wait(2800)
   },
   async () => {
     await click(`.ot-ftree__row[title="${RET}"]`)
-    openFile(RET, { ftab: 'history' })
-    cap(5, '换芝士来改。打开 <code>eval/retrieval.py</code>，选中只算 R@1 的那一行。')
+    openFile(RET)
+    cap(4, '换芝士来改。打开 <code>eval/retrieval.py</code>，选中只算 R@1 的那一行。')
     await moveTo(`.ot-carea__gutter span:nth-child(${RET_LINE})`, 120)
     selectLine(RET, RET_LINE)
     await wait(1400)
-    await click('.ot-fp .tabbar__tab[title="对话"]')
-    S.ftab = 'talk'
-    cap(5, '在右栏「对话」里问芝士，选中的那一行跟着一起去。')
-    await moveTo('.ot-fp .ot-composer__box')
-    await typeInto(CODE_ASK, (v) => (S.asking = v))
-    await click('.ot-fp .composer-send')
-    askAboutFile()
-    cap(5, '<b>芝士不直接改正式版。</b>它开了一件事，在这件事自己的那份上改；编辑器里还是正式版，一行没变。')
-    await wait(1400)
-    await moveTo('[data-cheese-copy]')
-    await wait(2600)
+    await click('#b-ask-chan')
+    askInChannel()
+    cap(4, '「在频道里问芝士」：回到这个文件常被提到的频道，选中的那一行作为一枚引用放进输入框。')
+    await wait(2400)
+    await moveTo('.ot-composer__box')
+    await typeInto(`<@cheese> ${CODE_ASK}`, (v) => (S.typing = v), '<@cheese> ')
+    await click('.ot-composer .composer-send')
+    send()
+    cap(4, '发出去就是频道里的一句话，下面开出一个<b>讨论</b>，和演示一一样。')
+    await wait(2400)
   },
   async () => {
-    // 芝士 takes a few seconds on its copy; the step goes on once the change waits for 采纳.
-    while (copyThingFor('research', RET)?.status === 'run') await wait(200)
-    await click('.ot-fp .tabbar__tab[title="待定改动"]')
-    S.ftab = 'pending'
-    cap(6, '芝士改完了。「待定改动」里是它那份和正式版的差别。')
+    const t = asked()!
+    await click(`#card-${t.id}`)
+    openThing(t.id)
+    cap(5, '点开讨论：芝士先说这一行在做什么、打算怎么改。讨论里它不动任何文件。')
+    await wait(3200)
+    await click('#b-kick')
+    kickoff()
+    cap(5, '商量好了点「开工」：交给芝士，交付是改好的 <code>eval/retrieval.py</code>。')
+    await wait(2200)
+    await click('#b-confirm')
+    confirmKick()
+    cap(5, '开工后芝士在<b>这件事自己的那份</b>上改，正式版不动。')
     await wait(2400)
-    await moveTo('#b-copy-more')
-    cap(6, '可以「让芝士再改」（回到这件事的对话里告诉它）、「不要」，或者「采纳」。')
+  },
+  async () => {
+    await toFiles(RET)
+    cap(6, '回到文件：编辑器里还是正式版，一行没变。')
+    await wait(1800)
+    await moveTo('[data-things-on-file]')
+    cap(6, '编辑器上方只写着「有 1 件事在改这个文件」。')
+    await wait(2200)
+    await moveTo('.ot-fp [data-zone="things-on-file"] .ot-fp__thing')
+    cap(6, '右栏「正在改这个文件的事」：谁在做、到哪一步。这里没有「采纳」。')
+    while (asked()?.status === 'run') await wait(200)
+    cap(6, '芝士改完了，这一行变成「等采纳」。')
+    await wait(2200)
+  },
+  async () => {
+    const t = asked()!
+    await click('.ot-fp [data-zone="things-on-file"] .ot-fp__thing')
+    openThing(t.id, 'changes')
+    cap(7, '点它就回到那件事，正好在「改动」：芝士那份和正式版的差别。')
+    await wait(2800)
+    await click('#b-accept')
+    acceptCopy(t.id)
+    cap(7, '「采纳」只在这件事里。')
+    await wait(1600)
+    await toFiles(RET)
+    cap(7, '回到文件：正式版就是新代码。历史里记一条「林晓 采纳了…」，和自己改的一样能撤回。')
+    await moveTo('.ot-fp .ot-hist__row:first-child .ot-hist__undo')
     await wait(3000)
   },
   async () => {
-    await click('#b-copy-accept')
-    const t = copyThingFor('research', RET)
-    if (t) acceptCopy(t.id)
-    S.ftab = 'history'
-    cap(7, '「采纳」：芝士的改动这才进正式版，编辑器里就是新代码。')
-    await wait(2200)
-    await moveTo('.ot-fp .ot-hist__row:first-child .ot-hist__undo')
-    cap(7, '历史里记一条「林晓 采纳了芝士的改动」，和人自己的改动一样，能撤回。')
+    await click('#b-own')
+    openOwnThing()
+    cap(
+      8,
+      '自己想单独试：「开一件事自己做」。频道里多了一件事，林晓自己做；编辑器顶上写着「你在「试改 retrieval.py」的副本里改」。'
+    )
+    await wait(2800)
+    await moveTo('.ot-carea__gutter span:nth-child(15)', 260)
+    await typeCodeTo(RET, documented(codeText('research', RET)))
+    cap(8, '改的是副本，王磊看到的正式版没变。')
+    await wait(1600)
+    if (V.run !== 'T2') {
+      await click('#b-run')
+      runCode('research', RET)
+      cap(8, '这里「运行」跑的是这份副本。')
+      await wait(1800)
+    }
+    const t = ownTry()!
+    await click('#b-see-thing')
+    openThing(t.id, 'changes')
+    cap(8, '「看这件事」：改动里是副本和正式版的差别，和芝士那件一样。')
+    await wait(2400)
+    await click('#b-done')
+    markDone(t.id)
+    cap(8, '「改好了」：王磊在这件事里看过，说可以。')
+    await wait(2600)
+    await click('#b-accept')
+    acceptCopy(t.id)
+    cap(8, '采纳，进了正式版，同样记进历史。人做还是芝士做，看改动、采纳都在这件事里。')
     await wait(3000)
   },
   async () => {
     cursor.shown = false
-    cap(8, VS)
+    cap(9, END)
     await wait(6000)
   },
 ]
 
 /** Bring the state to the start of step `k + 1` of 演示二 without animating. */
 function instantCode(k: number) {
-  if (k === 0) openFile(PRE, { ftab: 'history' })
+  if (k === 0) go('files', { file: PRE })
   if (k === 1) {
     typeCode('research', PRE, fixed(codeText('research', PRE)))
     snapshot('research', PRE)
   }
-  if (k === 2) runCode('research', PRE)
+  if (k === 2) {
+    runCode('research', PRE)
+    settle()
+  }
   if (k === 3) {
-    openBranch()
-    typeCode('research', PRE, documented(codeText('research', PRE)))
-    mergeBranch()
+    openFile(RET)
+    selectLine(RET, RET_LINE)
+    askInChannel()
+    S.typing = `<@cheese> ${CODE_ASK}`
+    send()
+    settle()
   }
   if (k === 4) {
-    openFile(RET, { ftab: 'talk' })
-    selectLine(RET, RET_LINE)
-    S.codeSel = { path: RET, start: RET_LINE, end: RET_LINE }
-    S.asking = CODE_ASK
-    askAboutFile()
-    const t = copyThingFor('research', RET)
-    if (t) finishCopy(t.id)
+    openThing(asked()!.id)
+    confirmKick()
+    S.morph = false
   }
-  if (k === 5) S.ftab = 'pending'
+  if (k === 5) {
+    openFile(RET)
+    finishCopy(asked()!.id)
+  }
   if (k === 6) {
-    const t = copyThingFor('research', RET)
-    if (t) acceptCopy(t.id)
-    S.ftab = 'history'
+    acceptCopy(asked()!.id)
+    openFile(RET)
+  }
+  if (k === 7) {
+    openOwnThing()
+    typeCode('research', RET, documented(codeText('research', RET)))
+    runCode('research', RET)
+    const t = ownTry()!
+    markDone(t.id)
+    settle()
+    acceptCopy(t.id)
+    openFile(RET)
   }
 }
 
@@ -815,11 +894,11 @@ function onUserClick(e: MouseEvent) {
       </div>
       <div>
         <b>项目文件：一份正式版</b
-        >文档、代码、Word、成果都在这里。人直接改正式版，代码和文档一样，大家同时在改；每次改动自动记进历史，能撤回，想隔离就开分支。芝士的改动先待定，一键接受。
+        >文档、代码、Word、成果都在这里。人直接改正式版，代码和文档一样，大家同时在改；每次改动自动记进历史，能撤回。别的改动都是一件事：芝士做还是人自己单独试，都在那件事里看改动、采纳。
       </div>
       <div>
         <b>布局：中间频道，右边那件事</b
-        >中间一直是频道，可以看对话，也可以看频道文档：这个频道的事、芝士整理的要点（每句都能跳回原消息）、大家写的。右栏只放选中的那一件：点开的讨论或任务；打开项目文件时，是文件的待定改动和历史。
+        >中间一直是频道，可以看对话，也可以看频道文档：这个频道的事、芝士整理的要点（每句都能跳回原消息）、大家写的。右栏只放选中的那一件：点开的讨论或任务；打开项目文件时，是文件的历史和正在改它的事。
       </div>
     </div>
   </div>

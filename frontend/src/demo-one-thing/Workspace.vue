@@ -2,7 +2,7 @@
 // The 1280×800 workspace: the product's project rail, the sidebar, the center
 // column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
 // panel, which holds one selected thing: the open 一件事, or beside 项目文件
-// the open file's 待定改动, 历史 and 对话. With nothing selected it is
+// the open file's 历史 and the 一件事 changing it. With nothing selected it is
 // folded away. The rail's first item, 首页, opens the home list (待办, my
 // teams and their projects, the 空间 I belong to). Under it, each space I
 // belong to has its own icon; it opens the same view as 首页's 空间 list does.

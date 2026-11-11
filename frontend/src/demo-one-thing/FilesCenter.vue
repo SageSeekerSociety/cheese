@@ -2,8 +2,12 @@
 // 项目文件: the project's files. The tree reads like the product's file
 // library; a document opens in the product's document editor, a Word file shows
 // 芝士's 修订 in the product's Word comparison, a code file opens in the code
-// view (DemoCodeEdit: the code, 运行 and my own terminal), and a result is
-// rendered Markdown. A code file opens editable on 正式版, like a document.
+// view (DemoCodeEdit: the code and 运行), and a result is rendered Markdown.
+// A code file opens editable on 正式版, like a document. 芝士's suggestion in a
+// document (《组会纪要》) is marked in the document itself, and its card sits
+// right above it, where it is read: 接受 or 拒绝 there. A code file's bar has
+// 「开一件事自己做」 (a project with more than one person): a person's own try
+// is a 一件事 too, and the editor then works in its copy (DemoCodeEdit).
 // docs/频道/ holds each channel's 文档. In a project claimed
 // from the course, what the 题目 brought in: the 题面 (or the 题单 document)
 // pinned on top, and the starter code, folded by problem.
@@ -15,15 +19,38 @@ import { computed } from 'vue'
 
 import ChannelDoc from './ChannelDoc.vue'
 import { PROJECT_FILES } from './course'
-import { DOC_HTML, FILES, isClaim, MINUTES_DOC, minutesHtml, RESULTS_MD, TASK_DIFFS, WORD_COMPARISON } from './data'
+import {
+  DOC_HTML,
+  FILES,
+  isClaim,
+  isShared,
+  MINUTES_DOC,
+  minutesHtml,
+  RESULTS_MD,
+  TASK_DIFFS,
+  WORD_COMPARISON,
+} from './data'
 import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
 import FileTree from './FileTree.vue'
 import ProblemSetDoc from './ProblemSetDoc.vue'
-import { fkey, isSaving, onBranch, openFile, S, t4, toast } from './state'
+import {
+  fkey,
+  isSaving,
+  lockedMain,
+  myCopy,
+  openFile,
+  openOwnThing,
+  S,
+  suggAccept,
+  suggReject,
+  t4,
+  toast,
+} from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import DocSuggestionCard from '@/components/panels/doc/DocSuggestionCard.vue'
 import OfficeCompare from '@/components/review/OfficeCompare.vue'
 import { buildFileRows } from '@/lib/changesTree'
 import { fileIcon } from '@/lib/fileKind'
@@ -68,7 +95,7 @@ const minutes = computed(() => {
 })
 
 function select(path: string) {
-  if (all.value.some((f) => f.path === path)) openFile(path, { ftab: S.ftab })
+  if (all.value.some((f) => f.path === path)) openFile(path)
 }
 function toggleDir(path: string) {
   const list = (S.collapsed[S.project] ??= [])
@@ -76,6 +103,13 @@ function toggleDir(path: string) {
   if (i >= 0) list.splice(i, 1)
   else list.push(path)
 }
+/** 芝士's suggestion to 《组会纪要》, until it is accepted or rejected. */
+const suggestion = computed(() => S.project === 'research' && !S.suggAccepted && !S.suggRejected)
+const copy = computed(() => myCopy(S.project))
+/** 开一件事自己做 on a code file of a shared project, on 正式版 (protected, the editor offers it itself). */
+const canTry = computed(
+  () => entry.value.kind === 'code' && isShared(S.project) && !copy.value && !lockedMain(S.project) && !S.viewSub
+)
 const crumbs = computed(() => entry.value.path.split('/'))
 const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`)
 </script>
@@ -131,11 +165,18 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           <span class="ot-files__size">{{ sizeOf(entry.bytes) }}</span>
           <span class="ot-head__gap" />
           <span v-if="entry.pinned" class="ot-files__tag">置顶</span>
-          <span v-if="entry.kind === 'code' && onBranch(S.project)" class="ot-files__tag"
-            >分支：{{ S.branch!.name }}</span
-          >
           <span v-else-if="entry.kind === 'code' && isSaving(S.project, entry.path)" class="ot-files__tag">正在改</span>
           <span v-else-if="entry.kind === 'word'" class="ot-files__tag">修订 2 处</span>
+          <BaseButton
+            v-if="canTry"
+            id="b-own"
+            kind="ghost"
+            size="sm"
+            prepend-icon="mdi-checkbox-marked-outline"
+            title="在一件事自己的副本里改，改好了在那件事里采纳"
+            @click="openOwnThing"
+            >开一件事自己做</BaseButton
+          >
           <BaseButton
             kind="ghost"
             size="sm"
@@ -149,7 +190,23 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           class="ot-files__view"
           :class="{ 'ot-files__view--flush': entry.kind === 'code' || entry.kind === 'list' || entry.chan }"
         >
-          <DemoDoc v-if="entry.path === MINUTES_DOC" :html="minutes" peer :typing="S.typed.length > 0" />
+          <template v-if="entry.path === MINUTES_DOC">
+            <div v-if="suggestion" class="ot-files__sugg" data-zone="suggestion">
+              <DocSuggestionCard
+                author-name="芝士"
+                author-handle="cheese"
+                author-agent
+                author-avatar=""
+                :index="0"
+                :total="1"
+                reason="《组会纪要》第 3 条：「（待补）」改成「下周组会前把 COCO 5K 的结果更新到这里。」"
+                editable
+                @accept="suggAccept"
+                @reject="suggReject"
+              />
+            </div>
+            <DemoDoc :html="minutes" peer :typing="S.typed.length > 0" />
+          </template>
           <ChannelDoc v-else-if="entry.chan" :key="entry.chan" :chan="entry.chan" />
           <ProblemSetDoc v-else-if="entry.kind === 'list'" />
           <DemoDoc
@@ -252,6 +309,11 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
   min-height: 0;
   padding: 16px 32px;
   overflow: auto;
+}
+
+.ot-files__sugg {
+  max-width: 560px;
+  margin-bottom: 16px;
 }
 
 .ot-files__view--flush {

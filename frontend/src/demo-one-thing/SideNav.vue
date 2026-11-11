@@ -123,7 +123,7 @@ function openPage(key: string) {
       :can-transfer="true"
       :can-leave="false"
       @open-page="openPage"
-      @select-docs="go('files', { ftab: 'history' })"
+      @select-docs="go('files')"
       @open-palette="toast('⌘K：搜索频道、文件和一件事')"
       @open-transfer="toast('演示里不能转让项目')"
     />

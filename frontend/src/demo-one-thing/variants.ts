@@ -6,7 +6,12 @@
 // demo. With no question open the 「方案」 button is not shown.
 //
 // To ask one: add it to QUESTIONS, then read V[key] where the screen differs.
-// 提交入口 was the last one asked; it is settled on 平时收起 (OriginCard.vue).
+// 提交入口 was asked before; it is settled on 平时收起 (OriginCard.vue).
+// Open now: 运行在哪 (`run`). 运行 is not a change, so it is not a 一件事, but
+// a person's private terminal sat beside the one model as an environment
+// nobody else sees. T1 runs in the project's one environment, the one 芝士 uses
+// in a 一件事, and records each run; T2 leaves running to 芝士, inside a
+// 一件事; T3 is the private terminal, kept to compare against.
 import { reactive } from 'vue'
 
 import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
@@ -19,7 +24,30 @@ export interface Question {
   options: { key: string; label: string; note: string }[]
 }
 
-export const QUESTIONS: Question[] = []
+export const QUESTIONS: Question[] = [
+  {
+    key: 'run',
+    title: '运行在哪',
+    default: 'T1',
+    options: [
+      {
+        key: 'T1',
+        label: 'T1 项目环境',
+        note: '运行在项目的那一个环境里，芝士做事也在这里；每次运行记进历史。在一件事的副本里，运行的是那份副本。',
+      },
+      {
+        key: 'T2',
+        label: 'T2 只有芝士运行',
+        note: '人没有「运行」。要跑，就选中代码在频道里问芝士，它在一件事里跑。',
+      },
+      {
+        key: 'T3',
+        label: 'T3 现在的样子',
+        note: '每人一个自己的终端：输出和终端只有你看得到。',
+      },
+    ],
+  },
+]
 
 const KEY = 'oneThingDemo.variants'
 
