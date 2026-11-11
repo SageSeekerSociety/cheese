@@ -231,6 +231,12 @@ function initial() {
     term: {} as Record<string, { cmd: string; out: string }[]>,
     /** Every submission to each 题目, newest first: recorded on the 题目, not in the project. */
     subs: { datalab: [], week3: [], shelllab: [] } as Record<string, Submission[]>,
+    /** Each graded unit's latest local 运行 (运行 or a run command in the terminal): how much of it passed. */
+    ran: {} as Record<string, { ok: number; total: number }>,
+    /** Submissions whose result (the judge's verdict, the teacher's review) I have looked at. */
+    seen: {} as Record<string, boolean>,
+    /** 方案 D3: the 题目 card opened or closed by hand, per 题目; unset, it opens by itself when it matters. */
+    cardOpen: {} as Record<string, boolean>,
     /** A submission whose pinned version is open (read-only) in the project's code view. */
     viewSub: null as string | null,
     /** When the scripted ask went out (the 一件事's own clock counts from it). */
@@ -839,7 +845,11 @@ function researchRun(path: string, text: string): { cmd: string; out: string } {
 
 function runOf(p: ProjectKey, path: string, text: string) {
   const unit = unitOf(p, path)
-  return unit ? UNITS[unit]!.run(text) : researchRun(path, text)
+  if (!unit) return researchRun(path, text)
+  // The same check 运行 prints, kept as a count for the 题目 card's 进度 (方案 D2).
+  const v = UNITS[unit]!.judge(text)
+  S.ran[unit] = { ok: v.rows.filter((r) => r.ok).length, total: v.rows.length }
+  return UNITS[unit]!.run(text)
 }
 
 /** 运行: the file as it reads now (the branch's copy while on one), in my own environment; the output lands in the bottom panel and the terminal. */
@@ -973,6 +983,8 @@ export function submitTopic(
     later(1500, () => {
       const v = UNITS[unit]!.judge(file.text)
       sub.verdict = v
+      // I just submitted it and the toast says what it got: not 「有新批改」 on top of that.
+      if (sub.who === ME) S.seen[id] = true
       toast(v.score === v.total ? `通过了：${name}` : `「${name}」第 ${n} 次：${v.score}/${v.total}`)
     })
     return
@@ -999,6 +1011,16 @@ export function resultOf(s: Submission): { text: string; tone: 'ok' | 'bad' | 'w
   return topicById(s.topic)?.grading === 'teacher'
     ? { text: '待老师评', tone: 'wait' }
     : { text: '评测中…', tone: 'wait' }
+}
+
+/** A result on the 题目 I have not looked at yet: the teacher's review, or a verdict on someone else's submission. */
+export function unseenResult(topicId: string): Submission | null {
+  return S.subs[topicId]?.find((x) => (x.verdict || x.review) && !S.seen[x.id]) ?? null
+}
+
+/** Opening the 题目 (or folding the card that announced it) counts as having looked. */
+export function markSeen(topicId: string): void {
+  for (const x of S.subs[topicId] ?? []) if (x.verdict || x.review) S.seen[x.id] = true
 }
 
 /** Where I stand on a 题目, for the project's origin card: 未提交, 已通过 3/5, or the latest submission. */
@@ -1419,9 +1441,11 @@ export function deadlines(): Deadline[] {
 }
 
 /** A deadline row of a claimed 题目 opens where the 方案 puts submitting: the 题目 in the space (A, B),
- *  the project with its 题目 tab (C), or the project's own file under its origin card (D). */
+ *  the project with its 题目 tab (C), or the project's own file under its origin card (D, D1, D2; D3
+ *  opens its folded card too). */
 function openDue(topicId: string, file: string): void {
   if (V.submit === 'A' || V.submit === 'B') return showTopic(topicId)
+  if (V.submit === 'D3') S.cardOpen[topicId] = true
   switchProject(topicById(topicId)!.project!)
   openFile(file, V.submit === 'C' ? { ftab: 'topic' } : {})
 }

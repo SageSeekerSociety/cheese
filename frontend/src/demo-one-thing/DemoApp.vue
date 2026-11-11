@@ -4,12 +4,14 @@
 // actions a click does; clicking by hand stops the script at any point. The
 // controls' 「方案」 menu switches the variants of the design questions still
 // open (variants.ts); a switch redraws in place and keeps where the demo is.
+// Under 提交入口 it also has 「模拟：离截止不到 24 小时」, which moves only the
+// clock deadlines are read against.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { ASK } from './data'
 import { isClaim } from './data'
 import { accept, claim, confirmKick, finish, go, kickoff, openThing, reply, reset, S, send, suggAccept } from './state'
-import { QUESTIONS, setVariant, V } from './variants'
+import { CLOCK, QUESTIONS, setVariant, V } from './variants'
 import Workspace from './Workspace.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -98,6 +100,9 @@ const ORIGIN_NOTE: Record<string, string> = {
   B: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。它来自哪道题写在中间的顶栏上，点它回到空间里的这道题，在那里提交。',
   C: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。它来自的题目在右栏「题目」里：要求、截止、提交记录、「提交」。',
   D: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片是它来自的题目：截止、交到哪了、「提交」；点题目名回到空间里的这道题。',
+  D1: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片是它来自的题目，全是灰字：交到哪了、几号截止、「提交」；只有最后 24 小时出现倒计时。',
+  D2: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片先说做到哪了：本地运行几个通过、最近一次提交的结果；截止是小字，旁边是「提交」。',
+  D3: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。标题下一行是它来自的题目和截止，圆点说交了没有；点开是卡片和「提交」。快截止或老师批改回来时自己展开。',
 }
 const notesOn = ref(false)
 const notes = ref<
@@ -508,6 +513,17 @@ function onUserClick(e: MouseEvent) {
                 <b>{{ o.label }}</b>
                 <span>{{ o.note }}</span>
               </span>
+            </button>
+            <button
+              v-if="q.key === 'submit'"
+              type="button"
+              class="ot-variants__sim"
+              :aria-pressed="CLOCK.dueSoon"
+              data-sim-due
+              @click="CLOCK.dueSoon = !CLOCK.dueSoon"
+            >
+              <v-icon size="16" :icon="CLOCK.dueSoon ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" />
+              模拟：离截止不到 24 小时
             </button>
           </section>
           <p v-if="!inClaim" class="ot-variants__hint">

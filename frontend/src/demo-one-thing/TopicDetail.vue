@@ -6,7 +6,8 @@
 // teacher's score and comment arrive. Opening one shows that version read-only.
 // The space shows it in its center column; under 方案 C the claimed project's
 // right panel embeds the same view (`embedded`: narrower, with 「在空间里打开」).
-// A 题单 (in every 方案 but D, where its rows stay in the 题单 document) lists
+// Showing a 题目 counts as having looked at its results (no more 「有新批改」).
+// A 题单 (in every 方案 but the D family, where its rows stay in the 题单 document) lists
 // its problems here, one row each with where it stands and its own 「提交」.
 import type { Submission } from './course'
 
@@ -19,6 +20,7 @@ import { whenText } from './shapes'
 import {
   claim,
   latestOf,
+  markSeen,
   openFile,
   openSpace,
   openSubmit,
@@ -29,7 +31,7 @@ import {
   showTopic,
   switchProject,
 } from './state'
-import { V } from './variants'
+import { onCard } from './variants'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -50,7 +52,7 @@ const subs = computed(() => S.subs[detail.value.id] ?? [])
 const isSet = computed(() => detail.value.category === '题单')
 /** The 题单's problems are listed (and submitted) here, except under 方案 D. */
 const setRows = computed(() =>
-  isSet.value && V.submit !== 'D'
+  isSet.value && !onCard()
     ? SET.map((p) => {
         const last = latestOf(detail.value.id, p.id)
         return {
@@ -68,7 +70,7 @@ const setRows = computed(() =>
 const itemsText = computed(() => {
   const t = detail.value
   if (t.category === '题单')
-    return V.submit === 'D' ? '每题一份 main.cpp，在题单里一题一题提交' : '每题一份 main.cpp，在下面一题一题提交'
+    return onCard() ? '每题一份 main.cpp，在题单里一题一题提交' : '每题一份 main.cpp，在下面一题一题提交'
   return submitItems(t, t.id)
     .map((x) => `${x.type === 'FILE' ? '文件' : '文字'} ${x.prompt}`)
     .join(' + ')
@@ -78,6 +80,11 @@ const openSub = ref<string | null>(null)
 watch(detail, () => (openSub.value = null))
 const shown = computed(() => openSub.value ?? subs.value[0]?.id ?? '')
 const toggle = (id: string) => (openSub.value = shown.value === id ? '' : id)
+watch(
+  () => [detail.value.id, subs.value.filter((x) => x.verdict || x.review).length],
+  () => markSeen(detail.value.id),
+  { immediate: true }
+)
 const pinned = (x: Submission) => asContext(x.path, x.code.replace(/\n$/, '').split('\n'))
 
 /** A 题单 problem's row opens its main.cpp in the project. */

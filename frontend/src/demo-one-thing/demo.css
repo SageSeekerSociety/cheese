@@ -108,6 +108,34 @@ body {
   color: var(--ink);
 }
 
+/* Scoped under .ot-variants: the app's `button:not(.v-btn)` reset outranks a single class. */
+.ot-variants .ot-variants__sim {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  margin-top: 4px;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-top: 1px dashed var(--line-2);
+  border-radius: 0;
+}
+
+.ot-variants .ot-variants__sim:hover {
+  color: var(--ink);
+}
+
+.ot-variants .ot-variants__sim[aria-pressed='true'] {
+  color: var(--ink);
+}
+
 .ot-variants__hint {
   padding: 8px;
   margin: 4px 0 0;

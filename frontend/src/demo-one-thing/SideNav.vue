@@ -7,8 +7,9 @@
 // under A one quiet line under the header, 「来自 ICS 2026 · Data Lab ›」,
 // opening the 题目 in the space, where submitting happens; under D a card: the
 // 题目's name (back to the space), the deadline, how it is graded, where my (or
-// my team's) latest submission stands, and 「提交」. B and C put the way back
-// in the center's header or the right panel and leave this sidebar alone.
+// my team's) latest submission stands, and 「提交」. D1, D2 and D3 are calmer
+// versions of that card (OriginCard.vue). B and C put the way back in the
+// center's header or the right panel and leave this sidebar alone.
 // Either way the code editor has no 提交: it is the same in every project.
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
@@ -18,6 +19,7 @@ import { computed, ref } from 'vue'
 
 import { dueChip, GRADING_TEXT, topicOf } from './course'
 import { type Channel, channelsOf, isClaim, projectMeta, SPACE } from './data'
+import OriginCard from './OriginCard.vue'
 import { deadlines, go, myStatus, openSubmit, S, showTopic, toast } from './state'
 import { V } from './variants'
 
@@ -182,6 +184,8 @@ function openPage(key: string) {
         >
       </div>
     </section>
+
+    <OriginCard v-if="origin && ['D1', 'D2', 'D3'].includes(V.submit)" />
 
     <div class="ot-side__scroll">
       <div class="ot-side__row" data-nav="inbox">

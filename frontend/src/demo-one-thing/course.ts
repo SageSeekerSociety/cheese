@@ -15,6 +15,7 @@
 import type { ChatLine } from './state'
 
 import { type ClaimKey, dayAt, NOW } from './data'
+import { CLOCK } from './variants'
 
 export interface JudgeRow {
   name: string
@@ -197,9 +198,18 @@ export const modeText = (t: Topic) =>
 export const topicById = (id: string) => TOPICS.find((t) => t.id === id)
 export const topicOf = (p: ClaimKey) => TOPICS.find((t) => t.project === p)!
 
+/** The time deadlines are read against. 「模拟：离截止不到 24 小时」 moves it to 20 hours before
+ *  Data Lab's deadline (the nearest one), so every countdown moves with it; nothing else reads it. */
+export function dueNow(): number {
+  return CLOCK.dueSoon ? Date.parse(TOPICS[0]!.due) - 20 * 3_600_000 : NOW
+}
+
+/** Whole hours left before a deadline (negative once past). */
+export const hoursLeft = (iso: string) => Math.floor((Date.parse(iso) - dueNow()) / 3_600_000)
+
 /** 「3 天后截止」 for a 题目 due within a week, else nothing. */
 export function dueChip(iso: string): string | null {
-  const days = Math.floor((Date.parse(iso) - NOW) / 86_400_000)
+  const days = Math.floor((Date.parse(iso) - dueNow()) / 86_400_000)
   if (days > 7 || days < 0) return null
   return days === 0 ? '今天截止' : days === 1 ? '明天截止' : `${days} 天后截止`
 }
