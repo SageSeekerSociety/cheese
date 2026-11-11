@@ -37,7 +37,9 @@ jobs:
           - { os: macos-15, target: x86_64-apple-darwin, tmux: x86_64, asset: Cheese-x64.dmg, update: Cheese-x64.app.tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: Cheese-Setup-x64.exe, update: Cheese-Setup-x64.exe }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    # Notarization waits on Apple's queue, which has taken over 30 minutes for a
+    # submission (2026-11-11); the build itself is about 15.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
