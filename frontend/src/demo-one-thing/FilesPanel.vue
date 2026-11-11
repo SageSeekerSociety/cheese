@@ -7,17 +7,16 @@
 // mention this file, each linking back to its place in the channel, and a
 // 问芝士 box that asks with the file, and the selected lines, as context; the
 // question and the answer land in the channel too). In a project claimed from
-// the course there is no 芝士 change to wait on: 评测记录 lists every 提交评测,
-// each pinned to the version it judged, and opening one shows that version.
+// the course there is no 芝士 change to wait on, so 待定改动 is not there; and
+// no submission record either: submissions belong to the 题目 and are listed
+// on it in the space, so this panel is the same as in any project.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 
 import { computed } from 'vue'
 
-import { UNITS } from './course'
-import { channelOf, isClaim, MINUTES_DOC, NAMES, TASK_DIFFS } from './data'
+import { channelOf, MINUTES_DOC, NAMES, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
-import JudgeResult from './JudgeResult.vue'
-import { hhmm, whenText } from './shapes'
+import { hhmm } from './shapes'
 import {
   accept,
   askAboutFile,
@@ -25,7 +24,6 @@ import {
   jumpTo,
   mentionsOf,
   openThing,
-  openVersion,
   S,
   snapshotAll,
   suggAccept,
@@ -56,7 +54,6 @@ const onBranch = computed(() =>
 )
 const pending = computed(() => suggestion.value + (taskDiff.value ? 1 : 0))
 const history = computed(() => S.history[S.project])
-const subs = computed(() => (isClaim(S.project) ? S.subs[S.project] : []))
 const mentions = computed(() => mentionsOf(S.file))
 const sel = computed(() => (S.codeSel?.path === S.file ? S.codeSel : null))
 const selLabel = computed(() =>
@@ -64,16 +61,6 @@ const selLabel = computed(() =>
 )
 
 const tabs = computed<PanelTab[]>(() => [
-  ...(research.value
-    ? []
-    : [
-        {
-          key: 'subs',
-          label: '评测记录',
-          icon: 'mdi-clipboard-check-outline',
-          signal: subs.value.length ? { kind: 'count' as const, count: subs.value.length } : undefined,
-        },
-      ]),
   { key: 'history', label: '历史', icon: 'mdi-history' },
   ...(research.value
     ? [
@@ -92,7 +79,9 @@ const tabs = computed<PanelTab[]>(() => [
     signal: mentions.value.length ? { kind: 'count' as const, count: mentions.value.length } : undefined,
   },
 ])
-const tab = computed(() => (S.ftab === 'history' || S.ftab === 'talk' ? S.ftab : research.value ? 'pending' : 'subs'))
+const tab = computed(() =>
+  S.ftab === 'history' || S.ftab === 'talk' ? S.ftab : research.value ? 'pending' : 'history'
+)
 /** A message as one plain paragraph: names for mentions, no Markdown marks, code blocks left out. */
 const plain = (t: string) =>
   t
@@ -117,29 +106,7 @@ function undoAt(i: number) {
     </header>
     <PanelTabs :tabs="tabs" :active="tab" @select="S.ftab = $event" />
     <div class="ot-fp__body" :class="{ 'ot-fp__body--talk': tab === 'talk' }">
-      <div v-if="tab === 'subs'" class="ot-subs" data-zone="subs">
-        <BaseEmptyState
-          v-if="!subs.length"
-          size="compact"
-          icon="mdi-clipboard-check-outline"
-          title="还没有提交评测"
-          desc="在要评测的代码文件上点「提交评测」，每次评的版本都记在这里"
-        />
-        <div v-for="x in subs" :key="x.id" class="ot-subs__item" :class="{ 'is-open': S.viewSub === x.id }">
-          <button type="button" class="ot-subs__row" :data-sub="x.id" @click="openVersion(x.id)">
-            <span class="ot-subs__line"
-              >第 {{ x.n }} 次提交 ·
-              <b :class="{ 'is-ok': x.score === x.total }">{{ x.score }}/{{ x.total }}</b>
-              · 版本 <code>{{ x.version }}</code></span
-            >
-            <span class="ot-subs__meta"
-              >{{ S.project === 'week3' ? `${UNITS[x.unit]!.title} · ` : '' }}{{ whenText(x.at) }}</span
-            >
-          </button>
-          <JudgeResult v-if="S.viewSub === x.id" :sub="x" class="ot-subs__detail" />
-        </div>
-      </div>
-      <template v-else-if="tab === 'pending'">
+      <template v-if="tab === 'pending'">
         <div v-if="onBranch" class="ot-fp__copy">
           <v-icon size="16" icon="mdi-source-branch" />
           <span>分支「{{ S.branch!.name }}」改了这个文件 {{ onBranch.n }} 行</span>
@@ -227,62 +194,6 @@ function undoAt(i: number) {
 </template>
 
 <style scoped>
-.ot-subs__item {
-  border-bottom: 1px solid var(--line);
-}
-
-.ot-subs__row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 8px;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-md);
-}
-
-.ot-subs__row:hover {
-  background: var(--fill);
-}
-
-.ot-subs__item.is-open .ot-subs__row {
-  background: var(--line-2);
-}
-
-.ot-subs__line {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--text);
-}
-
-.ot-subs__line b {
-  font-family: var(--font-mono);
-  color: var(--ink);
-}
-
-.ot-subs__line b.is-ok {
-  color: var(--ok-ink);
-}
-
-.ot-subs__line code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ink);
-}
-
-.ot-subs__meta {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.ot-subs__detail {
-  padding: 4px 8px 12px;
-}
-
 .ot-fp {
   display: flex;
   flex-direction: column;

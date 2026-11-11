@@ -127,7 +127,7 @@ const USAGE = [
           <SettingsRow label="芝士在这个项目里" description="可以问思路，它不会写出答案" width="select">
             <span class="ot-set__value" data-rule="cheese">只给提示</span>
           </SettingsRow>
-          <SettingsRow label="截止" description="以截止前最后一次提交评测为准" width="select">
+          <SettingsRow label="截止" description="提交在空间里的这道题目上，以截止前最后一次为准" width="select">
             <span class="ot-set__value" data-rule="due">{{ monthDayTime(Date.parse(topic.due)) }}</span>
           </SettingsRow>
           <SettingsRow label="代码" description="每次改动自动记进历史，可以撤回" width="select-wide">

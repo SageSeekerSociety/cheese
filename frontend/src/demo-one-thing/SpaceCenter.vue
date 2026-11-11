@@ -1,21 +1,53 @@
 <script setup lang="ts">
 // The course 空间's pages, beside its sidebar. 题目 (all, or one 分类): each
-// 题目 with its 分类, deadline, whether it is claimed alone (个人) or by a team
-// (组队 and the team size), where I or my team stand, and 领取 or 进入. 领取
-// makes a project owned by a team: a personal 题目 goes to my own team; one a
-// team may claim asks 「自己领」 or 「和团队一起领」 and which team, and every
-// member of that team is in the one project it gets. 公告 is the teacher's
-// notices; 资料库 the slides and handouts. A space has no channels and holds
-// no one's project.
-import { computed, nextTick, ref, watch } from 'vue'
+// 题目 with its 分类, how it is graded, deadline, whether it is claimed alone
+// (个人) or by a team (组队 and the team size), where I or my team stand, and
+// 领取 or 进入. 领取 makes a project owned by a team: a personal 题目 goes to my
+// own team; one a team may claim asks 「自己领」 or 「和团队一起领」 and which
+// team, and every member of that team is in the one project it gets.
+// Opening a 题目 shows what it asks for (提交项), how it is graded, and its
+// 提交记录: submissions are made to the 题目 and their results live here, not
+// in the project. Each one names its time, who submitted (as which team), the
+// version it pinned and its result: the judge's verdict, or 待老师评 until the
+// teacher's score and comment arrive. Opening one shows that version read-only.
+// 公告 is the teacher's notices; 资料库 the slides and handouts. A space has no
+// channels and holds no one's project.
+import type { Submission } from './course'
 
-import { ANNOUNCEMENTS, dueChip, LIBRARY, modeText, topicById, TOPICS } from './course'
-import { ME, NAMES, SPACE, TEAMS } from './data'
+import { computed, ref, watch } from 'vue'
+
+import {
+  ANNOUNCEMENTS,
+  dueChip,
+  GRADING_NOTE,
+  GRADING_TEXT,
+  LIBRARY,
+  modeText,
+  submitItems,
+  topicById,
+  TOPICS,
+  UNITS,
+} from './course'
+import { asContext, CLAIMED, ME, NAMES, projectTeam, SPACE, teamOf, TEAMS } from './data'
+import JudgeResult from './JudgeResult.vue'
 import { whenText } from './shapes'
-import { claim, claimAs, S, standing, switchProject, toast } from './state'
+import {
+  claim,
+  claimAs,
+  openSpace,
+  openSubmit,
+  openVersion,
+  resultOf,
+  S,
+  showTopic,
+  standing,
+  switchProject,
+  toast,
+} from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import { monthDayTime } from '@/lib/dateText'
 
 const ICONS: Record<string, string> = {
@@ -34,15 +66,25 @@ const rows = computed(() =>
   }))
 )
 
-// A 题目 shown from a project's 「来自」 line or a deadline: scrolled to and flashed.
-const list = ref<HTMLElement | null>(null)
-watch(
-  () => S.spaceFlashTick,
-  async () => {
-    await nextTick()
-    list.value?.querySelector(`[data-topic="${S.spaceFlash}"]`)?.scrollIntoView({ block: 'nearest' })
-  }
-)
+// ---- one 题目 open: what it asks for, and its 提交记录 ----
+const detail = computed(() => (S.spacePage === 'tasks' && S.spaceTopic ? topicById(S.spaceTopic) ?? null : null))
+const claimedHere = computed(() => !!detail.value?.project && S.claimed.includes(detail.value.project))
+const subs = computed(() => (detail.value ? S.subs[detail.value.id] ?? [] : []))
+/** 提交项 as one line; a 题单's are per problem. */
+const itemsText = computed(() => {
+  const t = detail.value
+  if (!t) return ''
+  if (t.category === '题单') return '每题一份 main.cpp，在题单里一题一题提交'
+  return submitItems(t, t.id)
+    .map((x) => `${x.type === 'FILE' ? '文件' : '文字'} ${x.prompt}`)
+    .join(' + ')
+})
+// The latest submission starts open; a click opens another or folds it.
+const openSub = ref<string | null>(null)
+watch(detail, () => (openSub.value = null))
+const shown = computed(() => openSub.value ?? subs.value[0]?.id ?? '')
+const toggle = (id: string) => (openSub.value = shown.value === id ? '' : id)
+const pinned = (x: Submission) => asContext(x.path, x.code.replace(/\n$/, '').split('\n'))
 
 // ---- 领取: 自己领 or 和团队一起领 ----
 const asked = computed(() => (S.claimAsk ? topicById(S.claimAsk) ?? null : null))
@@ -60,7 +102,11 @@ watch(asked, (t) => {
 
 const size = (b: number) => (b >= 1_000_000 ? `${(b / 1_000_000).toFixed(1)} MB` : `${Math.round(b / 1000)} KB`)
 const title = computed(() =>
-  S.spacePage === 'announce' ? '公告' : S.spacePage === 'library' ? '资料库' : S.spaceCat ?? '全部题目'
+  S.spacePage === 'announce'
+    ? '公告'
+    : S.spacePage === 'library'
+      ? '资料库'
+      : detail.value?.title ?? S.spaceCat ?? '全部题目'
 )
 </script>
 
@@ -71,25 +117,138 @@ const title = computed(() =>
       <span class="ot-head__sub">{{ SPACE.name }} · {{ SPACE.org }} · {{ SPACE.teacher }}</span>
     </header>
 
-    <div v-if="S.spacePage === 'tasks'" ref="list" class="ot-space__body">
+    <div v-if="detail" class="ot-space__body" data-zone="topic">
+      <button type="button" class="ot-tp__back" @click="openSpace('tasks')">
+        <v-icon size="16" icon="mdi-chevron-left" />全部题目
+      </button>
+      <div class="ot-tp__head">
+        <v-icon size="20" class="ot-space__kind" :icon="ICONS[detail.category]" />
+        <h3 class="ot-tp__title">{{ detail.title }}</h3>
+        <span class="ot-space__type">{{ detail.category }}</span>
+        <span class="ot-head__gap" />
+        <template v-if="claimedHere">
+          <BaseButton kind="secondary" size="sm" @click="switchProject(detail.project!)">进入项目</BaseButton>
+          <BaseButton
+            id="b-topic-submit"
+            kind="primary"
+            size="sm"
+            prepend-icon="mdi-upload-outline"
+            @click="openSubmit(detail.id)"
+            >提交</BaseButton
+          >
+        </template>
+        <BaseButton v-else kind="primary" size="sm" @click="claim(detail.id)">领取</BaseButton>
+      </div>
+      <p class="ot-tp__about">{{ detail.about }}</p>
+      <dl class="ot-tp__facts">
+        <div>
+          <dt>截止</dt>
+          <dd>
+            {{ monthDayTime(Date.parse(detail.due)) }}
+            <span v-if="dueChip(detail.due)" class="ot-space__chip">{{ dueChip(detail.due) }}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>谁来做</dt>
+          <dd>{{ modeText(detail) }}</dd>
+        </div>
+        <div>
+          <dt>评分方式</dt>
+          <dd data-grading>
+            <b>{{ GRADING_TEXT[detail.grading] }}</b> · {{ GRADING_NOTE[detail.grading] }}
+          </dd>
+        </div>
+        <div>
+          <dt>提交项</dt>
+          <dd>{{ itemsText }}</dd>
+        </div>
+        <div v-if="claimedHere">
+          <dt>项目</dt>
+          <dd>{{ CLAIMED[detail.project!].name }} · 在团队「{{ projectTeam(detail.project!).name }}」下</dd>
+        </div>
+      </dl>
+
+      <section class="ot-tp__subs" data-zone="topic-subs">
+        <h4 class="ot-tp__h">
+          提交记录<span>{{ subs.length || '' }}</span>
+        </h4>
+        <p v-if="!subs.length" class="ot-space__note">
+          {{ claimedHere ? '还没有提交。每次提交都记在这里：交的是哪个版本、结果是什么。' : '领取之后才能提交。' }}
+        </p>
+        <div v-for="x in subs" :key="x.id" class="ot-tp__sub" :class="{ 'is-open': shown === x.id }">
+          <button type="button" class="ot-tp__row" :data-sub="x.id" @click="toggle(x.id)">
+            <span class="ot-tp__n"
+              >{{ detail.category === '题单' ? `${UNITS[x.unit]!.title} · ` : '' }}第 {{ x.n }} 次</span
+            >
+            <span class="ot-tp__when">{{ whenText(x.at) }}</span>
+            <span class="ot-tp__by">
+              <UserAvatar :size="18" :name="NAMES[x.who]" :seed="x.who" />{{ NAMES[x.who]
+              }}{{ x.team ? ` · 以「${teamOf(x.team).name}」` : '' }}
+            </span>
+            <span class="ot-tp__ver"
+              >版本 <code>{{ x.version }}</code></span
+            >
+            <span class="ot-tp__res" :class="`is-${resultOf(x).tone}`">{{ resultOf(x).text }}</span>
+            <v-icon size="16" class="ot-tp__chev" :icon="shown === x.id ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+          </button>
+          <div v-if="shown === x.id" class="ot-tp__detail">
+            <JudgeResult v-if="x.verdict" :verdict="x.verdict" />
+            <div v-else-if="x.review" class="ot-tp__review" data-review>
+              <div class="ot-tp__rhead">
+                <UserAvatar :size="22" :name="NAMES[x.review.by]" :seed="x.review.by" />
+                <b>{{ NAMES[x.review.by] }}</b>
+                <span>批改 · {{ whenText(x.review.at) }}</span>
+                <span class="ot-head__gap" />
+                <b class="ot-tp__score">{{ x.review.score }}/{{ x.review.total }}</b>
+              </div>
+              <p>{{ x.review.comment }}</p>
+            </div>
+            <div v-else class="ot-tp__wait">
+              <v-icon size="15" icon="mdi-timer-sand" />{{
+                detail.grading === 'teacher' ? '待老师评：张老师批改后，分数和评语出现在这里' : '评测中…'
+              }}
+            </div>
+            <div v-for="tx in x.texts" :key="tx.prompt" class="ot-tp__part">
+              <div class="ot-tp__parthead">
+                <span class="ot-tp__kind">文字</span><b>{{ tx.prompt }}</b>
+              </div>
+              <p class="ot-tp__text">{{ tx.text }}</p>
+            </div>
+            <div class="ot-tp__part">
+              <div class="ot-tp__parthead">
+                <span class="ot-tp__kind">文件</span><code>{{ x.path }}</code>
+                <span>版本 {{ x.version }} · 只读</span>
+                <span class="ot-head__gap" />
+                <BaseButton kind="ghost" size="sm" prepend-icon="mdi-open-in-app" @click="openVersion(x.id)"
+                  >在项目里打开</BaseButton
+                >
+              </div>
+              <div class="ot-tp__code"><ChangesDiff :lines="pinned(x)" inline /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div v-else-if="S.spacePage === 'tasks'" class="ot-space__body">
       <p class="ot-space__note">
         领取后就是一个项目：个人题目建在你自己的团队下，组队题目建在领取它的团队下，组里每个人都在里面。一个团队一道题只有一个项目。
       </p>
       <div class="ot-space__list" data-zone="topics">
-        <div
-          v-for="t in rows"
-          :key="`${t.id}-${S.spaceFlash === t.id ? S.spaceFlashTick : 0}`"
-          class="ot-space__row"
-          :class="{ 'ot-flash': S.spaceFlash === t.id && S.spaceFlashTick }"
-          :data-topic="t.id"
-        >
+        <div v-for="t in rows" :key="t.id" class="ot-space__row" :data-topic="t.id">
           <v-icon size="18" class="ot-space__kind" :icon="ICONS[t.category]" />
-          <div class="ot-space__main">
+          <button
+            type="button"
+            class="ot-space__main"
+            :title="`打开「${t.title}」：要求和提交记录`"
+            @click="showTopic(t.id)"
+          >
             <span class="ot-space__title"
-              >{{ t.title }}<span class="ot-space__type">{{ t.category }}</span></span
+              >{{ t.title }}<span class="ot-space__type">{{ t.category }}</span
+              ><span class="ot-space__type" :data-grading="t.grading">{{ GRADING_TEXT[t.grading] }}</span></span
             >
             <span class="ot-space__about">{{ t.about }}</span>
-          </div>
+          </button>
           <span class="ot-space__mode" :class="{ 'is-team': t.mode !== 'solo' }">
             <v-icon size="14" :icon="t.mode === 'solo' ? 'mdi-account-outline' : 'mdi-account-multiple-outline'" />{{
               modeText(t)
@@ -276,6 +435,18 @@ const title = computed(() =>
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+.ot-space__main:hover {
+  background: var(--fill);
 }
 
 .ot-space__title {
@@ -361,6 +532,282 @@ const title = computed(() =>
 .ot-space__btn {
   flex: none;
   width: 64px;
+}
+
+/* One 题目 open */
+.ot-tp__back {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  padding: 2px 6px 2px 2px;
+  margin: 0 0 8px -2px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.ot-tp__back:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.ot-tp__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ot-tp__head .ot-space__type {
+  margin-left: 0;
+}
+
+.ot-tp__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ot-tp__about {
+  margin: 6px 0 12px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+
+.ot-tp__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  padding: 12px 16px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.ot-tp__facts > div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.ot-tp__facts dt {
+  flex: none;
+  width: 56px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ot-tp__facts dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+}
+
+.ot-tp__facts dd b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ot-tp__subs {
+  margin-top: 20px;
+}
+
+.ot-tp__h {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ot-tp__h span {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.ot-tp__sub {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.ot-tp__sub + .ot-tp__sub {
+  margin-top: 8px;
+}
+
+.ot-tp__row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px 0 16px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-lg);
+}
+
+.ot-tp__row:hover {
+  background: var(--fill);
+}
+
+.ot-tp__n {
+  flex: none;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ot-tp__when {
+  flex: none;
+  width: 88px;
+  color: var(--muted);
+}
+
+.ot-tp__by {
+  display: inline-flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ot-tp__ver {
+  flex: none;
+  color: var(--muted);
+}
+
+.ot-tp__ver code,
+.ot-tp__part code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.ot-tp__res {
+  flex: none;
+  min-width: 64px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+  text-align: right;
+}
+
+.ot-tp__res.is-ok {
+  color: var(--ok-ink);
+}
+
+.ot-tp__res.is-wait {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  color: var(--accent-ink);
+}
+
+.ot-tp__chev {
+  flex: none;
+  color: var(--muted);
+}
+
+.ot-tp__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 16px 16px;
+}
+
+.ot-tp__wait {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--accent-ink);
+}
+
+.ot-tp__review {
+  padding: 10px 12px;
+  background: var(--fill);
+  border-radius: var(--radius-md);
+}
+
+.ot-tp__rhead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ot-tp__rhead b {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ot-tp__rhead .ot-tp__score {
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+.ot-tp__review p,
+.ot-tp__text {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.ot-tp__parthead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ot-tp__parthead b {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ot-tp__kind {
+  padding: 0 6px;
+  line-height: 18px;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+}
+
+.ot-tp__code {
+  max-height: 240px;
+  margin-top: 6px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+/* The pinned version drawn as the code view draws it read-only: plain numbered lines. */
+.ot-tp__code :deep(.diff-line--hunk),
+.ot-tp__code :deep(.diff-line > .diff-line__num:first-of-type) {
+  display: none;
+}
+
+.ot-tp__code :deep(.diff-line__text) {
+  white-space: pre;
 }
 
 /* 公告 */

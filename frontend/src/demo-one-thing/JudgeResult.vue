@@ -1,20 +1,23 @@
 <script setup lang="ts">
-// One judged submission: the score and its one-line summary, then a row per
-// test (✓ / ✗, the time it took, and what went wrong). Shown under the editor
-// right after 提交评测 and again when a row of 评测记录 is opened.
-import type { Submission } from './course'
+// The judge's verdict on one submission: the score and its one-line summary,
+// then a row per test (✓ / ✗, the time it took, and what went wrong). Shown
+// when a submission is opened in its 题目's 提交记录.
+import type { Verdict } from './course'
 
-defineProps<{ sub: Submission }>()
+defineProps<{ verdict: Verdict }>()
 </script>
 
 <template>
   <div class="ot-judge">
-    <div class="ot-judge__verdict" :class="{ 'is-ok': sub.score === sub.total }">
-      <v-icon size="16" :icon="sub.score === sub.total ? 'mdi-check-circle-outline' : 'mdi-close-circle-outline'" />
-      <b>{{ sub.score === sub.total ? '已通过' : '没有全部通过' }}</b>
-      <span>{{ sub.summary }}</span>
+    <div class="ot-judge__verdict" :class="{ 'is-ok': verdict.score === verdict.total }">
+      <v-icon
+        size="16"
+        :icon="verdict.score === verdict.total ? 'mdi-check-circle-outline' : 'mdi-close-circle-outline'"
+      />
+      <b>{{ verdict.score === verdict.total ? '已通过' : '没有全部通过' }}</b>
+      <span>{{ verdict.summary }}</span>
     </div>
-    <div v-for="r in sub.rows" :key="r.name" class="ot-judge__row" :class="{ 'is-bad': !r.ok }">
+    <div v-for="r in verdict.rows" :key="r.name" class="ot-judge__row" :class="{ 'is-bad': !r.ok }">
       <span class="ot-judge__mark">{{ r.ok ? '✓' : '✗' }}</span>
       <span class="ot-judge__text"
         ><span class="ot-judge__name">{{ r.name }}</span

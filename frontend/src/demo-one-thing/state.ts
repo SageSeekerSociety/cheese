@@ -2,11 +2,23 @@
 // every click (a person's or the scripted cursor's) goes through the actions
 // below, so playing, stepping and clicking by hand always agree.
 import type { ReactionAgg } from '@/cx_types'
-import type { Submission } from './course'
+import type { Submission, Verdict } from './course'
 
 import { reactive } from 'vue'
 
-import { dueChip, hintFor, PROJECT_FILES, SET, topicById, TOPICS, UNITS, versionOf, welcome } from './course'
+import {
+  dueChip,
+  hintFor,
+  PROJECT_FILES,
+  reviewShell,
+  SET,
+  submitItems,
+  topicById,
+  TOPICS,
+  UNITS,
+  versionOf,
+  welcome,
+} from './course'
 import {
   ASK,
   CHAN_DOCS,
@@ -24,6 +36,7 @@ import {
   NAMES,
   type ProjectKey,
   projectOfChan,
+  projectTeam,
   teamOf,
 } from './data'
 
@@ -35,11 +48,7 @@ export type Status = 'talk' | 'run' | 'wait' | 'done'
 export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'space' | 'team'
 export type SpacePage = 'tasks' | 'announce' | 'library'
 /** The bottom panel's 输出 for one file. */
-export type Out =
-  | { kind: 'running' }
-  | { kind: 'run'; cmd: string; out: string }
-  | { kind: 'judging'; version: string }
-  | { kind: 'judge'; sub: string }
+export type Out = { kind: 'running' } | { kind: 'run'; cmd: string; out: string }
 export type ChanView = 'doc' | 'talk'
 
 /** One thing said: in a channel, or inside a 一件事. */
@@ -130,13 +139,14 @@ function initial() {
     /** The course 空间's page: 题目 (all, or one 分类), 公告 or 资料库. */
     spacePage: 'tasks' as SpacePage,
     spaceCat: null as string | null,
-    /** A 题目 to bring into view and flash in the list (from a project's 「来自」 line or a deadline). */
-    spaceFlash: null as string | null,
-    spaceFlashTick: 0,
+    /** The 题目 open in the space (its detail and 提交记录), from a row, a project's origin card or a deadline. */
+    spaceTopic: null as string | null,
     /** 全部题目's 「上次查看后新发布」 count: cleared once the list has been seen and left. */
     spaceNew: 3,
     /** 领取 asking 「自己领」 or 「和团队一起领」 for this 题目. */
     claimAsk: null as string | null,
+    /** The 提交 dialog: the 题目, and what is graded (the 题目 itself, or one problem of the 题单). */
+    submitAsk: null as null | { topic: string; unit: string },
     /** The team whose 项目 list is open on 首页. */
     teamView: 'linxiao',
     /** The channel each project was last on, so switching back lands where you were. */
@@ -196,7 +206,7 @@ function initial() {
       Object.entries(CODE).map(([path, c]) => [fkey('research', path), c.before.join('\n')])
     ),
     /** A file being typed into: the text it had before this burst of typing. The burst becomes one
-     *  历史 entry once typing pauses (or on ⌘S, leaving the file, 运行, 提交评测). */
+     *  历史 entry once typing pauses (or on ⌘S, leaving the file, 运行, opening 提交). */
     snapBase: {} as Record<string, string>,
     /** 林晓's branch in a shared project (the research project, a team's 题目), if she opened one: her own
      *  copy of the code files it touches, merged back by 合回正式版. */
@@ -218,11 +228,9 @@ function initial() {
     out: {} as Record<string, Out>,
     /** Each project's terminal transcript (the person's own environment). */
     term: {} as Record<string, { cmd: string; out: string }[]>,
-    /** Every 提交评测 in each claimed project, newest first. */
-    subs: { datalab: [], week3: [], shelllab: [] } as Record<ClaimKey, Submission[]>,
-    /** The file being judged right now (fkey), if any. */
-    judging: null as string | null,
-    /** A submission whose pinned version is open (read-only) in the code view. */
+    /** Every submission to each 题目, newest first: recorded on the 题目, not in the project. */
+    subs: { datalab: [], week3: [], shelllab: [] } as Record<string, Submission[]>,
+    /** A submission whose pinned version is open (read-only) in the project's code view. */
     viewSub: null as string | null,
     /** When the scripted ask went out (the 一件事's own clock counts from it). */
     askAt: '',
@@ -558,7 +566,7 @@ export function switchProject(p: ProjectKey): void {
     // The channel this project was last on, even when it lands on 项目文件 (设置 names it).
     S.chan = S.chanOf[p]
     S.file = S.fileOf[p] ?? S.file
-    S.ftab = isClaim(p) ? 'subs' : 'pending'
+    S.ftab = isClaim(p) ? 'history' : 'pending'
     S.settingsSection = 'project'
   }
   S.area = 'project'
@@ -578,18 +586,17 @@ export function openHome(center: 'inbox' | 'team' = 'inbox', extra: Partial<type
   go(center, extra)
 }
 
-/** The course 空间, from 首页's list, a project's 「来自」 line or a deadline: one of its pages. */
+/** The course 空间, from its rail icon, 首页's list, a project's origin card or a deadline: one of its pages. */
 export function openSpace(page: SpacePage = 'tasks', extra: Partial<typeof S> = {}): void {
   leaveProject()
   S.area = 'home'
   if (page !== 'tasks' || S.spacePage !== 'tasks') S.claimAsk = null
-  go('space', { spacePage: page, spaceCat: null, ...extra })
+  go('space', { spacePage: page, spaceCat: null, spaceTopic: null, ...extra })
 }
 
-/** Bring one 题目 into view in the space's list and flash it. */
+/** Open one 题目 in the space: what it asks, how it is graded, and its 提交记录. */
 export function showTopic(id: string): void {
-  openSpace('tasks', { spaceFlash: id })
-  S.spaceFlashTick++
+  openSpace('tasks', { spaceTopic: id })
 }
 
 /** Unread messages in one space's channels (the rail's count). */
@@ -878,36 +885,138 @@ export function termRun(p: ProjectKey, path: string, cmd: string): void {
   list.push({ cmd: c, out: `${c.split(/\s/)[0]}：演示里的终端只认 ls、cat、clear 和运行命令` })
 }
 
-// ---- 提交评测: the judge runs on a pinned version of 正式版 ----
+// ---- 提交: a submission is made to the 题目 ----
+//
+// The editor has 运行 only. A submission belongs to the 题目: the dialog lists
+// the 题目's 提交项, fills each FILE item from a version of the project's file
+// (正式版 as it reads now, or an earlier one from 历史) and records the
+// submission on the 题目, where the space shows it. How it is graded is the
+// 题目's: 评测机评 comes back at once, 老师评 waits for 张老师.
 
 let seqSub = 0
 
-/** 提交评测 on a judged file: the file as it is now is pinned (its version id) and judged. */
-export function submitCode(p: ProjectKey, path: string): void {
-  const unit = unitOf(p, path)
-  if (!unit || !isClaim(p) || S.judging) return
-  // What was just typed becomes its 历史 entry first; the judged version is the file as it reads now.
-  snapshot(p, path)
-  const k = fkey(p, path)
-  const text = officialText(p, path)
-  const version = versionOf(text)
-  S.judging = k
-  S.out[k] = { kind: 'judging', version }
-  S.outTab = 'out'
-  later(1500, () => {
-    S.judging = null
-    const v = UNITS[unit]!.judge(text)
-    const n = S.subs[p].filter((x) => x.unit === unit).length + 1
-    const sub: Submission = { ...v, id: `s${seqSub++}`, unit, n, at: new Date().toISOString(), version, code: text }
-    S.subs[p].unshift(sub)
-    S.out[k] = { kind: 'judge', sub: sub.id }
-    S.ftab = 'subs'
-    toast(v.score === v.total ? `通过了：${UNITS[unit]!.title}` : `${v.score}/${v.total} · 第 ${n} 次提交`)
+/** One version of a project file to submit from: 正式版 now, then each earlier one 历史 can name. */
+export interface FileVersion {
+  id: string
+  text: string
+  /** When it came into effect and who made it; the starter code has the claim's time. */
+  at: string
+  who: string
+  current: boolean
+  start: boolean
+}
+
+/** The versions of a file, newest first: 正式版 now, then what it read before each change in 历史. */
+export function versionsOf(p: ProjectKey, path: string): FileVersion[] {
+  const out: FileVersion[] = []
+  let text = officialText(p, path)
+  const touching = S.history[p].filter((h) => h.fixed || h.file === path || (h.prevs && path in h.prevs))
+  for (const h of touching) {
+    out.push({ id: versionOf(text), text, at: h.at, who: h.who, current: !out.length, start: !!h.fixed })
+    if (h.fixed) break
+    text = h.file === path ? h.prev! : h.prevs![path]!
+  }
+  if (!out.length) out.push({ id: versionOf(text), text, at: '', who: ME, current: true, start: false })
+  // Typing something and taking it back gives the same text twice: one entry per version.
+  return out.filter((v, i) => out.findIndex((x) => x.id === v.id) === i)
+}
+
+/** 提交 on a 题目: for a 题单 one problem, the one whose file is open, else the first not passed. */
+export function openSubmit(topicId: string, unit?: string): void {
+  const t = topicById(topicId)
+  if (!t?.project || !S.claimed.includes(t.project)) return
+  // What was just typed becomes its 历史 entry first, so 「当前版本」 is the file as it reads now.
+  snapshotAll()
+  let u = unit ?? topicId
+  if (!unit && t.category === '题单') {
+    const open = SET.find((x) => S.project === t.project && S.file.startsWith(`${x.id}/`))
+    u = open?.id ?? SET.find((x) => !passed(latestOf(topicId, x.id)))?.id ?? SET[0]!.id
+  }
+  S.submitAsk = { topic: topicId, unit: u }
+}
+
+/** The dialog's 提交: the chosen version of the FILE item and the TEXT items go to the 题目, graded its way. */
+export function submitTopic(
+  topicId: string,
+  unit: string,
+  file: FileVersion,
+  texts: { prompt: string; text: string }[]
+) {
+  const t = topicById(topicId)
+  if (!t?.project) return
+  const p = t.project
+  const item = submitItems(t, unit).find((x) => x.type === 'FILE')!
+  const team = projectTeam(p)
+  const list = S.subs[topicId]!
+  const n = list.filter((x) => x.unit === unit).length + 1
+  const id = `s${seqSub++}`
+  list.unshift({
+    id,
+    topic: topicId,
+    unit,
+    n,
+    at: new Date().toISOString(),
+    who: ME,
+    team: team.personal ? undefined : team.handle,
+    path: item.path!,
+    version: file.id,
+    code: file.text,
+    texts,
+  })
+  S.submitAsk = null
+  const name = t.category === '题单' ? UNITS[unit]!.title : t.title
+  // The reactive copy: what is set on it later reaches every view.
+  const sub = list.find((x) => x.id === id)!
+  if (t.grading === 'judge') {
+    toast(`已提交「${name}」第 ${n} 次：评测中`)
+    later(1500, () => {
+      const v = UNITS[unit]!.judge(file.text)
+      sub.verdict = v
+      toast(v.score === v.total ? `通过了：${name}` : `「${name}」第 ${n} 次：${v.score}/${v.total}`)
+    })
+    return
+  }
+  toast(`已提交「${name}」：等张老师批改`)
+  // The teacher's side is not in the demo; her review arrives a little later to show the loop closing.
+  later(6000, () => {
+    sub.review = { ...reviewShell(file.text, texts[0]?.text ?? ''), at: new Date().toISOString() }
+    toast(`张老师批改了「${name}」：${sub.review.score}/${sub.review.total}`)
   })
 }
 
 /** The latest submission of each unit decides where it stands (以截止前最后一次为准). */
-export const latestOf = (p: ClaimKey, unit: string) => S.subs[p].find((x) => x.unit === unit)
+export const latestOf = (topicId: string, unit: string) => S.subs[topicId]?.find((x) => x.unit === unit)
+
+/** A submission that has passed: full marks from the judge. */
+const full = (v?: Verdict) => !!v && v.score === v.total
+export const passed = (s?: Submission) => full(s?.verdict)
+
+/** What a submission got, in a few words: the score, or 评测中 / 待老师评 while it waits. */
+export function resultOf(s: Submission): { text: string; tone: 'ok' | 'bad' | 'wait' } {
+  if (s.verdict) return { text: `${s.verdict.score}/${s.verdict.total}`, tone: full(s.verdict) ? 'ok' : 'bad' }
+  if (s.review) return { text: `${s.review.score}/${s.review.total}`, tone: s.review.score >= 60 ? 'ok' : 'bad' }
+  return topicById(s.topic)?.grading === 'teacher'
+    ? { text: '待老师评', tone: 'wait' }
+    : { text: '评测中…', tone: 'wait' }
+}
+
+/** Where I stand on a 题目, for the project's origin card: 未提交, 已通过 3/5, or the latest submission. */
+export function myStatus(topicId: string): { text: string; sub?: string; tone: 'new' | 'ok' | 'bad' | 'wait' } {
+  const list = S.subs[topicId] ?? []
+  if (topicById(topicId)?.category === '题单') {
+    if (!list.length) return { text: '未提交', tone: 'new' }
+    const n = SET.filter((x) => passed(latestOf(topicId, x.id))).length
+    return {
+      text: `已通过 ${n}/${SET.length}`,
+      sub: `提交了 ${list.length} 次`,
+      tone: n === SET.length ? 'ok' : 'wait',
+    }
+  }
+  const last = list[0]
+  if (!last) return { text: '未提交', tone: 'new' }
+  const r = resultOf(last)
+  return { text: r.text, sub: `已提交 · 第 ${last.n} 次`, tone: r.tone }
+}
 
 // ---- 项目文件 ----
 
@@ -919,12 +1028,15 @@ export function openFile(path: string, extra: Partial<typeof S> = {}): void {
   go('files', { file: path, viewSub: null, ...extra })
 }
 
-/** Open the exact version a submission judged, read-only. */
+/** Open the exact version a submission pinned, read-only, in its project's code view (from the 题目's 提交记录). */
 export function openVersion(id: string): void {
-  if (!isClaim(S.project)) return
-  const sub = S.subs[S.project].find((x) => x.id === id)
-  if (!sub) return
-  openFile(UNITS[sub.unit]!.path, { viewSub: id, ftab: 'subs' })
+  const sub = Object.values(S.subs)
+    .flat()
+    .find((x) => x.id === id)
+  const p = sub && topicById(sub.topic)?.project
+  if (!sub || !p) return
+  switchProject(p)
+  openFile(sub.path, { viewSub: id })
 }
 
 // ---- a file in the conversation: mentions, 问芝士 ----
@@ -1058,25 +1170,14 @@ export function claimAs(topicId: string, team: string): void {
   switchProject(p)
 }
 
-/** Where a 题目 stands for me: 未领取, 进行中 · 项目名, or 已提交 with the latest score. */
+/** Where a 题目 stands for me in the space's list: 未领取, 进行中 · 项目名, or 已提交 with the latest result. */
 export function standing(topicId: string): { text: string; tone: 'new' | 'busy' | 'done' } {
   const p = topicById(topicId)?.project
   if (!p || !S.claimed.includes(p)) return { text: '未领取', tone: 'new' }
-  const name = CLAIMED[p].name
-  if (p === 'week3') {
-    const tried = SET.filter((x) => latestOf(p, x.id))
-    const passed = tried.filter((x) => {
-      const l = latestOf(p, x.id)!
-      return l.score === l.total
-    })
-    return tried.length
-      ? { text: `已提交 · 通过 ${passed.length}/${SET.length}`, tone: 'done' }
-      : { text: `进行中 · ${name}`, tone: 'busy' }
-  }
-  const last = latestOf(p, p)
-  return last
-    ? { text: `已提交 · ${last.score}/${last.total}`, tone: 'done' }
-    : { text: `进行中 · ${name}`, tone: 'busy' }
+  const st = myStatus(topicId)
+  if (st.tone === 'new') return { text: `进行中 · ${CLAIMED[p].name}`, tone: 'busy' }
+  // Green only when it is through: a failing score or one still waiting reads as work in progress.
+  return { text: p === 'week3' ? st.text : `已提交 · ${st.text}`, tone: st.tone === 'ok' ? 'done' : 'busy' }
 }
 
 let seq = 0
@@ -1290,10 +1391,7 @@ export function deadlines(): Deadline[] {
       continue
     }
     if (p === 'week3') {
-      const left = SET.filter((x) => {
-        const last = latestOf(p, x.id)
-        return !last || last.score < last.total
-      }).length
+      const left = SET.filter((x) => !passed(latestOf(t.id, x.id))).length
       if (!left) continue
       out.push({
         id: t.id,
@@ -1307,13 +1405,14 @@ export function deadlines(): Deadline[] {
       })
       continue
     }
-    const last = latestOf(p, p)
-    if (last && last.score === last.total) continue
+    const last = latestOf(t.id, t.id)
+    // Submitted to a 老师评 题目 is done on my side; a judged one is done once it passes.
+    if (last && (t.grading === 'teacher' || passed(last))) continue
     const file = PROJECT_FILES[p].find((f) => f.unit === p)!.path
     out.push({
       id: t.id,
       title: `${t.title} ${chip}`,
-      sub: last ? `最近一次 ${last.score}/${last.total}` : '还没提交',
+      sub: last ? `最近一次 ${resultOf(last).text}` : '还没提交',
       chip,
       open: () => {
         switchProject(p)

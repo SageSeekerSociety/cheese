@@ -3,23 +3,28 @@
 // project menu, search), 需要我的 on top, the channels in a fixed order, then
 // 项目文件, and 设置 at the bottom. Rows are the product's own sidebar rows. A
 // project claimed from a 题目 is an ordinary project and gets the same sidebar,
-// with one more line under the header: the 题目 it came from (来自 空间 · 题目),
-// which leads back to that 题目 in the space.
+// with one card under the header: the 题目 it came from. Its name opens that
+// 题目 in the space; under it the deadline, how it is graded, where my (or my
+// team's) latest submission stands, and 「提交」. Submitting is the 题目's
+// business, so it lives here and not in the code editor, which is the same in
+// every project.
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { VisibleRow } from '@/lib/topicTree'
 
 import { computed, ref } from 'vue'
 
-import { topicOf } from './course'
+import { dueChip, GRADING_TEXT, topicOf } from './course'
 import { type Channel, channelsOf, isClaim, projectMeta, SPACE } from './data'
-import { deadlines, go, S, showTopic, toast } from './state'
+import { deadlines, go, myStatus, openSubmit, S, showTopic, toast } from './state'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 import i18n from '@/i18n'
+import { monthDayTime } from '@/lib/dateText'
 
 const TERMS = { project: '项目', topic: '频道' }
 
@@ -38,6 +43,7 @@ const MENU_PAGES = [
 const space = computed(() => projectMeta(S.project))
 /** The 题目 this project was claimed from (the product records it as the project's external_task_id). */
 const origin = computed(() => (isClaim(S.project) ? topicOf(S.project) : null))
+const mine = computed(() => (origin.value ? myStatus(origin.value.id) : null))
 const channels = computed(() => channelsOf(S.project))
 
 // 需要我的: every 一件事 waiting on me, and every deadline across my projects.
@@ -127,19 +133,39 @@ function openPage(key: string) {
       @open-transfer="toast('演示里不能转让项目')"
     />
 
-    <button
-      v-if="origin"
-      type="button"
-      class="ot-side__origin"
-      data-origin
-      title="回到空间里的这道题目"
-      @click="showTopic(origin.id)"
-    >
-      <v-icon size="14" icon="mdi-school-outline" />
-      <span class="ot-side__origin-text"
-        >来自 {{ SPACE.name }}<b> · {{ origin.title }}</b></span
-      >
-    </button>
+    <section v-if="origin && mine" class="ot-orig" data-origin aria-label="来自的题目">
+      <div class="ot-orig__space"><v-icon size="13" icon="mdi-school-outline" />{{ SPACE.name }}</div>
+      <div class="ot-orig__head">
+        <button
+          type="button"
+          class="ot-orig__title"
+          :title="`在空间里打开「${origin.title}」`"
+          data-origin-topic
+          @click="showTopic(origin.id)"
+        >
+          <span>{{ origin.title }}</span
+          ><v-icon size="14" icon="mdi-chevron-right" />
+        </button>
+        <span class="ot-orig__mode">{{ GRADING_TEXT[origin.grading] }}</span>
+      </div>
+      <div class="ot-orig__due">
+        截止 {{ monthDayTime(Date.parse(origin.due)) }}<b v-if="dueChip(origin.due)"> · {{ dueChip(origin.due) }}</b>
+      </div>
+      <div class="ot-orig__foot">
+        <span class="ot-orig__st" :class="`is-${mine.tone}`" data-origin-status>
+          <b>{{ mine.text }}</b>
+          <span v-if="mine.sub">{{ mine.sub }}</span>
+        </span>
+        <BaseButton
+          id="b-submit"
+          kind="primary"
+          size="sm"
+          prepend-icon="mdi-upload-outline"
+          @click="openSubmit(origin.id)"
+          >提交</BaseButton
+        >
+      </div>
+    </section>
 
     <div class="ot-side__scroll">
       <div class="ot-side__row" data-nav="inbox">
@@ -221,39 +247,118 @@ function openPage(key: string) {
   background: var(--canvas);
 }
 
-.ot-side__origin {
+/* The 题目 this project came from: one compact card, its name leading back to the space. */
+.ot-orig {
   display: flex;
-  gap: 6px;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
   margin: 8px 8px 0;
-  padding: 6px 8px;
-  font: inherit;
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-  text-align: left;
-  cursor: pointer;
+  padding: 8px 10px 10px;
   background: var(--fill);
-  border: 0;
   border-radius: var(--radius-md);
 }
 
-.ot-side__origin:hover {
-  color: var(--ink);
-  background: var(--fill-2);
+.ot-orig__space {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  white-space: nowrap;
 }
 
-.ot-side__origin .v-icon {
-  margin-top: 1px;
+.ot-orig__head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
-.ot-side__origin-text {
+.ot-orig__title {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
   min-width: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
 }
 
-.ot-side__origin-text b {
+.ot-orig__title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-orig__title .v-icon {
+  flex: none;
+  color: var(--muted);
+}
+
+.ot-orig__title:hover span {
+  text-decoration: underline;
+}
+
+.ot-orig__mode {
+  flex: none;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+.ot-orig__due {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+/* Due soon: the same amber as anything else that waits on me. */
+.ot-orig__due b {
+  font-weight: 400;
+  color: var(--accent-ink);
+}
+
+.ot-orig__foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.ot-orig__st {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.ot-orig__st b {
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
+}
+
+.ot-orig__st.is-ok b {
+  color: var(--ok-ink);
+}
+
+.ot-orig__st.is-bad b,
+.ot-orig__st.is-wait b {
+  color: var(--ink);
 }
 
 .ot-side__scroll {

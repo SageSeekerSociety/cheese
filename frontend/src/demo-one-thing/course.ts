@@ -3,8 +3,11 @@
 // and the space's 公告 and 资料库. A 题目 is not a kind of screen: once claimed
 // it is an ordinary project owned by a team (the person's own team, or the team
 // that claimed it together), holding the 题面 as a document, the starter code,
-// the rules in its settings and a judge on the files of a judged unit. The
-// project records which 题目 it came from. A space has no channels.
+// the rules in its settings. The project records which 题目 it came from. A
+// submission is made to the 题目, not inside the project: it carries the
+// 题目's 提交项 (a version of a project file, a few words), is graded the way
+// the 题目 says (评测机评 or 老师评) and is recorded on the 题目 in the space.
+// A space has no channels.
 //
 // This is the student's side only. The teacher's views (the class's
 // submissions, the grade sheet, writing a 题目 and its tests) exist in the
@@ -29,17 +32,38 @@ export interface Verdict {
   summary: string
 }
 
-/** One 提交评测: the verdict, pinned to the exact version of 正式版 it judged. */
-export interface Submission extends Verdict {
+/** 张老师's review of a submission to a 老师评 题目 (the product's TaskSubmissionReview). */
+export interface Review {
+  score: number
+  total: number
+  comment: string
+  by: string
+  at: string
+}
+
+/** One submission to a 题目 (the product's TaskSubmission): what it carried and what it got. */
+export interface Submission {
   id: string
-  /** The judged unit: 'datalab', or one problem of the 题单 ('P1001'). */
+  /** The 题目 it was made to. */
+  topic: string
+  /** What is graded: the 题目 itself, or one problem of the 题单 ('P1001'). */
   unit: string
   /** 第 n 次提交 of this unit. */
   n: number
   at: string
-  /** The version's short id and its text, so anyone can see which code was graded. */
+  who: string
+  /** The team it was submitted as, for a team 题目. */
+  team?: string
+  /** The FILE item: the project file, the version's short id and its text, so anyone can see which code was graded. */
+  path: string
   version: string
   code: string
+  /** The TEXT items, as written. */
+  texts: { prompt: string; text: string }[]
+  /** 评测机评: the judge's verdict, once it is back. */
+  verdict?: Verdict
+  /** 老师评: the teacher's review, once it is written. */
+  review?: Review
 }
 
 const daysAhead = (d: number, h: number, m: number) => dayAt(-d, h, m)
@@ -57,6 +81,24 @@ export function versionOf(text: string): string {
 export const CATEGORIES = ['Lab', '题单', '大作业'] as const
 export type Category = (typeof CATEGORIES)[number]
 
+/** How a 题目's submissions are graded: by the judge, at once, or by the teacher, who gives a score and a comment. */
+export type Grading = 'judge' | 'teacher'
+export const GRADING_TEXT: Record<Grading, string> = { judge: '评测机评', teacher: '老师评' }
+export const GRADING_NOTE: Record<Grading, string> = {
+  judge: '提交后评测机马上出结果',
+  teacher: '张老师批改后给分和评语',
+}
+
+/** One 提交项 (the product's TaskSubmissionSchemaEntry): a file of the project, or a few words typed when submitting. */
+export interface SubmitItem {
+  type: 'FILE' | 'TEXT'
+  prompt: string
+  /** FILE: the project file whose version is submitted. */
+  path?: string
+  /** TEXT: what the box starts with. */
+  draft?: string
+}
+
 export interface Topic {
   id: string
   title: string
@@ -69,6 +111,9 @@ export interface Topic {
   size?: number
   /** The project 领取 creates; a 题目 without one is shown but not claimable in the demo. */
   project?: ClaimKey
+  grading: Grading
+  /** 提交项. A 题单 has none of its own: each problem is submitted alone (see submitItems). */
+  items: SubmitItem[]
 }
 
 export const TOPICS: Topic[] = [
@@ -81,6 +126,8 @@ export const TOPICS: Topic[] = [
     published: dayAt(6, 9, 0),
     mode: 'solo',
     project: 'datalab',
+    grading: 'judge',
+    items: [{ type: 'FILE', prompt: 'bits.c', path: 'bits.c' }],
   },
   {
     id: 'week3',
@@ -91,6 +138,8 @@ export const TOPICS: Topic[] = [
     published: dayAt(2, 8, 30),
     mode: 'solo',
     project: 'week3',
+    grading: 'judge',
+    items: [],
   },
   {
     id: 'shelllab',
@@ -102,6 +151,16 @@ export const TOPICS: Topic[] = [
     mode: 'team',
     size: 3,
     project: 'shelllab',
+    grading: 'teacher',
+    items: [
+      { type: 'FILE', prompt: 'tsh.c', path: 'tsh.c' },
+      {
+        type: 'TEXT',
+        prompt: '分工说明',
+        draft:
+          '林晓：eval（fork、execve、addjob）\n周珂：内置命令 jobs / bg / fg\n陈思远：sigchld_handler 和 sigint_handler',
+      },
+    ],
   },
   {
     id: 'cachelab',
@@ -112,6 +171,11 @@ export const TOPICS: Topic[] = [
     published: dayAt(1, 10, 5),
     mode: 'either',
     size: 2,
+    grading: 'judge',
+    items: [
+      { type: 'FILE', prompt: 'csim.c', path: 'csim.c' },
+      { type: 'FILE', prompt: 'trans.c', path: 'trans.c' },
+    ],
   },
   {
     id: 'bomblab',
@@ -121,6 +185,8 @@ export const TOPICS: Topic[] = [
     due: daysAhead(19, 23, 59),
     published: dayAt(1, 10, 6),
     mode: 'solo',
+    grading: 'judge',
+    items: [{ type: 'TEXT', prompt: '六关的拆弹字符串' }],
   },
 ]
 
@@ -358,7 +424,7 @@ const DATALAB_README = `<h1>Data Lab</h1>
 <h3>评分</h3>
 <p>13 个函数一起评：每个函数的测试全对、且 <code>dlc</code> 检查通过，就得它的分（Rating），满分 ${DATALAB_TOTAL} 分。可以反复提交，以截止前最后一次为准。</p>
 <h3>怎么做</h3>
-<ul><li><p>打开 <code>bits.c</code> 直接改，改了就生效，每次改动自动记进历史，都能撤回。</p></li><li><p>「运行」在你自己的环境里跑 <code>./btest</code>，只有你看得到。</p></li><li><p>「提交评测」评的是你提交那一刻的版本，评测记录里每次都能看到当时的代码。</p></li></ul>`
+<ul><li><p>打开 <code>bits.c</code> 直接改，改了就生效，每次改动自动记进历史，都能撤回。</p></li><li><p>「运行」在你自己的环境里跑 <code>./btest</code>，只有你看得到。</p></li><li><p>做好了点左上角题目卡片上的「提交」：挑 <code>bits.c</code> 的一个版本交给这道题目，评测机马上出结果。提交记录在空间里的这道题目上，每次都能看到当时的代码。</p></li></ul>`
 
 // ---- the judge: a C integer expression, parsed and run ----
 //
@@ -670,7 +736,7 @@ const setStatement = (p: SetProblem) => `<h2>${p.id} ${p.title}</h2>
 <pre><code>${p.sampleIn}</code></pre>
 <h3>样例输出</h3>
 <pre><code>${p.sampleOut}</code></pre>
-<p>代码写在 <code>${p.id}/main.cpp</code>，「提交评测」只评这一题。</p>`
+<p>代码写在 <code>${p.id}/main.cpp</code>。在「题单」里这道题那一行点「提交」，只评这一题。</p>`
 
 /** The 题单 document's own words above its live list. */
 export const WEEK3_INTRO = `<p>这周的 5 道题练输入输出、分支和循环，每题单独评测，以截止前最后一次提交为准。做完一题，上面那一行就变绿。</p>`
@@ -732,7 +798,7 @@ const SHELL_README = `<h1>Shell Lab 大作业（3 人组队）</h1>
 <h3>分工建议</h3>
 <ul><li><p>一个人写 <code>eval</code>：fork、execve、加进作业表</p></li><li><p>一个人写内置命令：<code>jobs</code>、<code>bg</code>、<code>fg</code></p></li><li><p>一个人写信号处理：<code>sigchld_handler</code>、<code>sigint_handler</code></p></li></ul>
 <h3>评分</h3>
-<p>8 条 trace，每条 1 分，评的是你们提交那一刻 <code>tsh.c</code> 的版本，全组一个分数。可以反复提交，以截止前最后一次为准。</p>
+<p>老师评：提交 <code>tsh.c</code> 的一个版本和一段分工说明，张老师按 8 条 trace 和分工说明给分、写评语，全组一个分数。可以反复提交，以截止前最后一次为准。</p>
 <h3>怎么一起写</h3>
 <ul><li><p>三个人改的是同一份 <code>tsh.c</code>，谁在改哪一行都看得到，改了就生效，每次改动记进历史、能撤回。</p></li><li><p>想先单独试，就「开分支」，改好了请组里的人看一眼再合回来。</p></li></ul>`
 
@@ -794,7 +860,7 @@ export interface ProjectFile {
   bytes: number
   /** The 题面 / 题单 document, pinned at the top of 项目文件. */
   pinned?: boolean
-  /** A code file of a judged unit: 提交评测 shows on it. */
+  /** The graded unit whose submission takes a version of this file. */
   unit?: string
   html?: string
   starter?: string
@@ -818,7 +884,7 @@ export const PROJECT_FILES: Record<ClaimKey, ProjectFile[]> = {
   ],
 }
 
-/** A judged unit: what 运行 prints and what 提交评测 says, on a version of its file. */
+/** A graded unit: what 运行 prints, and what the judge says about a submitted version of its file. */
 export interface Unit {
   id: string
   title: string
@@ -847,14 +913,37 @@ export const UNITS: Record<string, Unit> = {
   ),
 }
 
+/** A submission's 提交项: the 题目's own, or for a 题单 the one problem's main.cpp. */
+export function submitItems(t: Topic, unit: string): SubmitItem[] {
+  if (t.category !== '题单') return t.items
+  return [{ type: 'FILE', prompt: `${unit}/main.cpp`, path: `${unit}/main.cpp` }]
+}
+
+/** 张老师's review of a Shell Lab submission: she runs the 8 traces and reads the 分工说明 (the demo writes what she would). */
+export function reviewShell(code: string, split: string): Omit<Review, 'at'> {
+  const v = judgeShell(code)
+  const failed = v.rows.filter((r) => !r.ok).map((r) => r.name.split(' · ')[0])
+  const said = split.trim().length > 0
+  const score = Math.round((v.score / v.total) * 80) + (said ? 20 : 0)
+  const traces = failed.length
+    ? `trace 过了 ${v.score}/${v.total}，${failed.slice(0, 3).join('、')}${failed.length > 3 ? ' 等' : ''}还没过，先看 eval 里的 fork 和作业表。`
+    : `8 条 trace 都过了。`
+  return {
+    score,
+    total: 100,
+    by: 'zhanglaoshi',
+    comment: `${traces}${said ? '分工说明写得清楚，三个人各管一块。' : '没有写分工说明，这一项不给分。'}截止前可以再交。`,
+  }
+}
+
 /** 芝士's first message in the project's # 综合: what the 题目 brought in, and the rule it works under. */
 export function welcome(p: ClaimKey, due: string): ChatLine[] {
   const text =
     p === 'datalab'
-      ? `这个项目是你从「Data Lab」领取的，在你自己的团队下。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 代码在 \`bits.c\`：13 个函数，改了就生效，每次改动自动记进历史；「提交评测」一次评全部\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
+      ? `这个项目是你从「Data Lab」领取的，在你自己的团队下。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 代码在 \`bits.c\`：13 个函数，改了就生效，每次改动自动记进历史\n- 做好了点左上角题目卡片上的「提交」，评测机一次评全部，结果记在空间里的这道题目上\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
       : p === 'week3'
-        ? `这个项目是你从「第 3 周题单」领取的，在你自己的团队下。\n\n- 「题单」文档置顶在项目文件里，每道题做到哪了都在上面\n- 每道题一个文件夹：\`题面.md\` 和 \`main.cpp\`，每题单独提交评测\n- 截止 ${due}\n\n这门课设成「芝士只给提示」：卡住了可以问我思路，答案我不会写出来。`
-        : `这个项目是「ICS 第 7 组」一起领取的「Shell Lab 大作业」：林晓、周珂、陈思远三个人共用。\n\n- 题面在 \`README.md\`，置顶在项目文件里，里面有分工建议\n- 三个人改同一份 \`tsh.c\`：谁在改哪儿都看得到，改了就生效；想单独试就开分支\n- 「提交评测」跑 8 条 trace，全组一个分数，截止 ${due}\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
+        ? `这个项目是你从「第 3 周题单」领取的，在你自己的团队下。\n\n- 「题单」文档置顶在项目文件里，每道题做到哪了都在上面\n- 每道题一个文件夹：\`题面.md\` 和 \`main.cpp\`；在题单里每题单独「提交」\n- 截止 ${due}\n\n这门课设成「芝士只给提示」：卡住了可以问我思路，答案我不会写出来。`
+        : `这个项目是「ICS 第 7 组」一起领取的「Shell Lab 大作业」：林晓、周珂、陈思远三个人共用。\n\n- 题面在 \`README.md\`，置顶在项目文件里，里面有分工建议\n- 三个人改同一份 \`tsh.c\`：谁在改哪儿都看得到，改了就生效；想单独试就开分支\n- 题目卡片上的「提交」交 \`tsh.c\` 的一个版本和分工说明，张老师批改，全组一个分数，截止 ${due}\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
   return [{ id: `${p}-w1`, who: 'cheese', at: new Date().toISOString(), text }]
 }
 
@@ -874,7 +963,7 @@ export function hintFor(q: string): string {
   if (/P1001|A\+B|a \+ b/i.test(q))
     return '提示：`cin` 已经把两个数读进来了，剩下的是用 `cout` 把结果写出去，别忘了换行。'
   if (/错|不对|失败|过不了/.test(q))
-    return '看评测记录里第一个 ✗ 的那一行：把那组输入自己算一遍，再和你的代码一步一步对。'
+    return '看这道题目提交记录里第一个 ✗ 的那一行：把那组输入自己算一遍，再和你的代码一步一步对。'
   return '可以说说你卡在哪个函数、试过什么吗？我只给提示，不写答案。'
 }
 

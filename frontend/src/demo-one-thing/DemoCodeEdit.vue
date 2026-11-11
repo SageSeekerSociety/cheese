@@ -9,9 +9,10 @@
 // a shared project has 正式版受保护 on and no branch is open.
 // 开分支 (in a project with more than one person: the research project, a team's
 // 题目) gives a person a copy of their own; the bar then names the
-// branch, with 请人看一下 and 合回正式版. 提交评测 shows only on the file of a
-// judged unit and pins the version it judged; with a submission open, the view
-// shows that version read-only.
+// branch, with 请人看一下 and 合回正式版. The editor is the same in every
+// project and has no course control: a submission is made to the 题目 (the
+// origin card in the sidebar), not from here. A submission opened from its
+// 题目's 提交记录 shows here read-only: the version it pinned.
 // The editing surface is DemoCodeArea (why it is not Monaco is said there).
 import type { Peer } from './DemoCodeArea.vue'
 
@@ -21,7 +22,6 @@ import { avatarColor } from '@/utils/avatar'
 
 import { asContext, isClaim, isShared, NAMES } from './data'
 import DemoCodeArea from './DemoCodeArea.vue'
-import JudgeResult from './JudgeResult.vue'
 import {
   askReview,
   branchChanges,
@@ -34,14 +34,13 @@ import {
   mergeBranch,
   onBranch,
   openBranch,
+  resultOf,
   reviewerOf,
   runCode,
   S,
   snapshot,
-  submitCode,
   termRun,
   typeCode,
-  unitOf,
 } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -60,7 +59,6 @@ const text = computed({
   set: (v: string) => typeCode(p.value, path.value, v),
 })
 const saving = computed(() => isSaving(p.value, path.value))
-const unit = computed(() => unitOf(p.value, path.value))
 const changes = computed(() => branchChanges())
 const mark = computed(() => (S.codeAt?.path === path.value ? S.codeAt : null))
 // Leaving the file closes its burst of typing into 历史 (this view is keyed to one file: by
@@ -130,18 +128,13 @@ const faces = computed(() =>
 
 // ---- a pinned version, read-only ----
 const sub = computed(() =>
-  S.viewSub && isClaim(p.value) ? S.subs[p.value].find((x) => x.id === S.viewSub) ?? null : null
+  S.viewSub && isClaim(p.value) ? S.subs[p.value]?.find((x) => x.id === S.viewSub) ?? null : null
 )
 const pinned = computed(() => (sub.value ? asContext(path.value, sub.value.code.replace(/\n$/, '').split('\n')) : []))
 
 // ---- the bottom panel ----
 const open = ref(true)
 const out = computed(() => S.out[k.value])
-const outSub = computed(() => {
-  const o = out.value
-  if (o?.kind !== 'judge' || !isClaim(p.value)) return null
-  return S.subs[p.value].find((x) => x.id === o.sub) ?? null
-})
 const term = computed(() => S.term[p.value] ?? [])
 const cmd = ref('')
 const termBody = ref<HTMLElement | null>(null)
@@ -163,10 +156,6 @@ function run() {
   open.value = true
   runCode(p.value, path.value)
 }
-function submit() {
-  open.value = true
-  submitCode(p.value, path.value)
-}
 function showTab(t: 'out' | 'term') {
   S.outTab = t
   open.value = true
@@ -179,7 +168,7 @@ function showTab(t: 'out' | 'term') {
       <div class="ot-ced__bar ot-ced__bar--pinned">
         <v-icon size="15" icon="mdi-pin-outline" class="ot-ced__mark" />
         <span class="ot-ced__copy"
-          >第 {{ sub.n }} 次提交评测的版本 <code>{{ sub.version }}</code> · {{ sub.score }}/{{ sub.total }} · 只读</span
+          >第 {{ sub.n }} 次提交的版本 <code>{{ sub.version }}</code> · {{ resultOf(sub).text }} · 只读</span
         >
         <span class="ot-head__gap" />
         <BaseButton kind="secondary" size="sm" prepend-icon="mdi-arrow-left" @click="S.viewSub = null"
@@ -254,16 +243,6 @@ function showTab(t: 'out' | 'term') {
           >开分支</BaseButton
         >
         <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
-        <BaseButton
-          v-if="unit"
-          id="b-submit"
-          kind="primary"
-          size="sm"
-          prepend-icon="mdi-send-check-outline"
-          :loading="S.judging === k"
-          @click="submit"
-          >提交评测</BaseButton
-        >
       </div>
       <div class="ot-ced__edit">
         <DemoCodeArea
@@ -306,20 +285,11 @@ function showTab(t: 'out' | 'term') {
         />
       </div>
       <div v-if="open && S.outTab === 'out'" class="ot-ced__pbody" role="status">
-        <div v-if="!out" class="ot-ced__hint">
-          点「运行」，在你自己的环境里跑这份代码{{ unit ? '；「提交评测」交给评测机' : '' }}
-        </div>
+        <div v-if="!out" class="ot-ced__hint">点「运行」，在你自己的环境里跑这份代码</div>
         <div v-else-if="out.kind === 'running'" class="ot-ced__cmd">运行中…</div>
-        <template v-else-if="out.kind === 'run'">
+        <template v-else>
           <div class="ot-ced__cmd">$ {{ out.cmd }}</div>
           <pre class="ot-ced__res">{{ out.out }}</pre>
-        </template>
-        <div v-else-if="out.kind === 'judging'" class="ot-ced__cmd">
-          评测中… 版本 {{ out.version }}：编译、跑测试{{ p === 'datalab' ? '、dlc 检查' : '' }}
-        </div>
-        <template v-else-if="outSub">
-          <div class="ot-ced__cmd">第 {{ outSub.n }} 次提交 · 版本 {{ outSub.version }}</div>
-          <JudgeResult :sub="outSub" />
         </template>
       </div>
       <div v-else-if="open" ref="termBody" class="ot-ced__pbody ot-ced__term">

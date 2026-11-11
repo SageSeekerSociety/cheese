@@ -2,7 +2,8 @@
 // 首页's sidebar: the product's own home list (HomeNav.vue) under the 「首页」
 // header, as HomeSidebarView draws it: 待办, my teams (my own one first, then
 // 团队, each unfolding into its 项目 and 资料库), 新建或加入团队, and 空间, the
-// spaces I belong to. The course is one of those spaces; it is not on the rail.
+// spaces I belong to. The course is one of those spaces; it also has its own
+// icon on the rail, and both open the same view.
 //
 // HomeNav takes props and links by route name. The demo's memory router has
 // those names, so a click lands there; this file reads where it landed and

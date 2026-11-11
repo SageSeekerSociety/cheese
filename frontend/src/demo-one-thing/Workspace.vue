@@ -2,21 +2,26 @@
 // The 1280×800 workspace: the product's project rail, the sidebar, the center
 // column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
 // panel, which holds one selected thing: the open 一件事, or beside 项目文件
-// the open file's 待定改动, 评测记录 and 历史. With nothing selected it is
+// the open file's 待定改动, 历史 and 对话. With nothing selected it is
 // folded away. The rail's first item, 首页, opens the home list (待办, my
-// teams and their projects, the 空间 I belong to); the course is one of those
-// spaces and is reached from there, never from the rail. The rail holds
-// projects only: the research project (where the tour runs), each project
-// claimed from a 题目 (mine, and my team's), which appears on 领取, and the
-// other projects, which are inert.
-// The scripted cursor, the notes overlay and the toast sit on top of it.
+// teams and their projects, the 空间 I belong to). Under it, each space I
+// belong to has its own icon, Discord-server style: the course's color and
+// initials with a cap mark, so it does not read as a project; it opens the same
+// view as 首页's 空间 list does. Below a divider, the projects: the research
+// project (where the tour runs), each project claimed from a 题目 (mine, and
+// my team's), which appears on 领取, and the other projects, which are inert.
+// A claimed project stays among the projects: it belongs to a team, not to
+// the space.
+// The 提交 dialog, the scripted cursor, the notes overlay and the toast sit on top of it.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavGenericItem } from '@/components/common/Navigation/types'
 
 import { computed, ref } from 'vue'
 
+import { avatarColor } from '@/utils/avatar'
+
 import ChannelCenter from './ChannelCenter.vue'
-import { CLAIMED, ME, NAMES, OTHER_PROJECTS, PROJECT } from './data'
+import { CLAIMED, ME, NAMES, OTHER_PROJECTS, PROJECT, SPACE } from './data'
 import FilesCenter from './FilesCenter.vue'
 import FilesPanel from './FilesPanel.vue'
 import HomeSide from './HomeSide.vue'
@@ -25,7 +30,8 @@ import SettingsCenter from './SettingsCenter.vue'
 import SideNav from './SideNav.vue'
 import SpaceCenter from './SpaceCenter.vue'
 import SpaceSide from './SpaceSide.vue'
-import { deadlines, go, openHome, S, switchProject, thingById, toast, unreadIn } from './state'
+import { deadlines, go, openHome, openSpace, S, switchProject, thingById, toast, unreadIn } from './state'
+import SubmitDialog from './SubmitDialog.vue'
 import TeamCenter from './TeamCenter.vue'
 import ThingPanel from './ThingPanel.vue'
 
@@ -66,7 +72,7 @@ const waiting = computed(
   () => S.things.filter((t) => t.status === 'wait' && t.owner === ME).length + deadlines().length
 )
 
-const rail = computed<NavGenericItem[]>(() => [
+const home = computed<NavGenericItem[]>(() => [
   {
     key: 'Home',
     type: 'item',
@@ -74,9 +80,25 @@ const rail = computed<NavGenericItem[]>(() => [
     icon: 'cheese',
     badge: waiting.value,
     action: () => openHome(),
-    match: () => S.area === 'home',
+    match: () => S.area === 'home' && S.center !== 'space',
   },
   { key: 'divider', type: 'divider' },
+])
+
+// The spaces I belong to (the demo has one). The product's rail tile only draws projects, so the
+// space's tile is drawn here, in the rail's own tile classes (badge, the 「you are here」 bar, the flyout).
+const spaces = computed(() => [
+  {
+    ...SPACE,
+    color: avatarColor(String(SPACE.id)),
+    // Its 题目 due within a week that are not done yet: the same deadlines 待办 lists.
+    badge: deadlines().length,
+    here: S.area === 'home' && S.center === 'space',
+  },
+])
+
+const rail = computed<NavGenericItem[]>(() => [
+  { key: 'divider-spaces', type: 'divider' },
   {
     key: 'p-mm',
     type: 'item',
@@ -144,6 +166,26 @@ const userActions: MenuAction[] = [
   >
     <nav class="ot-rail app-rail" aria-label="项目">
       <div class="ot-rail__list">
+        <RailItem v-for="item in home" :key="item.key" :item="item" />
+        <button
+          v-for="sp in spaces"
+          :key="sp.id"
+          type="button"
+          class="app-rail-item ot-rail__space"
+          :aria-label="sp.badge ? `${sp.name}（${sp.badge} 个快截止）` : sp.name"
+          :aria-current="sp.here ? 'page' : undefined"
+          :data-space="sp.id"
+          @click="openSpace('tasks')"
+        >
+          <v-tooltip activator="parent" location="end" content-class="rail-flyout">
+            <div class="rail-flyout__inner">
+              <span class="rail-flyout__name">{{ sp.name }}</span>
+            </div>
+          </v-tooltip>
+          <span class="ot-rail__space-face" :style="{ background: sp.color }">{{ sp.short }}</span>
+          <span class="ot-rail__space-mark" aria-hidden="true"><v-icon size="11" icon="mdi-school" /></span>
+          <span v-if="sp.badge" class="app-rail-item__badge" aria-hidden="true">{{ sp.badge }}</span>
+        </button>
         <RailItem v-for="item in rail" :key="item.key" :item="item" />
       </div>
       <div class="ot-rail__end">
@@ -193,6 +235,7 @@ const userActions: MenuAction[] = [
         </div>
       </template>
     </div>
+    <SubmitDialog />
     <Transition name="ot-toast">
       <div v-if="S.toast" :key="S.toastTick" class="ot-toast" role="status">{{ S.toast }}</div>
     </Transition>
@@ -236,6 +279,49 @@ const userActions: MenuAction[] = [
   flex-direction: column;
   gap: 12px;
   align-items: center;
+}
+
+/* A space's tile: the same 48px slot and 「you are here」 bar as a project's, but its face is the
+   course's color with its initials, a rounder square, and a cap mark in the corner. */
+.app-rail-item.ot-rail__space,
+.app-rail-item.ot-rail__space:hover {
+  padding: 0;
+  font: inherit;
+  background: none;
+  border: 0;
+  border-radius: 16px;
+}
+
+.ot-rail__space-face {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--avatar-ink);
+  border-radius: 16px;
+  transition: border-radius var(--dur-quick) var(--ease-standard);
+}
+
+.ot-rail__space:hover .ot-rail__space-face,
+.ot-rail__space[aria-current] .ot-rail__space-face {
+  border-radius: 12px;
+}
+
+.ot-rail__space-mark {
+  display: grid;
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--ink);
+  background: var(--surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--canvas);
 }
 
 .ot-rail__btn {

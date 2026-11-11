@@ -1,15 +1,18 @@
 <script setup lang="ts">
 // 第 3 周题单's document, pinned in 项目文件: the 题单's entry point. Its live
 // block (the same pattern as a channel 文档's 这个频道的事) has one row per
-// problem read from the project's 评测记录, so a submission a moment ago is
+// problem read from the 题目's submissions, so a submission a moment ago is
 // already here: 通过 or not, how many tries, the latest score. A row opens that
-// problem's main.cpp. Under it, the teacher's few lines about the 题单.
+// problem's main.cpp, and its 「提交」 submits that one problem to the 题目: the
+// 题单 is the 题目's own content, so submitting from its rows is submitting to
+// the 题目. Under it, the teacher's few lines about the 题单.
 import { computed } from 'vue'
 
 import { SET, topicOf, WEEK3_INTRO } from './course'
 import DemoDoc from './DemoDoc.vue'
-import { latestOf, openFile, S } from './state'
+import { latestOf, openFile, openSubmit, passed as ok, resultOf, S } from './state'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { monthDayTime } from '@/lib/dateText'
 
 const rows = computed(() =>
@@ -17,9 +20,10 @@ const rows = computed(() =>
     const last = latestOf('week3', p.id)
     return {
       ...p,
-      tries: S.subs.week3.filter((x) => x.unit === p.id).length,
+      tries: (S.subs.week3 ?? []).filter((x) => x.unit === p.id).length,
       last,
-      passed: !!last && last.score === last.total,
+      result: last ? resultOf(last).text : '—',
+      passed: ok(last),
     }
   })
 )
@@ -43,23 +47,23 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
         <div class="ot-pset__cols t-eyebrow-read">
           <span>题目</span><span>状态</span><span>尝试</span><span>最近得分</span>
         </div>
-        <button
-          v-for="r in rows"
-          :key="r.id"
-          type="button"
-          class="ot-cdoc__row ot-pset__row"
-          :data-set="r.id"
-          @click="openFile(`${r.id}/main.cpp`)"
-        >
-          <span class="ot-pset__name"
-            ><code>{{ r.id }}</code> {{ r.title }}</span
+        <div v-for="r in rows" :key="r.id" class="ot-pset__row" :data-set="r.id">
+          <button type="button" class="ot-cdoc__row" @click="openFile(`${r.id}/main.cpp`)">
+            <span class="ot-pset__name"
+              ><code>{{ r.id }}</code> {{ r.title }}</span
+            >
+            <span class="ot-pset__st" :class="{ 'is-ok': r.passed, 'is-bad': r.last?.verdict && !r.passed }">
+              <v-icon v-if="r.passed" size="14" icon="mdi-check" />{{
+                r.passed ? '通过' : r.last?.verdict ? '没通过' : r.last ? '评测中' : '未提交'
+              }}
+            </span>
+            <span class="ot-pset__n">{{ r.tries ? `${r.tries} 次` : '—' }}</span>
+            <span class="ot-pset__n">{{ r.result }}</span>
+          </button>
+          <BaseButton kind="secondary" size="sm" class="ot-pset__submit" @click="openSubmit('week3', r.id)"
+            >提交</BaseButton
           >
-          <span class="ot-pset__st" :class="{ 'is-ok': r.passed, 'is-bad': r.last && !r.passed }">
-            <v-icon v-if="r.passed" size="14" icon="mdi-check" />{{ r.passed ? '通过' : r.last ? '没通过' : '未提交' }}
-          </span>
-          <span class="ot-pset__n">{{ r.tries ? `${r.tries} 次` : '—' }}</span>
-          <span class="ot-pset__n">{{ r.last ? `${r.last.score}/${r.last.total}` : '—' }}</span>
-        </button>
+        </div>
       </section>
 
       <section class="ot-cdoc__people">
@@ -150,7 +154,27 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
 .ot-pset__cols {
   display: flex;
   gap: 10px;
+  /* Clear of each row's 提交 (56px), the gap before it and the row's own right padding. */
+  padding-right: 72px;
   margin: 8px 0 2px;
+}
+
+/* The row opens the problem's file; its 提交 sits beside it, outside the row's button. */
+.ot-pset__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ot-pset__row .ot-cdoc__row {
+  flex: 1;
+  min-width: 0;
+  margin-right: 0;
+}
+
+.ot-pset__submit {
+  flex: none;
+  width: 56px;
 }
 
 .ot-pset__cols > :first-child,
@@ -163,7 +187,8 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
 .ot-pset__st,
 .ot-pset__n {
   flex: none;
-  width: 72px;
+  /* Narrow enough that the problem's name keeps its room beside each row's 提交. */
+  width: 52px;
   text-align: right;
 }
 

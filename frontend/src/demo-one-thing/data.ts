@@ -66,9 +66,9 @@ export const CHANNELS = [
 
 export const PROJECT = { team: '视觉语言组', teamHandle: 'vl-group', name: '多模态检索论文复现' }
 
-/** The course 空间: not a project and not on the rail. It is reached from 首页, where it is
- *  listed under 空间, and holds the 题目 the teacher published, 公告 and 资料库. */
-export const SPACE = { id: 1, name: '计算机系统基础（ICS 2026）', org: '计算机学院', teacher: '张老师' }
+/** The course 空间: not a project. It has its own icon on the rail (`short` is what the icon
+ *  shows) and is listed under 空间 on 首页; it holds the 题目 the teacher published, 公告 and 资料库. */
+export const SPACE = { id: 1, name: '计算机系统基础（ICS 2026）', short: 'ICS', org: '计算机学院', teacher: '张老师' }
 
 /** A team owns projects. Everyone has a personal one (just them); a claim by a team makes the team's project. */
 export interface DemoTeam {
