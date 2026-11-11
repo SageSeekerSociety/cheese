@@ -1,82 +1,61 @@
 // The design questions still open, each with the variants the demo can show
 // side by side. The top bar's 「方案」 menu picks one per question; the choice
-// is read from the link first (#v=submit:A, so a variant can be sent),
-// then from this browser's storage, else the default. Switching only changes
-// how the screen draws the same state, so it never resets the demo.
+// is read from the link first (#v=question:A, so a variant can be sent),
+// then from this browser's storage, else the question's default. Switching
+// only changes how the screen draws the same state, so it never resets the
+// demo. With no question open the 「方案」 button is not shown.
 //
-// 提交入口's D family (D, D1, D2, D3) all put the 题目's card in the claimed
-// project's sidebar (OriginCard.vue); the calmer ones differ in what the card
-// leads with and when it is open. Under them the menu also has 「模拟：离截止
-// 不到 24 小时」, which moves the clock the deadlines are read against (CLOCK
-// below) and nothing else: the tour and every recorded time stay as they are.
+// To ask one: add it to QUESTIONS, then read V[key] where the screen differs.
+// 提交入口 was the last one asked; it is settled on 平时收起 (OriginCard.vue).
 import { reactive } from 'vue'
 
 import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 
 export interface Question {
-  key: 'submit'
+  key: string
   title: string
+  /** The variant shown when neither the link nor storage names one. */
+  default: string
   options: { key: string; label: string; note: string }[]
 }
 
-export const QUESTIONS: Question[] = [
-  {
-    key: 'submit',
-    title: '提交入口',
-    options: [
-      { key: 'A', label: 'A 一行来源', note: '侧栏标题下一行「来自 …」，点开空间里的题目，在那里提交' },
-      { key: 'B', label: 'B 顶栏面包屑', note: '中间顶栏一个小标签：课程 › 题目 · 截止 · 状态' },
-      { key: 'C', label: 'C 右栏「题目」', note: '项目右栏多一个「题目」页，就地看题、提交' },
-      { key: 'D', label: 'D 卡片', note: '侧栏顶上的题目卡片：橙色「提交」、未提交、倒计时，一直亮着' },
-      { key: 'D1', label: 'D1 安静卡片', note: '同一张卡片，全灰；最后 24 小时才出现琥珀色倒计时' },
-      { key: 'D2', label: 'D2 进度', note: '卡片先说做到哪了：本地运行几个通过、最近一次提交；截止是小灰字' },
-      { key: 'D3', label: 'D3 平时收起', note: '平时一行带状态点；点开是 D1 的卡片，快截止或有新批改时自己展开' },
-    ],
-  },
-]
+export const QUESTIONS: Question[] = []
 
-export type SubmitVariant = 'A' | 'B' | 'C' | 'D' | 'D1' | 'D2' | 'D3'
-
-const DEFAULTS = { submit: 'D3' as SubmitVariant }
 const KEY = 'oneThingDemo.variants'
 
-const valid = (q: Question['key'], v: unknown) =>
+const valid = (q: string, v: unknown) =>
   typeof v === 'string' && !!QUESTIONS.find((x) => x.key === q)?.options.some((o) => o.key === v)
 
-/** #v=submit:A → { submit: 'A' }; anything it does not name, or no longer asks, is left out. */
-function fromHash(): Partial<typeof DEFAULTS> {
+/** #v=q:A → { q: 'A' }; anything it does not name, or no longer asks, is left out. */
+function fromHash(): Record<string, string> {
   const m = /(?:^#|&)v=([^&]*)/.exec(location.hash)
   const out: Record<string, string> = {}
   for (const part of decodeURIComponent(m?.[1] ?? '').split(',')) {
     const [q, v] = part.split(':')
-    if (q && v && valid(q as Question['key'], v.toUpperCase())) out[q] = v.toUpperCase()
+    if (q && v && valid(q, v.toUpperCase())) out[q] = v.toUpperCase()
   }
   return out
 }
 
-function fromStorage(): Partial<typeof DEFAULTS> {
+function fromStorage(): Record<string, string> {
   const saved = storageGetJson<Record<string, unknown>>(KEY) ?? {}
   const out: Record<string, string> = {}
   for (const q of QUESTIONS) if (valid(q.key, saved[q.key])) out[q.key] = saved[q.key] as string
   return out
 }
 
-export const V = reactive({ ...DEFAULTS, ...fromStorage(), ...fromHash() })
+const DEFAULTS = Object.fromEntries(QUESTIONS.map((q) => [q.key, q.default]))
 
-/** The D family: the 题目's card sits in the claimed project's sidebar, and 提交 is made from the project. */
-export const onCard = () => V.submit.startsWith('D')
-
-/** Demo-only clock for deadlines: 「模拟：离截止不到 24 小时」 in the 方案 menu. Not stored, not in the link. */
-export const CLOCK = reactive({ dueSoon: false })
+export const V = reactive<Record<string, string>>({ ...DEFAULTS, ...fromStorage(), ...fromHash() })
 
 /** The link that shows the variants on screen now. */
-export const variantHash = () => `#v=submit:${V.submit}`
+export const variantHash = () => `#v=${QUESTIONS.map((q) => `${q.key}:${V[q.key]}`).join(',')}`
 
-export function setVariant(q: Question['key'], v: string): void {
+export function setVariant(q: string, v: string): void {
   if (!valid(q, v)) return
-  Object.assign(V, { [q]: v })
+  V[q] = v
   // Storage can be missing (a private window, blocked site data): the choice then lasts until reload.
-  storageSetJson(KEY, { submit: V.submit })
+  storageSetJson(KEY, Object.fromEntries(QUESTIONS.map((x) => [x.key, V[x.key]])))
   history.replaceState(null, '', variantHash())
 }
 

@@ -12,8 +12,6 @@
 // my team's), which appears on 领取, and the other projects, which are inert.
 // A claimed project stays among the projects: it belongs to a team, not to
 // the space.
-// Under 方案 C of 提交入口 the right panel beside a claimed project's files
-// widens while its 题目 tab is open.
 // The 提交 dialog, the scripted cursor, the notes overlay and the toast sit on top of it.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavGenericItem } from '@/components/common/Navigation/types'
@@ -23,7 +21,7 @@ import { computed, ref } from 'vue'
 import { avatarColor } from '@/utils/avatar'
 
 import ChannelCenter from './ChannelCenter.vue'
-import { CLAIMED, isClaim, ME, NAMES, OTHER_PROJECTS, PROJECT, SPACE } from './data'
+import { CLAIMED, ME, NAMES, OTHER_PROJECTS, PROJECT, SPACE } from './data'
 import FilesCenter from './FilesCenter.vue'
 import FilesPanel from './FilesPanel.vue'
 import HomeSide from './HomeSide.vue'
@@ -36,7 +34,6 @@ import { deadlines, go, openHome, openSpace, S, switchProject, thingById, toast,
 import SubmitDialog from './SubmitDialog.vue'
 import TeamCenter from './TeamCenter.vue'
 import ThingPanel from './ThingPanel.vue'
-import { V } from './variants'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -67,17 +64,7 @@ const right = computed<'thing' | 'files' | null>(() => {
 const wide = computed(() => right.value === 'thing' && thingById(S.thing)?.status !== 'talk')
 const cols = computed(() => {
   if (right.value === 'thing' && S.focus) return '64px 228px 0px minmax(0, 1fr)'
-  const topicTab = right.value === 'files' && V.submit === 'C' && isClaim(S.project) && S.ftab === 'topic'
-  const r =
-    right.value === null
-      ? '0px'
-      : topicTab
-        ? '400px'
-        : right.value === 'files'
-          ? '320px'
-          : wide.value
-            ? '560px'
-            : '420px'
+  const r = right.value === null ? '0px' : right.value === 'files' ? '320px' : wide.value ? '560px' : '420px'
   return `64px 228px minmax(0, 1fr) ${r}`
 })
 

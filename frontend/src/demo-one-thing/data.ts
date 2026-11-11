@@ -239,6 +239,51 @@ export function asContext(path: string, lines: string[]) {
   )
 }
 
+/** Two versions of one file as a diff the product's viewer reads: the changed lines with three lines
+ *  around each (a longest-common-subsequence walk; the demo's files are a few dozen lines). */
+export function diffText(path: string, before: string, after: string): FileDiff {
+  const a = before.split('\n')
+  const b = after.split('\n')
+  const L = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0))
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      L[i]![j] = a[i] === b[j] ? L[i + 1]![j + 1]! + 1 : Math.max(L[i + 1]![j]!, L[i]![j + 1]!)
+  // Every line once, as git prints it, with its old and new line numbers.
+  const ops: { line: string; o: number; n: number }[] = []
+  let i = 0
+  let j = 0
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) ops.push({ line: ` ${a[i++]}`, o: i, n: ++j })
+    else if (i < a.length && (j === b.length || L[i + 1]![j]! >= L[i]![j + 1]!))
+      ops.push({ line: `-${a[i++]}`, o: i, n: j })
+    else ops.push({ line: `+${b[j++]}`, o: i, n: j })
+  }
+  // Keep three lines of context around each change; changes closer than that share a hunk.
+  const keep = ops.map(() => false)
+  ops.forEach((op, k) => {
+    if (op.line[0] === ' ') return
+    for (let m = Math.max(0, k - 3); m <= Math.min(ops.length - 1, k + 3); m++) keep[m] = true
+  })
+  const out = [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`]
+  for (let k = 0; k < ops.length; ) {
+    if (!keep[k]) {
+      k++
+      continue
+    }
+    let end = k
+    while (end < ops.length && keep[end]) end++
+    const hunk = ops.slice(k, end)
+    const olds = hunk.filter((x) => x.line[0] !== '+').length
+    const news = hunk.filter((x) => x.line[0] !== '-').length
+    const first = hunk[0]!
+    const oStart = first.line[0] === '+' ? first.o + 1 : first.o
+    const nStart = first.line[0] === '-' ? first.n + 1 : first.n
+    out.push(`@@ -${oStart},${olds} +${nStart},${news} @@`, ...hunk.map((x) => x.line))
+    k = end
+  }
+  return splitDiffByFile(out.join('\n'))[0]!
+}
+
 const PREPROCESS_OLD = [
   'import torchvision.transforms as T',
   '',

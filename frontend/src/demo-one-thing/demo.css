@@ -108,50 +108,6 @@ body {
   color: var(--ink);
 }
 
-/* Scoped under .ot-variants: the app's `button:not(.v-btn)` reset outranks a single class. */
-.ot-variants .ot-variants__sim {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  padding: 6px 8px;
-  margin-top: 4px;
-  font: inherit;
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-top: 1px dashed var(--line-2);
-  border-radius: 0;
-}
-
-.ot-variants .ot-variants__sim:hover {
-  color: var(--ink);
-}
-
-.ot-variants .ot-variants__sim[aria-pressed='true'] {
-  color: var(--ink);
-}
-
-.ot-variants__hint {
-  padding: 8px;
-  margin: 4px 0 0;
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--ink);
-  background: var(--accent-wash);
-  border-radius: 8px;
-}
-
-.ot-variants__go {
-  margin-left: 4px;
-  font-weight: 600;
-  color: var(--accent-ink);
-}
-
 .ot-variants__foot {
   padding: 8px 8px 2px;
   margin: 8px 0 0;
@@ -198,6 +154,28 @@ body {
   font-size: 15px;
   line-height: var(--lh-15-reading);
   color: var(--ink);
+}
+
+.ot-caption__t code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+/* 演示二's last caption: 人 and 芝士 side by side. */
+.ot-vs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.ot-vs > span {
+  padding-left: 12px;
+  border-left: 2px solid var(--line-2);
+}
+
+.ot-vs b {
+  display: block;
+  margin-bottom: 2px;
 }
 
 .ot-model {

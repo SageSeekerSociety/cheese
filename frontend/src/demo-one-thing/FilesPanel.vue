@@ -1,41 +1,45 @@
 <script setup lang="ts">
 // The right panel beside 项目文件, for the open file: 历史 (every change that
 // took effect on 正式版, the accepted task and each pause in a person's typing
-// included, each one undoable), 待定改动 (芝士's pending changes touching this
-// file: a 一件事's change waiting for 采纳 or a suggestion in a document; and
-// the open branch, if it changed the file) and 对话 (the channel messages that
-// mention this file, each linking back to its place in the channel, and a
-// 问芝士 box that asks with the file, and the selected lines, as context; the
-// question and the answer land in the channel too). In a project claimed from
+// included, each one undoable; the newest shows its 撤回 without a hover),
+// 待定改动 (芝士's pending changes touching this file: a 一件事's change
+// waiting for 采纳, shown as its diff against 正式版, or a suggestion in a
+// document; and the open branch, if it changed the file) and 对话 (the channel
+// messages that mention this file, each linking back to its place in the
+// channel, and a 问芝士 box that asks with the file, and the selected lines, as
+// context; the question and the answer land in the channel too). Asking there
+// for a change (「改成…」) opens a 一件事: 芝士 works on its own copy, and the
+// change shows here under 待定改动 with 让芝士再改 / 不要 / 采纳. In a project claimed from
 // the course there is no 芝士 change to wait on, so 待定改动 is not there; and
 // no submission record either: submissions belong to the 题目 and are listed
-// on it in the space. Under 方案 C of 提交入口 such a project gets one more tab,
-// 题目: the 题目 it came from (TopicDetail, the same view as in the space,
-// narrower), with its 提交记录 and 「提交」, and 「在空间里打开」.
+// on it in the space.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 
 import { computed } from 'vue'
 
-import { topicOf } from './course'
-import { channelOf, isClaim, MINUTES_DOC, NAMES, TASK_DIFFS } from './data'
+import { channelOf, diffText, MINUTES_DOC, NAMES, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
 import { hhmm } from './shapes'
 import {
   accept,
+  acceptCopy,
   askAboutFile,
   branchChanges,
+  copyThingFor,
+  dropCopy,
   jumpTo,
   mentionsOf,
+  officialText,
   openThing,
   S,
   snapshotAll,
   suggAccept,
   suggReject,
   t4,
+  tellCheese,
+  thingById,
   undo,
 } from './state'
-import TopicDetail from './TopicDetail.vue'
-import { V } from './variants'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -48,18 +52,27 @@ import { parseDiffLines } from '@/lib/diff'
 import { relTime } from '@/lib/relTime'
 
 const research = computed(() => S.project === 'research')
-/** 方案 C: the 题目 this project was claimed from, shown in its own tab. */
-const origin = computed(() => (V.submit === 'C' && isClaim(S.project) ? topicOf(S.project) : null))
 const suggestion = computed(() => (!research.value || S.suggAccepted || S.suggRejected ? 0 : 1))
 /** 芝士's task change to this file, while the task waits for 采纳. */
 const taskDiff = computed(() =>
   research.value && t4()?.status === 'wait' ? TASK_DIFFS.find((d) => d.path === S.file) ?? null : null
 )
 const taskLines = computed(() => (taskDiff.value ? parseDiffLines(taskDiff.value.body) : []))
+/** A 一件事 asked for from this file, working on its own copy: its diff against 正式版 as it reads now. */
+const copyThing = computed(() => (research.value ? copyThingFor(S.project, S.file) : null))
+const copyLines = computed(() => {
+  const t = copyThing.value
+  if (!t?.copy || t.status !== 'wait') return []
+  return parseDiffLines(diffText(t.copy.path, officialText(S.project, t.copy.path), t.copy.text).body)
+})
+function moreFromCheese(id: string) {
+  openThing(id)
+  tellCheese()
+}
 const onBranch = computed(() =>
   S.branch?.project === S.project ? branchChanges().find((c) => c.path === S.file) ?? null : null
 )
-const pending = computed(() => suggestion.value + (taskDiff.value ? 1 : 0))
+const pending = computed(() => suggestion.value + (taskDiff.value ? 1 : 0) + (copyThing.value ? 1 : 0))
 const history = computed(() => S.history[S.project])
 const mentions = computed(() => mentionsOf(S.file))
 const sel = computed(() => (S.codeSel?.path === S.file ? S.codeSel : null))
@@ -85,15 +98,11 @@ const tabs = computed<PanelTab[]>(() => [
     icon: 'mdi-message-outline',
     signal: mentions.value.length ? { kind: 'count' as const, count: mentions.value.length } : undefined,
   },
-  ...(origin.value ? [{ key: 'topic', label: '题目', icon: 'mdi-flag-checkered' }] : []),
 ])
 const tab = computed(() =>
-  S.ftab === 'history' || S.ftab === 'talk' || (S.ftab === 'topic' && origin.value)
-    ? S.ftab
-    : research.value
-      ? 'pending'
-      : 'history'
+  S.ftab === 'history' || S.ftab === 'talk' ? S.ftab : research.value ? 'pending' : 'history'
 )
+const STATUS_TEXT = { talk: '讨论', run: '芝士在做', wait: '等你采纳', done: '完成' }
 /** A message as one plain paragraph: names for mentions, no Markdown marks, code blocks left out. */
 const plain = (t: string) =>
   t
@@ -135,6 +144,26 @@ function undoAt(i: number) {
             <BaseButton kind="primary" size="sm" @click="accept">采纳</BaseButton>
           </div>
         </div>
+        <div v-if="copyThing" class="ot-fp__card ot-fp__task" data-zone="copy-pending">
+          <div class="ot-fp__task-head">
+            <CheeseAvatar :size="20" name="芝士" handle="cheese" />
+            <span class="ot-fp__task-title">{{
+              copyThing.status === 'run'
+                ? '芝士正在它自己那份上改这个文件，正式版没动'
+                : '芝士改好了它那份，和正式版的差别：'
+            }}</span>
+          </div>
+          <div v-if="copyLines.length" class="ot-fp__task-diff ot-fp__task-diff--tall">
+            <ChangesDiff :lines="copyLines" inline />
+          </div>
+          <div v-if="copyThing.status === 'wait'" class="ot-fp__task-actions">
+            <BaseButton id="b-copy-more" kind="ghost" size="sm" @click="moreFromCheese(copyThing.id)"
+              >让芝士再改</BaseButton
+            >
+            <BaseButton id="b-copy-drop" kind="ghost" size="sm" @click="dropCopy(copyThing.id)">不要</BaseButton>
+            <BaseButton id="b-copy-accept" kind="primary" size="sm" @click="acceptCopy(copyThing.id)">采纳</BaseButton>
+          </div>
+        </div>
         <template v-if="suggestion">
           <p v-if="S.file !== MINUTES_DOC" class="ot-fp__other">这个文件之外，芝士还有一条待定的建议：</p>
           <div class="ot-fp__card" data-zone="suggestion">
@@ -152,9 +181,13 @@ function undoAt(i: number) {
             />
           </div>
         </template>
-        <BaseEmptyState v-else-if="!taskDiff && !onBranch" size="compact" icon="mdi-check-all" title="暂无待定的改动" />
+        <BaseEmptyState
+          v-else-if="!taskDiff && !onBranch && !copyThing"
+          size="compact"
+          icon="mdi-check-all"
+          title="暂无待定的改动"
+        />
       </template>
-      <TopicDetail v-else-if="tab === 'topic' && origin" :topic-id="origin.id" embedded />
       <template v-else-if="tab === 'talk'">
         <div class="ot-talk" data-zone="file-talk">
           <p v-if="!mentions.length" class="ot-fp__other">频道里还没人提到这个文件。在下面问芝士，问题会发到频道里。</p>
@@ -177,6 +210,16 @@ function undoAt(i: number) {
                 </button>
               </div>
               <div class="ot-talk__text">{{ plain(m.line.text) }}</div>
+              <button
+                v-if="m.line.thing && thingById(m.line.thing)"
+                type="button"
+                class="ot-talk__thing"
+                :data-thing="m.line.thing"
+                @click="openThing(m.line.thing)"
+              >
+                <v-icon size="14" icon="mdi-checkbox-marked-outline" />一件事 ·
+                {{ STATUS_TEXT[thingById(m.line.thing)!.status] }}<v-icon size="13" icon="mdi-arrow-top-right" />
+              </button>
             </div>
           </div>
         </div>
@@ -296,6 +339,11 @@ function undoAt(i: number) {
   border-bottom: 1px solid var(--line);
 }
 
+/* One file's change, with three lines around it: room for all of it. */
+.ot-fp__task-diff--tall {
+  max-height: 420px;
+}
+
 .ot-fp__task-actions {
   display: flex;
   gap: 8px;
@@ -354,6 +402,26 @@ function undoAt(i: number) {
   background: var(--fill);
 }
 
+.ot-talk__thing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 6px;
+  margin-top: 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  background: var(--fill);
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.ot-talk__thing:hover {
+  color: var(--ink);
+  background: var(--fill-2);
+}
+
 .ot-talk__text {
   display: -webkit-box;
   margin-top: 2px;
@@ -375,6 +443,7 @@ function undoAt(i: number) {
 }
 
 .ot-hist__row:hover .ot-hist__undo,
+.ot-hist__row.ot-flash .ot-hist__undo,
 .ot-hist__undo:focus-visible {
   opacity: 1;
 }

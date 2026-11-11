@@ -7,6 +7,10 @@
 // no 「改代码」 switch: a read-only first view would be a mode documents do not
 // have, and 撤回 already makes a slip cheap. The editor is read-only only when
 // a shared project has 正式版受保护 on and no branch is open.
+// 芝士 never types into 正式版 either. Asked from the file's 对话 to change it,
+// 芝士 opens a 一件事 and works on its own copy; the bar then says so in one
+// quiet chip (芝士在改它那份 / 芝士那份等你采纳) that opens 待定改动,
+// where its diff waits for a person's 采纳.
 // 开分支 (in a project with more than one person: the research project, a team's
 // 题目) gives a person a copy of their own; the bar then names the
 // branch, with 请人看一下 and 合回正式版. The editor is the same in every
@@ -27,6 +31,7 @@ import {
   branchChanges,
   canMerge,
   codeText,
+  copyThingFor,
   dropBranch,
   fkey,
   isSaving,
@@ -61,6 +66,8 @@ const text = computed({
 const saving = computed(() => isSaving(p.value, path.value))
 const changes = computed(() => branchChanges())
 const mark = computed(() => (S.codeAt?.path === path.value ? S.codeAt : null))
+/** A 一件事 working on its own copy of this file. */
+const cheese = computed(() => copyThingFor(p.value, path.value))
 // Leaving the file closes its burst of typing into 历史 (this view is keyed to one file: by
 // unmount time S.file already names the next one).
 const mine = { p: S.project, path: S.file }
@@ -182,10 +189,11 @@ function showTab(t: 'out' | 'term') {
       <div v-if="branch" class="ot-ced__bar ot-ced__bar--branch" data-zone="branch">
         <v-icon size="15" icon="mdi-source-branch" class="ot-ced__mark" />
         <b class="ot-ced__branch">分支：{{ branch.name }}</b>
-        <span class="ot-ced__copy">{{
+        <!-- Once someone has looked, 「看过了」 says more than the count, and the bar has no room for both. -->
+        <span v-if="!branch.approved" class="ot-ced__copy">{{
           changes.length ? `改了 ${changes.length} 个文件` : '还没改，正式版不受影响'
         }}</span>
-        <span v-if="branch.approved" class="ot-ced__ok"><v-icon size="14" icon="mdi-check" />{{ reviewer }}看过了</span>
+        <span v-else class="ot-ced__ok"><v-icon size="14" icon="mdi-check" />{{ reviewer }}看过了</span>
         <span class="ot-head__gap" />
         <!-- The branch's own actions need the room: 放弃 and 运行 are icons here. -->
         <BaseButton
@@ -228,9 +236,22 @@ function showTab(t: 'out' | 'term') {
       <div v-else class="ot-ced__bar">
         <v-icon size="15" icon="mdi-file-code-outline" class="ot-ced__mark" />
         <span class="ot-ced__copy" data-zone="saved" title="改了就生效；每次改动自动记进历史，能撤回">{{
-          saving ? '正式版 · 正在改…' : '正式版 · 改了就生效'
+          cheese ? '正式版' : saving ? '正式版 · 正在改…' : '正式版 · 改了就生效'
         }}</span>
         <DocPresence v-if="faces.length" :peers="faces" class="ot-ced__faces" />
+        <button
+          v-if="cheese"
+          type="button"
+          class="ot-ced__cheese"
+          :class="{ 'is-wait': cheese.status === 'wait' }"
+          data-cheese-copy
+          title="在右栏「待定改动」里看"
+          @click="S.ftab = 'pending'"
+        >
+          <v-icon size="14" icon="mdi-source-fork" />{{
+            cheese.status === 'wait' ? '芝士那份等你采纳' : '芝士在改它那份'
+          }}
+        </button>
         <span class="ot-head__gap" />
         <BaseButton
           v-if="shared"
@@ -357,6 +378,32 @@ function showTab(t: 'out' | 'term') {
   font-size: 12px;
   color: var(--ok-ink);
   white-space: nowrap;
+}
+
+.ot-ced__cheese {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.ot-ced__cheese:hover {
+  color: var(--ink);
+}
+
+/* Waiting on me: the same amber as anything else that does. */
+.ot-ced__cheese.is-wait {
+  color: var(--accent-ink);
+  border-color: var(--accent-ink);
 }
 
 .ot-ced__copy {

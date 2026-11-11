@@ -4,41 +4,26 @@
 // in the project. Each one names its time, who submitted (as which team), the
 // version it pinned and its result: the judge's verdict, or 待老师评 until the
 // teacher's score and comment arrive. Opening one shows that version read-only.
-// The space shows it in its center column; under 方案 C the claimed project's
-// right panel embeds the same view (`embedded`: narrower, with 「在空间里打开」).
+// The space shows it in its center column.
 // Showing a 题目 counts as having looked at its results (no more 「有新批改」).
-// A 题单 (in every 方案 but the D family, where its rows stay in the 题单 document) lists
-// its problems here, one row each with where it stands and its own 「提交」.
+// A 题单's problems are listed, and submitted one by one, in the 题单 document in
+// its project (ProblemSetDoc), not here.
 import type { Submission } from './course'
 
 import { computed, ref, watch } from 'vue'
 
-import { dueChip, GRADING_NOTE, GRADING_TEXT, modeText, SET, submitItems, topicById, UNITS } from './course'
+import { dueChip, GRADING_NOTE, GRADING_TEXT, modeText, submitItems, topicById, UNITS } from './course'
 import { asContext, CLAIMED, NAMES, projectTeam, teamOf } from './data'
 import JudgeResult from './JudgeResult.vue'
 import { whenText } from './shapes'
-import {
-  claim,
-  latestOf,
-  markSeen,
-  openFile,
-  openSpace,
-  openSubmit,
-  openVersion,
-  passed,
-  resultOf,
-  S,
-  showTopic,
-  switchProject,
-} from './state'
-import { onCard } from './variants'
+import { claim, markSeen, openSpace, openSubmit, openVersion, resultOf, S, switchProject } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import { monthDayTime } from '@/lib/dateText'
 
-const props = defineProps<{ topicId: string; embedded?: boolean }>()
+const props = defineProps<{ topicId: string }>()
 
 const ICONS: Record<string, string> = {
   Lab: 'mdi-flask-outline',
@@ -50,27 +35,10 @@ const detail = computed(() => topicById(props.topicId)!)
 const claimedHere = computed(() => !!detail.value.project && S.claimed.includes(detail.value.project))
 const subs = computed(() => S.subs[detail.value.id] ?? [])
 const isSet = computed(() => detail.value.category === '题单')
-/** The 题单's problems are listed (and submitted) here, except under 方案 D. */
-const setRows = computed(() =>
-  isSet.value && !onCard()
-    ? SET.map((p) => {
-        const last = latestOf(detail.value.id, p.id)
-        return {
-          ...p,
-          tries: subs.value.filter((x) => x.unit === p.id).length,
-          result: last ? resultOf(last).text : '—',
-          ok: passed(last),
-          state: passed(last) ? '通过' : last?.verdict ? '没通过' : last ? '评测中' : '未提交',
-          bad: !!last?.verdict && !passed(last),
-        }
-      })
-    : []
-)
 /** 提交项 as one line; a 题单's are per problem. */
 const itemsText = computed(() => {
   const t = detail.value
-  if (t.category === '题单')
-    return onCard() ? '每题一份 main.cpp，在题单里一题一题提交' : '每题一份 main.cpp，在下面一题一题提交'
+  if (t.category === '题单') return '每题一份 main.cpp，在题单里一题一题提交'
   return submitItems(t, t.id)
     .map((x) => `${x.type === 'FILE' ? '文件' : '文字'} ${x.prompt}`)
     .join(' + ')
@@ -86,19 +54,11 @@ watch(
   { immediate: true }
 )
 const pinned = (x: Submission) => asContext(x.path, x.code.replace(/\n$/, '').split('\n'))
-
-/** A 题单 problem's row opens its main.cpp in the project. */
-function openProblem(id: string) {
-  const p = detail.value.project
-  if (!p || !claimedHere.value) return
-  if (S.area !== 'project' || S.project !== p) switchProject(p)
-  openFile(`${id}/main.cpp`, props.embedded ? { ftab: 'topic' } : {})
-}
 </script>
 
 <template>
-  <div class="ot-tp" :class="{ 'ot-tp--embedded': embedded }" data-zone="topic">
-    <button v-if="!embedded" type="button" class="ot-tp__back" @click="openSpace('tasks')">
+  <div class="ot-tp" data-zone="topic">
+    <button type="button" class="ot-tp__back" @click="openSpace('tasks')">
       <v-icon size="16" icon="mdi-chevron-left" />全部题目
     </button>
     <div class="ot-tp__head">
@@ -106,20 +66,9 @@ function openProblem(id: string) {
       <h3 class="ot-tp__title">{{ detail.title }}</h3>
       <span class="ot-tp__type">{{ detail.category }}</span>
       <span class="ot-tp__gap" />
-      <button
-        v-if="embedded"
-        type="button"
-        class="ot-tp__out"
-        data-topic-in-space
-        :title="`在空间里打开「${detail.title}」`"
-        @click="showTopic(detail.id)"
-      >
-        在空间里打开<v-icon size="13" icon="mdi-arrow-top-right" />
-      </button>
-      <template v-else-if="claimedHere">
+      <template v-if="claimedHere">
         <BaseButton kind="secondary" size="sm" @click="switchProject(detail.project!)">进入项目</BaseButton>
         <BaseButton
-          v-if="!setRows.length"
           id="b-topic-submit"
           kind="primary"
           size="sm"
@@ -139,7 +88,7 @@ function openProblem(id: string) {
           <span v-if="dueChip(detail.due)" class="ot-tp__chip">{{ dueChip(detail.due) }}</span>
         </dd>
       </div>
-      <div v-if="!embedded">
+      <div>
         <dt>谁来做</dt>
         <dd>{{ modeText(detail) }}</dd>
       </div>
@@ -153,58 +102,11 @@ function openProblem(id: string) {
         <dt>提交项</dt>
         <dd>{{ itemsText }}</dd>
       </div>
-      <div v-if="claimedHere && !embedded">
+      <div v-if="claimedHere">
         <dt>项目</dt>
         <dd>{{ CLAIMED[detail.project!].name }} · 在团队「{{ projectTeam(detail.project!).name }}」下</dd>
       </div>
     </dl>
-    <BaseButton
-      v-if="embedded && claimedHere && !setRows.length"
-      id="b-panel-submit"
-      class="ot-tp__submit"
-      kind="primary"
-      size="sm"
-      prepend-icon="mdi-upload-outline"
-      @click="openSubmit(detail.id)"
-      >提交</BaseButton
-    >
-
-    <section v-if="setRows.length" class="ot-tp__set" data-zone="set-problems">
-      <h4 class="ot-tp__h">
-        题目<span>通过 {{ setRows.filter((r) => r.ok).length }}/{{ setRows.length }}</span>
-      </h4>
-      <div class="ot-tp__setcols t-eyebrow-read">
-        <span>题</span><span>状态</span><span v-if="!embedded">尝试</span><span v-if="!embedded">最近得分</span>
-      </div>
-      <div v-for="r in setRows" :key="r.id" class="ot-tp__setrow" :data-problem="r.id">
-        <button
-          type="button"
-          class="ot-tp__setmain"
-          :disabled="!claimedHere"
-          :title="claimedHere ? `在项目里打开 ${r.id}/main.cpp` : undefined"
-          @click="openProblem(r.id)"
-        >
-          <span class="ot-tp__setname"
-            ><code>{{ r.id }}</code> {{ r.title }}</span
-          >
-          <span class="ot-tp__setst" :class="{ 'is-ok': r.ok, 'is-bad': r.bad }">
-            <v-icon v-if="r.ok" size="14" icon="mdi-check" />{{ r.state }}
-          </span>
-          <span v-if="!embedded" class="ot-tp__setn">{{ r.tries ? `${r.tries} 次` : '—' }}</span>
-          <span v-if="!embedded" class="ot-tp__setn">{{ r.result }}</span>
-        </button>
-        <BaseButton
-          v-if="claimedHere"
-          kind="secondary"
-          size="sm"
-          class="ot-tp__setsubmit"
-          :data-problem-submit="r.id"
-          @click="openSubmit(detail.id, r.id)"
-          >提交</BaseButton
-        >
-      </div>
-    </section>
-
     <section class="ot-tp__subs" data-zone="topic-subs">
       <h4 class="ot-tp__h">
         提交记录<span>{{ subs.length || '' }}</span>
@@ -217,12 +119,10 @@ function openProblem(id: string) {
           <span class="ot-tp__n">{{ isSet ? `${UNITS[x.unit]!.title} · ` : '' }}第 {{ x.n }} 次</span>
           <span class="ot-tp__when">{{ whenText(x.at) }}</span>
           <span class="ot-tp__by">
-            <template v-if="!embedded">
-              <UserAvatar :size="18" :name="NAMES[x.who]" :seed="x.who" />{{ NAMES[x.who]
-              }}{{ x.team ? ` · 以「${teamOf(x.team).name}」` : '' }}
-            </template>
+            <UserAvatar :size="18" :name="NAMES[x.who]" :seed="x.who" />{{ NAMES[x.who]
+            }}{{ x.team ? ` · 以「${teamOf(x.team).name}」` : '' }}
           </span>
-          <span v-if="!embedded" class="ot-tp__ver"
+          <span class="ot-tp__ver"
             >版本 <code>{{ x.version }}</code></span
           >
           <span class="ot-tp__res" :class="`is-${resultOf(x).tone}`">{{ resultOf(x).text }}</span>
@@ -254,11 +154,11 @@ function openProblem(id: string) {
           <div class="ot-tp__part">
             <div class="ot-tp__parthead">
               <span class="ot-tp__kind">文件</span><code>{{ x.path }}</code>
-              <span>版本 {{ x.version }}{{ embedded ? '' : ' · 只读' }}</span>
+              <span>版本 {{ x.version }} · 只读</span>
               <span class="ot-tp__gap" />
-              <BaseButton kind="ghost" size="sm" prepend-icon="mdi-open-in-app" @click="openVersion(x.id)">{{
-                embedded ? '打开' : '在项目里打开'
-              }}</BaseButton>
+              <BaseButton kind="ghost" size="sm" prepend-icon="mdi-open-in-app" @click="openVersion(x.id)"
+                >在项目里打开</BaseButton
+              >
             </div>
             <div class="ot-tp__code"><ChangesDiff :lines="pinned(x)" inline /></div>
           </div>
@@ -323,26 +223,6 @@ function openProblem(id: string) {
   color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.ot-tp__out {
-  display: inline-flex;
-  flex: none;
-  gap: 2px;
-  align-items: center;
-  padding: 2px 4px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--muted);
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-sm);
-}
-
-.ot-tp__out:hover {
-  color: var(--ink);
-  background: var(--fill);
 }
 
 .ot-tp__about {
@@ -421,106 +301,6 @@ function openProblem(id: string) {
   font-size: 12px;
   font-weight: 400;
   color: var(--muted);
-}
-
-/* A 题单's problems: one row each, the row opens its main.cpp, 「提交」 beside it. */
-.ot-tp__set {
-  margin-top: 20px;
-}
-
-.ot-tp__setcols {
-  display: flex;
-  gap: 10px;
-  /* Clear of each row's 提交 (56px), the gaps and paddings around it: 8 + 8 + 56 + 8. */
-  padding: 0 80px 2px 8px;
-}
-
-.ot-tp__setrow {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding-right: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.ot-tp__setmain {
-  display: flex;
-  flex: 1;
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
-  height: 40px;
-  padding: 0 8px;
-  font: inherit;
-  font-size: 14px;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-md);
-}
-
-.ot-tp__setmain:hover:not(:disabled) {
-  background: var(--fill);
-}
-
-.ot-tp__setmain:disabled {
-  cursor: default;
-}
-
-.ot-tp__setsubmit {
-  flex: none;
-  width: 56px;
-}
-
-.ot-tp__setcols > :first-child,
-.ot-tp__setname {
-  flex: 1;
-  min-width: 0;
-}
-
-.ot-tp__setcols > :not(:first-child),
-.ot-tp__setst,
-.ot-tp__setn {
-  flex: none;
-  width: 64px;
-  text-align: right;
-}
-
-.ot-tp__setname {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ot-tp__setname code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.ot-tp__setst {
-  display: inline-flex;
-  gap: 2px;
-  align-items: center;
-  justify-content: flex-end;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.ot-tp__setst.is-ok {
-  color: var(--ok-ink);
-}
-
-.ot-tp__setst.is-bad {
-  color: var(--text);
-}
-
-.ot-tp__setn {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text);
 }
 
 .ot-tp__subs {
@@ -700,45 +480,5 @@ function openProblem(id: string) {
 
 .ot-tp__code :deep(.diff-line__text) {
   white-space: pre;
-}
-
-/* In a project's right panel: one column, tighter. */
-.ot-tp--embedded .ot-tp__title {
-  font-size: 16px;
-}
-
-.ot-tp--embedded .ot-tp__about {
-  margin: 4px 0 10px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-
-.ot-tp--embedded .ot-tp__facts {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  padding: 10px 12px;
-}
-
-.ot-tp--embedded .ot-tp__submit {
-  width: 100%;
-  margin-top: 12px;
-}
-
-.ot-tp--embedded .ot-tp__set,
-.ot-tp--embedded .ot-tp__subs {
-  margin-top: 16px;
-}
-
-.ot-tp--embedded .ot-tp__row {
-  gap: 8px;
-  padding: 0 8px 0 12px;
-}
-
-.ot-tp--embedded .ot-tp__when {
-  width: auto;
-}
-
-.ot-tp--embedded .ot-tp__detail {
-  padding: 4px 12px 12px;
 }
 </style>

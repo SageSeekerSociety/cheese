@@ -1,20 +1,51 @@
 <script setup lang="ts">
 // The demo page: controls, the workspace scaled to the window, the caption
-// under it and the three model cards. The nine scripted steps drive the same
-// actions a click does; clicking by hand stops the script at any point. The
-// controls' 「方案」 menu switches the variants of the design questions still
-// open (variants.ts); a switch redraws in place and keeps where the demo is.
-// Under 提交入口 it also has 「模拟：离截止不到 24 小时」, which moves only the
-// clock deadlines are read against.
+// under it and the three model cards. Two guided tours share the same
+// mechanics: 「演示一：频道和一件事」 (STEPS, nine steps: a channel, a 一件事 from
+// 讨论 to 采纳, 项目文件) and 「演示二：改代码」 (CODE_STEPS, eight steps: the
+// code editor, a person editing 正式版 directly next to 王磊, 运行 in my own
+// terminal, a branch merged back, then 芝士 asked to change a file: it works in
+// its own copy inside a 一件事, the change waits as a 待定改动, and only a
+// person's 采纳 puts it into 正式版). Each step drives the same actions a click
+// does; clicking by hand stops the script at any point, and switching tours
+// starts the other one from a fresh state. In a project claimed from a 题目
+// the top bar also has 「模拟：离截止不到 24 小时」, which moves only the clock
+// deadlines are read against. The 「方案」 menu switches the variants of the
+// design questions still open (variants.ts); with none open it is not shown.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
-import { ASK } from './data'
-import { isClaim } from './data'
-import { accept, claim, confirmKick, finish, go, kickoff, openThing, reply, reset, S, send, suggAccept } from './state'
-import { CLOCK, QUESTIONS, setVariant, V } from './variants'
+import { CLOCK } from './course'
+import { ASK, isClaim } from './data'
+import {
+  accept,
+  acceptCopy,
+  askAboutFile,
+  askReview,
+  codeText,
+  confirmKick,
+  copyThingFor,
+  finish,
+  finishCopy,
+  go,
+  kickoff,
+  mergeBranch,
+  openBranch,
+  openFile,
+  openThing,
+  reply,
+  reset,
+  runCode,
+  S,
+  send,
+  snapshot,
+  suggAccept,
+  typeCode,
+} from './state'
+import { QUESTIONS, setVariant, V } from './variants'
 import Workspace from './Workspace.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import vuetify from '@/plugins/vuetify'
 import { applyResolvedTheme } from '@/theme'
 
@@ -47,13 +78,8 @@ onBeforeUnmount(() => {
 })
 
 const variantsOpen = ref(false)
-/** On a project claimed from a 题目: the only place the 提交入口 variants draw anything. */
+/** On a project claimed from a 题目: the only place the deadline clock changes anything on screen. */
 const inClaim = computed(() => S.area === 'project' && isClaim(S.project))
-/** From the 方案 menu: claim Data Lab (or go back to it) so the chosen 提交入口 is on screen. */
-function seeSubmit() {
-  claim('datalab')
-  variantsOpen.value = false
-}
 
 // ---- theme ----
 const theme = ref<'light' | 'dark'>(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
@@ -78,8 +104,7 @@ const caption = reactive({
   n: '演示',
   text: '点「播放演示」走一遍；「显示说明」在界面上标出每一块是什么。任何时候都可以停下自己点。数据都是演示用的。',
 })
-const N = 9
-const cap = (i: number, text: string) => Object.assign(caption, { n: `${i} / ${N}`, text })
+const cap = (i: number, text: string) => Object.assign(caption, { n: `${i} / ${steps.value.length}`, text })
 
 // ---- geometry inside the workspace (unscaled px) ----
 function rel(el: Element) {
@@ -94,16 +119,6 @@ function rel(el: Element) {
 }
 
 // ---- notes overlay ----
-/** What a claimed project's sidebar note says about the way back to its 题目, per 方案. */
-const ORIGIN_NOTE: Record<string, string> = {
-  A: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。标题下一行写着它来自哪道题，点它回到空间里的这道题，在那里提交、看提交记录。',
-  B: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。它来自哪道题写在中间的顶栏上，点它回到空间里的这道题，在那里提交。',
-  C: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。它来自的题目在右栏「题目」里：要求、截止、提交记录、「提交」。',
-  D: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片是它来自的题目：截止、交到哪了、「提交」；点题目名回到空间里的这道题。',
-  D1: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片是它来自的题目，全是灰字：交到哪了、几号截止、「提交」；只有最后 24 小时出现倒计时。',
-  D2: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上的卡片先说做到哪了：本地运行几个通过、最近一次提交的结果；截止是小字，旁边是「提交」。',
-  D3: '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。标题下一行是它来自的题目和截止，圆点说交了没有；点开是卡片和「提交」。快截止或老师批改回来时自己展开。',
-}
 const notesOn = ref(false)
 const notes = ref<
   { key: string; x: number; y: number; w: number; h: number; title: string; text: string; nx: number; ny: number }[]
@@ -157,7 +172,13 @@ function drawNotes() {
     return
   }
   if (S.project !== 'research') {
-    zone('.ot-side', '左栏：普通的项目', ORIGIN_NOTE[V.submit], 12, 340)
+    zone(
+      '.ot-side',
+      '左栏：普通的项目',
+      '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。标题下一行是它来自的课程和截止，圆点说交了没有；点开是卡片：本地运行到哪了、最近一次提交、「提交」。快截止或老师批改回来时它自己展开。',
+      12,
+      340
+    )
     zone(
       '.ot-pane',
       '中间：频道或文件',
@@ -167,10 +188,8 @@ function drawNotes() {
     )
     zone(
       '.ot-right [data-zone="right"]',
-      V.submit === 'C' ? '右栏：历史、对话和题目' : '右栏：历史和对话',
-      V.submit === 'C'
-        ? '每次改动都在历史里，能撤回；提交时可以挑历史里的任何一版。「题目」是它来自的题目：要求、提交记录和「提交」，和空间里那一页是同一个。'
-        : '每次改动都在历史里，能撤回；提交时可以挑历史里的任何一版。提交记录不在这里，在空间里的题目上。',
+      '右栏：历史和对话',
+      '每次改动都在历史里，能撤回；提交时可以挑历史里的任何一版。提交记录不在这里，在空间里的题目上。',
       20,
       110
     )
@@ -207,7 +226,7 @@ watch(
     S.chanView[S.chan],
     S.things.map((t) => t.status).join(),
     S.ftab,
-    V.submit,
+    Object.values(V).join(),
   ],
   async () => {
     await nextTick()
@@ -236,13 +255,14 @@ function wait(ms: number) {
   )
 }
 
-async function moveTo(sel: string) {
+/** Move the cursor onto an element (its middle, or `dx` from its left edge). */
+async function moveTo(sel: string, dx?: number) {
   await nextTick()
   const el = document.querySelector(`#ot-app ${sel}`)
   if (!el) return
   const r = rel(el)
   cursor.shown = true
-  cursor.x = r.x + r.w / 2
+  cursor.x = dx === undefined ? r.x + r.w / 2 : r.x + dx
   cursor.y = r.y + r.h / 2
   await wait(750)
 }
@@ -262,6 +282,29 @@ async function typeInto(full: string, set: (v: string) => void, lead = '') {
     await wait(45)
   }
   set(full)
+}
+
+/** Edit an open code file the way a person types: take out what differs from `to`, then type the rest. */
+async function typeCodeTo(path: string, to: string) {
+  const p = S.project
+  const from = codeText(p, path)
+  let a = 0
+  while (a < from.length && a < to.length && from[a] === to[a]) a++
+  let b = 0
+  while (b < from.length - a && b < to.length - a && from[from.length - 1 - b] === to[to.length - 1 - b]) b++
+  const head = to.slice(0, a)
+  const tail = to.slice(to.length - b)
+  const gone = from.slice(a, from.length - b)
+  const add = to.slice(a, to.length - b)
+  for (let i = gone.length - 1; i >= 0; i--) {
+    typeCode(p, path, head + gone.slice(0, i) + tail)
+    await wait(90)
+  }
+  for (let i = 1; i <= add.length; i += 2) {
+    typeCode(p, path, head + add.slice(0, i) + tail)
+    await wait(55)
+  }
+  typeCode(p, path, to)
 }
 
 const TYPED_NOTE = '林晓补充：COCO 5K 的结果见 eval_results.md。'
@@ -359,8 +402,8 @@ const STEPS: (() => Promise<void>)[] = [
   },
 ]
 
-/** Bring the state to the start of step `k` without animating. */
-function instant(k: number) {
+/** Bring the state to the start of step `k + 1` of 演示一 without animating. */
+function instantOne(k: number) {
   if (k === 1) {
     S.typing = ASK
     send()
@@ -384,14 +427,186 @@ function instant(k: number) {
   }
 }
 
+// ---- 演示二：改代码 ----
+const PRE = 'eval/preprocess.py'
+const RET = 'eval/retrieval.py'
+/** 林晓's own fix on 正式版: the size the model takes, and the crop the paper uses. */
+const fixed = (t: string) => t.replace('T.Resize(256),', 'T.Resize(224),\n        T.CenterCrop(224),')
+/** What she writes on her branch first: a line saying what the input is. */
+const documented = (t: string) =>
+  t.replace('def preprocess(img):', 'def preprocess(img):\n    """CLIP 的输入：224×224，和论文一样 center crop。"""')
+const CODE_ASK = '改成一次出 R@1 / R@5 / R@10'
+/** The line 林晓 selects before asking: `return recall_at_1(sims)`. */
+const RET_LINE = 18
+const selectLine = (path: string, line: number) =>
+  (S.codeAt = { path, start: line, end: line, tick: (S.codeAt?.tick ?? 0) + 1 })
+
+const VS =
+  '<span class="ot-vs"><span><b>人</b>直接改正式版，改了大家马上看到<br>每次停顿记进历史，能撤回<br>想单独试，就开分支，看过再合回去</span>' +
+  '<span><b>芝士</b>在一件事自己的那份上改，不碰正式版<br>改完是一份待定改动，人采纳了才进正式版<br>同样记进历史，能撤回</span></span>'
+
+const CODE_STEPS: (() => Promise<void>)[] = [
+  async () => {
+    reset()
+    cap(1, '项目文件里打开一个代码文件。它就是<b>正式版</b>，打开就能改，没有「改代码」这一步。')
+    await click('[data-nav="files"] .v-list-item')
+    go('files', { ftab: 'history' })
+    await click(`.ot-ftree__row[title="${PRE}"]`)
+    openFile(PRE, { ftab: 'history' })
+    await wait(1800)
+    await moveTo('.ot-ftree')
+    cap(1, '左边是文件树：文档、代码、成果都在这一处。')
+    await wait(1900)
+    await moveTo('.ot-ced__faces')
+    cap(1, '中间是编辑器。王磊也开着这个文件，他的光标带着名字。')
+    await wait(2200)
+    await moveTo('#b-run')
+    cap(1, '「运行」在编辑器上方；底下是<b>输出</b>和<b>终端</b>，都是你自己的环境，只有你看得到。')
+    await wait(2400)
+    await moveTo('.ot-fp .tabbar')
+    cap(1, '右栏是这个文件的「历史」「待定改动」「对话」：谁改过、芝士有什么还没生效的改动、频道里谁提到它。')
+    await wait(3000)
+  },
+  async () => {
+    cap(2, '林晓直接在正式版上改：<code>Resize(256)</code> 改成 224，再加一行 <code>CenterCrop(224)</code>。')
+    await moveTo('.ot-carea__gutter span:nth-child(6)', 160)
+    await typeCodeTo(PRE, fixed(codeText('research', PRE)))
+    cap(2, '改了就生效，王磊那边马上看到。停顿一下，这次改动就记成一条「历史」。')
+    await wait(2200)
+    await moveTo('.ot-fp .ot-hist__row:first-child .ot-hist__undo')
+    cap(2, '「林晓 改了 eval/preprocess.py」，旁边就是「撤回」：手滑了，一下退回去。')
+    await wait(2800)
+  },
+  async () => {
+    await click('#b-run')
+    snapshot('research', PRE)
+    runCode('research', PRE)
+    cap(3, '「运行」：在你自己的环境里跑正式版现在这份代码。')
+    await wait(1800)
+    await moveTo('[data-zone="terminal"] .ot-ced__mine')
+    cap(3, '输出和终端是你自己的，王磊看不到，芝士也不用它。跑出来正好 224×224。')
+    await wait(3000)
+  },
+  async () => {
+    await click('#b-branch')
+    openBranch()
+    cap(4, '想先单独试试：「开分支」。编辑器顶上写着分支名，在这里改不影响正式版，王磊看到的还是正式版。')
+    await wait(2600)
+    await moveTo('.ot-carea__gutter span:nth-child(5)', 220)
+    await typeCodeTo(PRE, documented(codeText('research', PRE)))
+    await wait(900)
+    await click('#b-review')
+    askReview()
+    cap(4, '改好了「请人看一下」：王磊看过，分支栏上写着「王磊看过了」。')
+    await wait(2600)
+    await click('#b-merge-branch')
+    mergeBranch()
+    cap(4, '「合回正式版」：分支上的改动作为一条历史进了正式版，同样能撤回。')
+    await wait(3000)
+  },
+  async () => {
+    await click(`.ot-ftree__row[title="${RET}"]`)
+    openFile(RET, { ftab: 'history' })
+    cap(5, '换芝士来改。打开 <code>eval/retrieval.py</code>，选中只算 R@1 的那一行。')
+    await moveTo(`.ot-carea__gutter span:nth-child(${RET_LINE})`, 120)
+    selectLine(RET, RET_LINE)
+    await wait(1400)
+    await click('.ot-fp .tabbar__tab[title="对话"]')
+    S.ftab = 'talk'
+    cap(5, '在右栏「对话」里问芝士，选中的那一行跟着一起去。')
+    await moveTo('.ot-fp .ot-composer__box')
+    await typeInto(CODE_ASK, (v) => (S.asking = v))
+    await click('.ot-fp .composer-send')
+    askAboutFile()
+    cap(5, '<b>芝士不直接改正式版。</b>它开了一件事，在这件事自己的那份上改；编辑器里还是正式版，一行没变。')
+    await wait(1400)
+    await moveTo('[data-cheese-copy]')
+    await wait(2600)
+  },
+  async () => {
+    // 芝士 takes a few seconds on its copy; the step goes on once the change waits for 采纳.
+    while (copyThingFor('research', RET)?.status === 'run') await wait(200)
+    await click('.ot-fp .tabbar__tab[title="待定改动"]')
+    S.ftab = 'pending'
+    cap(6, '芝士改完了。「待定改动」里是它那份和正式版的差别。')
+    await wait(2400)
+    await moveTo('#b-copy-more')
+    cap(6, '可以「让芝士再改」（回到这件事的对话里告诉它）、「不要」，或者「采纳」。')
+    await wait(3000)
+  },
+  async () => {
+    await click('#b-copy-accept')
+    const t = copyThingFor('research', RET)
+    if (t) acceptCopy(t.id)
+    S.ftab = 'history'
+    cap(7, '「采纳」：芝士的改动这才进正式版，编辑器里就是新代码。')
+    await wait(2200)
+    await moveTo('.ot-fp .ot-hist__row:first-child .ot-hist__undo')
+    cap(7, '历史里记一条「林晓 采纳了芝士的改动」，和人自己的改动一样，能撤回。')
+    await wait(3000)
+  },
+  async () => {
+    cursor.shown = false
+    cap(8, VS)
+    await wait(6000)
+  },
+]
+
+/** Bring the state to the start of step `k + 1` of 演示二 without animating. */
+function instantCode(k: number) {
+  if (k === 0) openFile(PRE, { ftab: 'history' })
+  if (k === 1) {
+    typeCode('research', PRE, fixed(codeText('research', PRE)))
+    snapshot('research', PRE)
+  }
+  if (k === 2) runCode('research', PRE)
+  if (k === 3) {
+    openBranch()
+    typeCode('research', PRE, documented(codeText('research', PRE)))
+    mergeBranch()
+  }
+  if (k === 4) {
+    openFile(RET, { ftab: 'talk' })
+    selectLine(RET, RET_LINE)
+    S.codeSel = { path: RET, start: RET_LINE, end: RET_LINE }
+    S.asking = CODE_ASK
+    askAboutFile()
+    const t = copyThingFor('research', RET)
+    if (t) finishCopy(t.id)
+  }
+  if (k === 5) S.ftab = 'pending'
+  if (k === 6) {
+    const t = copyThingFor('research', RET)
+    if (t) acceptCopy(t.id)
+    S.ftab = 'history'
+  }
+}
+
+// ---- the tours ----
+type TourKey = 'one' | 'code'
+const TOURS: Record<TourKey, { label: string; steps: (() => Promise<void>)[]; instant: (k: number) => void }> = {
+  one: { label: '演示一：频道和一件事', steps: STEPS, instant: instantOne },
+  code: { label: '演示二：改代码', steps: CODE_STEPS, instant: instantCode },
+}
+const TOUR_OPTIONS = (Object.keys(TOURS) as TourKey[]).map((k) => ({ value: k, label: TOURS[k].label }))
+const tour = ref<TourKey>('one')
+const steps = computed(() => TOURS[tour.value].steps)
+const INTRO = '点「播放演示」走一遍；「显示说明」在界面上标出每一块是什么。任何时候都可以停下自己点。数据都是演示用的。'
+/** Another tour starts from a fresh state, its first step not yet played. */
+function pickTour(k: TourKey) {
+  if (k === tour.value) return
+  tour.value = k
+  restart()
+}
+
 async function playFrom(i: number) {
   const my = ++run
   playing.value = true
   try {
-    for (idx.value = i; idx.value < STEPS.length; idx.value++) {
+    for (idx.value = i; idx.value < steps.value.length; idx.value++) {
       if (my !== run) return
       shown.value = idx.value
-      await STEPS[idx.value]!()
+      await steps.value[idx.value]!()
     }
   } catch {
     return
@@ -406,20 +621,26 @@ function stop(hide = true) {
   if (hide) cursor.shown = false
 }
 
-function jump(i: number) {
-  stop()
-  i = Math.max(0, Math.min(STEPS.length - 1, i))
+/** Fresh state, then every step before `i` done at once. */
+function fastForward(i: number) {
   reset()
-  for (let j = 0; j < i; j++) instant(j)
+  for (let j = 0; j < i; j++) TOURS[tour.value].instant(j)
   // Fast-forwarding replays the earlier steps' toasts; none of them belongs to this step.
   S.morph = false
   S.toast = ''
+}
+
+function jump(i: number) {
+  stop()
+  i = Math.max(0, Math.min(steps.value.length - 1, i))
+  fastForward(i)
   void playFrom(i)
 }
 
 function playLabel() {
+  const n = steps.value.length
   if (playing.value) return '暂停'
-  if (idx.value < 0) return caption.n === `${N} / ${N}` ? '再放一遍' : '播放演示'
+  if (idx.value < 0) return caption.n === `${n} / ${n}` ? '再放一遍' : '播放演示'
   return '继续播放'
 }
 
@@ -431,38 +652,35 @@ function togglePlay() {
 function restart() {
   stop()
   reset()
+  CLOCK.dueSoon = false
   idx.value = -1
   shown.value = -1
-  Object.assign(caption, { n: '演示', text: '点「播放演示」走一遍；「显示说明」在界面上标出每一块是什么。' })
+  Object.assign(caption, { n: '演示', text: INTRO })
 }
 
 /** Play step `i` alone from its start state and stop at its end (the screenshot run uses it). */
 async function only(i: number) {
   stop()
-  reset()
-  for (let j = 0; j < i; j++) instant(j)
-  // Fast-forwarding replays the earlier steps' toasts; none of them belongs to this step.
-  S.morph = false
-  S.toast = ''
+  fastForward(i)
   const my = ++run
   playing.value = true
   idx.value = i
   shown.value = i
   try {
-    await STEPS[i]!()
+    await steps.value[i]!()
   } catch {
     return
   }
   if (my !== run) return
   playing.value = false
   // 继续播放 picks up at the next step; after the last one the button offers to play it all again.
-  idx.value = i + 1 < STEPS.length ? i + 1 : -1
+  idx.value = i + 1 < steps.value.length ? i + 1 : -1
   cursor.shown = false
   Object.assign(window, { __oneThingDemoDone: i })
 }
 
-// Lets a browser check play any one step on its own (the screenshot run in the PR uses it).
-Object.assign(window, { __oneThingDemo: { jump, only } })
+// Lets a browser check pick a tour and play any one step on its own (the screenshot run uses it).
+Object.assign(window, { __oneThingDemo: { jump, only, tour: (k: TourKey) => pickTour(k) } })
 
 // A person's click inside the workspace takes over from the script.
 function onUserClick(e: MouseEvent) {
@@ -474,16 +692,43 @@ function onUserClick(e: MouseEvent) {
   <div class="ot-page">
     <div class="ot-top">
       <h1 class="ot-top__title">okcheese「一件事」演示</h1>
+      <SegmentedControl
+        :model-value="tour"
+        :options="TOUR_OPTIONS"
+        label="选一段演示"
+        size="md"
+        data-tours
+        @update:model-value="pickTour"
+      />
       <BaseButton kind="primary" size="sm" :prepend-icon="playing ? 'mdi-pause' : 'mdi-play'" @click="togglePlay">{{
         playLabel()
       }}</BaseButton>
       <BaseButton kind="secondary" size="sm" :disabled="shown <= 0" @click="only(shown - 1)">上一步</BaseButton>
-      <BaseButton kind="secondary" size="sm" :disabled="shown >= N - 1" @click="only(shown + 1)">下一步</BaseButton>
+      <BaseButton kind="secondary" size="sm" :disabled="shown >= steps.length - 1" @click="only(shown + 1)"
+        >下一步</BaseButton
+      >
       <BaseButton kind="secondary" size="sm" :class="{ 'ot-top__on': notesOn }" @click="toggleNotes">{{
         notesOn ? '隐藏说明' : '显示说明'
       }}</BaseButton>
       <BaseButton kind="secondary" size="sm" @click="restart">重来</BaseButton>
-      <v-menu v-model="variantsOpen" :close-on-content-click="false" location="bottom end" :offset="6">
+      <BaseButton
+        v-if="inClaim"
+        kind="ghost"
+        size="sm"
+        :prepend-icon="CLOCK.dueSoon ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'"
+        :aria-pressed="CLOCK.dueSoon"
+        title="只挪截止时间对照的那个钟：看提交入口在最后一天的样子"
+        data-sim-due
+        @click="CLOCK.dueSoon = !CLOCK.dueSoon"
+        >模拟：离截止不到 24 小时</BaseButton
+      >
+      <v-menu
+        v-if="QUESTIONS.length"
+        v-model="variantsOpen"
+        :close-on-content-click="false"
+        location="bottom end"
+        :offset="6"
+      >
         <template #activator="{ props: menuProps }">
           <BaseButton
             v-bind="menuProps"
@@ -492,7 +737,7 @@ function onUserClick(e: MouseEvent) {
             append-icon="mdi-chevron-down"
             data-variants
             title="还没定的设计：每个问题挑一个方案看"
-            >方案 {{ V.submit }}</BaseButton
+            >方案</BaseButton
           >
         </template>
         <div class="ot-variants" role="dialog" aria-label="方案">
@@ -514,22 +759,7 @@ function onUserClick(e: MouseEvent) {
                 <span>{{ o.note }}</span>
               </span>
             </button>
-            <button
-              v-if="q.key === 'submit'"
-              type="button"
-              class="ot-variants__sim"
-              :aria-pressed="CLOCK.dueSoon"
-              data-sim-due
-              @click="CLOCK.dueSoon = !CLOCK.dueSoon"
-            >
-              <v-icon size="16" :icon="CLOCK.dueSoon ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" />
-              模拟：离截止不到 24 小时
-            </button>
           </section>
-          <p v-if="!inClaim" class="ot-variants__hint">
-            提交入口只在从题目领来的项目里看得到。
-            <button type="button" class="ot-variants__go" data-see-submit @click="seeSubmit">领 Data Lab 去看</button>
-          </p>
           <p class="ot-variants__foot">切换不会重来，演示停在哪就还在哪。地址栏的链接带着当前方案。</p>
         </div>
       </v-menu>

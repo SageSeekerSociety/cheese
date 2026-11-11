@@ -3,16 +3,13 @@
 // block (the same pattern as a channel 文档's 这个频道的事) has one row per
 // problem read from the 题目's submissions, so a submission a moment ago is
 // already here: 通过 or not, how many tries, the latest score. A row opens that
-// problem's main.cpp. Under the D 方案 its 「提交」 submits that one problem to the
-// 题目 from here; under the others the document only reads, and each problem
-// is submitted from the 题单's page in the space (TopicDetail). Under it, the
-// teacher's few lines about the 题单.
+// problem's main.cpp, and its 「提交」 submits that one problem to the 题目 from
+// here. Under it, the teacher's few lines about the 题单.
 import { computed } from 'vue'
 
 import { SET, topicOf, WEEK3_INTRO } from './course'
 import DemoDoc from './DemoDoc.vue'
 import { latestOf, openFile, openSubmit, passed as ok, resultOf, S } from './state'
-import { onCard } from './variants'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { monthDayTime } from '@/lib/dateText'
@@ -46,7 +43,7 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
           <h2 class="ot-cdoc__h">这个题单</h2>
           <span class="ot-cdoc__note">实时 · 通过 {{ passed }}/{{ rows.length }}</span>
         </div>
-        <div class="ot-pset__cols t-eyebrow-read" :class="{ 'ot-pset__cols--bare': !onCard() }">
+        <div class="ot-pset__cols t-eyebrow-read">
           <span>题目</span><span>状态</span><span class="ot-pset__tries">尝试</span><span>最近得分</span>
         </div>
         <div v-for="r in rows" :key="r.id" class="ot-pset__row" :data-set="r.id">
@@ -62,12 +59,7 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
             <span class="ot-pset__n ot-pset__tries">{{ r.tries ? `${r.tries} 次` : '—' }}</span>
             <span class="ot-pset__n">{{ r.result }}</span>
           </button>
-          <BaseButton
-            v-if="onCard()"
-            kind="secondary"
-            size="sm"
-            class="ot-pset__submit"
-            @click="openSubmit('week3', r.id)"
+          <BaseButton kind="secondary" size="sm" class="ot-pset__submit" @click="openSubmit('week3', r.id)"
             >提交</BaseButton
           >
         </div>
@@ -168,10 +160,6 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
 }
 
 /* No 提交 beside the rows: the columns line up with the row's own padding. */
-.ot-pset__cols--bare {
-  padding-right: 8px;
-}
-
 /* The row opens the problem's file; its 提交 sits beside it, outside the row's button. */
 .ot-pset__row {
   display: flex;

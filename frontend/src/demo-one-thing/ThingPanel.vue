@@ -6,7 +6,9 @@
 // composer, 现场 and the diff are the product's own components.
 // 改动 is 芝士's own copy, read-only: only 芝士 changes it. A person 采纳s it
 // (or 采纳s and opens the file in the editor, on 正式版, to go on by hand), or
-// tells 芝士 in the task's conversation what to change.
+// tells 芝士 in the task's conversation what to change. A 一件事 asked for
+// from an open code file (FilesPanel's 对话) has one file in its copy; its
+// 改动 is that file against 正式版, and 采纳 here does what it does there.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 import type { Block, TodoItem } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
@@ -14,7 +16,7 @@ import type { ChatLine, MarkLine } from './state'
 
 import { computed, ref, watch } from 'vue'
 
-import { CHANNELS, ME, NAMES, PLAN, RESULTS_MD, TASK_DIFFS } from './data'
+import { CHANNELS, diffText, ME, NAMES, PLAN, projectOfChan, RESULTS_MD, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
 import { hhmm, stateOf } from './shapes'
@@ -22,11 +24,13 @@ import { siteBlocks, type SiteStep, T4_STEPS } from './site'
 import {
   accept,
   acceptAndOpen,
+  acceptCopy,
   closeThing,
   confirmKick,
   go,
   jumpTo,
   kickoff,
+  officialText,
   PHASE,
   PHASES,
   S,
@@ -107,7 +111,7 @@ const tabs = computed<PanelTab[]>(() => {
       { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
       { key: 'sources', label: '资料', icon: 'mdi-bookshelf', signal: { kind: 'count', count: SOURCES.length } },
     ]
-  const diffs = ours.value ? TASK_DIFFS : []
+  const n = diffs.value.length
   return [
     { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
     { key: 'site', label: '现场', icon: 'mdi-monitor-eye', signal: t.status === 'run' ? { kind: 'pulse' } : undefined },
@@ -115,13 +119,24 @@ const tabs = computed<PanelTab[]>(() => {
       key: 'changes',
       label: '改动',
       icon: 'mdi-file-compare',
-      empty: !diffs.length,
-      signal: diffs.length && t.status === 'wait' ? { kind: 'count', count: diffs.length, fresh: true } : undefined,
+      empty: !n,
+      signal: n && t.status === 'wait' ? { kind: 'count', count: n, fresh: true } : undefined,
     },
     { key: 'result', label: '成果', icon: 'mdi-table-check', empty: !result.value },
   ]
 })
 const tab = computed(() => (tabs.value.some((t) => t.key === S.rtab) ? S.rtab : 'chat'))
+
+/** What 芝士 changed: the scripted task's files, or the one file a 一件事 from the editor copied, against
+ *  正式版 while it waits (what 采纳 would do), against what 正式版 read when 芝士 took it after. */
+const diffs = computed(() => {
+  const t = thing.value
+  if (ours.value) return TASK_DIFFS
+  if (!t.copy) return []
+  const now = t.status === 'wait' ? officialText(projectOfChan(t.chan), t.copy.path) : t.copy.base
+  return [diffText(t.copy.path, now, t.copy.text)]
+})
+const acceptThis = () => (ours.value ? accept() : acceptCopy(thing.value.id))
 
 // ---- 资料 ----
 const SOURCES = [
@@ -220,7 +235,13 @@ const todo = computed<TodoItem[]>(() =>
 )
 
 // ---- 改动 / 成果 ----
-const expanded = ref(new Set(['eval/preprocess.py']))
+const expanded = ref(new Set<string>())
+// Each 一件事 opens on its first changed file.
+watch(
+  () => thing.value.id,
+  () => (expanded.value = new Set([thing.value.copy?.path ?? 'eval/preprocess.py'])),
+  { immediate: true }
+)
 function toggleSection(path: string) {
   const next = new Set(expanded.value)
   if (next.has(path)) next.delete(path)
@@ -254,7 +275,13 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
         <UserAvatar :name="ownerLabel" :seed="thing.owner" :size="20" />{{ ownerLabel }} 负责
       </span>
       <BaseButton v-if="talk && ours" id="b-kick" kind="primary" size="sm" @click="kickoff">开工</BaseButton>
-      <BaseButton v-else-if="thing.status === 'wait' && ours" id="b-accept" kind="primary" size="sm" @click="accept">
+      <BaseButton
+        v-else-if="thing.status === 'wait' && (ours || thing.copy)"
+        id="b-accept"
+        kind="primary"
+        size="sm"
+        @click="acceptThis"
+      >
         采纳
       </BaseButton>
       <BaseButton
@@ -381,9 +408,19 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
             >，它在自己那份上接着改；或者采纳后在编辑器里直接改正式版。
           </p>
         </div>
+        <div v-else-if="thing.copy" class="ot-chg" data-zone="task-changes">
+          <div class="ot-chg__bar">
+            <v-icon size="15" icon="mdi-lock-outline" />
+            <span class="ot-chg__what">{{
+              thing.status === 'wait' ? '芝士自己那份上的改动 · 只读，只有芝士改它' : thing.last
+            }}</span>
+            <span class="ot-head__gap" />
+            <BaseButton v-if="thing.status === 'wait'" kind="primary" size="sm" @click="acceptThis">采纳</BaseButton>
+          </div>
+        </div>
         <ChangesDiffList
-          v-if="ours"
-          :diffs="TASK_DIFFS"
+          v-if="diffs.length"
+          :diffs="diffs"
           :expanded="expanded"
           @toggle-section="toggleSection"
           @open="(p: string) => go('files', { file: p, ftab: 'pending' })"

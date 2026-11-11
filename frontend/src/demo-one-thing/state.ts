@@ -39,7 +39,6 @@ import {
   projectTeam,
   teamOf,
 } from './data'
-import { V } from './variants'
 
 import { monthDayTime } from '@/lib/dateText'
 
@@ -84,6 +83,9 @@ export interface Thing {
   /** What was said inside it (the scripted 一件事 builds its own from the step it is at). */
   talk?: (ChatLine | MarkLine)[]
   result?: string
+  /** A 一件事 asked for from an open code file: 芝士's own copy of that file (what 正式版 read when it
+   *  took the copy, and its text now), which 采纳 puts into 正式版. */
+  copy?: { path: string; base: string; text: string }
 }
 
 export interface HistoryEntry {
@@ -235,7 +237,8 @@ function initial() {
     ran: {} as Record<string, { ok: number; total: number }>,
     /** Submissions whose result (the judge's verdict, the teacher's review) I have looked at. */
     seen: {} as Record<string, boolean>,
-    /** 方案 D3: the 题目 card opened or closed by hand, per 题目; unset, it opens by itself when it matters. */
+    /** The 题目 card under a claimed project's header, opened or closed by hand, per 题目; unset, it opens by
+     *  itself when it matters. */
     cardOpen: {} as Record<string, boolean>,
     /** A submission whose pinned version is open (read-only) in the project's code view. */
     viewSub: null as string | null,
@@ -846,7 +849,7 @@ function researchRun(path: string, text: string): { cmd: string; out: string } {
 function runOf(p: ProjectKey, path: string, text: string) {
   const unit = unitOf(p, path)
   if (!unit) return researchRun(path, text)
-  // The same check 运行 prints, kept as a count for the 题目 card's 进度 (方案 D2).
+  // The same check 运行 prints, kept as a count for the 题目 card's first line.
   const v = UNITS[unit]!.judge(text)
   S.ran[unit] = { ok: v.rows.filter((r) => r.ok).length, total: v.rows.length }
   return UNITS[unit]!.run(text)
@@ -1110,8 +1113,25 @@ function answerAbout(path: string, ref: string, lines: string[]): string {
   return `看了 \`${ref}\`：${quote || '这个文件不长，'}有具体想改的地方可以直接改，正式版就是它。`
 }
 
+/** What 芝士 would make of a research code file asked to change it: the demo's one prepared change per file
+ *  (the same text the scripted task brings), if 正式版 does not read so already. */
+function proposalFor(p: ProjectKey, path: string): string | null {
+  const after = p === 'research' ? CODE[path]?.after?.join('\n') : undefined
+  return after && after !== officialText(p, path) ? after : null
+}
+
+/** What 芝士 says its prepared change does, per file. */
+const CHANGE_NOTE: Record<string, string> = {
+  'eval/retrieval.py': '`evaluate` 一次算出 R@1 / R@5 / R@10，新加了 `recall_at_k`',
+  'eval/preprocess.py': '预处理改成 `Resize(224, BICUBIC)` + `CenterCrop(224)`，和论文一致',
+}
+
+/** A question that asks for a change to the file (「改成…」「加上…」), not one about it. */
+const asksChange = (q: string) => /改|加上|换成|删/.test(q) && !/[？?]$|为什么|是不是/.test(q)
+
 /** 问芝士 from an open file: the question goes to the channel with the file (and the selected lines) as context;
- *  芝士 answers under it there. Both show in the file's 对话. */
+ *  芝士 answers under it there. Both show in the file's 对话. Asked to change the file, 芝士 does not type
+ *  into 正式版: the question opens a 一件事 instead (cheeseEdits). */
 export function askAboutFile(): void {
   const q = S.asking.trim()
   const p = S.project
@@ -1127,6 +1147,8 @@ export function askAboutFile(): void {
   const chan = chanForFile(p, path)
   const id = nextId('f')
   S.asking = ''
+  const proposal = asksChange(q) ? proposalFor(p, path) : null
+  if (proposal) return cheeseEdits(p, path, chan, `<@cheese> \`${ref}\` ${q}`, proposal)
   ;(S.chat[chan] ??= []).push({ id, who: ME, at: new Date().toISOString(), text: `<@cheese> \`${ref}\` ${q}` })
   later(1300, () =>
     S.chat[chan]!.push({
@@ -1138,6 +1160,91 @@ export function askAboutFile(): void {
     })
   )
   toast(`问题发在了 # ${channelsOf(p).find((c) => c.id === chan)?.title ?? ''}，芝士的回答也在那里`)
+}
+
+/** A change asked for from the editor: a 一件事 under the question, already started (the question names the
+ *  file and the change, so there is nothing to discuss first). 芝士 works on its own copy of the file and
+ *  正式版 stays as it is; a moment later the change waits for 采纳, as a 待定改动 on the file. */
+function cheeseEdits(p: ProjectKey, path: string, chan: string, text: string, proposal: string): void {
+  const at = new Date().toISOString()
+  const id = nextId('tc')
+  const ask = text.replace(/<@cheese>\s*/, '').replace(/`[^`]*`\s*/, '')
+  const talk: (ChatLine | MarkLine)[] = [
+    { id: `${id}a`, who: ME, at, text },
+    { id: `${id}k`, mark: `${NAMES[ME]} 开工 · 交给芝士`, at },
+    {
+      id: `${id}b`,
+      who: 'cheese',
+      at,
+      text: `好。我在这件事自己的那份 \`${path}\` 上改，正式版先不动；改完请你在「待定改动」里看一眼再采纳。`,
+    },
+  ]
+  const t: Thing = {
+    id,
+    title: `${path.split('/').pop()}：${ask.slice(0, 20)}`,
+    chan,
+    owner: ME,
+    status: 'run',
+    replies: 2,
+    last: '芝士：在自己那份上改，正式版先不动',
+    at,
+    talk,
+    copy: { path, base: officialText(p, path), text: proposal },
+  }
+  S.things.unshift(t)
+  ;(S.chat[chan] ??= []).push({ id: `${id}m`, who: ME, at, text, thing: id })
+  toast('芝士开了一件事，在它自己的那份上改：正式版没变')
+  later(6000, () => finishCopy(id))
+}
+
+/** 芝士 is done with its copy: the change waits for 采纳. */
+export function finishCopy(id: string): void {
+  const t = thingById(id)
+  if (!t?.copy || t.status !== 'run') return
+  t.status = 'wait'
+  t.at = new Date().toISOString()
+  t.last = '芝士：改好了，等你采纳'
+  t.replies++
+  t.talk!.push({
+    id: `${id}c`,
+    who: 'cheese',
+    at: t.at,
+    text: `改好了：${CHANGE_NOTE[t.copy.path] ?? `改了 \`${t.copy.path}\``}。和正式版的差别在「待定改动」里，采纳后才进正式版。`,
+  })
+}
+
+/** The 一件事 working on its own copy of this file, while it is still being done or waits for 采纳. */
+export const copyThingFor = (p: ProjectKey, path: string) =>
+  S.things.find(
+    (t) => t.copy?.path === path && projectOfChan(t.chan) === p && (t.status === 'run' || t.status === 'wait')
+  ) ?? null
+
+/** 采纳 a 一件事's copy of a file: it becomes 正式版, as one 历史 entry that 撤回 can take back. */
+export function acceptCopy(id: string): void {
+  const t = thingById(id)
+  if (!t?.copy || t.status !== 'wait') return
+  const p = projectOfChan(t.chan)
+  const { path, text } = t.copy
+  snapshot(p, path)
+  const prev = officialText(p, path)
+  S.official[fkey(p, path)] = text
+  t.status = 'done'
+  t.at = new Date().toISOString()
+  t.last = '已采纳 · 合进正式版'
+  t.talk?.push({ id: `${id}y`, mark: `${NAMES[ME]} 采纳 · 已合进正式版`, at: t.at, ok: true })
+  log(p, ME, `采纳了芝士的改动：改了 ${path}`, { file: path, prev })
+  toast('已采纳：芝士的改动进了正式版')
+}
+
+/** 不要: the copy is dropped and 正式版 stays as it is. */
+export function dropCopy(id: string): void {
+  const t = thingById(id)
+  if (!t?.copy || t.status !== 'wait') return
+  t.status = 'done'
+  t.at = new Date().toISOString()
+  t.last = '没有采纳 · 正式版没变'
+  t.talk?.push({ id: `${id}n`, mark: `${NAMES[ME]} 没有采纳 · 正式版没变`, at: t.at })
+  toast('没有采纳：芝士那份不要了，正式版没变')
 }
 
 // ---- 领取: a 题目 becomes a project owned by a team ----
@@ -1440,12 +1547,10 @@ export function deadlines(): Deadline[] {
   return out
 }
 
-/** A deadline row of a claimed 题目 opens where the 方案 puts submitting: the 题目 in the space (A, B),
- *  the project with its 题目 tab (C), or the project's own file under its origin card (D, D1, D2; D3
- *  opens its folded card too). */
+/** A deadline row of a claimed 题目 opens the project's own file, with the 题目's card under the
+ *  sidebar header opened (提交 is there). */
 function openDue(topicId: string, file: string): void {
-  if (V.submit === 'A' || V.submit === 'B') return showTopic(topicId)
-  if (V.submit === 'D3') S.cardOpen[topicId] = true
+  S.cardOpen[topicId] = true
   switchProject(topicById(topicId)!.project!)
-  openFile(file, V.submit === 'C' ? { ftab: 'topic' } : {})
+  openFile(file)
 }

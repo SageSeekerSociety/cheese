@@ -14,8 +14,9 @@
 // product and are not part of this demo.
 import type { ChatLine } from './state'
 
+import { reactive } from 'vue'
+
 import { type ClaimKey, dayAt, NOW } from './data'
-import { CLOCK } from './variants'
 
 export interface JudgeRow {
   name: string
@@ -197,6 +198,9 @@ export const modeText = (t: Topic) =>
 
 export const topicById = (id: string) => TOPICS.find((t) => t.id === id)
 export const topicOf = (p: ClaimKey) => TOPICS.find((t) => t.project === p)!
+
+/** Demo-only clock for deadlines: the top bar's 「模拟：离截止不到 24 小时」. Not stored, not in the link. */
+export const CLOCK = reactive({ dueSoon: false })
 
 /** The time deadlines are read against. 「模拟：离截止不到 24 小时」 moves it to 20 hours before
  *  Data Lab's deadline (the nearest one), so every countdown moves with it; nothing else reads it. */
