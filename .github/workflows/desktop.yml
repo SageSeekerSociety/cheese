@@ -33,8 +33,8 @@ jobs:
       matrix:
         include:
           # `update` is what the app's updater downloads (Windows reruns the installer).
-          - { os: macos-14, target: aarch64-apple-darwin, tmux: arm64, asset: Cheese-arm64.dmg, update: Cheese-arm64.app.tar.gz }
-          - { os: macos-14, target: x86_64-apple-darwin, tmux: x86_64, asset: Cheese-x64.dmg, update: Cheese-x64.app.tar.gz }
+          - { os: macos-15, target: aarch64-apple-darwin, tmux: arm64, asset: Cheese-arm64.dmg, update: Cheese-arm64.app.tar.gz }
+          - { os: macos-15, target: x86_64-apple-darwin, tmux: x86_64, asset: Cheese-x64.dmg, update: Cheese-x64.app.tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, asset: Cheese-Setup-x64.exe, update: Cheese-Setup-x64.exe }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
