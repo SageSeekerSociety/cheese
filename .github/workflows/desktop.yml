@@ -77,7 +77,8 @@ jobs:
       # PR) still builds, just without them.
       #
       # On macOS, with the team's Developer ID Application certificate in the
-      # secrets, the app is code-signed with it and notarized, so Gatekeeper
+      # secrets, the app is code-signed with it and notarized (by the App Store
+      # Connect key, or else a team member's Apple Account), so Gatekeeper
       # opens a downloaded DMG without the "unidentified developer" block.
       # Without those secrets (a fork's PR, or before they exist) it stays
       # ad-hoc signed ("-" in tauri.macos.conf.json), as before.
@@ -91,6 +92,9 @@ jobs:
           APPLE_API_ISSUER: ${{ runner.os == 'macOS' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY || '' }}
           APPLE_API_KEY_P8: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY_P8 || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
         run: |
           signed=false; [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && signed=true
           macos=""
@@ -101,11 +105,18 @@ jobs:
               export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
               printf '%s' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
               echo "SIGNED_MAC=true" >> "$GITHUB_ENV"
-            else
+              unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+              # Notarized as a team member's Apple Account with an app-specific
+              # password: App Store Connect API access can only be requested by
+              # the Account Holder, and this needs nothing from them.
               unset APPLE_API_ISSUER APPLE_API_KEY
+              echo "SIGNED_MAC=true" >> "$GITHUB_ENV"
+            else
+              unset APPLE_API_ISSUER APPLE_API_KEY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
             fi
           else
-            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
           fi
           pnpm tauri build --target ${{ matrix.target }} \
             --config "{\"version\":\"0.1.${{ github.run_number }}\",\"bundle\":{\"createUpdaterArtifacts\":$signed$macos}}"
