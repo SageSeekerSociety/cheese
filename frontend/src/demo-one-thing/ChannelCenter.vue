@@ -14,7 +14,7 @@ import { computed, ref, watch } from 'vue'
 
 import ChannelDetails from './ChannelDetails.vue'
 import ChannelDoc from './ChannelDoc.vue'
-import { ALL_CHANNELS, channelOf, COURSE_PEOPLE, ME, NAMES, PEOPLE } from './data'
+import { ALL_CHANNELS, channelOf, ME, NAMES, PEOPLE, peopleOf } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
 import { statusText } from './shapes'
@@ -53,12 +53,7 @@ for (const c of ALL_CHANNELS) {
   answer(`/topics/${c.id}/members`, () => ({ data: rows, total: rows.length }))
 }
 const projectMembers = computed<ProjectMemberRow[]>(() =>
-  (S.project === 'course'
-    ? COURSE_PEOPLE
-    : S.project === 'research'
-      ? PEOPLE
-      : PEOPLE.filter((p) => p.handle === ME || p.agent)
-  ).map((p) => ({
+  [...peopleOf(S.project), ...PEOPLE.filter((p) => p.agent)].map((p) => ({
     user_handle: p.handle,
     name: p.name,
     source: p.agent ? 'agent' : p.handle === ME ? 'owner' : 'team',

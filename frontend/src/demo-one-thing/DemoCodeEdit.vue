@@ -6,8 +6,9 @@
 // are in it, and each pause in typing becomes one 历史 entry with 撤回. There is
 // no 「改代码」 switch: a read-only first view would be a mode documents do not
 // have, and 撤回 already makes a slip cheap. The editor is read-only only when
-// the research project has 正式版受保护 on and no branch is open.
-// 开分支 (research) gives a person a copy of their own; the bar then names the
+// a shared project has 正式版受保护 on and no branch is open.
+// 开分支 (in a project with more than one person: the research project, a team's
+// 题目) gives a person a copy of their own; the bar then names the
 // branch, with 请人看一下 and 合回正式版. 提交评测 shows only on the file of a
 // judged unit and pins the version it judged; with a submission open, the view
 // shows that version read-only.
@@ -18,7 +19,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { avatarColor } from '@/utils/avatar'
 
-import { asContext } from './data'
+import { asContext, isClaim, isShared, NAMES } from './data'
 import DemoCodeArea from './DemoCodeArea.vue'
 import JudgeResult from './JudgeResult.vue'
 import {
@@ -33,6 +34,7 @@ import {
   mergeBranch,
   onBranch,
   openBranch,
+  reviewerOf,
   runCode,
   S,
   snapshot,
@@ -49,7 +51,8 @@ import DocPresence from '@/components/panels/doc/DocPresence.vue'
 const p = computed(() => S.project)
 const path = computed(() => S.file)
 const k = computed(() => fkey(p.value, path.value))
-const research = computed(() => p.value === 'research')
+const shared = computed(() => isShared(p.value))
+const reviewer = computed(() => NAMES[reviewerOf(p.value)])
 const branch = computed(() => (onBranch(p.value) ? S.branch : null))
 const locked = computed(() => lockedMain(p.value))
 const text = computed({
@@ -68,28 +71,58 @@ function onSelect(r: { start: number; end: number } | null) {
   S.codeSel = r ? { path: path.value, ...r } : null
 }
 
-// ---- 王磊 is in eval/preprocess.py on 正式版 (scripted): his caret moves over the lines he is reading ----
-const PEER_SPOTS = [
-  { line: 6, col: 8 },
-  { line: 6, col: 22 },
-  { line: 7, col: 8 },
-  { line: 7, col: 25 },
-  { line: 5, col: 4 },
-]
+// ---- a teammate on 正式版 (scripted): 王磊 in the research project's eval/preprocess.py, 周珂 in the
+// team's tsh.c, writing the built-in commands. Their caret moves over the lines they are on. ----
+const PEER_AT: Record<string, { handle: string; name: string; path: string; spots: { line: number; col: number }[] }> =
+  {
+    research: {
+      handle: 'wanglei',
+      name: '王磊',
+      path: 'eval/preprocess.py',
+      spots: [
+        { line: 6, col: 8 },
+        { line: 6, col: 22 },
+        { line: 7, col: 8 },
+        { line: 7, col: 25 },
+        { line: 5, col: 4 },
+      ],
+    },
+    shelllab: {
+      handle: 'zhouke',
+      name: '周珂',
+      path: 'tsh.c',
+      spots: [
+        { line: 31, col: 4 },
+        { line: 31, col: 18 },
+        { line: 29, col: 8 },
+        { line: 31, col: 26 },
+        { line: 32, col: 2 },
+      ],
+    },
+  }
+const peer = computed(() => PEER_AT[p.value])
 const spot = ref(0)
-const peerTimer = window.setInterval(() => (spot.value = (spot.value + 1) % PEER_SPOTS.length), 2200)
+const peerTimer = window.setInterval(() => (spot.value = (spot.value + 1) % 5), 2200)
 onBeforeUnmount(() => window.clearInterval(peerTimer))
-const peerHere = computed(() => research.value && !branch.value && path.value === 'eval/preprocess.py')
+const peerHere = computed(() => !!peer.value && !branch.value && path.value === peer.value.path)
 const peers = computed<Peer[]>(() => {
   if (!peerHere.value) return []
   const n = text.value.split('\n').length
-  const s = PEER_SPOTS[spot.value]!
-  return [{ handle: 'wanglei', name: '王磊', color: avatarColor('wanglei'), line: Math.min(s.line, n), col: s.col }]
+  const who = peer.value!
+  const s = who.spots[spot.value]!
+  return [{ handle: who.handle, name: who.name, color: avatarColor(who.handle), line: Math.min(s.line, n), col: s.col }]
 })
 const faces = computed(() =>
   peerHere.value
     ? [
-        { clientId: 2, handle: 'wanglei', agent: false, name: '王磊', avatar: '', color: avatarColor('wanglei') },
+        {
+          clientId: 2,
+          handle: peer.value!.handle,
+          agent: false,
+          name: peer.value!.name,
+          avatar: '',
+          color: avatarColor(peer.value!.handle),
+        },
         { clientId: 3, handle: 'linxiao', agent: false, name: '林晓', avatar: '', color: avatarColor('linxiao') },
       ]
     : []
@@ -97,9 +130,7 @@ const faces = computed(() =>
 
 // ---- a pinned version, read-only ----
 const sub = computed(() =>
-  S.viewSub && (p.value === 'datalab' || p.value === 'week3')
-    ? S.subs[p.value].find((x) => x.id === S.viewSub) ?? null
-    : null
+  S.viewSub && isClaim(p.value) ? S.subs[p.value].find((x) => x.id === S.viewSub) ?? null : null
 )
 const pinned = computed(() => (sub.value ? asContext(path.value, sub.value.code.replace(/\n$/, '').split('\n')) : []))
 
@@ -108,7 +139,7 @@ const open = ref(true)
 const out = computed(() => S.out[k.value])
 const outSub = computed(() => {
   const o = out.value
-  if (o?.kind !== 'judge' || (p.value !== 'datalab' && p.value !== 'week3')) return null
+  if (o?.kind !== 'judge' || !isClaim(p.value)) return null
   return S.subs[p.value].find((x) => x.id === o.sub) ?? null
 })
 const term = computed(() => S.term[p.value] ?? [])
@@ -165,7 +196,7 @@ function showTab(t: 'out' | 'term') {
         <span class="ot-ced__copy">{{
           changes.length ? `改了 ${changes.length} 个文件` : '还没改，正式版不受影响'
         }}</span>
-        <span v-if="branch.approved" class="ot-ced__ok"><v-icon size="14" icon="mdi-check" />王磊看过了</span>
+        <span v-if="branch.approved" class="ot-ced__ok"><v-icon size="14" icon="mdi-check" />{{ reviewer }}看过了</span>
         <span class="ot-head__gap" />
         <!-- The branch's own actions need the room: 放弃 and 运行 are icons here. -->
         <BaseButton
@@ -184,14 +215,14 @@ function showTab(t: 'out' | 'term') {
           size="sm"
           :disabled="!changes.length || branch.asked"
           @click="askReview"
-          >{{ branch.asked ? '等王磊看…' : '请人看一下' }}</BaseButton
+          >{{ branch.asked ? `等${reviewer}看…` : '请人看一下' }}</BaseButton
         >
         <BaseButton
           id="b-merge-branch"
           kind="primary"
           size="sm"
           :disabled="!canMerge()"
-          :title="S.settingsProtectMain && !branch.approved ? '正式版受保护：要别人看过才能合' : ''"
+          :title="S.protectMain[p] && !branch.approved ? '正式版受保护：要别人看过才能合' : ''"
           @click="mergeBranch"
           >合回正式版</BaseButton
         >
@@ -213,7 +244,7 @@ function showTab(t: 'out' | 'term') {
         <DocPresence v-if="faces.length" :peers="faces" class="ot-ced__faces" />
         <span class="ot-head__gap" />
         <BaseButton
-          v-if="research"
+          v-if="shared"
           id="b-branch"
           kind="ghost"
           size="sm"

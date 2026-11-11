@@ -231,3 +231,79 @@ body {
     background-color: var(--accent-wash);
   }
 }
+
+/* The home list and the space sidebar are the product's sidebar rows. The app gets these
+   from styles/common.scss, which the demo does not load (it would restyle the rest of the
+   page), so the rules those two sidebars use are repeated here, values unchanged. */
+.sidebar-header {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  height: 48px;
+  padding: 8px 12px;
+  border-block-end: 1px solid var(--line);
+}
+
+.side-nav .v-list-item {
+  min-height: 36px;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+
+.side-nav .v-list-item:hover {
+  background: var(--fill-2);
+}
+
+.side-nav .v-list-item--active,
+.side-nav .v-list-item--active:hover {
+  background: var(--line-2);
+}
+
+.side-nav .v-list-item--active > .v-list-item__overlay {
+  opacity: 0 !important;
+}
+
+.side-nav .v-list-item-title {
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+
+.side-nav .v-list-item--active .v-list-item-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.side-nav .v-list-item__spacer {
+  width: 8px !important;
+}
+
+.side-nav .v-list-item__prepend > .v-icon {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  font-size: 16px;
+  color: var(--faint);
+  opacity: 1;
+}
+
+.side-nav .v-list-subheader {
+  min-height: 28px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+.side-nav__count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--inverse-surface);
+  text-align: center;
+  background: var(--warn);
+  border-radius: var(--radius-pill);
+}

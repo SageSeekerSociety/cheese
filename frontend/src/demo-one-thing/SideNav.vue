@@ -1,18 +1,19 @@
 <script setup lang="ts">
-// The project sidebar: the product's project header (team, project menu,
-// search), 需要我的 on top, the channels in a fixed order, then 项目文件, and
-// 设置 at the bottom. Rows are the product's own sidebar rows. A project
-// claimed from the course is an ordinary project and gets the same sidebar.
-// The course 空间 is not a project: its sidebar has 课程主页 (the 题目 list),
-// the course-wide channels under 课程讨论, and the space's 设置.
+// The project sidebar: the product's project header (the team that owns it,
+// project menu, search), 需要我的 on top, the channels in a fixed order, then
+// 项目文件, and 设置 at the bottom. Rows are the product's own sidebar rows. A
+// project claimed from a 题目 is an ordinary project and gets the same sidebar,
+// with one more line under the header: the 题目 it came from (来自 空间 · 题目),
+// which leads back to that 题目 in the space.
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { VisibleRow } from '@/lib/topicTree'
 
 import { computed, ref } from 'vue'
 
-import { type Channel, channelsOf, projectMeta } from './data'
-import { deadlines, go, S, toast } from './state'
+import { topicOf } from './course'
+import { type Channel, channelsOf, isClaim, projectMeta, SPACE } from './data'
+import { deadlines, go, S, showTopic, toast } from './state'
 
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
@@ -24,7 +25,7 @@ const TERMS = { project: '项目', topic: '频道' }
 
 // The pinned rows translate their labels; the demo's three live under its own keys.
 i18n.global.mergeLocaleMessage('zh-CN', {
-  demoOneThing: { inbox: '需要我的', files: '项目文件', settings: '设置', space: '课程主页' },
+  demoOneThing: { inbox: '需要我的', files: '项目文件', settings: '设置' },
 })
 
 const MENU_PAGES = [
@@ -34,8 +35,9 @@ const MENU_PAGES = [
   { key: 'project-skills', label: 'navigation.project.skills', icon: 'mdi-book-cog-outline' },
 ]
 
-const course = computed(() => S.project === 'course')
 const space = computed(() => projectMeta(S.project))
+/** The 题目 this project was claimed from (the product records it as the project's external_task_id). */
+const origin = computed(() => (isClaim(S.project) ? topicOf(S.project) : null))
 const channels = computed(() => channelsOf(S.project))
 
 // 需要我的: every 一件事 waiting on me, and every deadline across my projects.
@@ -95,10 +97,8 @@ function actions(topic: Topic): MenuCommand[] {
 }
 
 function openPage(key: string) {
-  if (key === 'inbox' || (key === 'files' && !course.value)) go(key)
-  else if (key === 'space') go('space')
-  else if (key === 'settings') go('settings', course.value ? { settingsSection: 'course' } : {})
-  else if (key === 'project-settings') go('settings', { settingsSection: course.value ? 'course' : 'project' })
+  if (key === 'inbox' || key === 'files' || key === 'settings') go(key)
+  else if (key === 'project-settings') go('settings', { settingsSection: 'project' })
   else if (key === 'project-members') go('settings', { settingsSection: 'members' })
   else toast('演示里只有频道、项目文件和设置这几页')
 }
@@ -122,10 +122,24 @@ function openPage(key: string) {
       :can-transfer="true"
       :can-leave="false"
       @open-page="openPage"
-      @select-docs="course ? go('space') : go('files', { ftab: 'history' })"
+      @select-docs="go('files', { ftab: 'history' })"
       @open-palette="toast('⌘K：搜索频道、文件和一件事')"
       @open-transfer="toast('演示里不能转让项目')"
     />
+
+    <button
+      v-if="origin"
+      type="button"
+      class="ot-side__origin"
+      data-origin
+      title="回到空间里的这道题目"
+      @click="showTopic(origin.id)"
+    >
+      <v-icon size="14" icon="mdi-school-outline" />
+      <span class="ot-side__origin-text"
+        >来自 {{ SPACE.name }}<b> · {{ origin.title }}</b></span
+      >
+    </button>
 
     <div class="ot-side__scroll">
       <div class="ot-side__row" data-nav="inbox">
@@ -139,18 +153,8 @@ function openPage(key: string) {
         <TopicRailBadge v-if="waiting" class="ot-side__badge" :count="waiting" />
       </div>
 
-      <div v-if="course" class="ot-side__row" data-nav="space">
-        <TopicRailPinnedRows
-          :pages="[{ key: 'space', label: 'demoOneThing.space', icon: 'mdi-school-outline' }]"
-          :route-name="S.center"
-          :terms="TERMS"
-          :page="false"
-          @open-page="openPage"
-        />
-      </div>
-
       <div class="ot-side__sec">
-        <span class="t-eyebrow-read">{{ course ? '课程讨论' : '频道' }}</span>
+        <span class="t-eyebrow-read">频道</span>
         <button
           type="button"
           class="ot-side__add"
@@ -183,8 +187,8 @@ function openPage(key: string) {
         />
       </div>
 
-      <div v-if="!course" class="ot-side__sec"><span class="t-eyebrow-read">项目</span></div>
-      <div v-if="!course" class="ot-side__row" data-nav="files">
+      <div class="ot-side__sec"><span class="t-eyebrow-read">项目</span></div>
+      <div class="ot-side__row" data-nav="files">
         <TopicRailPinnedRows
           :pages="[{ key: 'files', label: 'demoOneThing.files', icon: 'mdi-folder-outline' }]"
           :route-name="S.center"
@@ -215,6 +219,41 @@ function openPage(key: string) {
   min-width: 0;
   min-height: 0;
   background: var(--canvas);
+}
+
+.ot-side__origin {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 8px 8px 0;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  background: var(--fill);
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+.ot-side__origin:hover {
+  color: var(--ink);
+  background: var(--fill-2);
+}
+
+.ot-side__origin .v-icon {
+  margin-top: 1px;
+}
+
+.ot-side__origin-text {
+  min-width: 0;
+}
+
+.ot-side__origin-text b {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .ot-side__scroll {

@@ -6,18 +6,7 @@ import type { Submission } from './course'
 
 import { reactive } from 'vue'
 
-import {
-  COURSE_CHAT,
-  dueChip,
-  hintFor,
-  PROJECT_FILES,
-  SET,
-  topicById,
-  TOPICS,
-  UNITS,
-  versionOf,
-  welcome,
-} from './course'
+import { dueChip, hintFor, PROJECT_FILES, SET, topicById, TOPICS, UNITS, versionOf, welcome } from './course'
 import {
   ASK,
   CHAN_DOCS,
@@ -28,18 +17,23 @@ import {
   dayAt,
   FILES,
   isClaim,
+  isShared,
   ME,
   minsAgo,
   MINUTES_DOC,
   NAMES,
   type ProjectKey,
   projectOfChan,
+  teamOf,
 } from './data'
 
 import { monthDayTime } from '@/lib/dateText'
 
 export type Status = 'talk' | 'run' | 'wait' | 'done'
-export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'space'
+/** inbox: 待办 on 首页, or 需要我的 inside a project (the same cross-project list). space: the
+ *  course 空间's pages. team: a team's 项目 list on 首页. The others are a project's. */
+export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'space' | 'team'
+export type SpacePage = 'tasks' | 'announce' | 'library'
 /** The bottom panel's 输出 for one file. */
 export type Out =
   | { kind: 'running' }
@@ -129,10 +123,24 @@ function doneThing(id: string, title: string, owner: string, ask: string, answer
 
 function initial() {
   return {
-    /** Which space on the rail is open: the research project (the tour runs here) or the course. */
+    /** 首页 (its 待办, a team's projects, the course 空间 reached from it) or a project on the rail. */
+    area: 'project' as 'home' | 'project',
+    /** The project open (or last open, while on 首页): the research project is where the tour runs. */
     project: 'research' as ProjectKey,
+    /** The course 空间's page: 题目 (all, or one 分类), 公告 or 资料库. */
+    spacePage: 'tasks' as SpacePage,
+    spaceCat: null as string | null,
+    /** A 题目 to bring into view and flash in the list (from a project's 「来自」 line or a deadline). */
+    spaceFlash: null as string | null,
+    spaceFlashTick: 0,
+    /** 全部题目's 「上次查看后新发布」 count: cleared once the list has been seen and left. */
+    spaceNew: 3,
+    /** 领取 asking 「自己领」 or 「和团队一起领」 for this 题目. */
+    claimAsk: null as string | null,
+    /** The team whose 项目 list is open on 首页. */
+    teamView: 'linxiao',
     /** The channel each project was last on, so switching back lands where you were. */
-    chanOf: { research: 'c-exp', course: 'k-general', datalab: 'dl-general', week3: 'w3-general' } as Record<
+    chanOf: { research: 'c-exp', datalab: 'dl-general', week3: 'w3-general', shelllab: 'sh-general' } as Record<
       ProjectKey,
       string
     >,
@@ -140,9 +148,9 @@ function initial() {
     fileOf: { research: MINUTES_DOC } as Record<string, string>,
     /** Where each project was left (channel, 项目文件 or 设置): switching back lands there. A project
      *  not visited yet lands on its default (the research project on its channel, a claimed
-     *  题目 in 项目文件 on its 题面 / 题单, the course on its 题目 list). */
+     *  题目 in 项目文件 on its 题面 / 题单). */
     centerOf: {} as Partial<Record<ProjectKey, Center>>,
-    /** The projects 林晓 has claimed from the course, in the order they were claimed (the rail's order). */
+    /** The projects claimed from the course (by 林晓 alone, or with her team), in the order they were claimed (the rail's order). */
     claimed: [] as ClaimKey[],
     center: 'chan' as Center,
     chan: 'c-exp',
@@ -160,7 +168,7 @@ function initial() {
     jumpTick: 0,
     /** 专注：the open 一件事 takes the center column too. */
     focus: false,
-    unread: { 'c-papers': 2, 'c-general': 1, 'k-general': 1, 'k-qa': 3 } as Record<string, number>,
+    unread: { 'c-papers': 2, 'c-general': 1 } as Record<string, number>,
     /** 项目文件's folded folders, per project (a 题单 folds by problem). */
     collapsed: {} as Record<string, string[]>,
     sheet: false,
@@ -179,8 +187,8 @@ function initial() {
     toastTick: 0,
     settingsSection: 'project',
     settingsAgentDirect: false,
-    /** 正式版受保护: people also work on a branch, and someone else has to look before it merges. */
-    settingsProtectMain: false,
+    /** 正式版受保护, per shared project: people also work on a branch, and someone else has to look before it merges. */
+    protectMain: {} as Record<string, boolean>,
     settingsNotify: 'mentions',
     settingsRuntime: 'a100',
     /** Every project's code files as 正式版 reads now, keyed by fkey. People type straight into it. */
@@ -190,9 +198,15 @@ function initial() {
     /** A file being typed into: the text it had before this burst of typing. The burst becomes one
      *  历史 entry once typing pauses (or on ⌘S, leaving the file, 运行, 提交评测). */
     snapBase: {} as Record<string, string>,
-    /** 林晓's branch in the research project, if she opened one: her own copy of the code files it
-     *  touches, merged back by 合回正式版. */
-    branch: null as null | { name: string; files: Record<string, string>; asked: boolean; approved: boolean },
+    /** 林晓's branch in a shared project (the research project, a team's 题目), if she opened one: her own
+     *  copy of the code files it touches, merged back by 合回正式版. */
+    branch: null as null | {
+      project: ProjectKey
+      name: string
+      files: Record<string, string>
+      asked: boolean
+      approved: boolean
+    },
     /** Lines selected in the open code file: 问芝士 sends them along. */
     codeSel: null as { path: string; start: number; end: number } | null,
     /** Lines to bring into view and mark in the editor (a file mention clicked in a channel). */
@@ -205,7 +219,7 @@ function initial() {
     /** Each project's terminal transcript (the person's own environment). */
     term: {} as Record<string, { cmd: string; out: string }[]>,
     /** Every 提交评测 in each claimed project, newest first. */
-    subs: { datalab: [], week3: [] } as Record<ClaimKey, Submission[]>,
+    subs: { datalab: [], week3: [], shelllab: [] } as Record<ClaimKey, Submission[]>,
     /** The file being judged right now (fkey), if any. */
     judging: null as string | null,
     /** A submission whose pinned version is open (read-only) in the code view. */
@@ -216,9 +230,9 @@ function initial() {
     extra: {} as Record<string, ChatLine[]>,
     /** Each project's 历史: every change that took effect on its 正式版. */
     history: {
-      course: [],
       datalab: [],
       week3: [],
+      shelllab: [],
       research: [
         { who: 'wanglei', what: '改了《组会纪要 11-07》', at: minsAgo(9) },
         {
@@ -474,7 +488,6 @@ function initial() {
         },
         { id: 'z4', who: 'linxiao', at: minsAgo(20), text: '中期报告下周三交，<@zhaoyutong> 记得把数据那节补上' },
       ],
-      ...structuredClone(COURSE_CHAT),
     } as Record<string, ChatLine[]>,
     showNotes: false,
   }
@@ -517,34 +530,66 @@ export function go(center: Center, extra: Partial<typeof S> = {}): void {
   }
 }
 
-/** The rail: switch to another project, back on the channel it was last on. The course
- *  space opens on its own page, the 题目 list. */
+/** Leaving a project (for another, or for 首页): remember where it was, close what was half-typed. */
+function leaveProject(): void {
+  // 全部题目's 「新发布」 count is what was new at this visit: it clears once the list is left.
+  if (S.center === 'space' && S.spacePage === 'tasks' && !S.spaceCat) S.spaceNew = 0
+  if (S.area !== 'project') return
+  if (S.center === 'chan') S.chanOf[S.project] = S.chan
+  // 需要我的 belongs to no project: leaving from it keeps where the project itself was left.
+  if (S.center !== 'inbox') S.centerOf[S.project] = S.center
+  S.fileOf[S.project] = S.file
+  snapshotAll()
+  // What was half-typed belongs to the channel it was typed in, not to the other project.
+  S.typing = ''
+  S.replyTo = null
+  S.viewSub = null
+  S.codeSel = null
+  S.asking = ''
+}
+
+/** The rail: switch to a project, back where it was last left. */
 export function switchProject(p: ProjectKey): void {
+  // The rail item of the project already open: stay where it is (from 需要我的, back into the project).
+  if (S.area === 'project' && S.project === p && S.center !== 'inbox') return
+  leaveProject()
   if (S.project !== p) {
-    if (S.center === 'chan') S.chanOf[S.project] = S.chan
-    // 需要我的 belongs to no project: leaving from it keeps where the project itself was left.
-    if (S.center !== 'inbox') S.centerOf[S.project] = S.center
-    S.fileOf[S.project] = S.file
-    snapshotAll()
-    // What was half-typed belongs to the channel it was typed in, not to the other project.
-    S.typing = ''
-    S.replyTo = null
-    S.viewSub = null
-    S.codeSel = null
-    S.asking = ''
     S.project = p
+    // The channel this project was last on, even when it lands on 项目文件 (设置 names it).
+    S.chan = S.chanOf[p]
     S.file = S.fileOf[p] ?? S.file
     S.ftab = isClaim(p) ? 'subs' : 'pending'
-    S.settingsSection = p === 'course' ? 'course' : 'project'
-  } else if (S.center !== 'inbox') {
-    // The rail item of the project already open: stay where it is.
-    return
+    S.settingsSection = 'project'
   }
+  S.area = 'project'
+  S.claimAsk = null
   // Where it was left; the first visit lands on the project's own starting place.
-  const center = S.centerOf[p] ?? (p === 'course' ? 'space' : isClaim(p) ? 'files' : 'chan')
+  const center = S.centerOf[p] ?? (isClaim(p) ? 'files' : 'chan')
   if (center === 'chan') go('chan', { chan: S.chanOf[p], thing: null })
   else if (center === 'files') go('files', { file: S.file, viewSub: null })
-  else go(center, p === 'course' ? { chan: S.chanOf.course } : {})
+  else go(center)
+}
+
+/** The rail's 首页: 待办 and the home list (teams, 空间). */
+export function openHome(center: 'inbox' | 'team' = 'inbox', extra: Partial<typeof S> = {}): void {
+  leaveProject()
+  S.area = 'home'
+  S.claimAsk = null
+  go(center, extra)
+}
+
+/** The course 空间, from 首页's list, a project's 「来自」 line or a deadline: one of its pages. */
+export function openSpace(page: SpacePage = 'tasks', extra: Partial<typeof S> = {}): void {
+  leaveProject()
+  S.area = 'home'
+  if (page !== 'tasks' || S.spacePage !== 'tasks') S.claimAsk = null
+  go('space', { spacePage: page, spaceCat: null, ...extra })
+}
+
+/** Bring one 题目 into view in the space's list and flash it. */
+export function showTopic(id: string): void {
+  openSpace('tasks', { spaceFlash: id })
+  S.spaceFlashTick++
 }
 
 /** Unread messages in one space's channels (the rail's count). */
@@ -612,21 +657,19 @@ export function sourceOf(thingId: string): ChatLine | null {
 // 合回正式版 brings it back; with 正式版受保护 on, people have to work on a branch
 // and someone else looks before it merges.
 
-/** The official text of a research code file. */
-export function officialCode(path: string): string[] {
-  return officialText('research', path).split('\n')
-}
-
 /** A code file as 正式版 reads now, in any project. */
 export function officialText(p: ProjectKey, path: string): string {
   return S.official[fkey(p, path)] ?? ''
 }
 
-/** On a branch, the research code files read from it. */
-export const onBranch = (p: ProjectKey) => p === 'research' && !!S.branch
+/** On a branch, the project's code files read from it. */
+export const onBranch = (p: ProjectKey) => S.branch?.project === p
 
-/** 正式版 is protected and no branch is open: the research editor is read-only. */
-export const lockedMain = (p: ProjectKey) => p === 'research' && S.settingsProtectMain && !S.branch
+/** 正式版 is protected and no branch is open: the shared project's editor is read-only. */
+export const lockedMain = (p: ProjectKey) => isShared(p) && !!S.protectMain[p] && !onBranch(p)
+
+/** Who looks at a branch before it merges: someone else in the project. */
+export const reviewerOf = (p: ProjectKey) => (p === 'research' ? 'wanglei' : 'zhouke')
 
 /** What the editor shows: the branch's copy while on one, else 正式版. */
 export function codeText(p: ProjectKey, path: string): string {
@@ -695,38 +738,44 @@ export function changedLines(before: string[], after: string[]): number {
   return Math.max(diff(a, b), diff(b, a))
 }
 
-// ---- a person's branch (research project) ----
+// ---- a person's branch (a shared project) ----
 
 /** The branch's files that differ from 正式版 now: path → changed line count. */
 export function branchChanges(): { path: string; n: number }[] {
   const b = S.branch
   if (!b) return []
   return Object.entries(b.files)
-    .map(([path, text]) => ({ path, n: changedLines(officialCode(path), text.split('\n')) }))
+    .map(([path, text]) => ({ path, n: changedLines(officialText(b.project, path).split('\n'), text.split('\n')) }))
     .filter((x) => x.n > 0)
 }
 
 export function openBranch(): void {
-  if (S.branch) return
+  if (S.branch) {
+    if (S.branch.project !== S.project) toast(`你在别的项目里还开着分支「${S.branch.name}」：先合回或放弃它`)
+    return
+  }
+  if (!isShared(S.project)) return
   snapshotAll()
-  S.branch = { name: `${NAMES[ME]}-试改`, files: {}, asked: false, approved: false }
+  S.branch = { project: S.project, name: `${NAMES[ME]}-试改`, files: {}, asked: false, approved: false }
   toast(`开了分支「${S.branch.name}」：在这里改不影响正式版，改好了再合回去`)
 }
 
-/** 请人看一下: in the demo 王磊 looks at it a moment later. */
+/** 请人看一下: in the demo the other person (王磊, or 周珂 in the team's 题目) looks at it a moment later. */
 export function askReview(): void {
   const b = S.branch
   if (!b || b.asked) return
   b.asked = true
-  toast('已请王磊看一下')
+  const who = NAMES[reviewerOf(b.project)]
+  toast(`已请${who}看一下`)
   later(1800, () => {
     if (S.branch !== b) return
     b.approved = true
-    toast(`王磊看过了分支「${b.name}」：可以合`)
+    toast(`${who}看过了分支「${b.name}」：可以合`)
   })
 }
 
-export const canMerge = () => !!S.branch && branchChanges().length > 0 && (!S.settingsProtectMain || S.branch.approved)
+export const canMerge = () =>
+  !!S.branch && branchChanges().length > 0 && (!S.protectMain[S.branch.project] || S.branch.approved)
 
 /** 合回正式版: the branch's changes go into 正式版 as one 历史 entry, and the branch closes. */
 export function mergeBranch(): void {
@@ -735,11 +784,11 @@ export function mergeBranch(): void {
   const changed = branchChanges()
   const prevs: Record<string, string> = {}
   for (const { path } of changed) {
-    prevs[path] = officialText('research', path)
-    S.official[fkey('research', path)] = b.files[path]!
+    prevs[path] = officialText(b.project, path)
+    S.official[fkey(b.project, path)] = b.files[path]!
   }
   S.branch = null
-  log('research', ME, `把分支「${b.name}」合回正式版：改了 ${changed.map((c) => c.path).join('、')}`, { prevs })
+  log(b.project, ME, `把分支「${b.name}」合回正式版：改了 ${changed.map((c) => c.path).join('、')}`, { prevs })
   toast(`已合回正式版：${changed.length} 个文件`)
 }
 
@@ -956,15 +1005,29 @@ export function askAboutFile(): void {
   toast(`问题发在了 # ${channelsOf(p).find((c) => c.id === chan)?.title ?? ''}，芝士的回答也在那里`)
 }
 
-// ---- 领取: a 题目 becomes a project of my own ----
+// ---- 领取: a 题目 becomes a project owned by a team ----
 
+/** 领取 on a 题目 row: one that a team may claim first asks 「自己领」 or 「和团队一起领」. */
 export function claim(topicId: string): void {
   const t = topicById(topicId)
   if (!t?.project) {
-    toast('演示里能领取的是 Data Lab 和第 3 周题单')
+    toast('演示里能领取的是 Data Lab、第 3 周题单和 Shell Lab 大作业')
     return
   }
+  if (S.claimed.includes(t.project)) {
+    switchProject(t.project)
+    return
+  }
+  if (t.mode === 'solo') claimAs(topicId, ME)
+  else S.claimAsk = topicId
+}
+
+/** The claim itself: the project goes to the team (`linxiao` is 林晓's own team), one per team per 题目. */
+export function claimAs(topicId: string, team: string): void {
+  const t = topicById(topicId)
+  if (!t?.project) return
   const p = t.project
+  S.claimAsk = null
   if (!S.claimed.includes(p)) {
     S.claimed.push(p)
     const files = PROJECT_FILES[p]
@@ -973,17 +1036,47 @@ export function claim(topicId: string): void {
     S.chanView[CLAIMED[p].chan] = 'talk'
     S.collapsed[p] = p === 'week3' ? SET.map((x) => x.id) : []
     S.fileOf[p] = files[0]!.path
+    const owner = teamOf(team)
+    const made =
+      p === 'datalab' ? 'README.md 和 bits.c' : p === 'week3' ? '题单.md 和 5 道题的文件' : 'README.md 和 tsh.c'
     S.history[p] = [
       {
         who: ME,
-        what: `领取了「${t.title}」：新建了 ${p === 'datalab' ? 'README.md 和 bits.c' : '题单.md 和 5 道题的文件'}`,
+        what: owner.personal
+          ? `领取了「${t.title}」：新建了 ${made}`
+          : `代表「${owner.name}」领取了「${t.title}」：新建了 ${made}`,
         at: new Date().toISOString(),
         fixed: true,
       },
     ]
-    toast(`领取了「${t.title}」：你的项目「${CLAIMED[p].name}」建好了`)
+    toast(
+      owner.personal
+        ? `领取了「${t.title}」：项目「${CLAIMED[p].name}」建在你自己的团队下`
+        : `「${owner.name}」领取了「${t.title}」：${owner.members.length} 个人共用项目「${CLAIMED[p].name}」`
+    )
   }
   switchProject(p)
+}
+
+/** Where a 题目 stands for me: 未领取, 进行中 · 项目名, or 已提交 with the latest score. */
+export function standing(topicId: string): { text: string; tone: 'new' | 'busy' | 'done' } {
+  const p = topicById(topicId)?.project
+  if (!p || !S.claimed.includes(p)) return { text: '未领取', tone: 'new' }
+  const name = CLAIMED[p].name
+  if (p === 'week3') {
+    const tried = SET.filter((x) => latestOf(p, x.id))
+    const passed = tried.filter((x) => {
+      const l = latestOf(p, x.id)!
+      return l.score === l.total
+    })
+    return tried.length
+      ? { text: `已提交 · 通过 ${passed.length}/${SET.length}`, tone: 'done' }
+      : { text: `进行中 · ${name}`, tone: 'busy' }
+  }
+  const last = latestOf(p, p)
+  return last
+    ? { text: `已提交 · ${last.score}/${last.total}`, tone: 'done' }
+    : { text: `进行中 · ${name}`, tone: 'busy' }
 }
 
 let seq = 0
@@ -995,7 +1088,7 @@ export function send(): void {
   if (!text) return
   S.typing = ''
   const at = new Date().toISOString()
-  // In the course and its projects 芝士 only gives hints, in the channel: no 一件事 is opened there.
+  // In a project claimed from a 题目 芝士 only gives hints, in the channel: no 一件事 is opened there.
   // A plain 「@芝士」 counts too: a viewer typing it by hand need not pick it from the mention list.
   if (/<@cheese>|@芝士/.test(text) && S.project !== 'research') {
     const id = nextId('u')
@@ -1193,23 +1286,10 @@ export function deadlines(): Deadline[] {
     if (!chip) continue
     const p = t.project
     if (!p || !S.claimed.includes(p)) {
-      out.push({ id: t.id, title: `${t.title} ${chip}`, sub: '还没领取', chip, open: () => switchProject('course') })
+      out.push({ id: t.id, title: `${t.title} ${chip}`, sub: '还没领取', chip, open: () => showTopic(t.id) })
       continue
     }
-    if (p === 'datalab') {
-      const last = latestOf(p, 'datalab')
-      if (last && last.score === last.total) continue
-      out.push({
-        id: t.id,
-        title: `${t.title} ${chip}`,
-        sub: last ? `最近一次 ${last.score}/${last.total}` : '还没提交',
-        chip,
-        open: () => {
-          switchProject(p)
-          openFile('bits.c')
-        },
-      })
-    } else {
+    if (p === 'week3') {
       const left = SET.filter((x) => {
         const last = latestOf(p, x.id)
         return !last || last.score < last.total
@@ -1225,7 +1305,21 @@ export function deadlines(): Deadline[] {
           openFile('题单.md')
         },
       })
+      continue
     }
+    const last = latestOf(p, p)
+    if (last && last.score === last.total) continue
+    const file = PROJECT_FILES[p].find((f) => f.unit === p)!.path
+    out.push({
+      id: t.id,
+      title: `${t.title} ${chip}`,
+      sub: last ? `最近一次 ${last.score}/${last.total}` : '还没提交',
+      chip,
+      open: () => {
+        switchProject(p)
+        openFile(file)
+      },
+    })
   }
   return out
 }

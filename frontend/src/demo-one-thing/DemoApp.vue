@@ -95,12 +95,36 @@ function drawNotes() {
     const r = rel(el)
     out.push({ key: sel, x: r.x + 3, y: r.y + 3, w: r.w - 6, h: r.h - 6, title, text, nx: r.x + dx, ny: r.y + dy })
   }
-  if (S.project === 'course') {
-    zone('.ot-side', '左栏：课程空间', '课程主页、课程讨论（全班的频道）、空间的设置。空间不是项目。', 12, 340)
+  if (S.area === 'home' && S.center === 'space') {
+    zone(
+      '.ot-side',
+      '左栏：空间',
+      '公告、资料库、题目（全部，和老师分的类）。空间不是项目，也没有频道；「管理」只有老师和助教看得到。',
+      12,
+      340
+    )
     zone(
       '.ot-pane',
-      '中间：课程主页',
-      '老师发布的题目：截止时间、我做到哪了。「领取」给我建一个自己的项目，题目从此就是那个项目。',
+      '中间：题目',
+      '每道题：分类、截止、个人还是组队、我或我们组做到哪了。「领取」建一个项目：个人题目在你自己的团队下，组队题目在一起领取的团队下。',
+      20,
+      70
+    )
+    notes.value = out
+    return
+  }
+  if (S.area === 'home') {
+    zone(
+      '.ot-side',
+      '左栏：首页',
+      '待办、我的团队（各自的项目）、我加入的空间。课程是一个空间，从这里进，不在最左边的项目栏上。',
+      12,
+      340
+    )
+    zone(
+      '.ot-pane',
+      '中间：待办',
+      '所有项目和空间里等我的事：快到的截止、等我采纳的任务。点一条就到那个项目或那道题。',
       20,
       70
     )
@@ -108,7 +132,13 @@ function drawNotes() {
     return
   }
   if (S.project !== 'research') {
-    zone('.ot-side', '左栏：普通的项目', '领取来的题目就是一个项目：频道、项目文件、设置，和别的项目一样。', 12, 340)
+    zone(
+      '.ot-side',
+      '左栏：普通的项目',
+      '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。顶上「来自」那一行回到空间里的这道题。',
+      12,
+      340
+    )
     zone(
       '.ot-pane',
       '中间：频道或文件',
@@ -144,7 +174,16 @@ function drawNotes() {
   notes.value = out
 }
 watch(
-  () => [S.project, S.center, S.thing, S.chan, S.chanView[S.chan], S.things.map((t) => t.status).join()],
+  () => [
+    S.area,
+    S.project,
+    S.center,
+    S.spacePage,
+    S.thing,
+    S.chan,
+    S.chanView[S.chan],
+    S.things.map((t) => t.status).join(),
+  ],
   async () => {
     await nextTick()
     setTimeout(drawNotes, 380)

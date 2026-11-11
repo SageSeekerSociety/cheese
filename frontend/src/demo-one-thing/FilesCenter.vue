@@ -20,7 +20,7 @@ import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
 import FileTree from './FileTree.vue'
 import ProblemSetDoc from './ProblemSetDoc.vue'
-import { fkey, isSaving, openFile, S, t4, toast } from './state'
+import { fkey, isSaving, onBranch, openFile, S, t4, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
@@ -131,8 +131,8 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           <span class="ot-files__size">{{ sizeOf(entry.bytes) }}</span>
           <span class="ot-head__gap" />
           <span v-if="entry.pinned" class="ot-files__tag">置顶</span>
-          <span v-if="entry.kind === 'code' && S.project === 'research' && S.branch" class="ot-files__tag"
-            >分支：{{ S.branch.name }}</span
+          <span v-if="entry.kind === 'code' && onBranch(S.project)" class="ot-files__tag"
+            >分支：{{ S.branch!.name }}</span
           >
           <span v-else-if="entry.kind === 'code' && isSaving(S.project, entry.path)" class="ot-files__tag">正在改</span>
           <span v-else-if="entry.kind === 'word'" class="ot-files__tag">修订 2 处</span>

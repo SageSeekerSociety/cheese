@@ -27,14 +27,10 @@ export const PEOPLE: Person[] = [
   { handle: 'cheese', name: '芝士', agent: true },
 ]
 
-/** The course's people (林晓 takes the course as a student). */
+/** The course's teachers: they write the space's 公告 and 资料库. */
 export const COURSE_PEOPLE: Person[] = [
-  { handle: 'linxiao', name: '林晓' },
   { handle: 'zhanglaoshi', name: '张老师' },
   { handle: 'lizhujiao', name: '李助教' },
-  { handle: 'zhouzihan', name: '周子涵' },
-  { handle: 'wuhao', name: '吴昊' },
-  { handle: 'cheese', name: '芝士', agent: true },
 ]
 
 export const NAMES: Record<string, string> = Object.fromEntries(
@@ -70,75 +66,81 @@ export const CHANNELS = [
 
 export const PROJECT = { team: '视觉语言组', teamHandle: 'vl-group', name: '多模态检索论文复现' }
 
-/** The course 空间 on the rail: its 题目 and the course-wide discussion (课程讨论). It is not a project. */
-export const COURSE = { team: '计算机学院', teamHandle: 'cs-school', name: '计算机系统基础（ICS 2026）' }
+/** The course 空间: not a project and not on the rail. It is reached from 首页, where it is
+ *  listed under 空间, and holds the 题目 the teacher published, 公告 and 资料库. */
+export const SPACE = { id: 1, name: '计算机系统基础（ICS 2026）', org: '计算机学院', teacher: '张老师' }
 
-export const COURSE_CHANNELS = [
-  {
-    id: 'k-general',
-    title: '综合',
-    about: '课程通知和作业安排',
-    members: ['zhanglaoshi', 'lizhujiao', 'linxiao', 'zhouzihan', 'wuhao'],
-  },
-  {
-    id: 'k-qa',
-    title: '答疑',
-    about: '作业和课上的问题，助教每天晚上看',
-    members: ['lizhujiao', 'zhanglaoshi', 'linxiao', 'zhouzihan', 'wuhao'],
-  },
+/** A team owns projects. Everyone has a personal one (just them); a claim by a team makes the team's project. */
+export interface DemoTeam {
+  handle: string
+  name: string
+  personal?: boolean
+  members: string[]
+}
+
+export const TEAMS: DemoTeam[] = [
+  { handle: 'linxiao', name: '林晓', personal: true, members: ['linxiao'] },
+  { handle: 'vl-group', name: PROJECT.team, members: PEOPLE.filter((p) => !p.agent).map((p) => p.handle) },
+  { handle: 'ics-g7', name: 'ICS 第 7 组', members: ['linxiao', 'zhouke', 'chensiyuan'] },
 ]
+export const teamOf = (handle: string) => TEAMS.find((t) => t.handle === handle)!
 
-/** The projects 领取 creates: one per student per 题目, an ordinary project. */
-export type ClaimKey = 'datalab' | 'week3'
-export const CLAIMS: ClaimKey[] = ['datalab', 'week3']
-export type ProjectKey = 'research' | 'course' | ClaimKey
+/** The projects 领取 creates: one per team per 题目, an ordinary project owned by that team. */
+export type ClaimKey = 'datalab' | 'week3' | 'shelllab'
+export const CLAIMS: ClaimKey[] = ['datalab', 'week3', 'shelllab']
+export type ProjectKey = 'research' | ClaimKey
 
-export const CLAIMED: Record<ClaimKey, { name: string; railId: string; chan: string; slug: string }> = {
-  datalab: { name: 'Data Lab · 林晓', railId: 'p-dl', chan: 'dl-general', slug: 'datalab-linxiao' },
-  week3: { name: '第 3 周题单 · 林晓', railId: 'p-w3', chan: 'w3-general', slug: 'week3-linxiao' },
+export const CLAIMED: Record<ClaimKey, { name: string; team: string; railId: string; chan: string; slug: string }> = {
+  datalab: { name: 'Data Lab', team: 'linxiao', railId: 'p-dl', chan: 'dl-general', slug: 'datalab' },
+  week3: { name: '第 3 周题单', team: 'linxiao', railId: 'p-w3', chan: 'w3-general', slug: 'week3' },
+  shelllab: { name: 'Shell Lab 大作业', team: 'ics-g7', railId: 'p-sh', chan: 'sh-general', slug: 'shelllab' },
 }
 
 const claimedChannel = (k: ClaimKey) => ({
   id: CLAIMED[k].chan,
   title: '综合',
   about: '这个项目里的事；芝士在这里只给提示',
-  members: ['linxiao'],
+  members: teamOf(CLAIMED[k].team).members,
 })
 
-export const isClaim = (p: ProjectKey): p is ClaimKey => p === 'datalab' || p === 'week3'
+export const isClaim = (p: ProjectKey): p is ClaimKey => p === 'datalab' || p === 'week3' || p === 'shelllab'
 
-/** The header of a project's sidebar: team (for a claimed project, the course it came from) and name. */
+/** A project with more than one person in it: people edit 正式版 together and can open a branch. */
+export const isShared = (p: ProjectKey) => p === 'research' || (isClaim(p) && !teamOf(CLAIMED[p].team).personal)
+
+/** The people in a project: its team's members (芝士 is added where a list needs it). */
+export const peopleOf = (p: ProjectKey) =>
+  p === 'research' ? PEOPLE : PEOPLE.filter((x) => projectTeam(p).members.includes(x.handle))
+
+/** The team a project belongs to. */
+export const projectTeam = (p: ProjectKey) => (p === 'research' ? teamOf('vl-group') : teamOf(CLAIMED[p].team))
+
+/** The header of a project's sidebar: the team that owns it, and its name. */
 export function projectMeta(p: ProjectKey) {
   if (p === 'research') return PROJECT
-  if (p === 'course') return COURSE
-  return { team: COURSE.name, teamHandle: 'ics2026', name: CLAIMED[p].name }
+  const team = teamOf(CLAIMED[p].team)
+  return { team: team.name, teamHandle: team.handle, name: CLAIMED[p].name }
 }
 
-/** The clone address for 用本地编辑器打开. */
+/** The clone address for 用本地编辑器打开: under the owning team. */
 export const gitUrl = (p: ProjectKey) =>
   p === 'research'
     ? 'https://okcheese.com/git/vl-group/mm-retrieval.git'
-    : `https://okcheese.com/git/ics2026/${isClaim(p) ? CLAIMED[p].slug : 'course'}.git`
+    : `https://okcheese.com/git/${CLAIMED[p].team}/${CLAIMED[p].slug}.git`
 
 export type Channel = (typeof CHANNELS)[number]
 
-export const channelsOf = (p: ProjectKey): Channel[] =>
-  p === 'research' ? CHANNELS : p === 'course' ? COURSE_CHANNELS : [claimedChannel(p)]
-export const ALL_CHANNELS: Channel[] = [...CHANNELS, ...COURSE_CHANNELS, ...CLAIMS.map(claimedChannel)]
+export const channelsOf = (p: ProjectKey): Channel[] => (p === 'research' ? CHANNELS : [claimedChannel(p)])
+export const ALL_CHANNELS: Channel[] = [...CHANNELS, ...CLAIMS.map(claimedChannel)]
 export const channelOf = (id: string): Channel | undefined => ALL_CHANNELS.find((c) => c.id === id)
-/** Which project or space a channel belongs to. */
-export const projectOfChan = (id: string): ProjectKey =>
-  CHANNELS.some((c) => c.id === id)
-    ? 'research'
-    : COURSE_CHANNELS.some((c) => c.id === id)
-      ? 'course'
-      : CLAIMS.find((k) => CLAIMED[k].chan === id) ?? 'research'
+/** Which project a channel belongs to. */
+export const projectOfChan = (id: string): ProjectKey => CLAIMS.find((k) => CLAIMED[k].chan === id) ?? 'research'
 
-/** The other projects on the rail: name, unread count. They are not in the demo. */
+/** The other projects on the rail, and the team each belongs to. They are not in the demo. */
 export const OTHER_PROJECTS = [
-  { id: 'p-kg', name: '知识图谱问答', badge: 3 },
-  { id: 'p-data', name: '数据清洗流水线', badge: 0 },
-  { id: 'p-thesis', name: '毕业论文', badge: 0 },
+  { id: 'p-kg', name: '知识图谱问答', badge: 3, team: 'vl-group' },
+  { id: 'p-data', name: '数据清洗流水线', badge: 0, team: 'vl-group' },
+  { id: 'p-thesis', name: '毕业论文', badge: 0, team: 'linxiao' },
 ]
 
 // ---- clock ----
@@ -431,20 +433,6 @@ export const CHAN_DOCS: Record<string, { html: string; by: string; at: string }>
     html: `<h3>机器</h3>
 <ul><li><p>A100 × 1：数据在 <code>/data</code>，新硬盘在 <code>/data2</code></p></li><li><p>跑长任务前在这里说一声</p></li></ul>`,
   },
-  'k-general': {
-    by: 'zhanglaoshi',
-    at: dayAt(3, 8, 40),
-    html: `<h3>成绩</h3>
-<ul><li><p>五个 Lab 占 50%，期末 50%</p></li><li><p>以截止前最后一次提交为准，迟交不收</p></li></ul>
-<h3>答疑时间</h3>
-<p>周二、周四晚 7 点到 9 点，李助教在 # 答疑。</p>`,
-  },
-  'k-qa': {
-    by: 'lizhujiao',
-    at: dayAt(2, 19, 0),
-    html: `<h3>提问之前</h3>
-<ul><li><p>先搜一下这个频道，很多问题问过</p></li><li><p>贴报错和你试过什么，不要贴整段答案代码</p></li></ul>`,
-  },
 }
 
 // ---- 芝士整理 ----
@@ -503,22 +491,6 @@ export const SUMMARY: Record<string, { upto: string; items: SummaryItem[] }> = {
       { kind: 'decided', line: 'z1', text: 'A100 周三晚 10 点停机维护约两小时，之前存好 checkpoint' },
       { kind: 'found', line: 'z3', text: '新的 4T 硬盘挂在 `/data2`，COCO 原图已经拷过去了' },
       { kind: 'open', line: 'z4', text: '中期报告下周三交，数据那一节还等赵雨桐补' },
-    ],
-  },
-  'k-general': {
-    upto: 'n5',
-    items: [
-      { kind: 'decided', line: 'n1', text: '每道题可以反复提交，以截止前最后一次为准' },
-      { kind: 'decided', line: 'n3', text: 'Cache Lab 分两部分，Part A 先截止' },
-      { kind: 'found', line: 'n2', text: 'Data Lab 只能用题面里列的运算符，`dlc` 超了就是 0 分' },
-    ],
-  },
-  'k-qa': {
-    upto: 'q5',
-    items: [
-      { kind: 'found', line: 'q2', text: 'bitXor 的方向是德摩根：把「或」换成 `~` 和 `&`（助教不给式子）' },
-      { kind: 'found', line: 'q5', text: 'Cache Lab 的 trace 在 `traces/` 下，`./test-csim` 会和参考实现对比' },
-      { kind: 'open', line: 'q3', text: 'logicalNeg 不用 `!` 怎么做，还没人给出完整思路' },
     ],
   },
 }

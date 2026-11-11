@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// 需要我的: the same page in every project. On top, the deadlines across all my
-// projects and the course (a 题目 not claimed yet, not submitted, or a 题单
-// with problems still open), nearest first; then every 一件事 that concerns
-// me, the ones waiting on me first. A deadline opens its project.
+// The cross-project inbox: 首页's 待办, and the same list as 需要我的 inside any
+// project. On top, the deadlines across all my projects and the spaces I am
+// in (a 题目 not claimed yet, not submitted, or a 题单 with problems still
+// open), nearest first; then every 一件事 that concerns me, the ones waiting on
+// me first. A deadline opens its project, or the 题目 in its space.
 import { computed } from 'vue'
 
 import { CHANNELS } from './data'
@@ -10,6 +11,7 @@ import { ownerName, taskLine } from './shapes'
 import { deadlines, openThing, S } from './state'
 
 import TaskCard from '@/components/room/TaskCard.vue'
+import { t as tr } from '@/i18n'
 
 const GROUPS = [
   { status: 'wait', label: '等你' },
@@ -28,7 +30,7 @@ const chanName = (id: string) => CHANNELS.find((c) => c.id === id)?.title ?? ''
 <template>
   <section class="ot-inbox" data-zone="center">
     <header class="ot-head">
-      <h2 class="ot-head__title">需要我的</h2>
+      <h2 class="ot-head__title">{{ S.area === 'home' ? tr('navigation.inbox') : '需要我的' }}</h2>
       <span class="ot-head__sub">{{ S.things.length + dues.length }} 件</span>
     </header>
     <div class="ot-inbox__body">

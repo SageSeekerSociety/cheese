@@ -51,7 +51,9 @@ const taskDiff = computed(() =>
   research.value && t4()?.status === 'wait' ? TASK_DIFFS.find((d) => d.path === S.file) ?? null : null
 )
 const taskLines = computed(() => (taskDiff.value ? parseDiffLines(taskDiff.value.body) : []))
-const onBranch = computed(() => (research.value ? branchChanges().find((c) => c.path === S.file) ?? null : null))
+const onBranch = computed(() =>
+  S.branch?.project === S.project ? branchChanges().find((c) => c.path === S.file) ?? null : null
+)
 const pending = computed(() => suggestion.value + (taskDiff.value ? 1 : 0))
 const history = computed(() => S.history[S.project])
 const subs = computed(() => (isClaim(S.project) ? S.subs[S.project] : []))

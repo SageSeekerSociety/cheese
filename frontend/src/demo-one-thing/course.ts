@@ -1,16 +1,17 @@
 // The course space 「计算机系统基础（ICS 2026）」: the 题目 the teacher published
-// in it, what each 题目 brings into the project a student gets on 领取, and the
-// judges. A 题目 is not a kind of screen: once claimed it is an ordinary
-// project (channels, 项目文件, 设置) that holds the 题面 as a document, the
-// starter code, the rules in its settings and a judge on the files of a judged
-// unit. The space itself holds only the 题目 list and the course-wide channels.
+// in it, what each 题目 brings into the project that 领取 creates, the judges,
+// and the space's 公告 and 资料库. A 题目 is not a kind of screen: once claimed
+// it is an ordinary project owned by a team (the person's own team, or the team
+// that claimed it together), holding the 题面 as a document, the starter code,
+// the rules in its settings and a judge on the files of a judged unit. The
+// project records which 题目 it came from. A space has no channels.
 //
 // This is the student's side only. The teacher's views (the class's
 // submissions, the grade sheet, writing a 题目 and its tests) exist in the
 // product and are not part of this demo.
 import type { ChatLine } from './state'
 
-import { type ClaimKey, dayAt, minsAgo, NOW } from './data'
+import { type ClaimKey, dayAt, NOW } from './data'
 
 export interface JudgeRow {
   name: string
@@ -53,13 +54,19 @@ export function versionOf(text: string): string {
 
 // ---- the space's 题目 ----
 
+export const CATEGORIES = ['Lab', '题单', '大作业'] as const
+export type Category = (typeof CATEGORIES)[number]
+
 export interface Topic {
   id: string
   title: string
-  kind: 'lab' | 'set'
+  category: Category
   about: string
   due: string
   published: string
+  /** Who claims it: one person (into their own team), a team of `size`, or either. */
+  mode: 'solo' | 'team' | 'either'
+  size?: number
   /** The project 领取 creates; a 题目 without one is shown but not claimable in the demo. */
   project?: ClaimKey
 }
@@ -68,38 +75,58 @@ export const TOPICS: Topic[] = [
   {
     id: 'datalab',
     title: 'Data Lab',
-    kind: 'lab',
+    category: 'Lab',
     about: '在 bits.c 里用位运算写 13 个函数，一起评分',
     due: daysAhead(3, 23, 59),
     published: dayAt(6, 9, 0),
+    mode: 'solo',
     project: 'datalab',
   },
   {
     id: 'week3',
     title: '第 3 周题单',
-    kind: 'set',
+    category: '题单',
     about: '5 道小题：输入输出、分支和循环，每题单独评测',
     due: daysAhead(5, 23, 59),
     published: dayAt(2, 8, 30),
+    mode: 'solo',
     project: 'week3',
+  },
+  {
+    id: 'shelllab',
+    title: 'Shell Lab 大作业（3 人组队）',
+    category: '大作业',
+    about: '三个人一起写一个带作业控制的 shell：tsh.c，8 条 trace 评分',
+    due: daysAhead(10, 23, 59),
+    published: dayAt(1, 10, 10),
+    mode: 'team',
+    size: 3,
+    project: 'shelllab',
   },
   {
     id: 'cachelab',
     title: 'Cache Lab',
-    kind: 'lab',
+    category: 'Lab',
     about: '写一个缓存模拟器，再写一个对缓存友好的矩阵转置',
     due: daysAhead(12, 23, 59),
     published: dayAt(1, 10, 5),
+    mode: 'either',
+    size: 2,
   },
   {
     id: 'bomblab',
     title: 'Bomb Lab',
-    kind: 'lab',
+    category: 'Lab',
     about: '用 gdb 读汇编，拆掉六关炸弹',
     due: daysAhead(19, 23, 59),
     published: dayAt(1, 10, 6),
+    mode: 'solo',
   },
 ]
+
+/** 个人 / 组队 · 3 人 / 个人或 2 人组队: how a 题目 is claimed. */
+export const modeText = (t: Topic) =>
+  t.mode === 'solo' ? '个人' : t.mode === 'team' ? `组队 · ${t.size} 人` : `个人或 ${t.size} 人组队`
 
 export const topicById = (id: string) => TOPICS.find((t) => t.id === id)
 export const topicOf = (p: ClaimKey) => TOPICS.find((t) => t.project === p)!
@@ -648,6 +675,117 @@ const setStatement = (p: SetProblem) => `<h2>${p.id} ${p.title}</h2>
 /** The 题单 document's own words above its live list. */
 export const WEEK3_INTRO = `<p>这周的 5 道题练输入输出、分支和循环，每题单独评测，以截止前最后一次提交为准。做完一题，上面那一行就变绿。</p>`
 
+// ---- Shell Lab 大作业: three people, one tsh.c, judged on 8 traces ----
+
+const TSH_C = `/*
+ * tsh - A tiny shell program with job control
+ *
+ * ICS 第 7 组：林晓、周珂、陈思远
+ */
+#include "tsh.h"
+
+/*
+ * eval - Evaluate the command line that the user has just typed in.
+ *   If the user has requested a built-in command (quit, jobs, bg or fg)
+ *   then execute it immediately. Otherwise, fork a child process and
+ *   run the job in the context of the child.
+ */
+void eval(char *cmdline) {
+  char *argv[MAXARGS];
+  int bg = parseline(cmdline, argv);
+  if (argv[0] == NULL)
+    return;
+  if (builtin_cmd(argv))
+    return;
+  /* TODO: fork, execve, addjob, waitfg */
+}
+
+/*
+ * builtin_cmd - If the user has typed a built-in command then execute
+ *   it immediately and return 1, else return 0.
+ */
+int builtin_cmd(char **argv) {
+  if (!strcmp(argv[0], "quit"))
+    exit(0);
+  /* TODO: jobs, bg, fg */
+  return 0;
+}
+
+/* waitfg - Block until process pid is no longer the foreground process */
+void waitfg(pid_t pid) {
+  /* TODO */
+}
+
+/* sigchld_handler - reap all available zombie children */
+void sigchld_handler(int sig) {
+  /* TODO: waitpid(-1, &status, WNOHANG | WUNTRACED) */
+}
+
+/* sigint_handler - forward SIGINT to the foreground job */
+void sigint_handler(int sig) {
+  /* TODO */
+}
+`
+
+const SHELL_README = `<h1>Shell Lab 大作业（3 人组队）</h1>
+<p>计算机系统基础（ICS 2026） · 张老师发布。三个人一组，写一个带作业控制的简单 shell：前台、后台、<code>jobs</code> / <code>bg</code> / <code>fg</code>，以及 Ctrl-C、Ctrl-Z 的信号处理。</p>
+<h3>分工建议</h3>
+<ul><li><p>一个人写 <code>eval</code>：fork、execve、加进作业表</p></li><li><p>一个人写内置命令：<code>jobs</code>、<code>bg</code>、<code>fg</code></p></li><li><p>一个人写信号处理：<code>sigchld_handler</code>、<code>sigint_handler</code></p></li></ul>
+<h3>评分</h3>
+<p>8 条 trace，每条 1 分，评的是你们提交那一刻 <code>tsh.c</code> 的版本，全组一个分数。可以反复提交，以截止前最后一次为准。</p>
+<h3>怎么一起写</h3>
+<ul><li><p>三个人改的是同一份 <code>tsh.c</code>，谁在改哪一行都看得到，改了就生效，每次改动记进历史、能撤回。</p></li><li><p>想先单独试，就「开分支」，改好了请组里的人看一眼再合回来。</p></li></ul>`
+
+/** One trace of the Shell Lab driver: what it checks, and what in tsh.c makes it pass (the demo reads the code). */
+const TRACES: { name: string; ok: (code: string) => boolean; note: string }[] = [
+  { name: 'trace01 · 读到 EOF 正常退出', ok: () => true, note: '' },
+  { name: 'trace02 · 内置命令 quit', ok: (c) => /"quit"/.test(c), note: '没有处理 quit' },
+  {
+    name: 'trace03 · 前台运行一个程序',
+    ok: (c) => /\bfork\s*\(/.test(c) && /\bexecve\s*\(/.test(c),
+    note: '命令没有运行：eval 里还没有 fork + execve',
+  },
+  {
+    name: 'trace04 · 后台运行（&）',
+    ok: (c) => /\baddjob\s*\(/.test(c),
+    note: '后台作业没有进作业表：缺 addjob',
+  },
+  { name: 'trace05 · 内置命令 jobs', ok: (c) => /"jobs"/.test(c), note: 'jobs 没有输出' },
+  { name: 'trace06 · Ctrl-C 转给前台作业', ok: (c) => /\bkill\s*\(\s*-/.test(c), note: 'SIGINT 没有转给前台进程组' },
+  {
+    name: 'trace07 · 回收结束的子进程',
+    ok: (c) => /\bwaitpid\s*\(/.test(c),
+    note: '有僵尸进程：sigchld_handler 没有 waitpid',
+  },
+  { name: 'trace08 · 内置命令 bg / fg', ok: (c) => /"bg"|"fg"/.test(c), note: 'bg / fg 不认识' },
+]
+
+function judgeShell(text: string): Verdict {
+  const code = stripComments(text)
+  const rows = TRACES.map((t, i) => {
+    const ok = t.ok(code)
+    return { name: t.name, ok, ms: 40 + i * 13, note: ok ? undefined : t.note }
+  })
+  const score = rows.filter((r) => r.ok).length
+  const first = rows.find((r) => !r.ok)
+  return {
+    score,
+    total: TRACES.length,
+    rows,
+    summary: first
+      ? `${score}/${TRACES.length} · ${first.name.split(' · ')[0]} 没过`
+      : `${score}/${TRACES.length} · 全部通过`,
+  }
+}
+
+function runShell(text: string): { cmd: string; out: string } {
+  const v = judgeShell(text)
+  return {
+    cmd: 'make && ./sdriver.pl -t trace01.txt … trace08.txt -s ./tsh',
+    out: `${v.rows.map((r) => `${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : `  ${r.note}`}`).join('\n')}\n通过 ${v.score}/${v.total}`,
+  }
+}
+
 // ---- what 领取 brings into the project ----
 
 export interface ProjectFile {
@@ -674,6 +812,10 @@ export const PROJECT_FILES: Record<ClaimKey, ProjectFile[]> = {
       { path: `${p.id}/main.cpp`, kind: 'code' as const, bytes: p.starter.length, unit: p.id, starter: p.starter },
     ]),
   ],
+  shelllab: [
+    { path: 'README.md', kind: 'doc', bytes: 1480, pinned: true, html: SHELL_README },
+    { path: 'tsh.c', kind: 'code', bytes: TSH_C.length, unit: 'shelllab', starter: TSH_C },
+  ],
 }
 
 /** A judged unit: what 运行 prints and what 提交评测 says, on a version of its file. */
@@ -687,6 +829,7 @@ export interface Unit {
 
 export const UNITS: Record<string, Unit> = {
   datalab: { id: 'datalab', title: 'Data Lab', path: 'bits.c', judge: judgeBits, run: runBits },
+  shelllab: { id: 'shelllab', title: 'Shell Lab 大作业', path: 'tsh.c', judge: judgeShell, run: runShell },
   ...Object.fromEntries(
     SET.map((p) => [
       p.id,
@@ -706,17 +849,13 @@ export const UNITS: Record<string, Unit> = {
 
 /** 芝士's first message in the project's # 综合: what the 题目 brought in, and the rule it works under. */
 export function welcome(p: ClaimKey, due: string): ChatLine[] {
-  const lab = p === 'datalab'
-  return [
-    {
-      id: `${p}-w1`,
-      who: 'cheese',
-      at: new Date().toISOString(),
-      text: lab
-        ? `这个项目是你从「Data Lab」领取的。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 代码在 \`bits.c\`：13 个函数，改了就生效，每次改动自动记进历史；「提交评测」一次评全部\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
-        : `这个项目是你从「第 3 周题单」领取的。\n\n- 「题单」文档置顶在项目文件里，每道题做到哪了都在上面\n- 每道题一个文件夹：\`题面.md\` 和 \`main.cpp\`，每题单独提交评测\n- 截止 ${due}\n\n这门课设成「芝士只给提示」：卡住了可以问我思路，答案我不会写出来。`,
-    },
-  ]
+  const text =
+    p === 'datalab'
+      ? `这个项目是你从「Data Lab」领取的，在你自己的团队下。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 代码在 \`bits.c\`：13 个函数，改了就生效，每次改动自动记进历史；「提交评测」一次评全部\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
+      : p === 'week3'
+        ? `这个项目是你从「第 3 周题单」领取的，在你自己的团队下。\n\n- 「题单」文档置顶在项目文件里，每道题做到哪了都在上面\n- 每道题一个文件夹：\`题面.md\` 和 \`main.cpp\`，每题单独提交评测\n- 截止 ${due}\n\n这门课设成「芝士只给提示」：卡住了可以问我思路，答案我不会写出来。`
+        : `这个项目是「ICS 第 7 组」一起领取的「Shell Lab 大作业」：林晓、周珂、陈思远三个人共用。\n\n- 题面在 \`README.md\`，置顶在项目文件里，里面有分工建议\n- 三个人改同一份 \`tsh.c\`：谁在改哪儿都看得到，改了就生效；想单独试就开分支\n- 「提交评测」跑 8 条 trace，全组一个分数，截止 ${due}\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
+  return [{ id: `${p}-w1`, who: 'cheese', at: new Date().toISOString(), text }]
 }
 
 /** 芝士's answer in a course project: the course is set to 「只给提示」, so a hint, never code. */
@@ -725,6 +864,10 @@ export function hintFor(q: string): string {
     return '这门课的设置是「芝士只给提示，不给答案」，所以代码得你自己写。你说说卡在哪一步，我告诉你该往哪个方向想。'
   if (/bitXor|异或/.test(q))
     return '提示：异或是「x 和 y 恰好一个是 1」。先用「与」和「或」写出来，再用德摩根定律 `a | b = ~(~a & ~b)` 把「或」换掉。'
+  if (/fork|execve|eval|tsh/.test(q))
+    return '提示：子进程里 `execve`，父进程把它 `addjob` 进作业表；前台作业要等它结束，后台的不等。fork 之前先把 SIGCHLD 屏蔽掉，想想为什么。'
+  if (/信号|SIGCHLD|SIGINT|waitpid|僵尸/.test(q))
+    return '提示：`sigchld_handler` 里循环 `waitpid(-1, &status, WNOHANG | WUNTRACED)`，一次把能回收的都回收；Ctrl-C 要发给整个前台进程组，想想 `kill` 的第一个参数怎么写。'
   if (/logicalNeg/.test(q)) return '提示：想想哪个数和它的相反数（`~x + 1`）符号位都是 0。'
   if (/运算符|超|上限|dlc/.test(q))
     return '`dlc` 数的是你写的每一个运算符，括号不算，一个 `~` 算一个。先写对，再看能不能把重复的部分合并。'
@@ -735,46 +878,61 @@ export function hintFor(q: string): string {
   return '可以说说你卡在哪个函数、试过什么吗？我只给提示，不写答案。'
 }
 
-// ---- the course's channels: the space's own discussion, not any student's project ----
+// ---- the space's 公告 and 资料库 ----
 
-export const COURSE_CHAT: Record<string, ChatLine[]> = {
-  'k-general': [
-    {
-      id: 'n1',
-      who: 'zhanglaoshi',
-      at: dayAt(6, 9, 0),
-      text: 'Data Lab 发布了，在课程主页里「领取」，每人会有一个自己的项目，题面和 bits.c 都在里面。可以反复提交，以截止前最后一次为准。',
-    },
-    {
-      id: 'n2',
-      who: 'lizhujiao',
-      at: dayAt(6, 9, 20),
-      text: '提醒：Data Lab 只能用题面里列出的运算符，提交时 `dlc` 会检查，超了那个函数就是 0 分。',
-    },
-    { id: 'n3', who: 'zhanglaoshi', at: dayAt(2, 8, 31), text: '第 3 周题单发了，5 道小题，每题单独评测。' },
-    { id: 'n4', who: 'wuhao', at: minsAgo(55), text: 'Bomb Lab 的 gdb 是在自己电脑上跑吗？' },
-    {
-      id: 'n5',
-      who: 'lizhujiao',
-      at: minsAgo(50),
-      text: '领取之后你的项目里有自己的终端，就在那儿跑。炸弹爆了服务器会记，先在 `explode_bomb` 上下断点。',
-    },
-  ],
-  'k-qa': [
-    { id: 'q1', who: 'zhouzihan', at: dayAt(1, 21, 3), text: 'bitXor 只能用 ~ 和 &，是不是要用德摩根？' },
-    {
-      id: 'q2',
-      who: 'lizhujiao',
-      at: dayAt(1, 21, 30),
-      text: '方向对。先把异或写成「或」和「与」的组合，再把「或」换掉。具体式子自己推，别在这里贴代码 🙂',
-    },
-    { id: 'q3', who: 'wuhao', at: minsAgo(80), text: 'logicalNeg 不能用 !，有人有思路吗' },
-    { id: 'q4', who: 'zhouzihan', at: minsAgo(75), text: '想想 0 和它的相反数有什么特别的' },
-    {
-      id: 'q5',
-      who: 'lizhujiao',
-      at: minsAgo(30),
-      text: 'P1046 记得把 30 厘米的板凳算进去，好几个人在这儿错了。',
-    },
-  ],
+export interface Announcement {
+  id: string
+  who: string
+  at: string
+  title: string
+  body: string
+  pinned?: boolean
 }
+
+export const ANNOUNCEMENTS: Announcement[] = [
+  {
+    id: 'a3',
+    who: 'zhanglaoshi',
+    at: dayAt(1, 10, 12),
+    title: 'Shell Lab 大作业发布：3 人一组',
+    body: '在「题目」里领取时选「和团队一起领」，选你们组的团队：全组共用一个项目，一个分数。还没组好队的，周五前在答疑时间找李助教。',
+  },
+  {
+    id: 'a2',
+    who: 'lizhujiao',
+    at: dayAt(6, 9, 20),
+    title: 'Data Lab：注意运算符限制',
+    body: '只能用题面里列出的运算符，提交时 dlc 会检查，超了那个函数就是 0 分。可以反复提交，以截止前最后一次为准。',
+  },
+  {
+    id: 'a1',
+    who: 'zhanglaoshi',
+    at: dayAt(9, 8, 40),
+    title: '课程安排和评分',
+    body: '五个 Lab 和大作业占 50%，期末 50%。答疑时间：周二、周四晚 7 点到 9 点，李助教。每道题领取后都是你（或你们组）自己的项目。',
+    pinned: true,
+  },
+]
+
+export interface LibraryFile {
+  name: string
+  kind: 'slides' | 'handout'
+  bytes: number
+  who: string
+  at: string
+}
+
+export const LIBRARY: LibraryFile[] = [
+  { name: '第 1 讲 课程介绍.pdf', kind: 'slides', bytes: 2_310_000, who: 'zhanglaoshi', at: dayAt(9, 8, 30) },
+  { name: '第 2 讲 信息的表示和处理.pdf', kind: 'slides', bytes: 4_820_000, who: 'zhanglaoshi', at: dayAt(7, 9, 2) },
+  { name: '第 3 讲 程序的机器级表示.pdf', kind: 'slides', bytes: 5_160_000, who: 'zhanglaoshi', at: dayAt(2, 8, 50) },
+  { name: 'Data Lab 讲义.pdf', kind: 'handout', bytes: 640_000, who: 'lizhujiao', at: dayAt(6, 9, 10) },
+  {
+    name: 'Shell Lab 讲义：信号和作业控制.pdf',
+    kind: 'handout',
+    bytes: 910_000,
+    who: 'lizhujiao',
+    at: dayAt(1, 10, 20),
+  },
+  { name: 'gdb 速查表.pdf', kind: 'handout', bytes: 180_000, who: 'lizhujiao', at: dayAt(1, 10, 30) },
+]

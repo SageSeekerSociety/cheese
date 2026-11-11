@@ -3,9 +3,12 @@
 // column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
 // panel, which holds one selected thing: the open 一件事, or beside 项目文件
 // the open file's 待定改动, 评测记录 and 历史. With nothing selected it is
-// folded away. The rail holds the research project (where the tour runs), the
-// course 空间 (it opens on its 题目 list), and each project 林晓 claimed from
-// it, which appears on 领取; the other projects are inert.
+// folded away. The rail's first item, 首页, opens the home list (待办, my
+// teams and their projects, the 空间 I belong to); the course is one of those
+// spaces and is reached from there, never from the rail. The rail holds
+// projects only: the research project (where the tour runs), each project
+// claimed from a 题目 (mine, and my team's), which appears on 领取, and the
+// other projects, which are inert.
 // The scripted cursor, the notes overlay and the toast sit on top of it.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavGenericItem } from '@/components/common/Navigation/types'
@@ -13,14 +16,17 @@ import type { NavGenericItem } from '@/components/common/Navigation/types'
 import { computed, ref } from 'vue'
 
 import ChannelCenter from './ChannelCenter.vue'
-import { CLAIMED, COURSE, ME, NAMES, OTHER_PROJECTS, PROJECT } from './data'
+import { CLAIMED, ME, NAMES, OTHER_PROJECTS, PROJECT } from './data'
 import FilesCenter from './FilesCenter.vue'
 import FilesPanel from './FilesPanel.vue'
+import HomeSide from './HomeSide.vue'
 import InboxCenter from './InboxCenter.vue'
 import SettingsCenter from './SettingsCenter.vue'
 import SideNav from './SideNav.vue'
 import SpaceCenter from './SpaceCenter.vue'
-import { go, S, switchProject, thingById, toast, unreadIn } from './state'
+import SpaceSide from './SpaceSide.vue'
+import { deadlines, go, openHome, S, switchProject, thingById, toast, unreadIn } from './state'
+import TeamCenter from './TeamCenter.vue'
 import ThingPanel from './ThingPanel.vue'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
@@ -43,6 +49,7 @@ defineProps<{
 }>()
 
 const right = computed<'thing' | 'files' | null>(() => {
+  if (S.area === 'home') return null
   if (S.center === 'files') return 'files'
   if (S.center === 'chan' && S.thing && thingById(S.thing)) return 'thing'
   return null
@@ -55,7 +62,9 @@ const cols = computed(() => {
   return `64px 228px minmax(0, 1fr) ${r}`
 })
 
-const waiting = computed(() => S.things.filter((t) => t.status === 'wait' && t.owner === ME).length)
+const waiting = computed(
+  () => S.things.filter((t) => t.status === 'wait' && t.owner === ME).length + deadlines().length
+)
 
 const rail = computed<NavGenericItem[]>(() => [
   {
@@ -63,9 +72,9 @@ const rail = computed<NavGenericItem[]>(() => [
     type: 'item',
     title: '首页',
     icon: 'cheese',
-    badge: 12 + waiting.value,
-    action: () => go('inbox'),
-    match: () => S.center === 'inbox',
+    badge: waiting.value,
+    action: () => openHome(),
+    match: () => S.area === 'home',
   },
   { key: 'divider', type: 'divider' },
   {
@@ -76,36 +85,26 @@ const rail = computed<NavGenericItem[]>(() => [
     shortcut: 1,
     badge: unreadIn('research'),
     action: () => switchProject('research'),
-    match: () => S.project === 'research',
-  },
-  {
-    key: 'p-ics',
-    type: 'item',
-    title: COURSE.name,
-    projectId: 'p-ics',
-    shortcut: 2,
-    badge: unreadIn('course'),
-    action: () => switchProject('course'),
-    match: () => S.project === 'course',
+    match: () => S.area === 'project' && S.project === 'research',
   },
   ...S.claimed.map((k, i) => ({
     key: CLAIMED[k].railId,
     type: 'item' as const,
     title: CLAIMED[k].name,
     projectId: CLAIMED[k].railId,
-    shortcut: i + 3,
+    shortcut: i + 2,
     badge: unreadIn(k),
     action: () => switchProject(k),
-    match: () => S.project === k,
+    match: () => S.area === 'project' && S.project === k,
   })),
   ...OTHER_PROJECTS.map((p, i) => ({
     key: p.id,
     type: 'item' as const,
     title: p.name,
     projectId: p.id,
-    shortcut: i + 3 + S.claimed.length,
+    shortcut: i + 2 + S.claimed.length,
     badge: p.badge,
-    action: () => toast(`演示里能进的是「${PROJECT.name}」「${COURSE.name}」和从课程领取的项目`),
+    action: () => toast(`演示里能进的是「${PROJECT.name}」和从空间领取的项目`),
   })),
   {
     key: 'add',
@@ -166,12 +165,15 @@ const userActions: MenuAction[] = [
         </AdaptiveMenu>
       </div>
     </nav>
-    <SideNav />
+    <SpaceSide v-if="S.area === 'home' && S.center === 'space'" />
+    <HomeSide v-else-if="S.area === 'home'" />
+    <SideNav v-else />
     <main class="ot-pane">
       <ChannelCenter v-if="S.center === 'chan'" />
       <InboxCenter v-else-if="S.center === 'inbox'" />
       <FilesCenter v-else-if="S.center === 'files'" />
       <SpaceCenter v-else-if="S.center === 'space'" />
+      <TeamCenter v-else-if="S.center === 'team'" />
       <SettingsCenter v-else />
     </main>
     <div class="ot-right">

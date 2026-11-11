@@ -1,14 +1,14 @@
 <script setup lang="ts">
 // 设置: the one place. A table of contents on the left and the section on the
-// right, drawn with the product's settings rows. The course 空间's settings are
-// the teacher's switches (芝士 only hints / may answer / off, judging on
-// submit, one project per student), shown read-only to the student. A project
-// claimed from a 题目 shows the rules the 题目 brought: 芝士 only hints, the
-// deadline, the code rule. Every project can be opened in a local editor.
+// right, drawn with the product's settings rows. A project claimed from a
+// 题目 says which 题目 and space it came from and which team owns it, and
+// shows the rules the 题目 brought: 芝士 only hints, the deadline, the code
+// rule (a team's project is edited together, with branches and 正式版受保护 as
+// in the research project). Every project can be opened in a local editor.
 import { computed, ref } from 'vue'
 
 import { topicOf } from './course'
-import { channelOf, COURSE, COURSE_PEOPLE, gitUrl, isClaim, ME, NAMES, PEOPLE, PROJECT, projectMeta } from './data'
+import { channelOf, gitUrl, isClaim, isShared, ME, NAMES, PEOPLE, peopleOf, projectMeta, SPACE } from './data'
 import { S, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -18,7 +18,6 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { monthDayTime } from '@/lib/dateText'
 
-const course = computed(() => S.project === 'course')
 const claimed = computed(() => isClaim(S.project))
 const topic = computed(() => (isClaim(S.project) ? topicOf(S.project) : null))
 const url = computed(() => gitUrl(S.project))
@@ -29,9 +28,7 @@ function copyUrl() {
 const chanTitle = computed(() => channelOf(S.chan)?.title ?? '')
 const SECTIONS = computed(() => [
   { key: 'channel', label: `频道 · ${chanTitle.value}`, icon: 'mdi-pound' },
-  course.value
-    ? { key: 'course', label: '空间', icon: 'mdi-school-outline' }
-    : { key: 'project', label: '项目', icon: 'mdi-folder-cog-outline' },
+  { key: 'project', label: '项目', icon: 'mdi-folder-cog-outline' },
   { key: 'members', label: '成员', icon: 'mdi-account-group-outline' },
   { key: 'cheese', label: '芝士', icon: 'mdi-robot-outline' },
   { key: 'env', label: '环境', icon: 'mdi-server-outline' },
@@ -40,20 +37,18 @@ const SECTIONS = computed(() => [
   { key: 'usage', label: '用量', icon: 'mdi-chart-box-outline' },
 ])
 const title = computed(() => SECTIONS.value.find((s) => s.key === S.settingsSection)?.label ?? '')
-const people = computed(() =>
-  course.value ? COURSE_PEOPLE : claimed.value ? PEOPLE.filter((p) => p.handle === ME || p.agent) : PEOPLE
-)
-const fixed = () => toast('课程的这几项由老师设置')
+const people = computed(() => [...peopleOf(S.project), ...PEOPLE.filter((p) => p.agent)])
+const shared = computed(() => isShared(S.project))
+const protect = computed({
+  get: () => !!S.protectMain[S.project],
+  set: (v: boolean) => (S.protectMain[S.project] = v),
+})
 
 const chanName = ref(chanTitle.value)
 const projName = ref(projectMeta(S.project).name)
 const model = ref('sonnet')
 const theme = ref(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
 const ROLES: Record<string, string> = {
-  zhanglaoshi: '老师',
-  lizhujiao: '助教',
-  zhouzihan: '学生',
-  wuhao: '学生',
   linxiao: '所有者',
   wanglei: '成员',
   chensiyuan: '成员',
@@ -117,42 +112,16 @@ const USAGE = [
           </SettingsRow>
         </template>
 
-        <template v-else-if="S.settingsSection === 'course'">
-          <SettingsRow label="课程名称" :description="`${COURSE.team} · 张老师`" width="select">
-            <span class="ot-set__value">{{ COURSE.name }}</span>
-          </SettingsRow>
-          <p class="ot-set__fixed"><v-icon size="14" icon="mdi-lock-outline" />这几项由老师设置，你看得到、改不了</p>
-          <SettingsRow label="芝士在学生的项目里" description="学生问芝士时，它能说到哪一步" width="select-wide">
-            <SegmentedControl
-              :model-value="'hint'"
-              :options="[
-                { value: 'hint', label: '只给提示' },
-                { value: 'answer', label: '可以给答案' },
-                { value: 'off', label: '关闭' },
-              ]"
-              label="芝士在学生的项目里"
-              @update:model-value="fixed"
-            />
-          </SettingsRow>
-          <SettingsRow
-            label="提交后自动评测"
-            description="提交评测时评测机马上跑，结果和分数记进评测记录"
-            width="select"
-          >
-            <v-switch :model-value="true" color="primary" density="compact" hide-details inset @click.prevent="fixed" />
-          </SettingsRow>
-          <SettingsRow
-            label="每人一个项目"
-            description="领取题目时给每个学生建一个自己的项目；关掉就是小组领取"
-            width="select"
-          >
-            <v-switch :model-value="true" color="primary" density="compact" hide-details inset @click.prevent="fixed" />
-          </SettingsRow>
-        </template>
-
         <template v-else-if="S.settingsSection === 'project' && claimed && topic">
-          <SettingsRow label="项目名称" :description="`来自题目「${topic.title}」 · ${COURSE.name}`" width="select">
+          <SettingsRow label="项目名称" :description="`来自 ${SPACE.name} · ${topic.title}`" width="select">
             <span class="ot-set__value">{{ projectMeta(S.project).name }}</span>
+          </SettingsRow>
+          <SettingsRow
+            label="所属团队"
+            :description="shared ? `一起领取这道题目的团队，成员都在项目里` : '你自己的团队：个人题目领取后建在这里'"
+            width="select"
+          >
+            <span class="ot-set__value" data-rule="team">{{ projectMeta(S.project).team }}</span>
           </SettingsRow>
           <p class="ot-set__fixed"><v-icon size="14" icon="mdi-lock-outline" />下面三条是题目带来的规则，由老师设置</p>
           <SettingsRow label="芝士在这个项目里" description="可以问思路，它不会写出答案" width="select">
@@ -162,7 +131,21 @@ const USAGE = [
             <span class="ot-set__value" data-rule="due">{{ monthDayTime(Date.parse(topic.due)) }}</span>
           </SettingsRow>
           <SettingsRow label="代码" description="每次改动自动记进历史，可以撤回" width="select-wide">
-            <span class="ot-set__value" data-rule="code">只有你一个人，改动直接生效</span>
+            <span class="ot-set__value" data-rule="code">{{
+              shared
+                ? `${people.length - 1} 个人一起改正式版，改动直接生效；想隔离就开分支`
+                : '只有你一个人，改动直接生效'
+            }}</span>
+          </SettingsRow>
+          <SettingsRow v-if="shared" label="正式版受保护" description="人也要走分支，合之前要别人看过" width="select">
+            <v-switch
+              v-model="protect"
+              data-setting="protect-main"
+              color="primary"
+              density="compact"
+              hide-details
+              inset
+            />
           </SettingsRow>
           <SettingsRow
             label="用本地编辑器打开"
@@ -211,7 +194,7 @@ const USAGE = [
           </SettingsRow>
           <SettingsRow label="正式版受保护" description="人也要走分支，合之前要别人看过" width="select">
             <v-switch
-              v-model="S.settingsProtectMain"
+              v-model="protect"
               data-setting="protect-main"
               color="primary"
               density="compact"
@@ -236,7 +219,7 @@ const USAGE = [
               />
             </span>
           </SettingsRow>
-          <SettingsRow label="所属团队" :description="PROJECT.team" width="select">
+          <SettingsRow label="所属团队" :description="projectMeta(S.project).team" width="select">
             <BaseButton kind="secondary" size="sm" @click="toast('转到另一个团队：成员和文件一起走')">转移</BaseButton>
           </SettingsRow>
         </template>
@@ -250,7 +233,7 @@ const USAGE = [
             >
             <span class="ot-set__handle">@{{ p.handle }}</span>
             <span class="ot-head__gap" />
-            <span class="ot-set__role">{{ course && p.handle === ME ? '学生' : ROLES[p.handle] }}</span>
+            <span class="ot-set__role">{{ ROLES[p.handle] }}</span>
           </div>
           <BaseButton
             kind="secondary"
