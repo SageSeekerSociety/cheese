@@ -52,6 +52,38 @@ jobs:
         if: runner.os == 'macOS'
         run: sh scripts/build-tmux.sh ${{ matrix.tmux }} resources/tmux
 
+      # Tauri signs the app and its own executable, not a binary shipped as a
+      # resource, and notarization rejects the whole app over an unsigned one
+      # ("not signed with a valid Developer ID certificate", no secure
+      # timestamp, no hardened runtime). So tmux is signed here, before it is
+      # bundled, with the same identity the build uses.
+      - name: Sign the bundled tmux
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "no Developer ID in the secrets: tmux stays unsigned, as the app stays ad-hoc signed"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/tmux-signing.keychain-db"
+          pass=$(openssl rand -hex 16)
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" >/dev/null
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # codesign looks the identity up in the search list, not only in --keychain.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          codesign --force --options runtime --timestamp --keychain "$keychain" \
+            --sign "$APPLE_SIGNING_IDENTITY" resources/tmux
+          codesign --verify --strict --verbose=2 resources/tmux
+          security delete-keychain "$keychain"
+
       # The app must link the patched tao in src-tauri/patches/tao (Cargo.toml's
       # [patch.crates-io] says why). A tauri bump that moves to another tao
       # version leaves the patch unused without any error, and the build would
