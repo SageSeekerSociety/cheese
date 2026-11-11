@@ -75,14 +75,50 @@ jobs:
       # app knows to update. The update artifacts are signed with the key the
       # app's pubkey (tauri.conf.json) trusts; a build without the key (a fork's
       # PR) still builds, just without them.
+      #
+      # On macOS, with the team's Developer ID Application certificate in the
+      # secrets, the app is code-signed with it and notarized, so Gatekeeper
+      # opens a downloaded DMG without the "unidentified developer" block.
+      # Without those secrets (a fork's PR, or before they exist) it stays
+      # ad-hoc signed ("-" in tauri.macos.conf.json), as before.
       - name: Build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY || '' }}
+          APPLE_API_KEY_P8: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY_P8 || '' }}
         run: |
           signed=false; [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && signed=true
+          macos=""
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            macos=",\"macOS\":{\"signingIdentity\":\"$APPLE_SIGNING_IDENTITY\"}"
+            if [ -n "$APPLE_API_KEY_P8" ]; then
+              # notarytool reads the App Store Connect key from a file.
+              export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+              printf '%s' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
+              echo "SIGNED_MAC=true" >> "$GITHUB_ENV"
+            else
+              unset APPLE_API_ISSUER APPLE_API_KEY
+            fi
+          else
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY
+          fi
           pnpm tauri build --target ${{ matrix.target }} \
-            --config "{\"version\":\"0.1.${{ github.run_number }}\",\"bundle\":{\"createUpdaterArtifacts\":$signed}}"
+            --config "{\"version\":\"0.1.${{ github.run_number }}\",\"bundle\":{\"createUpdaterArtifacts\":$signed$macos}}"
+
+      # A signed and notarized app must pass Gatekeeper's own check; one that
+      # does not would ship the block the certificate is for.
+      - name: Gatekeeper accepts the signed app
+        if: runner.os == 'macOS' && env.SIGNED_MAC == 'true'
+        run: |
+          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/Cheese.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl -a -t exec -vv "$app"
+          xcrun stapler validate "$app"
 
       - name: Name the installer
         run: |
