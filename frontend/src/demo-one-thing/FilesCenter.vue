@@ -3,14 +3,15 @@
 // library; a document opens in the product's document editor, a Word file shows
 // 芝士's 修订 in the product's Word comparison, a code file opens in the code
 // view (DemoCodeEdit: the code, 运行 and my own terminal), and a result is
-// rendered Markdown. docs/频道/ holds each channel's 文档. In a project claimed
+// rendered Markdown. A code file opens editable on 正式版, like a document.
+// docs/频道/ holds each channel's 文档. In a project claimed
 // from the course, what the 题目 brought in: the 题面 (or the 题单 document)
 // pinned on top, and the starter code, folded by problem.
 import type { FileRow } from '@/lib/changesTree'
 import type { FileDiff } from '@/lib/diff'
 import type { OfficeComparison } from '@/types/reviewComment'
 
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 
 import ChannelDoc from './ChannelDoc.vue'
 import { PROJECT_FILES } from './course'
@@ -19,7 +20,7 @@ import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
 import FileTree from './FileTree.vue'
 import ProblemSetDoc from './ProblemSetDoc.vue'
-import { editCode, fkey, isUnsaved, openFile, S, t4, toast } from './state'
+import { fkey, isSaving, openFile, S, t4, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
@@ -65,14 +66,6 @@ const minutes = computed(() => {
     : minutesHtml(S.suggAccepted)
   return S.typed ? html.replace('<li><p></p></li>', `<li><p>${S.typed}</p></li>`) : html
 })
-
-const editing = computed(() => S.codeDraft?.path === entry.value.path)
-// A research copy belongs to the file it was opened on; moving to another file drops it.
-watch(
-  () => S.file,
-  () => (S.codeDraft = null)
-)
-const pending = computed(() => S.project === 'research' && !!S.codePending[entry.value.path])
 
 function select(path: string) {
   if (all.value.some((f) => f.path === path)) openFile(path, { ftab: S.ftab })
@@ -138,17 +131,10 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           <span class="ot-files__size">{{ sizeOf(entry.bytes) }}</span>
           <span class="ot-head__gap" />
           <span v-if="entry.pinned" class="ot-files__tag">置顶</span>
-          <span v-if="entry.kind === 'code' && isUnsaved(S.project, entry.path)" class="ot-files__tag">没保存</span>
-          <span v-if="pending" class="ot-files__tag">你的改动等人采纳</span>
-          <BaseButton
-            v-if="S.project === 'research' && entry.kind === 'code' && !editing"
-            id="b-edit-code"
-            kind="secondary"
-            size="sm"
-            prepend-icon="mdi-pencil-outline"
-            @click="editCode(entry.path)"
-            >改代码</BaseButton
+          <span v-if="entry.kind === 'code' && S.project === 'research' && S.branch" class="ot-files__tag"
+            >分支：{{ S.branch.name }}</span
           >
+          <span v-else-if="entry.kind === 'code' && isSaving(S.project, entry.path)" class="ot-files__tag">正在改</span>
           <span v-else-if="entry.kind === 'word'" class="ot-files__tag">修订 2 处</span>
           <BaseButton
             kind="ghost"

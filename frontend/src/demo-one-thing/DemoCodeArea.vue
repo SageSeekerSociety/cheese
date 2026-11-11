@@ -1,20 +1,88 @@
 <script setup lang="ts">
 // The code editing surface of the code view (DemoCodeEdit): a line-number
-// gutter and a plain textarea in the read-only view's type and rhythm.
+// gutter and a plain textarea in the read-only view's type and rhythm. Over the
+// text it draws a teammate's caret with their name (the documents' caret, in
+// their colour) and a band on lines brought into view from a mention; it
+// reports which lines are selected, for 问芝士.
 //
 // A plain textarea, not the product's Monaco editor: Monaco needs web workers
 // and several MB, and the demo page runs as one file in a null-origin sandbox.
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
-defineProps<{ label: string }>()
-/** ⌘S / Ctrl+S inside the editor. */
-const emit = defineEmits<{ (e: 'save'): void }>()
+export interface Peer {
+  handle: string
+  name: string
+  color: string
+  /** 1-based line, 0-based column. */
+  line: number
+  col: number
+}
+
+const props = defineProps<{
+  label: string
+  readonly?: boolean
+  peers?: Peer[]
+  /** Lines to bring into view and mark; `tick` changes on every new request. */
+  mark?: { start: number; end: number; tick: number } | null
+}>()
+const emit = defineEmits<{
+  /** ⌘S / Ctrl+S inside the editor. */
+  (e: 'save'): void
+  (e: 'blur'): void
+  /** The selected lines (1-based), or null for a bare caret. */
+  (e: 'select', range: { start: number; end: number } | null): void
+}>()
 const text = defineModel<string>({ required: true })
 const lines = computed(() => text.value.split('\n'))
+// The textarea is as wide as its longest line and the column scrolls sideways: a textarea scrolling
+// on its own would leave the carets and the band behind, and its scrollbar would cover the last line.
+const cols = computed(() => Math.max(...lines.value.map((l) => l.length)) + 2)
+
+const scroller = ref<HTMLElement | null>(null)
+const area = ref<HTMLTextAreaElement | null>(null)
+
+const lineOf = (i: number) => text.value.slice(0, i).split('\n').length
+function select() {
+  const a = area.value
+  if (!a) return
+  if (a.selectionStart === a.selectionEnd) {
+    emit('select', null)
+    return
+  }
+  // A selection that ends at the start of a line does not take that line.
+  const end = a.selectionEnd > 0 && text.value[a.selectionEnd - 1] === '\n' ? a.selectionEnd - 1 : a.selectionEnd
+  emit('select', { start: lineOf(a.selectionStart), end: lineOf(end) })
+}
+
+// A mention asks for some lines: scroll them to a third of the way down, select them, and flash a band.
+const band = ref<{ start: number; end: number } | null>(null)
+watch(
+  () => props.mark?.tick,
+  async () => {
+    const m = props.mark
+    if (!m) return
+    band.value = { start: m.start, end: Math.max(m.start, m.end) }
+    await nextTick()
+    const sc = scroller.value
+    const a = area.value
+    if (!sc || !a) return
+    const lh = parseFloat(getComputedStyle(a).lineHeight) || 18.6
+    sc.scrollTop = Math.max(0, (m.start - 1) * lh - sc.clientHeight / 3)
+    const starts = [0]
+    for (let i = 0; i < text.value.length; i++) if (text.value[i] === '\n') starts.push(i + 1)
+    const from = starts[m.start - 1] ?? 0
+    const to = (starts[band.value.end] ?? text.value.length + 1) - 1
+    a.focus({ preventScroll: true })
+    a.setSelectionRange(from, Math.max(from, to))
+    select()
+    setTimeout(() => (band.value = null), 2600)
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
-  <div class="ot-carea">
+  <div ref="scroller" class="ot-carea">
     <div
       class="ot-carea__gutter"
       :style="{ width: `calc(${String(lines.length).length}ch + 20px)` }"
@@ -22,17 +90,41 @@ const lines = computed(() => text.value.split('\n'))
     >
       <span v-for="(_, i) in lines" :key="i">{{ i + 1 }}</span>
     </div>
-    <textarea
-      v-model="text"
-      class="ot-carea__text"
-      :rows="lines.length"
-      wrap="off"
-      spellcheck="false"
-      autocomplete="off"
-      :aria-label="label"
-      @keydown.meta.s.prevent="emit('save')"
-      @keydown.ctrl.s.prevent="emit('save')"
-    />
+    <div class="ot-carea__body">
+      <div
+        v-if="band"
+        class="ot-carea__band"
+        :style="{ top: `${(band.start - 1) * 1.55}em`, height: `${(band.end - band.start + 1) * 1.55}em` }"
+        aria-hidden="true"
+      />
+      <textarea
+        ref="area"
+        v-model="text"
+        class="ot-carea__text"
+        :rows="lines.length"
+        :readonly="readonly"
+        wrap="off"
+        spellcheck="false"
+        autocomplete="off"
+        :aria-label="label"
+        :style="{ width: `calc(${cols}ch + 12px)` }"
+        @keydown.meta.s.prevent="emit('save')"
+        @keydown.ctrl.s.prevent="emit('save')"
+        @select="select"
+        @mouseup="select"
+        @keyup="select"
+        @blur="emit('blur')"
+      />
+      <span
+        v-for="p in peers ?? []"
+        :key="p.handle"
+        class="ot-carea__peer"
+        :style="{ top: `${(p.line - 1) * 1.55}em`, left: `${p.col}ch`, borderColor: p.color }"
+        aria-hidden="true"
+      >
+        <span class="ot-carea__peername" :style="{ backgroundColor: p.color }">{{ p.name }}</span>
+      </span>
+    </div>
   </div>
 </template>
 
@@ -60,14 +152,20 @@ const lines = computed(() => text.value.split('\n'))
   user-select: none;
 }
 
-.ot-carea__text {
-  flex: 1;
+/* The read-only view prints a diff marker column (a space) before each line: start where its text starts. */
+.ot-carea__body {
+  position: relative;
+  flex: 1 0 auto;
   min-width: 0;
-  padding: 0 12px 0 0;
-  /* The read-only view prints a diff marker column (a space) before each line: start where its text starts. */
   margin: 0 0 0 19px;
-  overflow-x: auto;
-  overflow-y: hidden;
+}
+
+.ot-carea__text {
+  display: block;
+  min-width: 100%;
+  padding: 0 12px 0 0;
+  margin: 0;
+  overflow: hidden;
   font: inherit;
   line-height: inherit;
   color: var(--text);
@@ -77,5 +175,64 @@ const lines = computed(() => text.value.split('\n'))
   border: 0;
   outline: none;
   caret-color: var(--ink);
+}
+
+.ot-carea__text[readonly] {
+  caret-color: transparent;
+}
+
+.ot-carea__band {
+  position: absolute;
+  right: 0;
+  left: -19px;
+  pointer-events: none;
+  background: var(--accent-wash);
+  border-left: 2px solid var(--accent-ink);
+  animation: ot-band 2.6s var(--ease-out) forwards;
+}
+
+@keyframes ot-band {
+  70% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+/* A teammate's caret: the documents' caret (DocProse), a line in their colour with their name above it. */
+.ot-carea__peer {
+  position: absolute;
+  height: 1.55em;
+  pointer-events: none;
+  border-left: 2px solid;
+  transition:
+    top var(--dur-base) var(--ease-out),
+    left var(--dur-base) var(--ease-out);
+}
+
+.ot-carea__peername {
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  padding: 0 4px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: #fff;
+  white-space: nowrap;
+  border-radius: 3px 3px 3px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ot-carea__band {
+    animation: none;
+  }
+
+  .ot-carea__peer {
+    transition: none;
+  }
 }
 </style>

@@ -4,6 +4,9 @@
 // widens and gains 现场 / 改动 / 成果, and the stage bar moves along
 // 讨论 › 在做 › 等你采纳 › 完成. The header row, the tabs, the conversation, the
 // composer, 现场 and the diff are the product's own components.
+// 改动 is 芝士's own copy, read-only: only 芝士 changes it. A person 采纳s it
+// (or 采纳s and opens the file in the editor, on 正式版, to go on by hand), or
+// tells 芝士 in the task's conversation what to change.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 import type { Block, TodoItem } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
@@ -18,6 +21,7 @@ import { hhmm, stateOf } from './shapes'
 import { siteBlocks, type SiteStep, T4_STEPS } from './site'
 import {
   accept,
+  acceptAndOpen,
   closeThing,
   confirmKick,
   go,
@@ -28,6 +32,7 @@ import {
   S,
   sayInThing,
   sourceOf,
+  tellCheese,
   thingById,
 } from './state'
 
@@ -250,7 +255,7 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
       </span>
       <BaseButton v-if="talk && ours" id="b-kick" kind="primary" size="sm" @click="kickoff">开工</BaseButton>
       <BaseButton v-else-if="thing.status === 'wait' && ours" id="b-accept" kind="primary" size="sm" @click="accept">
-        采纳 · 合进正式版
+        采纳
       </BaseButton>
       <BaseButton
         kind="ghost"
@@ -350,12 +355,38 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
       </div>
 
       <template v-else-if="tab === 'changes'">
+        <div v-if="ours" class="ot-chg" data-zone="task-changes">
+          <div class="ot-chg__bar">
+            <v-icon size="15" icon="mdi-lock-outline" />
+            <span class="ot-chg__what">{{
+              thing.status === 'done' ? '已采纳，进了正式版' : '芝士自己那份上的改动 · 只读，只有芝士改它'
+            }}</span>
+            <span class="ot-head__gap" />
+            <template v-if="thing.status === 'wait'">
+              <BaseButton id="b-accept-tab" kind="secondary" size="sm" @click="accept">采纳</BaseButton>
+              <BaseButton id="b-accept-open" kind="primary" size="sm" @click="acceptAndOpen"
+                >采纳并在编辑器里打开</BaseButton
+              >
+            </template>
+            <BaseButton
+              v-else-if="thing.status === 'done'"
+              kind="secondary"
+              size="sm"
+              @click="go('files', { file: 'eval/preprocess.py', ftab: 'history' })"
+              >在编辑器里打开</BaseButton
+            >
+          </div>
+          <p v-if="thing.status !== 'done'" class="ot-chg__hint">
+            要改哪里，<button type="button" class="ot-chg__tell" @click="tellCheese">在对话里告诉芝士</button
+            >，它在自己那份上接着改；或者采纳后在编辑器里直接改正式版。
+          </p>
+        </div>
         <ChangesDiffList
           v-if="ours"
           :diffs="TASK_DIFFS"
           :expanded="expanded"
           @toggle-section="toggleSection"
-          @open="(p: string) => go('files', { file: p, ftab: 'history' })"
+          @open="(p: string) => go('files', { file: p, ftab: 'pending' })"
         />
         <BaseEmptyState v-else size="compact" icon="mdi-file-compare" title="这件事没有改动文件" />
       </template>
@@ -583,6 +614,51 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
 
 .ot-pad {
   padding: 8px 16px;
+}
+
+.ot-chg {
+  border-bottom: 1px solid var(--line);
+}
+
+.ot-chg__bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 8px 4px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--fill);
+}
+
+.ot-chg__bar > :not(.ot-chg__what, .ot-head__gap) {
+  flex: none;
+}
+
+.ot-chg__what {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-chg__hint {
+  margin: 0;
+  padding: 6px 16px 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  background: var(--fill);
+}
+
+.ot-chg__tell {
+  padding: 0;
+  font: inherit;
+  color: var(--accent-ink);
+  cursor: pointer;
+  background: none;
+  border: 0;
 }
 
 .ot-src {

@@ -3,7 +3,8 @@
 // whenever the day changes, one person's run of messages under one name
 // (the product's own grouping rules, lib/chatGrouping), the hover bar on the
 // row under the pointer, reactions, a reply's quote, and a 一件事's card under
-// the message that opened it.
+// the message that opened it. A file a message mentions (`eval/preprocess.py`,
+// `eval/preprocess.py:6`) opens in 项目文件's editor at that line.
 import type { Block } from '@/cx_types'
 import type { ChatLine, MarkLine } from './state'
 
@@ -11,7 +12,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 
 import { ME, NAMES } from './data'
 import { block, hhmm, ownerName, REFS, taskLine } from './shapes'
-import { openThing, react, S, thingById, toast } from './state'
+import { fileRef, openFileAt, openThing, react, S, thingById, toast } from './state'
 
 import RoomHoverBar from '@/components/room/RoomHoverBar.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
@@ -66,8 +67,15 @@ function hover(e: MouseEvent) {
   bar.top = row.offsetTop
   bar.shown = true
 }
-// A person's face or name opens who they are, as the product's name card does.
+// A person's face or name opens who they are, as the product's name card does;
+// a file mention opens the file at its line.
 function person(e: MouseEvent) {
+  const code = (e.target as HTMLElement).closest<HTMLElement>('code.ot-fref')
+  if (code) {
+    const r = fileRef(S.project, code.textContent ?? '')
+    if (r) openFileAt(r.path, r.start, r.end)
+    return
+  }
   const el = (e.target as HTMLElement).closest<HTMLElement>('.im-person')
   if (!el) return
   const row = el.closest<HTMLElement>('[data-line]')
@@ -132,6 +140,20 @@ function restore() {
 }
 let ro: ResizeObserver | null = null
 
+// Messages render their Markdown lazily: mark each inline code that names a project file once it appears.
+function markRefs() {
+  for (const c of content.value?.querySelectorAll<HTMLElement>('[data-line] code:not(.ot-fref)') ?? []) {
+    if (c.closest('pre')) continue
+    const r = fileRef(S.project, c.textContent ?? '')
+    if (!r) continue
+    c.classList.add('ot-fref')
+    c.title = r.start
+      ? `在项目文件里打开，第 ${r.start}${r.end && r.end > r.start ? `–${r.end}` : ''} 行`
+      : '在项目文件里打开'
+  }
+}
+let mo: MutationObserver | null = null
+
 // A channel 文档's ↗ and a 一件事's 来自 ask for one message: if it is in this timeline,
 // centre it in the scroller (not scrollIntoView, which would also scroll the
 // clipped workspace around it) and flash the row.
@@ -163,6 +185,9 @@ onMounted(() => {
   // The browser's own scroll anchoring would move the view first and leave remember() a moved position.
   sc.style.overflowAnchor = 'none'
   sc.addEventListener('scroll', remember, { passive: true })
+  markRefs()
+  mo = new MutationObserver(markRefs)
+  mo.observe(content.value, { childList: true, subtree: true })
   // The rows rewrap (content) and the composer under the scroller can change height (scroller).
   ro = new ResizeObserver(restore)
   ro.observe(content.value)
@@ -170,6 +195,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   ro?.disconnect()
+  mo?.disconnect()
   scrollerOf()?.removeEventListener('scroll', remember)
 })
 watch(
@@ -248,6 +274,16 @@ watch(
   position: relative;
   width: 100%;
   container: chat-timeline / inline-size;
+}
+
+.ot-tl :deep(code.ot-fref) {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.ot-tl :deep(code.ot-fref:hover) {
+  color: var(--accent-ink);
 }
 
 .ot-tl__card {

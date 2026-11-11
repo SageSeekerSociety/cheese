@@ -1,56 +1,110 @@
 <script setup lang="ts">
-// The right panel beside 项目文件: 待定改动 (芝士's suggestions waiting on a
-// person, accepted with one click, and a person's own code copy while it is
-// being edited or waits for 采纳) and 历史 (every change that took effect, the
-// accepted task included, each one undoable). In a project claimed from the
-// course there is no 芝士 suggestion; 评测记录 lists every 提交评测, each pinned
-// to the version it judged, and opening one shows that version's code.
+// The right panel beside 项目文件, for the open file: 历史 (every change that
+// took effect on 正式版, the accepted task and each pause in a person's typing
+// included, each one undoable), 待定改动 (芝士's pending changes touching this
+// file: a 一件事's change waiting for 采纳 or a suggestion in a document; and
+// the open branch, if it changed the file) and 对话 (the channel messages that
+// mention this file, each linking back to its place in the channel, and a
+// 问芝士 box that asks with the file, and the selected lines, as context; the
+// question and the answer land in the channel too). In a project claimed from
+// the course there is no 芝士 change to wait on: 评测记录 lists every 提交评测,
+// each pinned to the version it judged, and opening one shows that version.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 
 import { computed } from 'vue'
 
 import { UNITS } from './course'
-import { isClaim, MINUTES_DOC, NAMES } from './data'
+import { channelOf, isClaim, MINUTES_DOC, NAMES, TASK_DIFFS } from './data'
+import DemoComposer from './DemoComposer.vue'
 import JudgeResult from './JudgeResult.vue'
-import { whenText } from './shapes'
-import { changedLines, openVersion, S, suggAccept, suggReject, undo } from './state'
+import { hhmm, whenText } from './shapes'
+import {
+  accept,
+  askAboutFile,
+  branchChanges,
+  jumpTo,
+  mentionsOf,
+  openThing,
+  openVersion,
+  S,
+  snapshotAll,
+  suggAccept,
+  suggReject,
+  t4,
+  undo,
+} from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import DocSuggestionCard from '@/components/panels/doc/DocSuggestionCard.vue'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
+import { parseDiffLines } from '@/lib/diff'
 import { relTime } from '@/lib/relTime'
 
 const research = computed(() => S.project === 'research')
-const pending = computed(() => (!research.value || S.suggAccepted || S.suggRejected ? 0 : 1))
+const suggestion = computed(() => (!research.value || S.suggAccepted || S.suggRejected ? 0 : 1))
+/** 芝士's task change to this file, while the task waits for 采纳. */
+const taskDiff = computed(() =>
+  research.value && t4()?.status === 'wait' ? TASK_DIFFS.find((d) => d.path === S.file) ?? null : null
+)
+const taskLines = computed(() => (taskDiff.value ? parseDiffLines(taskDiff.value.body) : []))
+const onBranch = computed(() => (research.value ? branchChanges().find((c) => c.path === S.file) ?? null : null))
+const pending = computed(() => suggestion.value + (taskDiff.value ? 1 : 0))
 const history = computed(() => S.history[S.project])
 const subs = computed(() => (isClaim(S.project) ? S.subs[S.project] : []))
-/** A person's code copies: the one open in the editor, and any sent for 采纳 under 代码受保护. */
-const copies = computed(() => [
-  ...(research.value && S.codeDraft
-    ? [{ path: S.codeDraft.path, n: changedLines(S.codeDraft.path, S.codeDraft.text.split('\n')), note: '还在改' }]
-    : []),
-  ...Object.entries(S.codePending).map(([path, lines]) => ({ path, n: changedLines(path, lines), note: '等人采纳' })),
-])
+const mentions = computed(() => mentionsOf(S.file))
+const sel = computed(() => (S.codeSel?.path === S.file ? S.codeSel : null))
+const selLabel = computed(() =>
+  sel.value ? `带上第 ${sel.value.start}${sel.value.end > sel.value.start ? `–${sel.value.end}` : ''} 行` : null
+)
+
 const tabs = computed<PanelTab[]>(() => [
-  research.value
-    ? {
-        key: 'pending',
-        label: '待定改动',
-        icon: 'mdi-file-document-edit-outline',
-        signal: pending.value ? { kind: 'count', count: pending.value, fresh: true } : undefined,
-      }
-    : {
-        key: 'subs',
-        label: '评测记录',
-        icon: 'mdi-clipboard-check-outline',
-        signal: subs.value.length ? { kind: 'count', count: subs.value.length } : undefined,
-      },
+  ...(research.value
+    ? []
+    : [
+        {
+          key: 'subs',
+          label: '评测记录',
+          icon: 'mdi-clipboard-check-outline',
+          signal: subs.value.length ? { kind: 'count' as const, count: subs.value.length } : undefined,
+        },
+      ]),
   { key: 'history', label: '历史', icon: 'mdi-history' },
+  ...(research.value
+    ? [
+        {
+          key: 'pending',
+          label: '待定改动',
+          icon: 'mdi-file-document-edit-outline',
+          signal: pending.value ? { kind: 'count' as const, count: pending.value, fresh: true } : undefined,
+        },
+      ]
+    : []),
+  {
+    key: 'talk',
+    label: '对话',
+    icon: 'mdi-message-outline',
+    signal: mentions.value.length ? { kind: 'count' as const, count: mentions.value.length } : undefined,
+  },
 ])
-const tab = computed(() => (S.ftab === 'history' ? 'history' : research.value ? 'pending' : 'subs'))
+const tab = computed(() => (S.ftab === 'history' || S.ftab === 'talk' ? S.ftab : research.value ? 'pending' : 'subs'))
+/** A message as one plain paragraph: names for mentions, no Markdown marks, code blocks left out. */
+const plain = (t: string) =>
+  t
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/[`*]/g, '')
+    .replace(/<@cheese>/g, '@芝士')
+    .replace(/<@(\w+)>/g, (_, h) => `@${NAMES[h] ?? h}`)
+    .trim()
+function undoAt(i: number) {
+  // A burst of typing still open becomes its own entry first, so 撤回 takes back what was clicked.
+  const n = history.value.length
+  snapshotAll()
+  undo(i + history.value.length - n)
+}
 </script>
 
 <template>
@@ -60,7 +114,7 @@ const tab = computed(() => (S.ftab === 'history' ? 'history' : research.value ? 
       <span class="ot-fp__dir">{{ S.file.includes('/') ? S.file.slice(0, S.file.lastIndexOf('/')) : '' }}</span>
     </header>
     <PanelTabs :tabs="tabs" :active="tab" @select="S.ftab = $event" />
-    <div class="ot-fp__body">
+    <div class="ot-fp__body" :class="{ 'ot-fp__body--talk': tab === 'talk' }">
       <div v-if="tab === 'subs'" class="ot-subs" data-zone="subs">
         <BaseEmptyState
           v-if="!subs.length"
@@ -84,13 +138,24 @@ const tab = computed(() => (S.ftab === 'history' ? 'history' : research.value ? 
         </div>
       </div>
       <template v-else-if="tab === 'pending'">
-        <div v-for="c in copies" :key="c.path + c.note" class="ot-fp__copy">
+        <div v-if="onBranch" class="ot-fp__copy">
           <v-icon size="16" icon="mdi-source-branch" />
-          <span>你的副本：{{ c.path }} 改了 {{ c.n }} 行</span>
-          <span class="ot-fp__copy-note">{{ c.note }}</span>
+          <span>分支「{{ S.branch!.name }}」改了这个文件 {{ onBranch.n }} 行</span>
+          <span class="ot-fp__copy-note">还没合回</span>
         </div>
-        <template v-if="pending">
-          <p v-if="S.file !== MINUTES_DOC" class="ot-fp__other">这个文件没有待定的改动。其他文件：</p>
+        <div v-if="taskDiff" class="ot-fp__card ot-fp__task" data-zone="task-pending">
+          <div class="ot-fp__task-head">
+            <CheeseAvatar :size="20" name="芝士" handle="cheese" />
+            <span class="ot-fp__task-title">任务「{{ t4()!.title }}」改了这个文件，等你采纳</span>
+          </div>
+          <div class="ot-fp__task-diff"><ChangesDiff :lines="taskLines" inline /></div>
+          <div class="ot-fp__task-actions">
+            <BaseButton kind="ghost" size="sm" @click="openThing('t4'), (S.rtab = 'changes')">去任务里看</BaseButton>
+            <BaseButton kind="primary" size="sm" @click="accept">采纳</BaseButton>
+          </div>
+        </div>
+        <template v-if="suggestion">
+          <p v-if="S.file !== MINUTES_DOC" class="ot-fp__other">这个文件之外，芝士还有一条待定的建议：</p>
           <div class="ot-fp__card" data-zone="suggestion">
             <DocSuggestionCard
               author-name="芝士"
@@ -106,7 +171,33 @@ const tab = computed(() => (S.ftab === 'history' ? 'history' : research.value ? 
             />
           </div>
         </template>
-        <BaseEmptyState v-else-if="!copies.length" size="compact" icon="mdi-check-all" title="暂无待定的改动" />
+        <BaseEmptyState v-else-if="!taskDiff && !onBranch" size="compact" icon="mdi-check-all" title="暂无待定的改动" />
+      </template>
+      <template v-else-if="tab === 'talk'">
+        <div class="ot-talk" data-zone="file-talk">
+          <p v-if="!mentions.length" class="ot-fp__other">频道里还没人提到这个文件。在下面问芝士，问题会发到频道里。</p>
+          <div v-for="m in mentions" :key="m.line.id" class="ot-talk__item">
+            <CheeseAvatar v-if="m.line.who === 'cheese'" :size="22" name="芝士" handle="cheese" />
+            <UserAvatar v-else :size="22" :name="NAMES[m.line.who]" :seed="m.line.who" />
+            <div class="ot-talk__main">
+              <div class="ot-talk__meta">
+                <b>{{ NAMES[m.line.who] }}</b>
+                <span>{{ hhmm(m.line.at) }}</span>
+                <span class="ot-head__gap" />
+                <button
+                  type="button"
+                  class="ot-talk__jump"
+                  :data-jump="m.line.id"
+                  title="在频道里看这条消息"
+                  @click="jumpTo(m.chan, m.line.id)"
+                >
+                  # {{ channelOf(m.chan)?.title }}<v-icon size="13" icon="mdi-arrow-top-right" />
+                </button>
+              </div>
+              <div class="ot-talk__text">{{ plain(m.line.text) }}</div>
+            </div>
+          </div>
+        </div>
       </template>
       <ol v-else class="ot-hist">
         <li v-for="(h, i) in history" :key="h.what + h.at" class="ot-hist__row" :class="{ 'ot-flash': h.fresh }">
@@ -118,10 +209,18 @@ const tab = computed(() => (S.ftab === 'history' ? 'history' : research.value ? 
             >
             <span class="t-meta-read" :title="new Date(h.at).toLocaleString()">{{ relTime(h.at) }}</span>
           </div>
-          <BaseButton v-if="!h.fixed" class="ot-hist__undo" kind="ghost" size="sm" @click="undo(i)">撤回</BaseButton>
+          <BaseButton v-if="!h.fixed" class="ot-hist__undo" kind="ghost" size="sm" @click="undoAt(i)">撤回</BaseButton>
         </li>
       </ol>
     </div>
+    <DemoComposer
+      v-if="tab === 'talk'"
+      v-model="S.asking"
+      :placeholder="research ? '问芝士，带着这个文件' : '问芝士思路（它只给提示）'"
+      :reply-label="selLabel"
+      @clear-reply="S.codeSel = null"
+      @send="askAboutFile"
+    />
   </aside>
 </template>
 
@@ -243,6 +342,102 @@ const tab = computed(() => (S.ftab === 'history' ? 'history' : research.value ? 
   margin: 0 0 8px;
   font-size: 13px;
   color: var(--muted);
+}
+
+.ot-fp__body--talk {
+  padding: 8px 12px;
+}
+
+.ot-fp__task {
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.ot-fp__task-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--ink);
+}
+
+.ot-fp__task-diff {
+  max-height: 220px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.ot-fp__task-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 8px;
+}
+
+.ot-talk {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ot-talk__item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ot-talk__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ot-talk__meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ot-talk__meta b {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ot-talk__jump {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.ot-talk__jump:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.ot-talk__text {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  white-space: pre-wrap;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
 }
 
 .ot-hist__row:hover {

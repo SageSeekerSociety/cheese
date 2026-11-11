@@ -1,28 +1,41 @@
 <script setup lang="ts">
 // A project's code view, in every project: the code, 运行, and a bottom panel
 // bound to my own environment (输出 and 终端, only I can see it; it is my
-// terminal, not 芝士's). In the research project the file reads as its
-// official version until 改代码, which edits a copy that 合进正式版 puts in
-// (请人采纳 while 代码受保护 is on). In a project claimed from the course the
-// editor is the file itself: 保存 (⌘S) changes it and 历史 records each save.
-// 提交评测 shows only on the file of a judged unit and pins the version it
-// judged; with a submission open, the view shows that version read-only.
+// terminal, not 芝士's). Opening a code file opens it editable on 正式版, as a
+// document is: what is typed is the file, a teammate's caret shows where they
+// are in it, and each pause in typing becomes one 历史 entry with 撤回. There is
+// no 「改代码」 switch: a read-only first view would be a mode documents do not
+// have, and 撤回 already makes a slip cheap. The editor is read-only only when
+// the research project has 正式版受保护 on and no branch is open.
+// 开分支 (research) gives a person a copy of their own; the bar then names the
+// branch, with 请人看一下 and 合回正式版. 提交评测 shows only on the file of a
+// judged unit and pins the version it judged; with a submission open, the view
+// shows that version read-only.
 // The editing surface is DemoCodeArea (why it is not Monaco is said there).
-import { computed, nextTick, ref, watch } from 'vue'
+import type { Peer } from './DemoCodeArea.vue'
+
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+
+import { avatarColor } from '@/utils/avatar'
 
 import { asContext } from './data'
 import DemoCodeArea from './DemoCodeArea.vue'
 import JudgeResult from './JudgeResult.vue'
 import {
-  changedLines,
-  draftText,
+  askReview,
+  branchChanges,
+  canMerge,
+  codeText,
+  dropBranch,
   fkey,
-  isUnsaved,
-  mergeCode,
-  officialCode,
+  isSaving,
+  lockedMain,
+  mergeBranch,
+  onBranch,
+  openBranch,
   runCode,
   S,
-  saveCode,
+  snapshot,
   submitCode,
   termRun,
   typeCode,
@@ -31,21 +44,56 @@ import {
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
+import DocPresence from '@/components/panels/doc/DocPresence.vue'
 
 const p = computed(() => S.project)
 const path = computed(() => S.file)
 const k = computed(() => fkey(p.value, path.value))
 const research = computed(() => p.value === 'research')
-/** Research: the copy opened by 改代码 is on this file. */
-const editing = computed(() => S.codeDraft?.path === path.value)
+const branch = computed(() => (onBranch(p.value) ? S.branch : null))
+const locked = computed(() => lockedMain(p.value))
 const text = computed({
-  get: () => draftText(p.value, path.value),
+  get: () => codeText(p.value, path.value),
   set: (v: string) => typeCode(p.value, path.value, v),
 })
-const unsaved = computed(() => isUnsaved(p.value, path.value))
+const saving = computed(() => isSaving(p.value, path.value))
 const unit = computed(() => unitOf(p.value, path.value))
-const changed = computed(() => (editing.value ? changedLines(path.value, text.value.split('\n')) : 0))
-const official = computed(() => asContext(path.value, officialCode(path.value)))
+const changes = computed(() => branchChanges())
+const mark = computed(() => (S.codeAt?.path === path.value ? S.codeAt : null))
+// Leaving the file closes its burst of typing into 历史 (this view is keyed to one file: by
+// unmount time S.file already names the next one).
+const mine = { p: S.project, path: S.file }
+onBeforeUnmount(() => snapshot(mine.p, mine.path))
+function onSelect(r: { start: number; end: number } | null) {
+  S.codeSel = r ? { path: path.value, ...r } : null
+}
+
+// ---- 王磊 is in eval/preprocess.py on 正式版 (scripted): his caret moves over the lines he is reading ----
+const PEER_SPOTS = [
+  { line: 6, col: 8 },
+  { line: 6, col: 22 },
+  { line: 7, col: 8 },
+  { line: 7, col: 25 },
+  { line: 5, col: 4 },
+]
+const spot = ref(0)
+const peerTimer = window.setInterval(() => (spot.value = (spot.value + 1) % PEER_SPOTS.length), 2200)
+onBeforeUnmount(() => window.clearInterval(peerTimer))
+const peerHere = computed(() => research.value && !branch.value && path.value === 'eval/preprocess.py')
+const peers = computed<Peer[]>(() => {
+  if (!peerHere.value) return []
+  const n = text.value.split('\n').length
+  const s = PEER_SPOTS[spot.value]!
+  return [{ handle: 'wanglei', name: '王磊', color: avatarColor('wanglei'), line: Math.min(s.line, n), col: s.col }]
+})
+const faces = computed(() =>
+  peerHere.value
+    ? [
+        { clientId: 2, handle: 'wanglei', agent: false, name: '王磊', avatar: '', color: avatarColor('wanglei') },
+        { clientId: 3, handle: 'linxiao', agent: false, name: '林晓', avatar: '', color: avatarColor('linxiao') },
+      ]
+    : []
+)
 
 // ---- a pinned version, read-only ----
 const sub = computed(() =>
@@ -78,8 +126,9 @@ watch(
   }
 )
 
-const save = () => saveCode(p.value, path.value)
+const save = () => snapshot(p.value, path.value, false)
 function run() {
+  snapshot(p.value, path.value)
   open.value = true
   runCode(p.value, path.value)
 }
@@ -109,45 +158,71 @@ function showTab(t: 'out' | 'term') {
       <div class="ot-ced__pinned"><ChangesDiff :lines="pinned" inline /></div>
     </template>
 
-    <template v-else-if="research && !editing">
-      <div class="ot-ced__bar">
-        <v-icon size="15" icon="mdi-file-check-outline" class="ot-ced__mark" />
-        <span class="ot-ced__copy">正式版 · 改代码在你自己的副本上改</span>
-        <span class="ot-head__gap" />
-        <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
-      </div>
-      <div class="ot-ced__pinned"><ChangesDiff :lines="official" inline /></div>
-    </template>
-
-    <template v-else-if="research">
-      <div class="ot-ced__bar">
-        <v-icon size="15" icon="mdi-source-branch" class="ot-ced__mark" />
-        <span class="ot-ced__copy">你的副本 · 基于正式版</span>
-        <span class="ot-head__gap" />
-        <BaseButton kind="ghost" size="sm" @click="S.codeDraft = null">放弃</BaseButton>
-        <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
-        <BaseButton id="b-merge-code" kind="primary" size="sm" :disabled="!changed" @click="mergeCode">
-          {{ S.settingsProtectCode ? '请人采纳' : '合进正式版' }}
-        </BaseButton>
-      </div>
-      <div class="ot-ced__edit"><DemoCodeArea v-model="S.codeDraft!.text" :label="`编辑 ${path}`" /></div>
-    </template>
-
     <template v-else>
-      <div class="ot-ced__bar">
-        <v-icon size="15" icon="mdi-file-code-outline" class="ot-ced__mark" />
-        <span class="ot-ced__copy">{{ unsaved ? '有改动没保存' : '已保存' }}</span>
+      <div v-if="branch" class="ot-ced__bar ot-ced__bar--branch" data-zone="branch">
+        <v-icon size="15" icon="mdi-source-branch" class="ot-ced__mark" />
+        <b class="ot-ced__branch">分支：{{ branch.name }}</b>
+        <span class="ot-ced__copy">{{
+          changes.length ? `改了 ${changes.length} 个文件` : '还没改，正式版不受影响'
+        }}</span>
+        <span v-if="branch.approved" class="ot-ced__ok"><v-icon size="14" icon="mdi-check" />王磊看过了</span>
+        <span class="ot-head__gap" />
+        <!-- The branch's own actions need the room: 放弃 and 运行 are icons here. -->
+        <BaseButton
+          kind="ghost"
+          size="sm"
+          icon="mdi-close"
+          title="放弃这个分支"
+          aria-label="放弃这个分支"
+          @click="dropBranch"
+        />
+        <BaseButton id="b-run" kind="ghost" size="sm" icon="mdi-play" title="运行" aria-label="运行" @click="run" />
+        <BaseButton
+          v-if="!branch.approved"
+          id="b-review"
+          kind="secondary"
+          size="sm"
+          :disabled="!changes.length || branch.asked"
+          @click="askReview"
+          >{{ branch.asked ? '等王磊看…' : '请人看一下' }}</BaseButton
+        >
+        <BaseButton
+          id="b-merge-branch"
+          kind="primary"
+          size="sm"
+          :disabled="!canMerge()"
+          :title="S.settingsProtectMain && !branch.approved ? '正式版受保护：要别人看过才能合' : ''"
+          @click="mergeBranch"
+          >合回正式版</BaseButton
+        >
+      </div>
+      <div v-else-if="locked" class="ot-ced__bar" data-zone="locked">
+        <v-icon size="15" icon="mdi-shield-lock-outline" class="ot-ced__mark" />
+        <span class="ot-ced__copy">正式版受保护 · 人也要走分支，合之前要别人看过</span>
         <span class="ot-head__gap" />
         <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
-        <BaseButton
-          id="b-save"
-          :kind="unit ? 'secondary' : 'primary'"
-          size="sm"
-          :disabled="!unsaved"
-          title="保存（⌘S）"
-          @click="save"
-          >保存</BaseButton
+        <BaseButton id="b-branch" kind="primary" size="sm" prepend-icon="mdi-source-branch" @click="openBranch"
+          >开分支</BaseButton
         >
+      </div>
+      <div v-else class="ot-ced__bar">
+        <v-icon size="15" icon="mdi-file-code-outline" class="ot-ced__mark" />
+        <span class="ot-ced__copy" data-zone="saved" title="改了就生效；每次改动自动记进历史，能撤回">{{
+          saving ? '正式版 · 正在改…' : '正式版 · 改了就生效'
+        }}</span>
+        <DocPresence v-if="faces.length" :peers="faces" class="ot-ced__faces" />
+        <span class="ot-head__gap" />
+        <BaseButton
+          v-if="research"
+          id="b-branch"
+          kind="ghost"
+          size="sm"
+          prepend-icon="mdi-source-branch"
+          title="在自己的分支上改，改好了再合回正式版"
+          @click="openBranch"
+          >开分支</BaseButton
+        >
+        <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
         <BaseButton
           v-if="unit"
           id="b-submit"
@@ -160,7 +235,16 @@ function showTab(t: 'out' | 'term') {
         >
       </div>
       <div class="ot-ced__edit">
-        <DemoCodeArea v-model="text" :label="`编辑 ${path}`" @save="save" />
+        <DemoCodeArea
+          v-model="text"
+          :label="`编辑 ${path}`"
+          :readonly="locked"
+          :peers="peers"
+          :mark="mark"
+          @save="save"
+          @blur="snapshot(p, path)"
+          @select="onSelect"
+        />
       </div>
     </template>
 
@@ -249,6 +333,29 @@ function showTab(t: 'out' | 'term') {
 
 .ot-ced__mark {
   color: var(--muted);
+}
+
+.ot-ced__bar--branch {
+  background: var(--accent-wash);
+}
+
+.ot-ced__bar--branch .ot-ced__mark {
+  color: var(--accent-ink);
+}
+
+.ot-ced__branch {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.ot-ced__ok {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ok-ink);
+  white-space: nowrap;
 }
 
 .ot-ced__copy {

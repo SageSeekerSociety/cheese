@@ -331,7 +331,7 @@ const DATALAB_README = `<h1>Data Lab</h1>
 <h3>评分</h3>
 <p>13 个函数一起评：每个函数的测试全对、且 <code>dlc</code> 检查通过，就得它的分（Rating），满分 ${DATALAB_TOTAL} 分。可以反复提交，以截止前最后一次为准。</p>
 <h3>怎么做</h3>
-<ul><li><p>打开 <code>bits.c</code> 直接改，保存就生效，历史里每次保存都能撤回。</p></li><li><p>「运行」在你自己的环境里跑 <code>./btest</code>，只有你看得到。</p></li><li><p>「提交评测」评的是你提交那一刻的版本，评测记录里每次都能看到当时的代码。</p></li></ul>`
+<ul><li><p>打开 <code>bits.c</code> 直接改，改了就生效，每次改动自动记进历史，都能撤回。</p></li><li><p>「运行」在你自己的环境里跑 <code>./btest</code>，只有你看得到。</p></li><li><p>「提交评测」评的是你提交那一刻的版本，评测记录里每次都能看到当时的代码。</p></li></ul>`
 
 // ---- the judge: a C integer expression, parsed and run ----
 //
@@ -713,7 +713,7 @@ export function welcome(p: ClaimKey, due: string): ChatLine[] {
       who: 'cheese',
       at: new Date().toISOString(),
       text: lab
-        ? `这个项目是你从「Data Lab」领取的。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 代码在 \`bits.c\`：13 个函数，改完保存就生效；「提交评测」一次评全部\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
+        ? `这个项目是你从「Data Lab」领取的。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 代码在 \`bits.c\`：13 个函数，改了就生效，每次改动自动记进历史；「提交评测」一次评全部\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
         : `这个项目是你从「第 3 周题单」领取的。\n\n- 「题单」文档置顶在项目文件里，每道题做到哪了都在上面\n- 每道题一个文件夹：\`题面.md\` 和 \`main.cpp\`，每题单独提交评测\n- 截止 ${due}\n\n这门课设成「芝士只给提示」：卡住了可以问我思路，答案我不会写出来。`,
     },
   ]

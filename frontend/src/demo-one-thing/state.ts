@@ -90,12 +90,17 @@ export interface HistoryEntry {
   /** A code save: the file and the text 正式版 had before it, which 撤回 puts back. */
   file?: string
   prev?: string
+  /** A change to several code files at once (an accepted task, a merged branch): path → text before. */
+  prevs?: Record<string, string>
   /** Nothing to take back (领取 itself). */
   fixed?: boolean
 }
 
 export const PHASES = ['讨论', '在做', '等你采纳', '完成'] as const
 export const PHASE: Record<Status, number> = { talk: 0, run: 1, wait: 2, done: 3 }
+
+/** The key of one project's file in the per-file records. */
+export const fkey = (p: ProjectKey, path: string) => `${p}:${path}`
 
 const rx = (emoji: string, ...authors: string[]): ReactionAgg => ({ emoji, count: authors.length, authors })
 
@@ -133,6 +138,10 @@ function initial() {
     >,
     /** The file each project's 项目文件 was last on. */
     fileOf: { research: MINUTES_DOC } as Record<string, string>,
+    /** Where each project was left (channel, 项目文件 or 设置): switching back lands there. A project
+     *  not visited yet lands on its default (the research project on its channel, a claimed
+     *  题目 in 项目文件 on its 题面 / 题单, the course on its 题目 list). */
+    centerOf: {} as Partial<Record<ProjectKey, Center>>,
     /** The projects 林晓 has claimed from the course, in the order they were claimed (the rail's order). */
     claimed: [] as ClaimKey[],
     center: 'chan' as Center,
@@ -170,19 +179,26 @@ function initial() {
     toastTick: 0,
     settingsSection: 'project',
     settingsAgentDirect: false,
-    settingsProtectCode: false,
+    /** 正式版受保护: people also work on a branch, and someone else has to look before it merges. */
+    settingsProtectMain: false,
     settingsNotify: 'mentions',
     settingsRuntime: 'a100',
-    /** Code a person merged into the research project's official version by hand: path → its lines. */
-    codeEdits: {} as Record<string, string[]>,
-    /** Edits sent for someone else's 采纳 while 代码受保护 is on: path → its lines. */
-    codePending: {} as Record<string, string[]>,
-    /** The research code file open in the editor, on the person's own copy. */
-    codeDraft: null as { path: string; text: string } | null,
-    /** A claimed project's code files as they are now, keyed by fkey. */
-    official: {} as Record<string, string>,
-    /** What is typed in a claimed project's editor and not saved yet, keyed by fkey. */
-    unsaved: {} as Record<string, string>,
+    /** Every project's code files as 正式版 reads now, keyed by fkey. People type straight into it. */
+    official: Object.fromEntries(
+      Object.entries(CODE).map(([path, c]) => [fkey('research', path), c.before.join('\n')])
+    ),
+    /** A file being typed into: the text it had before this burst of typing. The burst becomes one
+     *  历史 entry once typing pauses (or on ⌘S, leaving the file, 运行, 提交评测). */
+    snapBase: {} as Record<string, string>,
+    /** 林晓's branch in the research project, if she opened one: her own copy of the code files it
+     *  touches, merged back by 合回正式版. */
+    branch: null as null | { name: string; files: Record<string, string>; asked: boolean; approved: boolean },
+    /** Lines selected in the open code file: 问芝士 sends them along. */
+    codeSel: null as { path: string; start: number; end: number } | null,
+    /** Lines to bring into view and mark in the editor (a file mention clicked in a channel). */
+    codeAt: null as { path: string; start: number; end: number; tick: number } | null,
+    /** What is typed in the open file's 问芝士 box. */
+    asking: '',
     /** The code view's bottom panel: which tab, and each file's 输出. */
     outTab: 'out' as 'out' | 'term',
     out: {} as Record<string, Out>,
@@ -205,6 +221,13 @@ function initial() {
       week3: [],
       research: [
         { who: 'wanglei', what: '改了《组会纪要 11-07》', at: minsAgo(9) },
+        {
+          who: 'wanglei',
+          what: '改了 configs/clip_vit_b32.yaml',
+          at: minsAgo(26),
+          file: 'configs/clip_vit_b32.yaml',
+          prev: CODE['configs/clip_vit_b32.yaml']!.before.join('\n').replace('batch_size: 256', 'batch_size: 128'),
+        },
         { who: 'chensiyuan', what: '采纳了任务「补长描述截断实验」：改了 2 个文件', at: dayAt(1, 17, 42) },
         { who: 'zhaoyutong', what: '上传了 report/中期报告.docx', at: dayAt(1, 11, 5) },
         { who: 'wanglei', what: '采纳了任务「BLIP 精读笔记」：新增 docs/papers/BLIP-精读.md', at: dayAt(3, 15, 20) },
@@ -378,7 +401,7 @@ function initial() {
           id: 'e5',
           who: 'wanglei',
           at: minsAgo(96),
-          text: '找到一个可能的原因：项目里那份 `eval/preprocess.py` 是 `Resize(256)`，没有 center crop。我 notebook 里用的是 224 + crop。',
+          text: '找到一个可能的原因：项目里那份 `eval/preprocess.py:6` 是 `Resize(256)`，没有 center crop。我 notebook 里用的是 224 + crop。',
         },
         {
           id: 'e6',
@@ -499,19 +522,29 @@ export function go(center: Center, extra: Partial<typeof S> = {}): void {
 export function switchProject(p: ProjectKey): void {
   if (S.project !== p) {
     if (S.center === 'chan') S.chanOf[S.project] = S.chan
+    // 需要我的 belongs to no project: leaving from it keeps where the project itself was left.
+    if (S.center !== 'inbox') S.centerOf[S.project] = S.center
     S.fileOf[S.project] = S.file
+    snapshotAll()
     // What was half-typed belongs to the channel it was typed in, not to the other project.
     S.typing = ''
     S.replyTo = null
     S.viewSub = null
-    S.codeDraft = null
+    S.codeSel = null
+    S.asking = ''
     S.project = p
     S.file = S.fileOf[p] ?? S.file
     S.ftab = isClaim(p) ? 'subs' : 'pending'
     S.settingsSection = p === 'course' ? 'course' : 'project'
+  } else if (S.center !== 'inbox') {
+    // The rail item of the project already open: stay where it is.
+    return
   }
-  if (p === 'course') go('space', { chan: S.chanOf.course })
-  else go('chan', { chan: S.chanOf[p], thing: null })
+  // Where it was left; the first visit lands on the project's own starting place.
+  const center = S.centerOf[p] ?? (p === 'course' ? 'space' : isClaim(p) ? 'files' : 'chan')
+  if (center === 'chan') go('chan', { chan: S.chanOf[p], thing: null })
+  else if (center === 'files') go('files', { file: S.file, viewSub: null })
+  else go(center, p === 'course' ? { chan: S.chanOf.course } : {})
 }
 
 /** Unread messages in one space's channels (the rail's count). */
@@ -571,43 +604,57 @@ export function sourceOf(thingId: string): ChatLine | null {
 
 // ---- code ----
 //
-// The research project keeps its own flow: 改代码 edits a copy of the official
-// version, 合进正式版 puts it in (or 请人采纳 while 代码受保护 is on). In a
-// project claimed from the course, a person's edit is saved straight into the
-// project's files; every save is a 历史 entry with 撤回.
+// People edit 正式版 live, code as well as documents: what is typed is the file,
+// in every project. History is automatic: each burst of typing becomes one 历史
+// entry once it pauses, and 撤回 puts back what the file read before it.
+// 芝士 never types into 正式版: a task works on its own copy and a person 采纳s
+// it. A person who wants isolation opens a branch (research project), and
+// 合回正式版 brings it back; with 正式版受保护 on, people have to work on a branch
+// and someone else looks before it merges.
 
-/** The key of one project's file in the per-file records. */
-export const fkey = (p: ProjectKey, path: string) => `${p}:${path}`
-
-/** The official text of a research code file: a person's merged edit, else the task's version once accepted. */
+/** The official text of a research code file. */
 export function officialCode(path: string): string[] {
-  const c = CODE[path]
-  if (!c) return []
-  return S.codeEdits[path] ?? (t4()?.status === 'done' && c.after ? c.after : c.before)
+  return officialText('research', path).split('\n')
 }
 
-/** A code file as it is now, in any project. */
+/** A code file as 正式版 reads now, in any project. */
 export function officialText(p: ProjectKey, path: string): string {
-  return p === 'research' ? officialCode(path).join('\n') : S.official[fkey(p, path)] ?? ''
+  return S.official[fkey(p, path)] ?? ''
 }
 
-/** What the editor shows: the research copy being edited, or a claimed file with what is typed and not saved. */
-export function draftText(p: ProjectKey, path: string): string {
-  if (p === 'research') return S.codeDraft?.path === path ? S.codeDraft.text : officialText(p, path)
-  return S.unsaved[fkey(p, path)] ?? officialText(p, path)
+/** On a branch, the research code files read from it. */
+export const onBranch = (p: ProjectKey) => p === 'research' && !!S.branch
+
+/** 正式版 is protected and no branch is open: the research editor is read-only. */
+export const lockedMain = (p: ProjectKey) => p === 'research' && S.settingsProtectMain && !S.branch
+
+/** What the editor shows: the branch's copy while on one, else 正式版. */
+export function codeText(p: ProjectKey, path: string): string {
+  if (onBranch(p)) return S.branch!.files[path] ?? officialText(p, path)
+  return officialText(p, path)
 }
 
+const snapTimers: Record<string, number> = {}
+
+/** Typing: on a branch it changes the branch's copy; otherwise 正式版 itself, at once. */
 export function typeCode(p: ProjectKey, path: string, text: string): void {
-  if (p === 'research') {
-    if (S.codeDraft?.path === path) S.codeDraft.text = text
+  if (onBranch(p)) {
+    S.branch!.files[path] = text
     return
   }
+  if (lockedMain(p)) return
   const k = fkey(p, path)
-  if (text === officialText(p, path)) delete S.unsaved[k]
-  else S.unsaved[k] = text
+  const prev = officialText(p, path)
+  if (text === prev) return
+  if (!(k in S.snapBase)) S.snapBase[k] = prev
+  S.official[k] = text
+  window.clearTimeout(snapTimers[k])
+  const my = gen
+  snapTimers[k] = window.setTimeout(() => my === gen && snapshot(p, path), 1500)
 }
 
-export const isUnsaved = (p: ProjectKey, path: string) => fkey(p, path) in S.unsaved
+/** A burst of typing still waiting to become its 历史 entry. */
+export const isSaving = (p: ProjectKey, path: string) => fkey(p, path) in S.snapBase
 
 /** The judged unit a file belongs to (Data Lab's bits.c, a 题单 problem's main.cpp), if any. */
 export const unitOf = (p: ProjectKey, path: string) =>
@@ -619,47 +666,88 @@ function log(p: ProjectKey, who: string, what: string, extra: Partial<HistoryEnt
   list.unshift({ who, what, at: new Date().toISOString(), fresh: true, ...extra })
 }
 
-/** 保存 (⌘S) in a claimed project: the file changes, and 历史 records it with what it read before. */
-export function saveCode(p: ProjectKey, path: string, quiet = false): void {
+/** The burst of typing on one file becomes one 历史 entry, with what the file read before it. */
+export function snapshot(p: ProjectKey, path: string, quiet = true): void {
   const k = fkey(p, path)
-  const text = S.unsaved[k]
-  if (text === undefined || p === 'research') return
-  const prev = officialText(p, path)
-  S.official[k] = text
-  delete S.unsaved[k]
-  log(p, ME, `改了 ${path}`, { file: path, prev })
-  if (!quiet) toast(`已保存：${path}`)
+  window.clearTimeout(snapTimers[k])
+  const prev = S.snapBase[k]
+  if (prev === undefined) return
+  delete S.snapBase[k]
+  if (prev !== officialText(p, path)) log(p, ME, `改了 ${path}`, { file: path, prev })
+  if (!quiet) toast(`已记进历史：${path}`)
 }
 
-/** How many lines a research copy changes against the official version (lines only on one side, the larger side). */
-export function changedLines(path: string, lines: string[]): number {
+/** Every pending burst becomes its entry (leaving a project, before 撤回). */
+export function snapshotAll(): void {
+  for (const k of Object.keys(S.snapBase)) {
+    const i = k.indexOf(':')
+    snapshot(k.slice(0, i) as ProjectKey, k.slice(i + 1))
+  }
+}
+
+/** How many lines differ between two versions of a file (lines only on one side, the larger side). */
+export function changedLines(before: string[], after: string[]): number {
   const count = (xs: string[]) => xs.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map<string, number>())
   const diff = (a: Map<string, number>, b: Map<string, number>) =>
     [...a].reduce((n, [k, v]) => n + Math.max(0, v - (b.get(k) ?? 0)), 0)
-  const a = count(officialCode(path))
-  const b = count(lines)
+  const a = count(before)
+  const b = count(after)
   return Math.max(diff(a, b), diff(b, a))
 }
 
-export function editCode(path: string): void {
-  S.codeDraft = { path, text: officialCode(path).join('\n') }
+// ---- a person's branch (research project) ----
+
+/** The branch's files that differ from 正式版 now: path → changed line count. */
+export function branchChanges(): { path: string; n: number }[] {
+  const b = S.branch
+  if (!b) return []
+  return Object.entries(b.files)
+    .map(([path, text]) => ({ path, n: changedLines(officialCode(path), text.split('\n')) }))
+    .filter((x) => x.n > 0)
 }
 
-/** 合进正式版: a person's edit takes effect at once, unless the project has 代码受保护 on. */
-export function mergeCode(): void {
-  const d = S.codeDraft
-  if (!d) return
-  const lines = d.text.replace(/\n+$/, '').split('\n')
-  S.codeDraft = null
-  if (S.settingsProtectCode) {
-    S.codePending[d.path] = lines
-    toast('已请人采纳：别人采纳之后才进正式版')
-    return
+export function openBranch(): void {
+  if (S.branch) return
+  snapshotAll()
+  S.branch = { name: `${NAMES[ME]}-试改`, files: {}, asked: false, approved: false }
+  toast(`开了分支「${S.branch.name}」：在这里改不影响正式版，改好了再合回去`)
+}
+
+/** 请人看一下: in the demo 王磊 looks at it a moment later. */
+export function askReview(): void {
+  const b = S.branch
+  if (!b || b.asked) return
+  b.asked = true
+  toast('已请王磊看一下')
+  later(1800, () => {
+    if (S.branch !== b) return
+    b.approved = true
+    toast(`王磊看过了分支「${b.name}」：可以合`)
+  })
+}
+
+export const canMerge = () => !!S.branch && branchChanges().length > 0 && (!S.settingsProtectMain || S.branch.approved)
+
+/** 合回正式版: the branch's changes go into 正式版 as one 历史 entry, and the branch closes. */
+export function mergeBranch(): void {
+  const b = S.branch
+  if (!b || !canMerge()) return
+  const changed = branchChanges()
+  const prevs: Record<string, string> = {}
+  for (const { path } of changed) {
+    prevs[path] = officialText('research', path)
+    S.official[fkey('research', path)] = b.files[path]!
   }
-  S.codeEdits[d.path] = lines
-  delete S.codePending[d.path]
-  log('research', ME, `改了 ${d.path}`)
-  toast('已合进正式版')
+  S.branch = null
+  log('research', ME, `把分支「${b.name}」合回正式版：改了 ${changed.map((c) => c.path).join('、')}`, { prevs })
+  toast(`已合回正式版：${changed.length} 个文件`)
+}
+
+export function dropBranch(): void {
+  if (!S.branch) return
+  const name = S.branch.name
+  S.branch = null
+  toast(`分支「${name}」已放弃，正式版没变`)
 }
 
 // ---- 运行 and the terminal: the person's own environment ----
@@ -697,10 +785,10 @@ function runOf(p: ProjectKey, path: string, text: string) {
   return unit ? UNITS[unit]!.run(text) : researchRun(path, text)
 }
 
-/** 运行: on my copy, in my own environment; the output lands in the bottom panel and the terminal. */
+/** 运行: the file as it reads now (the branch's copy while on one), in my own environment; the output lands in the bottom panel and the terminal. */
 export function runCode(p: ProjectKey, path: string): void {
   const k = fkey(p, path)
-  const text = draftText(p, path)
+  const text = codeText(p, path)
   S.out[k] = { kind: 'running' }
   S.outTab = 'out'
   later(800, () => {
@@ -730,12 +818,12 @@ export function termRun(p: ProjectKey, path: string, cmd: string): void {
     const code = isClaim(p) ? PROJECT_FILES[p].find((x) => x.path === f)?.kind === 'code' : !!CODE[f]
     list.push({
       cmd: c,
-      out: code ? draftText(p, f) : files.includes(f) ? '（文档，在项目文件里打开）' : `cat: ${f}: 没有这个文件`,
+      out: code ? codeText(p, f) : files.includes(f) ? '（文档，在项目文件里打开）' : `cat: ${f}: 没有这个文件`,
     })
     return
   }
   if (/^(make|\.\/|g\+\+|python|bash)/.test(c)) {
-    list.push({ cmd: c, out: runOf(p, path, draftText(p, path)).out })
+    list.push({ cmd: c, out: runOf(p, path, codeText(p, path)).out })
     return
   }
   list.push({ cmd: c, out: `${c.split(/\s/)[0]}：演示里的终端只认 ls、cat、clear 和运行命令` })
@@ -749,8 +837,8 @@ let seqSub = 0
 export function submitCode(p: ProjectKey, path: string): void {
   const unit = unitOf(p, path)
   if (!unit || !isClaim(p) || S.judging) return
-  // What is typed is saved first, so the judged version is the file as it reads now.
-  saveCode(p, path, true)
+  // What was just typed becomes its 历史 entry first; the judged version is the file as it reads now.
+  snapshot(p, path)
   const k = fkey(p, path)
   const text = officialText(p, path)
   const version = versionOf(text)
@@ -788,6 +876,84 @@ export function openVersion(id: string): void {
   const sub = S.subs[S.project].find((x) => x.id === id)
   if (!sub) return
   openFile(UNITS[sub.unit]!.path, { viewSub: id, ftab: 'subs' })
+}
+
+// ---- a file in the conversation: mentions, 问芝士 ----
+
+/** Every file path of a project's 项目文件. */
+export const pathsOf = (p: ProjectKey): string[] =>
+  isClaim(p) ? PROJECT_FILES[p].map((f) => f.path) : p === 'research' ? FILES.map((f) => f.path) : []
+
+/** A file mention as messages write it, `path`, `path:12` or `path:12-14`, if it names a file of the project. */
+export function fileRef(p: ProjectKey, text: string): { path: string; start?: number; end?: number } | null {
+  const m = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(text.trim())
+  if (!m || !pathsOf(p).includes(m[1]!)) return null
+  const start = m[2] ? Number(m[2]) : undefined
+  return { path: m[1]!, start, end: m[3] ? Number(m[3]) : start }
+}
+
+/** Open a file in 项目文件 at a line (from a mention in a channel): the editor brings it into view and marks it. */
+export function openFileAt(path: string, start?: number, end?: number): void {
+  openFile(path, { ftab: 'talk' })
+  if (start) S.codeAt = { path, start, end: end ?? start, tick: (S.codeAt?.tick ?? 0) + 1 }
+}
+
+/** The messages in this project's channels that mention a file. */
+export function mentionsOf(path: string): { chan: string; line: ChatLine }[] {
+  return channelsOf(S.project).flatMap((c) =>
+    (S.chat[c.id] ?? []).filter((l) => l.text.includes(path)).map((line) => ({ chan: c.id, line }))
+  )
+}
+
+/** The channel a question about a file goes to: where it was last talked about, else the project's main one. */
+function chanForFile(p: ProjectKey, path: string): string {
+  if (isClaim(p)) return CLAIMED[p].chan
+  return mentionsOf(path).at(-1)?.chan ?? 'c-exp'
+}
+
+/** 芝士's answer about a research file, read off the file as it is now. */
+function answerAbout(path: string, ref: string, lines: string[]): string {
+  const text = codeText('research', path)
+  const quote = lines.length ? `\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`` : ''
+  if (path === 'eval/preprocess.py')
+    return /CenterCrop\(\s*224\s*\)/.test(text)
+      ? `\`${ref}\` 现在是 \`Resize(224, BICUBIC)\` + \`CenterCrop(224)\`，和论文、和《评测口径说明》都一致，输入正好 224×224。${quote}`
+      : `\`${ref}\` 只做了 \`Resize(256)\`，没有 center crop，进模型的不是 224×224，模型里会再缩放一次。论文是 224 + BICUBIC + center crop，Flickr30K 差的那 1 个点多半在这里。${quote}`
+  if (path === 'eval/retrieval.py')
+    return text.includes('recall_at_k')
+      ? `\`${ref}\` 现在一次出 R@1 / R@5 / R@10，\`recall_at_k\` 按相似度排序取前 k 个，看正确的那条在不在里面。${quote}`
+      : `\`${ref}\` 现在只算 R@1（\`recall_at_1\`）。要 R@5 / R@10 的话，把它换成按 k 取前几名的写法。${quote}`
+  return `看了 \`${ref}\`：${quote || '这个文件不长，'}有具体想改的地方可以直接改，正式版就是它。`
+}
+
+/** 问芝士 from an open file: the question goes to the channel with the file (and the selected lines) as context;
+ *  芝士 answers under it there. Both show in the file's 对话. */
+export function askAboutFile(): void {
+  const q = S.asking.trim()
+  const p = S.project
+  const path = S.file
+  if (!q) return
+  const sel = S.codeSel?.path === path ? S.codeSel : null
+  const ref = sel ? `${path}:${sel.start}${sel.end > sel.start ? `-${sel.end}` : ''}` : path
+  const lines = sel
+    ? codeText(p, path)
+        .split('\n')
+        .slice(sel.start - 1, sel.end)
+    : []
+  const chan = chanForFile(p, path)
+  const id = nextId('f')
+  S.asking = ''
+  ;(S.chat[chan] ??= []).push({ id, who: ME, at: new Date().toISOString(), text: `<@cheese> \`${ref}\` ${q}` })
+  later(1300, () =>
+    S.chat[chan]!.push({
+      id: nextId('c'),
+      who: 'cheese',
+      at: new Date().toISOString(),
+      text: isClaim(p) ? `关于 \`${ref}\`：${hintFor(q)}` : answerAbout(path, ref, lines),
+      replyTo: id,
+    })
+  )
+  toast(`问题发在了 # ${channelsOf(p).find((c) => c.id === chan)?.title ?? ''}，芝士的回答也在那里`)
 }
 
 // ---- 领取: a 题目 becomes a project of my own ----
@@ -960,8 +1126,26 @@ export function accept(): void {
   t.last = '已采纳 · 合进正式版'
   t.at = new Date().toISOString()
   S.rtab = 'result'
-  log('research', ME, '采纳了任务「统一评测脚本」：改了 2 个文件，新增 results/eval_results.md')
-  toast('已采纳：合进项目文件的正式版')
+  const prevs: Record<string, string> = {}
+  for (const [path, c] of Object.entries(CODE)) {
+    if (!c.after) continue
+    prevs[path] = officialText('research', path)
+    S.official[fkey('research', path)] = c.after.join('\n')
+  }
+  log('research', ME, '采纳了任务「统一评测脚本」：改了 2 个文件，新增 results/eval_results.md', { prevs })
+  toast('已采纳：进了项目文件的正式版')
+}
+
+/** 采纳并在编辑器里打开: accept, then open the first changed file on 正式版, where people edit it directly. */
+export function acceptAndOpen(): void {
+  accept()
+  openFile('eval/preprocess.py', { ftab: 'history' })
+}
+
+/** Tell 芝士 what to change in its copy: the task's own conversation, with an @ ready. */
+export function tellCheese(): void {
+  S.rtab = 'chat'
+  if (!S.thingTyping.includes('<@cheese>')) S.thingTyping = `<@cheese> ${S.thingTyping}`
 }
 
 export function suggAccept(): void {
@@ -987,7 +1171,7 @@ export function undo(index: number): void {
   if (h.what.startsWith('接受了芝士对')) S.suggAccepted = false
   if (h.what.startsWith('拒绝了芝士对')) S.suggRejected = false
   if (h.file && h.prev !== undefined) S.official[fkey(S.project, h.file)] = h.prev
-  else if (S.project === 'research' && h.who === ME && h.what.startsWith('改了 ')) delete S.codeEdits[h.what.slice(3)]
+  for (const [path, prev] of Object.entries(h.prevs ?? {})) S.official[fkey(S.project, path)] = prev
   toast(`已撤回：${NAMES[h.who]} ${h.what}`)
 }
 

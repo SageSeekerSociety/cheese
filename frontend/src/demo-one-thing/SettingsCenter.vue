@@ -161,7 +161,7 @@ const USAGE = [
           <SettingsRow label="截止" description="以截止前最后一次提交评测为准" width="select">
             <span class="ot-set__value" data-rule="due">{{ monthDayTime(Date.parse(topic.due)) }}</span>
           </SettingsRow>
-          <SettingsRow label="代码" description="每次保存都记进历史，可以撤回" width="select-wide">
+          <SettingsRow label="代码" description="每次改动自动记进历史，可以撤回" width="select-wide">
             <span class="ot-set__value" data-rule="code">只有你一个人，改动直接生效</span>
           </SettingsRow>
           <SettingsRow
@@ -209,8 +209,15 @@ const USAGE = [
               @update:model-value="S.settingsAgentDirect = $event === 'direct'"
             />
           </SettingsRow>
-          <SettingsRow label="代码受保护" description="打开后，人的代码改动也要别人采纳才生效" width="select">
-            <v-switch v-model="S.settingsProtectCode" color="primary" density="compact" hide-details inset />
+          <SettingsRow label="正式版受保护" description="人也要走分支，合之前要别人看过" width="select">
+            <v-switch
+              v-model="S.settingsProtectMain"
+              data-setting="protect-main"
+              color="primary"
+              density="compact"
+              hide-details
+              inset
+            />
           </SettingsRow>
           <SettingsRow
             label="用本地编辑器打开"
