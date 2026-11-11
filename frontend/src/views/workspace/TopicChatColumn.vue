@@ -431,8 +431,6 @@ defineExpose({
   }
 }
 .chat-col {
-  /* 对话栏那条错误提示（ChatPanel 的 .chat-error-toast）是 absolute，定位的就是
-     这一层——ChatPanel 自己的根不是定位元素。 */
   position: relative;
   display: flex;
   flex-direction: column;
