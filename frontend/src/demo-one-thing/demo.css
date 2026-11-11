@@ -108,6 +108,22 @@ body {
   color: var(--ink);
 }
 
+.ot-variants__hint {
+  padding: 8px;
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--ink);
+  background: var(--accent-wash);
+  border-radius: 8px;
+}
+
+.ot-variants__go {
+  margin-left: 4px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
 .ot-variants__foot {
   padding: 8px 8px 2px;
   margin: 8px 0 0;

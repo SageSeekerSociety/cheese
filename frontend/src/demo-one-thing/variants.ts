@@ -1,6 +1,6 @@
 // The design questions still open, each with the variants the demo can show
 // side by side. The top bar's 「方案」 menu picks one per question; the choice
-// is read from the link first (#v=submit:A,space:1, so a variant can be sent),
+// is read from the link first (#v=submit:A, so a variant can be sent),
 // then from this browser's storage, else the default. Switching only changes
 // how the screen draws the same state, so it never resets the demo.
 import { reactive } from 'vue'
@@ -8,7 +8,7 @@ import { reactive } from 'vue'
 import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 
 export interface Question {
-  key: 'submit' | 'space'
+  key: 'submit'
   title: string
   options: { key: string; label: string; note: string }[]
 }
@@ -24,27 +24,17 @@ export const QUESTIONS: Question[] = [
       { key: 'D', label: 'D 卡片（现状）', note: '侧栏顶上的题目卡片和「提交」' },
     ],
   },
-  {
-    key: 'space',
-    title: '空间在侧栏的样子',
-    options: [
-      { key: '1', label: '1 白底描边', note: '白底，课程色只做边框和字' },
-      { key: '2', label: '2 圆形分组', note: '圆形，首页下面自成一组，和方形的项目分开' },
-      { key: '3', label: '3 现状', note: '课程色方块加学士帽' },
-    ],
-  },
 ]
 
 export type SubmitVariant = 'A' | 'B' | 'C' | 'D'
-export type SpaceVariant = '1' | '2' | '3'
 
-const DEFAULTS = { submit: 'A' as SubmitVariant, space: '1' as SpaceVariant }
+const DEFAULTS = { submit: 'A' as SubmitVariant }
 const KEY = 'oneThingDemo.variants'
 
 const valid = (q: Question['key'], v: unknown) =>
   typeof v === 'string' && !!QUESTIONS.find((x) => x.key === q)?.options.some((o) => o.key === v)
 
-/** #v=submit:A,space:1 → { submit: 'A', space: '1' }; anything it does not name is left out. */
+/** #v=submit:A → { submit: 'A' }; anything it does not name, or no longer asks, is left out. */
 function fromHash(): Partial<typeof DEFAULTS> {
   const m = /(?:^#|&)v=([^&]*)/.exec(location.hash)
   const out: Record<string, string> = {}
@@ -65,13 +55,13 @@ function fromStorage(): Partial<typeof DEFAULTS> {
 export const V = reactive({ ...DEFAULTS, ...fromStorage(), ...fromHash() })
 
 /** The link that shows the variants on screen now. */
-export const variantHash = () => `#v=submit:${V.submit},space:${V.space}`
+export const variantHash = () => `#v=submit:${V.submit}`
 
 export function setVariant(q: Question['key'], v: string): void {
   if (!valid(q, v)) return
   Object.assign(V, { [q]: v })
   // Storage can be missing (a private window, blocked site data): the choice then lasts until reload.
-  storageSetJson(KEY, { submit: V.submit, space: V.space })
+  storageSetJson(KEY, { submit: V.submit })
   history.replaceState(null, '', variantHash())
 }
 

@@ -6,10 +6,8 @@
 // folded away. The rail's first item, 首页, opens the home list (待办, my
 // teams and their projects, the 空间 I belong to). Under it, each space I
 // belong to has its own icon; it opens the same view as 首页's 空间 list does.
-// How that icon looks is an open question (方案 空间在侧栏的样子, variants.ts):
-// 1 a white tile with the course's color only as its border and initials, and
-// a cap mark; 2 a circle filled with the course's color, Discord-server style;
-// 3 a tile filled with the course's color, with a cap mark. Below a divider, the projects: the research
+// The icon is a white tile with the course's color only as its border and
+// initials, and a cap mark, so it never reads as a project. Below a divider, the projects: the research
 // project (where the tour runs), each project claimed from a 题目 (mine, and
 // my team's), which appears on 领取, and the other projects, which are inert.
 // A claimed project stays among the projects: it belongs to a team, not to
@@ -187,7 +185,6 @@ const userActions: MenuAction[] = [
           :key="sp.id"
           type="button"
           class="app-rail-item ot-rail__space"
-          :class="`ot-rail__space--v${V.space}`"
           :aria-label="sp.badge ? `${sp.name}（${sp.badge} 个快截止）` : sp.name"
           :aria-current="sp.here ? 'page' : undefined"
           :data-space="sp.id"
@@ -199,9 +196,7 @@ const userActions: MenuAction[] = [
             </div>
           </v-tooltip>
           <span class="ot-rail__space-face" :style="{ '--space-color': sp.color }">{{ sp.short }}</span>
-          <span v-if="V.space !== '2'" class="ot-rail__space-mark" aria-hidden="true"
-            ><v-icon size="11" icon="mdi-school"
-          /></span>
+          <span class="ot-rail__space-mark" aria-hidden="true"><v-icon size="11" icon="mdi-school" /></span>
           <span v-if="sp.badge" class="app-rail-item__badge" aria-hidden="true">{{ sp.badge }}</span>
         </button>
         <RailItem v-for="item in rail" :key="item.key" :item="item" />
@@ -323,32 +318,16 @@ const userActions: MenuAction[] = [
   transition: border-radius var(--dur-quick) var(--ease-standard);
 }
 
-.ot-rail__space--v3 .ot-rail__space-face {
-  background: var(--space-color);
-}
-
 .ot-rail__space:hover .ot-rail__space-face,
 .ot-rail__space[aria-current] .ot-rail__space-face {
   border-radius: 12px;
 }
 
-/* 方案 1: no fill a project could have; the course's color is only the border and the initials. */
-.ot-rail__space--v1 .ot-rail__space-face {
+/* No fill a project could have: the course's color is only the border and the initials. */
+.ot-rail__space .ot-rail__space-face {
   color: var(--space-color);
   background: var(--surface);
   box-shadow: inset 0 0 0 2px var(--space-color);
-}
-
-/* 方案 2: a circle, the one round tile on the rail, filled with the course's color. */
-.app-rail-item.ot-rail__space--v2,
-.ot-rail__space--v2 .ot-rail__space-face,
-.ot-rail__space--v2:hover .ot-rail__space-face,
-.ot-rail__space--v2[aria-current] .ot-rail__space-face {
-  border-radius: 50%;
-}
-
-.ot-rail__space--v2 .ot-rail__space-face {
-  background: var(--space-color);
 }
 
 .ot-rail__space-mark {

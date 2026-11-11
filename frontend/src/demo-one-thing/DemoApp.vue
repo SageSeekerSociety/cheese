@@ -4,10 +4,11 @@
 // actions a click does; clicking by hand stops the script at any point. The
 // controls' 「方案」 menu switches the variants of the design questions still
 // open (variants.ts); a switch redraws in place and keeps where the demo is.
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { ASK } from './data'
-import { accept, confirmKick, finish, go, kickoff, openThing, reply, reset, S, send, suggAccept } from './state'
+import { isClaim } from './data'
+import { accept, claim, confirmKick, finish, go, kickoff, openThing, reply, reset, S, send, suggAccept } from './state'
 import { QUESTIONS, setVariant, V } from './variants'
 import Workspace from './Workspace.vue'
 
@@ -44,6 +45,13 @@ onBeforeUnmount(() => {
 })
 
 const variantsOpen = ref(false)
+/** On a project claimed from a 题目: the only place the 提交入口 variants draw anything. */
+const inClaim = computed(() => S.area === 'project' && isClaim(S.project))
+/** From the 方案 menu: claim Data Lab (or go back to it) so the chosen 提交入口 is on screen. */
+function seeSubmit() {
+  claim('datalab')
+  variantsOpen.value = false
+}
 
 // ---- theme ----
 const theme = ref<'light' | 'dark'>(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
@@ -195,7 +203,6 @@ watch(
     S.things.map((t) => t.status).join(),
     S.ftab,
     V.submit,
-    V.space,
   ],
   async () => {
     await nextTick()
@@ -480,7 +487,7 @@ function onUserClick(e: MouseEvent) {
             append-icon="mdi-chevron-down"
             data-variants
             title="还没定的设计：每个问题挑一个方案看"
-            >方案 {{ V.submit }} · {{ V.space }}</BaseButton
+            >方案 {{ V.submit }}</BaseButton
           >
         </template>
         <div class="ot-variants" role="dialog" aria-label="方案">
@@ -503,6 +510,10 @@ function onUserClick(e: MouseEvent) {
               </span>
             </button>
           </section>
+          <p v-if="!inClaim" class="ot-variants__hint">
+            提交入口只在从题目领来的项目里看得到。
+            <button type="button" class="ot-variants__go" data-see-submit @click="seeSubmit">领 Data Lab 去看</button>
+          </p>
           <p class="ot-variants__foot">切换不会重来，演示停在哪就还在哪。地址栏的链接带着当前方案。</p>
         </div>
       </v-menu>
