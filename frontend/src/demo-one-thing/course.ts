@@ -641,11 +641,50 @@ interface SetProblem {
   statement: string
   sampleIn: string
   sampleOut: string
+  /** A second sample, and what the starter's usual mistake prints on it (the demo runs no real compiler). */
+  sample2: { in: string; out: string; got: string }
   starter: string
   /** The demo's judge for this problem: the verdict on a version of main.cpp. */
   judge: (code: string) => Verdict
-  /** What main.cpp prints on the sample input. */
-  run: (code: string) => string
+}
+
+/** What 运行 feeds a 题单 problem: one of its 样例, or input typed by hand. */
+export type RunInput = { sample: number } | { custom: string }
+
+/** What a 运行 printed; on a 样例, also what was expected and whether it matched. */
+export interface RunOut {
+  cmd: string
+  out: string
+  expect?: string
+  pass?: boolean
+}
+
+/** main.cpp run on one input. A+B really adds what it reads; the other problems are scripted on their two
+ *  样例 (sample 1 comes out right, sample 2 shows the mistake the judge reports), and say so for other input. */
+function runOn(p: SetProblem, code: string, input: string): string {
+  if (!printsAnything(code)) return '(没有输出)'
+  if (p.id === 'P1001') {
+    if (!printsSum(code)) return '(输出不是 a + b)'
+    const [a, b] = input.trim().split(/\s+/).map(Number)
+    return Number.isFinite(a) && Number.isFinite(b) ? String(a! + b!) : '(读不到两个整数)'
+  }
+  if (input.trim() === p.sampleIn.trim()) return p.sampleOut
+  if (input.trim() === p.sample2.in.trim()) return p.sample2.got
+  return '(演示里这道题只模拟了两个样例的输出)'
+}
+
+/** 运行 on a 题单 problem: a 样例 shows 通过 / 不通过 against its expected output; custom input shows the output only. */
+function runSet(p: SetProblem, code: string, input: RunInput = { sample: 0 }): RunOut {
+  if ('custom' in input)
+    return { cmd: 'g++ -O2 main.cpp -o main && ./main < 自定义输入', out: runOn(p, code, input.custom) }
+  const s = input.sample === 1 ? { in: p.sample2.in, out: p.sample2.out } : { in: p.sampleIn, out: p.sampleOut }
+  const out = runOn(p, code, s.in)
+  return {
+    cmd: `g++ -O2 main.cpp -o main && ./main < 样例${input.sample + 1}.in`,
+    out,
+    expect: s.out,
+    pass: out === s.out,
+  }
 }
 
 const CPP_HEAD = '#include <iostream>\nusing namespace std;\n\nint main() {\n'
@@ -680,6 +719,7 @@ export const SET: SetProblem[] = [
     statement: '输入两个整数 a、b，输出它们的和。|a|, |b| ≤ 10⁹。',
     sampleIn: '20 30',
     sampleOut: '50',
+    sample2: { in: '-7 7', out: '0', got: '0' },
     starter: `${CPP_HEAD}  int a, b;\n  cin >> a >> b;\n  // 在这里输出 a + b\n  return 0;\n}\n`,
     judge: (code) => {
       const tests: [string, number][] = [
@@ -698,7 +738,6 @@ export const SET: SetProblem[] = [
       const score = ok ? 4 : 0
       return { score, total: 4, rows, summary: ok ? '4/4 · 全部通过' : `0/4 · 测试点 #1 ${rows[0]!.note}` }
     },
-    run: (code) => (printsSum(code) ? '50' : printsAnything(code) ? '(输出和样例不一样)' : '(没有输出)'),
   },
   {
     id: 'P1046',
@@ -706,9 +745,9 @@ export const SET: SetProblem[] = [
     statement: '树上 10 个苹果的高度，和陶陶伸手能摸到的高度。陶陶站上 30 厘米的板凳也能摘，问能摘到几个。',
     sampleIn: '100 200 150 140 129 134 167 198 200 111\n110',
     sampleOut: '5',
+    sample2: { in: '100 200 150 140 129 134 167 198 200 111\n140', out: '7', got: '5' },
     starter: `${CPP_HEAD}  int h[10], reach;\n  for (int i = 0; i < 10; i++) cin >> h[i];\n  cin >> reach;\n  // 数一数能摘到几个\n  return 0;\n}\n`,
     judge: scriptedJudge('期望 7，你的输出是 5（板凳的 30 厘米算进去了吗）'),
-    run: (code) => (printsAnything(code) ? '5' : '(没有输出)'),
   },
   {
     id: 'P1085',
@@ -716,9 +755,9 @@ export const SET: SetProblem[] = [
     statement: '一周七天，每天上学和补习的小时数。超过 8 小时津津就不高兴，输出最不高兴的那天，都高兴输出 0。',
     sampleIn: '5 3\n6 2\n7 2\n5 3\n5 4\n0 4\n0 6',
     sampleOut: '3',
+    sample2: { in: '5 3\n6 4\n7 2\n5 3\n5 5\n0 4\n0 6', out: '2', got: '5' },
     starter: `${CPP_HEAD}  // 读 7 行，每行两个数\n  return 0;\n}\n`,
     judge: scriptedJudge('期望 2，你的输出是 5（一样不高兴时输出最早的那天）'),
-    run: (code) => (printsAnything(code) ? '3' : '(没有输出)'),
   },
   {
     id: 'P1089',
@@ -726,9 +765,9 @@ export const SET: SetProblem[] = [
     statement: '每月初拿到 300 元，预算花完后把整百的钱存给妈妈，年底多加 20%。某月不够花就输出 -那个月。',
     sampleIn: '290\n230\n280\n200\n300\n170\n340\n50\n90\n80\n200\n60',
     sampleOut: '-7',
+    sample2: { in: '290\n230\n280\n200\n300\n170\n330\n50\n90\n80\n200\n60', out: '1580', got: '1320' },
     starter: `${CPP_HEAD}  int budget[12];\n  for (int i = 0; i < 12; i++) cin >> budget[i];\n  // 按月模拟\n  return 0;\n}\n`,
-    judge: scriptedJudge('期望 1580，你的输出是 1500（年底的 20% 加了吗）'),
-    run: (code) => (printsAnything(code) ? '-7' : '(没有输出)'),
+    judge: scriptedJudge('期望 1580，你的输出是 1320（年底的 20% 加了吗）'),
   },
   {
     id: 'P5703',
@@ -736,9 +775,9 @@ export const SET: SetProblem[] = [
     statement: '每个苹果 a 元，要买 b 个，输出一共多少元。',
     sampleIn: '5 3',
     sampleOut: '15',
+    sample2: { in: '1000000 1000000', out: '1000000000000', got: '-727379968' },
     starter: `${CPP_HEAD}  long long a, b;\n  cin >> a >> b;\n  return 0;\n}\n`,
     judge: scriptedJudge('期望 1000000000000，你的输出溢出了'),
-    run: (code) => (printsAnything(code) ? '15' : '(没有输出)'),
   },
 ]
 
@@ -904,7 +943,9 @@ export interface Unit {
   title: string
   path: string
   judge: (text: string) => Verdict
-  run: (text: string) => { cmd: string; out: string }
+  run: (text: string, input?: RunInput) => RunOut
+  /** A 题单 problem runs on a chosen input (样例 1 / 样例 2 / 自定义输入); a lab runs its own tests. */
+  samples?: boolean
 }
 
 export const UNITS: Record<string, Unit> = {
@@ -918,10 +959,8 @@ export const UNITS: Record<string, Unit> = {
         title: `${p.id} ${p.title}`,
         path: `${p.id}/main.cpp`,
         judge: p.judge,
-        run: (text: string) => ({
-          cmd: `g++ -O2 main.cpp -o main && ./main < 样例.in`,
-          out: `${p.run(text)}\n样例输出：${p.sampleOut}`,
-        }),
+        run: (text: string, input?: RunInput) => runSet(p, text, input),
+        samples: true,
       },
     ])
   ),

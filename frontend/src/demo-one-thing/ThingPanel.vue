@@ -12,6 +12,12 @@
 // of that file. A 一件事 a person opened to do themselves (开一件事自己做) has
 // no 现场: the person types into its copy in the editor (去副本里改), says
 // 改好了, a teammate looks in the conversation, and it is 采纳ed here too.
+// A person can also 接手 a 一件事 芝士 is doing: 芝士 stops, the person works
+// in its copy, and 还给芝士 lets 芝士 go on. 采纳 is one path for every
+// 一件事 (acceptCopy). When 正式版 moved since the copy was taken, 改动 says
+// 「正式版在这期间改过」: changes to different lines are kept on both sides
+// (the copy catches up first, a line in 对话), and where both changed the same
+// lines it shows both and the adopter picks a side per block before 采纳.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 import type { Block, TodoItem } from '@/cx_types'
 import type { MemberActivityLine } from '@/lib/memberActivity'
@@ -19,29 +25,31 @@ import type { ChatLine, MarkLine } from './state'
 
 import { computed, ref, watch } from 'vue'
 
-import { CHANNELS, diffText, ME, NAMES, PLAN, projectOfChan, RESULTS_MD, TASK_DIFFS } from './data'
+import { CHANNELS, diffText, ME, NAMES, PLAN, RESULTS_MD, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
 import { hhmm, stateOf } from './shapes'
 import { siteBlocks, type SiteStep, T4_STEPS } from './site'
 import {
-  accept,
   acceptAndOpen,
   acceptCopy,
   closeThing,
   confirmKick,
+  copyState,
   editCopy,
+  giveBack,
   jumpTo,
   kickoff,
   markDone,
-  officialText,
   openFile,
   PHASE,
   PHASES,
+  pickSide,
   researchRun,
   S,
   sayInThing,
   sourceOf,
+  takeOver,
   tellCheese,
   thingById,
 } from './state'
@@ -63,6 +71,17 @@ const talk = computed(() => thing.value.status === 'talk')
 const ours = computed(() => thing.value.id === 't4')
 /** A 一件事 I opened to do myself: I type into its copy, 芝士 does not work on it. */
 const mineToDo = computed(() => !!thing.value.copy && thing.value.doer === ME)
+/** 芝士's 一件事 that I took over (接手): I work in its copy until I give it back. */
+const takenByMe = computed(() => thing.value.takenBy === ME)
+/** 芝士 is doing it and nobody has taken it over: 接手 is offered (演示一's scripted task excepted). */
+const canTake = computed(
+  () =>
+    !ours.value &&
+    !!thing.value.copy &&
+    thing.value.doer === 'cheese' &&
+    thing.value.status === 'run' &&
+    !thing.value.takenBy
+)
 /** It can be started: 演示一's task, or a 讨论 about code where 芝士 has a change to offer. */
 const startable = computed(() => talk.value && (ours.value || !!thing.value.copy))
 const chanTitle = computed(() => CHANNELS.find((c) => c.id === thing.value.chan)?.title ?? '')
@@ -148,16 +167,23 @@ const tab = computed(() => (tabs.value.some((t) => t.key === S.rtab) ? S.rtab : 
 
 /** What the 一件事 changed: the scripted task's files, or each file of its copy against 正式版 as it reads now
  *  (what 采纳 would do), and once 采纳ed against what 正式版 read then. Files it has not changed are left out. */
+const states = computed(() => (thing.value.copy ? copyState(thing.value) : []))
+/** 正式版 moved since the copy was taken. */
+const stale = computed(() => states.value.some((x) => x.stale))
+/** Blocks both changed and nobody has picked a side for yet: 采纳 waits on them. */
+const open = computed(() => states.value.reduce((n, x) => n + x.open, 0))
+const blocks = computed(() => states.value.reduce((n, x) => n + x.blocks.length, 0))
+const staleBy = computed(() => [...new Set(states.value.flatMap((x) => x.by))].map((h) => NAMES[h]).join('、'))
+const doerName = computed(() => NAMES[thing.value.doer ?? 'cheese'])
 const diffs = computed(() => {
   const t = thing.value
-  if (ours.value) return TASK_DIFFS
-  const p = projectOfChan(t.chan)
-  return Object.entries(t.copy ?? {})
-    .map(([path, c]) => ({ path, before: t.status === 'done' ? c.base : officialText(p, path), after: c.text }))
+  if (ours.value && !stale.value) return TASK_DIFFS
+  return states.value
+    .map((x) => ({ path: x.path, before: t.status === 'done' ? t.copy![x.path]!.base : x.now, after: x.text }))
     .filter((x) => x.before !== x.after)
     .map((x) => diffText(x.path, x.before, x.after))
 })
-const acceptThis = () => (ours.value ? accept() : acceptCopy(thing.value.id))
+const acceptThis = () => acceptCopy(thing.value.id)
 
 // ---- 资料 ----
 const SOURCES = computed(() =>
@@ -319,11 +345,26 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
           >改好了</BaseButton
         >
       </template>
+      <template v-else-if="takenByMe && thing.status === 'run'">
+        <BaseButton id="b-edit-copy" kind="ghost" size="sm" @click="editCopy(thing.id)">去副本里改</BaseButton>
+        <BaseButton id="b-give" kind="primary" size="sm" @click="giveBack(thing.id)">还给芝士</BaseButton>
+      </template>
       <BaseButton
-        v-else-if="thing.status === 'wait' && (ours || thing.copy)"
+        v-else-if="canTake"
+        id="b-take"
+        kind="secondary"
+        size="sm"
+        title="芝士先停下，你在这件事的副本里接着改"
+        @click="takeOver(thing.id)"
+        >接手</BaseButton
+      >
+      <BaseButton
+        v-else-if="thing.status === 'wait' && thing.copy"
         id="b-accept"
         kind="primary"
         size="sm"
+        :disabled="open > 0"
+        :title="open ? '先在「改动」里挑两边都改了的那几行用哪边' : ''"
         @click="acceptThis"
       >
         采纳
@@ -428,8 +469,10 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
             }}</span>
             <span class="ot-head__gap" />
             <template v-if="thing.status === 'wait'">
-              <BaseButton id="b-accept-tab" kind="secondary" size="sm" @click="accept">采纳</BaseButton>
-              <BaseButton id="b-accept-open" kind="primary" size="sm" @click="acceptAndOpen"
+              <BaseButton id="b-accept-tab" kind="secondary" size="sm" :disabled="open > 0" @click="acceptThis"
+                >采纳</BaseButton
+              >
+              <BaseButton id="b-accept-open" kind="primary" size="sm" :disabled="open > 0" @click="acceptAndOpen"
                 >采纳并在编辑器里打开</BaseButton
               >
             </template>
@@ -464,14 +507,62 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
               @click="editCopy(thing.id)"
               >去副本里改</BaseButton
             >
-            <BaseButton v-if="thing.status === 'wait'" id="b-accept-tab" kind="primary" size="sm" @click="acceptThis"
+            <BaseButton
+              v-if="thing.status === 'wait'"
+              id="b-accept-tab"
+              kind="primary"
+              size="sm"
+              :disabled="open > 0"
+              @click="acceptThis"
               >采纳</BaseButton
             >
           </div>
-          <p v-if="!mineToDo && thing.status !== 'done'" class="ot-chg__hint">
+          <p v-if="!mineToDo && !takenByMe && thing.status !== 'done'" class="ot-chg__hint">
             要改哪里，<button type="button" class="ot-chg__tell" @click="tellCheese">在对话里告诉芝士</button
             >，它在自己那份上接着改。
           </p>
+        </div>
+        <div v-if="stale" class="ot-stale" data-zone="stale">
+          <div class="ot-stale__head">
+            <v-icon size="15" icon="mdi-source-merge" />正式版在这期间改过{{ staleBy ? `（${staleBy}直接改的）` : '' }}
+          </div>
+          <p class="ot-stale__note">
+            {{
+              blocks
+                ? '两边改了不同地方的，采纳时都留着；下面这几行两边都改了，挑一边再采纳。'
+                : `两边改的不是同一处：采纳时${thing.doer === ME ? '' : '芝士'}先跟上最新的正式版，这期间的改动都留着。`
+            }}
+          </p>
+          <template v-for="x in states" :key="x.path">
+            <div v-for="(b, k) in x.blocks" :key="k" class="ot-conf" :data-conflict="`${x.path}:${k}`">
+              <div class="ot-conf__title">
+                <code>{{ x.path }}</code> · 两边都改了这几行{{ x.picks[k] ? '' : '，挑一边' }}
+              </div>
+              <div class="ot-conf__sides">
+                <button
+                  v-for="side in ['ours', 'theirs'] as const"
+                  :key="side"
+                  type="button"
+                  class="ot-conf__side"
+                  :class="{ 'is-on': x.picks[k] === side, 'is-off': x.picks[k] && x.picks[k] !== side }"
+                  :data-pick="side"
+                  :aria-pressed="x.picks[k] === side"
+                  @click="pickSide(thing.id, x.path, k, side)"
+                >
+                  <span class="ot-conf__label">
+                    <v-icon size="14" :icon="x.picks[k] === side ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" />{{
+                      side === 'ours'
+                        ? `正式版现在的${x.by.length ? `（${x.by.map((h) => NAMES[h]).join('、')}改的）` : ''}`
+                        : `这件事的（${doerName}改的）`
+                    }}
+                  </span>
+                  <pre class="ot-conf__code">{{
+                    (side === 'ours' ? b.ours : b.theirs).join('\n') || '（删掉了这几行）'
+                  }}</pre>
+                </button>
+              </div>
+            </div>
+          </template>
         </div>
         <ChangesDiffList
           v-if="diffs.length"
@@ -751,6 +842,92 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
   cursor: pointer;
   background: none;
   border: 0;
+}
+
+.ot-stale {
+  padding: 8px 12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ot-stale__head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+.ot-stale__note {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.ot-conf + .ot-conf {
+  margin-top: 8px;
+}
+
+.ot-conf__title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.ot-conf__title code {
+  font-family: var(--font-mono);
+}
+
+/* The two sides of one block, side by side: the picked one carries the ink, the other steps back. */
+.ot-conf__sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ot-conf__side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.ot-conf__side:hover {
+  border-color: var(--faint);
+}
+
+.ot-conf__side.is-on {
+  border-color: var(--ink);
+}
+
+.ot-conf__side.is-off {
+  opacity: 0.55;
+}
+
+.ot-conf__label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.ot-conf__code {
+  margin: 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre;
 }
 
 .ot-src {

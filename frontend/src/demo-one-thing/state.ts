@@ -2,7 +2,7 @@
 // every click (a person's or the scripted cursor's) goes through the actions
 // below, so playing, stepping and clicking by hand always agree.
 import type { ReactionAgg } from '@/cx_types'
-import type { Submission, Verdict } from './course'
+import type { RunInput, RunOut, Submission, Verdict } from './course'
 
 import { reactive } from 'vue'
 
@@ -37,7 +37,6 @@ import {
   type ProjectKey,
   projectOfChan,
   projectTeam,
-  TASK_DIFFS,
   teamOf,
 } from './data'
 import { V } from './variants'
@@ -50,7 +49,7 @@ export type Status = 'talk' | 'run' | 'wait' | 'done'
 export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'space' | 'team'
 export type SpacePage = 'tasks' | 'announce' | 'library'
 /** The bottom panel's 输出 for one file. */
-export type Out = { kind: 'running' } | { kind: 'run'; cmd: string; out: string }
+export type Out = { kind: 'running' } | ({ kind: 'run' } & RunOut)
 export type ChanView = 'doc' | 'talk'
 
 /** One thing said: in a channel, or inside a 一件事. */
@@ -92,7 +91,20 @@ export interface Thing {
   /** A 一件事 that changes code: its own copy of each file it touches (what 正式版 read when the copy was
    *  taken, and the copy's text now). Only 采纳, in the 一件事, puts it into 正式版. */
   copy?: Record<string, { base: string; text: string }>
+  /** When the copy was taken from 正式版 (开工, or opening it to do oneself): 正式版 changed after it is a conflict to settle at 采纳. */
+  copyAt?: string
+  /** Files it adds that are not code (演示一's result table), named in the 历史 entry its 采纳 makes. */
+  adds?: string[]
+  /** A person who took over 芝士's copy (接手): 芝士 waits until it is given back. */
+  takenBy?: string | null
+  /** Someone took it over at some point: its 采纳 says so. */
+  tookOver?: boolean
+  /** Where 正式版 and the copy both changed the same lines: which side the adopter picked, per file and block. */
+  picks?: Record<string, Record<number, Side>>
 }
+
+/** A side of a block both 正式版 and a 一件事's copy changed: 正式版 as it reads now, or the 一件事's. */
+export type Side = 'ours' | 'theirs'
 
 export interface HistoryEntry {
   who: string
@@ -106,6 +118,10 @@ export interface HistoryEntry {
   prevs?: Record<string, string>
   /** Nothing to take back (领取 itself). */
   fixed?: boolean
+  /** How it got into 正式版 when it was a 一件事's 采纳: the 一件事 (linked when there is one), and who did it. */
+  via?: { thing?: string; title: string; by: string }
+  /** The document or file it is about when that is not `file` or `prevs` (a document, a run): for 这个文件's 历史. */
+  about?: string
   /** A 运行 in the project's environment (方案 T1): recorded, nothing to take back; a rerun of the same
    *  file right after only counts up. */
   run?: boolean
@@ -208,7 +224,6 @@ function initial() {
     toast: '',
     toastTick: 0,
     settingsSection: 'project',
-    settingsAgentDirect: false,
     /** 正式版受保护, per shared project: every change goes through a 一件事, people's too; 正式版 is read-only. */
     protectMain: {} as Record<string, boolean>,
     settingsNotify: 'mentions',
@@ -231,6 +246,8 @@ function initial() {
     /** The code view's bottom panel: which tab (输出 / 终端 under 方案 T3), and each file's 输出. */
     outTab: 'out' as 'out' | 'term',
     out: {} as Record<string, Out>,
+    /** What 运行 feeds a 题单 problem's file, per file: 样例 1, 样例 2, or the custom input typed here. */
+    runIn: {} as Record<string, { pick: 0 | 1 | 'custom'; text: string }>,
     /** Each project's terminal transcript (方案 T3: the person's own environment). */
     term: {} as Record<string, { cmd: string; out: string }[]>,
     /** Every submission to each 题目, newest first: recorded on the 题目, not in the project. */
@@ -254,17 +271,33 @@ function initial() {
       week3: [],
       shelllab: [],
       research: [
-        { who: 'wanglei', what: '改了《组会纪要 11-07》', at: minsAgo(9) },
+        { who: 'wanglei', what: '直接改了《组会纪要 11-07》', at: minsAgo(9), about: MINUTES_DOC },
         {
           who: 'wanglei',
-          what: '改了 configs/clip_vit_b32.yaml',
+          what: '直接改了 configs/clip_vit_b32.yaml',
           at: minsAgo(26),
           file: 'configs/clip_vit_b32.yaml',
           prev: CODE['configs/clip_vit_b32.yaml']!.before.join('\n').replace('batch_size: 256', 'batch_size: 128'),
         },
-        { who: 'chensiyuan', what: '采纳了任务「补长描述截断实验」：改了 2 个文件', at: dayAt(1, 17, 42) },
-        { who: 'zhaoyutong', what: '上传了 report/中期报告.docx', at: dayAt(1, 11, 5) },
-        { who: 'wanglei', what: '采纳了任务「BLIP 精读笔记」：新增 docs/papers/BLIP-精读.md', at: dayAt(3, 15, 20) },
+        {
+          who: 'chensiyuan',
+          what: '采纳了「补长描述截断实验」（芝士做的）：改了 2 个文件',
+          at: dayAt(1, 17, 42),
+          via: { title: '补长描述截断实验', by: '芝士做的' },
+        },
+        {
+          who: 'zhaoyutong',
+          what: '直接上传了 report/中期报告.docx',
+          at: dayAt(1, 11, 5),
+          about: 'report/中期报告.docx',
+        },
+        {
+          who: 'wanglei',
+          what: '采纳了「BLIP 精读笔记」（芝士做的）：新增 docs/papers/BLIP-精读.md',
+          at: dayAt(3, 15, 20),
+          via: { title: 'BLIP 精读笔记', by: '芝士做的' },
+          about: 'docs/papers/BLIP-精读.md',
+        },
       ],
     } as Record<ProjectKey, HistoryEntry[]>,
     things: [
@@ -749,7 +782,7 @@ export function snapshot(p: ProjectKey, path: string, quiet = true): void {
   const prev = S.snapBase[k]
   if (prev === undefined) return
   delete S.snapBase[k]
-  if (prev !== officialText(p, path)) log(p, ME, `改了 ${path}`, { file: path, prev })
+  if (prev !== officialText(p, path)) log(p, ME, `直接改了 ${path}`, { file: path, prev })
   if (!quiet) toast(`已记进历史：${path}`)
 }
 
@@ -795,13 +828,19 @@ export function researchRun(path: string, text: string): { cmd: string; out: str
   return { cmd: `bash -n ${path}`, out: '语法检查通过（只检查，不下载）' }
 }
 
-function runOf(p: ProjectKey, path: string, text: string) {
+function runOf(p: ProjectKey, path: string, text: string): RunOut {
   const unit = unitOf(p, path)
   if (!unit) return researchRun(path, text)
   // The same check 运行 prints, kept as a count for the 题目 card's first line.
   const v = UNITS[unit]!.judge(text)
   S.ran[unit] = { ok: v.rows.filter((r) => r.ok).length, total: v.rows.length }
-  return UNITS[unit]!.run(text)
+  const sel = S.runIn[fkey(p, path)]
+  const input: RunInput | undefined = !sel
+    ? undefined
+    : sel.pick === 'custom'
+      ? { custom: sel.text }
+      : { sample: sel.pick }
+  return UNITS[unit]!.run(text, input)
 }
 
 /** A run in the project's environment, in 历史: no 撤回, and running the same file again only updates it. */
@@ -814,7 +853,7 @@ function logRun(p: ProjectKey, path: string): void {
     top.fresh = true
     return
   }
-  log(p, ME, what, { run: true, runs: 1 })
+  log(p, ME, what, { run: true, runs: 1, about: path })
 }
 
 /** 运行: the file as it reads now (in a 一件事's copy, that copy). The output lands in the bottom panel. */
@@ -1176,6 +1215,7 @@ function startCopy(t: Thing): void {
   const p = projectOfChan(t.chan)
   const at = new Date().toISOString()
   for (const [path, c] of Object.entries(t.copy!)) c.base = officialText(p, path)
+  t.copyAt = at
   t.status = 'run'
   t.at = at
   t.last = '芝士：开始改了，在自己那份上'
@@ -1194,7 +1234,7 @@ function startCopy(t: Thing): void {
 /** 芝士 is done with its copy: the change waits for 采纳, in the 一件事. */
 export function finishCopy(id: string): void {
   const t = thingById(id)
-  if (!t?.copy || t.status !== 'run' || t.doer !== 'cheese') return
+  if (!t?.copy || t.status !== 'run' || t.doer !== 'cheese' || t.takenBy) return
   const path = Object.keys(t.copy)[0]!
   t.status = 'wait'
   t.at = new Date().toISOString()
@@ -1211,9 +1251,8 @@ export function finishCopy(id: string): void {
 /** The 一件事 whose copy I am typing in, in this project (开一件事自己做), while it is not finished. */
 export function myCopy(p: ProjectKey): Thing | null {
   const t = thingById(S.inCopy)
-  return t?.copy && t.doer === ME && projectOfChan(t.chan) === p && (t.status === 'run' || t.status === 'wait')
-    ? t
-    : null
+  const mine = t?.doer === ME || t?.takenBy === ME
+  return t?.copy && mine && projectOfChan(t.chan) === p && (t.status === 'run' || t.status === 'wait') ? t : null
 }
 
 /** 开一件事自己做: a person's try at the open file is a 一件事 too, in the file's channel, with the person
@@ -1240,6 +1279,7 @@ export function openOwnThing(): void {
     at,
     talk: [{ id: `${id}k`, mark: `${NAMES[ME]} 开了这件事 · 自己做`, at }],
     copy: { [path]: { base, text: base } },
+    copyAt: at,
   })
   ;(S.chat[chan] ??= []).push({ id: `${id}m`, who: ME, at, text: `开一件事自己做：试改 \`${path}\``, thing: id })
   S.inCopy = id
@@ -1249,7 +1289,7 @@ export function openOwnThing(): void {
 /** Back into a 一件事's copy (from the 一件事): the editor opens on its first file. */
 export function editCopy(id: string): void {
   const t = thingById(id)
-  if (!t?.copy || t.doer !== ME) return
+  if (!t?.copy || (t.doer !== ME && t.takenBy !== ME)) return
   const p = projectOfChan(t.chan)
   if (S.project !== p) switchProject(p)
   S.inCopy = id
@@ -1281,38 +1321,232 @@ export function markDone(id: string): void {
   })
 }
 
-/** The 一件事 whose copy changes this file, while it is being done or waits for 采纳 (演示一's task by its diffs). */
+/** The 一件事 whose copy changes this file, while it is being done or waits for 采纳. */
 export function thingsOnFile(p: ProjectKey, path: string): Thing[] {
   return S.things.filter(
-    (t) =>
-      projectOfChan(t.chan) === p &&
-      (t.status === 'run' || t.status === 'wait') &&
-      (t.copy ? path in t.copy : t.id === 't4' && TASK_DIFFS.some((d) => d.path === path))
+    (t) => projectOfChan(t.chan) === p && (t.status === 'run' || t.status === 'wait') && !!t.copy && path in t.copy
   )
 }
 
-/** 采纳 a 一件事's copy: each file it changed becomes 正式版, as one 历史 entry that 撤回 can take back. */
+/** A line of the 一件事's own conversation (演示一's task keeps its scripted lines; what is added goes after them). */
+function say(t: Thing, line: ChatLine | MarkLine): void {
+  if (t.talk) t.talk.push(line)
+  else (S.extra[t.id] ??= []).push(line as ChatLine)
+}
+
+/** Lines [s, e) of one version replaced by `lines` in another. */
+interface Hunk {
+  s: number
+  e: number
+  lines: string[]
+}
+
+/** The changes from `a` to `b` as hunks over a's lines (a longest-common-subsequence walk; the files are short). */
+function hunksOf(a: string[], b: string[]): Hunk[] {
+  const L = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0))
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      L[i]![j] = a[i] === b[j] ? L[i + 1]![j + 1]! + 1 : Math.max(L[i + 1]![j]!, L[i]![j + 1]!)
+  const out: Hunk[] = []
+  let cur: Hunk | null = null
+  let i = 0
+  let j = 0
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      if (cur) out.push(cur)
+      cur = null
+      i++
+      j++
+      continue
+    }
+    cur ??= { s: i, e: i, lines: [] }
+    if (i < a.length && (j === b.length || L[i + 1]![j]! >= L[i]![j + 1]!)) cur.e = ++i
+    else cur.lines.push(b[j++]!)
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+/** One stretch of a three-way merge: lines both sides agree on, or a block both changed differently. */
+export type MergePart = { same: string[] } | { ours: string[]; theirs: string[] }
+
+/** 正式版 as it reads now (ours) and the 一件事's copy (theirs), both from the copy's base: where they changed
+ *  different lines both changes are kept; where they changed the same lines the block is left for a person. */
+function merge3(base: string, ours: string, theirs: string): MergePart[] {
+  const B = base.split('\n')
+  const tagged = [
+    ...hunksOf(B, ours.split('\n')).map((h) => ({ ...h, side: 'ours' as Side })),
+    ...hunksOf(B, theirs.split('\n')).map((h) => ({ ...h, side: 'theirs' as Side })),
+  ].sort((x, y) => x.s - y.s || x.e - y.e)
+  const parts: MergePart[] = []
+  const keep = (lines: string[]) => lines.length && parts.push({ same: lines })
+  let at = 0
+  let k = 0
+  while (k < tagged.length) {
+    const group = [tagged[k++]!]
+    let gs = group[0]!.s
+    let ge = group[0]!.e
+    // A hunk joins the block when it overlaps it, or starts where it starts (two insertions at one place).
+    while (k < tagged.length && (tagged[k]!.s < ge || tagged[k]!.s === gs)) {
+      const h = tagged[k++]!
+      group.push(h)
+      gs = Math.min(gs, h.s)
+      ge = Math.max(ge, h.e)
+    }
+    keep(B.slice(at, gs))
+    const sideText = (side: Side) => {
+      const out: string[] = []
+      let c = gs
+      for (const h of group.filter((x) => x.side === side)) {
+        out.push(...B.slice(c, h.s), ...h.lines)
+        c = h.e
+      }
+      return [...out, ...B.slice(c, ge)]
+    }
+    const o = sideText('ours')
+    const t = sideText('theirs')
+    const sides = new Set(group.map((h) => h.side))
+    if (sides.size === 1) keep(sides.has('ours') ? o : t)
+    else if (o.join('\n') === t.join('\n')) keep(o)
+    else parts.push({ ours: o, theirs: t })
+    at = ge
+  }
+  keep(B.slice(at))
+  return parts
+}
+
+/** Where a 一件事's copy stands against 正式版 now, per file it changed: whether 正式版 moved since the copy was
+ *  taken, who moved it, the blocks both changed, and the text 采纳 would write (blocks not yet picked: the copy's). */
+export function copyState(t: Thing) {
+  const p = projectOfChan(t.chan)
+  return Object.entries(t.copy ?? {})
+    .filter(([, c]) => c.text !== c.base)
+    .map(([path, c]) => {
+      const now = officialText(p, path)
+      const stale = t.status !== 'done' && now !== c.base
+      const parts = stale ? merge3(c.base, now, c.text) : [{ same: c.text.split('\n') }]
+      const picks = t.picks?.[path] ?? {}
+      let n = 0
+      const lines = parts.flatMap((x) => ('same' in x ? x.same : picks[n++] === 'ours' ? x.ours : x.theirs))
+      const blocks = parts.filter((x): x is { ours: string[]; theirs: string[] } => !('same' in x))
+      const by = [
+        ...new Set(
+          S.history[p]
+            .filter((h) => h.at > (t.copyAt ?? '') && (h.file === path || (h.prevs && path in h.prevs)))
+            .map((h) => h.who)
+        ),
+      ]
+      return {
+        path,
+        now,
+        stale,
+        by,
+        blocks,
+        picks,
+        text: lines.join('\n'),
+        open: blocks.length - Object.keys(picks).length,
+      }
+    })
+}
+
+/** The adopter's choice for one block both sides changed. */
+export function pickSide(id: string, path: string, block: number, side: Side): void {
+  const t = thingById(id)
+  if (!t) return
+  ;((t.picks ??= {})[path] ??= {})[block] = side
+}
+
+/** Who did a 一件事, as its 采纳 says it: 「芝士做的」, 「林晓做的」, 「芝士做的，林晓接手改过」. */
+const byText = (t: Thing) => `${NAMES[t.doer ?? 'cheese']}做的${t.tookOver ? `，${NAMES[ME]}接手改过` : ''}`
+
+/** 采纳, the one way a 一件事 reaches 正式版 (演示一's task, 芝士's, a person's own). Each file it changed becomes
+ *  正式版 as one 历史 entry that names the 一件事 and who did it, and 撤回 can take back. If 正式版 moved
+ *  meanwhile, nothing is overwritten: the copy first catches up with 正式版 (a line in the 一件事's conversation),
+ *  and a block both changed takes the side the adopter picked; with a block not picked yet, 采纳 waits. */
 export function acceptCopy(id: string): void {
   const t = thingById(id)
   if (!t?.copy || t.status !== 'wait') return
   const p = projectOfChan(t.chan)
+  for (const path of Object.keys(t.copy)) snapshot(p, path)
+  const states = copyState(t)
+  if (states.some((x) => x.open > 0)) {
+    toast('两边都改了同一处：先在「改动」里挑用哪边')
+    return
+  }
+  const at = new Date().toISOString()
+  const stale = states.filter((x) => x.stale)
+  if (stale.length) {
+    const kept = [...new Set(stale.flatMap((x) => x.by))].map((h) => NAMES[h]).join('、') || '别人'
+    const picked = stale.reduce((n, x) => n + x.blocks.length, 0)
+    const text = `跟上了最新的正式版：${kept}这期间的改动都留着${picked ? `，${picked} 处两边都改的用了${NAMES[ME]}挑的那边` : ''}。`
+    say(
+      t,
+      t.doer === ME ? { id: `${id}u`, mark: `${NAMES[ME]} ${text}`, at } : { id: `${id}u`, who: 'cheese', at, text }
+    )
+  }
   const prevs: Record<string, string> = {}
-  for (const [path, c] of Object.entries(t.copy)) {
-    snapshot(p, path)
-    const prev = officialText(p, path)
-    if (c.text === prev) continue
-    prevs[path] = prev
-    c.base = prev
-    S.official[fkey(p, path)] = c.text
+  for (const x of states) {
+    if (x.text === x.now) continue
+    prevs[x.path] = x.now
+    t.copy[x.path] = { base: x.now, text: x.text }
+    S.official[fkey(p, x.path)] = x.text
   }
   if (S.inCopy === id) S.inCopy = null
   t.status = 'done'
-  t.at = new Date().toISOString()
+  t.at = at
   t.last = '已采纳 · 合进正式版'
-  t.talk!.push({ id: `${id}y`, mark: `${NAMES[ME]} 采纳 · 已合进正式版`, at: t.at, ok: true })
+  t.takenBy = null
+  // 演示一's task says 采纳 in its own scripted conversation.
+  if (t.talk) say(t, { id: `${id}y`, mark: `${NAMES[ME]} 采纳 · 已合进正式版`, at, ok: true })
   const paths = Object.keys(prevs)
-  if (paths.length) log(p, ME, `采纳了「${t.title}」：改了 ${paths.join('、')}`, { prevs })
-  toast(paths.length ? '已采纳：进了正式版' : '已采纳：副本和正式版一样，没有要改的')
+  const by = byText(t)
+  const what = [paths.length ? `改了 ${paths.join('、')}` : '', t.adds?.length ? `新增 ${t.adds.join('、')}` : '']
+    .filter(Boolean)
+    .join('，')
+  if (what) log(p, ME, `采纳了「${t.title}」（${by}）：${what}`, { prevs, via: { thing: id, title: t.title, by } })
+  if (S.thing === id && t.adds?.length) S.rtab = 'result'
+  toast(what ? '已采纳：进了正式版' : '已采纳：副本和正式版一样，没有要改的')
+}
+
+/** 接手: a person takes 芝士's copy over; 芝士 stops and says so. The editor opens in that copy. */
+export function takeOver(id: string): void {
+  const t = thingById(id)
+  if (!t?.copy || t.doer !== 'cheese' || t.status !== 'run' || t.takenBy || t.id === 't4') return
+  const at = new Date().toISOString()
+  t.takenBy = ME
+  t.tookOver = true
+  t.last = `${NAMES[ME]} 接手了，芝士先停下`
+  say(t, { id: nextId('k'), mark: `${NAMES[ME]} 接手`, at })
+  say(t, {
+    id: nextId('c'),
+    who: 'cheese',
+    at,
+    text: '好，我先停下。你在这件事的副本里改、运行都行，改完点「还给芝士」，我接着做。',
+  })
+  editCopy(id)
+  toast('接手了：你在芝士那份副本里改，芝士先停下')
+}
+
+/** 还给芝士: the copy goes back with what the person changed in it; 芝士 picks up from there. */
+export function giveBack(id: string): void {
+  const t = thingById(id)
+  if (!t?.takenBy) return
+  const at = new Date().toISOString()
+  t.takenBy = null
+  if (S.inCopy === id) S.inCopy = null
+  t.last = '芝士：接着做，你改的都留着'
+  say(t, { id: nextId('k'), mark: `${NAMES[ME]} 还给芝士`, at })
+  say(t, { id: nextId('c'), who: 'cheese', at, text: '收到，我接着做。你在副本里改的都留着。' })
+  toast('还给芝士了')
+  later(4000, () => finishCopy(id))
+}
+
+/** 王磊 (or another teammate) typing into 正式版 in the demo: his edit takes effect and is his 历史 entry. */
+export function editAs(who: string, p: ProjectKey, path: string, text: string): void {
+  const prev = officialText(p, path)
+  if (prev === text) return
+  S.official[fkey(p, path)] = text
+  log(p, who, `直接改了 ${path}`, { file: path, prev })
 }
 
 // ---- 领取: a 题目 becomes a project owned by a team ----
@@ -1513,6 +1747,15 @@ export function confirmKick(): void {
   if (!t) return
   S.sheet = false
   if (t.id !== 't4') return startCopy(t)
+  // 演示一's task: 芝士's copy of the two code files it changes, and the result table it adds.
+  const at = new Date().toISOString()
+  t.copy = Object.fromEntries(
+    Object.entries(CODE)
+      .filter(([, c]) => c.after)
+      .map(([path, c]) => [path, { base: officialText('research', path), text: c.after!.join('\n') }])
+  )
+  t.copyAt = at
+  t.adds = ['results/eval_results.md']
   t.status = 'run'
   t.last = '芝士：开始改了，先对齐预处理'
   t.at = new Date().toISOString()
@@ -1532,27 +1775,12 @@ export function finish(): void {
   S.live = 5
 }
 
-export function accept(): void {
-  const t = t4()
-  if (!t || t.status !== 'wait') return
-  t.status = 'done'
-  t.last = '已采纳 · 合进正式版'
-  t.at = new Date().toISOString()
-  S.rtab = 'result'
-  const prevs: Record<string, string> = {}
-  for (const [path, c] of Object.entries(CODE)) {
-    if (!c.after) continue
-    prevs[path] = officialText('research', path)
-    S.official[fkey('research', path)] = c.after.join('\n')
-  }
-  log('research', ME, '采纳了任务「统一评测脚本」：改了 2 个文件，新增 results/eval_results.md', { prevs })
-  toast('已采纳：进了项目文件的正式版')
-}
-
-/** 采纳并在编辑器里打开: accept, then open the first changed file on 正式版, where people edit it directly. */
+/** 采纳并在编辑器里打开: 采纳, then open the first changed file on 正式版, where people edit it directly. */
 export function acceptAndOpen(): void {
-  accept()
-  openFile('eval/preprocess.py')
+  const t = thingById(S.thing)
+  if (!t) return
+  acceptCopy(t.id)
+  if (t.status === 'done') openFile(Object.keys(t.copy ?? {})[0] ?? 'eval/preprocess.py')
 }
 
 /** Tell 芝士 what to change in its copy: the task's own conversation, with an @ ready. */
@@ -1564,14 +1792,14 @@ export function tellCheese(): void {
 export function suggAccept(): void {
   if (S.suggAccepted) return
   S.suggAccepted = true
-  log('research', ME, '接受了芝士对《组会纪要 11-07》的建议')
+  log('research', ME, '接受了芝士对《组会纪要 11-07》的建议', { about: MINUTES_DOC })
   toast('建议已接受，进了正式版')
 }
 
 export function suggReject(): void {
   if (S.suggAccepted || S.suggRejected) return
   S.suggRejected = true
-  log('research', ME, '拒绝了芝士对《组会纪要 11-07》的建议')
+  log('research', ME, '拒绝了芝士对《组会纪要 11-07》的建议', { about: MINUTES_DOC })
   toast('建议已拒绝，正式版不变')
 }
 

@@ -3,33 +3,49 @@
 // what happened, not a second place to change things: 采纳 happens only in a
 // 一件事. On top, while there is any, 「正在改这个文件的事」: each 一件事 whose
 // copy touches this file, with who does it and where it stands; a row opens
-// the 一件事 in its channel, on 改动. Under it, 历史: every change that took
-// effect on 正式版 (each pause in a person's typing, each 采纳) with 撤回 (the
+// the 一件事 in its channel, on 改动. Under it, 历史, of the whole project or
+// of this file only: every change that took effect on 正式版, each saying who
+// and through what: 「直接改了」 (a person's typing, each pause one entry) or
+// 「采纳了「<事名>」（芝士做的 / 林晓做的）」, the name opening that 一件事.
+// Each has 撤回 (the
 // newest shows it without a hover), and, under 方案 T1, each 运行 in the
 // project's environment, collapsed to one quiet line with no 撤回. No
 // submission record either: submissions belong to the 题目 and are listed on it
 // in the space.
-import { computed } from 'vue'
+import type { HistoryEntry } from './state'
+
+import { computed, ref } from 'vue'
 
 import { NAMES } from './data'
 import { openThing, S, snapshotAll, type Thing, thingsOnFile, undo } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { relTime } from '@/lib/relTime'
 
-const history = computed(() => S.history[S.project])
+/** 历史 of the whole project, or only what touched this file. */
+const scope = ref<'all' | 'file'>('all')
+const SCOPES = [
+  { value: 'all' as const, label: '整个项目' },
+  { value: 'file' as const, label: '这个文件' },
+]
+const touches = (h: HistoryEntry, path: string) => h.file === path || h.about === path || !!h.prevs?.[path]
+const history = computed(() =>
+  scope.value === 'all' ? S.history[S.project] : S.history[S.project].filter((h) => touches(h, S.file))
+)
+/** What an 采纳 entry says after the 一件事's name and who did it: 「：改了 …」. */
+const rest = (h: HistoryEntry) => h.what.slice(`采纳了「${h.via!.title}」（${h.via!.by}）`.length)
 const onFile = computed(() => thingsOnFile(S.project, S.file))
 /** Who does a 一件事 once started: 芝士 unless a person opened it to do it themselves. */
 const doer = (t: Thing) => t.doer ?? 'cheese'
 const where = (t: Thing) =>
   t.status === 'wait' ? '等采纳' : doer(t) === 'cheese' ? '芝士在做' : `${NAMES[doer(t)]}在改`
-function undoAt(i: number) {
+function undoAt(h: HistoryEntry) {
   // A burst of typing still open becomes its own entry first, so 撤回 takes back what was clicked.
-  const n = history.value.length
   snapshotAll()
-  undo(i + history.value.length - n)
+  undo(S.history[S.project].indexOf(h))
 }
 </script>
 
@@ -57,7 +73,11 @@ function undoAt(i: number) {
           <v-icon size="14" icon="mdi-chevron-right" class="ot-fp__go" />
         </button>
       </section>
-      <h3 class="t-eyebrow-read ot-fp__label">历史</h3>
+      <div class="ot-fp__histhead">
+        <h3 class="t-eyebrow-read ot-fp__label">历史</h3>
+        <span class="ot-head__gap" />
+        <SegmentedControl v-model="scope" :options="SCOPES" label="历史的范围" size="sm" data-hist-scope />
+      </div>
       <ol class="ot-hist">
         <li
           v-for="(h, i) in history"
@@ -76,12 +96,24 @@ function undoAt(i: number) {
             <CheeseAvatar v-if="h.who === 'cheese'" :size="22" name="芝士" handle="cheese" />
             <UserAvatar v-else :size="22" :name="NAMES[h.who]" :seed="h.who" />
             <div class="ot-hist__text">
-              <span
+              <span v-if="h.via" data-via
+                ><b>{{ NAMES[h.who] }}</b> 采纳了「<button
+                  v-if="h.via.thing"
+                  type="button"
+                  class="ot-hist__thing"
+                  title="打开这件事"
+                  @click="openThing(h.via.thing, 'changes')"
+                >
+                  {{ h.via.title }}</button
+                ><template v-else>{{ h.via.title }}</template
+                >」<span class="ot-hist__by">（{{ h.via.by }}）</span>{{ rest(h) }}</span
+              >
+              <span v-else
                 ><b>{{ NAMES[h.who] }}</b> {{ h.what }}</span
               >
               <span class="t-meta-read" :title="new Date(h.at).toLocaleString()">{{ relTime(h.at) }}</span>
             </div>
-            <BaseButton v-if="!h.fixed" class="ot-hist__undo" kind="ghost" size="sm" @click="undoAt(i)"
+            <BaseButton v-if="!h.fixed" class="ot-hist__undo" kind="ghost" size="sm" @click="undoAt(h)"
               >撤回</BaseButton
             >
           </template>
@@ -248,6 +280,33 @@ function undoAt(i: number) {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--text);
+}
+
+.ot-fp__histhead {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.ot-fp__histhead .ot-fp__label {
+  margin: 0;
+}
+
+.ot-hist__thing {
+  padding: 0;
+  font: inherit;
+  color: var(--accent-ink);
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+.ot-hist__thing:hover {
+  text-decoration: underline;
+}
+
+.ot-hist__by {
+  color: var(--muted);
 }
 
 .ot-hist__text b {

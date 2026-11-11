@@ -5,7 +5,9 @@
 // shows the rules the 题目 brought: 芝士 only hints, the deadline, the code
 // rule (a team's project is edited together; anything tried apart is a
 // 一件事, and 正式版受保护 makes every change one, as in the research project).
-// Every project can be opened in a local editor.
+// Every project can be opened in a local editor. There is no setting for how
+// 芝士's changes land: 正式版 takes only a person's own edit or a 一件事 a
+// person 采纳s, so a 「直接生效」 for 芝士 would be a third way in.
 import { computed, ref } from 'vue'
 
 import { topicOf } from './course'
@@ -176,21 +178,6 @@ const USAGE = [
               variant="outlined"
               autocomplete="off"
               hide-details
-            />
-          </SettingsRow>
-          <SettingsRow
-            label="芝士的改动"
-            description="默认在一件事里等你采纳；改成直接生效后随时可撤回"
-            width="select-wide"
-          >
-            <SegmentedControl
-              :model-value="S.settingsAgentDirect ? 'direct' : 'pending'"
-              :options="[
-                { value: 'pending', label: '等采纳' },
-                { value: 'direct', label: '直接生效' },
-              ]"
-              label="芝士的改动"
-              @update:model-value="S.settingsAgentDirect = $event === 'direct'"
             />
           </SettingsRow>
           <SettingsRow label="正式版受保护" description="改动都要走一件事，正式版只读" width="select">

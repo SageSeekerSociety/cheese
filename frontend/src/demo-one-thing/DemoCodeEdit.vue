@@ -15,7 +15,12 @@
 // 正式版 is read-only and the bar offers 「开一件事来改」.
 // 运行 follows 方案「运行在哪」 (variants.ts): T1 runs in the project's one
 // environment and the bottom panel is labelled 项目环境; T2 has no 运行, only a
-// hint; T3 is my own terminal (输出 / 终端, only I can see it). The editor has
+// hint; T3 is my own terminal (输出 / 终端, only I can see it). A 题单 problem
+// runs like an OJ: beside 运行 a small picker, 样例 1 / 样例 2 / 自定义输入
+// (custom opens a box in the bottom panel), and a 样例 run says 通过 or 不通过
+// against its expected output; Data Lab and Shell Lab run their own tests.
+// A 一件事 of 芝士's that I took over (接手) opens here like my own, its banner
+// saying whose it is, with 还给芝士. The editor has
 // no course control: a submission is made to the 题目 (the origin card in the
 // sidebar). A submission opened from its 题目's 提交记录 shows here read-only.
 // The editing surface is DemoCodeArea (why it is not Monaco is said there).
@@ -25,12 +30,14 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { avatarColor } from '@/utils/avatar'
 
+import { UNITS } from './course'
 import { asContext, isClaim } from './data'
 import DemoCodeArea from './DemoCodeArea.vue'
 import {
   askInChannel,
   codeText,
   fkey,
+  giveBack,
   isSaving,
   leaveCopy,
   lockedMain,
@@ -44,6 +51,7 @@ import {
   termRun,
   thingsOnFile,
   typeCode,
+  unitOf,
 } from './state'
 import { V } from './variants'
 
@@ -143,6 +151,14 @@ const noRun = computed(() => V.run === 'T2')
 /** T3: my own terminal beside 输出. */
 const ownTerm = computed(() => V.run === 'T3')
 const open = ref(true)
+/** A 题单 problem: 运行 takes 样例 1, 样例 2 or custom input. */
+const samples = computed(() => !!UNITS[unitOf(p.value, path.value) ?? '']?.samples)
+const runIn = computed(() => (S.runIn[k.value] ??= { pick: 0, text: '' }))
+const PICKS = [
+  { value: 0, label: '样例 1' },
+  { value: 1, label: '样例 2' },
+  { value: 'custom', label: '自定义输入' },
+] as const
 const out = computed(() => S.out[k.value])
 const term = computed(() => S.term[p.value] ?? [])
 const cmd = ref('')
@@ -194,11 +210,20 @@ function showTab(t: 'out' | 'term') {
     <template v-else>
       <div v-if="copy" class="ot-ced__bar ot-ced__bar--copy" data-zone="copy">
         <v-icon size="15" icon="mdi-source-fork" class="ot-ced__mark" />
-        <span class="ot-ced__copy" :title="`你在「${copy.title}」的副本里改`"
+        <span v-if="copy.takenBy" class="ot-ced__copy" :title="`你接手了芝士的「${copy.title}」`"
+          >你接手了芝士的「<b>{{ copy.title }}</b
+          >」</span
+        >
+        <button v-if="copy.takenBy" id="b-give-back" type="button" class="ot-ced__back" @click="giveBack(copy.id)">
+          · 还给芝士
+        </button>
+        <span v-if="!copy.takenBy" class="ot-ced__copy" :title="`你在「${copy.title}」的副本里改`"
           >你在「<b>{{ copy.title }}</b
           >」的副本里改</span
         >
-        <button id="b-leave-copy" type="button" class="ot-ced__back" @click="leaveCopy">· 回到正式版</button>
+        <button v-if="!copy.takenBy" id="b-leave-copy" type="button" class="ot-ced__back" @click="leaveCopy">
+          · 回到正式版
+        </button>
         <span class="ot-head__gap" />
         <!-- The banner's own words need the room: 看这件事 and 运行 are icons here. -->
         <BaseButton
@@ -267,7 +292,12 @@ function showTab(t: 'out' | 'term') {
           :title="isClaim(p) ? '这门课里芝士只给提示，不替你运行' : '选中代码，在频道里问芝士，它在一件事里跑'"
           ><v-icon size="14" icon="mdi-play-off" />{{ isClaim(p) ? '没有运行' : '运行交给芝士' }}</span
         >
-        <BaseButton v-else id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
+        <template v-else>
+          <select v-if="samples" v-model="runIn.pick" class="ot-ced__insel" aria-label="运行的输入" data-run-input>
+            <option v-for="o in PICKS" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+          <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
+        </template>
       </div>
       <div class="ot-ced__edit">
         <DemoCodeArea
@@ -326,6 +356,17 @@ function showTab(t: 'out' | 'term') {
         />
       </div>
       <div v-if="open && (S.outTab === 'out' || !ownTerm)" class="ot-ced__pbody" role="status">
+        <textarea
+          v-if="samples && runIn.pick === 'custom'"
+          v-model="runIn.text"
+          class="ot-ced__stdin"
+          rows="2"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="自定义输入：程序从这里读，例如 3 4"
+          aria-label="自定义输入"
+          data-run-custom
+        />
         <div v-if="!out" class="ot-ced__hint">
           {{
             ownTerm ? '点「运行」，在你自己的环境里跑这份代码' : '点「运行」，在项目环境里跑这份代码；每次运行记进历史'
@@ -335,6 +376,16 @@ function showTab(t: 'out' | 'term') {
         <template v-else>
           <div class="ot-ced__cmd">$ {{ out.cmd }}</div>
           <pre class="ot-ced__res">{{ out.out }}</pre>
+          <div
+            v-if="out.expect !== undefined"
+            class="ot-ced__verdict"
+            :class="out.pass ? 'is-ok' : 'is-bad'"
+            data-run-verdict
+          >
+            <v-icon size="14" :icon="out.pass ? 'mdi-check-circle-outline' : 'mdi-close-circle-outline'" />{{
+              out.pass ? '通过：和样例输出一致' : `不通过：样例输出是 ${out.expect}`
+            }}
+          </div>
         </template>
       </div>
       <div v-else-if="open" ref="termBody" class="ot-ced__pbody ot-ced__term">
@@ -441,6 +492,48 @@ function showTab(t: 'out' | 'term') {
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
+}
+
+.ot-ced__insel {
+  height: 28px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.ot-ced__stdin {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  margin: 4px 0 6px;
+  font: inherit;
+  color: var(--ink);
+  resize: vertical;
+  background: var(--fill);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.ot-ced__verdict {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.ot-ced__verdict.is-ok {
+  color: var(--ok-ink);
+}
+
+.ot-ced__verdict.is-bad {
+  color: var(--danger-ink);
 }
 
 .ot-ced__runhint {

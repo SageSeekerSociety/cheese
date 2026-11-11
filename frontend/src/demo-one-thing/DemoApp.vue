@@ -2,12 +2,15 @@
 // The demo page: controls, the workspace scaled to the window, the caption
 // under it and the three model cards. Two guided tours share the same
 // mechanics: 「演示一：频道和一件事」 (STEPS, nine steps: a channel, a 一件事 from
-// 讨论 to 采纳, 项目文件) and 「演示二：改代码」 (CODE_STEPS, nine steps, the
+// 讨论 to 采纳, 项目文件) and 「演示二：改代码」 (CODE_STEPS, ten steps, the
 // same one model for code: a person edits 正式版 directly next to 王磊, as in
 // a document; 运行 as the 方案「运行在哪」 now picks it; selected lines are taken
 // to the channel, where @芝士 opens a 讨论, 开工 sends 芝士 to work on the
-// 一件事's own copy, and its 改动 is 采纳ed in the 一件事; a person's own try is
-// a 一件事 too (开一件事自己做), 采纳ed the same way). Each step drives the same actions a click
+// 一件事's own copy; 王磊 edits the same file meanwhile, so at 采纳 the 改动
+// shows 「正式版在这期间改过」, the block both changed is picked by hand and
+// 芝士 catches up before its change goes in; a person's own try is a 一件事
+// too (开一件事自己做), 采纳ed the same way; 历史 names who did each and
+// through which 一件事). Each step drives the same actions a click
 // does; clicking by hand stops the script at any point, and switching tours
 // starts the other one from a fresh state. In a project claimed from a 题目
 // the top bar also has 「模拟：离截止不到 24 小时」, which moves only the clock
@@ -18,11 +21,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { CLOCK } from './course'
 import { ASK, isClaim, ME } from './data'
 import {
-  accept,
   acceptCopy,
   askInChannel,
   codeText,
   confirmKick,
+  editAs,
   finish,
   finishCopy,
   go,
@@ -31,6 +34,7 @@ import {
   openFile,
   openOwnThing,
   openThing,
+  pickSide,
   reply,
   reset,
   runCode,
@@ -369,7 +373,7 @@ const STEPS: (() => Promise<void>)[] = [
   },
   async () => {
     await click('#b-accept')
-    accept()
+    acceptCopy('t4')
     cap(7, '「采纳」：芝士那份进了正式版。成果直接就在项目文件里，不用再「保存」。')
     await wait(2800)
   },
@@ -420,7 +424,7 @@ function instantOne(k: number) {
     finish()
     S.rtab = 'changes'
   }
-  if (k === 6) accept()
+  if (k === 6) acceptCopy('t4')
   if (k === 7) {
     go('files', { file: 'docs/组会纪要-11-07.md' })
     S.typed = TYPED_NOTE
@@ -446,6 +450,9 @@ function selectLine(path: string, line: number) {
 /** The 讨论 opened by asking about the selected line, and 林晓's own try. */
 const asked = () => S.things.find((t) => t.doer === 'cheese' && !!t.copy?.[RET]) ?? null
 const ownTry = () => S.things.find((t) => t.doer === ME && !!t.copy) ?? null
+/** 王磊's edit to 正式版 while 芝士 works: a line on top (not 芝士's lines), and 芝士's line 18 his own way. */
+const wangleiEdit = (t: string) =>
+  `# 评测入口：Flickr30K 1K / COCO 5K\n${t.replace('    return recall_at_1(sims)', '    return round(recall_at_1(sims), 1)')}`
 const toFiles = async (path: string) => {
   await click('[data-nav="files"] .v-list-item')
   openFile(path)
@@ -484,7 +491,7 @@ const CODE_STEPS: (() => Promise<void>)[] = [
     cap(2, '改了就生效，王磊那边马上看到。停顿一下，这次改动就记成一条「历史」。')
     await wait(2200)
     await moveTo('.ot-fp .ot-hist__row:first-child .ot-hist__undo')
-    cap(2, '「林晓 改了 eval/preprocess.py」，旁边就是「撤回」：手滑了，一下退回去。')
+    cap(2, '「林晓 直接改了 eval/preprocess.py」，旁边就是「撤回」：手滑了，一下退回去。')
     await wait(2800)
   },
   async () => {
@@ -552,13 +559,15 @@ const CODE_STEPS: (() => Promise<void>)[] = [
   },
   async () => {
     await toFiles(RET)
-    cap(6, '回到文件：编辑器里还是正式版，一行没变。')
-    await wait(1800)
+    cap(6, '回到文件：编辑器里还是正式版，一行没变；上方写着「有 1 件事在改这个文件」。')
     await moveTo('[data-things-on-file]')
-    cap(6, '编辑器上方只写着「有 1 件事在改这个文件」。')
     await wait(2200)
+    editAs('wanglei', 'research', RET, wangleiEdit(codeText('research', RET)))
+    cap(6, '这时王磊也在直接改这个文件：第 1 行加了一句说明，第 18 行改成保留一位小数。正式版马上就是他改的。')
+    await moveTo('.ot-carea__gutter span:nth-child(19)', 200)
+    await wait(2800)
     await moveTo('.ot-fp [data-zone="things-on-file"] .ot-fp__thing')
-    cap(6, '右栏「正在改这个文件的事」：谁在做、到哪一步。这里没有「采纳」。')
+    cap(6, '右栏「正在改这个文件的事」：芝士那件还在做。这里没有「采纳」。')
     while (asked()?.status === 'run') await wait(200)
     cap(6, '芝士改完了，这一行变成「等采纳」。')
     await wait(2200)
@@ -567,52 +576,67 @@ const CODE_STEPS: (() => Promise<void>)[] = [
     const t = asked()!
     await click('.ot-fp [data-zone="things-on-file"] .ot-fp__thing')
     openThing(t.id, 'changes')
-    cap(7, '点它就回到那件事，正好在「改动」：芝士那份和正式版的差别。')
-    await wait(2800)
+    cap(7, '回到那件事的「改动」：上面写着「正式版在这期间改过（王磊直接改的）」。采纳不会盖掉王磊的改动。')
+    await wait(3000)
+    await moveTo('[data-conflict]')
+    cap(7, '王磊加的第 1 行和芝士改的不是一处，两边都留着；第 18 行两边都改了，并排摆出来，由采纳的人挑。')
+    await wait(3200)
+    await click('[data-conflict] [data-pick="theirs"]')
+    pickSide(t.id, RET, 0, 'theirs')
+    cap(7, '挑「这件事的」：芝士那版一次出三个数，<code>recall_at_k</code> 里已经保留了一位小数。')
+    await wait(2600)
+  },
+  async () => {
+    const t = asked()!
     await click('#b-accept')
     acceptCopy(t.id)
-    cap(7, '「采纳」只在这件事里。')
-    await wait(1600)
-    await toFiles(RET)
-    cap(7, '回到文件：正式版就是新代码。历史里记一条「林晓 采纳了…」，和自己改的一样能撤回。')
-    await moveTo('.ot-fp .ot-hist__row:first-child .ot-hist__undo')
+    S.rtab = 'chat'
+    cap(8, '「采纳」：芝士先「跟上最新的正式版」，对话里一行说清楚留了谁的改动，再进正式版。')
     await wait(3000)
+    await toFiles(RET)
+    cap(8, '回到文件：第 1 行王磊的说明还在，第 18 行是芝士那版。')
+    await wait(2400)
+    await moveTo('.ot-fp [data-via] .ot-hist__thing')
+    cap(8, '历史写着「林晓 采纳了「…」（芝士做的）」，和王磊那条「直接改了」放在一起；点事名回到那件事，也能撤回。')
+    await wait(3200)
   },
   async () => {
     await click('#b-own')
     openOwnThing()
     cap(
-      8,
+      9,
       '自己想单独试：「开一件事自己做」。频道里多了一件事，林晓自己做；编辑器顶上写着「你在「试改 retrieval.py」的副本里改」。'
     )
     await wait(2800)
-    await moveTo('.ot-carea__gutter span:nth-child(15)', 260)
+    await moveTo('.ot-carea__gutter span:nth-child(16)', 260)
     await typeCodeTo(RET, documented(codeText('research', RET)))
-    cap(8, '改的是副本，王磊看到的正式版没变。')
+    cap(9, '改的是副本，王磊看到的正式版没变。')
     await wait(1600)
     if (V.run !== 'T2') {
       await click('#b-run')
       runCode('research', RET)
-      cap(8, '这里「运行」跑的是这份副本。')
+      cap(9, '这里「运行」跑的是这份副本。')
       await wait(1800)
     }
     const t = ownTry()!
     await click('#b-see-thing')
     openThing(t.id, 'changes')
-    cap(8, '「看这件事」：改动里是副本和正式版的差别，和芝士那件一样。')
+    cap(9, '「看这件事」：改动里是副本和正式版的差别，和芝士那件一样。')
     await wait(2400)
     await click('#b-done')
     markDone(t.id)
-    cap(8, '「改好了」：王磊在这件事里看过，说可以。')
+    cap(9, '「改好了」：王磊在这件事里看过，说可以。')
     await wait(2600)
     await click('#b-accept')
     acceptCopy(t.id)
-    cap(8, '采纳，进了正式版，同样记进历史。人做还是芝士做，看改动、采纳都在这件事里。')
+    await toFiles(RET)
+    await moveTo('.ot-fp [data-via] .ot-hist__thing')
+    cap(9, '采纳，进了正式版。历史里这条写「（林晓做的）」：人做还是芝士做，看改动、采纳都在那件事里。')
     await wait(3000)
   },
   async () => {
     cursor.shown = false
-    cap(9, END)
+    cap(10, END)
     await wait(6000)
   },
 ]
@@ -643,13 +667,15 @@ function instantCode(k: number) {
   }
   if (k === 5) {
     openFile(RET)
+    editAs('wanglei', 'research', RET, wangleiEdit(codeText('research', RET)))
     finishCopy(asked()!.id)
   }
-  if (k === 6) {
+  if (k === 6) pickSide(asked()!.id, RET, 0, 'theirs')
+  if (k === 7) {
     acceptCopy(asked()!.id)
     openFile(RET)
   }
-  if (k === 7) {
+  if (k === 8) {
     openOwnThing()
     typeCode('research', RET, documented(codeText('research', RET)))
     runCode('research', RET)
