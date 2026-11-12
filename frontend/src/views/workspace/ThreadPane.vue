@@ -20,7 +20,6 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { useChannelSpeakers } from '@/composables/useChannelSpeakers'
-import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { ApiError } from '@/api'
@@ -156,12 +155,7 @@ useScreenHeader(() =>
 </script>
 
 <template>
-  <section
-    v-guide-anchor="'thread-pane'"
-    class="thread-pane"
-    :aria-label="t('work.room.thread.title')"
-    data-testid="thread-pane"
-  >
+  <section class="thread-pane" :aria-label="t('work.room.thread.title')" data-testid="thread-pane">
     <!-- Desktop: the head row tops this column. Phone: it is the top bar's content (useScreenHeader). -->
     <ThreadHead v-if="!page" v-bind="headBinding" />
 

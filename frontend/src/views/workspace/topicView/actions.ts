@@ -44,7 +44,7 @@ export function useTopicActions(opts: {
   opening: {
     onOpenThread: (block: Block) => void
     openTaskPage: (taskId: string) => void
-    upgradeMessage: (messageId: string) => void
+    upgradeInColumn: (messageId: string) => void
   }
   openTopic: (topicId: string) => void
   panelRef: Ref<WorkPanelHandle | null>
@@ -93,7 +93,7 @@ export function useTopicActions(opts: {
     'mention-click': handleMentionClick,
     'open-file': (path: string) => opts.panelRef.value?.openFile?.(path),
     'open-resource': handleOpenResource,
-    'upgrade-message': opts.opening.upgradeMessage,
+    'upgrade-message': opts.opening.upgradeInColumn,
     'open-thread': opts.opening.onOpenThread,
     'open-topic': opts.openTopic,
     'open-card': opts.opening.openTaskPage,
