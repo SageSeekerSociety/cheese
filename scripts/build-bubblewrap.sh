@@ -61,8 +61,9 @@ done
 curl -fsSL --retry 5 --retry-all-errors -o "$package/licenses/musl-$musl_version-COPYRIGHT" \
   "https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v$musl_version"
 echo "$musl_copyright_sha256  $package/licenses/musl-$musl_version-COPYRIGHT" | sha256sum -c -
-curl -fsSL --retry 5 --retry-all-errors -o "$package/licenses/libcap-$libcap_version-License" \
-  "https://git.kernel.org/pub/scm/libs/libcap/libcap.git/plain/License?h=libcap-$libcap_version"
+curl -fsSL --retry 5 --retry-all-errors -o libcap.tar.xz \
+  "https://cdn.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-$libcap_version.tar.xz"
+tar -xJOf libcap.tar.xz "libcap-$libcap_version/License" > "$package/licenses/libcap-$libcap_version-License"
 echo "$libcap_license_sha256  $package/licenses/libcap-$libcap_version-License" | sha256sum -c -
 {
   printf '%s\n%s\n\n' "bubblewrap $version (bwrap), linked statically from these components, built by" \

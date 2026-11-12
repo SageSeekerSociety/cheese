@@ -63,7 +63,7 @@ for path in /etc /bin /sbin /lib /lib64; do
 done
 sudo mkdir -p "$lower"/{home,tmp,var/tmp,run,proc,dev,sys,mnt}
 sudo install -d -o "$(id -u)" -g "$(id -g)" "$lower$mount/tests"
-# Overlay copy-up cannot preserve ownership absent from the single-uid map.
+# Overlay copy-up fails when the source UID or GID is outside the single-UID map.
 sudo chown -R "$(id -u):$(id -g)" "$lower/mnt"
 sudo chmod 1777 "$lower/tmp" "$lower/var/tmp"
 sudo rm -f "$lower/etc/hosts" "$lower/etc/resolv.conf"
