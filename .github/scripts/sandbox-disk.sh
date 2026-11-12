@@ -51,3 +51,14 @@ with open(os.environ["GITHUB_ENV"], "a") as output:
 with open(os.environ["GITHUB_PATH"], "a") as output:
     output.write(str(directory) + "\n")
 PY
+
+# Keep lower separate from the live root that contains the test's upper/work.
+lower="$RUNNER_TEMP/cheese-native-rootfs"
+sudo mkdir -p "$lower"
+sudo cp -al /usr "$lower/usr"
+sudo cp -a /etc /bin /sbin /lib /lib64 "$lower/"
+sudo mkdir -p "$lower"/{home,tmp,var/tmp,run,proc,dev,sys,mnt}
+sudo chmod 1777 "$lower/tmp" "$lower/var/tmp"
+sudo rm -f "$lower/etc/hosts" "$lower/etc/resolv.conf"
+sudo touch "$lower/etc/hosts" "$lower/etc/resolv.conf"
+echo "CHEESE_TEST_ROOTFS=$lower" >> "$GITHUB_ENV"

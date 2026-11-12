@@ -30,7 +30,7 @@ def image(monkeypatch, tmp_path):
     @contextlib.contextmanager
     def lease(_reference):
         with lock.open("rb") as held:
-            yield Path("/"), held.fileno()
+            yield Path(os.environ["CHEESE_TEST_ROOTFS"]), held.fileno()
 
     run_path = bootstrap.runpy.run_path
 
