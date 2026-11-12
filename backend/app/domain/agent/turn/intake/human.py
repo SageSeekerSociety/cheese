@@ -20,7 +20,7 @@ from app.domain.agent.mentions import (
     person_mentions,
 )
 from app.domain.agent.queries import _agent_at
-from app.domain.agent.turn.intake.rooms import _is_dm
+from app.domain.agent.turn.intake.rooms import _is_dm, only_person_in_project
 from app.domain.agent.turn.store.human import (
     CallAdmission,
     HumanHandoff,
@@ -41,7 +41,7 @@ from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place
 from app.domain.room_task.services import TaskService
-from app.domain.thread.services import answered_in, thread_teammate
+from app.domain.thread.services import thread_teammate
 from app.domain.topic_membership.services import TopicMemberService
 
 
@@ -114,6 +114,17 @@ async def _read_human(
         else None
     )
     agent = thread_agent or agent
+    # A person alone in the project talks in its channels to its AI teammate:
+    # every message there is for it, as in a private chat. With anyone else in
+    # the project, a channel's main line is people talking to each other, and
+    # only a message that calls the teammate reaches it.
+    alone = (
+        place.task is None
+        and place.thread is None
+        and seats is None
+        and names_a_person(author)
+        and await only_person_in_project(session, topic.project_id, author)
+    )
     recipient = {
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
@@ -129,6 +140,7 @@ async def _read_human(
             and names_a_person(author)
             and not _names_only_people(mentions.content)
         )
+        or (alone and not _names_only_people(mentions.content))
         or (seats is not None and looks_like_agent_handle(seats[1])),
     }
     return HumanPreparation(
@@ -152,7 +164,8 @@ class Addressing:
     ``mention`` (it @-s the teammate), ``reply`` (it replies to the teammate's
     message), ``task`` (its owner or a collaborator speaks in an open task),
     ``thread`` (a person speaks in a 支线 a teammate was handed),
-    ``private`` (a private chat with the teammate). ``people`` are the persons it
+    ``private`` (a private chat with the teammate), ``alone`` (the only person
+    in the project speaks in a channel's main line). ``people`` are the persons it
     @-s. ``place`` is ``channel``, ``task`` or ``private``; ``task_status`` the
     task's status when it is said in one."""
 
@@ -207,6 +220,8 @@ async def preview_addressing(
             else "thread"
             if place.thread is not None
             else "private"
+            if _is_dm(place.room)
+            else "alone"
         )
     if with_text:
         parent = await reply_parent(session, place, reply_to)
@@ -352,7 +367,7 @@ async def record_human_effects(
             session,
             project_id=place.project_id,
             room_id=place.room_id,
-            conversation_id=await answered_in(session, user_block),
+            conversation_id=user_block.conversation_id,
             block_id=user_block.id,
             author=author,
             content=user_block.content,
