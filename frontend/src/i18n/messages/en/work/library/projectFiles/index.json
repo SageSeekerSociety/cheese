@@ -10,7 +10,7 @@
   "historyFailed": "Couldn't load the history",
   "historyEmpty": "No changes yet",
   "openTask": "Open task",
-  "note": "This is the project's current version. It changes when a task is accepted.",
+  "note": "This is the project's current version. A task's changes appear here once accepted.",
   "newTask": "Start a task to change it",
   "search": "Search file names",
   "noMatch": "No matching files",
