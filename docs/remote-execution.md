@@ -112,7 +112,7 @@ home、项目 package store、平台 toolchain、固定 Claude Code、release st
 
 镜像自带编译工具不代表 sandbox 获得 root。实测 `apt-get install` 因 dpkg 锁权限失败，gdb 的进程调试因现有 seccomp 拒绝 `ptrace` 失败；需要这些权限时使用虚拟机规格，不增加 UID 范围。
 
-验证脚本是 `scripts/remote_execution/sandbox_image.py`：在独立临时 VM 上准备数据盘和两个版本的 release 后，比较 executor 首次 ping 的 ready 时间，编译运行 C/C++，检查固定 Claude Code、UID map 和网络，再将 home 与根文件系统合计写满，检查相邻 sandbox 和已写满 sandbox 的 executor。测量数字及 lazy-pull 取舍记录在交付 PR 的 Design notes 和 Hands-on check 中。
+验证脚本是 `scripts/remote_execution/sandbox_image.py`：在独立临时 VM 上准备数据盘和两个版本的 release 后，比较 executor 首次 ping 的 ready 时间，编译运行 C/C++，检查固定 Claude Code、UID map 和网络，再将 home 与根文件系统合计写满，检查相邻 sandbox 和已写满 sandbox 的 executor。测量数字及 lazy-pull 取舍见 [PR #5243 的 Design notes 和 Hands-on check](https://github.com/SageSeekerSociety/cheese/pull/5243)。
 
 ## Central session upgrades
 
