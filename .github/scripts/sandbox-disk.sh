@@ -22,3 +22,32 @@ if ! mountpoint -q "$mount"; then
 fi
 sudo install -d -o "$(id -u)" -g "$(id -g)" "$mount/tests"
 echo "CHEESE_TEST_SANDBOX_DISK=$mount/tests" >> "$GITHUB_ENV"
+
+# The overlay tests need the same bwrap capabilities as cloud enrollment.
+PYTHONPATH="$here/../../backend" python3 - <<'PY'
+import hashlib
+import io
+import os
+import platform
+import tarfile
+import urllib.request
+from pathlib import Path
+
+from app.domain.agent.toolchain import ARTIFACTS, BUBBLEWRAP_REVISION
+
+target = {"x86_64": "linux-x64", "aarch64": "linux-arm64"}[platform.machine()]
+artifact = ARTIFACTS[("bubblewrap", target)]
+with urllib.request.urlopen(artifact.url, timeout=120) as source:
+    packed = source.read()
+assert hashlib.sha256(packed).hexdigest() == artifact.sha256
+directory = Path(os.environ["RUNNER_TEMP"]) / "cheese-bwrap"
+directory.mkdir(exist_ok=True)
+binary = directory / "bwrap"
+with tarfile.open(fileobj=io.BytesIO(packed), mode="r:gz") as archive:
+    binary.write_bytes(archive.extractfile(f"bubblewrap-{BUBBLEWRAP_REVISION}/bwrap").read())
+binary.chmod(0o755)
+with open(os.environ["GITHUB_ENV"], "a") as output:
+    output.write(f"CHEESE_TEST_BWRAP={binary}\n")
+with open(os.environ["GITHUB_PATH"], "a") as output:
+    output.write(str(directory) + "\n")
+PY

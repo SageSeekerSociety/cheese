@@ -42,6 +42,11 @@ HELPER = Path(sandbox_host.__file__)
 RUNNER = Path(environment_runner.__file__)
 
 
+@pytest.fixture(autouse=True)
+def image_lower(monkeypatch, tmp_path):
+    bubblewrap.image(monkeypatch, tmp_path)
+
+
 def _sandbox_host_runs() -> bool:
     if os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1":
         return False

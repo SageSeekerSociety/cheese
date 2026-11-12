@@ -77,12 +77,14 @@ async def sweep(sessions):
                 argv, source = preparation(reference, api)
                 result = await device_hub.exec(device, argv, stdin=source, timeout=1800)
                 if result.get("exit") != 0 or result.get("truncated"):
+                    # i18n-exempt: caught below and logged by background maintenance
                     raise RuntimeError(
                         "image preparation failed: "
                         + (result.get("stderr") or "")[-500:]
                     )
                 receipt = json.loads(result["stdout"].strip().splitlines()[-1])
                 if receipt["reference"] != reference:
+                    # i18n-exempt: caught below and logged by background maintenance
                     raise RuntimeError("host prepared a different image")
                 async with sessions() as db:
                     row = await db.get(model, key)

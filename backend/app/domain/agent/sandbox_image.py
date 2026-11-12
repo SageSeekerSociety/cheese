@@ -31,6 +31,7 @@ REFERENCE = re.compile(r"ghcr\.io/[a-z0-9._/-]+@sha256:([0-9a-f]{64})")
 def image_key(reference):
     match = REFERENCE.fullmatch(reference)
     if not match:
+        # i18n-exempt: configuration validation for the host CLI
         raise ValueError("a sandbox image must be a digest-pinned GHCR reference")
     return "sha256-" + match[1]
 
@@ -58,6 +59,7 @@ def place_crane(url, expected, cache, target=CRANE):
                 digest.update(block)
                 out.write(block)
         if digest.hexdigest() != expected:
+            # i18n-exempt: host tool installation diagnostic
             raise RuntimeError("crane artifact failed its pinned checksum")
         placed = Path(target)
         placed.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +82,7 @@ def lease(reference, cache=CACHE):
         fcntl.flock(guard, fcntl.LOCK_SH)
         directory = cache / image_key(reference)
         if not (directory / "ready.json").is_file():
+            # i18n-exempt: executor bootstrap diagnostic
             raise RuntimeError("sandbox image is not prewarmed: " + reference)
         descriptor = os.open(directory / "lease", os.O_RDONLY)
         fcntl.flock(descriptor, fcntl.LOCK_SH)
@@ -109,6 +112,7 @@ def prewarm(reference, *, keep=2, cache=CACHE, crane=CRANE, crane_artifact=None)
     """Publish a fully unpacked rootfs atomically, before admitting sandboxes."""
     key = image_key(reference)
     if keep < 0:
+        # i18n-exempt: host CLI argument validation
         raise ValueError("old image retention must be nonnegative")
     cache.mkdir(mode=0o755, parents=True, exist_ok=True)
     cache.chmod(0o755)

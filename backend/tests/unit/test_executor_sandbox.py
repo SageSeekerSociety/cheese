@@ -31,6 +31,11 @@ BACKEND = Path(__file__).resolve().parents[2]
 PARTS = ("runtime_core", "runtime_commands", "runtime_context", "runtime_calls")
 
 
+@pytest.fixture(autouse=True)
+def image_lower(monkeypatch, tmp_path):
+    bubblewrap.image(monkeypatch, tmp_path)
+
+
 def _stage_a_release(store: Path) -> Path:
     """One release under `store`, holding exactly what a machine stages.
 
