@@ -21,9 +21,9 @@ import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformN
 import type { RefNames } from '../../lib/refChip'
 import type { ChapterRow } from '../../types/chapters'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { vGuideAnchor } from '@/composables/useGuideAnchors'
+import { pointGuideAnchor, vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { askGroupFolds } from '../../lib/askGroups'
 import { replySnippet } from '../../lib/blockDisplay'
@@ -270,7 +270,8 @@ const createdCont = computed(() =>
   })
 )
 const NO_TASKS: TaskLine[] = []
-// 频道主线上 AI 队友最近的一条回复：新手引导指着它说「回复了」。
+// 频道主线上 AI 队友最近的一条回复：新手引导指着它说「回复了」。按 id 找到那一行再登记，
+// 不在每一行上挂指令（`pointGuideAnchor`）。
 const newestAgentReply = computed(() => {
   if (!props.threadable) return null
   for (let i = props.rows.length - 1; i >= 0; i--) {
@@ -279,6 +280,18 @@ const newestAgentReply = computed(() => {
   }
   return null
 })
+let replyAnchor: HTMLElement | null = null
+watch(
+  newestAgentReply,
+  async (id) => {
+    await nextTick()
+    const el = id ? props.contentRef.value?.querySelector<HTMLElement>(`[data-row-id="${id}"]`) ?? null : null
+    pointGuideAnchor('agent-reply', el, replyAnchor)
+    replyAnchor = el
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => pointGuideAnchor('agent-reply', null, replyAnchor))
 function ownerName(task: TaskLine): string | null {
   return task.owner ? (props.nameOf ?? String)(task.owner) : null
 }
@@ -697,7 +710,6 @@ const rowLabels = computed(() =>
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
-              v-guide-anchor="m.id === newestAgentReply ? 'agent-reply' : ''"
               :class="{
                 'tl-arrive': arrived.has(m.id),
                 'tl-flash': flashId === m.id,
