@@ -404,6 +404,8 @@ def sandbox_argv(
             "/sys",
             "/sys",
         ]
+        for identity in ("/etc/passwd", "/etc/group"):
+            command += ["--ro-bind", identity, identity]
     elif network and names != "/etc/resolv.conf":
         # Onto the file it leads to: bwrap mounts on no link (systemd-resolved's).
         command += ["--ro-bind", names, os.path.realpath("/etc/resolv.conf")]

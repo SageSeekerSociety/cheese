@@ -74,6 +74,7 @@ class Sandbox:
             "env": self.env,
             "release": str(release),
             "sandbox": self.limits,
+            "sandbox_image": self.image,
         }
         (self.state / "config.json").write_text(json.dumps(config))
         self.log = (output / (self.name + ".log")).open("w")
@@ -252,6 +253,7 @@ def main():
             "compile": "printf '#include <stdio.h>\\nint main(void){puts(\"c works\");return 0;}\\n' > main.c; printf 'all:\\n\\tgcc -g main.c -o main\\n' > Makefile; make && ./main && g++ main.c -o main-cpp && ./main-cpp",
             "claude": str(args.claude) + " --version",
             "uid_map": "cat /proc/self/uid_map; cat /proc/self/gid_map",
+            "identity": 'id -un && getent passwd "$(id -u)"',
             "apt": "apt-get install -y hello",
             "gdb": "gdb -q -batch -ex run --args ./main",
             "network": "getent ahostsv4 github.com && curl -fsS --max-time 20 https://github.com/ -o /dev/null",
@@ -259,6 +261,7 @@ def main():
         receipt["checks"] = {name: one.command(body) for name, body in checks.items()}
         assert receipt["checks"]["compile"]["exit"] == 0, receipt["checks"]["compile"]
         assert receipt["checks"]["claude"]["exit"] == 0, receipt["checks"]["claude"]
+        assert receipt["checks"]["identity"]["exit"] == 0, receipt["checks"]["identity"]
         receipt["home_write"] = one.command(
             "dd if=/dev/zero of=home-fill bs=1M count=32 status=none"
         )

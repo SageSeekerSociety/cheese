@@ -108,7 +108,7 @@ This upgrade path applies to ordinary room executors. Private execution containe
 
 `confinement.sandbox_argv` 使用 bubblewrap 原生 `--overlay-src` / `--overlay`。lower 来自共享镜像，upper 和 work 在该 sandbox home 的 `.cheese/rootfs/<digest>/` 内，与 home 共用同一个 XFS project quota；这两个目录在 sandbox 内被隐藏，程序只访问合并后的 `/`。可写层随 sandbox 的 home 销毁，不占用 tmpfs 来绕过磁盘额度。
 
-home、项目 package store、平台 toolchain、固定 Claude Code、release store 和 executor/platform socket 继续按原方式挂入，`/tmp` 和 `/var/tmp` 继续落在 home 中，`/sys` 保持只读。现有 user/pid/IPC/UTS/network namespace、单 UID 映射、seccomp、cgroup 和网络规则保持原有策略。
+home、项目 package store、平台 toolchain、固定 Claude Code、release store 和 executor/platform socket 继续按原方式挂入，`/tmp` 和 `/var/tmp` 继续落在 home 中，`/sys` 保持只读。宿主机的 `/etc/passwd` 和 `/etc/group` 只读挂入，让模板创建的登录 UID 仍可解析为用户名。现有 user/pid/IPC/UTS/network namespace、单 UID 映射、seccomp、cgroup 和网络规则保持原有策略。
 
 镜像自带编译工具不代表 sandbox 获得 root。实测 `apt-get install` 因 dpkg 锁权限失败，gdb 的进程调试因现有 seccomp 拒绝 `ptrace` 失败；需要这些权限时使用虚拟机规格，不增加 UID 范围。
 
