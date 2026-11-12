@@ -1,15 +1,16 @@
 <script setup lang="ts">
-// 项目文件: the project's files, as 正式版 reads them, and nothing else (no
-// copy of a 一件事 is ever shown here). The tree reads like the product's file
-// library; a document opens in the product's document editor and is edited
-// there directly, a Word file shows 芝士's 修订 in the product's Word
-// comparison, a code file opens read-only (DemoCodeEdit: 正式版 and the one
-// action 「改这个文件」, which opens a 一件事's 工作台), and a result is
-// rendered Markdown. 芝士's suggestion in a document (《组会纪要》) is marked
-// in the document itself, and its card sits right above it, where it is read:
-// 接受 or 拒绝 there. docs/频道/ holds each channel's 文档. In a project claimed
-// from the course, what the 题目 brought in: the 题面 (or the 题单 document)
-// pinned on top, and the starter code, folded by problem.
+// 项目文件: the project itself, live. The tree reads like the product's file
+// library. Documents and code follow one rule: people type into them
+// directly, see each other's carets, and each saved stretch is one 历史 entry
+// that can be taken back. A document opens in the product's document editor;
+// a code file opens in the same kind of editor (DemoCodeEdit) with one action
+// more, 运行, whose output is a run record on the file; a Word file shows
+// 芝士's 修订 in the product's Word comparison, and a result is rendered
+// Markdown. 芝士's suggestion in a document (《组会纪要》) is marked in the
+// document itself, and its card sits right above it: 接受 or 拒绝 there.
+// docs/频道/ holds each channel's 文档. In a project claimed from the course,
+// what the 题目 brought in: the 题面 (or the 题单 document) pinned on top, and
+// the starter code, folded by problem.
 import type { FileRow } from '@/lib/changesTree'
 import type { FileDiff } from '@/lib/diff'
 import type { OfficeComparison } from '@/types/reviewComment'
@@ -23,7 +24,7 @@ import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
 import FileTree from './FileTree.vue'
 import ProblemSetDoc from './ProblemSetDoc.vue'
-import { fkey, openFile, S, suggAccept, suggReject, t4, toast } from './state'
+import { editDoc, fkey, openFile, S, suggAccept, suggReject, t4, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
@@ -50,7 +51,7 @@ const all = computed<Entry[]>(() =>
 const pinnedFiles = computed(() => all.value.filter((f) => f.pinned))
 const rows = computed<FileRow[]>(() => {
   const diffByPath = new Map<string, FileDiff>()
-  // Only the result is new to the official version; the code files are simply its current text.
+  // Only the result is new to the project once 演示一's task is accepted; the code files are simply their current text.
   const result = TASK_DIFFS.find((d) => d.status === 'added')
   if (S.project === 'research' && accepted.value && result) diffByPath.set(result.path, result)
   return buildFileRows({
@@ -166,7 +167,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
                 @reject="suggReject"
               />
             </div>
-            <DemoDoc :html="minutes" peer :typing="S.typed.length > 0" />
+            <DemoDoc :html="minutes" peer :typing="S.typed.length > 0" @update="editDoc(S.project, MINUTES_DOC)" />
           </template>
           <ChannelDoc v-else-if="entry.chan" :key="entry.chan" :chan="entry.chan" />
           <ProblemSetDoc v-else-if="entry.kind === 'list'" />
@@ -174,6 +175,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
             v-else-if="entry.kind === 'doc'"
             :key="fkey(S.project, entry.path)"
             :html="entry.html ?? DOC_HTML[entry.path] ?? ''"
+            @update="editDoc(S.project, entry.path)"
           />
           <OfficeCompare v-else-if="entry.kind === 'word'" :comparison="WORD_COMPARISON as OfficeComparison" />
           <DemoCodeEdit v-else-if="entry.kind === 'code'" :key="fkey(S.project, entry.path)" />

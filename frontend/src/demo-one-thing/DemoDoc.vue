@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// A living document on the official version: the product's document editor
+// A living document of the project: the product's document editor
 // (DocEditor with the doc schema, drawn by DocProse), so 芝士's pending
 // suggestion is the editor's own suggestion marks, and 王磊's caret is the
 // product's caret. What 林晓 types in the script lands in item 4. A person's
-// typing is reported as `update` (a channel's 文档 keeps it).
+// typing is reported as `update` (a channel's 文档 keeps it; 项目文件 logs it in
+// 历史, one entry per stretch).
 import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { onBeforeUnmount, shallowRef, watch } from 'vue'

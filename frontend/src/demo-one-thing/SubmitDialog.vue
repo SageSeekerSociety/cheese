@@ -1,10 +1,9 @@
 <script setup lang="ts">
 // 提交 to a 题目, as the product's submission form asks for it
-// (TaskSubmissionSchemaEntry): one field per 提交项. A FILE item is filled from
-// a version of the file, with its version id: by default the file as the work
-// 一件事 (领取's 「做 Data Lab」) reads now, while it is still being done, so a
-// student hands in straight from their work; or 正式版 as it reads now, or an
-// earlier one 历史 can name. A TEXT item is typed here. A
+// (TaskSubmissionSchemaEntry): one field per 提交项. A FILE item freezes a
+// version of the project file, with its version id: by default the file as it
+// reads now in 项目文件, or an earlier one 历史 can name. A TEXT item is typed
+// here. A
 // team 题目 is submitted as the team that claimed it, one record for all of
 // them. The dialog also says how the 题目 is graded, so 评测机评 coming back at
 // once and 老师评 waiting are both expected. 提交 records it on the 题目.
@@ -13,7 +12,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { GRADING_NOTE, GRADING_TEXT, SET, submitItems, topicById, UNITS } from './course'
 import { NAMES, projectTeam } from './data'
 import { whenText } from './shapes'
-import { type FileVersion, latestOf, passed, S, submitTopic, submitVersions } from './state'
+import { type FileVersion, latestOf, passed, S, submitTopic, versionsOf } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -26,7 +25,7 @@ const unit = ref('')
 const items = computed(() => (topic.value ? submitItems(topic.value, unit.value) : []))
 const fileItem = computed(() => items.value.find((x) => x.type === 'FILE') ?? null)
 const versions = computed<FileVersion[]>(() =>
-  topic.value?.project && fileItem.value ? submitVersions(topic.value.project, fileItem.value.path!) : []
+  topic.value?.project && fileItem.value ? versionsOf(topic.value.project, fileItem.value.path!) : []
 )
 const pick = ref('')
 const texts = reactive<Record<string, string>>({})
@@ -43,17 +42,15 @@ watch(
     for (const it of items.value) if (it.type === 'TEXT') texts[it.prompt] = it.draft ?? ''
   }
 )
-// Each file starts on the first version offered: the work 一件事's, else 正式版 as it reads now.
+// Each file starts on the first version offered: the file as it reads now.
 watch(versions, (v) => (pick.value = v[0]?.id ?? ''), { immediate: true })
 
 const label = (v: FileVersion) =>
-  v.work
-    ? `「${v.work}」里的当前版本 · ${v.id}`
-    : v.current
-      ? `正式版 · 当前版本 · ${v.id}`
-      : v.start
-        ? `历史 · 领取时的起始代码 · ${v.id}`
-        : `历史 · ${whenText(v.at)} ${NAMES[v.who]}改的 · ${v.id}`
+  v.current
+    ? `现在的版本 · ${v.id}`
+    : v.start
+      ? `历史 · 领取时的起始代码 · ${v.id}`
+      : `历史 · ${whenText(v.at)} ${NAMES[v.who]}改的 · ${v.id}`
 
 const ready = computed(() => items.value.every((it) => it.type === 'FILE' || (texts[it.prompt] ?? '').trim()))
 
@@ -108,7 +105,7 @@ function submit() {
             <option v-for="v in versions" :key="v.id" :value="v.id">{{ label(v) }}</option>
           </select>
           <span class="ot-sub__hint"
-            >这个文件的一个版本：在做的那件事里的，或者正式版的。提交后固定不变，之后再改也不影响这次提交</span
+            >项目文件里这个文件的一个版本：现在的，或者历史里的。提交后固定不变，之后再改也不影响这次提交</span
           >
         </template>
         <textarea

@@ -1,21 +1,23 @@
 <script setup lang="ts">
 // The right panel beside 项目文件, for the open file. It is a place to read
-// what happened, not a second place to change things: 采纳 happens only in a
-// 一件事. On top, while there is any, 「正在改这个文件的事」: each 一件事 whose
-// 工作台 has this file, with who is doing it and where it stands; a row opens
-// the 一件事 on its 工作台. Under it, 历史, of the whole project or of this
-// file only: every change that took effect on 正式版, each saying who and
-// through what: 「直接改了」 (a document, typed into) or 「采纳了「<事名>」
-// （芝士做的 / 林晓做的）」, the name opening that 一件事. Each has 撤回 (the
-// newest shows it without a hover). Runs are not here: they stay in the
-// 工作台 of the 一件事 they were made in. No submission record either:
+// what happened, not a second place to change things. On top, while there is
+// any, 「在改它的事」: each of 芝士's 一件事 that changes this file, with
+// who is doing it and where it stands; a row opens the 一件事 on its 文件.
+// Under it two pages. 历史, of the whole project or of this file only: every
+// change that took effect, each saying who and how: 「改了 …」 (a person typing
+// into the file, one entry per saved stretch) or 「采纳了「<事名>」（芝士做的 /
+// 芝士做的，林晓接手改过）」, the name opening that 一件事. Each has 撤回 (the
+// newest shows it without a hover). 运行: this file's run records, newest
+// first: who ran it, when, which version, the command and what it printed,
+// each with 发到频道. Runs never enter 历史. No submission record either:
 // submissions belong to the 题目 and are listed on it in the space.
 import type { HistoryEntry } from './state'
 
 import { computed, ref } from 'vue'
 
 import { NAMES } from './data'
-import { doingNow, openBench, openThing, S, type Thing, thingsOnFile, undo } from './state'
+import { hhmm } from './shapes'
+import { openThing, runnable, runsOf, S, shareRun, type Thing, thingsOnFile, undo } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
@@ -36,10 +38,19 @@ const history = computed(() =>
 /** What an 采纳 entry says after the 一件事's name and who did it: 「：改了 …」. */
 const rest = (h: HistoryEntry) => h.what.slice(`采纳了「${h.via!.title}」（${h.via!.by}）`.length)
 const onFile = computed(() => thingsOnFile(S.project, S.file))
-/** Who is doing a 一件事 now (who did it, once it waits for 采纳). */
-const doer = (t: Thing) => doingNow(t) ?? t.doer ?? 'cheese'
+/** Who is doing a 一件事 now: 芝士, or whoever took it over. */
+const doer = (t: Thing) => t.takenBy ?? 'cheese'
 const where = (t: Thing) =>
-  t.status === 'wait' ? '等采纳' : doer(t) === 'cheese' ? '芝士在做' : `${NAMES[doer(t)]}在做`
+  t.status === 'wait' ? '等采纳' : doer(t) === 'cheese' ? '芝士在做' : `${NAMES[doer(t)]}接手在改`
+
+/** 历史 or 运行; 运行 only on a file that runs. */
+const PAGES = [
+  { value: 'history' as const, label: '历史' },
+  { value: 'runs' as const, label: '运行' },
+]
+const canRun = computed(() => runnable(S.project, S.file))
+const page = computed(() => (canRun.value ? S.fileTab : 'history'))
+const runs = computed(() => [...runsOf(S.project, S.file)].reverse())
 const undoAt = (h: HistoryEntry) => undo(S.history[S.project].indexOf(h))
 </script>
 
@@ -51,14 +62,14 @@ const undoAt = (h: HistoryEntry) => undo(S.history[S.project].indexOf(h))
     </header>
     <div class="ot-fp__body">
       <section v-if="onFile.length" class="ot-fp__things" data-zone="things-on-file">
-        <h3 class="t-eyebrow-read ot-fp__label">正在改这个文件的事</h3>
+        <h3 class="t-eyebrow-read ot-fp__label">在改它的事</h3>
         <button
           v-for="t in onFile"
           :key="t.id"
           type="button"
           class="ot-fp__thing"
           :data-thing="t.id"
-          @click="openBench(t.id, S.file)"
+          @click="openThing(t.id, 'files', S.file)"
         >
           <CheeseAvatar v-if="doer(t) === 'cheese'" :size="20" name="芝士" handle="cheese" />
           <UserAvatar v-else :size="20" :name="NAMES[doer(t)]" :seed="doer(t)" />
@@ -68,11 +79,59 @@ const undoAt = (h: HistoryEntry) => undo(S.history[S.project].indexOf(h))
         </button>
       </section>
       <div class="ot-fp__histhead">
-        <h3 class="t-eyebrow-read ot-fp__label">历史</h3>
+        <SegmentedControl
+          v-if="canRun"
+          v-model="S.fileTab"
+          :options="
+            PAGES.map((x) => (x.value === 'runs' ? { ...x, label: runs.length ? `运行 ${runs.length}` : '运行' } : x))
+          "
+          label="历史或运行"
+          size="sm"
+          data-file-tab
+        />
+        <h3 v-else class="t-eyebrow-read ot-fp__label">历史</h3>
         <span class="ot-head__gap" />
-        <SegmentedControl v-model="scope" :options="SCOPES" label="历史的范围" size="sm" data-hist-scope />
+        <SegmentedControl
+          v-if="page === 'history'"
+          v-model="scope"
+          :options="SCOPES"
+          label="历史的范围"
+          size="sm"
+          data-hist-scope
+        />
       </div>
-      <ol class="ot-hist">
+      <div v-if="page === 'runs'" class="ot-runs" data-zone="file-runs">
+        <p v-if="!runs.length" class="ot-runs__empty">
+          还没运行过。点文件上面的「运行」：在项目的环境里跑，输出记在这里。
+        </p>
+        <article v-for="r in runs" :key="r.id" class="ot-runs__rec" :data-run-rec="r.id">
+          <div class="ot-runs__meta">
+            <UserAvatar :size="18" :name="NAMES[r.who]" :seed="r.who" />
+            <b>{{ NAMES[r.who] }}</b> · {{ hhmm(r.at) }} · 版本 <code>{{ r.ver }}</code>
+            <span class="ot-head__gap" />
+            <BaseButton
+              v-if="!r.running"
+              kind="ghost"
+              size="sm"
+              icon="mdi-send-outline"
+              title="发到频道"
+              aria-label="发到频道"
+              @click="shareRun(S.project, S.file, r.id)"
+            />
+          </div>
+          <div class="ot-runs__cmd">$ {{ r.cmd || '…' }}</div>
+          <div v-if="r.running" class="ot-runs__out ot-runs__out--wait">运行中…</div>
+          <pre v-else class="ot-runs__out">{{ r.out }}</pre>
+          <div
+            v-if="!r.running && r.expect !== undefined"
+            class="ot-runs__verdict"
+            :class="r.pass ? 'is-ok' : 'is-bad'"
+          >
+            {{ r.pass ? '通过：和样例输出一致' : `不通过：样例输出是 ${r.expect}` }}
+          </div>
+        </article>
+      </div>
+      <ol v-else class="ot-hist">
         <li v-for="(h, i) in history" :key="h.what + i" class="ot-hist__row" :class="{ 'ot-flash': h.fresh }">
           <CheeseAvatar v-if="h.who === 'cheese'" :size="22" name="芝士" handle="cheese" />
           <UserAvatar v-else :size="22" :name="NAMES[h.who]" :seed="h.who" />
@@ -255,6 +314,81 @@ const undoAt = (h: HistoryEntry) => undo(S.history[S.project].indexOf(h))
 
 .ot-hist__thing:hover {
   text-decoration: underline;
+}
+
+.ot-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ot-runs__empty {
+  margin: 4px 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.ot-runs__rec {
+  padding: 6px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.ot-runs__meta {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ot-runs__meta b {
+  color: var(--ink);
+}
+
+.ot-runs__meta code,
+.ot-runs__cmd,
+.ot-runs__out {
+  font-family: var(--font-mono);
+}
+
+.ot-runs__cmd,
+.ot-runs__out {
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.ot-runs__cmd {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.ot-runs__out {
+  max-height: 180px;
+  margin: 2px 0 0;
+  overflow: auto;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.ot-runs__out--wait {
+  color: var(--muted);
+}
+
+.ot-runs__verdict {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.ot-runs__verdict.is-ok {
+  color: var(--ok-ink);
+}
+
+.ot-runs__verdict.is-bad {
+  color: var(--danger-ink);
 }
 
 .ot-hist__by {

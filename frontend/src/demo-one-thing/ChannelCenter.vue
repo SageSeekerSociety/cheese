@@ -3,12 +3,12 @@
 // (title and description, 文档 / 对话, the roster, the bell, 进行中, ⋯), then
 // either the channel's 文档 or the conversation and its composer. The title
 // opens 频道详情 as a popover; the right panel stays folded until a 一件事 is
-// opened, from a card, from the 文档 or from the 进行中 menu. The course's
-// channels and the channels of a project claimed from it are drawn by the same
-// column; there 芝士 only gives hints, in the conversation, and the work is
-// the 一件事 领取 opened. A message naming a code file (`eval/retrieval.py`)
-// with an @芝士 opens a 讨论 about it, as any @芝士 does; started, 芝士 does
-// the change in that 一件事's 工作台.
+// opened, from a card, from the 文档 or from the 进行中 menu. An @芝士 opens a
+// 讨论 under the message; one naming a code file (`eval/retrieval.py`) is about
+// that file, and started, 芝士 does the change in that 一件事. In a project
+// where 芝士 may not change files (one claimed from a 题目) the 讨论 gives
+// hints and has no 开工. A project claimed from the course is drawn by the
+// same column.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, TopicMemberRow, TopicNotifyLevel } from '@/cx_types'
 import type { ChatLine } from './state'

@@ -2,60 +2,58 @@
 // The demo page: controls, the workspace scaled to the window, the caption
 // under it and the three model cards. Two guided tours share the same
 // mechanics: 「演示一：频道和一件事」 (STEPS, nine steps: a channel, a 一件事 from
-// 讨论 to 采纳 with 芝士 working in its 工作台, 项目文件) and 「演示二：做事：
-// 人和芝士」 (CODE_STEPS, ten steps, one model whoever does the work: a code
-// file is read-only in 项目文件 and 「改这个文件」 opens a 一件事 I do, edited
-// and run in its 工作台 and 采纳ed; a bigger change asked of 芝士 in a channel
-// becomes a 讨论, then 开工, and 芝士 works in the 工作台 while I watch; I 接手,
-// fix one line, 交给芝士 with a note; 王磊 采纳s his own change to the same
-// file meanwhile, so at 采纳 the block both changed is picked by hand; then
-// Data Lab: 领取 opens 「做 Data Lab」, written and run in its 工作台, 芝士 only
-// hinting, and submitted from the 题目 card). Each step drives the same
-// actions a click does; clicking by hand stops the script at any point, and
-// switching tours starts the other one from a fresh state. In a project
-// claimed from a 题目 the top bar also has 「模拟：离截止不到 24 小时」, which
-// moves only the clock deadlines are read against. The 「方案」 menu switches
-// the variants of the design questions still open (variants.ts: where the
-// 工作台 opens); with none open it is not shown.
+// 讨论 to 采纳, opened as a page of its own on 文件 while 芝士 works, then
+// 项目文件, where documents and code are both typed into directly) and
+// 「演示二：做事：人和芝士」 (CODE_STEPS, seven beats: 林晓 types into
+// preprocess.py in 项目文件 and runs it, a run record on the file; @芝士 in
+// # 实验记录 about retrieval.py becomes a 讨论 and then a 一件事, whose card
+// says what 芝士 is doing; opened, it lands on 文件; 王磊 edits retrieval.py
+// in 项目文件 meanwhile, next to the lines 芝士's marker shows, and 芝士 redoes
+// its change on his version at its next run and says so; 林晓 接手, fixes one
+// line, 交给芝士; in 改动 a second edit of 王磊's makes the freshness badge go
+// stale until 芝士 has caught up, then 采纳; then Data Lab: 领取, bits.c typed
+// and run in 项目文件, @芝士 giving only a hint, 提交 from the 题目 card). Each
+// step drives the same actions a click does; clicking by hand stops the
+// script at any point, and switching tours starts the other one from a fresh
+// state. In a project claimed from a 题目 the top bar also has 「模拟：离截止不到
+// 24 小时」, which moves only the clock deadlines are read against.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { CLOCK } from './course'
-import { ASK, isClaim, ME } from './data'
+import { ASK, CLAIMED, isClaim, MINUTES_DOC, type ProjectKey } from './data'
 import {
   acceptCopy,
   claim,
   confirmKick,
-  editFile,
+  editDoc,
+  editProject,
   finish,
+  freshness,
   go,
   handToCheese,
   kickoff,
   liveStep,
-  markDone,
-  officialText,
-  openBench,
   openFile,
   openSpace,
   openSubmit,
   openThing,
-  peerChange,
-  pickSide,
+  peerEdit,
+  projectText,
   reply,
   reset,
-  runInBench,
+  runInProject,
+  runInThing,
   S,
-  sayInThing,
   send,
   settle,
   settleUntil,
   submitTopic,
-  submitVersions,
   suggAccept,
   takeOver,
   thingById,
   typeCopy,
+  versionsOf,
 } from './state'
-import { QUESTIONS, setVariant, V } from './variants'
 import Workspace from './Workspace.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -91,7 +89,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', fit)
 })
 
-const variantsOpen = ref(false)
 /** On a project claimed from a 题目: the only place the deadline clock changes anything on screen. */
 const inClaim = computed(() => S.area === 'project' && isClaim(S.project))
 
@@ -189,21 +186,21 @@ function drawNotes() {
     zone(
       '.ot-side',
       '左栏：普通的项目',
-      '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。领取时开好了一件事「做 …」，写代码、运行都在它的工作台里。标题下一行是它来自的课程和截止，圆点说交了没有；点开是卡片：工作台里运行到哪了、「接着做」、最近一次提交、「提交」。快截止或老师批改回来时它自己展开。',
+      '领取来的题目就是一个项目，属于一个团队：频道、项目文件、设置，和别的项目一样。标题下一行是它来自的课程和截止，圆点说交了没有；点开是卡片：最近一次运行通过了多少、「接着做」打开要写的文件、最近一次提交、「提交」。快截止或老师批改回来时它自己展开。',
       12,
       340
     )
     zone(
       '.ot-pane',
       '中间：频道或文件',
-      '题面置顶在项目文件里。项目文件只放正式版，代码只读；在那件事的工作台里写、运行，芝士在它的对话里只给提示。',
+      '题面置顶在项目文件里。代码直接写，「运行」跑题目带来的命令，输出记在文件上。这个项目设成「芝士不能改文件」：@芝士 开出的讨论只给提示，没有「开工」。',
       20,
       70
     )
     zone(
       '.ot-right [data-zone="right"]',
-      '右栏：历史',
-      '每次采纳都在历史里，能撤回。提交时默认交那件事里的当前版本，也可以挑正式版或历史里的任何一版。提交记录不在这里，在空间里的题目上。',
+      '右栏：历史和运行',
+      '每段改动都在历史里，能撤回；「运行」是这个文件的每次运行。提交时挑项目文件里这个文件的一个版本。提交记录不在这里，在空间里的题目上。',
       20,
       110
     )
@@ -211,18 +208,12 @@ function drawNotes() {
     return
   }
   zone('.ot-side', '左栏：去哪儿', '需要我的、频道（顺序固定）、项目文件、设置。', 12, 340)
-  if (document.querySelector('#ot-app .ot-pane .ot-wb')) {
-    zone(
-      '.ot-pane',
-      '中间：这件事的工作台',
-      '这件事自己的那份文件、编辑器、下面是每次运行和输出。芝士做的时候只读，看它在改哪一行；人做的时候能改、能运行。正式版不动，采纳了才进。',
-      20,
-      70
-    )
+  const open = S.thing ? thingById(S.thing) : null
+  if (open && open.status !== 'talk' && S.center === 'chan') {
     zone(
       '.ot-right [data-zone="right"]',
-      '右栏：还是这件事',
-      '对话和改动；接手、交给芝士、改好了、采纳都在顶上。',
+      '这件事，整页',
+      '开工后的一件事像文档一样整页打开：对话、文件、改动。「文件」是它在项目最新版上面改的那几处，别的文件跟着项目走；芝士做的时候只读，接手了才能改。「改动」是和正式版的差别，基于最新版时才能采纳。左上角回到频道。',
       20,
       110
     )
@@ -232,14 +223,14 @@ function drawNotes() {
   zone(
     '.ot-pane',
     '中间：频道或文件',
-    '频道有两种看法：对话，和频道文档（这个频道的事、芝士整理的定了 / 发现 / 没定、大家写的）。打开项目文件时是文件树和正式版。',
+    '频道有两种看法：对话，和频道文档（这个频道的事、芝士整理的定了 / 发现 / 没定、大家写的）。打开项目文件时是文件树和文件本身：文档、代码都直接改，代码多一个「运行」。',
     20,
     70
   )
   zone(
     '.ot-right [data-zone="right"]',
     '右栏：选中的那一件',
-    '只放一样东西。频道里是点开的那件事：讨论有对话、资料，开工后多出工作台、改动；什么都没点开就收起。打开文件时是它的历史，和正在改它的事（点开就是那件事的工作台）。',
+    '只放一样东西。频道里是点开的讨论，什么都没点开就收起；开工后的一件事整页打开。打开文件时是它的历史、运行记录，和正在改它的事。',
     20,
     110
   )
@@ -257,8 +248,7 @@ watch(
     S.chan,
     S.chanView[S.chan],
     S.things.map((t) => t.status).join(),
-    S.bench,
-    Object.values(V).join(),
+    S.fileTab,
   ],
   async () => {
     await nextTick()
@@ -316,9 +306,8 @@ async function typeInto(full: string, set: (v: string) => void, lead = '') {
   set(full)
 }
 
-/** Type into a file of a 一件事's 工作台 the way a person types: take out what differs from `to`, then type the rest. */
-async function typeCopyTo(id: string, path: string, to: string) {
-  const from = thingById(id)?.copy?.[path]?.text ?? ''
+/** Typing that turns `from` into `to` the way a person types: take out what differs, then type the rest. */
+async function typeFromTo(from: string, to: string, set: (v: string) => void) {
   let a = 0
   while (a < from.length && a < to.length && from[a] === to[a]) a++
   let b = 0
@@ -328,36 +317,37 @@ async function typeCopyTo(id: string, path: string, to: string) {
   const gone = from.slice(a, from.length - b)
   const add = to.slice(a, to.length - b)
   for (let i = gone.length - 1; i >= 0; i--) {
-    typeCopy(id, path, head + gone.slice(0, i) + tail)
+    set(head + gone.slice(0, i) + tail)
     await wait(90)
   }
   for (let i = 1; i <= add.length; i += 2) {
-    typeCopy(id, path, head + add.slice(0, i) + tail)
+    set(head + add.slice(0, i) + tail)
     await wait(55)
   }
-  typeCopy(id, path, to)
+  set(to)
 }
+
+/** A person typing into a project file in 项目文件 (林晓 by default, or a teammate). */
+const typeProject = (p: ProjectKey, path: string, to: string, who?: string) =>
+  typeFromTo(projectText(p, path), to, (v) => (who ? peerEdit(who, p, path, v) : editProject(p, path, v)))
+
+/** 林晓 typing into a 一件事's file after 接手. */
+const typeCopyTo = (id: string, path: string, to: string) =>
+  typeFromTo(thingById(id)?.copy?.[path]?.text ?? '', to, (v) => typeCopy(id, path, v))
 
 /** Wait until `ok` holds (芝士's timers move the 一件事 along on their own). */
 async function until(ok: () => boolean) {
   while (!ok()) await wait(200)
 }
 
-/** A tab of the open 一件事, as clicking it does (W1 keeps the 工作台 in the center column). */
-async function tabTo(key: 'chat' | 'changes', label: string) {
+/** A face of the open 一件事, as clicking its tab does. */
+async function tabTo(key: 'chat' | 'files' | 'changes', label: string) {
   await click(`.ot-thing .tabbar__tab[title="${label}"]`)
   S.rtab = key
-  if (V.bench !== 'W1') S.bench = false
 }
 
-/** Open the 一件事's 工作台 the way the current 方案 offers it: W1's header button, else its tab. */
-async function toBench(id: string) {
-  await click(V.bench === 'W1' ? '#b-bench' : '.ot-thing .tabbar__tab[title="工作台"]')
-  openBench(id)
-}
-
-/** A line of the open 工作台's editor, for the cursor. */
-const benchLine = (n: number) => `.ot-wb .ot-carea__gutter span:nth-child(${n})`
+/** A line of the code editor on screen (项目文件's, or a 一件事's 文件), for the cursor. */
+const codeLine = (n: number, scope = '') => `${scope} .ot-carea__gutter span:nth-child(${n})`
 
 const TYPED_NOTE = '林晓补充：COCO 5K 的结果见 eval_results.md。'
 
@@ -366,7 +356,7 @@ const STEPS: (() => Promise<void>)[] = [
     reset()
     cap(
       1,
-      '中间是频道：「对话」，或频道的「文档」（这个频道的事、芝士整理的要点、大家写的；积了几条没读的，进去先看文档）。右栏只放点开的那一件事，平时收起。左边：需要我的、频道（顺序固定）、项目文件、设置。'
+      '中间是频道：「对话」，或频道的「文档」（这个频道的事、芝士整理的要点、大家写的；积了几条没读的，进去先看文档）。右栏只放点开的那一件，平时收起。左边：需要我的、频道（顺序固定）、项目文件、设置。'
     )
     await wait(4000)
   },
@@ -400,14 +390,16 @@ const STEPS: (() => Promise<void>)[] = [
     await wait(2600)
     await click('#b-confirm')
     confirmKick()
-    cap(4, '讨论原地变成任务：多出「工作台」和「改动」，进度走到「在做」。')
+    cap(4, '讨论变成一件事，右栏收起。频道里它的卡片实时写着芝士在做什么：改哪个文件、第几行、跑了几次。')
+    await moveTo('#card-t4')
     await wait(2800)
   },
   async () => {
-    await toBench('t4')
+    await click('#card-t4')
+    openThing('t4')
     cap(
       5,
-      '「工作台」：这件事自己的那份文件。芝士在哪个文件、哪一行，计划走到哪一步，跑了什么命令、输出什么，都在这里，只读。'
+      '点卡片：开工后的一件事像文档一样<b>整页</b>打开，落在「文件」：它改的文件、芝士在哪一行、计划走到哪、每次运行和输出，只读。左上角回到频道。'
     )
     for (let i = 1; i <= 4; i++) {
       await wait(1100)
@@ -417,44 +409,47 @@ const STEPS: (() => Promise<void>)[] = [
   },
   async () => {
     finish()
-    cap(6, '做完了，「等你采纳」：只有这个状态是橙色。结果表 <code>results/eval_results.md</code> 也在工作台里。')
+    cap(6, '做完了，「等你采纳」：只有这个状态是橙色。结果表 <code>results/eval_results.md</code> 也在「文件」里。')
     await wait(2000)
     await tabTo('changes', '改动')
-    cap(6, '「改动」：工作台里那份和正式版的差别。采纳后才进正式版；要改就在对话里告诉芝士，或者接手。')
+    cap(6, '「改动」：和正式版的差别，写着「基于最新版」。要改就在对话里告诉芝士，或者接手。')
     await wait(2800)
   },
   async () => {
     await click('#b-accept')
     acceptCopy('t4')
-    cap(7, '「采纳」：芝士那份进了正式版。成果直接就在项目文件里，不用再「保存」。')
+    cap(7, '「采纳」：芝士的改动进了项目。成果直接就在项目文件里，不用再「保存」。')
     await wait(2800)
   },
   async () => {
     await click('[data-nav="files"] .v-list-item')
-    go('files', { file: 'docs/组会纪要-11-07.md' })
+    go('files', { file: MINUTES_DOC })
     cap(
       8,
-      '项目文件：文档、Word、代码、成果都在这一处，都是正式版。文档直接改，王磊也在改；标出来的那段是芝士的建议，卡片就在文档上面，还没生效。'
+      '项目文件就是项目本身：文档、Word、代码、成果都在这里。文档直接改，王磊也在改；标出来的那段是芝士的建议，卡片就在文档上面，还没生效。'
     )
     await wait(2800)
-    await typeInto(TYPED_NOTE, (v) => (S.typed = v))
+    await typeInto(TYPED_NOTE, (v) => {
+      S.typed = v
+      editDoc('research', MINUTES_DOC)
+    })
     await wait(800)
     await click('.doc-suggestion-card button:last-of-type')
     suggAccept()
-    cap(8, '接受芝士的建议，它才进正式版。')
+    cap(8, '接受芝士的建议，它才改进文档。')
     await wait(1800)
     await moveTo('.ot-fp .ot-hist')
-    cap(8, '右栏「历史」：每次生效记一条，包括刚才的采纳，写着是哪件事、谁做的，每条都能撤回。')
+    cap(8, '右栏「历史」：每段改动记一条，「林晓 改了…」，刚才的采纳也在，写着是哪件事、谁做的，每条都能撤回。')
     await wait(3000)
   },
   async () => {
     await click('.ot-ftree__row[title="eval/preprocess.py"]')
-    S.file = 'eval/preprocess.py'
+    openFile('eval/preprocess.py')
     cap(
       9,
-      '代码已经是采纳后的新版本（224）。代码在这里只读：要改就点「改这个文件」，开一件事，在它的工作台里改，做完一样采纳。'
+      '代码也一样：已经是采纳后的新版本（224），直接改就行。多一个「运行」：在项目的环境里跑，输出是这个文件上的一条运行记录。'
     )
-    await moveTo('#b-edit-file')
+    await moveTo('#b-run')
     await wait(3600)
     cursor.shown = false
   },
@@ -473,18 +468,18 @@ function instantOne(k: number) {
   }
   if (k === 3) confirmKick()
   if (k === 4) {
-    openBench('t4')
+    openThing('t4')
     liveStep(4)
   }
   if (k === 5) {
     finish()
     S.rtab = 'changes'
-    if (V.bench !== 'W1') S.bench = false
   }
   if (k === 6) acceptCopy('t4')
   if (k === 7) {
-    go('files', { file: 'docs/组会纪要-11-07.md' })
+    go('files', { file: MINUTES_DOC })
     S.typed = TYPED_NOTE
+    editDoc('research', MINUTES_DOC)
     suggAccept()
   }
 }
@@ -492,13 +487,20 @@ function instantOne(k: number) {
 // ---- 演示二：做事：人和芝士 ----
 const PRE = 'eval/preprocess.py'
 const RET = 'eval/retrieval.py'
-/** 林晓's own fix: the size the model takes, and the crop the paper uses. */
+/** 林晓's own fix in 项目文件: the size the model takes, and the crop the paper uses. */
 const fixed = (t: string) => t.replace('T.Resize(256),', 'T.Resize(224),\n        T.CenterCrop(224),')
 /** Her one-line fix after 接手: 芝士's first try sorts the wrong way round. */
 const sorted = (t: string) => t.replace('sims.argsort(dim=1)[', 'sims.argsort(dim=1, descending=True)[')
-/** 王磊's own 一件事 meanwhile: a line on top (not 芝士's lines), and line 18, the one 芝士 rewrote, his own way. */
-const wangleiEdit = (t: string) =>
-  `# 评测入口：Flickr30K 1K / COCO 5K\n${t.replace('    return recall_at_1(sims)', '    return round(recall_at_1(sims), 1)')}`
+/** 王磊's edit in 项目文件 while 芝士 works, typed in two places: the import, then cosine similarity on the line
+ *  right above the one 芝士 rewrites. */
+const cosineImport = (t: string) => t.replace('import torch\n', 'import torch\nimport torch.nn.functional as F\n')
+const cosineSims = (t: string) =>
+  t.replace(
+    '    sims = image_feats @ text_feats.T',
+    '    sims = F.normalize(image_feats, dim=-1) @ F.normalize(text_feats, dim=-1).T'
+  )
+/** His second edit, while the 一件事 waits for 采纳: a line on top, away from 芝士's. */
+const headline = (t: string) => `# 评测入口：Flickr30K 1K / COCO 5K\n${t}`
 const CODE_ASK = '<@cheese> 把 `eval/retrieval.py` 改成一次出 R@1 / R@5 / R@10'
 const HAND_NOTE = '排序方向我改好了，你把 Flickr30K 1K 完整跑一遍。'
 const HINT_ASK = '<@cheese> logicalNeg 从哪下手？'
@@ -506,122 +508,128 @@ const HINT_ASK = '<@cheese> logicalNeg 从哪下手？'
 const BIT_XOR = '  return ~(~x & ~y) & ~(x & y);'
 const withXor = (t: string) => t.replace(/(int bitXor\(int x, int y\) \{\n)\s*return 2;/, `$1${BIT_XOR}`)
 
-/** The 一件事 opened by 「改这个文件」 on preprocess.py, the one asked of 芝士 about retrieval.py, Data Lab's. */
-const myFix = () => S.things.find((t) => t.doer === ME && t.title === `改 ${PRE.split('/').pop()}`) ?? null
+/** The 一件事 asked of 芝士 about retrieval.py, and the hint 讨论 in Data Lab. */
 const asked = () => S.things.find((t) => t.id.startsWith('tc')) ?? null
-const lab = () => thingById('w-datalab')
+const hint = () => S.things.find((t) => t.id.startsWith('th')) ?? null
 const toFiles = async (path: string) => {
   await click('[data-nav="files"] .v-list-item')
   openFile(path)
+  S.fileTab = 'history'
 }
-/** The line of a file's text that contains `bit`, 1-based. */
+/** The line of a text that contains `bit`, 1-based. */
 const lineOf = (text: string, bit: string) => text.split('\n').findIndex((l) => l.includes(bit)) + 1
+/** 芝士 has said, in the 一件事, that it redid its change on someone's edit. */
+const rebased = () => !!asked()?.talk?.some((l) => 'text' in l && l.text.includes('重做了我的改动'))
 
-const END = '只有一件事。谁做都在它的工作台里做：芝士做你看着，你做芝士帮着；做完采纳。'
+const END = '人直接改项目；芝士在它的一件事里做，跟着项目的最新版走，做完你采纳。'
 
 const CODE_STEPS: (() => Promise<void>)[] = [
   async () => {
     reset()
-    cap(1, '研究项目，项目文件里打开一个代码文件。这里是<b>正式版</b>，只读。')
+    cap(1, '项目文件就是项目本身。打开 <code>eval/preprocess.py</code>：王磊也在这个文件里，他的光标看得到。')
     await click('[data-nav="files"] .v-list-item')
     go('files')
     await click(`.ot-ftree__row[title="${PRE}"]`)
     openFile(PRE)
-    await wait(1600)
-    await moveTo('[data-zone="official"]')
-    cap(1, '项目文件里没有编辑器、没有「运行」、没有终端。')
-    await wait(2200)
-    await moveTo('#b-edit-file')
-    cap(1, '只有一个按钮：「改这个文件」。右栏是这个文件的历史。')
-    await wait(2600)
-  },
-  async () => {
-    await click('#b-edit-file')
-    editFile('research', PRE)
+    await wait(2000)
+    await moveTo(codeLine(6, '.ot-ced'), 200)
+    await typeProject('research', PRE, fixed(projectText('research', PRE)))
     cap(
-      2,
-      '开了一件事「改 preprocess.py」，林晓自己做，直接进它的<b>工作台</b>：这件事自己的那份文件。频道里也多了这件事。'
+      1,
+      '林晓直接改，和改文档一样：<code>Resize(256)</code> 换成 224，加一行 <code>CenterCrop(224)</code>。自动保存。'
     )
-    await wait(2800)
-    const t = myFix()!
-    await moveTo(benchLine(6), 160)
-    await typeCopyTo(t.id, PRE, fixed(t.copy![PRE]!.text))
-    cap(2, '<code>Resize(256)</code> 改成 224，加一行 <code>CenterCrop(224)</code>。改的是这件事的那份，正式版没动。')
-    await wait(1600)
+    await wait(1400)
+    await moveTo('.ot-fp .ot-hist__row')
+    cap(1, '右栏「历史」多了一条「林晓 改了 eval/preprocess.py」，能撤回。')
+    await wait(2400)
     await click('#b-run')
-    runInBench(t.id, PRE)
-    await until(() => !t.runs!.at(-1)!.running)
-    cap(2, '「运行」也在这件事里：输出留在工作台下面，正好 224×224。')
+    runInProject('research', PRE)
+    await until(() => !S.fileRuns[`research:${PRE}`]?.at(-1)?.running)
+    cap(
+      1,
+      '「运行」：项目的环境跑这个文件，输出是这个文件上的一条<b>运行记录</b>：谁、什么时候、哪个版本。最近一次收在文件下面。'
+    )
     await wait(2600)
-  },
-  async () => {
-    const t = myFix()!
-    await click('#b-done')
-    markDone(t.id)
-    cap(3, '「改好了」：等采纳。王磊在这件事的对话里看了一眼。')
-    await wait(2200)
-    await tabTo('changes', '改动')
-    cap(3, '「改动」：这件事和正式版的差别。')
-    await wait(2200)
-    await click('#b-accept')
-    acceptCopy(t.id)
-    cap(3, '「采纳」：自己做的小改动，也是这样进正式版。')
-    await wait(1800)
-    await toFiles(PRE)
-    await moveTo('.ot-fp [data-via]')
-    cap(3, '历史写着「林晓 采纳了「改 preprocess.py」（林晓做的）」，点事名回到那件事，也能撤回。')
-    await wait(3200)
+    await click('[data-file-tab] .segmented__option:last-child')
+    S.fileTab = 'runs'
+    cap(1, '右栏「运行」：这个文件的每次运行。运行不进历史；想让大家看到，点「发到频道」。')
+    await wait(2800)
   },
   async () => {
     await click('[data-chan="c-exp"]')
     go('chan', { chan: 'c-exp', thing: null })
     S.chanView['c-exp'] = 'talk'
-    cap(4, '大一点的改动交给芝士。在频道里 @芝士，提到那个文件。')
+    cap(2, '大一点的改动交给芝士：在 # 实验记录 里 @芝士，提到那个文件。')
     await moveTo('.ot-composer__box')
     await typeInto(CODE_ASK, (v) => (S.typing = v), '<@cheese> ')
     await click('.ot-composer .composer-send')
     send()
-    await wait(1800)
+    await wait(1600)
     const t = asked()!
     await click(`#card-${t.id}`)
     openThing(t.id)
-    cap(4, '下面开出一个<b>讨论</b>：芝士先说这个文件现在怎样、打算怎么改，不动任何文件。')
-    await wait(2800)
+    cap(2, '下面开出一个<b>讨论</b>，在右栏：芝士先说这个文件现在怎样、打算怎么改，不动任何文件。')
+    await until(() => t.replies >= 2)
+    await wait(2600)
     await click('#b-kick')
     kickoff()
     await wait(1400)
     await click('#b-confirm')
     confirmKick()
-    cap(4, '「开工」：交给芝士。')
+    cap(2, '「开工」：讨论变成一件事，右栏收起。频道里的卡片实时写着它在做什么：芝士在改哪一行、跑了几次。')
+    await moveTo(`#card-${t.id}`)
+    await wait(3400)
+  },
+  async () => {
+    const t = asked()!
+    await click(`#card-${t.id}`)
+    openThing(t.id)
+    cap(3, '点卡片：这件事<b>整页</b>打开，落在「文件」：芝士改的文件、它在打哪一行，下面是每次运行。左上角回到频道。')
+    await until(() => !!t.runs?.length && !t.runs.at(-1)!.running)
+    cap(3, '它跑了一遍，命令和输出都在下面：R@1 只有 0.0。它在对话里说要再查查。')
+    await until(() => t.last.includes('在查'))
     await wait(1600)
   },
   async () => {
     const t = asked()!
-    await toBench(t.id)
-    cap(5, '打开它的工作台看芝士做：它在改哪个文件、哪一行，一行行打出来；只读。')
-    await until(() => !!t.runs?.length && !t.runs.at(-1)!.running)
-    cap(5, '它跑了一遍，命令和输出都在下面：R@1 只有 0.0。')
-    await until(() => t.last.includes('排序方向反了'))
-    cap(5, '芝士在对话里说：排序方向反了，它要改一下。')
-    await wait(1200)
+    await click('#b-thing-back')
+    go('chan', { chan: 'c-exp', thing: null })
+    await toFiles(RET)
+    cap(
+      4,
+      '这时王磊在项目文件里直接改 <code>retrieval.py</code>。芝士那件事在改的几行带着标记，不是锁，只是让人看到会撞在哪。'
+    )
+    await moveTo('[data-cheese-mark]')
+    await wait(2200)
+    await moveTo(codeLine(2, '.ot-ced'), 120)
+    await typeProject('research', RET, cosineImport(projectText('research', RET)), 'wanglei')
+    await moveTo(codeLine(18, '.ot-ced'), 260)
+    await typeProject('research', RET, cosineSims(projectText('research', RET)), 'wanglei')
+    cap(4, '王磊把相似度换成余弦，正好是芝士改的那几行的上一行。')
+    await wait(2200)
+    await click('[data-things-on-file]')
+    openThing(t.id, 'files', RET)
+    cap(4, '回到这件事：它记下了「王磊改了项目里的 retrieval.py」。芝士下次运行前，先跟上项目的最新版。')
+    await until(rebased)
+    await tabTo('chat', '对话')
+    cap(4, '芝士在王磊的版本上重做了自己的改动，在对话里一句话说清楚，重跑了。上面一行写着「基于最新版」和跑的时间。')
+    await wait(3400)
   },
   async () => {
     const t = asked()!
+    await tabTo('files', '文件')
     await click('#b-take')
     takeOver(t.id)
-    cap(6, '林晓「接手」：芝士停下，在对话里说了一句。还是这个工作台，现在归林晓，可以改了。')
-    await wait(2400)
-    const text = t.copy![RET]!.text
-    await moveTo(benchLine(lineOf(text, 'argsort')), 300)
-    await typeCopyTo(t.id, RET, sorted(text))
-    await click('#b-run')
-    runInBench(t.id, RET)
-    await until(() => !t.runs!.at(-1)!.running)
-    cap(6, '改一行，加上 <code>descending=True</code>，再跑：R@1 79.0，对了。')
+    cap(5, '林晓看出来了：argsort 默认从小到大，排序方向反了。她「接手」：芝士停下，这件事的文件归她改。')
     await wait(2200)
-    peerChange('wanglei', 'research', RET, 'retrieval.py 加一行说明', wangleiEdit(officialText('research', RET)))
-    cap(6, '这时王磊也改了这个文件：他自己开了一件事，加一行说明，第 18 行改成保留一位小数，采纳进了正式版。')
-    await wait(3000)
+    const text = t.copy![RET]!.text
+    await moveTo(codeLine(lineOf(text, 'argsort'), '.ot-wb'), 300)
+    await typeCopyTo(t.id, RET, sorted(text))
+    await click('#b-run-thing')
+    runInThing(t.id, RET)
+    await until(() => !t.runs!.at(-1)!.running)
+    cap(5, '改一行，加上 <code>descending=True</code>，在这件事里跑：R@1 79.4，对了。')
+    await wait(2200)
     await click('#b-hand')
     S.handNote = ''
     S.hand = true
@@ -629,146 +637,135 @@ const CODE_STEPS: (() => Promise<void>)[] = [
     await typeInto(HAND_NOTE, (v) => (S.handNote = v))
     await click('#b-hand-confirm')
     handToCheese(t.id, S.handNote)
-    cap(6, '「交给芝士」，带一句话：芝士在同一个工作台里接着跑。')
+    cap(5, '「交给芝士」，带一句话：芝士先跟上项目的最新版，再跑完整的 Flickr30K 1K。')
     await until(() => t.status === 'wait')
-    cap(6, '芝士跑完了：等采纳。')
+    cap(5, '跑完了，等你采纳。')
     await wait(1800)
   },
   async () => {
     const t = asked()!
     await tabTo('changes', '改动')
-    cap(7, '「改动」上面写着「正式版在这期间改过（王磊采纳的）」：采纳不会盖掉王磊的改动。')
-    await wait(3000)
-    await moveTo('[data-conflict]')
-    cap(7, '王磊加的第 1 行和这件事改的不是一处，两边都留着；第 18 行两边都改了，并排摆出来，由采纳的人挑。')
-    await wait(3000)
-    await click('[data-conflict] [data-pick="theirs"]')
-    pickSide(t.id, RET, 0, 'theirs')
-    await wait(1000)
+    cap(6, '「改动」：和正式版的差别，只有芝士和林晓改的这几行。徽标写着「基于最新版」和刚才跑的时间。')
+    await moveTo('[data-fresh]')
+    await wait(2400)
+    await moveTo('#b-accept-tab')
+    await wait(600)
+    peerEdit('wanglei', 'research', RET, headline(projectText('research', RET)))
+    cap(6, '王磊又在项目里加了一行说明：徽标变成「项目又改过 · 芝士在跟上」，采纳先停着。')
+    await wait(1600)
+    await until(() => freshness(t).fresh && !t.catching)
+    cap(6, '他改的不是同一处，芝士直接合进来，又跑了一遍：回到「基于最新版」，可以采纳了。')
+    await wait(2400)
     await click('#b-accept')
     acceptCopy(t.id)
-    cap(7, '「采纳」：先跟上最新的正式版，对话里一行说清楚留了谁的改动，再进正式版。')
-    await wait(2200)
+    cap(6, '「采纳」：干干净净进了项目。')
+    await wait(1800)
     await toFiles(RET)
     await moveTo('.ot-fp [data-via]')
-    cap(7, '历史：「林晓 采纳了「…」（芝士做的，林晓接手改过）」，下面是王磊那条「（王磊做的）」。')
-    await wait(3400)
+    cap(
+      6,
+      '历史：「林晓 采纳了「…」（芝士做的，林晓接手改过）」，下面是王磊的两条「王磊 改了 eval/retrieval.py」，都能撤回。'
+    )
+    await wait(3600)
   },
   async () => {
     await click('[data-space]')
     openSpace('tasks')
-    cap(8, '换到课程：空间里领取 Data Lab。')
+    cap(7, '换到课程：空间里领取 Data Lab。领取只建一个项目，在你自己的团队下。')
     await wait(1600)
     await click('#b-claim-datalab')
     claim('datalab')
-    cap(8, '领取就开好了一件事「做 Data Lab」，林晓做。题目卡在左栏标题下面。')
-    await wait(2400)
+    await wait(1600)
     await click('[data-origin-line]')
     S.cardOpen.datalab = true
-    await wait(1200)
+    await wait(1000)
     await click('[data-origin-work]')
-    openBench('w-datalab')
-    cap(8, '「接着做」打开这件事的工作台：写 <code>bits.c</code>、运行，都在这里。')
-    await wait(2200)
-    const t = lab()!
-    const text = t.copy!['bits.c']!.text
-    await moveTo(benchLine(lineOf(text, 'int bitXor') + 1), 120)
-    await typeCopyTo(t.id, 'bits.c', withXor(text))
+    openFile('bits.c')
+    cap(7, '题目卡上「接着做」打开 <code>bits.c</code>，在项目文件里直接写。')
+    await wait(1600)
+    const text = projectText('datalab', 'bits.c')
+    await moveTo(codeLine(lineOf(text, 'int bitXor') + 1, '.ot-ced'), 120)
+    await typeProject('datalab', 'bits.c', withXor(text))
     await click('#b-run')
-    runInBench(t.id, 'bits.c')
-    await until(() => !t.runs!.at(-1)!.running)
-    cap(8, '运行 btest：bitXor 过了。题目卡上的进度读的就是这里的运行。题单的题目运行时还能挑样例或自己输入。')
-    await wait(2600)
-    await tabTo('chat', '对话')
-    await moveTo('.ot-thing .ot-composer__box')
-    await typeInto(HINT_ASK, (v) => (S.thingTyping = v), '<@cheese> ')
-    await click('.ot-thing .composer-send')
-    sayInThing()
-    await wait(1800)
-    cap(8, '在这件事的对话里问芝士：这门课它只给提示，不改代码。')
-    await wait(2600)
-  },
-  async () => {
-    S.cardOpen.datalab = true
+    runInProject('datalab', 'bits.c')
+    await until(() => !S.fileRuns['datalab:bits.c']?.at(-1)?.running)
+    cap(7, '「运行」跑题目带来的 <code>make btest</code>：bitXor 过了。输出记在 bits.c 上，题目卡的进度读的就是它。')
+    await wait(2800)
+    await click(`[data-chan="${CLAIMED.datalab.chan}"]`)
+    go('chan', { chan: CLAIMED.datalab.chan, thing: null })
+    await moveTo('.ot-composer__box')
+    await typeInto(HINT_ASK, (v) => (S.typing = v), '<@cheese> ')
+    await click('.ot-composer .composer-send')
+    send()
+    await until(() => (hint()?.replies ?? 0) >= 2)
+    await click(`#card-${hint()!.id}`)
+    openThing(hint()!.id)
+    cap(7, '在频道里 @芝士：这个项目设成「芝士不能改文件」，开出的讨论只给提示，没有「开工」。')
+    await wait(3600)
     await click('#b-submit')
     openSubmit('datalab')
-    cap(9, '「提交」在题目卡上。默认交「做 Data Lab」里的当前版本：不用先采纳，也可以挑正式版的版本。')
-    await wait(1200)
+    cap(7, '「提交」在题目卡上：冻结项目文件里 bits.c 的一个版本（默认现在这一版），交到题目上。')
     await moveTo('[data-version]')
     await wait(2600)
     await click('#b-submit-confirm')
-    const v = submitVersions('datalab', 'bits.c')[0]!
-    submitTopic('datalab', 'datalab', v, [])
-    cap(9, '提交记在题目上，评测机马上评。')
-    await wait(3000)
-  },
-  async () => {
+    submitTopic('datalab', 'datalab', versionsOf('datalab', 'bits.c')[0]!, [])
+    cap(7, '提交记在题目上，评测机马上评。')
+    await wait(2600)
     cursor.shown = false
-    cap(10, END)
-    await wait(6000)
+    cap(7, END)
+    await wait(5000)
   },
 ]
 
 /** Bring the state to the start of step `k + 1` of 演示二 without animating. */
 function instantCode(k: number) {
-  if (k === 0) go('files', { file: PRE })
-  if (k === 1) {
-    editFile('research', PRE)
-    const t = myFix()!
-    typeCopy(t.id, PRE, fixed(t.copy![PRE]!.text))
-    runInBench(t.id, PRE)
-    settle()
-  }
-  if (k === 2) {
-    const t = myFix()!
-    markDone(t.id)
-    settle()
-    acceptCopy(t.id)
+  if (k === 0) {
     openFile(PRE)
+    editProject('research', PRE, fixed(projectText('research', PRE)))
+    runInProject('research', PRE)
+    settle()
+    S.fileTab = 'runs'
   }
-  if (k === 3) {
+  if (k === 1) {
     go('chan', { chan: 'c-exp', thing: null })
     S.typing = CODE_ASK
     send()
-    settle()
+    settleUntil(() => (asked()?.replies ?? 0) >= 2)
     openThing(asked()!.id)
     confirmKick()
-    S.morph = false
+    S.morph = ''
+  }
+  if (k === 2) {
+    const t = asked()!
+    openThing(t.id)
+    settleUntil(() => t.last.includes('在查'))
+  }
+  if (k === 3) {
+    const t = asked()!
+    go('chan', { chan: 'c-exp', thing: null })
+    openFile(RET)
+    peerEdit('wanglei', 'research', RET, cosineSims(cosineImport(projectText('research', RET))))
+    openThing(t.id, 'chat')
+    settleUntil(rebased)
+    settleUntil(() => !t.runs!.at(-1)!.running)
   }
   if (k === 4) {
     const t = asked()!
-    openBench(t.id)
-    settleUntil(() => t.last.includes('排序方向反了'))
-  }
-  if (k === 5) {
-    const t = asked()!
+    S.rtab = 'files'
     takeOver(t.id)
-    settle()
     typeCopy(t.id, RET, sorted(t.copy![RET]!.text))
-    runInBench(t.id, RET)
+    runInThing(t.id, RET)
     settle()
-    peerChange('wanglei', 'research', RET, 'retrieval.py 加一行说明', wangleiEdit(officialText('research', RET)))
     handToCheese(t.id, HAND_NOTE)
     settle()
   }
-  if (k === 6) {
+  if (k === 5) {
     const t = asked()!
-    pickSide(t.id, RET, 0, 'theirs')
+    peerEdit('wanglei', 'research', RET, headline(projectText('research', RET)))
+    settle()
     acceptCopy(t.id)
     openFile(RET)
-  }
-  if (k === 7) {
-    claim('datalab')
-    S.cardOpen.datalab = true
-    const t = lab()!
-    openBench(t.id)
-    typeCopy(t.id, 'bits.c', withXor(t.copy!['bits.c']!.text))
-    runInBench(t.id, 'bits.c')
-    settle()
-  }
-  if (k === 8) {
-    submitTopic('datalab', 'datalab', submitVersions('datalab', 'bits.c')[0]!, [])
-    settle()
+    S.fileTab = 'history'
   }
 }
 
@@ -816,7 +813,7 @@ function fastForward(i: number) {
   reset()
   for (let j = 0; j < i; j++) TOURS[tour.value].instant(j)
   // Fast-forwarding replays the earlier steps' toasts; none of them belongs to this step.
-  S.morph = false
+  S.morph = ''
   S.toast = ''
 }
 
@@ -912,47 +909,6 @@ function onUserClick(e: MouseEvent) {
         @click="CLOCK.dueSoon = !CLOCK.dueSoon"
         >模拟：离截止不到 24 小时</BaseButton
       >
-      <v-menu
-        v-if="QUESTIONS.length"
-        v-model="variantsOpen"
-        :close-on-content-click="false"
-        location="bottom end"
-        :offset="6"
-      >
-        <template #activator="{ props: menuProps }">
-          <BaseButton
-            v-bind="menuProps"
-            kind="secondary"
-            size="sm"
-            append-icon="mdi-chevron-down"
-            data-variants
-            title="还没定的设计：每个问题挑一个方案看"
-            >方案</BaseButton
-          >
-        </template>
-        <div class="ot-variants" role="dialog" aria-label="方案">
-          <section v-for="q in QUESTIONS" :key="q.key" class="ot-variants__q" :data-question="q.key">
-            <h3 class="ot-variants__title">{{ q.title }}</h3>
-            <button
-              v-for="o in q.options"
-              :key="o.key"
-              type="button"
-              class="ot-variants__opt"
-              :class="{ 'is-on': V[q.key] === o.key }"
-              :aria-pressed="V[q.key] === o.key"
-              :data-variant="`${q.key}:${o.key}`"
-              @click="setVariant(q.key, o.key)"
-            >
-              <v-icon size="16" :icon="V[q.key] === o.key ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" />
-              <span class="ot-variants__main">
-                <b>{{ o.label }}</b>
-                <span>{{ o.note }}</span>
-              </span>
-            </button>
-          </section>
-          <p class="ot-variants__foot">切换不会重来，演示停在哪就还在哪。地址栏的链接带着当前方案。</p>
-        </div>
-      </v-menu>
       <BaseButton
         kind="ghost"
         size="sm"
@@ -1000,16 +956,16 @@ function onUserClick(e: MouseEvent) {
 
     <div class="ot-model">
       <div>
-        <b>一件事：谁做都在它的工作台里</b>在频道里 @芝士
-        开出一个讨论，芝士只出主意、查资料。商量好了点「开工」，芝士在这件事的工作台里做，你看着，随时能接手；自己做也是一件事。做完你采纳，才进正式版。
+        <b>一件事：交给芝士的事</b>在频道里 @芝士
+        开出一个讨论，芝士只出主意、查资料。商量好了点「开工」，芝士在这件事里改，改在项目最新版的上面；别人照常改项目，它跟着跟上。随时能接手。做完你采纳，才进项目。
       </div>
       <div>
-        <b>项目文件：一份正式版</b
-        >文档、代码、Word、成果都在这里。文档直接改；代码只读，要改就点「改这个文件」，开一件事。每次采纳记进历史，写着是哪件事、谁做的，能撤回。
+        <b>项目文件：项目本身</b
+        >文档、代码、Word、成果都在这里，人直接改，光标看得到，每段保存记进历史，能撤回。代码多一个「运行」：输出是这个文件上的运行记录，不进历史。
       </div>
       <div>
         <b>布局：中间频道，右边那件事</b
-        >中间是频道，可以看对话，也可以看频道文档：这个频道的事、芝士整理的要点（每句都能跳回原消息）、大家写的。右栏只放选中的那一件：点开的讨论或任务；打开项目文件时，是文件的历史和正在改它的事。工作台放哪还在比，看「方案」。
+        >中间是频道，可以看对话，也可以看频道文档。右栏只放选中的那一件：点开的讨论；开工后的一件事像文档一样整页打开，返回回到频道。打开项目文件时，右栏是文件的历史、运行记录和正在改它的事。
       </div>
     </div>
   </div>

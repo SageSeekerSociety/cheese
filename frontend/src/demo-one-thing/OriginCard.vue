@@ -6,32 +6,31 @@
 // the 题目: the header right above it already names the project, which is the
 // 题目's name, and a long one (「Shell Lab 大作业」) would not fit beside the
 // date. A click opens a calm card in place and folds it again. The card leads
-// with what I have done: the latest 运行 in the 一件事 领取 opened
-// (「做 Data Lab」), read off its 工作台 (「运行：8/13 个函数通过」,
-// 「trace 通过 3/8」, a 题单's 「已做 2/5」, or 「还没运行」), with
-// 「接着做 ›」 opening that 一件事's 工作台; then the latest submission, then
-// the actions: 「看题目」 back to the 题目 in the space and 「提交」 (which
-// offers the 一件事's current version as well as 正式版's). The date stays on the line only; inside, an amber
+// with what I have done: the latest run record on the project file the 题目
+// grades (「运行：8/13 个函数通过」, 「trace 通过 3/8」, a 题单's 「已做 2/5」,
+// or 「还没运行」), with 「接着做 ›」 opening that file in 项目文件 (for a 题单,
+// the first problem not passed yet); then the latest submission, then the
+// actions: 「看题目」 back to the 题目 in the space and 「提交」, which freezes a
+// version of the project file. The date stays on the line only; inside, an amber
 // 「还剩 20 小时」 shows in the last 24 hours. Nothing on it is orange, and 提交
 // is a secondary button. It opens by itself only in the last 24 hours or
 // when a result I have not looked at has come in; folding it, or opening the
 // 题目, counts as having looked, and a blue 「新」 marks that result on the card.
 import { computed, watch } from 'vue'
 
-import { CLOCK, hoursLeft, SET, topicOf } from './course'
+import { CLOCK, hoursLeft, SET, topicOf, UNITS } from './course'
 import { isClaim, SPACE } from './data'
 import {
   lastRun,
   latestOf,
   markSeen,
-  openBench,
+  openFile,
   openSubmit,
   passed,
   resultOf,
   S,
   showTopic,
   unseenResult,
-  workOf,
 } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -55,9 +54,14 @@ const hours = computed(() => (t.value ? hoursLeft(t.value.due) : 999))
 const soon = computed(() => hours.value >= 0 && hours.value < 24 && !done.value)
 const countdown = computed(() => (hours.value < 1 ? '不到 1 小时就截止' : `还剩 ${hours.value} 小时`))
 
-/** The work 一件事 领取 opened: where the work is done. */
-const work = computed(() => (t.value?.project ? workOf(t.value.project) : null))
-/** The card's first line: the latest 运行 in that 一件事's 工作台. */
+/** The file 接着做 opens: the one the 题目 grades, or for a 题单 the first problem not passed yet. */
+const mainFile = computed(() => {
+  if (!t.value) return null
+  if (!isSet.value) return UNITS[t.value.id]?.path ?? null
+  const next = SET.find((x) => !passed(latestOf(t.value!.id, x.id))) ?? SET[0]!
+  return UNITS[next.id]!.path
+})
+/** The card's first line: the latest run record on that file. */
 const progress = computed(() => {
   if (!t.value?.project) return ''
   const p = t.value.project
@@ -141,12 +145,12 @@ function look() {
       <div class="ot-card__leadrow">
         <span class="ot-card__lead" data-origin-progress>{{ progress }}</span>
         <button
-          v-if="work"
+          v-if="mainFile"
           type="button"
           class="ot-card__link"
           data-origin-work
-          :title="`打开「${work.title}」的工作台`"
-          @click="openBench(work.id)"
+          :title="`在项目文件里打开 ${mainFile}`"
+          @click="openFile(mainFile)"
         >
           接着做<v-icon size="13" icon="mdi-chevron-right" />
         </button>

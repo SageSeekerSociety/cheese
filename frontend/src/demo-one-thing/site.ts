@@ -1,5 +1,5 @@
 // What 芝士 does in 演示一's task, step by step along its plan: what it
-// thinks, reads, runs (and what that printed) and says. The task's 工作台
+// thinks, reads, runs (and what that printed) and says. The task's 文件
 // shows the runs of the steps done so far (state.liveStep).
 export type SiteStep =
   | { kind: 'thinking'; text: string }

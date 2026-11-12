@@ -1,5 +1,6 @@
 // The demo's own records turned into the shapes the product's components take:
-// a chat line becomes a Block, a 一件事 becomes a TaskLine with a TaskState.
+// a chat line becomes a Block, a 一件事 becomes a TaskLine with a TaskState
+// (its card's second line is what is happening in it now, state.liveLine).
 import type { Block } from '@/cx_types'
 import type { TaskLine } from '@/lib/channelTasks'
 import type { RefNames } from '@/lib/refChip'
@@ -7,6 +8,7 @@ import type { TaskState } from '@/lib/taskState'
 import type { ChatLine, Status, Thing } from './state'
 
 import { ME, NAMES } from './data'
+import { liveLine } from './state'
 
 import { calendarDaysAgo, clockTime, dayTimeText } from '@/lib/dateText'
 
@@ -72,7 +74,7 @@ export function taskLine(thing: Thing): TaskLine {
     mine: thing.status === 'wait' && thing.owner === ME,
     accepted: null,
     at: thing.at,
-    latest: thing.last,
+    latest: liveLine(thing),
   }
 }
 

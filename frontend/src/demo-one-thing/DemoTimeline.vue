@@ -3,8 +3,10 @@
 // whenever the day changes, one person's run of messages under one name
 // (the product's own grouping rules, lib/chatGrouping), the hover bar on the
 // row under the pointer, reactions, a reply's quote, and a 一件事's card under
-// the message that opened it. A file a message mentions (`eval/preprocess.py`,
-// `eval/preprocess.py:6`) opens in 项目文件's editor at that line.
+// the message that opened it, its second line saying what is happening in it
+// now. A file a message mentions (`eval/preprocess.py`,
+// `eval/preprocess.py:6`) opens in 项目文件's editor at that line. A question
+// 芝士 asks inside a 一件事 with two answers shows them as two buttons under it.
 import type { Block } from '@/cx_types'
 import type { ChatLine, MarkLine } from './state'
 
@@ -12,8 +14,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 
 import { ME, NAMES } from './data'
 import { block, hhmm, ownerName, REFS, taskLine } from './shapes'
-import { fileRef, openFileAt, openThing, react, S, thingById, toast } from './state'
+import { answerAsk, fileRef, openFileAt, openThing, react, S, thingById, toast } from './state'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import RoomHoverBar from '@/components/room/RoomHoverBar.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
@@ -251,10 +254,22 @@ watch(
           :active="bar.shown && bar.id === line.id"
           @react="onReact"
         />
+        <div v-if="line.choices" class="ot-tl__choices" data-choices>
+          <BaseButton
+            v-for="c in line.choices"
+            :key="c.key"
+            :kind="line.answered === c.key ? 'primary' : 'secondary'"
+            size="sm"
+            :disabled="!!line.answered"
+            :data-choice="c.key"
+            @click="answerAsk(conversation, line.id, c.key)"
+            >{{ c.label }}</BaseButton
+          >
+        </div>
         <div v-if="cards && line.thing && thingById(line.thing)" class="ot-tl__card">
           <TaskCard
             :id="`card-${line.thing}`"
-            :class="{ 'ot-sel': S.thing === line.thing, 'ot-flash': S.morph && line.thing === 't4' }"
+            :class="{ 'ot-sel': S.thing === line.thing, 'ot-flash': S.morph === line.thing }"
             :task="taskLine(thingById(line.thing)!)"
             :owner-name="ownerName(thingById(line.thing)!)"
             @open="openThing"
@@ -288,6 +303,12 @@ watch(
 
 .ot-tl__card {
   /* Under the message text: lines up with the message body, past the avatar column. */
+  padding: 2px 16px 8px 60px;
+}
+
+.ot-tl__choices {
+  display: flex;
+  gap: 8px;
   padding: 2px 16px 8px 60px;
 }
 

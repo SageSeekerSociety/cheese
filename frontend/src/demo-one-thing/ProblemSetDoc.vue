@@ -3,14 +3,13 @@
 // block (the same pattern as a channel 文档's 这个频道的事) has one row per
 // problem read from the 题目's submissions, so a submission a moment ago is
 // already here: 通过 or not, how many tries, the latest score. A row opens that
-// problem's main.cpp in the 工作台 of 「做第 3 周题单」 (the 一件事 领取 opened,
-// where it is written and run), and its 「提交」 submits that one problem to the
-// 题目 from here. Under it, the teacher's few lines about the 题单.
+// problem's main.cpp in 项目文件, where it is written and run, and its 「提交」
+// submits that one problem to the 题目 from here. Under it, the teacher's few lines about the 题单.
 import { computed } from 'vue'
 
 import { SET, topicOf, WEEK3_INTRO } from './course'
 import DemoDoc from './DemoDoc.vue'
-import { latestOf, openBench, openSubmit, passed as ok, resultOf, S } from './state'
+import { latestOf, openFile, openSubmit, passed as ok, resultOf, S } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { monthDayTime } from '@/lib/dateText'
@@ -48,7 +47,7 @@ const due = monthDayTime(Date.parse(topicOf('week3').due))
           <span>题目</span><span>状态</span><span class="ot-pset__tries">尝试</span><span>最近得分</span>
         </div>
         <div v-for="r in rows" :key="r.id" class="ot-pset__row" :data-set="r.id">
-          <button type="button" class="ot-cdoc__row" @click="openBench('w-week3', `${r.id}/main.cpp`)">
+          <button type="button" class="ot-cdoc__row" @click="openFile(`${r.id}/main.cpp`)">
             <span class="ot-pset__name"
               ><code>{{ r.id }}</code> {{ r.title }}</span
             >

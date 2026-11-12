@@ -1,30 +1,19 @@
 <script setup lang="ts">
 // 设置: the one place. A table of contents on the left and the section on the
-// right, drawn with the product's settings rows. A project claimed from a
-// 题目 says which 题目 and space it came from and which team owns it, and
-// shows the rules the 题目 brought: 芝士 only hints, the deadline, the code
-// rule (the work is the 一件事 领取 opened, done in its 工作台 by me or by the
-// whole team, and 采纳ed into 正式版). Every project can be opened in a local
-// editor. There is no setting for how changes land: code reaches 正式版 only
-// through a 一件事 a person 采纳s, whoever did it, so neither a 「直接生效」 for
-// 芝士 nor a 「正式版受保护」 switch has anything left to choose.
+// right, drawn with the product's settings rows. A project of the team's own
+// says how its code files run (「怎么运行」: the command 运行 uses per file,
+// any other by its type). A project claimed from a 题目 says which 题目 and
+// space it came from and which team owns it, and shows the rules the 题目
+// brought: the deadline, and code typed straight into 项目文件 and run with
+// the 题目's command. 「芝士能改文件」 is one switch for every project (in 芝士):
+// off, an @芝士 gets a 讨论 with hints and no 开工; a project claimed from a
+// 题目 has it off, set by the teacher. Every project can be opened in a local
+// editor, whose pushes land in the project like typing here does.
 import { computed, ref } from 'vue'
 
-import { topicOf, WORK_TITLE } from './course'
-import {
-  channelOf,
-  type ClaimKey,
-  gitUrl,
-  isClaim,
-  isShared,
-  ME,
-  NAMES,
-  PEOPLE,
-  peopleOf,
-  projectMeta,
-  SPACE,
-} from './data'
-import { S, toast } from './state'
+import { topicOf } from './course'
+import { channelOf, gitUrl, isClaim, isShared, ME, NAMES, PEOPLE, peopleOf, projectMeta, RUN_HOW, SPACE } from './data'
+import { cheeseEdits, S, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
@@ -135,22 +124,24 @@ const USAGE = [
             <span class="ot-set__value" data-rule="team">{{ projectMeta(S.project).team }}</span>
           </SettingsRow>
           <p class="ot-set__fixed"><v-icon size="14" icon="mdi-lock-outline" />下面三条是题目带来的规则，由老师设置</p>
-          <SettingsRow label="芝士在这个项目里" description="可以问思路，它不会写出答案" width="select">
-            <span class="ot-set__value" data-rule="cheese">只给提示</span>
+          <SettingsRow label="芝士能改文件" description="关着：@芝士 开出的讨论只给提示，没有「开工」" width="select">
+            <span class="ot-set__value" data-rule="cheese">关</span>
           </SettingsRow>
           <SettingsRow label="截止" description="提交在空间里的这道题目上，以截止前最后一次为准" width="select">
             <span class="ot-set__value" data-rule="due">{{ monthDayTime(Date.parse(topic.due)) }}</span>
           </SettingsRow>
-          <SettingsRow label="代码" description="改好了采纳进正式版，记进历史，可以撤回" width="select-wide">
+          <SettingsRow
+            label="代码"
+            description="在项目文件里直接改，每段保存记进历史，可以撤回；「运行」跑题目带来的命令"
+            width="select-wide"
+          >
             <span class="ot-set__value" data-rule="code">{{
-              shared
-                ? `在「${WORK_TITLE[S.project as ClaimKey]}」的工作台里 ${people.length - 1} 个人一起改`
-                : `在「${WORK_TITLE[S.project as ClaimKey]}」的工作台里改`
+              shared ? `${people.length - 1} 个人一起改，光标都看得到` : '在项目文件里直接改'
             }}</span>
           </SettingsRow>
           <SettingsRow
             label="用本地编辑器打开"
-            description="从你自己的编辑器推上来的改动，变成一件你做的事，采纳了才进正式版"
+            description="从你自己的编辑器推上来的改动直接进项目文件，和在这里改一样记进历史"
             width="select-wide"
           >
             <span class="ot-set__clone">
@@ -180,7 +171,7 @@ const USAGE = [
           </SettingsRow>
           <SettingsRow
             label="用本地编辑器打开"
-            description="从你自己的编辑器推上来的改动，变成一件你做的事，采纳了才进正式版"
+            description="从你自己的编辑器推上来的改动直接进项目文件，和在这里改一样记进历史"
             width="select-wide"
           >
             <span class="ot-set__clone">
@@ -193,6 +184,18 @@ const USAGE = [
                 aria-label="复制"
                 @click="copyUrl"
               />
+            </span>
+          </SettingsRow>
+          <SettingsRow
+            label="怎么运行"
+            description="代码文件上「运行」跑的命令；没写的文件按类型：Python 文件 python <文件>，脚本 bash <文件>"
+            width="select-wide"
+          >
+            <span class="ot-set__how" data-run-how>
+              <span v-for="(cmd, path) in RUN_HOW" :key="path" class="ot-set__howrow"
+                ><code>{{ path }}</code
+                ><span>{{ cmd }}</span></span
+              >
             </span>
           </SettingsRow>
           <SettingsRow label="所属团队" :description="projectMeta(S.project).team" width="select">
@@ -222,6 +225,27 @@ const USAGE = [
         </div>
 
         <template v-else-if="S.settingsSection === 'cheese'">
+          <SettingsRow
+            label="芝士能改文件"
+            :description="
+              claimed
+                ? '题目带来的设置，由老师定：@芝士 开出的讨论只给提示，没有「开工」'
+                : '开着：@芝士 的讨论可以「开工」，芝士在一件事里改，你采纳了才进项目。关着：只出主意'
+            "
+            width="select"
+          >
+            <v-switch
+              :model-value="cheeseEdits(S.project)"
+              color="primary"
+              density="compact"
+              hide-details
+              inset
+              :disabled="claimed"
+              aria-label="芝士能改文件"
+              data-cheese-edits
+              @update:model-value="(v: boolean | null) => (S.cheeseEdits[S.project] = !!v)"
+            />
+          </SettingsRow>
           <SettingsRow label="默认模型" description="新开的一件事用这个模型" width="select-wide">
             <SegmentedControl
               v-model="model"
@@ -432,6 +456,28 @@ const USAGE = [
   align-items: center;
   margin: 12px 0 4px;
   font-size: 12px;
+  color: var(--muted);
+}
+
+.ot-set__how {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.ot-set__howrow {
+  display: flex;
+  flex-direction: column;
+}
+
+.ot-set__how code,
+.ot-set__howrow span {
+  font-family: var(--font-mono);
+}
+
+.ot-set__how code {
   color: var(--muted);
 }
 

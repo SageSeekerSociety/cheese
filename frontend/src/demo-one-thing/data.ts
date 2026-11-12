@@ -1,5 +1,5 @@
 // The demo's sample project: who is in it, what the channels say, the task's
-// changes and the official versions of the files. All of it is made up; the
+// changes and the project's files as they start out. All of it is made up; the
 // screens that draw it are the product's own components.
 //
 // Every time is relative to the moment the page opened, so the clock on a
@@ -113,7 +113,7 @@ const claimedChannel = (k: ClaimKey) => ({
 
 export const isClaim = (p: ProjectKey): p is ClaimKey => p === 'datalab' || p === 'week3' || p === 'shelllab'
 
-/** A project with more than one person in it: people edit 正式版 together, and can try something apart in a 一件事. */
+/** A project with more than one person in it: people edit its files together, each other's carets in view. */
 export const isShared = (p: ProjectKey) => p === 'research' || (isClaim(p) && !teamOf(CLAIMED[p].team).personal)
 
 /** The people in a project: its team's members (芝士 is added where a list needs it). */
@@ -230,7 +230,7 @@ export const TASK_DIFFS: FileDiff[] = splitDiffByFile(
   } as Parameters<typeof diffOf>[0])
 )
 
-/** The official version of a code file, drawn by the same diff viewer with every line as context. */
+/** A version of a code file, drawn by the same diff viewer with every line as context. */
 export function asContext(path: string, lines: string[]) {
   return parseDiffLines(
     [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, `@@ -1,${lines.length} +1,${lines.length} @@`]
@@ -326,7 +326,7 @@ const RETRIEVAL_HEAD = [
   '    sims = image_feats @ text_feats.T',
 ]
 
-/** Code files on the official version: path → lines before / after the task is accepted. */
+/** The research project's code files: path → lines before / after 演示一's task is accepted. */
 export const CODE: Record<string, { before: string[]; after?: string[] }> = {
   'eval/preprocess.py': { before: PREPROCESS_OLD, after: PREPROCESS_NEW },
   'eval/retrieval.py': {
@@ -371,6 +371,13 @@ export const CODE: Record<string, { before: string[]; after?: string[] }> = {
       'unzip -q val2017.zip && unzip -q annotations_trainval2017.zip',
     ],
   },
+}
+
+/** 项目设置「怎么运行」 in the research project: the command 运行 runs a code file with. A code file it does not
+ *  name runs by its type (`python <file>`, `bash <file>`). */
+export const RUN_HOW: Record<string, string> = {
+  'eval/retrieval.py': 'python -m eval.retrieval --data flickr30k --split 1k --limit 100',
+  'eval/preprocess.py': 'python -m eval.preprocess data/coco/val2017/000000000139.jpg',
 }
 
 export interface FileEntry {

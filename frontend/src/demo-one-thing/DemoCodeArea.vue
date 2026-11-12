@@ -1,14 +1,16 @@
 <script setup lang="ts">
-// The code surface of 项目文件's read-only view (DemoCodeEdit) and of a
-// 一件事's 工作台 (Workbench): a line-number gutter and a plain textarea in the
-// diff view's type and rhythm, read-only unless the 工作台 is mine to work in.
-// Over the text it draws the caret of whoever else is typing, with their name
-// (the documents' caret, in their colour; 芝士's while it works), and a band
-// on lines brought into view from a mention.
+// The code surface of a code file in 项目文件 (DemoCodeEdit, where people type
+// into the live project) and of a 一件事's 文件 (ThingFiles, read-only unless
+// I took it over): a line-number gutter and a plain textarea in the diff
+// view's type and rhythm. Over the text it draws the caret of whoever else is
+// typing, with their name (the documents' caret, in their colour; 芝士's while
+// it works), a band on lines brought into view from a mention, and the
+// passive marker of a 一件事 changing some lines (a band, and the tag
+// 「芝士在改这几行」), which is not a lock: its tag opens the 一件事.
 //
 // A plain textarea, not the product's Monaco editor: Monaco needs web workers
 // and several MB, and the demo page runs as one file in a null-origin sandbox.
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 export interface Peer {
   handle: string
@@ -19,13 +21,24 @@ export interface Peer {
   col: number
 }
 
+/** Lines a 一件事 is changing, 1-based and inclusive, and what its tag says. */
+export interface LineTag {
+  key: string
+  start: number
+  end: number
+  label: string
+  color: string
+}
+
 const props = defineProps<{
   label: string
   readonly?: boolean
   peers?: Peer[]
+  tags?: LineTag[]
   /** Lines to bring into view and mark; `tick` changes on every new request. */
   mark?: { start: number; end: number; tick: number } | null
 }>()
+const emit = defineEmits<{ (e: 'tag', key: string): void }>()
 const text = defineModel<string>({ required: true })
 const lines = computed(() => text.value.split('\n'))
 // The textarea is as wide as its longest line and the column scrolls sideways: a textarea scrolling
@@ -33,6 +46,27 @@ const lines = computed(() => text.value.split('\n'))
 const cols = computed(() => Math.max(...lines.value.map((l) => l.length)) + 2)
 
 const scroller = ref<HTMLElement | null>(null)
+const gutter = ref<HTMLElement | null>(null)
+
+// A 一件事's tag sits at the right edge of what is in view, wherever the column has scrolled sideways: where
+// that edge is, in the text's own coordinates.
+const tagRight = ref(0)
+function placeTags() {
+  const sc = scroller.value
+  if (!sc) return
+  tagRight.value = sc.scrollLeft + sc.clientWidth - (gutter.value?.offsetWidth ?? 0) - 19 - 8
+}
+let ro: ResizeObserver | null = null
+onMounted(() => {
+  placeTags()
+  scroller.value?.addEventListener('scroll', placeTags, { passive: true })
+  ro = new ResizeObserver(placeTags)
+  if (scroller.value) ro.observe(scroller.value)
+})
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  scroller.value?.removeEventListener('scroll', placeTags)
+})
 const area = ref<HTMLTextAreaElement | null>(null)
 
 // Whoever else is typing stays in view: their caret's line is scrolled to when it leaves the visible part.
@@ -79,6 +113,7 @@ watch(
 <template>
   <div ref="scroller" class="ot-carea">
     <div
+      ref="gutter"
       class="ot-carea__gutter"
       :style="{ width: `calc(${String(lines.length).length}ch + 20px)` }"
       aria-hidden="true"
@@ -92,6 +127,28 @@ watch(
         :style="{ top: `${(band.start - 1) * 1.55}em`, height: `${(band.end - band.start + 1) * 1.55}em` }"
         aria-hidden="true"
       />
+      <template v-for="g in tags ?? []" :key="g.key">
+        <div
+          class="ot-carea__tagband"
+          :style="{
+            top: `${(g.start - 1) * 1.55}em`,
+            height: `${(g.end - g.start + 1) * 1.55}em`,
+            borderColor: g.color,
+            backgroundColor: `color-mix(in srgb, ${g.color} 9%, transparent)`,
+          }"
+          aria-hidden="true"
+        />
+        <button
+          type="button"
+          class="ot-carea__tag"
+          :style="{ top: `${(g.start - 1) * 18.6 + 1}px`, left: `${tagRight}px`, color: g.color, borderColor: g.color }"
+          :title="`${g.label}：点开那件事，看它改到哪了`"
+          data-cheese-mark
+          @click="emit('tag', g.key)"
+        >
+          {{ g.label }}
+        </button>
+      </template>
       <textarea
         ref="area"
         v-model="text"
@@ -108,6 +165,7 @@ watch(
         v-for="p in peers ?? []"
         :key="p.handle"
         class="ot-carea__peer"
+        :class="{ 'is-top': p.line === 1 }"
         :style="{ top: `${(p.line - 1) * 1.55}em`, left: `${p.col}ch`, borderColor: p.color }"
         aria-hidden="true"
       >
@@ -190,6 +248,31 @@ watch(
   }
 }
 
+/* A 一件事 changing these lines: a tinted band with a rule in 芝士's colour, and its tag at the right. */
+.ot-carea__tagband {
+  position: absolute;
+  right: 0;
+  left: -19px;
+  pointer-events: none;
+  border-left: 2px solid;
+}
+
+.ot-carea__tag {
+  position: absolute;
+  transform: translateX(-100%);
+  z-index: 1;
+  height: 17px;
+  padding: 0 6px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+}
+
 /* A teammate's caret: the documents' caret (DocProse), a line in their colour with their name above it. */
 .ot-carea__peer {
   position: absolute;
@@ -213,6 +296,13 @@ watch(
   color: #fff;
   white-space: nowrap;
   border-radius: 3px 3px 3px 0;
+}
+
+/* On the first line the name would sit above the text and be cut off: it goes under the caret. */
+.ot-carea__peer.is-top .ot-carea__peername {
+  top: 100%;
+  bottom: auto;
+  border-radius: 0 3px 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {

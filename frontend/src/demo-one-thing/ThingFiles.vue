@@ -1,35 +1,26 @@
 <script setup lang="ts">
-// A 一件事's 工作台: the 一件事's own copy of the files it touches, what it
-// made, and every 运行 made in it with what it printed. It is the same place
-// whoever does the 一件事. While 芝士 does it, it is live and read-only: the
-// file 芝士 is in opens by itself, a caret named 芝士 moves over the line it is
-// typing, a dot marks that file in the list, and each command it runs lands
-// in the strip below with its output. While a person does it (「改这个文件」,
-// after 接手, a course's 一件事, a team doing one together) the same 工作台 is
-// editable: the copy is typed into, 运行 runs the open file of the copy, and
-// the output stays in the 一件事. A 题单 problem runs like an OJ: 样例 1 /
-// 样例 2 / 自定义输入, and a 样例 run says 通过 or 不通过 against its expected
-// output; Data Lab and Shell Lab run their own tests. 正式版 never changes
-// here: that is 采纳, in the 一件事's 改动. 接手 / 交给芝士 / 改好了 sit in the
-// 一件事's header (ThingActions): in ThingPanel, or under W1 in this 工作台's
-// own header; the bar on top says who is doing it and whether this 工作台
-// can be typed into.
-// Where it is drawn is 方案「工作台放哪」 (variants.ts): `center` (W1) takes the
-// center column, with a back arrow to the channel; `panel` (W2) sits under the
-// 一件事's tabs in the right panel, its files a row of tabs on top; `full` (W3)
-// fills the 一件事's own view. Both wide ones list the files at the left.
+// A started 一件事's 文件: what it changes on top of the live project. On the
+// left, the files it has touched (and what it made); every other file is read
+// live from the project, so its runs see the latest code, and the list says
+// so. While 芝士 does it, it is live and read-only: the file 芝士 is in opens by
+// itself, a caret named 芝士 moves over the line it is typing, a dot marks that
+// file in the list, and each command it runs lands in the strip below with its
+// output. After 接手 the same files are editable by the person who took it
+// over, and 运行 runs the open file as the 一件事 reads it; the output stays in
+// the 一件事. The project never changes here: that is 采纳, in 改动. The bar on
+// top says who is doing it and whether it can be typed into; how fresh it is
+// against the project is on the 一件事's stage bar (ThingPanel).
 import type { Peer } from './DemoCodeArea.vue'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { avatarColor } from '@/utils/avatar'
 
 import { UNITS } from './course'
-import { channelOf, NAMES, projectOfChan } from './data'
+import { NAMES, projectOfChan } from './data'
 import DemoCodeArea from './DemoCodeArea.vue'
 import { hhmm } from './shapes'
-import { benchFileOf, benchFiles, canWork, doingNow, runInBench, S, t4Plan, thingById, typeCopy, unitOf } from './state'
-import ThingActions from './ThingActions.vue'
+import { canWork, doingNow, runInThing, S, t4Plan, thingById, thingFileOf, thingFiles, typeCopy, unitOf } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
@@ -37,12 +28,10 @@ import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { fileIcon } from '@/lib/fileKind'
 
-const props = defineProps<{ mode: 'center' | 'panel' | 'full' }>()
-
 const t = computed(() => thingById(S.thing)!)
 const p = computed(() => projectOfChan(t.value.chan))
-const files = computed(() => benchFiles(t.value))
-const file = computed(() => benchFileOf(t.value))
+const files = computed(() => thingFiles(t.value))
+const file = computed(() => thingFileOf(t.value))
 const added = computed(() => !!file.value && file.value in (t.value.adds ?? {}))
 const mine = computed(() => canWork(t.value))
 const who = computed(() => doingNow(t.value))
@@ -59,45 +48,27 @@ const changed = (path: string) => {
 const live = computed(() => (S.cheeseAt?.thing === t.value.id && who.value === 'cheese' ? S.cheeseAt : null))
 
 function pick(path: string) {
-  S.benchFile[t.value.id] = path
+  S.thingFile[t.value.id] = path
 }
 
-// ---- carets: 芝士's while it types; a teammate's in a team's 一件事 (周珂 in tsh.c, writing the built-ins) ----
-const spot = ref(0)
-const timer = window.setInterval(() => (spot.value = (spot.value + 1) % 4), 2200)
-onBeforeUnmount(() => window.clearInterval(timer))
-const MATE_SPOTS = [31, 29, 31, 32]
+/** 芝士's caret while it types. */
 const peers = computed<Peer[]>(() => {
+  if (!live.value || live.value.path !== file.value) return []
   const n = text.value.split('\n').length
-  if (live.value && live.value.path === file.value) {
-    const line = Math.min(live.value.line, n)
-    // At the line's first character: the end of a long line can sit past the editor's right edge.
-    const col = /^\s*/.exec(text.value.split('\n')[line - 1] ?? '')![0].length
-    return [{ handle: 'cheese', name: '芝士', color: avatarColor('cheese'), line, col }]
-  }
-  if (t.value.team?.includes('zhouke') && file.value === 'tsh.c' && t.value.status === 'run')
-    return [
-      {
-        handle: 'zhouke',
-        name: NAMES.zhouke!,
-        color: avatarColor('zhouke'),
-        line: Math.min(MATE_SPOTS[spot.value]!, n),
-        col: 6,
-      },
-    ]
-  return []
+  const line = Math.min(live.value.line, n)
+  // At the line's first character: the end of a long line can sit past the editor's right edge.
+  const col = /^\s*/.exec(text.value.split('\n')[line - 1] ?? '')![0].length
+  return [{ handle: 'cheese', name: '芝士', color: avatarColor('cheese'), line, col }]
 })
 
-/** What the bar on top says: who is doing it now, and whether this 工作台 can be typed into. */
+/** What the bar on top says: who is doing it now, and whether these files can be typed into. */
 const state = computed(() => {
   const th = t.value
   if (th.status === 'wait') return '做完了，等采纳 · 只读'
-  if (th.status === 'done') return '已采纳，进了正式版 · 只读'
+  if (th.status === 'done') return '已采纳，进了项目 · 只读'
   if (who.value === 'cheese')
     return live.value ? `芝士在改 ${live.value.path} 第 ${live.value.line} 行 · 只读` : '芝士在做 · 只读'
-  if (th.team && mine.value)
-    return `${th.team.map((h) => NAMES[h]).join('、')}一起在做 · 改的是这件事的副本，正式版不动`
-  if (mine.value) return '你在做 · 改的是这件事的副本，正式版不动'
+  if (mine.value) return '你接手了 · 改的是这件事的文件，项目不动'
   return `${NAMES[who.value ?? '']}在做 · 只读`
 })
 
@@ -117,39 +88,20 @@ watch(
   () => [runs.value.length, runs.value.at(-1)?.running],
   async () => {
     await nextTick()
-    // The newest run from its first line: a long output (btest's) is read from the top.
+    // The newest run from its first line: a long output is read from the top.
     const last = strip.value?.lastElementChild as HTMLElement | null | undefined
     if (strip.value && last) strip.value.scrollTop = last.offsetTop - strip.value.offsetTop - 4
   },
   { immediate: true }
 )
 function run() {
-  if (file.value) runInBench(t.value.id, file.value)
+  if (file.value) runInThing(t.value.id, file.value)
 }
-
-const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
 </script>
 
 <template>
-  <section class="ot-wb" :class="`ot-wb--${props.mode}`" data-zone="bench">
-    <header v-if="props.mode === 'center'" class="ot-wb__head">
-      <BaseButton
-        id="b-bench-back"
-        kind="ghost"
-        size="sm"
-        prepend-icon="mdi-arrow-left"
-        :title="`回到 # ${chanTitle}`"
-        @click="S.bench = false"
-        ># {{ chanTitle }}</BaseButton
-      >
-      <span class="ot-wb__slash">/</span>
-      <h2 class="ot-wb__title" :title="t.title">{{ t.title }}</h2>
-      <span class="ot-wb__name">工作台</span>
-      <span class="ot-head__gap" />
-      <ThingActions quiet />
-    </header>
-
-    <div class="ot-wb__bar" :class="{ 'is-mine': mine, 'is-live': who === 'cheese' }" data-bench-state>
+  <section class="ot-wb" data-zone="thing-files">
+    <div class="ot-wb__bar" :class="{ 'is-mine': mine, 'is-live': who === 'cheese' }" data-thing-state>
       <CheeseAvatar v-if="who === 'cheese'" :size="18" name="芝士" handle="cheese" />
       <UserAvatar v-else-if="who" :size="18" :name="NAMES[who]" :seed="who" />
       <v-icon v-else size="15" icon="mdi-lock-outline" />
@@ -159,7 +111,7 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
 
     <div class="ot-wb__main">
       <nav v-if="files.length" class="ot-wb__files" aria-label="这件事的文件">
-        <span v-if="props.mode !== 'panel'" class="t-eyebrow-read ot-wb__label">这件事的文件</span>
+        <span class="t-eyebrow-read ot-wb__label">这件事改的</span>
         <button
           v-for="f in files"
           :key="f"
@@ -167,7 +119,7 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
           class="ot-wb__file"
           :class="{ 'is-on': f === file }"
           :title="f"
-          :data-bench-file="f"
+          :data-thing-file="f"
           @click="pick(f)"
         >
           <v-icon size="15" :icon="fileIcon(f)" />
@@ -175,7 +127,10 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
           <span v-if="live?.path === f" class="ot-wb__dot ot-wb__dot--live" title="芝士在改" />
           <span v-else-if="changed(f)" class="ot-wb__dot" :title="f in (t.adds ?? {}) ? '新的' : '改了'" />
         </button>
-        <div v-if="t.id === 't4' && props.mode !== 'panel'" class="ot-wb__plan" data-bench-plan>
+        <p v-if="t.copy && t.status !== 'done'" class="ot-wb__live">
+          其余文件跟着项目的最新版：别人刚改的，运行时就用上。
+        </p>
+        <div v-if="t.id === 't4'" class="ot-wb__plan" data-thing-plan>
           <span class="t-eyebrow-read ot-wb__label">计划</span>
           <div v-for="(s, i) in t4Plan()" :key="i" class="ot-wb__step" :class="{ 'is-done': s.done }">
             <v-icon size="14" :icon="s.done ? 'mdi-check-circle' : 'mdi-circle-outline'" />{{ s.subject }}
@@ -190,14 +145,14 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
           v-else
           :key="`${t.id}:${file}`"
           v-model="text"
-          :label="editable ? `编辑 ${file}（这件事的副本）` : `${file}（只读）`"
+          :label="editable ? `编辑 ${file}（这件事里的）` : `${file}（只读）`"
           :readonly="!editable"
           :peers="peers"
         />
       </div>
     </div>
 
-    <div class="ot-wb__strip" data-zone="bench-runs">
+    <div class="ot-wb__strip" data-zone="thing-runs">
       <div class="ot-wb__striphead">
         <span class="ot-wb__striptitle">运行</span>
         <span class="ot-wb__count">{{ runs.length ? `${runs.length} 次` : '' }}</span>
@@ -206,7 +161,7 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
           <select v-if="samples" v-model="runIn.pick" class="ot-wb__insel" aria-label="运行的输入" data-run-input>
             <option v-for="o in PICKS" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
-          <BaseButton id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
+          <BaseButton id="b-run-thing" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
         </template>
       </div>
       <textarea
@@ -222,7 +177,7 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
       />
       <div ref="strip" class="ot-wb__runs" role="log">
         <div v-if="!runs.length" class="ot-wb__hint">
-          {{ editable ? '点「运行」，在这件事里跑这份副本；输出留在这件事里。' : '还没有运行。' }}
+          {{ editable ? '点「运行」，跑这件事里的这份；输出留在这件事里。' : '还没有运行。' }}
         </div>
         <div v-for="r in runs" :key="r.id" class="ot-wb__run" :data-run="r.who">
           <div class="ot-wb__runmeta">
@@ -260,43 +215,7 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
   height: 100%;
 }
 
-.ot-wb__head {
-  display: flex;
-  flex: none;
-  gap: 6px;
-  align-items: center;
-  height: 48px;
-  padding: 0 16px 0 8px;
-  border-bottom: 1px solid var(--line);
-}
-
-.ot-wb__slash {
-  color: var(--faint);
-}
-
-.ot-wb__title {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.ot-wb__head > :not(.ot-wb__title, .ot-head__gap) {
-  flex: none;
-}
-
-.ot-wb__name {
-  flex: none;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-/* Who is doing it: neutral while it is read-only; the accent wash while it is mine to type in, as a 一件事
-   being worked on reads elsewhere. */
+/* Who is doing it: neutral while it is read-only; the accent wash while it is mine to type in (after 接手). */
 .ot-wb__bar {
   display: flex;
   flex: none;
@@ -325,6 +244,15 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
 
 .ot-wb__bar.is-mine .ot-wb__state {
   color: var(--accent-ink);
+}
+
+.ot-wb__live {
+  margin-top: 8px;
+  padding: 8px 6px 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  border-top: 1px solid var(--line);
 }
 
 .ot-wb__pulse {
@@ -357,21 +285,6 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
   padding: 8px;
   overflow: auto;
   border-right: 1px solid var(--line);
-}
-
-/* In the right panel the files are a row of tabs over the file. */
-.ot-wb--panel .ot-wb__main {
-  flex-direction: column;
-}
-
-.ot-wb--panel .ot-wb__files {
-  flex-direction: row;
-  gap: 4px;
-  width: auto;
-  padding: 6px 8px;
-  overflow-x: auto;
-  border-right: 0;
-  border-bottom: 1px solid var(--line);
 }
 
 .ot-wb__label {
@@ -492,10 +405,6 @@ const chanTitle = computed(() => channelOf(t.value.chan)?.title ?? '')
   flex-direction: column;
   height: 208px;
   border-top: 1px solid var(--line);
-}
-
-.ot-wb--panel .ot-wb__strip {
-  height: 184px;
 }
 
 .ot-wb__striphead {
