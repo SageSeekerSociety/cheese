@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && apt-get update \
     && apt-get install -y --no-install-recommends $(cut -f1 /usr/share/cheese/template-packages.tsv) build-essential gdb \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
-    && rm -f /etc/ssh/ssh_host_* /etc/machine-id /var/lib/dbus/machine-id \
+    && rm -f /etc/ssh/ssh_host_* /etc/ssl/private/* /etc/machine-id /var/lib/dbus/machine-id /var/lib/systemd/random-seed \
     && dpkg-query -W -f='${binary:Package}\t${Version}\n' > /usr/share/cheese/image-packages.tsv \
     && mkdir -p /home /tmp /var/tmp
 
