@@ -1,11 +1,12 @@
 """Room visibility and the real roster used to prepare messages and turns."""
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.adapters import project_team
-from app.domain.membership.roster import people_in_project, roster_rows
+from app.domain.membership.roster import Member, people_in_project, roster_rows
 from app.domain.topic.models import Topic, is_private_chat
 from app.domain.user.about import about_by_handles
 from app.domain.user.services import timezones_by_handles
@@ -36,10 +37,18 @@ def _is_dm(topic: Topic) -> bool:
 
 
 async def only_person_in_project(
-    session: AsyncSession, project_id: uuid.UUID, author: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    author: str,
+    members: Sequence[Member] | None = None,
 ) -> bool:
     """Whether ``author`` is the one person in the project: the AI teammates
-    aside, nobody else could be talked to in its channels."""
+    aside, nobody else could be talked to in its channels. ``members`` is the
+    project's roster when the caller already read it; without it only the
+    project's people are read (a roster the request already read answers
+    that too)."""
+    if members is not None:
+        return [member.handle for member in members if not member.agent] == [author]
     return await people_in_project(session, project_id, team=project_team) == [author]
 
 

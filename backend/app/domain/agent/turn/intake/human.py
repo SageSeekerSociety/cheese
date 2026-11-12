@@ -123,7 +123,8 @@ async def _read_human(
         and place.thread is None
         and seats is None
         and names_a_person(author)
-        and await only_person_in_project(session, topic.project_id, author)
+        and not _names_only_people(mentions.content)
+        and await only_person_in_project(session, topic.project_id, author, roster)
     )
     recipient = {
         "instance_id": str(agent.instance_id),
@@ -140,7 +141,7 @@ async def _read_human(
             and names_a_person(author)
             and not _names_only_people(mentions.content)
         )
-        or (alone and not _names_only_people(mentions.content))
+        or alone
         or (seats is not None and looks_like_agent_handle(seats[1])),
     }
     return HumanPreparation(
