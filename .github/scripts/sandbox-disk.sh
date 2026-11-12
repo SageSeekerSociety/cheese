@@ -56,7 +56,11 @@ PY
 lower="$RUNNER_TEMP/cheese-native-rootfs"
 sudo mkdir -p "$lower"
 sudo cp -al /usr "$lower/usr"
-sudo cp -a /etc /bin /sbin /lib /lib64 "$lower/"
+for path in /etc /bin /sbin /lib /lib64; do
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    sudo cp -a "$path" "$lower/"
+  fi
+done
 sudo mkdir -p "$lower"/{home,tmp,var/tmp,run,proc,dev,sys,mnt}
 sudo chmod 1777 "$lower/tmp" "$lower/var/tmp"
 sudo rm -f "$lower/etc/hosts" "$lower/etc/resolv.conf"

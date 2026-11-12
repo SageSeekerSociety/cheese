@@ -22,7 +22,7 @@ from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, sandbox_image
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
@@ -218,8 +218,10 @@ def _up(case, seat) -> str:
                 host,
                 device_id=device.device_id,
                 when=datetime.now(UTC),
-                sandbox_disk_gb=None,
+                sandbox_disk_gb=None if host.whole_machine else 64,
             )
+            if not host.whole_machine:
+                host.sandbox_image = sandbox_image.default_image()["reference"]
             await db.commit()
             return device.device_id
 
