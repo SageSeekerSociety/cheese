@@ -5,10 +5,14 @@ ARG CLAUDE_CODE_VERSION=2.1.316
 # label to tag the pulled image with that name.
 LABEL com.cheese.local-image="cheese-private-executor:${CLAUDE_CODE_VERSION}"
 # apt over a reachable HTTPS mirror, verified against node's bundled CA roots.
+# gcc, g++, make and gdb: course work in C and C++ (a lab with a Makefile) has
+# to build and run here; libc6-dev carries the headers gcc does not pull in
+# under --no-install-recommends.
 RUN mkdir -p /etc/ssl/certs \
     && node -p 'require("tls").rootCertificates.join("\n")' > /etc/ssl/certs/ca-certificates.crt \
     && sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get install -y --no-install-recommends python3 bash ca-certificates ripgrep \
+       gcc g++ libc6-dev make gdb \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force \
