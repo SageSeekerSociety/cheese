@@ -148,7 +148,9 @@ def test_a_persons_message_is_live_for_the_room_and_wakes_who_it_names(
 
 
 def test_a_message_that_names_nobody_wakes_nobody(client, stub_hooks):
-    _, topic_id = _room(client)
+    # With someone else in the project, the channel is people talking.
+    seed_user(client, "bob")
+    _, topic_id = _room(client, members=("bob",))
     with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "我们今晚开会"})
         frames = _until_done(ws)

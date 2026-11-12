@@ -91,6 +91,28 @@ def _caller_handle(headers: dict | None) -> str | None:
     return claims.handle if claims is not None else None
 
 
+async def second_person(session, project_id, handle: str = "bob") -> None:
+    """Put ``handle`` (registered on the way) in the project, on ``session``.
+
+    In a project with one person every message that person says in a channel's
+    main line is for the AI teammate; a test of what a message calls when it
+    names nobody needs someone else there. The caller commits."""
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+
+    user_id = await registered(session, handle)
+    now = datetime.now(UTC)
+    session.add(
+        TeamUserRelation(
+            team_id=await shared_team_of(session, project_id, joiner_user_id=user_id),
+            user_id=user_id,
+            role=TeamMemberRole.MEMBER,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await session.flush()
+
+
 async def shared_team_of(
     session, project_id, *, joiner_user_id: int | None = None
 ) -> int:
