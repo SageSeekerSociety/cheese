@@ -6,6 +6,7 @@ pinned bwrap; other tools use the system's own executables, linked into place.""
 import contextlib
 import os
 import shutil
+import sys
 from pathlib import Path
 
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
@@ -24,6 +25,8 @@ def image(monkeypatch, tmp_path):
     OCI export/cache behavior is covered separately. These tests need native
     executables and exercise the real overlay, namespaces, limits and sockets.
     """
+    if os.environ.get("CHEESE_TEST_ROOTFS"):
+        monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
     lock = tmp_path / "image-lease"
     lock.touch()
 

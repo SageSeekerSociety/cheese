@@ -62,6 +62,7 @@ for path in /etc /bin /sbin /lib /lib64; do
   fi
 done
 sudo mkdir -p "$lower"/{home,tmp,var/tmp,run,proc,dev,sys,mnt}
+sudo install -d -o "$(id -u)" -g "$(id -g)" "$lower$mount/tests"
 sudo chmod 1777 "$lower/tmp" "$lower/var/tmp"
 sudo rm -f "$lower/etc/hosts" "$lower/etc/resolv.conf"
 sudo touch "$lower/etc/hosts" "$lower/etc/resolv.conf"
