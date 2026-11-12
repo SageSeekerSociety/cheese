@@ -2,12 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useProjectTour } from '@/composables/useProjectTour'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NewChannelDialog from '@/components/channel/NewChannelDialog.vue'
 import { t } from '@/i18n'
+import { loadComposerDraft } from '@/lib/composerDrafts'
 import { DEFAULT_SHELL, shellFor } from '@/lib/shell'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -73,6 +75,16 @@ const legacyTopic = computed(() => (route.query.topic ? String(route.query.topic
 const shell = computed(() => shellFor(store.projects, props.projectId))
 const shellSettled = computed(() => shell.value !== null || store.projects.length > 0 || store.projectsSettled)
 
+// 导览的第一步是「把输入框里那一句发出去」，那一句是建项目时写进「综合」的草稿
+// （`views/welcome/Welcome.vue`）。还没发就离开的人再回来，要回到那一句所在的地方：
+// 落在总览上，那一句和导览都不在眼前，看上去像丢了。
+const tour = useProjectTour()
+function unsentFirstLine(): string | null {
+  if (tour.done.value || tour.stop.value !== 0) return null
+  const root = store.projects.find((p) => p.id === props.projectId)?.root_topic_id
+  return root && loadComposerDraft(root)?.draft.trim() ? root : null
+}
+
 watch(
   [legacyTopic, shellSettled],
   ([wanted, settled]) => {
@@ -90,6 +102,11 @@ watch(
     //
     // 不等话题列表到货：目的地和列表无关，等只会换来一屏转圈。
     if (!settled) return
+    const waiting = unsentFirstLine()
+    if (waiting) {
+      openTopic(waiting)
+      return
+    }
     const home = (shell.value ?? DEFAULT_SHELL).home
     if (!home) return
     void router.replace({ name: home, params: { projectId: props.projectId } })
