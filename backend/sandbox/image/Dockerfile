@@ -12,8 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
     && rm -f /etc/ssh/ssh_host_* /etc/machine-id /var/lib/dbus/machine-id \
     && dpkg-query -W -f='${binary:Package}\t${Version}\n' > /usr/share/cheese/image-packages.tsv \
-    && mkdir -p /sys/fs/cgroup /home /tmp /var/tmp \
-    && touch /etc/resolv.conf /etc/hosts
+    && mkdir -p /home /tmp /var/tmp
+
+COPY mount-target /etc/resolv.conf
+COPY mount-target /etc/hosts
 
 RUN curl -fsSL https://github.com/jj-vcs/jj/releases/download/v0.46.0/jj-v0.46.0-x86_64-unknown-linux-musl.tar.gz -o /tmp/jj.tar.gz \
     && echo 'fce0271158e665ceb82dc66c5eb95b1728649094e9133074f3b5baece345fc08  /tmp/jj.tar.gz' | sha256sum -c - \

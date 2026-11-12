@@ -5,6 +5,7 @@ on:
     paths:
       - backend/sandbox/image/Dockerfile
       - backend/sandbox/image/template-packages.tsv
+      - backend/sandbox/image/mount-target
       - .github/workflows/sandbox-image.yml
   pull_request:
     paths:
