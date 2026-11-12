@@ -1,70 +1,11 @@
-// What 芝士 did, as the records the product's 现场 (PanelSite) reads: one
-// block per native record, with the parts the panel draws (thinking, a tool
-// call, its output, a line of text). Shaped like the product's own sample
-// records in views/demo/catalogPanelsFixtures.
-import type { Block } from '@/cx_types'
-
+// What 芝士 does in 演示一's task, step by step along its plan: what it
+// thinks, reads, runs (and what that printed) and says. The task's 工作台
+// shows the runs of the steps done so far (state.liveStep).
 export type SiteStep =
   | { kind: 'thinking'; text: string }
   | { kind: 'bash'; command: string; description: string; output: string; failed?: boolean }
   | { kind: 'read'; path: string; output: string }
   | { kind: 'text'; text: string }
-
-function hash(seed: string): string {
-  let h = 2166136261
-  let out = ''
-  for (let n = 0; n < 24; n++) {
-    for (const c of seed + n) h = Math.imul(h ^ c.charCodeAt(0), 16777619)
-    out += 'abcdefghijklmnopqrstuvwxyz0123456789'[(h >>> 0) % 36]
-  }
-  return out
-}
-
-export function siteBlocks(thing: string, steps: SiteStep[], startIso: string): Block[] {
-  const start = Date.parse(startIso)
-  const out: Block[] = []
-  let seq = 0
-  const push = (record: unknown, parts: unknown[], tool?: string) => {
-    seq++
-    out.push({
-      id: `${thing}-rec-${seq}`,
-      conversation_id: thing,
-      kind: 'event',
-      author_type: 'participant',
-      author: 'cheese',
-      content: '',
-      turn_id: `${thing}-turn`,
-      created_at: new Date(start + seq * 17_000).toISOString(),
-      meta: { record, sequence: seq, in_room: false, tool, parts },
-    } as Block)
-  }
-  steps.forEach((s, i) => {
-    // Call ids read like the runtime's own (call_00_<random>), not like a fixture's.
-    const call = `call_${String(i).padStart(2, '0')}_${hash(`${thing}${i}`)}`
-    if (s.kind === 'thinking') {
-      push({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: s.text }] } }, [
-        { kind: 'thinking', text: s.text },
-      ])
-    } else if (s.kind === 'text') {
-      push({ type: 'assistant', message: { content: [{ type: 'text', text: s.text }] } }, [
-        { kind: 'text', text: s.text },
-      ])
-    } else {
-      const name = s.kind === 'bash' ? 'Bash' : 'Read'
-      const input = s.kind === 'bash' ? { command: s.command, description: s.description } : { file_path: s.path }
-      const preview = s.kind === 'bash' ? s.description : s.path
-      push(
-        { type: 'assistant', message: { content: [{ type: 'tool_use', id: call, name, input }] } },
-        [{ kind: 'tool', name, call_id: call, input, preview }],
-        name
-      )
-      push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: call, content: s.output }] } }, [
-        { kind: 'output', call_id: call, text: s.output, failed: s.kind === 'bash' && !!s.failed },
-      ])
-    }
-  })
-  return out
-}
 
 /** The scripted task's run, in the order the checklist ticks: `upTo` steps of the plan done. */
 export const T4_STEPS: SiteStep[][] = [

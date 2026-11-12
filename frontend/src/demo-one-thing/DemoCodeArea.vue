@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// The code editing surface of the code view (DemoCodeEdit): a line-number
-// gutter and a plain textarea in the read-only view's type and rhythm. Over the
-// text it draws a teammate's caret with their name (the documents' caret, in
-// their colour) and a band on lines brought into view from a mention; it
-// reports which lines are selected, for 问芝士.
+// The code surface of 项目文件's read-only view (DemoCodeEdit) and of a
+// 一件事's 工作台 (Workbench): a line-number gutter and a plain textarea in the
+// diff view's type and rhythm, read-only unless the 工作台 is mine to work in.
+// Over the text it draws the caret of whoever else is typing, with their name
+// (the documents' caret, in their colour; 芝士's while it works), and a band
+// on lines brought into view from a mention.
 //
 // A plain textarea, not the product's Monaco editor: Monaco needs web workers
 // and several MB, and the demo page runs as one file in a null-origin sandbox.
@@ -25,13 +26,6 @@ const props = defineProps<{
   /** Lines to bring into view and mark; `tick` changes on every new request. */
   mark?: { start: number; end: number; tick: number } | null
 }>()
-const emit = defineEmits<{
-  /** ⌘S / Ctrl+S inside the editor. */
-  (e: 'save'): void
-  (e: 'blur'): void
-  /** The selected lines (1-based), or null for a bare caret. */
-  (e: 'select', range: { start: number; end: number } | null): void
-}>()
 const text = defineModel<string>({ required: true })
 const lines = computed(() => text.value.split('\n'))
 // The textarea is as wide as its longest line and the column scrolls sideways: a textarea scrolling
@@ -41,18 +35,20 @@ const cols = computed(() => Math.max(...lines.value.map((l) => l.length)) + 2)
 const scroller = ref<HTMLElement | null>(null)
 const area = ref<HTMLTextAreaElement | null>(null)
 
-const lineOf = (i: number) => text.value.slice(0, i).split('\n').length
-function select() {
-  const a = area.value
-  if (!a) return
-  if (a.selectionStart === a.selectionEnd) {
-    emit('select', null)
-    return
+// Whoever else is typing stays in view: their caret's line is scrolled to when it leaves the visible part.
+watch(
+  () => props.peers?.[0]?.line,
+  async (line) => {
+    await nextTick()
+    const sc = scroller.value
+    const a = area.value
+    if (!line || !sc || !a) return
+    const lh = parseFloat(getComputedStyle(a).lineHeight) || 18.6
+    const y = (line - 1) * lh
+    if (y < sc.scrollTop || y > sc.scrollTop + sc.clientHeight - 3 * lh)
+      sc.scrollTop = Math.max(0, y - sc.clientHeight / 3)
   }
-  // A selection that ends at the start of a line does not take that line.
-  const end = a.selectionEnd > 0 && text.value[a.selectionEnd - 1] === '\n' ? a.selectionEnd - 1 : a.selectionEnd
-  emit('select', { start: lineOf(a.selectionStart), end: lineOf(end) })
-}
+)
 
 // A mention asks for some lines: scroll them to a third of the way down, select them, and flash a band.
 const band = ref<{ start: number; end: number } | null>(null)
@@ -74,7 +70,6 @@ watch(
     const to = (starts[band.value.end] ?? text.value.length + 1) - 1
     a.focus({ preventScroll: true })
     a.setSelectionRange(from, Math.max(from, to))
-    select()
     setTimeout(() => (band.value = null), 2600)
   },
   { immediate: true }
@@ -108,12 +103,6 @@ watch(
         autocomplete="off"
         :aria-label="label"
         :style="{ width: `calc(${cols}ch + 12px)` }"
-        @keydown.meta.s.prevent="emit('save')"
-        @keydown.ctrl.s.prevent="emit('save')"
-        @select="select"
-        @mouseup="select"
-        @keyup="select"
-        @blur="emit('blur')"
       />
       <span
         v-for="p in peers ?? []"

@@ -1,14 +1,13 @@
 <script setup lang="ts">
-// 项目文件: the project's files. The tree reads like the product's file
-// library; a document opens in the product's document editor, a Word file shows
-// 芝士's 修订 in the product's Word comparison, a code file opens in the code
-// view (DemoCodeEdit: the code and 运行), and a result is rendered Markdown.
-// A code file opens editable on 正式版, like a document. 芝士's suggestion in a
-// document (《组会纪要》) is marked in the document itself, and its card sits
-// right above it, where it is read: 接受 or 拒绝 there. A code file's bar has
-// 「开一件事自己做」 (a project with more than one person): a person's own try
-// is a 一件事 too, and the editor then works in its copy (DemoCodeEdit).
-// docs/频道/ holds each channel's 文档. In a project claimed
+// 项目文件: the project's files, as 正式版 reads them, and nothing else (no
+// copy of a 一件事 is ever shown here). The tree reads like the product's file
+// library; a document opens in the product's document editor and is edited
+// there directly, a Word file shows 芝士's 修订 in the product's Word
+// comparison, a code file opens read-only (DemoCodeEdit: 正式版 and the one
+// action 「改这个文件」, which opens a 一件事's 工作台), and a result is
+// rendered Markdown. 芝士's suggestion in a document (《组会纪要》) is marked
+// in the document itself, and its card sits right above it, where it is read:
+// 接受 or 拒绝 there. docs/频道/ holds each channel's 文档. In a project claimed
 // from the course, what the 题目 brought in: the 题面 (or the 题单 document)
 // pinned on top, and the starter code, folded by problem.
 import type { FileRow } from '@/lib/changesTree'
@@ -19,34 +18,12 @@ import { computed } from 'vue'
 
 import ChannelDoc from './ChannelDoc.vue'
 import { PROJECT_FILES } from './course'
-import {
-  DOC_HTML,
-  FILES,
-  isClaim,
-  isShared,
-  MINUTES_DOC,
-  minutesHtml,
-  RESULTS_MD,
-  TASK_DIFFS,
-  WORD_COMPARISON,
-} from './data'
+import { DOC_HTML, FILES, isClaim, MINUTES_DOC, minutesHtml, RESULTS_MD, TASK_DIFFS, WORD_COMPARISON } from './data'
 import DemoCodeEdit from './DemoCodeEdit.vue'
 import DemoDoc from './DemoDoc.vue'
 import FileTree from './FileTree.vue'
 import ProblemSetDoc from './ProblemSetDoc.vue'
-import {
-  fkey,
-  isSaving,
-  lockedMain,
-  myCopy,
-  openFile,
-  openOwnThing,
-  S,
-  suggAccept,
-  suggReject,
-  t4,
-  toast,
-} from './state'
+import { fkey, openFile, S, suggAccept, suggReject, t4, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
@@ -105,11 +82,6 @@ function toggleDir(path: string) {
 }
 /** 芝士's suggestion to 《组会纪要》, until it is accepted or rejected. */
 const suggestion = computed(() => S.project === 'research' && !S.suggAccepted && !S.suggRejected)
-const copy = computed(() => myCopy(S.project))
-/** 开一件事自己做 on a code file of a shared project, on 正式版 (protected, the editor offers it itself). */
-const canTry = computed(
-  () => entry.value.kind === 'code' && isShared(S.project) && !copy.value && !lockedMain(S.project) && !S.viewSub
-)
 const crumbs = computed(() => entry.value.path.split('/'))
 const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`)
 </script>
@@ -165,18 +137,7 @@ const sizeOf = (b: number) => (b > 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} 
           <span class="ot-files__size">{{ sizeOf(entry.bytes) }}</span>
           <span class="ot-head__gap" />
           <span v-if="entry.pinned" class="ot-files__tag">置顶</span>
-          <span v-else-if="entry.kind === 'code' && isSaving(S.project, entry.path)" class="ot-files__tag">正在改</span>
           <span v-else-if="entry.kind === 'word'" class="ot-files__tag">修订 2 处</span>
-          <BaseButton
-            v-if="canTry"
-            id="b-own"
-            kind="ghost"
-            size="sm"
-            prepend-icon="mdi-checkbox-marked-outline"
-            title="在一件事自己的副本里改，改好了在那件事里采纳"
-            @click="openOwnThing"
-            >开一件事自己做</BaseButton
-          >
           <BaseButton
             kind="ghost"
             size="sm"

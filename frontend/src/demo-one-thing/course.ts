@@ -3,7 +3,8 @@
 // and the space's 公告 and 资料库. A 题目 is not a kind of screen: once claimed
 // it is an ordinary project owned by a team (the person's own team, or the team
 // that claimed it together), holding the 题面 as a document, the starter code,
-// the rules in its settings. The project records which 题目 it came from. A
+// the rules in its settings, and one 一件事 the work is done in (WORK_TITLE:
+// 「做 Data Lab」, done by the person, or by the whole team). The project records which 题目 it came from. A
 // submission is made to the 题目, not inside the project: it carries the
 // 题目's 提交项 (a version of a project file, a few words), is graded the way
 // the 题目 says (评测机评 or 老师评) and is recorded on the 题目 in the space.
@@ -438,7 +439,7 @@ const DATALAB_README = `<h1>Data Lab</h1>
 <h3>评分</h3>
 <p>13 个函数一起评：每个函数的测试全对、且 <code>dlc</code> 检查通过，就得它的分（Rating），满分 ${DATALAB_TOTAL} 分。可以反复提交，以截止前最后一次为准。</p>
 <h3>怎么做</h3>
-<ul><li><p>打开 <code>bits.c</code> 直接改，改了就生效，每次改动自动记进历史，都能撤回。</p></li><li><p>「运行」在你自己的环境里跑 <code>./btest</code>，只有你看得到。</p></li><li><p>做好了在这道题目上「提交」：挑 <code>bits.c</code> 的一个版本交上去，评测机马上出结果。提交记录也在这道题目上，每次都能看到当时的代码。</p></li></ul>`
+<ul><li><p>领取时开好了一件事「做 Data Lab」：在它的工作台里写 <code>bits.c</code>，「运行」跑 <code>./btest</code>，输出留在那件事里。</p></li><li><p>芝士在那件事的对话里只给提示，不写代码。</p></li><li><p>做好了在这道题目上「提交」：挑 <code>bits.c</code> 的一个版本交上去，评测机马上出结果。提交记录也在这道题目上，每次都能看到当时的代码。</p></li></ul>`
 
 // ---- the judge: a C integer expression, parsed and run ----
 //
@@ -641,11 +642,50 @@ interface SetProblem {
   statement: string
   sampleIn: string
   sampleOut: string
+  /** A second sample, and what the starter's usual mistake prints on it (the demo runs no real compiler). */
+  sample2: { in: string; out: string; got: string }
   starter: string
   /** The demo's judge for this problem: the verdict on a version of main.cpp. */
   judge: (code: string) => Verdict
-  /** What main.cpp prints on the sample input. */
-  run: (code: string) => string
+}
+
+/** What 运行 feeds a 题单 problem: one of its 样例, or input typed by hand. */
+export type RunInput = { sample: number } | { custom: string }
+
+/** What a 运行 printed; on a 样例, also what was expected and whether it matched. */
+export interface RunOut {
+  cmd: string
+  out: string
+  expect?: string
+  pass?: boolean
+}
+
+/** main.cpp run on one input. A+B really adds what it reads; the other problems are scripted on their two
+ *  样例 (sample 1 comes out right, sample 2 shows the mistake the judge reports), and say so for other input. */
+function runOn(p: SetProblem, code: string, input: string): string {
+  if (!printsAnything(code)) return '(没有输出)'
+  if (p.id === 'P1001') {
+    if (!printsSum(code)) return '(输出不是 a + b)'
+    const [a, b] = input.trim().split(/\s+/).map(Number)
+    return Number.isFinite(a) && Number.isFinite(b) ? String(a! + b!) : '(读不到两个整数)'
+  }
+  if (input.trim() === p.sampleIn.trim()) return p.sampleOut
+  if (input.trim() === p.sample2.in.trim()) return p.sample2.got
+  return '(演示里这道题只模拟了两个样例的输出)'
+}
+
+/** 运行 on a 题单 problem: a 样例 shows 通过 / 不通过 against its expected output; custom input shows the output only. */
+function runSet(p: SetProblem, code: string, input: RunInput = { sample: 0 }): RunOut {
+  if ('custom' in input)
+    return { cmd: 'g++ -O2 main.cpp -o main && ./main < 自定义输入', out: runOn(p, code, input.custom) }
+  const s = input.sample === 1 ? { in: p.sample2.in, out: p.sample2.out } : { in: p.sampleIn, out: p.sampleOut }
+  const out = runOn(p, code, s.in)
+  return {
+    cmd: `g++ -O2 main.cpp -o main && ./main < 样例${input.sample + 1}.in`,
+    out,
+    expect: s.out,
+    pass: out === s.out,
+  }
 }
 
 const CPP_HEAD = '#include <iostream>\nusing namespace std;\n\nint main() {\n'
@@ -680,6 +720,7 @@ export const SET: SetProblem[] = [
     statement: '输入两个整数 a、b，输出它们的和。|a|, |b| ≤ 10⁹。',
     sampleIn: '20 30',
     sampleOut: '50',
+    sample2: { in: '-7 7', out: '0', got: '0' },
     starter: `${CPP_HEAD}  int a, b;\n  cin >> a >> b;\n  // 在这里输出 a + b\n  return 0;\n}\n`,
     judge: (code) => {
       const tests: [string, number][] = [
@@ -698,7 +739,6 @@ export const SET: SetProblem[] = [
       const score = ok ? 4 : 0
       return { score, total: 4, rows, summary: ok ? '4/4 · 全部通过' : `0/4 · 测试点 #1 ${rows[0]!.note}` }
     },
-    run: (code) => (printsSum(code) ? '50' : printsAnything(code) ? '(输出和样例不一样)' : '(没有输出)'),
   },
   {
     id: 'P1046',
@@ -706,9 +746,9 @@ export const SET: SetProblem[] = [
     statement: '树上 10 个苹果的高度，和陶陶伸手能摸到的高度。陶陶站上 30 厘米的板凳也能摘，问能摘到几个。',
     sampleIn: '100 200 150 140 129 134 167 198 200 111\n110',
     sampleOut: '5',
+    sample2: { in: '100 200 150 140 129 134 167 198 200 111\n140', out: '7', got: '5' },
     starter: `${CPP_HEAD}  int h[10], reach;\n  for (int i = 0; i < 10; i++) cin >> h[i];\n  cin >> reach;\n  // 数一数能摘到几个\n  return 0;\n}\n`,
     judge: scriptedJudge('期望 7，你的输出是 5（板凳的 30 厘米算进去了吗）'),
-    run: (code) => (printsAnything(code) ? '5' : '(没有输出)'),
   },
   {
     id: 'P1085',
@@ -716,9 +756,9 @@ export const SET: SetProblem[] = [
     statement: '一周七天，每天上学和补习的小时数。超过 8 小时津津就不高兴，输出最不高兴的那天，都高兴输出 0。',
     sampleIn: '5 3\n6 2\n7 2\n5 3\n5 4\n0 4\n0 6',
     sampleOut: '3',
+    sample2: { in: '5 3\n6 4\n7 2\n5 3\n5 5\n0 4\n0 6', out: '2', got: '5' },
     starter: `${CPP_HEAD}  // 读 7 行，每行两个数\n  return 0;\n}\n`,
     judge: scriptedJudge('期望 2，你的输出是 5（一样不高兴时输出最早的那天）'),
-    run: (code) => (printsAnything(code) ? '3' : '(没有输出)'),
   },
   {
     id: 'P1089',
@@ -726,9 +766,9 @@ export const SET: SetProblem[] = [
     statement: '每月初拿到 300 元，预算花完后把整百的钱存给妈妈，年底多加 20%。某月不够花就输出 -那个月。',
     sampleIn: '290\n230\n280\n200\n300\n170\n340\n50\n90\n80\n200\n60',
     sampleOut: '-7',
+    sample2: { in: '290\n230\n280\n200\n300\n170\n330\n50\n90\n80\n200\n60', out: '1580', got: '1320' },
     starter: `${CPP_HEAD}  int budget[12];\n  for (int i = 0; i < 12; i++) cin >> budget[i];\n  // 按月模拟\n  return 0;\n}\n`,
-    judge: scriptedJudge('期望 1580，你的输出是 1500（年底的 20% 加了吗）'),
-    run: (code) => (printsAnything(code) ? '-7' : '(没有输出)'),
+    judge: scriptedJudge('期望 1580，你的输出是 1320（年底的 20% 加了吗）'),
   },
   {
     id: 'P5703',
@@ -736,9 +776,9 @@ export const SET: SetProblem[] = [
     statement: '每个苹果 a 元，要买 b 个，输出一共多少元。',
     sampleIn: '5 3',
     sampleOut: '15',
+    sample2: { in: '1000000 1000000', out: '1000000000000', got: '-727379968' },
     starter: `${CPP_HEAD}  long long a, b;\n  cin >> a >> b;\n  return 0;\n}\n`,
     judge: scriptedJudge('期望 1000000000000，你的输出溢出了'),
-    run: (code) => (printsAnything(code) ? '15' : '(没有输出)'),
   },
 ]
 
@@ -814,7 +854,7 @@ const SHELL_README = `<h1>Shell Lab 大作业（3 人组队）</h1>
 <h3>评分</h3>
 <p>老师评：提交 <code>tsh.c</code> 的一个版本和一段分工说明，张老师按 8 条 trace 和分工说明给分、写评语，全组一个分数。可以反复提交，以截止前最后一次为准。</p>
 <h3>怎么一起写</h3>
-<ul><li><p>三个人改的是同一份 <code>tsh.c</code>，谁在改哪一行都看得到，改了就生效，每次改动记进历史、能撤回。</p></li><li><p>想先单独试，就「开一件事自己做」：在那件事的副本里改，组里的人在那件事里看过，采纳了才进正式版。</p></li></ul>`
+<ul><li><p>领取时开好了一件事「做 Shell Lab」，三个人一起做：都在它的工作台里改同一份 <code>tsh.c</code>，谁在改哪一行都看得到。</p></li><li><p>做好了在那件事里「改好了」、采纳进正式版；提交时也可以直接交那件事里的当前版本。</p></li></ul>`
 
 /** One trace of the Shell Lab driver: what it checks, and what in tsh.c makes it pass (the demo reads the code). */
 const TRACES: { name: string; ok: (code: string) => boolean; note: string }[] = [
@@ -904,7 +944,9 @@ export interface Unit {
   title: string
   path: string
   judge: (text: string) => Verdict
-  run: (text: string) => { cmd: string; out: string }
+  run: (text: string, input?: RunInput) => RunOut
+  /** A 题单 problem runs on a chosen input (样例 1 / 样例 2 / 自定义输入); a lab runs its own tests. */
+  samples?: boolean
 }
 
 export const UNITS: Record<string, Unit> = {
@@ -918,10 +960,8 @@ export const UNITS: Record<string, Unit> = {
         title: `${p.id} ${p.title}`,
         path: `${p.id}/main.cpp`,
         judge: p.judge,
-        run: (text: string) => ({
-          cmd: `g++ -O2 main.cpp -o main && ./main < 样例.in`,
-          out: `${p.run(text)}\n样例输出：${p.sampleOut}`,
-        }),
+        run: (text: string, input?: RunInput) => runSet(p, text, input),
+        samples: true,
       },
     ])
   ),
@@ -950,15 +990,24 @@ export function reviewShell(code: string, split: string): Omit<Review, 'at'> {
   }
 }
 
-/** 芝士's first message in the project's # 综合: what the 题目 brought in, and the rule it works under. */
+/** The 一件事 领取 opens in a claimed project: the work itself, done by whoever claimed it (the whole team for a team 题目). */
+export const WORK_TITLE: Record<ClaimKey, string> = {
+  datalab: '做 Data Lab',
+  week3: '做第 3 周题单',
+  shelllab: '做 Shell Lab',
+}
+
+/** 芝士's first message in the project's # 综合: what the 题目 brought in, the 一件事 the work happens in, and
+ *  the rule 芝士 works under. The 一件事's card sits under it. */
 export function welcome(p: ClaimKey, due: string): ChatLine[] {
+  const work = `「${WORK_TITLE[p]}」`
   const text =
     p === 'datalab'
-      ? `这个项目是你从「Data Lab」领取的，在你自己的团队下。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 代码在 \`bits.c\`：13 个函数，改了就生效，每次改动自动记进历史\n- 做好了在这道题目上「提交」，评测机一次评全部，结果也记在题目上\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
+      ? `这个项目是你从「Data Lab」领取的，在你自己的团队下。\n\n- 题面在 \`README.md\`，置顶在项目文件里\n- 领取时开好了一件事${work}，你来做：在它的工作台里写 \`bits.c\`、运行 btest\n- 做好了在这道题目上「提交」，评测机一次评全部，结果也记在题目上\n- 截止 ${due}，以截止前最后一次提交为准\n\n这门课设成「芝士只给提示」：在那件事的对话里问我思路，答案我不会写出来。`
       : p === 'week3'
-        ? `这个项目是你从「第 3 周题单」领取的，在你自己的团队下。\n\n- 「题单」文档置顶在项目文件里，每道题做到哪了都在上面\n- 每道题一个文件夹：\`题面.md\` 和 \`main.cpp\`；在题单里每题单独「提交」\n- 截止 ${due}\n\n这门课设成「芝士只给提示」：卡住了可以问我思路，答案我不会写出来。`
-        : `这个项目是「ICS 第 7 组」一起领取的「Shell Lab 大作业」：林晓、周珂、陈思远三个人共用。\n\n- 题面在 \`README.md\`，置顶在项目文件里，里面有分工建议\n- 三个人改同一份 \`tsh.c\`：谁在改哪儿都看得到，改了就生效；想单独试就开一件事\n- 在这道题目上「提交」：交 \`tsh.c\` 的一个版本和分工说明，张老师批改，全组一个分数，截止 ${due}\n\n这门课设成「芝士只给提示」：思路可以问我，答案我不会写出来。`
-  return [{ id: `${p}-w1`, who: 'cheese', at: new Date().toISOString(), text }]
+        ? `这个项目是你从「第 3 周题单」领取的，在你自己的团队下。\n\n- 「题单」文档置顶在项目文件里，每道题做到哪了都在上面\n- 领取时开好了一件事${work}：5 道题的 \`main.cpp\` 都在它的工作台里，运行时挑样例或自己输入\n- 在题单里每题单独「提交」，截止 ${due}\n\n这门课设成「芝士只给提示」：卡住了在那件事的对话里问我思路，答案我不会写出来。`
+        : `这个项目是「ICS 第 7 组」一起领取的「Shell Lab 大作业」：林晓、周珂、陈思远三个人共用。\n\n- 题面在 \`README.md\`，置顶在项目文件里，里面有分工建议\n- 领取时开好了一件事${work}，三个人一起做：都在它的工作台里改同一份 \`tsh.c\`，谁在改哪儿都看得到\n- 在这道题目上「提交」：交 \`tsh.c\` 的一个版本和分工说明，张老师批改，全组一个分数，截止 ${due}\n\n这门课设成「芝士只给提示」：思路可以在那件事的对话里问我，答案我不会写出来。`
+  return [{ id: `${p}-w1`, who: 'cheese', at: new Date().toISOString(), text, thing: `w-${p}` }]
 }
 
 /** 芝士's answer in a course project: the course is set to 「只给提示」, so a hint, never code. */

@@ -1,71 +1,81 @@
 <script setup lang="ts">
-// The right panel for one 一件事. As a 讨论 it has 对话 / 资料 and a 开工
-// button; 开工 turns the same conversation into a 任务 in place: the panel
-// widens and gains 现场 / 改动 / 成果, and the stage bar moves along
-// 讨论 › 在做 › 等你采纳 › 完成. The header row, the tabs, the conversation, the
-// composer, 现场 and the diff are the product's own components.
-// 改动 is the 一件事's own copy, and this is the one place a copy is 采纳ed.
-// 芝士's copy is read-only: only 芝士 changes it. A person 采纳s it (or 采纳s
-// and opens the file in the editor, on 正式版, to go on by hand), or tells 芝士
-// in the 一件事's conversation what to change. A 讨论 about code lines (asked
-// with 在频道里问芝士) is started the same way, and 芝士 then works on its copy
-// of that file. A 一件事 a person opened to do themselves (开一件事自己做) has
-// no 现场: the person types into its copy in the editor (去副本里改), says
-// 改好了, a teammate looks in the conversation, and it is 采纳ed here too.
+// The panel for one 一件事. As a 讨论 it has 对话 / 资料 and a 开工 button;
+// 开工 turns the same conversation into a 任务 in place: the panel widens and
+// gains 工作台 and 改动, and the stage bar moves along 讨论 › 在做 › 等你采纳
+// › 完成. The header row, the tabs, the conversation, the composer and the
+// diff are the product's own components.
+// 工作台 (Workbench.vue) is where the 一件事 is done: its copy of the files,
+// and every 运行 with what it printed. Where it opens is 方案「工作台放哪」: W1
+// in the center column (this panel keeps 对话 / 改动 and a 「工作台」 button
+// in the header), W2 as a tab here, the panel widening while a person is
+// doing it, W3 with this panel as the 一件事's own full view (tabs 工作台 ·
+// 对话 · 改动, a back arrow to the channel), which a started 一件事 always
+// opens as.
+// The header holds who is doing it and what moves the doing along, the same
+// for every 一件事 (ThingActions: 开工, 接手, 交给芝士, 改好了, 采纳); under W1,
+// while the 工作台 is open in the center, that row moves to the 工作台's own
+// header and this one keeps the title. The 交给芝士 sheet opens here.
+// 改动 is the copy against 正式版, and the one place a copy is 采纳ed
+// (acceptCopy). When 正式版 moved since the copy was taken, 改动 says
+// 「正式版在这期间改过」: changes to different lines are kept on both sides
+// (the copy catches up first, a line in 对话), and where both changed the
+// same lines it shows both and the adopter picks a side per block before 采纳.
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
-import type { Block, TodoItem } from '@/cx_types'
-import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { ChatLine, MarkLine } from './state'
 
 import { computed, ref, watch } from 'vue'
 
-import { CHANNELS, diffText, ME, NAMES, PLAN, projectOfChan, RESULTS_MD, TASK_DIFFS } from './data'
+import { channelOf, diffText, ME, NAMES, TASK_DIFFS } from './data'
 import DemoComposer from './DemoComposer.vue'
 import DemoTimeline from './DemoTimeline.vue'
 import { hhmm, stateOf } from './shapes'
-import { siteBlocks, type SiteStep, T4_STEPS } from './site'
 import {
-  accept,
-  acceptAndOpen,
   acceptCopy,
+  canTake,
+  canWork,
   closeThing,
   confirmKick,
-  editCopy,
+  copyState,
+  doingNow,
+  handToCheese,
+  hasBench,
   jumpTo,
-  kickoff,
-  markDone,
-  officialText,
+  openBench,
   openFile,
   PHASE,
   PHASES,
-  researchRun,
+  pickSide,
   S,
   sayInThing,
   sourceOf,
   tellCheese,
   thingById,
 } from './state'
+import ThingActions from './ThingActions.vue'
+import { V } from './variants'
+import Workbench from './Workbench.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import ChangesDiffList from '@/components/panels/ChangesDiffList.vue'
-import PanelSite from '@/components/panels/PanelSite.vue'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
-import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { fileIcon } from '@/lib/fileKind'
-import { siteBundle } from '@/views/demo/catalogPanelsFixtures'
 
 const thing = computed(() => thingById(S.thing)!)
 const talk = computed(() => thing.value.status === 'talk')
 const ours = computed(() => thing.value.id === 't4')
-/** A 一件事 I opened to do myself: I type into its copy, 芝士 does not work on it. */
-const mineToDo = computed(() => !!thing.value.copy && thing.value.doer === ME)
-/** It can be started: 演示一's task, or a 讨论 about code where 芝士 has a change to offer. */
-const startable = computed(() => talk.value && (ours.value || !!thing.value.copy))
-const chanTitle = computed(() => CHANNELS.find((c) => c.id === thing.value.chan)?.title ?? '')
+const bench = computed(() => hasBench(thing.value))
+/** 方案 W3: a started 一件事 is its own full view. */
+const full = computed(() => V.bench === 'W3' && !talk.value)
+/** 方案 W1: the 工作台 opens in the center column, beside this panel. */
+const benchInCenter = computed(() => V.bench === 'W1')
+/** I can work in it now (I am doing it, or took it over, or my team is doing it). */
+const working = computed(() => canWork(thing.value))
+/** Who is doing it now, once started. */
+const who = computed(() => doingNow(thing.value))
+const chanTitle = computed(() => channelOf(thing.value.chan)?.title ?? '')
 /** The channel message this 一件事 was opened under: 来自 points back at it. */
 const source = computed(() => sourceOf(thing.value.id))
 
@@ -104,9 +114,8 @@ const scripted = computed<(ChatLine | MarkLine)[]>(() => {
       id: 'r5',
       who: 'cheese',
       at: plus(at, 9),
-      text: '做完了，请你采纳：统一后 **Flickr30K R@1 = 79.1**，和论文的 79.3 基本对上；COCO 5K R@1 = 50.3。改了 2 个文件，结果表在「成果」。',
+      text: '做完了，请你采纳：统一后 **Flickr30K R@1 = 79.1**，和论文的 79.3 基本对上；COCO 5K R@1 = 50.3。改了 2 个文件，结果表 `results/eval_results.md` 在工作台里。',
     })
-  if (t.status === 'done') out.push({ id: 'a', mark: `${NAMES[ME]} 采纳 · 已合进正式版`, at: plus(at, 12), ok: true })
   return out
 })
 const lines = computed(() => [
@@ -122,18 +131,17 @@ const tabs = computed<PanelTab[]>(() => {
       { key: 'sources', label: '资料', icon: 'mdi-bookshelf', signal: { kind: 'count', count: SOURCES.value.length } },
     ]
   const n = diffs.value.length
+  const benchTab: PanelTab = {
+    key: 'bench',
+    label: '工作台',
+    icon: 'mdi-tools',
+    signal: who.value === 'cheese' ? ({ kind: 'pulse' } as const) : undefined,
+  }
+  const chat: PanelTab = { key: 'chat', label: '对话', icon: 'mdi-message-outline' }
   return [
-    { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
-    ...(mineToDo.value
-      ? []
-      : [
-          {
-            key: 'site',
-            label: '现场',
-            icon: 'mdi-monitor-eye',
-            signal: t.status === 'run' ? ({ kind: 'pulse' } as const) : undefined,
-          },
-        ]),
+    // The full view leads with the 工作台, as a document leads with its page.
+    ...(full.value && bench.value ? [benchTab, chat] : [chat]),
+    ...(!full.value && !benchInCenter.value && bench.value ? [benchTab] : []),
     {
       key: 'changes',
       label: '改动',
@@ -141,23 +149,46 @@ const tabs = computed<PanelTab[]>(() => {
       empty: !n,
       signal: n && t.status === 'wait' ? { kind: 'count', count: n, fresh: true } : undefined,
     },
-    { key: 'result', label: '成果', icon: 'mdi-table-check', empty: !result.value },
   ]
 })
-const tab = computed(() => (tabs.value.some((t) => t.key === S.rtab) ? S.rtab : 'chat'))
+/** The tab on show: the 工作台 while it is open here (W2, W3), else the one picked, else 对话. */
+const tab = computed(() => {
+  if (S.bench && bench.value && !benchInCenter.value && !talk.value) return 'bench'
+  const k = S.rtab === 'bench' ? 'chat' : S.rtab
+  return tabs.value.some((t) => t.key === k) ? k : 'chat'
+})
+function selectTab(key: string) {
+  if (key === 'bench') {
+    S.bench = true
+    return
+  }
+  S.rtab = key
+  // In W1 the 工作台 stays in the center column whatever this panel shows.
+  if (!benchInCenter.value) S.bench = false
+}
 
 /** What the 一件事 changed: the scripted task's files, or each file of its copy against 正式版 as it reads now
  *  (what 采纳 would do), and once 采纳ed against what 正式版 read then. Files it has not changed are left out. */
+const states = computed(() => (thing.value.copy ? copyState(thing.value) : []))
+/** 正式版 moved since the copy was taken. */
+const stale = computed(() => states.value.some((x) => x.stale))
+/** Blocks both changed and nobody has picked a side for yet: 采纳 waits on them. */
+const open = computed(() => states.value.reduce((n, x) => n + x.open, 0))
+const blocks = computed(() => states.value.reduce((n, x) => n + x.blocks.length, 0))
+const staleBy = computed(() => [...new Set(states.value.flatMap((x) => x.by))].map((h) => NAMES[h]).join('、'))
+const doerName = computed(() => NAMES[thing.value.doer ?? 'cheese'])
 const diffs = computed(() => {
   const t = thing.value
-  if (ours.value) return TASK_DIFFS
-  const p = projectOfChan(t.chan)
-  return Object.entries(t.copy ?? {})
-    .map(([path, c]) => ({ path, before: t.status === 'done' ? c.base : officialText(p, path), after: c.text }))
-    .filter((x) => x.before !== x.after)
-    .map((x) => diffText(x.path, x.before, x.after))
+  if (ours.value && t.status !== 'run' && !stale.value) return TASK_DIFFS
+  return [
+    ...states.value
+      .map((x) => ({ path: x.path, before: t.status === 'done' ? t.copy![x.path]!.base : x.now, after: x.text }))
+      .filter((x) => x.before !== x.after)
+      .map((x) => diffText(x.path, x.before, x.after)),
+    ...Object.entries(ours.value ? {} : t.adds ?? {}).map(([path, md]) => diffText(path, '', md)),
+  ]
 })
-const acceptThis = () => (ours.value ? accept() : acceptCopy(thing.value.id))
+const acceptThis = () => acceptCopy(thing.value.id)
 
 // ---- 资料 ----
 const SOURCES = computed(() =>
@@ -170,109 +201,7 @@ const SOURCES = computed(() =>
     : Object.keys(thing.value.copy ?? {}).map((path) => ({ path, who: thing.value.owner, what: '引用' }))
 )
 
-// ---- 现场 ----
-const OTHER_SITE: Record<string, SiteStep[]> = {
-  t1: [
-    { kind: 'thinking', text: '用 CLIP 的 tokenizer 数 token，训练集和 5K 测试集分开。' },
-    {
-      kind: 'bash',
-      command: 'python scripts/caption_lengths.py --split train2017 --split 5k',
-      description: '统计描述长度',
-      output: 'train2017: 591753 captions  >77: 37281 (6.3%)\n5k:        25010 captions  >77:  1526 (6.1%)',
-    },
-    { kind: 'text', text: '超过 77 个 token 的占 6.3%，表放进成果。' },
-  ],
-  t2: [
-    {
-      kind: 'bash',
-      command: 'python -m eval.retrieval --model blip_base_14M --data flickr30k --split 1k',
-      description: '跑第 3 个 checkpoint',
-      output: 'encoding 1000 images, 5000 captions … done (41s)\nR@1 81.9  R@5 95.4  R@10 97.8',
-    },
-    {
-      kind: 'bash',
-      command: 'python -m eval.retrieval --model blip_base_129M --data flickr30k --split 1k',
-      description: '跑第 4 个 checkpoint',
-      output: 'loading checkpoint blip_base_129M … 38%',
-    },
-  ],
-  t3: [
-    { kind: 'read', path: 'docs/组会纪要-11-07.md', output: '组会纪要 11-07\n1. 评测口径：统一用 eval/retrieval.py …' },
-    {
-      kind: 'bash',
-      command: 'marp slides.md -o report/组会-11-07.pdf',
-      description: '导出幻灯片',
-      output: '[  INFO ] slides.md => report/组会-11-07.pdf (7 pages)',
-    },
-  ],
-}
-/** 芝士 on a code 一件事's copy: read the file, change it, run it. */
-function copySite(): SiteStep[] {
-  const t = thingById(S.thing)
-  const [path, c] = Object.entries(t?.copy ?? {})[0] ?? []
-  if (!path || !c) return []
-  const r = researchRun(path, c.text)
-  return [
-    { kind: 'read', path, output: c.base.split('\n').slice(0, 6).join('\n') },
-    { kind: 'thinking', text: '在这件事自己的那份上改，正式版不动。' },
-    { kind: 'bash', command: r.cmd, description: '改完跑一遍', output: r.out },
-    { kind: 'text', text: '改好了，等采纳。' },
-  ]
-}
-const siteRecords = computed<Block[]>(() => {
-  const t = thing.value
-  if (ours.value)
-    return siteBlocks(
-      't4',
-      T4_STEPS.slice(0, Math.max(S.live, 0) + (t.status === 'run' ? 1 : 0)).flat(),
-      plus(S.askAt || t.at, 2)
-    )
-  return siteBlocks(t.id, OTHER_SITE[t.id] ?? copySite(), plus(t.at, -20))
-})
-const site = siteBundle({ transcript: siteRecords })
-// The session strip at the top of 现场 says who is connected: 芝士 while the task runs, nobody after.
-watch(
-  () => thing.value.status === 'run',
-  (on) => {
-    site.inspector.state.value = on
-      ? ({ id: `${thing.value.id}-session`, connected: true, tasks: {} } as typeof site.inspector.state.value)
-      : null
-  },
-  { immediate: true }
-)
-const working = computed(() => thing.value.status === 'run')
-const running = computed(() => (working.value ? { [`${thing.value.id}-turn`]: Date.now() - 60_000 } : {}))
-const memberNames = NAMES
-const STEP_NOW = [
-  '正在读文件',
-  '执行命令 pytest',
-  '执行命令 eval.retrieval flickr30k',
-  '执行命令 eval.retrieval coco',
-  '正在写结果表',
-]
-const activity = computed<MemberActivityLine[]>(() =>
-  working.value
-    ? [
-        {
-          handle: 'cheese',
-          name: '芝士',
-          kind: 'working',
-          since: Math.floor(Date.parse(thing.value.at) / 1000),
-          step: ours.value ? STEP_NOW[Math.min(S.live, 4)] ?? null : '执行命令 eval.retrieval',
-        },
-      ]
-    : []
-)
-
-const todo = computed<TodoItem[]>(() =>
-  PLAN.map((subject, i) => ({
-    id: String(i),
-    subject,
-    status: thing.value.status !== 'run' || i < S.live ? 'completed' : i === S.live ? 'in_progress' : 'pending',
-  }))
-)
-
-// ---- 改动 / 成果 ----
+// ---- 改动 ----
 const expanded = ref(new Set<string>())
 // Each 一件事 opens on its first changed file.
 watch(
@@ -286,49 +215,54 @@ function toggleSection(path: string) {
   else next.add(path)
   expanded.value = next
 }
-const result = computed(() => {
-  const t = thing.value
-  if (ours.value) return t.status === 'wait' || t.status === 'done' ? RESULTS_MD : ''
-  return t.result ?? ''
-})
 
 // ---- conversation ----
 const replyLine = computed(() => lines.value.find((l) => l.id === S.thingReplyTo) as ChatLine | undefined)
 const replyLabel = computed(() =>
   replyLine.value ? `回复 ${NAMES[replyLine.value.who]}：${replyLine.value.text.slice(0, 40)}` : null
 )
-
-const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner]))
 </script>
 
 <template>
-  <aside class="ot-thing" data-zone="right">
+  <aside class="ot-thing" :class="{ 'ot-thing--full': full }" data-zone="right">
     <header class="ot-thing__head" :class="{ 'ot-flash': S.morph }">
-      <v-icon size="18" class="ot-thing__icon" :icon="talk ? 'mdi-forum-outline' : 'mdi-checkbox-marked-outline'" />
-      <span v-if="S.focus" class="ot-thing__chan"># {{ chanTitle }} /</span>
+      <BaseButton
+        v-if="full"
+        id="b-thing-back"
+        kind="ghost"
+        size="sm"
+        prepend-icon="mdi-arrow-left"
+        :title="`回到 # ${chanTitle}`"
+        @click="closeThing"
+        ># {{ chanTitle }}</BaseButton
+      >
+      <v-icon
+        v-else
+        size="18"
+        class="ot-thing__icon"
+        :icon="talk ? 'mdi-forum-outline' : 'mdi-checkbox-marked-outline'"
+      />
+      <span v-if="S.focus && !full" class="ot-thing__chan"># {{ chanTitle }} /</span>
       <h2 class="ot-thing__title" :title="thing.title">{{ thing.title }}</h2>
       <TaskStateMark :state="stateOf(thing)" :size="15" :class="{ 'ot-wait': thing.status === 'wait' }" />
       <span class="ot-head__gap" />
-      <span v-if="ownerLabel" class="ot-thing__owner" :title="`${ownerLabel} 负责`">
-        <UserAvatar :name="ownerLabel" :seed="thing.owner" :size="20" />{{ ownerLabel }} 负责
-      </span>
-      <BaseButton v-if="startable" id="b-kick" kind="primary" size="sm" @click="kickoff">开工</BaseButton>
-      <template v-else-if="mineToDo && thing.status === 'run'">
-        <BaseButton id="b-edit-copy" kind="ghost" size="sm" @click="editCopy(thing.id)">去副本里改</BaseButton>
-        <BaseButton id="b-done" kind="primary" size="sm" :disabled="!diffs.length" @click="markDone(thing.id)"
-          >改好了</BaseButton
-        >
-      </template>
+      <ThingActions v-if="!(benchInCenter && S.bench && bench)" :faces="!full" />
       <BaseButton
-        v-else-if="thing.status === 'wait' && (ours || thing.copy)"
-        id="b-accept"
-        kind="primary"
+        v-if="benchInCenter && bench && !full"
+        id="b-bench"
+        kind="ghost"
         size="sm"
-        @click="acceptThis"
+        :prepend-icon="S.bench ? undefined : 'mdi-tools'"
+        :icon="S.bench ? 'mdi-tools' : undefined"
+        :class="{ 'ot-thing__on': S.bench }"
+        :aria-pressed="S.bench"
+        :aria-label="S.bench ? '工作台开在中间，点一下收起' : undefined"
+        :title="S.bench ? '工作台开在中间，点一下收起' : '在中间打开这件事的工作台'"
+        @click="S.bench ? (S.bench = false) : openBench(thing.id)"
+        >{{ S.bench ? '' : '工作台' }}</BaseButton
       >
-        采纳
-      </BaseButton>
       <BaseButton
+        v-if="!full && !(benchInCenter && S.bench)"
         kind="ghost"
         size="sm"
         :icon="S.focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
@@ -336,7 +270,15 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
         :aria-label="S.focus ? '退出专注' : '专注模式'"
         @click="S.focus = !S.focus"
       />
-      <BaseButton kind="ghost" size="sm" icon="mdi-close" title="关闭" aria-label="关闭" @click="closeThing" />
+      <BaseButton
+        v-if="!full"
+        kind="ghost"
+        size="sm"
+        icon="mdi-close"
+        title="关闭"
+        aria-label="关闭"
+        @click="closeThing"
+      />
     </header>
 
     <div class="ot-stages">
@@ -376,19 +318,42 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
           <span class="ot-kick__label">交付</span>
           <span class="ot-kick__value">{{ thing.deliver ?? '统一的评测脚本 + 结果表' }}</span>
         </div>
-        <p class="ot-kick__note">芝士在这件事自己的那份上改，你采纳后才合进正式版。</p>
+        <p class="ot-kick__note">芝士在这件事的工作台里做，你随时能打开看、接手；你采纳后才合进正式版。</p>
         <div class="ot-kick__actions">
           <BaseButton kind="ghost" size="sm" @click="S.sheet = false">取消</BaseButton>
           <BaseButton id="b-confirm" kind="primary" size="sm" @click="confirmKick">确认开工</BaseButton>
         </div>
       </div>
     </Transition>
+    <Transition name="ot-sheet">
+      <div v-if="S.hand" class="ot-kick" data-zone="hand">
+        <div class="ot-kick__title">交给芝士</div>
+        <textarea
+          v-model="S.handNote"
+          class="ot-kick__note-in"
+          rows="2"
+          autocomplete="off"
+          placeholder="跟芝士说一句：改了什么、接下来做什么"
+          aria-label="交给芝士时说的话"
+          data-hand-note
+        />
+        <p class="ot-kick__note">芝士在这个工作台里接着做，你改的都留着。</p>
+        <div class="ot-kick__actions">
+          <BaseButton kind="ghost" size="sm" @click="S.hand = false">取消</BaseButton>
+          <BaseButton id="b-hand-confirm" kind="primary" size="sm" @click="handToCheese(thing.id, S.handNote)"
+            >交给芝士</BaseButton
+          >
+        </div>
+      </div>
+    </Transition>
 
-    <PanelTabs :tabs="tabs" :active="tab" class="ot-thing__tabs" @select="S.rtab = $event" />
+    <PanelTabs :tabs="tabs" :active="tab" class="ot-thing__tabs" @select="selectTab" />
 
-    <div class="ot-thing__body" :class="{ 'ot-thing__body--flush': tab === 'site' || tab === 'changes' }">
+    <div class="ot-thing__body" :class="{ 'ot-thing__body--flush': tab === 'bench' || tab === 'changes' }">
+      <Workbench v-if="tab === 'bench'" :mode="full ? 'full' : 'panel'" />
+
       <DemoTimeline
-        v-if="tab === 'chat'"
+        v-else-if="tab === 'chat'"
         :lines="lines"
         :conversation="thing.id"
         @reply="(l) => (S.thingReplyTo = l.id)"
@@ -402,76 +367,81 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
         </button>
       </div>
 
-      <div v-else-if="tab === 'site'" class="ot-site">
-        <div v-if="ours" class="ot-site__plan">
-          <TodoChecklist :items="todo" />
-        </div>
-        <PanelSite
-          class="ot-site__panel"
-          :site="site"
-          :topic-id="thing.id"
-          :active="true"
-          :member-names="memberNames"
-          :working="working"
-          :running-turns="running"
-          :activity="activity"
-          agent-name="芝士"
-        />
-      </div>
-
-      <template v-else-if="tab === 'changes'">
-        <div v-if="ours" class="ot-chg" data-zone="task-changes">
+      <template v-else>
+        <div v-if="thing.copy && thing.status !== 'talk'" class="ot-chg" data-zone="task-changes">
           <div class="ot-chg__bar">
-            <v-icon size="15" icon="mdi-lock-outline" />
-            <span class="ot-chg__what">{{
-              thing.status === 'done' ? '已采纳，进了正式版' : '芝士自己那份上的改动 · 只读，只有芝士改它'
-            }}</span>
-            <span class="ot-head__gap" />
-            <template v-if="thing.status === 'wait'">
-              <BaseButton id="b-accept-tab" kind="secondary" size="sm" @click="accept">采纳</BaseButton>
-              <BaseButton id="b-accept-open" kind="primary" size="sm" @click="acceptAndOpen"
-                >采纳并在编辑器里打开</BaseButton
-              >
-            </template>
-            <BaseButton
-              v-else-if="thing.status === 'done'"
-              kind="secondary"
-              size="sm"
-              @click="openFile('eval/preprocess.py')"
-              >在编辑器里打开</BaseButton
-            >
-          </div>
-          <p v-if="thing.status !== 'done'" class="ot-chg__hint">
-            要改哪里，<button type="button" class="ot-chg__tell" @click="tellCheese">在对话里告诉芝士</button
-            >，它在自己那份上接着改；或者采纳后在编辑器里直接改正式版。
-          </p>
-        </div>
-        <div v-else-if="thing.copy" class="ot-chg" data-zone="task-changes">
-          <div class="ot-chg__bar">
-            <v-icon size="15" :icon="mineToDo ? 'mdi-source-fork' : 'mdi-lock-outline'" />
+            <v-icon size="15" :icon="working ? 'mdi-pencil-outline' : 'mdi-lock-outline'" />
             <span class="ot-chg__what">{{
               thing.status === 'done'
                 ? '已采纳，进了正式版'
-                : mineToDo
-                  ? `${NAMES[ME]}在这件事的副本上改的 · 和正式版的差别`
-                  : '芝士自己那份上的改动 · 只读，只有芝士改它'
+                : working
+                  ? '你在工作台里改的 · 和正式版的差别'
+                  : `${who === 'cheese' || !who ? doerName : NAMES[who]}在工作台里改的 · 和正式版的差别`
             }}</span>
             <span class="ot-head__gap" />
             <BaseButton
-              v-if="mineToDo && thing.status !== 'done'"
+              v-if="bench && thing.status !== 'done'"
               kind="secondary"
               size="sm"
-              @click="editCopy(thing.id)"
-              >去副本里改</BaseButton
+              @click="openBench(thing.id)"
+              >{{ working ? '去工作台里改' : '看工作台' }}</BaseButton
             >
-            <BaseButton v-if="thing.status === 'wait'" id="b-accept-tab" kind="primary" size="sm" @click="acceptThis"
+            <BaseButton
+              v-if="thing.status === 'wait'"
+              id="b-accept-tab"
+              kind="primary"
+              size="sm"
+              :disabled="open > 0"
+              @click="acceptThis"
               >采纳</BaseButton
             >
           </div>
-          <p v-if="!mineToDo && thing.status !== 'done'" class="ot-chg__hint">
+          <p v-if="!working && thing.status !== 'done' && !thing.course" class="ot-chg__hint">
             要改哪里，<button type="button" class="ot-chg__tell" @click="tellCheese">在对话里告诉芝士</button
-            >，它在自己那份上接着改。
+            >，它在工作台里接着改{{ thing.status === 'run' && canTake(thing) ? '；或者「接手」自己改' : '' }}。
           </p>
+        </div>
+        <div v-if="stale" class="ot-stale" data-zone="stale">
+          <div class="ot-stale__head">
+            <v-icon size="15" icon="mdi-source-merge" />正式版在这期间改过{{ staleBy ? `（${staleBy}采纳的）` : '' }}
+          </div>
+          <p class="ot-stale__note">
+            {{
+              blocks
+                ? '两边改了不同地方的，采纳时都留着；下面这几行两边都改了，挑一边再采纳。'
+                : `两边改的不是同一处：采纳时先跟上最新的正式版，这期间的改动都留着。`
+            }}
+          </p>
+          <template v-for="x in states" :key="x.path">
+            <div v-for="(b, k) in x.blocks" :key="k" class="ot-conf" :data-conflict="`${x.path}:${k}`">
+              <div class="ot-conf__title">
+                <code>{{ x.path }}</code> · 两边都改了这几行{{ x.picks[k] ? '' : '，挑一边' }}
+              </div>
+              <div class="ot-conf__sides">
+                <button
+                  v-for="side in ['ours', 'theirs'] as const"
+                  :key="side"
+                  type="button"
+                  class="ot-conf__side"
+                  :class="{ 'is-on': x.picks[k] === side, 'is-off': x.picks[k] && x.picks[k] !== side }"
+                  :data-pick="side"
+                  :aria-pressed="x.picks[k] === side"
+                  @click="pickSide(thing.id, x.path, k, side)"
+                >
+                  <span class="ot-conf__label">
+                    <v-icon size="14" :icon="x.picks[k] === side ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" />{{
+                      side === 'ours'
+                        ? `正式版现在的${x.by.length ? `（${x.by.map((h) => NAMES[h]).join('、')}）` : ''}`
+                        : '这件事的'
+                    }}
+                  </span>
+                  <pre class="ot-conf__code">{{
+                    (side === 'ours' ? b.ours : b.theirs).join('\n') || '（删掉了这几行）'
+                  }}</pre>
+                </button>
+              </div>
+            </div>
+          </template>
         </div>
         <ChangesDiffList
           v-if="diffs.length"
@@ -480,39 +450,16 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
           @toggle-section="toggleSection"
           @open="(p: string) => openFile(p)"
         />
-        <BaseEmptyState v-else size="compact" icon="mdi-file-compare" title="这件事没有改动文件" />
+        <BaseEmptyState v-else size="compact" icon="mdi-file-compare" title="这件事还没有改动文件" />
       </template>
-
-      <div v-else class="ot-pad">
-        <template v-if="result">
-          <div v-if="ours" class="ot-result__path">
-            <v-icon size="16" icon="mdi-language-markdown-outline" />results/eval_results.md
-            <span class="ot-head__gap" />
-            <button
-              v-if="thing.status === 'done'"
-              type="button"
-              class="ot-result__open"
-              @click="openFile('results/eval_results.md')"
-            >
-              在项目文件里打开
-            </button>
-          </div>
-          <MarkdownView :source="result" />
-        </template>
-        <BaseEmptyState
-          v-else
-          size="compact"
-          icon="mdi-table-check"
-          title="还没有成果"
-          description="做完之后，交付的东西会出现在这里"
-        />
-      </div>
     </div>
 
     <DemoComposer
       v-if="tab === 'chat'"
       v-model="S.thingTyping"
-      :placeholder="talk ? '回复讨论，@芝士 问它' : '在任务中回复'"
+      :placeholder="
+        talk ? '回复讨论，@芝士 问它' : thing.course ? '在这件事里说，@芝士 问思路（它只给提示）' : '在任务中回复'
+      "
       :reply-label="replyLabel"
       @clear-reply="S.thingReplyTo = null"
       @send="sayInThing"
@@ -566,14 +513,8 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
   flex: none;
 }
 
-.ot-thing__owner {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  margin-right: 4px;
-  font-size: 13px;
-  color: var(--text);
-  white-space: nowrap;
+.ot-thing__on {
+  background: var(--fill-2);
 }
 
 .ot-stages {
@@ -682,6 +623,20 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
   color: var(--muted);
 }
 
+.ot-kick__note-in {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  resize: none;
+  background: var(--fill);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  outline: none;
+}
+
 .ot-kick__actions {
   display: flex;
   gap: 8px;
@@ -753,6 +708,92 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
   border: 0;
 }
 
+.ot-stale {
+  padding: 8px 12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ot-stale__head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+.ot-stale__note {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.ot-conf + .ot-conf {
+  margin-top: 8px;
+}
+
+.ot-conf__title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.ot-conf__title code {
+  font-family: var(--font-mono);
+}
+
+/* The two sides of one block, side by side: the picked one carries the ink, the other steps back. */
+.ot-conf__sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ot-conf__side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.ot-conf__side:hover {
+  border-color: var(--faint);
+}
+
+.ot-conf__side.is-on {
+  border-color: var(--ink);
+}
+
+.ot-conf__side.is-off {
+  opacity: 0.55;
+}
+
+.ot-conf__label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.ot-conf__code {
+  margin: 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre;
+}
+
 .ot-src {
   display: flex;
   gap: 8px;
@@ -790,42 +831,6 @@ const ownerLabel = computed(() => (talk.value ? null : NAMES[thing.value.owner])
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
-}
-
-.ot-site {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-}
-
-.ot-site__plan {
-  padding: 12px 16px 8px;
-  border-bottom: 1px solid var(--line);
-}
-
-.ot-site__panel {
-  flex: 1;
-  min-height: 0;
-}
-
-.ot-result__path {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-bottom: 8px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.ot-result__open {
-  padding: 0;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  color: var(--accent-ink);
-  cursor: pointer;
-  background: none;
-  border: 0;
 }
 
 .ot-sheet-enter-active {

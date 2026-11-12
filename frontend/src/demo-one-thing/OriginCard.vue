@@ -6,12 +6,12 @@
 // the 题目: the header right above it already names the project, which is the
 // 题目's name, and a long one (「Shell Lab 大作业」) would not fit beside the
 // date. A click opens a calm card in place and folds it again. The card leads
-// with what I have done: the latest 运行 (「运行：8/13 个函数通过」,
-// 「trace 通过 3/8」, a 题单's 「已做 2/5」, or 「还没运行」; 「本地…」 under
-// 方案 T3, where runs are in my own terminal; under T2 nobody in a course
-// project runs code, so it stays 「还没运行」), then the
-// latest submission, then the actions: 「看题目」 back to the 题目 in the
-// space and 「提交」. The date stays on the line only; inside, an amber
+// with what I have done: the latest 运行 in the 一件事 领取 opened
+// (「做 Data Lab」), read off its 工作台 (「运行：8/13 个函数通过」,
+// 「trace 通过 3/8」, a 题单's 「已做 2/5」, or 「还没运行」), with
+// 「接着做 ›」 opening that 一件事's 工作台; then the latest submission, then
+// the actions: 「看题目」 back to the 题目 in the space and 「提交」 (which
+// offers the 一件事's current version as well as 正式版's). The date stays on the line only; inside, an amber
 // 「还剩 20 小时」 shows in the last 24 hours. Nothing on it is orange, and 提交
 // is a secondary button. It opens by itself only in the last 24 hours or
 // when a result I have not looked at has come in; folding it, or opening the
@@ -20,8 +20,19 @@ import { computed, watch } from 'vue'
 
 import { CLOCK, hoursLeft, SET, topicOf } from './course'
 import { isClaim, SPACE } from './data'
-import { latestOf, markSeen, openSubmit, passed, resultOf, S, showTopic, unseenResult } from './state'
-import { V } from './variants'
+import {
+  lastRun,
+  latestOf,
+  markSeen,
+  openBench,
+  openSubmit,
+  passed,
+  resultOf,
+  S,
+  showTopic,
+  unseenResult,
+  workOf,
+} from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { monthDay } from '@/lib/dateText'
@@ -44,23 +55,23 @@ const hours = computed(() => (t.value ? hoursLeft(t.value.due) : 999))
 const soon = computed(() => hours.value >= 0 && hours.value < 24 && !done.value)
 const countdown = computed(() => (hours.value < 1 ? '不到 1 小时就截止' : `还剩 ${hours.value} 小时`))
 
-/** The card's first line: the latest 运行 (in the project's environment, or in my own terminal under T3). */
+/** The work 一件事 领取 opened: where the work is done. */
+const work = computed(() => (t.value?.project ? workOf(t.value.project) : null))
+/** The card's first line: the latest 运行 in that 一件事's 工作台. */
 const progress = computed(() => {
-  if (!t.value) return ''
-  const where = V.run === 'T3' ? '本地' : ''
+  if (!t.value?.project) return ''
+  const p = t.value.project
   if (isSet.value) {
     const did = SET.filter((x) => {
-      const r = S.ran[x.id]
+      const r = lastRun(p, x.id)
       return passed(latestOf(t.value!.id, x.id)) || (!!r && r.ok === r.total)
     }).length
-    const touched = SET.some((x) => S.ran[x.id]) || subs.value.length > 0
-    return touched ? `已做 ${did}/${SET.length}` : `${where}还没运行`
+    const touched = SET.some((x) => lastRun(p, x.id)) || subs.value.length > 0
+    return touched ? `已做 ${did}/${SET.length}` : '还没运行'
   }
-  const r = S.ran[t.value.id]
-  if (!r) return `${where}还没运行`
-  return t.value.id === 'shelllab'
-    ? `${where}运行：trace 通过 ${r.ok}/${r.total}`
-    : `${where}运行：${r.ok}/${r.total} 个函数通过`
+  const r = lastRun(p, t.value.id)
+  if (!r) return '还没运行'
+  return t.value.id === 'shelllab' ? `运行：trace 通过 ${r.ok}/${r.total}` : `运行：${r.ok}/${r.total} 个函数通过`
 })
 /** The card's second line: the latest submission; a result I have not looked at says only what came back. */
 const submitted = computed(() => {
@@ -127,7 +138,19 @@ function look() {
     </button>
 
     <section v-if="open" class="ot-card" data-origin aria-label="来自的题目">
-      <div class="ot-card__lead" data-origin-progress>{{ progress }}</div>
+      <div class="ot-card__leadrow">
+        <span class="ot-card__lead" data-origin-progress>{{ progress }}</span>
+        <button
+          v-if="work"
+          type="button"
+          class="ot-card__link"
+          data-origin-work
+          :title="`打开「${work.title}」的工作台`"
+          @click="openBench(work.id)"
+        >
+          接着做<v-icon size="13" icon="mdi-chevron-right" />
+        </button>
+      </div>
       <div class="ot-card__line" data-origin-status><b v-if="fresh" class="ot-card__new">新</b>{{ submitted }}</div>
       <div v-if="soon" class="ot-card__soon" data-origin-soon>{{ countdown }}</div>
       <div class="ot-card__foot">
@@ -228,6 +251,13 @@ function look() {
   padding: 8px 10px 10px;
   background: var(--fill);
   border-radius: var(--radius-md);
+}
+
+.ot-card__leadrow {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
 }
 
 /* What I have done leads: body text, a step above the rest. */

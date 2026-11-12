@@ -2,7 +2,7 @@
 // every click (a person's or the scripted cursor's) goes through the actions
 // below, so playing, stepping and clicking by hand always agree.
 import type { ReactionAgg } from '@/cx_types'
-import type { Submission, Verdict } from './course'
+import type { RunInput, RunOut, Submission, Verdict } from './course'
 
 import { reactive } from 'vue'
 
@@ -18,6 +18,7 @@ import {
   UNITS,
   versionOf,
   welcome,
+  WORK_TITLE,
 } from './course'
 import {
   ASK,
@@ -34,13 +35,14 @@ import {
   minsAgo,
   MINUTES_DOC,
   NAMES,
+  PLAN,
   type ProjectKey,
   projectOfChan,
   projectTeam,
-  TASK_DIFFS,
+  RESULTS_MD,
   teamOf,
 } from './data'
-import { V } from './variants'
+import { T4_STEPS } from './site'
 
 import { monthDayTime } from '@/lib/dateText'
 
@@ -49,8 +51,6 @@ export type Status = 'talk' | 'run' | 'wait' | 'done'
  *  course 空间's pages. team: a team's 项目 list on 首页. The others are a project's. */
 export type Center = 'inbox' | 'chan' | 'files' | 'settings' | 'space' | 'team'
 export type SpacePage = 'tasks' | 'announce' | 'library'
-/** The bottom panel's 输出 for one file. */
-export type Out = { kind: 'running' } | { kind: 'run'; cmd: string; out: string }
 export type ChanView = 'doc' | 'talk'
 
 /** One thing said: in a channel, or inside a 一件事. */
@@ -65,12 +65,25 @@ export interface ChatLine {
   replyTo?: string
 }
 
-/** A quiet line in a 一件事's conversation: 开工, 采纳. */
+/** A quiet line in a 一件事's conversation: 开工, 接手, 采纳. */
 export interface MarkLine {
   id: string
   mark: string
   at: string
   ok?: boolean
+}
+
+/** One 运行 in a 一件事's 工作台: who ran what, on which file of the copy, and what it printed. A 题单 sample
+ *  run also says what was expected and whether it matched; a graded file's run counts what passed. */
+export interface Run extends RunOut {
+  id: string
+  who: string
+  at: string
+  path?: string
+  running?: boolean
+  unit?: string
+  ok?: number
+  total?: number
 }
 
 export interface Thing {
@@ -84,32 +97,48 @@ export interface Thing {
   at: string
   /** What was said inside it (the scripted 一件事 builds its own from the step it is at). */
   talk?: (ChatLine | MarkLine)[]
-  result?: string
-  /** Who does it once started: 芝士 (unset), or the person who opened it to try something themselves. */
+  /** Who does it once started: 芝士 (unset), or a person (「改这个文件」, a course's 一件事). */
   doer?: string
+  /** A team doing it together (a team 题目's 一件事): each of them can work in its 工作台. */
+  team?: string[]
+  /** Opened by 领取 in a project claimed from a 题目: 芝士 only gives hints in its 对话 and never works on it. */
+  course?: boolean
   /** What 开工 hands over, as the 开工 sheet says it (演示一's task has its own). */
   deliver?: string
-  /** A 一件事 that changes code: its own copy of each file it touches (what 正式版 read when the copy was
-   *  taken, and the copy's text now). Only 采纳, in the 一件事, puts it into 正式版. */
+  /** Its 工作台's files: its own copy of each file it touches (what 正式版 read when the copy was taken, and
+   *  the copy's text now). Only 采纳, in the 一件事, puts it into 正式版. */
   copy?: Record<string, { base: string; text: string }>
+  /** When the copy was taken from 正式版 (开工, 改这个文件, 领取): 正式版 changed after it is settled at 采纳. */
+  copyAt?: string
+  /** Files it makes that are not code (a result table): path → what it reads, shown in its 工作台 and
+   *  named in the 历史 entry its 采纳 makes. */
+  adds?: Record<string, string>
+  /** Every 运行 made in its 工作台, by 芝士 or a person, oldest first. */
+  runs?: Run[]
+  /** A person who took over 芝士's work (接手): 芝士 waits until it is handed back. */
+  takenBy?: string | null
+  /** Everyone who has worked on it, in the order they started: its 采纳 says who did it. */
+  by?: string[]
+  /** Where 正式版 and the copy both changed the same lines: which side the adopter picked, per file and block. */
+  picks?: Record<string, Record<number, Side>>
 }
+
+/** A side of a block both 正式版 and a 一件事's copy changed: 正式版 as it reads now, or the 一件事's. */
+export type Side = 'ours' | 'theirs'
 
 export interface HistoryEntry {
   who: string
   what: string
   at: string
   fresh?: boolean
-  /** A code save: the file and the text 正式版 had before it, which 撤回 puts back. */
-  file?: string
-  prev?: string
-  /** A change to several code files at once (an accepted 一件事): path → text before. */
+  /** A change to code files (an accepted 一件事): path → text before, which 撤回 puts back. */
   prevs?: Record<string, string>
   /** Nothing to take back (领取 itself). */
   fixed?: boolean
-  /** A 运行 in the project's environment (方案 T1): recorded, nothing to take back; a rerun of the same
-   *  file right after only counts up. */
-  run?: boolean
-  runs?: number
+  /** How it got into 正式版 when it was a 一件事's 采纳: the 一件事 (linked when there is one), and who did it. */
+  via?: { thing?: string; title: string; by: string }
+  /** The document or file it is about when that is not in `prevs` (a document): for 这个文件's 历史. */
+  about?: string
 }
 
 export const PHASES = ['讨论', '在做', '等你采纳', '完成'] as const
@@ -139,7 +168,6 @@ function doneThing(id: string, title: string, owner: string, ask: string, answer
       { id: `${id}b`, who: 'cheese', at: back(4), text: answer },
       { id: `${id}c`, mark: `${NAMES[owner]} 采纳 · 已合进正式版`, at, ok: true },
     ],
-    result: answer,
   }
 }
 
@@ -195,6 +223,9 @@ function initial() {
     /** 项目文件's folded folders, per project (a 题单 folds by problem). */
     collapsed: {} as Record<string, string[]>,
     sheet: false,
+    /** The 交给芝士 sheet in the open 一件事's header, and the note going with it. */
+    hand: false,
+    handNote: '',
     morph: false,
     typing: '',
     thingTyping: '',
@@ -208,41 +239,31 @@ function initial() {
     toast: '',
     toastTick: 0,
     settingsSection: 'project',
-    settingsAgentDirect: false,
-    /** 正式版受保护, per shared project: every change goes through a 一件事, people's too; 正式版 is read-only. */
-    protectMain: {} as Record<string, boolean>,
     settingsNotify: 'mentions',
     settingsRuntime: 'a100',
-    /** Every project's code files as 正式版 reads now, keyed by fkey. People type straight into it. */
+    /** Every project's code files as 正式版 reads now, keyed by fkey. 项目文件 shows them read-only; only a
+     *  一件事's 采纳 changes them. */
     official: Object.fromEntries(
       Object.entries(CODE).map(([path, c]) => [fkey('research', path), c.before.join('\n')])
     ),
-    /** A file being typed into: the text it had before this burst of typing. The burst becomes one
-     *  历史 entry once typing pauses (or on ⌘S, leaving the file, 运行, opening 提交). */
-    snapBase: {} as Record<string, string>,
-    /** The 一件事 whose copy the editor shows and types into (开一件事自己做), while I am in it. */
-    inCopy: null as string | null,
-    /** Lines selected in the open code file: 在频道里问芝士 takes them along. */
-    codeSel: null as { path: string; start: number; end: number } | null,
-    /** Lines to bring into view and mark in the editor (a file mention clicked in a channel). */
+    /** Lines to bring into view and mark in 项目文件's code view (a file mention clicked in a channel). */
     codeAt: null as { path: string; start: number; end: number; tick: number } | null,
-    /** A file (and lines) riding along in the channel composer, from 在频道里问芝士: sent with the message. */
-    chanRef: null as FileAt | null,
-    /** The code view's bottom panel: which tab (输出 / 终端 under 方案 T3), and each file's 输出. */
-    outTab: 'out' as 'out' | 'term',
-    out: {} as Record<string, Out>,
-    /** Each project's terminal transcript (方案 T3: the person's own environment). */
-    term: {} as Record<string, { cmd: string; out: string }[]>,
+    /** The open 一件事's 工作台 is showing (where depends on 方案「工作台放哪」). */
+    bench: false,
+    /** The file each 一件事's 工作台 has open, once chosen there. */
+    benchFile: {} as Record<string, string>,
+    /** Where 芝士 is typing now: the 一件事, the file of its copy, the line. Cleared when it stops. */
+    cheeseAt: null as null | { thing: string; path: string; line: number },
+    /** What 运行 feeds a 题单 problem in a 工作台, per 一件事 and file: 样例 1, 样例 2, or input typed there. */
+    runIn: {} as Record<string, { pick: 0 | 1 | 'custom'; text: string }>,
     /** Every submission to each 题目, newest first: recorded on the 题目, not in the project. */
     subs: { datalab: [], week3: [], shelllab: [] } as Record<string, Submission[]>,
-    /** Each graded unit's latest 运行 (in the project's environment, or in my terminal under 方案 T3): how much passed. */
-    ran: {} as Record<string, { ok: number; total: number }>,
     /** Submissions whose result (the judge's verdict, the teacher's review) I have looked at. */
     seen: {} as Record<string, boolean>,
     /** The 题目 card under a claimed project's header, opened or closed by hand, per 题目; unset, it opens by
      *  itself when it matters. */
     cardOpen: {} as Record<string, boolean>,
-    /** A submission whose pinned version is open (read-only) in the project's code view. */
+    /** A submission whose pinned version is open (read-only) in 项目文件's code view. */
     viewSub: null as string | null,
     /** When the scripted ask went out (the 一件事's own clock counts from it). */
     askAt: '',
@@ -254,17 +275,38 @@ function initial() {
       week3: [],
       shelllab: [],
       research: [
-        { who: 'wanglei', what: '改了《组会纪要 11-07》', at: minsAgo(9) },
+        { who: 'wanglei', what: '直接改了《组会纪要 11-07》', at: minsAgo(9), about: MINUTES_DOC },
         {
           who: 'wanglei',
-          what: '改了 configs/clip_vit_b32.yaml',
+          what: '采纳了「batch_size 改回 256」（王磊做的）：改了 configs/clip_vit_b32.yaml',
           at: minsAgo(26),
-          file: 'configs/clip_vit_b32.yaml',
-          prev: CODE['configs/clip_vit_b32.yaml']!.before.join('\n').replace('batch_size: 256', 'batch_size: 128'),
+          via: { title: 'batch_size 改回 256', by: '王磊做的' },
+          prevs: {
+            'configs/clip_vit_b32.yaml': CODE['configs/clip_vit_b32.yaml']!.before.join('\n').replace(
+              'batch_size: 256',
+              'batch_size: 128'
+            ),
+          },
         },
-        { who: 'chensiyuan', what: '采纳了任务「补长描述截断实验」：改了 2 个文件', at: dayAt(1, 17, 42) },
-        { who: 'zhaoyutong', what: '上传了 report/中期报告.docx', at: dayAt(1, 11, 5) },
-        { who: 'wanglei', what: '采纳了任务「BLIP 精读笔记」：新增 docs/papers/BLIP-精读.md', at: dayAt(3, 15, 20) },
+        {
+          who: 'chensiyuan',
+          what: '采纳了「补长描述截断实验」（芝士做的）：改了 2 个文件',
+          at: dayAt(1, 17, 42),
+          via: { title: '补长描述截断实验', by: '芝士做的' },
+        },
+        {
+          who: 'zhaoyutong',
+          what: '直接上传了 report/中期报告.docx',
+          at: dayAt(1, 11, 5),
+          about: 'report/中期报告.docx',
+        },
+        {
+          who: 'wanglei',
+          what: '采纳了「BLIP 精读笔记」（芝士做的）：新增 docs/papers/BLIP-精读.md',
+          at: dayAt(3, 15, 20),
+          via: { title: 'BLIP 精读笔记', by: '芝士做的' },
+          about: 'docs/papers/BLIP-精读.md',
+        },
       ],
     } as Record<ProjectKey, HistoryEntry[]>,
     things: [
@@ -293,8 +335,20 @@ function initial() {
             text: '做完了，等你采纳：\n\n| token 数 | 训练集 | 5K 测试集 |\n| --- | --- | --- |\n| ≤ 20 | 71.4% | 72.0% |\n| 21–77 | 22.3% | 21.9% |\n| > 77 | **6.3%** | 6.1% |\n\n超过 77 的会被截断，长描述截断实验可以只看这 6% 左右。',
           },
         ],
-        result:
-          '| token 数 | 训练集 | 5K 测试集 |\n| --- | --- | --- |\n| ≤ 20 | 71.4% | 72.0% |\n| 21–77 | 22.3% | 21.9% |\n| > 77 | 6.3% | 6.1% |',
+        adds: {
+          'results/caption_lengths.md':
+            '| token 数 | 训练集 | 5K 测试集 |\n| --- | --- | --- |\n| ≤ 20 | 71.4% | 72.0% |\n| 21–77 | 22.3% | 21.9% |\n| > 77 | 6.3% | 6.1% |',
+        },
+        runs: [
+          {
+            id: 't1r1',
+            who: 'cheese',
+            at: minsAgo(50),
+            cmd: 'python scripts/caption_lengths.py --split train2017 --split 5k',
+            out: 'train2017: 591753 captions  >77: 37281 (6.3%)\n5k:        25010 captions  >77:  1526 (6.1%)',
+          },
+        ],
+        copy: {},
       },
       {
         id: 't2',
@@ -327,6 +381,24 @@ function initial() {
             text: 'Flickr30K 跑到第 3/5 个 checkpoint，目前最好的是 `blip_base_14M`，R@1 = 81.9。',
           },
         ],
+        copy: {},
+        runs: [
+          {
+            id: 't2r1',
+            who: 'cheese',
+            at: minsAgo(30),
+            cmd: 'python -m eval.retrieval --model blip_base_14M --data flickr30k --split 1k',
+            out: 'encoding 1000 images, 5000 captions … done (41s)\nR@1 81.9  R@5 95.4  R@10 97.8',
+          },
+          {
+            id: 't2r2',
+            who: 'cheese',
+            at: minsAgo(6),
+            cmd: 'python -m eval.retrieval --model blip_base_129M --data flickr30k --split 1k',
+            out: 'loading checkpoint blip_base_129M … 38%',
+            running: true,
+          },
+        ],
       },
       {
         id: 't3',
@@ -349,8 +421,20 @@ function initial() {
           { id: 't3c', who: 'linxiao', at: dayAt(1, 18, 10), text: '第 4 页的表换成 R@1/R@5 两列就行，别的都好' },
           { id: 't3d', mark: '林晓 采纳 · 已合进正式版', at: dayAt(1, 18, 12), ok: true },
         ],
-        result:
-          '**report/组会-11-07.pdf**，7 页：\n\n1. 本周进展\n2. CLIP 零样本检索结果\n3. 和论文的差距\n4. 长描述截断实验设计\n5. 下周计划',
+        copy: {},
+        adds: {
+          'report/组会-11-07.pdf':
+            '**组会 11-07**，7 页：\n\n1. 本周进展\n2. CLIP 零样本检索结果\n3. 和论文的差距\n4. 长描述截断实验设计\n5. 下周计划',
+        },
+        runs: [
+          {
+            id: 't3r1',
+            who: 'cheese',
+            at: dayAt(1, 16, 38),
+            cmd: 'marp slides.md -o report/组会-11-07.pdf',
+            out: '[  INFO ] slides.md => report/组会-11-07.pdf (7 pages)',
+          },
+        ],
       },
       {
         id: 't5',
@@ -529,9 +613,15 @@ const later = (ms: number, fn: () => void) => {
   setTimeout(run, ms)
 }
 
-/** Everything a timer was still going to do, done now, in the order it was asked for. */
+/** What timers were going to do, done now in order, until `until` holds (a tour fast-forwarding to the middle
+ *  of 芝士's work); without it, until nothing is left. */
+export function settleUntil(until: () => boolean): void {
+  while (pending.size && !until()) [...pending][0]!()
+}
+
+/** Everything a timer was still going to do, done now, in the order it was asked for (and what those then ask for). */
 export function settle(): void {
-  for (const run of [...pending]) run()
+  while (pending.size) for (const run of [...pending]) run()
 }
 
 export function reset(): void {
@@ -555,6 +645,7 @@ export function go(center: Center, extra: Partial<typeof S> = {}): void {
   if (center !== 'chan') {
     S.thing = null
     S.focus = false
+    S.bench = false
   }
   if (center === 'chan') {
     // Decided on entry, before the unread count is cleared: a backlog lands on 文档.
@@ -572,13 +663,10 @@ function leaveProject(): void {
   // 需要我的 belongs to no project: leaving from it keeps where the project itself was left.
   if (S.center !== 'inbox') S.centerOf[S.project] = S.center
   S.fileOf[S.project] = S.file
-  snapshotAll()
   // What was half-typed belongs to the channel it was typed in, not to the other project.
   S.typing = ''
   S.replyTo = null
   S.viewSub = null
-  S.codeSel = null
-  S.chanRef = null
 }
 
 /** The rail: switch to a project, back where it was last left. */
@@ -631,12 +719,25 @@ export function openThing(id: string, rtab = 'chat'): void {
   const t = thingById(id)
   if (!t) return
   if (projectOfChan(t.chan) !== S.project) switchProject(projectOfChan(t.chan))
-  go('chan', { chan: t.chan, thing: id, rtab })
+  go('chan', { chan: t.chan, thing: id, rtab, bench: false, hand: false })
+}
+
+/** A 一件事 that has a 工作台: started (演示一's task once 开工), with files or runs of its own. */
+export const hasBench = (t: Thing) => t.status !== 'talk' && (!!t.copy || !!t.runs || t.id === 't4')
+
+/** Open a 一件事 on its 工作台, with one of its files open there (「改这个文件」, 「接着做」, a 题单 row). */
+export function openBench(id: string, path?: string): void {
+  const t = thingById(id)
+  if (!t) return
+  openThing(id)
+  if (path) S.benchFile[id] = path
+  S.bench = hasBench(t)
 }
 
 export function closeThing(): void {
   S.thing = null
   S.focus = false
+  S.bench = false
 }
 
 /** Show one message of a channel in its 对话: the timeline scrolls it into view and flashes it. */
@@ -679,58 +780,26 @@ export function sourceOf(thingId: string): ChatLine | null {
   return null
 }
 
-// ---- code ----
+// ---- code: 正式版, and the 一件事 that change it ----
 //
-// People edit 正式版 live, code as well as documents: what is typed is the file,
-// in every project. History is automatic: each burst of typing becomes one 历史
-// entry once it pauses, and 撤回 puts back what the file read before it.
-// Every other change is a 一件事, whoever does it. 芝士 is asked in a channel
-// (lines selected in a file → 在频道里问芝士), talks it over, and after 开工
-// works on the 一件事's own copy. A person who wants to try something apart
-// opens one too (开一件事自己做) and types into its copy. Either way the change
-// waits in that 一件事's 改动 until a person 采纳s it there. With 正式版受保护
-// on, 正式版 is read-only and every change goes through a 一件事.
+// 正式版 is what 项目文件 shows, and its code is read-only there. Every change
+// to code is a 一件事, whoever does it: 芝士 (asked in a channel, a 讨论,
+// then 开工), or a person (「改这个文件」 opens one I do, straight into its
+// 工作台; 领取 opens the course's one). Each 一件事 has a 工作台: its own copy
+// of the files it touches, every 运行 made in it and what it printed. Whoever
+// is doing it changes the copy: 芝士 live while people watch, a person by
+// typing. 接手 and 交给芝士 move the doing between them, in the same 工作台.
+// Done (改好了, or 芝士 finishing), its 改动 is 采纳ed in the 一件事 by a
+// person, the one way into 正式版 (acceptCopy); 历史 says which 一件事 and who
+// did it.
 
 /** A code file as 正式版 reads now, in any project. */
 export function officialText(p: ProjectKey, path: string): string {
   return S.official[fkey(p, path)] ?? ''
 }
 
-/** 正式版 is protected and I am not in a 一件事's copy: the shared project's editor is read-only. */
-export const lockedMain = (p: ProjectKey) => isShared(p) && !!S.protectMain[p] && !myCopy(p)
-
 /** Who looks at a person's 一件事 in the demo: someone else in the project. */
 const reviewerOf = (p: ProjectKey) => (p === 'research' ? 'wanglei' : 'zhouke')
-
-/** What the editor shows: the 一件事's copy while I am in one, else 正式版. */
-export function codeText(p: ProjectKey, path: string): string {
-  const t = myCopy(p)
-  return t?.copy![path]?.text ?? officialText(p, path)
-}
-
-const snapTimers: Record<string, number> = {}
-
-/** Typing: in a 一件事's copy it changes the copy; otherwise 正式版 itself, at once. */
-export function typeCode(p: ProjectKey, path: string, text: string): void {
-  const t = myCopy(p)
-  if (t) {
-    const c = (t.copy![path] ??= { base: officialText(p, path), text: officialText(p, path) })
-    c.text = text
-    return
-  }
-  if (lockedMain(p)) return
-  const k = fkey(p, path)
-  const prev = officialText(p, path)
-  if (text === prev) return
-  if (!(k in S.snapBase)) S.snapBase[k] = prev
-  S.official[k] = text
-  window.clearTimeout(snapTimers[k])
-  const my = gen
-  snapTimers[k] = window.setTimeout(() => my === gen && snapshot(p, path), 1500)
-}
-
-/** A burst of typing still waiting to become its 历史 entry. */
-export const isSaving = (p: ProjectKey, path: string) => fkey(p, path) in S.snapBase
 
 /** The judged unit a file belongs to (Data Lab's bits.c, a 题单 problem's main.cpp), if any. */
 export const unitOf = (p: ProjectKey, path: string) =>
@@ -742,33 +811,52 @@ function log(p: ProjectKey, who: string, what: string, extra: Partial<HistoryEnt
   list.unshift({ who, what, at: new Date().toISOString(), fresh: true, ...extra })
 }
 
-/** The burst of typing on one file becomes one 历史 entry, with what the file read before it. */
-export function snapshot(p: ProjectKey, path: string, quiet = true): void {
-  const k = fkey(p, path)
-  window.clearTimeout(snapTimers[k])
-  const prev = S.snapBase[k]
-  if (prev === undefined) return
-  delete S.snapBase[k]
-  if (prev !== officialText(p, path)) log(p, ME, `改了 ${path}`, { file: path, prev })
-  if (!quiet) toast(`已记进历史：${path}`)
+/** Who is working on a started 一件事 right now: whoever took it over, else its doer; nobody once it is done. */
+export function doingNow(t: Thing): string | null {
+  if (t.status !== 'run') return null
+  return t.takenBy ?? t.doer ?? 'cheese'
 }
 
-/** Every pending burst becomes its entry (leaving a project, before 撤回). */
-export function snapshotAll(): void {
-  for (const k of Object.keys(S.snapBase)) {
-    const i = k.indexOf(':')
-    snapshot(k.slice(0, i) as ProjectKey, k.slice(i + 1))
-  }
+/** I can type and 运行 in this 一件事's 工作台 now: I am the one doing it, or one of the team doing it. */
+export function canWork(t: Thing): boolean {
+  const who = doingNow(t)
+  return !!who && who !== 'cheese' && (who === ME || !!t.team?.includes(ME))
 }
 
-// ---- 运行 ----
-//
-// Where code runs is still open (方案「运行在哪」, variants.ts). T1: in the project's one environment, the
-// one 芝士 works in; each run is recorded (in 历史, or in the 一件事 whose copy ran). T2: people have no
-// 运行, 芝士 runs code inside a 一件事. T3: my own private terminal, as before.
+/** 接手 is offered: 芝士 is doing a 一件事 with files of its own and nobody has taken it over (演示一's scripted
+ *  task, and a course's, excepted). */
+export const canTake = (t: Thing) =>
+  t.id !== 't4' && !t.course && doingNow(t) === 'cheese' && Object.keys(t.copy ?? {}).length > 0
+
+/** Typing in a 工作台: it changes the 一件事's copy, never 正式版. */
+export function typeCopy(id: string, path: string, text: string): void {
+  const t = thingById(id)
+  const c = t?.copy?.[path]
+  if (!t || !c || !canWork(t)) return
+  c.text = text
+}
+
+/** The files a 工作台 lists: the copy's, then what it made. */
+export const benchFiles = (t: Thing) => [...Object.keys(t.copy ?? {}), ...Object.keys(t.adds ?? {})]
+
+/** The file a 工作台 shows: the one 芝士 is typing in while it works, else the one picked there, else the first. */
+export function benchFileOf(t: Thing): string | null {
+  const files = benchFiles(t)
+  const live = S.cheeseAt?.thing === t.id && doingNow(t) === 'cheese' ? S.cheeseAt.path : null
+  const picked = S.benchFile[t.id]
+  return live ?? (picked && files.includes(picked) ? picked : files[0] ?? null)
+}
+
+/** Everyone who worked on it, kept in order: who its 采纳 credits. */
+function worked(t: Thing, who: string): void {
+  t.by ??= []
+  if (!t.by.includes(who)) t.by.push(who)
+}
+
+// ---- 运行, in a 工作台 ----
 
 /** The research project's files, run on the text as it now reads: a short, plausible run. */
-export function researchRun(path: string, text: string): { cmd: string; out: string } {
+function researchRun(path: string, text: string): RunOut {
   if (path === 'eval/preprocess.py') {
     const crop = /CenterCrop\(\s*224\s*\)/.test(text)
     const size = /Resize\(\s*(\d+)/.exec(text)?.[1] ?? '256'
@@ -780,9 +868,13 @@ export function researchRun(path: string, text: string): { cmd: string; out: str
   }
   if (path === 'eval/retrieval.py') {
     const all = text.includes('recall_at_k')
+    // argsort without descending=True ranks the least similar first: the numbers come out near zero.
+    const wrong = all && !/descending\s*=\s*True/.test(text)
     return {
       cmd: 'python -m eval.retrieval --data flickr30k --split 1k --limit 100',
-      out: `encoding 100 images, 500 captions … done (3.8s)\n${all ? 'R@1 79.0  R@5 94.0  R@10 97.0' : 'R@1 78.0'}   （只抽了前 100 张，快速检查）`,
+      out: `encoding 100 images, 500 captions … done (3.8s)\n${
+        wrong ? 'R@1 0.0  R@5 1.0  R@10 2.0' : all ? 'R@1 79.0  R@5 94.0  R@10 97.0' : 'R@1 78.0'
+      }   （只抽了前 100 张，快速检查）`,
     }
   }
   if (path.endsWith('.yaml')) {
@@ -795,88 +887,665 @@ export function researchRun(path: string, text: string): { cmd: string; out: str
   return { cmd: `bash -n ${path}`, out: '语法检查通过（只检查，不下载）' }
 }
 
-function runOf(p: ProjectKey, path: string, text: string) {
+/** A run of one file of a 工作台's copy: a graded file runs its own tests (a 题单 problem on the input picked
+ *  for it) and counts what passed, for the 题目 card; a research file runs as researchRun says. */
+function runOf(t: Thing, path: string, text: string): Omit<Run, 'id' | 'who' | 'at'> {
+  const p = projectOfChan(t.chan)
   const unit = unitOf(p, path)
-  if (!unit) return researchRun(path, text)
-  // The same check 运行 prints, kept as a count for the 题目 card's first line.
+  if (!unit) return { path, ...researchRun(path, text) }
   const v = UNITS[unit]!.judge(text)
-  S.ran[unit] = { ok: v.rows.filter((r) => r.ok).length, total: v.rows.length }
-  return UNITS[unit]!.run(text)
+  const sel = S.runIn[`${t.id}:${path}`]
+  const input: RunInput | undefined = !sel
+    ? undefined
+    : sel.pick === 'custom'
+      ? { custom: sel.text }
+      : { sample: sel.pick }
+  return { path, unit, ok: v.rows.filter((r) => r.ok).length, total: v.rows.length, ...UNITS[unit]!.run(text, input) }
 }
 
-/** A run in the project's environment, in 历史: no 撤回, and running the same file again only updates it. */
-function logRun(p: ProjectKey, path: string): void {
-  const what = `运行了 ${path}`
-  const top = S.history[p][0]
-  if (top?.run && top.who === ME && top.what === what) {
-    top.runs = (top.runs ?? 1) + 1
-    top.at = new Date().toISOString()
-    top.fresh = true
-    return
-  }
-  log(p, ME, what, { run: true, runs: 1 })
+/** 运行 in a 工作台, by the person doing it: the file as the copy reads now. The output stays in the 一件事. */
+export function runInBench(id: string, path: string): void {
+  const t = thingById(id)
+  const c = t?.copy?.[path]
+  if (!t || !c || !canWork(t)) return
+  const text = c.text
+  t.runs ??= []
+  const runs = t.runs
+  runs.push({ id: nextId('r'), who: ME, at: new Date().toISOString(), path, cmd: '', out: '', running: true })
+  // The reactive copy: what is set on it later reaches every view.
+  const run = runs.at(-1)!
+  later(800, () => Object.assign(run, runOf(t, path, text), { running: false }))
 }
 
-/** 运行: the file as it reads now (in a 一件事's copy, that copy). The output lands in the bottom panel. */
-export function runCode(p: ProjectKey, path: string): void {
-  if (V.run === 'T2') return
-  const k = fkey(p, path)
-  const text = codeText(p, path)
-  const copy = myCopy(p)
-  S.out[k] = { kind: 'running' }
-  S.outTab = 'out'
-  later(800, () => {
-    const r = runOf(p, path, text)
-    S.out[k] = { kind: 'run', ...r }
-    if (V.run === 'T3') (S.term[p] ??= []).push(r)
-    else if (copy)
-      copy.talk!.push({ id: nextId('r'), mark: `${NAMES[ME]} 在副本里运行了 ${path}`, at: new Date().toISOString() })
-    else logRun(p, path)
+/** The 一件事 领取 opened in a claimed project. */
+export const workOf = (p: ProjectKey) => (isClaim(p) ? thingById(`w-${p}`) : null)
+
+/** The latest finished run of a graded unit in that 一件事: how much passed (the 题目 card's first line). */
+export function lastRun(p: ProjectKey, unit: string): Run | null {
+  return (
+    workOf(p)
+      ?.runs?.filter((r) => r.unit === unit && !r.running)
+      .at(-1) ?? null
+  )
+}
+
+// ---- 芝士 working in a 工作台 ----
+
+/** One step of 芝士's work: after `ms`, unless the 一件事 has stopped running or a person has taken it over
+ *  (`always`: a step that only finishes what was already under way, such as a run's output arriving). */
+interface Act {
+  ms: number
+  run: (t: Thing) => void
+  always?: boolean
+}
+
+/** 芝士's steps, one after another. A step that finds the 一件事 taken over (接手) ends the chain there. */
+function play(id: string, acts: Act[]): void {
+  const [a, ...rest] = acts
+  if (!a) return
+  later(a.ms, () => {
+    const t = thingById(id)
+    if (!t) return
+    if (doingNow(t) !== 'cheese' && !a.always) {
+      if (S.cheeseAt?.thing === id) S.cheeseAt = null
+      return
+    }
+    a.run(t)
+    play(id, rest)
   })
 }
 
-/** A command typed into the terminal (T3). */
-export function termRun(p: ProjectKey, path: string, cmd: string): void {
-  const list = (S.term[p] ??= [])
-  const c = cmd.trim()
-  if (!c) return
-  if (c === 'clear') {
-    list.splice(0)
-    return
-  }
-  const files = isClaim(p) ? PROJECT_FILES[p].map((f) => f.path) : FILES.map((f) => f.path)
-  if (c === 'ls') {
-    list.push({ cmd: c, out: [...new Set(files.map((f) => f.split('/')[0]))].join('  ') })
-    return
-  }
-  const cat = /^cat\s+(\S+)$/.exec(c)
-  if (cat) {
-    const f = cat[1]!
-    const code = isClaim(p) ? PROJECT_FILES[p].find((x) => x.path === f)?.kind === 'code' : !!CODE[f]
-    list.push({
-      cmd: c,
-      out: code ? codeText(p, f) : files.includes(f) ? '（文档，在项目文件里打开）' : `cat: ${f}: 没有这个文件`,
+/** 芝士 typing `to` over `from` in one file of the copy, a line at a time: in each changed block the old lines
+ *  go, then the new ones come in one by one, with its caret on the line it is on. */
+function typeActs(path: string, from: string, to: string, ms = 300): Act[] {
+  const cur = from.split('\n')
+  const frames: { text: string; line: number }[] = []
+  let shift = 0
+  for (const h of hunksOf(from.split('\n'), to.split('\n'))) {
+    const at = h.s + shift
+    if (h.e > h.s) {
+      cur.splice(at, h.e - h.s)
+      frames.push({ text: cur.join('\n'), line: at + 1 })
+    }
+    h.lines.forEach((l, i) => {
+      cur.splice(at + i, 0, l)
+      frames.push({ text: cur.join('\n'), line: at + i + 1 })
     })
+    shift += h.lines.length - (h.e - h.s)
+  }
+  return frames.map((f) => ({
+    ms,
+    run: (t) => {
+      t.copy![path]!.text = f.text
+      S.cheeseAt = { thing: t.id, path, line: f.line }
+    },
+  }))
+}
+
+/** 芝士 runs a file of its copy (or the command given): the command shows in the 工作台 at once, its output
+ *  a moment later. */
+function runActs(path: string, fixed?: RunOut): Act[] {
+  let run: Run | null = null
+  return [
+    {
+      ms: 500,
+      run: (t) => {
+        t.runs ??= []
+        const runs = t.runs
+        const r = fixed ?? runOf(t, path, t.copy![path]!.text)
+        runs.push({ ...r, id: nextId('r'), who: 'cheese', at: new Date().toISOString(), path, running: true })
+        run = runs.at(-1)!
+        S.cheeseAt = null
+      },
+    },
+    { ms: 900, always: true, run: () => run && (run.running = false) },
+  ]
+}
+
+/** 芝士 says something in the 一件事's 对话. */
+const sayAct = (ms: number, text: string, last = text): Act => ({
+  ms,
+  run: (t) => {
+    say(t, { id: nextId('c'), who: 'cheese', at: new Date().toISOString(), text })
+    t.replies++
+    t.last = `芝士：${last}`
+  },
+})
+
+const doneAct: Act = { ms: 600, run: (t) => finishCopy(t.id) }
+
+// ---- a file in the conversation: mentions, and 讨论 about a file ----
+
+/** Every file path of a project's 项目文件. */
+export const pathsOf = (p: ProjectKey): string[] =>
+  isClaim(p) ? PROJECT_FILES[p].map((f) => f.path) : p === 'research' ? FILES.map((f) => f.path) : []
+
+/** A file and, if any, the lines of it a message is about. */
+export interface FileAt {
+  path: string
+  start?: number
+  end?: number
+}
+
+/** A file mention as messages write it, `path`, `path:12` or `path:12-14`, if it names a file of the project. */
+export function fileRef(p: ProjectKey, text: string): FileAt | null {
+  const m = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(text.trim())
+  if (!m || !pathsOf(p).includes(m[1]!)) return null
+  const start = m[2] ? Number(m[2]) : undefined
+  return { path: m[1]!, start, end: m[3] ? Number(m[3]) : start }
+}
+
+/** A file mention written back out: `path`, `path:12` or `path:12-14`. */
+const refText = (r: FileAt) => (r.start ? `${r.path}:${r.start}${r.end && r.end > r.start ? `-${r.end}` : ''}` : r.path)
+
+/** Open a file in 项目文件 at a line (from a mention in a channel): the code view brings it into view and marks it. */
+export function openFileAt(path: string, start?: number, end?: number): void {
+  openFile(path)
+  if (start) S.codeAt = { path, start, end: end ?? start, tick: (S.codeAt?.tick ?? 0) + 1 }
+}
+
+/** The messages in this project's channels that mention a file. */
+function mentionsOf(path: string): { chan: string; line: ChatLine }[] {
+  return channelsOf(S.project).flatMap((c) =>
+    (S.chat[c.id] ?? []).filter((l) => l.text.includes(path)).map((line) => ({ chan: c.id, line }))
+  )
+}
+
+/** The channel a file's 一件事 goes to: where the file was last talked about, else the project's main one. */
+function chanForFile(p: ProjectKey, path: string): string {
+  if (isClaim(p)) return CLAIMED[p].chan
+  return mentionsOf(path).at(-1)?.chan ?? 'c-exp'
+}
+
+/** 芝士's answer about a research file, read off the file as it is now. */
+function answerAbout(path: string, ref: string, lines: string[]): string {
+  const text = officialText('research', path)
+  const quote = lines.length ? `\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`` : ''
+  if (path === 'eval/preprocess.py')
+    return /CenterCrop\(\s*224\s*\)/.test(text)
+      ? `\`${ref}\` 现在是 \`Resize(224)\` + \`CenterCrop(224)\`，和论文、和《评测口径说明》都一致，输入正好 224×224。${quote}`
+      : `\`${ref}\` 只做了 \`Resize(256)\`，没有 center crop，进模型的不是 224×224，模型里会再缩放一次。论文是 224 + BICUBIC + center crop，Flickr30K 差的那 1 个点多半在这里。${quote}`
+  if (path === 'eval/retrieval.py')
+    return text.includes('recall_at_k')
+      ? `\`${ref}\` 现在一次出 R@1 / R@5 / R@10，\`recall_at_k\` 按相似度排序取前 k 个，看正确的那条在不在里面。${quote}`
+      : `\`${ref}\` 现在只算 R@1（\`recall_at_1\`）。要 R@5 / R@10，得换成按 k 取前几名的写法。${quote}`
+  return `看了 \`${ref}\`。${quote}`
+}
+
+/** What 芝士 would make of a research code file asked to change it: the demo's one prepared change per file
+ *  (the same text 演示一's task brings), if 正式版 does not read so already. */
+function proposalFor(p: ProjectKey, path: string): string | null {
+  const after = p === 'research' ? CODE[path]?.after?.join('\n') : undefined
+  return after && after !== officialText(p, path) ? after : null
+}
+
+/** What 芝士 says its prepared change does, per file. */
+const CHANGE_NOTE: Record<string, string> = {
+  'eval/retrieval.py': '`evaluate` 一次算出 R@1 / R@5 / R@10，新加了 `recall_at_k`',
+  'eval/preprocess.py': '预处理改成 `Resize(224, BICUBIC)` + `CenterCrop(224)`，和论文一致',
+}
+
+/** An @芝士 in the research project that names a file: a 讨论 under the message, like any other. 芝士 answers
+ *  about the file; where it has a change to offer, the 一件事 can be started (开工) and 芝士 then works on its
+ *  own copy of the file, in the 一件事's 工作台. */
+function discussCode(chan: string, text: string, ref: FileAt): void {
+  const p: ProjectKey = 'research'
+  const at = new Date().toISOString()
+  const id = nextId('tc')
+  const proposal = proposalFor(p, ref.path)
+  const lines = ref.start
+    ? officialText(p, ref.path)
+        .split('\n')
+        .slice(ref.start - 1, ref.end ?? ref.start)
+    : []
+  // 「把 `eval/retrieval.py` 改成…」 reads 「retrieval.py：改成…」 as a title.
+  const ask = text
+    .replace(/<@cheese>\s*/, '')
+    .replace(/(把\s*)?`[^`]*`\s*/, '')
+    .trim()
+  S.things.unshift({
+    id,
+    title: `${ref.path.split('/').pop()}：${ask.slice(0, 24) || '问芝士'}`,
+    chan,
+    owner: ME,
+    doer: 'cheese',
+    status: 'talk',
+    replies: 1,
+    last: '芝士：我先看看这个文件',
+    at,
+    talk: [{ id: `${id}a`, who: ME, at, text }],
+    copy: proposal ? { [ref.path]: { base: officialText(p, ref.path), text: officialText(p, ref.path) } } : undefined,
+    deliver: proposal ? `改好的 ${ref.path}` : undefined,
+  })
+  S.chat[chan]!.push({ id: `${id}m`, who: ME, at, text, thing: id })
+  toast('在这条消息下开了一个讨论')
+  later(1300, () => {
+    const t = thingById(id)
+    if (!t || t.status !== 'talk') return
+    const offer = proposal
+      ? `\n\n我可以这样改：${CHANGE_NOTE[ref.path] ?? `改 \`${ref.path}\``}。要做就点「开工」：我在这件事的工作台里改，正式版不动；改到哪、跑出什么，打开工作台就看得到。`
+      : ''
+    t.talk!.push({
+      id: `${id}b`,
+      who: 'cheese',
+      at: new Date().toISOString(),
+      text: answerAbout(ref.path, refText(ref), lines) + offer,
+    })
+    t.replies++
+    t.last = proposal ? '芝士：可以改成一次出几个数，要做就开工' : '芝士：看了这个文件'
+  })
+}
+
+/** 开工 on a 讨论 about code: 芝士 takes its copy of the file from 正式版 as it reads now and works on it in
+ *  the 工作台: it types its change, runs it, and when the numbers are off says so and fixes it (a person can
+ *  接手 at any point), then says it is done. */
+function startCopy(t: Thing): void {
+  const p = projectOfChan(t.chan)
+  const at = new Date().toISOString()
+  const path = Object.keys(t.copy!)[0]!
+  const base = officialText(p, path)
+  t.copy![path] = { base, text: base }
+  t.copyAt = at
+  t.status = 'run'
+  t.at = at
+  t.runs ??= []
+  worked(t, 'cheese')
+  t.last = '芝士：开始改了，在工作台里'
+  t.talk!.push(
+    { id: `${t.id}k`, mark: `${NAMES[ME]} 开工 · 交给芝士`, at },
+    { id: `${t.id}s`, who: 'cheese', at, text: '开始改了。我在这件事的工作台里改，正式版不动。' }
+  )
+  t.replies++
+  S.morph = true
+  toast('开工了，交给芝士')
+  setTimeout(() => (S.morph = false), 1200)
+  const goal = proposalFor(p, path) ?? base
+  // Its first try at retrieval.py sorts the wrong way round; the run shows it, and it fixes it (or whoever took over does).
+  const draft = goal.replace(', descending=True', '')
+  play(t.id, [
+    { ms: 1200, run: () => undefined },
+    ...typeActs(path, base, draft),
+    ...runActs(path),
+    ...(draft === goal
+      ? []
+      : [
+          sayAct(700, 'R@1 只有 0.0，排序方向反了：argsort 默认从小到大。我改一下再跑。', '排序方向反了，我改一下'),
+          ...typeActs(path, draft, goal, 400).map((a, i) => (i ? a : { ...a, ms: 4200 })),
+          ...runActs(path),
+        ]),
+    doneAct,
+  ])
+}
+
+/** 芝士 is done with its copy: the change waits for 采纳, in the 一件事. */
+function finishCopy(id: string): void {
+  const t = thingById(id)
+  if (!t?.copy || doingNow(t) !== 'cheese' || t.id === 't4') return
+  const path = Object.keys(t.copy)[0]!
+  t.status = 'wait'
+  t.at = new Date().toISOString()
+  t.last = '芝士：改好了，等你采纳'
+  t.replies++
+  if (S.cheeseAt?.thing === id) S.cheeseAt = null
+  say(t, {
+    id: `${id}c`,
+    who: 'cheese',
+    at: t.at,
+    text: `改好了：${CHANGE_NOTE[path] ?? `改了 \`${path}\``}，在工作台里跑过。和正式版的差别在「改动」里，你采纳后才进正式版。`,
+  })
+}
+
+/** 「改这个文件」 on a code file in 项目文件: a 一件事 I do, in the file's channel like any other, opened straight
+ *  into its 工作台 with the file open. A 一件事 I am already doing on this file is opened instead of a second one. */
+export function editFile(p: ProjectKey, path: string): void {
+  const open = thingsOnFile(p, path).find((t) => canWork(t))
+  if (open) return openBench(open.id, path)
+  const chan = chanForFile(p, path)
+  const at = new Date().toISOString()
+  const id = nextId('tp')
+  const title = `改 ${path.split('/').pop()}`
+  const base = officialText(p, path)
+  S.things.unshift({
+    id,
+    title,
+    chan,
+    owner: ME,
+    doer: ME,
+    status: 'run',
+    replies: 0,
+    last: `${NAMES[ME]}在工作台里改`,
+    at,
+    talk: [{ id: `${id}k`, mark: `${NAMES[ME]} 开了这件事 · 自己做`, at }],
+    copy: { [path]: { base, text: base } },
+    copyAt: at,
+    runs: [],
+    by: [ME],
+  })
+  ;(S.chat[chan] ??= []).push({ id: `${id}m`, who: ME, at, text: `改 \`${path}\``, thing: id })
+  openBench(id, path)
+  toast(`开了一件事「${title}」：在它的工作台里改，正式版不变`)
+}
+
+/** 改好了, on a 一件事 a person is doing: it waits for 采纳 in the 一件事, as 芝士's does. In a project with
+ *  more than one person, a teammate looks a moment later. */
+export function markDone(id: string): void {
+  const t = thingById(id)
+  if (!t?.copy || !canWork(t)) return
+  const at = new Date().toISOString()
+  t.status = 'wait'
+  t.at = at
+  t.takenBy = null
+  t.last = `${NAMES[ME]}：改好了，等采纳`
+  say(t, { id: `${id}d`, mark: `${NAMES[ME]} 改好了 · 等采纳`, at })
+  toast('改好了：在这件事的「改动」里看，采纳了才进正式版')
+  const p = projectOfChan(t.chan)
+  if (!isShared(p)) return
+  const who = reviewerOf(p)
+  later(1600, () => {
+    if (t.status !== 'wait') return
+    say(t, { id: `${id}r`, who, at: new Date().toISOString(), text: '看了改动，可以。' })
+    t.replies++
+    t.last = `${NAMES[who]}：看了改动，可以。`
+  })
+}
+
+/** 接手: a person takes over 芝士's work, in the same 工作台; 芝士 stops and says so in the 对话. */
+export function takeOver(id: string): void {
+  const t = thingById(id)
+  if (!t || !canTake(t)) return
+  const at = new Date().toISOString()
+  t.takenBy = ME
+  worked(t, ME)
+  if (S.cheeseAt?.thing === id) S.cheeseAt = null
+  t.last = `${NAMES[ME]} 接手了，芝士先停下`
+  say(t, { id: nextId('k'), mark: `${NAMES[ME]} 接手`, at })
+  say(t, {
+    id: nextId('c'),
+    who: 'cheese',
+    at,
+    text: '好，我先停下。工作台归你了，改、运行都行；改完点「交给芝士」，我接着做。',
+  })
+  toast('接手了：芝士先停下，你在同一个工作台里改')
+}
+
+/** 交给芝士, with a note: from a person who took 芝士's work over, or a person's own 一件事 handed on. 芝士 picks
+ *  up the copy as it reads, runs it, and finishes. */
+export function handToCheese(id: string, note: string): void {
+  const t = thingById(id)
+  if (!t?.copy || !canWork(t) || t.course) return
+  const at = new Date().toISOString()
+  t.takenBy = null
+  t.doer = 'cheese'
+  worked(t, 'cheese')
+  S.hand = false
+  t.last = '芝士：收到，接着做'
+  say(t, { id: nextId('k'), mark: `${NAMES[ME]} 交给芝士`, at })
+  if (note.trim()) say(t, { id: nextId('x'), who: ME, at, text: note.trim() })
+  say(t, { id: nextId('c'), who: 'cheese', at, text: '收到，接着做。你改的都留着。' })
+  t.replies += 2
+  toast('交给芝士了')
+  const path = Object.keys(t.copy)[0]!
+  const full = path === 'eval/retrieval.py'
+  play(id, [
+    ...runActs(
+      path,
+      full
+        ? {
+            cmd: 'python -m eval.retrieval --data flickr30k --split 1k',
+            out: /descending\s*=\s*True/.test(t.copy[path]!.text)
+              ? 'encoding 1000 images, 5000 captions … done (38s)\nR@1 79.1  R@5 94.8  R@10 97.6'
+              : 'encoding 1000 images, 5000 captions … done (38s)\nR@1 0.1  R@5 0.5  R@10 1.0',
+          }
+        : undefined
+    ),
+    doneAct,
+  ])
+}
+
+/** The 一件事 whose copy changes this file, while it is being done or waits for 采纳. */
+export function thingsOnFile(p: ProjectKey, path: string): Thing[] {
+  return S.things.filter(
+    (t) => projectOfChan(t.chan) === p && (t.status === 'run' || t.status === 'wait') && !!t.copy && path in t.copy
+  )
+}
+
+/** A line of the 一件事's own conversation (演示一's task keeps its scripted lines; what is added goes after them). */
+function say(t: Thing, line: ChatLine | MarkLine): void {
+  if (t.talk) t.talk.push(line)
+  else (S.extra[t.id] ??= []).push(line as ChatLine)
+}
+
+/** Lines [s, e) of one version replaced by `lines` in another. */
+interface Hunk {
+  s: number
+  e: number
+  lines: string[]
+}
+
+/** The changes from `a` to `b` as hunks over a's lines (a longest-common-subsequence walk; the files are short). */
+function hunksOf(a: string[], b: string[]): Hunk[] {
+  const L = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0))
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      L[i]![j] = a[i] === b[j] ? L[i + 1]![j + 1]! + 1 : Math.max(L[i + 1]![j]!, L[i]![j + 1]!)
+  const out: Hunk[] = []
+  let cur: Hunk | null = null
+  let i = 0
+  let j = 0
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      if (cur) out.push(cur)
+      cur = null
+      i++
+      j++
+      continue
+    }
+    cur ??= { s: i, e: i, lines: [] }
+    if (i < a.length && (j === b.length || L[i + 1]![j]! >= L[i]![j + 1]!)) cur.e = ++i
+    else cur.lines.push(b[j++]!)
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+/** One stretch of a three-way merge: lines both sides agree on, or a block both changed differently. */
+export type MergePart = { same: string[] } | { ours: string[]; theirs: string[] }
+
+/** 正式版 as it reads now (ours) and the 一件事's copy (theirs), both from the copy's base: where they changed
+ *  different lines both changes are kept; where they changed the same lines the block is left for a person. */
+function merge3(base: string, ours: string, theirs: string): MergePart[] {
+  const B = base.split('\n')
+  const tagged = [
+    ...hunksOf(B, ours.split('\n')).map((h) => ({ ...h, side: 'ours' as Side })),
+    ...hunksOf(B, theirs.split('\n')).map((h) => ({ ...h, side: 'theirs' as Side })),
+  ].sort((x, y) => x.s - y.s || x.e - y.e)
+  const parts: MergePart[] = []
+  const keep = (lines: string[]) => lines.length && parts.push({ same: lines })
+  let at = 0
+  let k = 0
+  while (k < tagged.length) {
+    const group = [tagged[k++]!]
+    let gs = group[0]!.s
+    let ge = group[0]!.e
+    // A hunk joins the block when it overlaps it, or starts where it starts (two insertions at one place).
+    while (k < tagged.length && (tagged[k]!.s < ge || tagged[k]!.s === gs)) {
+      const h = tagged[k++]!
+      group.push(h)
+      gs = Math.min(gs, h.s)
+      ge = Math.max(ge, h.e)
+    }
+    keep(B.slice(at, gs))
+    const sideText = (side: Side) => {
+      const out: string[] = []
+      let c = gs
+      for (const h of group.filter((x) => x.side === side)) {
+        out.push(...B.slice(c, h.s), ...h.lines)
+        c = h.e
+      }
+      return [...out, ...B.slice(c, ge)]
+    }
+    const o = sideText('ours')
+    const t = sideText('theirs')
+    const sides = new Set(group.map((h) => h.side))
+    if (sides.size === 1) keep(sides.has('ours') ? o : t)
+    else if (o.join('\n') === t.join('\n')) keep(o)
+    else parts.push({ ours: o, theirs: t })
+    at = ge
+  }
+  keep(B.slice(at))
+  return parts
+}
+
+/** Where a 一件事's copy stands against 正式版 now, per file it changed: whether 正式版 moved since the copy was
+ *  taken, who moved it, the blocks both changed, and the text 采纳 would write (blocks not yet picked: the copy's). */
+export function copyState(t: Thing) {
+  const p = projectOfChan(t.chan)
+  return Object.entries(t.copy ?? {})
+    .filter(([, c]) => c.text !== c.base)
+    .map(([path, c]) => {
+      const now = officialText(p, path)
+      const stale = t.status !== 'done' && now !== c.base
+      const parts = stale ? merge3(c.base, now, c.text) : [{ same: c.text.split('\n') }]
+      const picks = t.picks?.[path] ?? {}
+      let n = 0
+      const lines = parts.flatMap((x) => ('same' in x ? x.same : picks[n++] === 'ours' ? x.ours : x.theirs))
+      const blocks = parts.filter((x): x is { ours: string[]; theirs: string[] } => !('same' in x))
+      const by = [
+        ...new Set(S.history[p].filter((h) => h.at > (t.copyAt ?? '') && h.prevs && path in h.prevs).map((h) => h.who)),
+      ]
+      return {
+        path,
+        now,
+        stale,
+        by,
+        blocks,
+        picks,
+        text: lines.join('\n'),
+        open: blocks.length - Object.keys(picks).length,
+      }
+    })
+}
+
+/** The adopter's choice for one block both sides changed. */
+export function pickSide(id: string, path: string, block: number, side: Side): void {
+  const t = thingById(id)
+  if (!t) return
+  ;((t.picks ??= {})[path] ??= {})[block] = side
+}
+
+/** Who did a 一件事, as its 采纳 says it: 「芝士做的」, 「林晓做的」, 「芝士做的，林晓接手改过」, 「林晓开的头，芝士做完」,
+ *  a team's 「林晓、周珂、陈思远做的」. */
+function byText(t: Thing): string {
+  const by = t.by?.length ? t.by : [t.doer ?? 'cheese']
+  if (by.length === 1) return `${NAMES[by[0]!]}做的`
+  if (by[0] === 'cheese')
+    return `芝士做的，${by
+      .slice(1)
+      .map((h) => NAMES[h])
+      .join('、')}接手改过`
+  if (by.at(-1) === 'cheese')
+    return `${by
+      .slice(0, -1)
+      .map((h) => NAMES[h])
+      .join('、')}开的头，芝士做完`
+  return `${by.map((h) => NAMES[h]).join('、')}做的`
+}
+
+/** 采纳, the one way a 一件事 reaches 正式版 (演示一's task, 芝士's, a person's own, a course's). Each file it
+ *  changed becomes 正式版 as one 历史 entry that names the 一件事 and who did it, and 撤回 can take back. If
+ *  正式版 moved meanwhile, nothing is overwritten: the copy first catches up with 正式版 (a line in the 一件事's
+ *  conversation), and a block both changed takes the side the adopter picked; with a block not picked yet, 采纳 waits. */
+export function acceptCopy(id: string): void {
+  const t = thingById(id)
+  if (!t?.copy || t.status !== 'wait') return
+  const p = projectOfChan(t.chan)
+  const states = copyState(t)
+  if (states.some((x) => x.open > 0)) {
+    toast('两边都改了同一处：先在「改动」里挑用哪边')
     return
   }
-  if (/^(make|\.\/|g\+\+|python|bash)/.test(c)) {
-    list.push({ cmd: c, out: runOf(p, path, codeText(p, path)).out })
-    return
+  const at = new Date().toISOString()
+  const stale = states.filter((x) => x.stale)
+  if (stale.length) {
+    const kept = [...new Set(stale.flatMap((x) => x.by))].map((h) => NAMES[h]).join('、') || '别人'
+    const picked = stale.reduce((n, x) => n + x.blocks.length, 0)
+    const text = `跟上了最新的正式版：${kept}这期间的改动都留着${picked ? `，${picked} 处两边都改的用了${NAMES[ME]}挑的那边` : ''}。`
+    say(
+      t,
+      t.doer === ME ? { id: `${id}u`, mark: `${NAMES[ME]} ${text}`, at } : { id: `${id}u`, who: 'cheese', at, text }
+    )
   }
-  list.push({ cmd: c, out: `${c.split(/\s/)[0]}：演示里的终端只认 ls、cat、clear 和运行命令` })
+  const prevs: Record<string, string> = {}
+  for (const x of states) {
+    if (x.text === x.now) continue
+    prevs[x.path] = x.now
+    t.copy[x.path] = { base: x.now, text: x.text }
+    S.official[fkey(p, x.path)] = x.text
+  }
+  t.status = 'done'
+  t.at = at
+  t.last = '已采纳 · 合进正式版'
+  t.takenBy = null
+  // 演示一's task says 采纳 in its own scripted conversation.
+  if (t.talk) say(t, { id: `${id}y`, mark: `${NAMES[ME]} 采纳 · 已合进正式版`, at, ok: true })
+  const paths = Object.keys(prevs)
+  const adds = Object.keys(t.adds ?? {})
+  const by = byText(t)
+  const what = [paths.length ? `改了 ${paths.join('、')}` : '', adds.length ? `新增 ${adds.join('、')}` : '']
+    .filter(Boolean)
+    .join('，')
+  if (what) log(p, ME, `采纳了「${t.title}」（${by}）：${what}`, { prevs, via: { thing: id, title: t.title, by } })
+  toast(what ? '已采纳：进了正式版' : '已采纳：这件事和正式版一样，没有要改的')
+}
+
+/** A teammate's own small 一件事 on a code file, done and 采纳ed by them while the demo plays (王磊 in 演示二):
+ *  its card in the file's channel, and its 采纳 in 历史, the same way as anyone's. */
+export function peerChange(who: string, p: ProjectKey, path: string, title: string, text: string): void {
+  const base = officialText(p, path)
+  if (base === text) return
+  const chan = chanForFile(p, path)
+  const at = new Date().toISOString()
+  const id = nextId('tw')
+  S.things.unshift({
+    id,
+    title,
+    chan,
+    owner: who,
+    doer: who,
+    status: 'done',
+    replies: 0,
+    last: '已采纳 · 合进正式版',
+    at,
+    talk: [
+      { id: `${id}k`, mark: `${NAMES[who]} 开了这件事 · 自己做`, at },
+      { id: `${id}y`, mark: `${NAMES[who]} 采纳 · 已合进正式版`, at, ok: true },
+    ],
+    copy: { [path]: { base, text } },
+    copyAt: at,
+    runs: [],
+    by: [who],
+  })
+  ;(S.chat[chan] ??= []).push({ id: `${id}m`, who, at, text: `改 \`${path}\``, thing: id })
+  S.official[fkey(p, path)] = text
+  const by = byText(thingById(id)!)
+  log(p, who, `采纳了「${title}」（${by}）：改了 ${path}`, { prevs: { [path]: base }, via: { thing: id, title, by } })
 }
 
 // ---- 提交: a submission is made to the 题目 ----
 //
-// The editor has 运行 only. A submission belongs to the 题目: the dialog lists
-// the 题目's 提交项, fills each FILE item from a version of the project's file
-// (正式版 as it reads now, or an earlier one from 历史) and records the
-// submission on the 题目, where the space shows it. How it is graded is the
-// 题目's: 评测机评 comes back at once, 老师评 waits for 张老师.
+// A submission belongs to the 题目, not to the 一件事 or the project: the
+// dialog lists the 题目's 提交项, fills each FILE item from a version of the
+// file and records the submission on the 题目, where the space shows it. The
+// versions offered: the file as the work 一件事 (领取's 「做 Data Lab」) reads
+// now, while it is still being done, then 正式版 as it reads now and each
+// earlier one 历史 can name. A student submits straight from the work: the
+// submission keeps the exact text and its version id, so nothing has to be
+// 采纳ed first just to hand it in. How it is graded is the 题目's: 评测机评
+// comes back at once, 老师评 waits for 张老师.
 
 let seqSub = 0
 
-/** One version of a project file to submit from: 正式版 now, then each earlier one 历史 can name. */
+/** One version of a project file to submit from: the work 一件事's, 正式版 now, then each earlier one 历史 can name. */
 export interface FileVersion {
   id: string
   text: string
@@ -885,32 +1554,47 @@ export interface FileVersion {
   who: string
   current: boolean
   start: boolean
+  /** The 一件事 it is read from (its 工作台 as it reads now), when it is not a version of 正式版. */
+  work?: string
 }
 
 /** The versions of a file, newest first: 正式版 now, then what it read before each change in 历史. */
 export function versionsOf(p: ProjectKey, path: string): FileVersion[] {
   const out: FileVersion[] = []
   let text = officialText(p, path)
-  const touching = S.history[p].filter((h) => h.fixed || h.file === path || (h.prevs && path in h.prevs))
+  const touching = S.history[p].filter((h) => h.fixed || (h.prevs && path in h.prevs))
   for (const h of touching) {
     out.push({ id: versionOf(text), text, at: h.at, who: h.who, current: !out.length, start: !!h.fixed })
     if (h.fixed) break
-    text = h.file === path ? h.prev! : h.prevs![path]!
+    text = h.prevs![path]!
   }
   if (!out.length) out.push({ id: versionOf(text), text, at: '', who: ME, current: true, start: false })
-  // Typing something and taking it back gives the same text twice: one entry per version.
+  // A change and its 撤回 give the same text twice: one entry per version.
   return out.filter((v, i) => out.findIndex((x) => x.id === v.id) === i)
+}
+
+/** Every version 提交 offers, the first one picked: the file in the work 一件事 while it is still being done (unless
+ *  it reads the same as 正式版), then 正式版's. */
+export function submitVersions(p: ProjectKey, path: string): FileVersion[] {
+  const official = versionsOf(p, path)
+  const t = workOf(p)
+  const c = t?.copy?.[path]
+  if (!t || !c || t.status === 'done') return official
+  const id = versionOf(c.text)
+  if (id === official[0]?.id) return official
+  return [{ id, text: c.text, at: '', who: ME, current: false, start: false, work: t.title }, ...official]
 }
 
 /** 提交 on a 题目: for a 题单 one problem, the one whose file is open, else the first not passed. */
 export function openSubmit(topicId: string, unit?: string): void {
   const t = topicById(topicId)
   if (!t?.project || !S.claimed.includes(t.project)) return
-  // What was just typed becomes its 历史 entry first, so 「当前版本」 is the file as it reads now.
-  snapshotAll()
   let u = unit ?? topicId
   if (!unit && t.category === '题单') {
-    const open = SET.find((x) => S.project === t.project && S.file.startsWith(`${x.id}/`))
+    // The problem open in the work 一件事's 工作台, or in 项目文件.
+    const w = workOf(t.project)
+    const file = (S.bench && w && S.thing === w.id && benchFileOf(w)) || S.file
+    const open = SET.find((x) => S.project === t.project && file.startsWith(`${x.id}/`))
     u = open?.id ?? SET.find((x) => !passed(latestOf(topicId, x.id)))?.id ?? SET[0]!.id
   }
   S.submitAsk = { topic: topicId, unit: u }
@@ -1021,7 +1705,7 @@ export function openFile(path: string, extra: Partial<typeof S> = {}): void {
   go('files', { file: path, viewSub: null, ...extra })
 }
 
-/** Open the exact version a submission pinned, read-only, in its project's code view (from the 题目's 提交记录). */
+/** Open the exact version a submission pinned, read-only, in 项目文件's code view (from the 题目's 提交记录). */
 export function openVersion(id: string): void {
   const sub = Object.values(S.subs)
     .flat()
@@ -1030,289 +1714,6 @@ export function openVersion(id: string): void {
   if (!sub || !p) return
   switchProject(p)
   openFile(sub.path, { viewSub: id })
-}
-
-// ---- a file in the conversation: mentions, 在频道里问芝士 ----
-
-/** Every file path of a project's 项目文件. */
-export const pathsOf = (p: ProjectKey): string[] =>
-  isClaim(p) ? PROJECT_FILES[p].map((f) => f.path) : p === 'research' ? FILES.map((f) => f.path) : []
-
-/** A file and, if any, the lines of it a message is about. */
-export interface FileAt {
-  path: string
-  start?: number
-  end?: number
-}
-
-/** A file mention as messages write it, `path`, `path:12` or `path:12-14`, if it names a file of the project. */
-export function fileRef(p: ProjectKey, text: string): FileAt | null {
-  const m = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(text.trim())
-  if (!m || !pathsOf(p).includes(m[1]!)) return null
-  const start = m[2] ? Number(m[2]) : undefined
-  return { path: m[1]!, start, end: m[3] ? Number(m[3]) : start }
-}
-
-/** A file mention written back out: `path`, `path:12` or `path:12-14`. */
-export const refText = (r: FileAt) =>
-  r.start ? `${r.path}:${r.start}${r.end && r.end > r.start ? `-${r.end}` : ''}` : r.path
-
-/** Open a file in 项目文件 at a line (from a mention in a channel): the editor brings it into view and marks it. */
-export function openFileAt(path: string, start?: number, end?: number): void {
-  openFile(path)
-  if (start) S.codeAt = { path, start, end: end ?? start, tick: (S.codeAt?.tick ?? 0) + 1 }
-}
-
-/** The messages in this project's channels that mention a file. */
-function mentionsOf(path: string): { chan: string; line: ChatLine }[] {
-  return channelsOf(S.project).flatMap((c) =>
-    (S.chat[c.id] ?? []).filter((l) => l.text.includes(path)).map((line) => ({ chan: c.id, line }))
-  )
-}
-
-/** The channel a file's 一件事 goes to: where the file was last talked about, else the project's main one. */
-function chanForFile(p: ProjectKey, path: string): string {
-  if (isClaim(p)) return CLAIMED[p].chan
-  return mentionsOf(path).at(-1)?.chan ?? 'c-exp'
-}
-
-/** 在频道里问芝士, from lines selected in an open file: the lines ride along as a chip in the composer of the
- *  file's channel, and the channel opens. From there it is any channel message: an @芝士 opens a 讨论. */
-export function askInChannel(): void {
-  const p = S.project
-  const path = S.file
-  const sel = S.codeSel?.path === path ? S.codeSel : null
-  snapshot(p, path)
-  const chan = chanForFile(p, path)
-  S.chanRef = { path, start: sel?.start, end: sel?.end }
-  // The selection went along: the editor does not keep it (nor the band of a mention that made it).
-  S.codeSel = null
-  S.codeAt = null
-  go('chan', { chan, thing: null })
-  S.chanView[chan] = 'talk'
-  if (!S.typing.includes('<@cheese>')) S.typing = `<@cheese> ${S.typing}`
-}
-
-/** 芝士's answer about a research file, read off the file as it is now. */
-function answerAbout(path: string, ref: string, lines: string[]): string {
-  const text = officialText('research', path)
-  const quote = lines.length ? `\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`` : ''
-  if (path === 'eval/preprocess.py')
-    return /CenterCrop\(\s*224\s*\)/.test(text)
-      ? `\`${ref}\` 现在是 \`Resize(224)\` + \`CenterCrop(224)\`，和论文、和《评测口径说明》都一致，输入正好 224×224。${quote}`
-      : `\`${ref}\` 只做了 \`Resize(256)\`，没有 center crop，进模型的不是 224×224，模型里会再缩放一次。论文是 224 + BICUBIC + center crop，Flickr30K 差的那 1 个点多半在这里。${quote}`
-  if (path === 'eval/retrieval.py')
-    return text.includes('recall_at_k')
-      ? `\`${ref}\` 现在一次出 R@1 / R@5 / R@10，\`recall_at_k\` 按相似度排序取前 k 个，看正确的那条在不在里面。${quote}`
-      : `\`${ref}\` 现在只算 R@1（\`recall_at_1\`）。要 R@5 / R@10，得换成按 k 取前几名的写法。${quote}`
-  return `看了 \`${ref}\`。${quote}`
-}
-
-/** What 芝士 would make of a research code file asked to change it: the demo's one prepared change per file
- *  (the same text 演示一's task brings), if 正式版 does not read so already. */
-function proposalFor(p: ProjectKey, path: string): string | null {
-  const after = p === 'research' ? CODE[path]?.after?.join('\n') : undefined
-  return after && after !== officialText(p, path) ? after : null
-}
-
-/** What 芝士 says its prepared change does, per file. */
-const CHANGE_NOTE: Record<string, string> = {
-  'eval/retrieval.py': '`evaluate` 一次算出 R@1 / R@5 / R@10，新加了 `recall_at_k`',
-  'eval/preprocess.py': '预处理改成 `Resize(224, BICUBIC)` + `CenterCrop(224)`，和论文一致',
-}
-
-/** An @芝士 in the research project that carries lines of a file: a 讨论 under the message, like any other.
- *  芝士 answers about the lines; where it has a change to offer, the 一件事 can be started (开工) and 芝士
- *  then works on its own copy of the file. */
-function discussCode(chan: string, text: string, ref: FileAt): void {
-  const p: ProjectKey = 'research'
-  const at = new Date().toISOString()
-  const id = nextId('tc')
-  const proposal = proposalFor(p, ref.path)
-  const lines = ref.start
-    ? officialText(p, ref.path)
-        .split('\n')
-        .slice(ref.start - 1, ref.end ?? ref.start)
-    : []
-  const ask = text
-    .replace(/<@cheese>\s*/, '')
-    .replace(/`[^`]*`\s*/, '')
-    .trim()
-  S.things.unshift({
-    id,
-    title: `${ref.path.split('/').pop()}：${ask.slice(0, 24) || '问芝士'}`,
-    chan,
-    owner: ME,
-    doer: 'cheese',
-    status: 'talk',
-    replies: 1,
-    last: '芝士：我先看看这几行',
-    at,
-    talk: [{ id: `${id}a`, who: ME, at, text }],
-    copy: proposal ? { [ref.path]: { base: officialText(p, ref.path), text: proposal } } : undefined,
-    deliver: proposal ? `改好的 ${ref.path}` : undefined,
-  })
-  S.chat[chan]!.push({ id: `${id}m`, who: ME, at, text, thing: id })
-  toast('在这条消息下开了一个讨论')
-  later(1300, () => {
-    const t = thingById(id)
-    if (!t || t.status !== 'talk') return
-    const offer = proposal
-      ? `\n\n我可以这样改：${CHANGE_NOTE[ref.path] ?? `改 \`${ref.path}\``}。要做就点「开工」：我在这件事自己的那份上改，正式版不动，改完你在「改动」里看了再采纳。`
-      : ''
-    t.talk!.push({
-      id: `${id}b`,
-      who: 'cheese',
-      at: new Date().toISOString(),
-      text: answerAbout(ref.path, refText(ref), lines) + offer,
-    })
-    t.replies++
-    t.last = proposal ? '芝士：可以改成一次出几个数，要做就开工' : '芝士：看了这几行'
-  })
-}
-
-/** 开工 on a 讨论 about code: 芝士 takes its copy of the files from 正式版 as it reads now and works on it. */
-function startCopy(t: Thing): void {
-  const p = projectOfChan(t.chan)
-  const at = new Date().toISOString()
-  for (const [path, c] of Object.entries(t.copy!)) c.base = officialText(p, path)
-  t.status = 'run'
-  t.at = at
-  t.last = '芝士：开始改了，在自己那份上'
-  t.talk!.push(
-    { id: `${t.id}k`, mark: `${NAMES[ME]} 开工 · 交给芝士`, at },
-    { id: `${t.id}s`, who: 'cheese', at, text: '开始改了。我在这件事自己的那份上改，正式版不动。' }
-  )
-  t.replies++
-  S.morph = true
-  S.rtab = 'site'
-  toast('开工了，交给芝士')
-  setTimeout(() => (S.morph = false), 1200)
-  later(5000, () => finishCopy(t.id))
-}
-
-/** 芝士 is done with its copy: the change waits for 采纳, in the 一件事. */
-export function finishCopy(id: string): void {
-  const t = thingById(id)
-  if (!t?.copy || t.status !== 'run' || t.doer !== 'cheese') return
-  const path = Object.keys(t.copy)[0]!
-  t.status = 'wait'
-  t.at = new Date().toISOString()
-  t.last = '芝士：改好了，等你采纳'
-  t.replies++
-  t.talk!.push({
-    id: `${id}c`,
-    who: 'cheese',
-    at: t.at,
-    text: `改好了：${CHANGE_NOTE[path] ?? `改了 \`${path}\``}，跑过一遍。和正式版的差别在「改动」里，你采纳后才进正式版。`,
-  })
-}
-
-/** The 一件事 whose copy I am typing in, in this project (开一件事自己做), while it is not finished. */
-export function myCopy(p: ProjectKey): Thing | null {
-  const t = thingById(S.inCopy)
-  return t?.copy && t.doer === ME && projectOfChan(t.chan) === p && (t.status === 'run' || t.status === 'wait')
-    ? t
-    : null
-}
-
-/** 开一件事自己做: a person's try at the open file is a 一件事 too, in the file's channel, with the person
- *  doing it. The editor then types into its copy; 正式版 stays as it is until someone 采纳s it there. */
-export function openOwnThing(): void {
-  const p = S.project
-  const path = S.file
-  if (myCopy(p)) return
-  snapshot(p, path)
-  const chan = chanForFile(p, path)
-  const at = new Date().toISOString()
-  const id = nextId('tp')
-  const title = `试改 ${path.split('/').pop()}`
-  const base = officialText(p, path)
-  S.things.unshift({
-    id,
-    title,
-    chan,
-    owner: ME,
-    doer: ME,
-    status: 'run',
-    replies: 0,
-    last: `${NAMES[ME]} 在这件事的副本里改`,
-    at,
-    talk: [{ id: `${id}k`, mark: `${NAMES[ME]} 开了这件事 · 自己做`, at }],
-    copy: { [path]: { base, text: base } },
-  })
-  ;(S.chat[chan] ??= []).push({ id: `${id}m`, who: ME, at, text: `开一件事自己做：试改 \`${path}\``, thing: id })
-  S.inCopy = id
-  toast(`开了一件事「${title}」：你在它的副本里改，正式版不变`)
-}
-
-/** Back into a 一件事's copy (from the 一件事): the editor opens on its first file. */
-export function editCopy(id: string): void {
-  const t = thingById(id)
-  if (!t?.copy || t.doer !== ME) return
-  const p = projectOfChan(t.chan)
-  if (S.project !== p) switchProject(p)
-  S.inCopy = id
-  openFile(Object.keys(t.copy)[0] ?? S.file)
-}
-
-/** 回到正式版: the editor shows 正式版 again; the 一件事 and its copy stay as they are. */
-export function leaveCopy(): void {
-  S.inCopy = null
-  toast('回到正式版：那件事的副本还在，随时可以回去接着改')
-}
-
-/** 改好了, on a 一件事 a person does: it waits for 采纳 in the 一件事, as 芝士's does. A teammate looks a moment later. */
-export function markDone(id: string): void {
-  const t = thingById(id)
-  if (!t?.copy || t.doer !== ME || t.status !== 'run') return
-  const at = new Date().toISOString()
-  t.status = 'wait'
-  t.at = at
-  t.last = `${NAMES[ME]}：改好了，等采纳`
-  t.talk!.push({ id: `${id}d`, mark: `${NAMES[ME]} 改好了 · 等采纳`, at })
-  toast('改好了：在这件事的「改动」里看，采纳了才进正式版')
-  const who = reviewerOf(projectOfChan(t.chan))
-  later(1600, () => {
-    if (t.status !== 'wait') return
-    t.talk!.push({ id: `${id}r`, who, at: new Date().toISOString(), text: '看了改动，可以。' })
-    t.replies++
-    t.last = `${NAMES[who]}：看了改动，可以。`
-  })
-}
-
-/** The 一件事 whose copy changes this file, while it is being done or waits for 采纳 (演示一's task by its diffs). */
-export function thingsOnFile(p: ProjectKey, path: string): Thing[] {
-  return S.things.filter(
-    (t) =>
-      projectOfChan(t.chan) === p &&
-      (t.status === 'run' || t.status === 'wait') &&
-      (t.copy ? path in t.copy : t.id === 't4' && TASK_DIFFS.some((d) => d.path === path))
-  )
-}
-
-/** 采纳 a 一件事's copy: each file it changed becomes 正式版, as one 历史 entry that 撤回 can take back. */
-export function acceptCopy(id: string): void {
-  const t = thingById(id)
-  if (!t?.copy || t.status !== 'wait') return
-  const p = projectOfChan(t.chan)
-  const prevs: Record<string, string> = {}
-  for (const [path, c] of Object.entries(t.copy)) {
-    snapshot(p, path)
-    const prev = officialText(p, path)
-    if (c.text === prev) continue
-    prevs[path] = prev
-    c.base = prev
-    S.official[fkey(p, path)] = c.text
-  }
-  if (S.inCopy === id) S.inCopy = null
-  t.status = 'done'
-  t.at = new Date().toISOString()
-  t.last = '已采纳 · 合进正式版'
-  t.talk!.push({ id: `${id}y`, mark: `${NAMES[ME]} 采纳 · 已合进正式版`, at: t.at, ok: true })
-  const paths = Object.keys(prevs)
-  if (paths.length) log(p, ME, `采纳了「${t.title}」：改了 ${paths.join('、')}`, { prevs })
-  toast(paths.length ? '已采纳：进了正式版' : '已采纳：副本和正式版一样，没有要改的')
 }
 
 // ---- 领取: a 题目 becomes a project owned by a team ----
@@ -1359,13 +1760,48 @@ export function claimAs(topicId: string, team: string): void {
         fixed: true,
       },
     ]
+    openWork(p, owner.personal ? [ME] : owner.members)
     toast(
       owner.personal
-        ? `领取了「${t.title}」：项目「${CLAIMED[p].name}」建在你自己的团队下`
-        : `「${owner.name}」领取了「${t.title}」：${owner.members.length} 个人共用项目「${CLAIMED[p].name}」`
+        ? `领取了「${t.title}」：项目「${CLAIMED[p].name}」建在你自己的团队下，开好了一件事「${WORK_TITLE[p]}」`
+        : `「${owner.name}」领取了「${t.title}」：${owner.members.length} 个人一起做「${WORK_TITLE[p]}」`
     )
   }
   switchProject(p)
+}
+
+/** The 一件事 领取 opens: the work itself, done by whoever claimed it (each of a team), its 工作台 holding a
+ *  copy of every code file the 题目 brought. 芝士 only gives hints in its 对话. Its card sits under 芝士's
+ *  welcome in the project's # 综合. */
+function openWork(p: ClaimKey, people: string[]): void {
+  const at = new Date().toISOString()
+  const id = `w-${p}`
+  const code = PROJECT_FILES[p].filter((f) => f.kind === 'code')
+  S.things.unshift({
+    id,
+    title: WORK_TITLE[p],
+    chan: CLAIMED[p].chan,
+    owner: ME,
+    doer: ME,
+    team: people.length > 1 ? people : undefined,
+    course: true,
+    status: 'run',
+    replies: 0,
+    last: people.length > 1 ? `${people.map((h) => NAMES[h]).join('、')}在做` : `${NAMES[ME]}在做`,
+    at,
+    talk: [
+      {
+        id: `${id}k`,
+        mark:
+          people.length > 1 ? `${people.map((h) => NAMES[h]).join('、')} 一起做` : `${NAMES[ME]} 领取了题目 · 自己做`,
+        at,
+      },
+    ],
+    copy: Object.fromEntries(code.map((f) => [f.path, { base: f.starter!, text: f.starter! }])),
+    copyAt: at,
+    runs: [],
+    by: people,
+  })
 }
 
 /** Where a 题目 stands for me in the space's list: 未领取, 进行中 · 项目名, or 已提交 with the latest result. */
@@ -1383,18 +1819,12 @@ const nextId = (p: string) => `${p}${Date.now().toString(36)}${seq++}`
 
 /** The channel composer: an @芝士 opens a 讨论 under the message; anything else is just said. */
 export function send(): void {
-  const typed = S.typing.trim()
-  const ref = S.chanRef
-  if (!typed && !ref) return
-  // Lines brought from a file go with the message, as a mention right after the @.
-  const mention = ref ? `\`${refText(ref)}\`` : ''
-  const text = !ref
-    ? typed
-    : typed.includes('<@cheese>')
-      ? typed.replace(/<@cheese>\s*/, `<@cheese> ${mention} `).trim()
-      : `${mention} ${typed}`.trim()
+  const text = S.typing.trim()
+  if (!text) return
+  // A file the message names (`eval/retrieval.py`): an @芝士 about it opens a 讨论 that can become a change.
+  const ref =
+    [...text.matchAll(/`([^`]+)`/g)].map((m) => fileRef(S.project, m[1]!)).find((r): r is FileAt => !!r) ?? null
   S.typing = ''
-  S.chanRef = null
   const at = new Date().toISOString()
   // In a project claimed from a 题目 芝士 only gives hints, in the channel: no 一件事 is opened there.
   // A plain 「@芝士」 counts too: a viewer typing it by hand need not pick it from the mention list.
@@ -1414,8 +1844,8 @@ export function send(): void {
     )
     return
   }
-  // Code lines asked about in the research project: a 讨论 of its own about them.
-  if (ref && text.includes('<@cheese>')) {
+  // A code file asked about in the research project: a 讨论 of its own about it.
+  if (ref && text.includes('<@cheese>') && pathsOf('research').includes(ref.path) && CODE[ref.path]) {
     discussCode(S.chan, text, ref)
     return
   }
@@ -1451,21 +1881,28 @@ export function sayInThing(): void {
   const text = S.thingTyping.trim()
   if (!t || !text) return
   S.thingTyping = ''
-  const list = (S.extra[t.id] ??= [])
+  // Read back through S, not the `??=` result: a fresh array is only reactive once it is in S.
+  S.extra[t.id] ??= []
+  const list = S.extra[t.id]!
   list.push({ id: nextId('x'), who: ME, at: new Date().toISOString(), text, replyTo: S.thingReplyTo ?? undefined })
   S.thingReplyTo = null
   t.replies++
   t.last = `${NAMES[ME]}：${text.replace(/<@cheese>/g, '@芝士')}`
   t.at = new Date().toISOString()
-  const asks = text.includes('<@cheese>') || t.status !== 'talk'
+  // A course's 一件事: 芝士 answers an @ with a hint, never with code, and never works on it.
+  const asked = /<@cheese>|@芝士/.test(text)
+  const asks = t.course ? asked : asked || t.status !== 'talk'
   if (!asks) return
   setTimeout(() => {
-    const answer =
-      t.status === 'talk'
+    const answer = t.course
+      ? hintFor(text)
+      : t.status === 'talk'
         ? '好，记下了，开工时按这个来。'
-        : t.status === 'run'
+        : doingNow(t) === 'cheese'
           ? '收到，我把这条加进计划，做完一起给你看。'
-          : '收到。这件已经做完了，要改的话我在这份上接着改，改完再请你采纳。'
+          : t.status === 'run'
+            ? '收到。现在是你在做，要我接着做就点「交给芝士」。'
+            : '收到。这件已经做完了，要改的话我在这份上接着改，改完再请你采纳。'
     list.push({ id: nextId('x'), who: 'cheese', at: new Date().toISOString(), text: answer })
     t.replies++
     t.last = `芝士：${answer}`
@@ -1513,77 +1950,94 @@ export function confirmKick(): void {
   if (!t) return
   S.sheet = false
   if (t.id !== 't4') return startCopy(t)
+  // 演示一's task: 芝士's copy of the two code files it changes; the plan steps fill it in (liveStep).
+  const at = new Date().toISOString()
+  t.copy = Object.fromEntries(
+    Object.entries(CODE)
+      .filter(([, c]) => c.after)
+      .map(([path]) => [path, { base: officialText('research', path), text: officialText('research', path) }])
+  )
+  t.copyAt = at
+  t.runs = []
+  t.by = ['cheese']
   t.status = 'run'
   t.last = '芝士：开始改了，先对齐预处理'
-  t.at = new Date().toISOString()
+  t.at = at
   S.morph = true
-  S.rtab = 'site'
-  S.live = 0
+  liveStep(0)
   toast('开工了，交给芝士')
   setTimeout(() => (S.morph = false), 1200)
+}
+
+/** Which file of 演示一's task 芝士 changes at each plan step, and the line it is on. */
+const T4_EDITS: { path: string; line: number }[] = [
+  { path: 'eval/preprocess.py', line: 7 },
+  { path: 'eval/retrieval.py', line: 18 },
+]
+
+/** 演示一's task at plan step `i` (0–5): the files of its copy as far as 芝士 has got, the runs of the steps
+ *  done and under way (T4_STEPS), where its caret is, and at the end the result table it adds. */
+export function liveStep(i: number): void {
+  const t = t4()
+  if (!t?.copy) return
+  S.live = i
+  T4_EDITS.forEach((e, k) => {
+    const c = t.copy![e.path]!
+    c.text = i > k ? CODE[e.path]!.after!.join('\n') : c.base
+  })
+  const upTo = Math.min(i + 1, T4_STEPS.length)
+  t.runs = T4_STEPS.slice(0, upTo)
+    .flat()
+    .flatMap((s, k) =>
+      s.kind === 'bash' ? [{ id: `t4r${k}`, who: 'cheese', at: t.at, cmd: s.command, out: s.output }] : []
+    )
+  const edit = T4_EDITS[i]
+  S.cheeseAt = edit && i < 5 ? { thing: 't4', ...edit } : null
+  if (i >= 4) t.adds = { 'results/eval_results.md': RESULTS_MD }
 }
 
 export function finish(): void {
   const t = t4()
   if (!t) return
+  liveStep(5)
   t.status = 'wait'
   t.last = '芝士：Flickr30K R@1 = 79.1，等你采纳'
   t.at = new Date().toISOString()
-  S.live = 5
 }
 
-export function accept(): void {
-  const t = t4()
-  if (!t || t.status !== 'wait') return
-  t.status = 'done'
-  t.last = '已采纳 · 合进正式版'
-  t.at = new Date().toISOString()
-  S.rtab = 'result'
-  const prevs: Record<string, string> = {}
-  for (const [path, c] of Object.entries(CODE)) {
-    if (!c.after) continue
-    prevs[path] = officialText('research', path)
-    S.official[fkey('research', path)] = c.after.join('\n')
-  }
-  log('research', ME, '采纳了任务「统一评测脚本」：改了 2 个文件，新增 results/eval_results.md', { prevs })
-  toast('已采纳：进了项目文件的正式版')
-}
-
-/** 采纳并在编辑器里打开: accept, then open the first changed file on 正式版, where people edit it directly. */
-export function acceptAndOpen(): void {
-  accept()
-  openFile('eval/preprocess.py')
-}
+/** The plan 演示一's task follows, ticked as far as it has got. */
+export const t4Plan = () =>
+  PLAN.map((subject, i) => ({ subject, done: (t4()?.status ?? 'talk') !== 'run' || i < S.live }))
 
 /** Tell 芝士 what to change in its copy: the task's own conversation, with an @ ready. */
 export function tellCheese(): void {
   S.rtab = 'chat'
+  S.bench = false
   if (!S.thingTyping.includes('<@cheese>')) S.thingTyping = `<@cheese> ${S.thingTyping}`
 }
 
 export function suggAccept(): void {
   if (S.suggAccepted) return
   S.suggAccepted = true
-  log('research', ME, '接受了芝士对《组会纪要 11-07》的建议')
+  log('research', ME, '接受了芝士对《组会纪要 11-07》的建议', { about: MINUTES_DOC })
   toast('建议已接受，进了正式版')
 }
 
 export function suggReject(): void {
   if (S.suggAccepted || S.suggRejected) return
   S.suggRejected = true
-  log('research', ME, '拒绝了芝士对《组会纪要 11-07》的建议')
+  log('research', ME, '拒绝了芝士对《组会纪要 11-07》的建议', { about: MINUTES_DOC })
   toast('建议已拒绝，正式版不变')
 }
 
-/** 撤回 one entry of the open project's 历史: a code save puts back the text the file had before it. */
+/** 撤回 one entry of the open project's 历史: an 采纳 puts back the text each file had before it. */
 export function undo(index: number): void {
   const list = S.history[S.project]
   const h = list[index]
-  if (!h || h.fixed || h.run) return
+  if (!h || h.fixed) return
   list.splice(index, 1)
   if (h.what.startsWith('接受了芝士对')) S.suggAccepted = false
   if (h.what.startsWith('拒绝了芝士对')) S.suggRejected = false
-  if (h.file && h.prev !== undefined) S.official[fkey(S.project, h.file)] = h.prev
   for (const [path, prev] of Object.entries(h.prevs ?? {})) S.official[fkey(S.project, path)] = prev
   toast(`已撤回：${NAMES[h.who]} ${h.what}`)
 }

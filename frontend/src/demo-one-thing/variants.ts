@@ -7,11 +7,12 @@
 //
 // To ask one: add it to QUESTIONS, then read V[key] where the screen differs.
 // 提交入口 was asked before; it is settled on 平时收起 (OriginCard.vue).
-// Open now: 运行在哪 (`run`). 运行 is not a change, so it is not a 一件事, but
-// a person's private terminal sat beside the one model as an environment
-// nobody else sees. T1 runs in the project's one environment, the one 芝士 uses
-// in a 一件事, and records each run; T2 leaves running to 芝士, inside a
-// 一件事; T3 is the private terminal, kept to compare against.
+// Open now: 工作台放哪 (`bench`). Every 一件事 has a 工作台: its own copy of
+// the files, what changed, what was run and what it printed (Workbench.vue).
+// W1 opens it in the center column with the 一件事's 对话 left in the right
+// panel; W2 keeps the 一件事 in the right panel with a 工作台 tab, widened
+// while a person is doing it; W3 opens a started 一件事 as a view of its own
+// over channel and panel (工作台 · 对话 · 改动), like opening a document.
 import { reactive } from 'vue'
 
 import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
@@ -26,24 +27,24 @@ export interface Question {
 
 export const QUESTIONS: Question[] = [
   {
-    key: 'run',
-    title: '运行在哪',
-    default: 'T1',
+    key: 'bench',
+    title: '工作台放哪',
+    default: 'W1',
     options: [
       {
-        key: 'T1',
-        label: 'T1 项目环境',
-        note: '运行在项目的那一个环境里，芝士做事也在这里；每次运行记进历史。在一件事的副本里，运行的是那份副本。',
+        key: 'W1',
+        label: 'W1 中间整块',
+        note: '打开一件事的工作台，它占中间一栏：左边是这件事的文件，中间看或改，底下是运行。对话留在右栏，左上角的返回回到频道。',
       },
       {
-        key: 'T2',
-        label: 'T2 只有芝士运行',
-        note: '人没有「运行」。要跑，就选中代码在频道里问芝士，它在一件事里跑。',
+        key: 'W2',
+        label: 'W2 右栏加宽',
+        note: '一件事照旧在右栏打开，多一个「工作台」页；人在做的时候右栏加宽，频道留在左边看得见。',
       },
       {
-        key: 'T3',
-        label: 'T3 现在的样子',
-        note: '每人一个自己的终端：输出和终端只有你看得到。',
+        key: 'W3',
+        label: 'W3 一件事全屏',
+        note: '开工后的一件事单独占一整页，像打开一个文档：页头是名字、谁在做、到哪了，下面是工作台、对话、改动；返回才回到频道。',
       },
     ],
   },

@@ -2,35 +2,45 @@
 // The right panel beside 项目文件, for the open file. It is a place to read
 // what happened, not a second place to change things: 采纳 happens only in a
 // 一件事. On top, while there is any, 「正在改这个文件的事」: each 一件事 whose
-// copy touches this file, with who does it and where it stands; a row opens
-// the 一件事 in its channel, on 改动. Under it, 历史: every change that took
-// effect on 正式版 (each pause in a person's typing, each 采纳) with 撤回 (the
-// newest shows it without a hover), and, under 方案 T1, each 运行 in the
-// project's environment, collapsed to one quiet line with no 撤回. No
-// submission record either: submissions belong to the 题目 and are listed on it
-// in the space.
-import { computed } from 'vue'
+// 工作台 has this file, with who is doing it and where it stands; a row opens
+// the 一件事 on its 工作台. Under it, 历史, of the whole project or of this
+// file only: every change that took effect on 正式版, each saying who and
+// through what: 「直接改了」 (a document, typed into) or 「采纳了「<事名>」
+// （芝士做的 / 林晓做的）」, the name opening that 一件事. Each has 撤回 (the
+// newest shows it without a hover). Runs are not here: they stay in the
+// 工作台 of the 一件事 they were made in. No submission record either:
+// submissions belong to the 题目 and are listed on it in the space.
+import type { HistoryEntry } from './state'
+
+import { computed, ref } from 'vue'
 
 import { NAMES } from './data'
-import { openThing, S, snapshotAll, type Thing, thingsOnFile, undo } from './state'
+import { doingNow, openBench, openThing, S, type Thing, thingsOnFile, undo } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { relTime } from '@/lib/relTime'
 
-const history = computed(() => S.history[S.project])
+/** 历史 of the whole project, or only what touched this file. */
+const scope = ref<'all' | 'file'>('all')
+const SCOPES = [
+  { value: 'all' as const, label: '整个项目' },
+  { value: 'file' as const, label: '这个文件' },
+]
+const touches = (h: HistoryEntry, path: string) => h.about === path || !!h.prevs?.[path]
+const history = computed(() =>
+  scope.value === 'all' ? S.history[S.project] : S.history[S.project].filter((h) => touches(h, S.file))
+)
+/** What an 采纳 entry says after the 一件事's name and who did it: 「：改了 …」. */
+const rest = (h: HistoryEntry) => h.what.slice(`采纳了「${h.via!.title}」（${h.via!.by}）`.length)
 const onFile = computed(() => thingsOnFile(S.project, S.file))
-/** Who does a 一件事 once started: 芝士 unless a person opened it to do it themselves. */
-const doer = (t: Thing) => t.doer ?? 'cheese'
+/** Who is doing a 一件事 now (who did it, once it waits for 采纳). */
+const doer = (t: Thing) => doingNow(t) ?? t.doer ?? 'cheese'
 const where = (t: Thing) =>
-  t.status === 'wait' ? '等采纳' : doer(t) === 'cheese' ? '芝士在做' : `${NAMES[doer(t)]}在改`
-function undoAt(i: number) {
-  // A burst of typing still open becomes its own entry first, so 撤回 takes back what was clicked.
-  const n = history.value.length
-  snapshotAll()
-  undo(i + history.value.length - n)
-}
+  t.status === 'wait' ? '等采纳' : doer(t) === 'cheese' ? '芝士在做' : `${NAMES[doer(t)]}在做`
+const undoAt = (h: HistoryEntry) => undo(S.history[S.project].indexOf(h))
 </script>
 
 <template>
@@ -48,7 +58,7 @@ function undoAt(i: number) {
           type="button"
           class="ot-fp__thing"
           :data-thing="t.id"
-          @click="openThing(t.id, 'changes')"
+          @click="openBench(t.id, S.file)"
         >
           <CheeseAvatar v-if="doer(t) === 'cheese'" :size="20" name="芝士" handle="cheese" />
           <UserAvatar v-else :size="20" :name="NAMES[doer(t)]" :seed="doer(t)" />
@@ -57,34 +67,33 @@ function undoAt(i: number) {
           <v-icon size="14" icon="mdi-chevron-right" class="ot-fp__go" />
         </button>
       </section>
-      <h3 class="t-eyebrow-read ot-fp__label">历史</h3>
+      <div class="ot-fp__histhead">
+        <h3 class="t-eyebrow-read ot-fp__label">历史</h3>
+        <span class="ot-head__gap" />
+        <SegmentedControl v-model="scope" :options="SCOPES" label="历史的范围" size="sm" data-hist-scope />
+      </div>
       <ol class="ot-hist">
-        <li
-          v-for="(h, i) in history"
-          :key="h.what + i"
-          class="ot-hist__row"
-          :class="{ 'ot-flash': h.fresh, 'ot-hist__row--run': h.run }"
-        >
-          <template v-if="h.run">
-            <v-icon size="14" icon="mdi-play" class="ot-hist__runmark" />
-            <span class="ot-hist__runtext"
-              >{{ NAMES[h.who] }} {{ h.what }}{{ (h.runs ?? 1) > 1 ? ` · ${h.runs} 次` : '' }}</span
+        <li v-for="(h, i) in history" :key="h.what + i" class="ot-hist__row" :class="{ 'ot-flash': h.fresh }">
+          <CheeseAvatar v-if="h.who === 'cheese'" :size="22" name="芝士" handle="cheese" />
+          <UserAvatar v-else :size="22" :name="NAMES[h.who]" :seed="h.who" />
+          <div class="ot-hist__text">
+            <span v-if="h.via" data-via
+              ><b>{{ NAMES[h.who] }}</b> 采纳了「<a
+                v-if="h.via.thing"
+                href="#"
+                class="ot-hist__thing"
+                title="打开这件事"
+                @click.prevent="openThing(h.via.thing, 'changes')"
+                >{{ h.via.title }}</a
+              ><template v-else>{{ h.via.title }}</template
+              >」<span class="ot-hist__by">（{{ h.via.by }}）</span>{{ rest(h) }}</span
+            >
+            <span v-else
+              ><b>{{ NAMES[h.who] }}</b> {{ h.what }}</span
             >
             <span class="t-meta-read" :title="new Date(h.at).toLocaleString()">{{ relTime(h.at) }}</span>
-          </template>
-          <template v-else>
-            <CheeseAvatar v-if="h.who === 'cheese'" :size="22" name="芝士" handle="cheese" />
-            <UserAvatar v-else :size="22" :name="NAMES[h.who]" :seed="h.who" />
-            <div class="ot-hist__text">
-              <span
-                ><b>{{ NAMES[h.who] }}</b> {{ h.what }}</span
-              >
-              <span class="t-meta-read" :title="new Date(h.at).toLocaleString()">{{ relTime(h.at) }}</span>
-            </div>
-            <BaseButton v-if="!h.fixed" class="ot-hist__undo" kind="ghost" size="sm" @click="undoAt(i)"
-              >撤回</BaseButton
-            >
-          </template>
+          </div>
+          <BaseButton v-if="!h.fixed" class="ot-hist__undo" kind="ghost" size="sm" @click="undoAt(h)">撤回</BaseButton>
         </li>
       </ol>
     </div>
@@ -180,28 +189,6 @@ function undoAt(i: number) {
   color: var(--faint);
 }
 
-/* A 运行: one quiet line, nothing to take back. */
-.ot-hist__row.ot-hist__row--run {
-  gap: 6px;
-  align-items: center;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.ot-hist__runmark {
-  flex: none;
-  color: var(--faint);
-}
-
-.ot-hist__runtext {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ot-hist__row:hover {
   background: var(--fill);
 }
@@ -248,6 +235,30 @@ function undoAt(i: number) {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--text);
+}
+
+.ot-fp__histhead {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.ot-fp__histhead .ot-fp__label {
+  margin: 0;
+}
+
+/* The 一件事's name runs on with the sentence, wrapping like the words around it: a link, not a button. */
+.ot-hist__thing {
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+
+.ot-hist__thing:hover {
+  text-decoration: underline;
+}
+
+.ot-hist__by {
+  color: var(--muted);
 }
 
 .ot-hist__text b {

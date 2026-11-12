@@ -3,15 +3,12 @@
 // the chip row (回复谁), the editor, and the actions row with ＋, the mic, the
 // 交给芝士 face and 发送. Only the room's back end is missing, so the box
 // is assembled here from the same parts instead of mounting RoomComposer.
-// Lines brought from a file (在频道里问芝士) ride in the chip row as one more
-// chip, `path:行`, the way the product's composer carries a quoted selection.
 import { computed } from 'vue'
 
 import { REFS } from './shapes'
 import { toast } from './state'
 
 import ComposerActions from '@/components/room/ComposerActions.vue'
-import ComposerChip from '@/components/room/ComposerChip.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import ComposerSummon from '@/components/room/ComposerSummon.vue'
@@ -19,15 +16,13 @@ import ComposerSummon from '@/components/room/ComposerSummon.vue'
 const props = defineProps<{
   placeholder: string
   replyLabel?: string | null
-  /** A file (and lines) going along with the message, as `path:行`. */
-  refLabel?: string | null
 }>()
 const text = defineModel<string>({ required: true })
-const emit = defineEmits<{ (e: 'send'): void; (e: 'clear-reply'): void; (e: 'clear-ref'): void }>()
+const emit = defineEmits<{ (e: 'send'): void; (e: 'clear-reply'): void }>()
 
 const CHEESE = { handle: 'cheese', label: '芝士' }
 const on = computed(() => text.value.includes('<@cheese>'))
-const canSend = computed(() => text.value.trim().length > 0 || !!props.refLabel)
+const canSend = computed(() => text.value.trim().length > 0)
 
 function toggleSummon() {
   text.value = on.value ? text.value.replace(/<@cheese>\s?/g, '') : `<@cheese> ${text.value.replace(/^\s+/, '')}`
@@ -49,22 +44,8 @@ function onKey(e: KeyboardEvent) {
         :quote="null"
         :atts="[]"
         topic-id="demo"
-        :lead="!!props.refLabel"
         @clear-reply="emit('clear-reply')"
-      >
-        <template #lead>
-          <ComposerChip
-            v-if="props.refLabel"
-            key="ref"
-            class="ot-composer__ref"
-            :label="props.refLabel"
-            remove-label="不带这几行"
-            @remove="emit('clear-ref')"
-          >
-            <template #face><v-icon size="13">mdi-code-tags</v-icon></template>
-          </ComposerChip>
-        </template>
-      </ComposerChipRow>
+      />
       <ComposerEditor
         v-model="text"
         class="composer-input"

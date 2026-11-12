@@ -3,13 +3,27 @@
 // right, drawn with the product's settings rows. A project claimed from a
 // 题目 says which 题目 and space it came from and which team owns it, and
 // shows the rules the 题目 brought: 芝士 only hints, the deadline, the code
-// rule (a team's project is edited together; anything tried apart is a
-// 一件事, and 正式版受保护 makes every change one, as in the research project).
-// Every project can be opened in a local editor.
+// rule (the work is the 一件事 领取 opened, done in its 工作台 by me or by the
+// whole team, and 采纳ed into 正式版). Every project can be opened in a local
+// editor. There is no setting for how changes land: code reaches 正式版 only
+// through a 一件事 a person 采纳s, whoever did it, so neither a 「直接生效」 for
+// 芝士 nor a 「正式版受保护」 switch has anything left to choose.
 import { computed, ref } from 'vue'
 
-import { topicOf } from './course'
-import { channelOf, gitUrl, isClaim, isShared, ME, NAMES, PEOPLE, peopleOf, projectMeta, SPACE } from './data'
+import { topicOf, WORK_TITLE } from './course'
+import {
+  channelOf,
+  type ClaimKey,
+  gitUrl,
+  isClaim,
+  isShared,
+  ME,
+  NAMES,
+  PEOPLE,
+  peopleOf,
+  projectMeta,
+  SPACE,
+} from './data'
 import { S, toast } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -40,10 +54,6 @@ const SECTIONS = computed(() => [
 const title = computed(() => SECTIONS.value.find((s) => s.key === S.settingsSection)?.label ?? '')
 const people = computed(() => [...peopleOf(S.project), ...PEOPLE.filter((p) => p.agent)])
 const shared = computed(() => isShared(S.project))
-const protect = computed({
-  get: () => !!S.protectMain[S.project],
-  set: (v: boolean) => (S.protectMain[S.project] = v),
-})
 
 const chanName = ref(chanTitle.value)
 const projName = ref(projectMeta(S.project).name)
@@ -131,26 +141,16 @@ const USAGE = [
           <SettingsRow label="截止" description="提交在空间里的这道题目上，以截止前最后一次为准" width="select">
             <span class="ot-set__value" data-rule="due">{{ monthDayTime(Date.parse(topic.due)) }}</span>
           </SettingsRow>
-          <SettingsRow label="代码" description="每次改动自动记进历史，可以撤回" width="select-wide">
+          <SettingsRow label="代码" description="改好了采纳进正式版，记进历史，可以撤回" width="select-wide">
             <span class="ot-set__value" data-rule="code">{{
               shared
-                ? `${people.length - 1} 个人一起改正式版，改动直接生效；想单独试就开一件事`
-                : '只有你一个人，改动直接生效'
+                ? `在「${WORK_TITLE[S.project as ClaimKey]}」的工作台里 ${people.length - 1} 个人一起改`
+                : `在「${WORK_TITLE[S.project as ClaimKey]}」的工作台里改`
             }}</span>
-          </SettingsRow>
-          <SettingsRow v-if="shared" label="正式版受保护" description="改动都要走一件事，正式版只读" width="select">
-            <v-switch
-              v-model="protect"
-              data-setting="protect-main"
-              color="primary"
-              density="compact"
-              hide-details
-              inset
-            />
           </SettingsRow>
           <SettingsRow
             label="用本地编辑器打开"
-            description="从你自己的编辑器推上来的改动，也一样记进历史"
+            description="从你自己的编辑器推上来的改动，变成一件你做的事，采纳了才进正式版"
             width="select-wide"
           >
             <span class="ot-set__clone">
@@ -179,33 +179,8 @@ const USAGE = [
             />
           </SettingsRow>
           <SettingsRow
-            label="芝士的改动"
-            description="默认在一件事里等你采纳；改成直接生效后随时可撤回"
-            width="select-wide"
-          >
-            <SegmentedControl
-              :model-value="S.settingsAgentDirect ? 'direct' : 'pending'"
-              :options="[
-                { value: 'pending', label: '等采纳' },
-                { value: 'direct', label: '直接生效' },
-              ]"
-              label="芝士的改动"
-              @update:model-value="S.settingsAgentDirect = $event === 'direct'"
-            />
-          </SettingsRow>
-          <SettingsRow label="正式版受保护" description="改动都要走一件事，正式版只读" width="select">
-            <v-switch
-              v-model="protect"
-              data-setting="protect-main"
-              color="primary"
-              density="compact"
-              hide-details
-              inset
-            />
-          </SettingsRow>
-          <SettingsRow
             label="用本地编辑器打开"
-            description="从你自己的编辑器推上来的改动，也一样记进历史"
+            description="从你自己的编辑器推上来的改动，变成一件你做的事，采纳了才进正式版"
             width="select-wide"
           >
             <span class="ot-set__clone">

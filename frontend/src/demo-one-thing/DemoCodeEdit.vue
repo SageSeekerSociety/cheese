@@ -1,178 +1,39 @@
 <script setup lang="ts">
-// A project's code view, in every project: a place to read and edit files.
-// Opening a code file opens it editable on 正式版, as a document is: what is
-// typed is the file, a teammate's caret shows where they are in it, and each
-// pause in typing becomes one 历史 entry with 撤回. There is no 「改代码」
-// switch: a read-only first view would be a mode documents do not have, and
-// 撤回 already makes a slip cheap.
-// Every other change is a 一件事, and the editor only leads into one. With
-// lines selected, 「在频道里问芝士」 takes them into the file's channel, where an
-// @芝士 opens a 讨论 like any other. 「开一件事自己做」 (on the file's bar above,
-// FilesCenter) opens a 一件事 that I do: the editor then types into its copy,
-// under a banner 「你在「…」的副本里改 · 回到正式版」. Review and 采纳 happen in
-// the 一件事, never here: while one changes this file the bar only says so
-// (「有 1 件事在改这个文件 ›」, which opens it on 改动). With 正式版受保护 on,
-// 正式版 is read-only and the bar offers 「开一件事来改」.
-// 运行 follows 方案「运行在哪」 (variants.ts): T1 runs in the project's one
-// environment and the bottom panel is labelled 项目环境; T2 has no 运行, only a
-// hint; T3 is my own terminal (输出 / 终端, only I can see it). The editor has
-// no course control: a submission is made to the 题目 (the origin card in the
-// sidebar). A submission opened from its 题目's 提交记录 shows here read-only.
-// The editing surface is DemoCodeArea (why it is not Monaco is said there).
-import type { Peer } from './DemoCodeArea.vue'
-
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-
-import { avatarColor } from '@/utils/avatar'
+// A code file in 项目文件: 正式版, read-only, in every project. Code is never
+// typed into here: every change to it is a 一件事, whoever does it. The bar
+// has one action, 「改这个文件」: it opens a 一件事 I do, in the file's channel
+// like any other, straight into its 工作台 with this file open
+// (state.editFile). When a 一件事 I am doing already has this file (in a
+// project claimed from a 题目, the one 领取 opened) the button opens that one
+// instead and says so: 「去「做 Data Lab」里改」. While any 一件事 changes the
+// file the bar says so, 「有 1 件事在改这个文件 ›」, which opens it on its
+// 工作台; the right panel lists them (FilesPanel). A file mention clicked in a
+// channel brings its lines into view with a band. A submission opened from
+// its 题目's 提交记录 shows here read-only, pinned to its version.
+// The surface is DemoCodeArea, read-only (why it is not Monaco is said there).
+import { computed } from 'vue'
 
 import { asContext, isClaim } from './data'
 import DemoCodeArea from './DemoCodeArea.vue'
-import {
-  askInChannel,
-  codeText,
-  fkey,
-  isSaving,
-  leaveCopy,
-  lockedMain,
-  myCopy,
-  openOwnThing,
-  openThing,
-  resultOf,
-  runCode,
-  S,
-  snapshot,
-  termRun,
-  thingsOnFile,
-  typeCode,
-} from './state'
-import { V } from './variants'
+import { canWork, editFile, officialText, openBench, resultOf, S, thingsOnFile } from './state'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
-import DocPresence from '@/components/panels/doc/DocPresence.vue'
 
 const p = computed(() => S.project)
 const path = computed(() => S.file)
-const k = computed(() => fkey(p.value, path.value))
-/** The 一件事 whose copy I am typing in. */
-const copy = computed(() => myCopy(p.value))
-const locked = computed(() => lockedMain(p.value))
-const text = computed({
-  get: () => codeText(p.value, path.value),
-  set: (v: string) => typeCode(p.value, path.value, v),
-})
-const saving = computed(() => isSaving(p.value, path.value))
+const text = computed(() => officialText(p.value, path.value))
 const mark = computed(() => (S.codeAt?.path === path.value ? S.codeAt : null))
-const sel = computed(() => (S.codeSel?.path === path.value ? S.codeSel : null))
-/** The 一件事 changing this file (other than the one I am typing in). */
-const others = computed(() => thingsOnFile(p.value, path.value).filter((t) => t.id !== copy.value?.id))
-// Leaving the file closes its burst of typing into 历史 (this view is keyed to one file: by
-// unmount time S.file already names the next one).
-const mine = { p: S.project, path: S.file }
-onBeforeUnmount(() => snapshot(mine.p, mine.path))
-function onSelect(r: { start: number; end: number } | null) {
-  S.codeSel = r ? { path: path.value, ...r } : null
-}
-
-// ---- a teammate on 正式版 (scripted): 王磊 in the research project's eval/preprocess.py, 周珂 in the
-// team's tsh.c, writing the built-in commands. Their caret moves over the lines they are on. ----
-const PEER_AT: Record<string, { handle: string; name: string; path: string; spots: { line: number; col: number }[] }> =
-  {
-    research: {
-      handle: 'wanglei',
-      name: '王磊',
-      path: 'eval/preprocess.py',
-      spots: [
-        { line: 6, col: 8 },
-        { line: 6, col: 22 },
-        { line: 7, col: 8 },
-        { line: 7, col: 25 },
-        { line: 5, col: 4 },
-      ],
-    },
-    shelllab: {
-      handle: 'zhouke',
-      name: '周珂',
-      path: 'tsh.c',
-      spots: [
-        { line: 31, col: 4 },
-        { line: 31, col: 18 },
-        { line: 29, col: 8 },
-        { line: 31, col: 26 },
-        { line: 32, col: 2 },
-      ],
-    },
-  }
-const peer = computed(() => PEER_AT[p.value])
-const spot = ref(0)
-const peerTimer = window.setInterval(() => (spot.value = (spot.value + 1) % 5), 2200)
-onBeforeUnmount(() => window.clearInterval(peerTimer))
-const peerHere = computed(() => !!peer.value && !copy.value && path.value === peer.value.path)
-const peers = computed<Peer[]>(() => {
-  if (!peerHere.value) return []
-  const n = text.value.split('\n').length
-  const who = peer.value!
-  const s = who.spots[spot.value]!
-  return [{ handle: who.handle, name: who.name, color: avatarColor(who.handle), line: Math.min(s.line, n), col: s.col }]
-})
-const faces = computed(() =>
-  peerHere.value
-    ? [
-        {
-          clientId: 2,
-          handle: peer.value!.handle,
-          agent: false,
-          name: peer.value!.name,
-          avatar: '',
-          color: avatarColor(peer.value!.handle),
-        },
-        { clientId: 3, handle: 'linxiao', agent: false, name: '林晓', avatar: '', color: avatarColor('linxiao') },
-      ]
-    : []
-)
+/** The 一件事 changing this file now. */
+const on = computed(() => thingsOnFile(p.value, path.value))
+/** One I am doing already: 「改这个文件」 goes there instead of opening a second. */
+const mine = computed(() => on.value.find((t) => canWork(t)) ?? null)
 
 // ---- a pinned version, read-only ----
 const sub = computed(() =>
   S.viewSub && isClaim(p.value) ? S.subs[p.value]?.find((x) => x.id === S.viewSub) ?? null : null
 )
 const pinned = computed(() => (sub.value ? asContext(path.value, sub.value.code.replace(/\n$/, '').split('\n')) : []))
-
-// ---- 运行 and the bottom panel, per 方案「运行在哪」 ----
-/** T2: people have no 运行. */
-const noRun = computed(() => V.run === 'T2')
-/** T3: my own terminal beside 输出. */
-const ownTerm = computed(() => V.run === 'T3')
-const open = ref(true)
-const out = computed(() => S.out[k.value])
-const term = computed(() => S.term[p.value] ?? [])
-const cmd = ref('')
-const termBody = ref<HTMLElement | null>(null)
-function enter() {
-  termRun(p.value, path.value, cmd.value)
-  cmd.value = ''
-}
-watch(
-  () => [term.value.length, S.outTab],
-  async () => {
-    await nextTick()
-    termBody.value?.scrollTo({ top: termBody.value.scrollHeight })
-  }
-)
-
-const save = () => snapshot(p.value, path.value, false)
-function run() {
-  snapshot(p.value, path.value)
-  open.value = true
-  runCode(p.value, path.value)
-}
-const PTABS = [
-  { key: 'out', label: '输出' },
-  { key: 'term', label: '终端' },
-] as const
-function showTab(t: 'out' | 'term') {
-  S.outTab = t
-  open.value = true
-}
 </script>
 
 <template>
@@ -185,175 +46,43 @@ function showTab(t: 'out' | 'term') {
         >
         <span class="ot-head__gap" />
         <BaseButton kind="secondary" size="sm" prepend-icon="mdi-arrow-left" @click="S.viewSub = null"
-          >回到正在改的</BaseButton
+          >回到正式版</BaseButton
         >
       </div>
       <div class="ot-ced__pinned"><ChangesDiff :lines="pinned" inline /></div>
     </template>
 
     <template v-else>
-      <div v-if="copy" class="ot-ced__bar ot-ced__bar--copy" data-zone="copy">
-        <v-icon size="15" icon="mdi-source-fork" class="ot-ced__mark" />
-        <span class="ot-ced__copy" :title="`你在「${copy.title}」的副本里改`"
-          >你在「<b>{{ copy.title }}</b
-          >」的副本里改</span
+      <div class="ot-ced__bar">
+        <v-icon size="15" icon="mdi-lock-outline" class="ot-ced__mark" />
+        <span class="ot-ced__copy" data-zone="official" title="代码在这里只读：改它就开一件事，采纳了才进正式版"
+          >正式版 · 只读</span
         >
-        <button id="b-leave-copy" type="button" class="ot-ced__back" @click="leaveCopy">· 回到正式版</button>
-        <span class="ot-head__gap" />
-        <!-- The banner's own words need the room: 看这件事 and 运行 are icons here. -->
-        <BaseButton
-          id="b-see-thing"
-          kind="ghost"
-          size="sm"
-          icon="mdi-checkbox-marked-outline"
-          title="看这件事"
-          aria-label="看这件事"
-          @click="openThing(copy.id, 'changes')"
-        />
-        <BaseButton
-          v-if="!noRun"
-          id="b-run"
-          kind="ghost"
-          size="sm"
-          icon="mdi-play"
-          title="运行这份副本"
-          aria-label="运行这份副本"
-          @click="run"
-        />
-      </div>
-      <div v-else class="ot-ced__bar">
-        <v-icon size="15" :icon="locked ? 'mdi-shield-lock-outline' : 'mdi-file-code-outline'" class="ot-ced__mark" />
-        <span
-          class="ot-ced__copy"
-          data-zone="saved"
-          :title="locked ? '改动都要走一件事，正式版只读' : '改了就生效；每次改动自动记进历史，能撤回'"
-          >{{ locked ? '正式版受保护' : saving ? '正式版 · 正在改…' : '正式版' }}</span
-        >
-        <DocPresence v-if="faces.length" :peers="faces" class="ot-ced__faces" />
         <button
-          v-if="others.length"
+          v-if="on.length && !mine"
           type="button"
           class="ot-ced__things"
           data-things-on-file
-          title="在那件事的「改动」里看"
-          @click="openThing(others[0]!.id, 'changes')"
+          title="打开那件事的工作台"
+          @click="openBench(on[0]!.id, path)"
         >
-          有 {{ others.length }} 件事在改这个文件 ›
+          有 {{ on.length }} 件事在改这个文件 ›
         </button>
         <span class="ot-head__gap" />
         <BaseButton
-          v-if="sel"
-          id="b-ask-chan"
-          kind="ghost"
-          size="sm"
-          prepend-icon="mdi-message-text-outline"
-          :title="`带着第 ${sel.start}${sel.end > sel.start ? `–${sel.end}` : ''} 行去频道里问`"
-          @click="askInChannel"
-          >在频道里问芝士</BaseButton
-        >
-        <BaseButton
-          v-if="locked"
-          id="b-own"
+          id="b-edit-file"
           kind="primary"
           size="sm"
-          prepend-icon="mdi-checkbox-marked-outline"
-          @click="openOwnThing"
-          >开一件事来改</BaseButton
+          prepend-icon="mdi-pencil-outline"
+          :title="mine ? `在「${mine.title}」的工作台里接着改` : '开一件事来改：在它的工作台里改、运行，改好了采纳'"
+          @click="editFile(p, path)"
+          >{{ mine ? `去「${mine.title}」里改` : '改这个文件' }}</BaseButton
         >
-        <span
-          v-if="noRun"
-          class="ot-ced__norun"
-          data-zone="no-run"
-          :title="isClaim(p) ? '这门课里芝士只给提示，不替你运行' : '选中代码，在频道里问芝士，它在一件事里跑'"
-          ><v-icon size="14" icon="mdi-play-off" />{{ isClaim(p) ? '没有运行' : '运行交给芝士' }}</span
-        >
-        <BaseButton v-else id="b-run" kind="secondary" size="sm" prepend-icon="mdi-play" @click="run">运行</BaseButton>
       </div>
       <div class="ot-ced__edit">
-        <DemoCodeArea
-          v-model="text"
-          :label="`编辑 ${path}`"
-          :readonly="locked"
-          :peers="peers"
-          :mark="mark"
-          @save="save"
-          @blur="snapshot(p, path)"
-          @select="onSelect"
-        />
+        <DemoCodeArea :model-value="text" :label="`${path}（正式版，只读）`" readonly :mark="mark" />
       </div>
     </template>
-
-    <p v-if="noRun" class="ot-ced__runhint" data-zone="terminal">
-      <v-icon size="14" icon="mdi-information-outline" />{{
-        isClaim(p)
-          ? '这里没有「运行」，这门课里芝士也只给提示：代码要等提交后由评测机跑。'
-          : '这里没有「运行」：选中代码，在频道里问芝士，它在一件事里跑，输出在那件事的「现场」。'
-      }}
-    </p>
-    <div v-else class="ot-ced__panel" :class="{ 'is-open': open }" data-zone="terminal">
-      <div class="ot-ced__ptabs">
-        <template v-if="ownTerm">
-          <button
-            v-for="t in PTABS"
-            :key="t.key"
-            type="button"
-            class="ot-ced__ptab"
-            :class="{ 'is-on': S.outTab === t.key && open }"
-            @click="showTab(t.key)"
-          >
-            {{ t.label }}
-          </button>
-        </template>
-        <button v-else type="button" class="ot-ced__ptab" :class="{ 'is-on': open }" @click="showTab('out')">
-          输出
-        </button>
-        <span class="ot-head__gap" />
-        <span v-if="ownTerm" class="ot-ced__mine"
-          ><v-icon size="13" icon="mdi-lock-outline" />你的环境 · 只有你能看到</span
-        >
-        <span v-else class="ot-ced__mine" data-zone="project-env"
-          ><v-icon size="13" icon="mdi-server-outline" />项目环境{{
-            copy ? ` · 「${copy.title}」的副本` : ' · 芝士做事也在这里'
-          }}</span
-        >
-        <BaseButton
-          kind="ghost"
-          size="sm"
-          :icon="open ? 'mdi-chevron-down' : 'mdi-chevron-up'"
-          :title="open ? '收起' : '展开'"
-          :aria-label="open ? '收起' : '展开'"
-          @click="open = !open"
-        />
-      </div>
-      <div v-if="open && (S.outTab === 'out' || !ownTerm)" class="ot-ced__pbody" role="status">
-        <div v-if="!out" class="ot-ced__hint">
-          {{
-            ownTerm ? '点「运行」，在你自己的环境里跑这份代码' : '点「运行」，在项目环境里跑这份代码；每次运行记进历史'
-          }}
-        </div>
-        <div v-else-if="out.kind === 'running'" class="ot-ced__cmd">运行中…</div>
-        <template v-else>
-          <div class="ot-ced__cmd">$ {{ out.cmd }}</div>
-          <pre class="ot-ced__res">{{ out.out }}</pre>
-        </template>
-      </div>
-      <div v-else-if="open" ref="termBody" class="ot-ced__pbody ot-ced__term">
-        <template v-for="(t, i) in term" :key="i">
-          <div class="ot-ced__cmd">$ {{ t.cmd }}</div>
-          <pre class="ot-ced__res">{{ t.out }}</pre>
-        </template>
-        <label class="ot-ced__prompt"
-          >$
-          <input
-            v-model="cmd"
-            class="ot-ced__input"
-            spellcheck="false"
-            autocomplete="off"
-            aria-label="终端"
-            @keydown.enter="enter"
-        /></label>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -381,47 +110,17 @@ function showTab(t: 'out' | 'term') {
   color: var(--muted);
 }
 
-/* In a 一件事's copy: the bar says so in the accent wash, the way a 一件事 being worked on reads. */
-.ot-ced__bar--copy {
-  gap: 6px;
-  padding-left: 12px;
-  background: var(--accent-wash);
-}
-
-.ot-ced__bar--copy .ot-ced__mark {
-  color: var(--accent-ink);
-}
-
-.ot-ced__copy b {
-  font-weight: 600;
-}
-
-.ot-ced__back {
-  padding: 0;
-  font: inherit;
-  color: var(--accent-ink);
-  white-space: nowrap;
-  cursor: pointer;
-  background: none;
-  border: 0;
-}
-
-.ot-ced__back:hover {
-  text-decoration: underline;
-}
-
-/* A 一件事 changing this file: a quiet note, not an action; it opens the 一件事. With lines selected
-   the bar also holds 在频道里问芝士, and the note gives way first. */
+/* A 一件事 changing this file: a quiet note, not an action; it opens the 一件事. */
 .ot-ced__things {
   flex: 0 1 auto;
   min-width: 0;
   height: 24px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   padding: 0 8px;
+  overflow: hidden;
   font: inherit;
   font-size: 12px;
   color: var(--text);
+  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
   background: var(--surface);
@@ -431,28 +130,6 @@ function showTab(t: 'out' | 'term') {
 
 .ot-ced__things:hover {
   color: var(--ink);
-}
-
-.ot-ced__norun {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-  padding: 0 4px;
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.ot-ced__runhint {
-  display: flex;
-  flex: none;
-  gap: 6px;
-  align-items: center;
-  padding: 8px 16px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted);
-  border-top: 1px solid var(--line);
 }
 
 .ot-ced__copy {
@@ -495,101 +172,5 @@ function showTab(t: 'out' | 'term') {
 
 .ot-ced__pinned :deep(.diff-line__text) {
   white-space: pre;
-}
-
-.ot-ced__panel {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  border-top: 1px solid var(--line);
-}
-
-.ot-ced__panel.is-open {
-  height: 196px;
-}
-
-.ot-ced__ptabs {
-  display: flex;
-  flex: none;
-  gap: 4px;
-  align-items: center;
-  height: 32px;
-  padding: 0 4px 0 8px;
-}
-
-.ot-ced__ptab {
-  height: 24px;
-  padding: 0 8px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--muted);
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-radius: var(--radius-sm);
-}
-
-.ot-ced__ptab:hover {
-  color: var(--ink);
-}
-
-.ot-ced__ptab.is-on {
-  color: var(--ink);
-  background: var(--fill-2);
-}
-
-.ot-ced__mine {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.ot-ced__pbody {
-  flex: 1;
-  min-height: 0;
-  padding: 4px 16px 8px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.ot-ced__hint {
-  font-family: var(--font-sans);
-  color: var(--muted);
-}
-
-.ot-ced__cmd {
-  color: var(--muted);
-}
-
-.ot-ced__res {
-  margin: 0 0 4px;
-  font: inherit;
-  color: var(--ink);
-  white-space: pre-wrap;
-}
-
-.ot-ced__term {
-  cursor: text;
-}
-
-.ot-ced__prompt {
-  display: flex;
-  gap: 6px;
-  color: var(--muted);
-}
-
-.ot-ced__input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  color: var(--ink);
-  background: none;
-  border: 0;
-  outline: none;
-  caret-color: var(--ink);
 }
 </style>

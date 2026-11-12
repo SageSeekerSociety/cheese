@@ -1,9 +1,13 @@
 <script setup lang="ts">
 // The 1280×800 workspace: the product's project rail, the sidebar, the center
-// column (always the channel, or 需要我的 / 项目文件 / 设置) and the right
-// panel, which holds one selected thing: the open 一件事, or beside 项目文件
-// the open file's 历史 and the 一件事 changing it. With nothing selected it is
-// folded away. The rail's first item, 首页, opens the home list (待办, my
+// column (the channel, or 需要我的 / 项目文件 / 设置) and the right panel,
+// which holds one selected thing: the open 一件事, or beside 项目文件 the open
+// file's 历史 and the 一件事 changing it. With nothing selected it is folded
+// away. A 一件事's 工作台 goes where 方案「工作台放哪」 puts it: W1 in the
+// center column in place of the channel (the 一件事 stays in the right
+// panel); W2 in the right panel, which widens to 640px while a person is
+// doing the 一件事; W3 with the 一件事 itself taking center and right as one
+// view, as 专注 does. The rail's first item, 首页, opens the home list (待办, my
 // teams and their projects, the 空间 I belong to). Under it, each space I
 // belong to has its own icon; it opens the same view as 首页's 空间 list does.
 // The icon is a white tile with the course's color only as its border and
@@ -30,10 +34,24 @@ import SettingsCenter from './SettingsCenter.vue'
 import SideNav from './SideNav.vue'
 import SpaceCenter from './SpaceCenter.vue'
 import SpaceSide from './SpaceSide.vue'
-import { deadlines, go, openHome, openSpace, S, switchProject, thingById, toast, unreadIn } from './state'
+import {
+  canWork,
+  deadlines,
+  go,
+  hasBench,
+  openHome,
+  openSpace,
+  S,
+  switchProject,
+  thingById,
+  toast,
+  unreadIn,
+} from './state'
 import SubmitDialog from './SubmitDialog.vue'
 import TeamCenter from './TeamCenter.vue'
 import ThingPanel from './ThingPanel.vue'
+import { V } from './variants'
+import Workbench from './Workbench.vue'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -61,10 +79,28 @@ const right = computed<'thing' | 'files' | null>(() => {
   return null
 })
 
-const wide = computed(() => right.value === 'thing' && thingById(S.thing)?.status !== 'talk')
+const open = computed(() => (right.value === 'thing' ? thingById(S.thing) : null))
+const wide = computed(() => !!open.value && open.value.status !== 'talk')
+/** W1: the open 一件事's 工作台 takes the center column. */
+const benchCenter = computed(() => V.bench === 'W1' && S.bench && wide.value && hasBench(open.value!))
+/** W3: a started 一件事 is a view of its own, over channel and panel. */
+const thingFull = computed(() => V.bench === 'W3' && wide.value)
+/** W2: the right panel widens while a person works in the 工作台 shown in it. */
+const benchWide = computed(() => V.bench === 'W2' && S.bench && wide.value && canWork(open.value!))
 const cols = computed(() => {
-  if (right.value === 'thing' && S.focus) return '64px 228px 0px minmax(0, 1fr)'
-  const r = right.value === null ? '0px' : right.value === 'files' ? '320px' : wide.value ? '560px' : '420px'
+  if (right.value === 'thing' && (S.focus || thingFull.value)) return '64px 228px 0px minmax(0, 1fr)'
+  const r =
+    right.value === null
+      ? '0px'
+      : right.value === 'files'
+        ? '320px'
+        : benchWide.value
+          ? '640px'
+          : benchCenter.value
+            ? '372px'
+            : wide.value
+              ? '560px'
+              : '420px'
   return `64px 228px minmax(0, 1fr) ${r}`
 })
 
@@ -161,7 +197,7 @@ const userActions: MenuAction[] = [
   <div
     id="ot-app"
     class="ot-app"
-    :class="{ 'ot-app--focus': S.focus && right === 'thing' }"
+    :class="{ 'ot-app--focus': (S.focus || thingFull) && right === 'thing' }"
     :style="{ gridTemplateColumns: cols }"
   >
     <nav class="ot-rail app-rail" aria-label="项目">
@@ -211,7 +247,8 @@ const userActions: MenuAction[] = [
     <HomeSide v-else-if="S.area === 'home'" />
     <SideNav v-else />
     <main class="ot-pane">
-      <ChannelCenter v-if="S.center === 'chan'" />
+      <Workbench v-if="benchCenter" mode="center" />
+      <ChannelCenter v-else-if="S.center === 'chan'" />
       <InboxCenter v-else-if="S.center === 'inbox'" />
       <FilesCenter v-else-if="S.center === 'files'" />
       <SpaceCenter v-else-if="S.center === 'space'" />
