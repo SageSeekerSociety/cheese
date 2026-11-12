@@ -142,6 +142,11 @@ def accepting(host: CloudHost) -> bool:
         and host.disk_full_since is None
         and host.status not in {MachineStatus.error, MachineStatus.deleting, *GONE}
         and not _failed_unenrolled(host)
+        and (
+            host.device_id is None
+            or host.sandbox_image
+            == enrollment.sandbox_image.default_image()["reference"]
+        )
     )
 
 

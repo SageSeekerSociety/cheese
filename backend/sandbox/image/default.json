@@ -1,0 +1,5 @@
+{
+  "reference": "ghcr.io/sageseekersociety/cheese/sandbox-rootfs@sha256:5cd035c05b8bcc9f0eb326f2656776dc89418a328246eedcfa5fa7954685b2f3",
+  "keep_old": 2,
+  "cache_budget_gb": 8
+}

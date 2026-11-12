@@ -2,7 +2,7 @@
 
 Cheese's **Cloud** compute (see `where-a-turn-runs.md`) is a sandbox per agent session,
 on a pool of hosts the platform opens on [MicroCloud](https://github.com/micro-teams/micro-cloud).
-MicroCloud is Lg's team's project; cheese is one tenant of it. This file is the
+MicroCloud is maintained by the cheese team itself; cheese is one tenant of it. This file is the
 cheese-side view: what we ask it for, what its answers mean, how the pool is kept, and the
 procedure for getting a change into MicroCloud when cheese needs one. MicroCloud's own
 architecture (Proxmox, LXC vs VM, its built-in AI channels) is in its README and is not
@@ -67,6 +67,14 @@ sweep's `grow` puts a fresh host in its place with the current version. At most 
 drains at a time, and no host is drained while the others' free slots cannot hold what it
 carries — a rebuild never interrupts a running sandbox, it only waits it out. Demand mode
 does not rebuild (a host that empties is released and replaced by demand anyway).
+
+### 云端 sandbox 的系统环境
+
+标准 sandbox 的系统包由 cheese 仓库的 `backend/sandbox/image/Dockerfile` 定义，CI 构建 OCI 镜像，`default.json` 固定 digest。MicroCloud VM 模板提供主机内核及主机运行环境；给标准 sandbox 增加系统软件包只修改 cheese 镜像配方。整台 VM 规格继续使用 VM 模板自己的系统。
+
+主机接入及 warm-host 准备在数据盘就绪后先拉取、解包默认镜像，完成后才可接单。后端发布新的默认 digest 时，独立维护循环先为已经接入的主机准备新版本，准备期间已有 sandbox 继续使用原镜像，新 sandbox 只分配到已准备好当前默认 digest 的主机。镜像引用单独记录在 `cloud_hosts.sandbox_image` 和 `warm_machines.sandbox_image`，不把它作为 VM 模板版本变化来滚动重建主机。
+
+共享 rootfs 缓存在数据盘，容量计算为缓存和解包暂存额外预留 8 GB。每个 sandbox 的 overlay upper/work 位于自己的 home，与 home 共用原有 XFS project quota；不会把可写层放到 tmpfs。镜像生命周期、固定工具分发和用户设备范围见 [云端 sandbox 镜像](remote-execution.md#云端-sandbox-镜像)。
 
 ### Each sandbox's disk has a limit of its own
 

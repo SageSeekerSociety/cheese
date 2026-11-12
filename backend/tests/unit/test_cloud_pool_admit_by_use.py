@@ -15,8 +15,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
+from app.domain.agent import sandbox_image
 from app.domain.machine.models import CloudHost, HostReading, capacity, hard_capacity
-from app.domain.machine.reaper import memory_admits
+from app.domain.machine.reaper import accepting, memory_admits
 
 GIB = 1 << 30
 NOW = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
@@ -62,6 +63,14 @@ def test_the_default_host_reserves_four_slots_and_holds_eight_at_most():
     one = host()
     assert capacity(one) == 4
     assert hard_capacity(one) == 8
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_an_enrolled_host_takes_new_sandboxes_only_with_the_default_image(prepared):
+    one = host()
+    one.device_id = "test-cloud-device"
+    one.sandbox_image = sandbox_image.default_image()["reference"] if prepared else None
+    assert accepting(one) is prepared
 
 
 def test_a_full_host_with_memory_to_spare_takes_one_more():

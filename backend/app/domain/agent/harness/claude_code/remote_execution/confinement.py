@@ -292,8 +292,10 @@ def sandbox_argv(
     platform=None,
     programs=(),
     network=True,
+    image_root=None,
+    image_lease=None,
 ):
-    """`argv` run in a bubblewrap sandbox: the room's processes see the machine
+    """Run `argv` with an image overlay on cloud hosts or the device's system
     read-only, and of the owner's home only what is bound back below.
 
     Writable: the room's home and its project's package store. Read-only: the
@@ -331,6 +333,21 @@ def sandbox_argv(
     sockets.mkdir(exist_ok=True, mode=0o700)
     if platform is not None:
         own_directory(platform)
+    if image_root is not None:
+        layer = home / ".cheese/rootfs" / image_root.parent.name
+        upper, work = layer / "upper", layer / "work"
+        for directory in (upper, work):
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root_mount = [
+            "--overlay-src",
+            str(image_root),
+            "--overlay",
+            str(upper),
+            str(work),
+            "/",
+        ]
+    else:
+        root_mount = ["--ro-bind", "/", "/"]
     command = [
         bwrap,
         "--unshare-user",
@@ -348,9 +365,8 @@ def sandbox_argv(
         str(fds["block"]),
         "--seccomp",
         str(fds["seccomp"]),
-        "--ro-bind",
-        "/",
-        "/",
+        *([] if image_lease is None else ["--sync-fd", str(image_lease)]),
+        *root_mount,
         "--dev",
         "/dev",
         "--proc",
@@ -373,21 +389,32 @@ def sandbox_argv(
     ]
     # Before the owner's home too, which may be kept on one of them.
     for mount in HIDDEN_MOUNTS:
-        if Path(mount).is_dir():
+        if image_root is None and Path(mount).is_dir():
             command += ["--tmpfs", mount]
+    if image_root is not None:
+        command += ["--tmpfs", "/home"]
     command += ["--tmpfs", str(owner)]
     names = resolv_conf()
-    if network and names != "/etc/resolv.conf":
+    if image_root is not None:
+        command += [
+            "--ro-bind",
+            names,
+            "/etc/resolv.conf",
+            "--ro-bind",
+            "/sys",
+            "/sys",
+        ]
+    elif network and names != "/etc/resolv.conf":
         # Onto the file it leads to: bwrap mounts on no link (systemd-resolved's).
         command += ["--ro-bind", names, os.path.realpath("/etc/resolv.conf")]
     command += bool(fd := fds.get("hosts")) * ["--ro-bind-data", str(fd), "/etc/hosts"]
     runtime_dir = Path(f"/run/user/{os.getuid()}")
-    if runtime_dir.is_dir():
+    if image_root is None and runtime_dir.is_dir():
         command += ["--tmpfs", str(runtime_dir)]
     # The docker group's socket is root on the machine, and a user namespace
     # keeps the owner's groups: a session would reach it through a read-only
     # mount as well, since connecting to a socket is not a write to the mount.
-    if Path("/run/docker.sock").exists():
+    if image_root is None and Path("/run/docker.sock").exists():
         command += ["--ro-bind", "/dev/null", "/run/docker.sock"]
     # The Python the executor runs on, when the person keeps it in their home
     # (pyenv, uv, conda): shown read-only, as the machine's own would be, at
@@ -405,6 +432,9 @@ def sandbox_argv(
         *(("--ro-bind", path) for path in programs if path.is_dir()),
     ):
         command += [option, str(path), str(path)]
+    if image_root is not None:
+        # The upper is charged to the home, but only overlayfs may modify it.
+        command += ["--tmpfs", str(home / ".cheese/rootfs")]
     command += [
         "--bind",
         str(sockets),

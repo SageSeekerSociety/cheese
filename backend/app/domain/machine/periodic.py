@@ -6,7 +6,7 @@ from typing import Any
 from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.machine import disk_guard, warm
+from app.domain.machine import disk_guard, sandbox_images, warm
 
 Sweeper = Callable[[], Awaitable[Any]]
 
@@ -32,6 +32,11 @@ def register_periodic_jobs(
         "cloud warm pool",
         settings.machine_enroll_interval_seconds,
         lambda: warm.sweep_warm_pool(sessions),
+    )
+    jobs.register(
+        "cloud sandbox images",
+        60,
+        lambda: sandbox_images.sweep(sessions),
     )
     # Not on the cloud pool's switch: it protects people's computers that run
     # sandboxes as well as the platform's hosts.

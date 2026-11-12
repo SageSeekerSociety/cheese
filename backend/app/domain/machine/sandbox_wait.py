@@ -75,6 +75,7 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
                 CloudHost.enroll_attempts,
                 CloudHost.released_at,
                 CloudHost.whole_machine,
+                CloudHost.sandbox_image,
             ).where(CloudHost.id == host_id)
         )
     ).one_or_none()
@@ -98,4 +99,6 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
     if host.status in GONE:
         # Gone upstream: the next attempt forgets it and places the session.
         return True
-    return hub.is_online(host.device_id)
+    return hub.is_online(host.device_id) and (
+        host.whole_machine or bool(host.sandbox_image)
+    )

@@ -36,6 +36,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
 from app.core.db import Base
+from app.domain.agent import sandbox_image
 from app.domain.common import Timestamps, UuidPk
 
 
@@ -140,6 +141,7 @@ class WarmMachine(UuidPk, Timestamps, Base):
     # What the machine's data disk holds, found when it enrolled; handed to the
     # host it becomes (``CloudHost.sandbox_disk_gb``).
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class CloudHost(UuidPk, Timestamps, Base):
@@ -197,6 +199,7 @@ class CloudHost(UuidPk, Timestamps, Base):
     # it enrolled (`enrollment.bootstrap_script`). A pool host enrolls only with
     # one; NULL on a whole VM, which runs no sandbox.
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Why the last attempt failed. Kept so a stuck host explains itself.
     enroll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     enroll_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -563,7 +566,10 @@ def hard_capacity(host: CloudHost) -> int:
     # is placed.
     swap_gb = -(-settings.cloud_host_swap_mb // 1024)
     by_disk = (
-        int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb - swap_gb
+        int(host.sandbox_disk_gb)
+        - settings.cloud_host_disk_reserve_gb
+        - swap_gb
+        - int(sandbox_image.default_image()["cache_budget_gb"])
     ) // settings.cloud_sandbox_disk_gb
     return max(0, min(by_cores, by_disk))
 

@@ -28,7 +28,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import owner_reads, reaper, services
+from app.domain.machine import enrollment, owner_reads, reaper, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -135,6 +135,9 @@ class Case:
                 host.ai_status = AiStatus.disabled
                 host.device_id = device_id
                 host.enrolled_at = datetime.now(UTC)
+                host.sandbox_image = enrollment.sandbox_image.default_image()[
+                    "reference"
+                ]
                 host.last_seen_at = datetime.now(UTC)
                 await db.commit()
 
@@ -291,6 +294,7 @@ def _warm_machine_ready(case: Case) -> str:
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.50",
                     sandbox_disk_gb=64,
+                    sandbox_image=enrollment.sandbox_image.default_image()["reference"],
                     create_request={
                         "hostname": "warm-1",
                         "offeringId": 1,

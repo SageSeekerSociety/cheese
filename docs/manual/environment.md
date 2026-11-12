@@ -59,6 +59,10 @@ order: 10
 
 ## 已知限制 {#limitations}
 
+标准沙箱使用平台统一构建的 Debian 13 环境，包含 gcc、g++、make、C 标准库头文件和 gdb。可写系统层与工作目录共用该沙箱的磁盘限额。团队设备上的沙箱继续使用那台电脑的软件，项目自己的 Dockerfile 或 devcontainer 暂不用于构建标准沙箱。
+
+标准沙箱仍不能以 root 安装系统软件包，gdb 的进程调试也受权限限制。需要安装系统软件包或使用 gdb 进程调试时，使用虚拟机沙箱。
+
 标准沙箱不能运行 Docker 或 `docker compose`。rootless Docker 和 rootless Podman 也不能运行。
 
 需要 Docker 时，按[换一位 AI 队友的环境](/environment#channel-environment)的步骤，点 AI 队友环境旁的「改」。在「规格」中选「虚拟机沙箱」，点「使用这个环境」。

@@ -1053,6 +1053,7 @@ def start_sandbox(
     connect,
     release,
     platform=None,
+    image=None,
     **options,
 ):
     """Start `argv` in a sandbox (`confinement.sandbox_argv`) and, with `connect`, give
@@ -1094,29 +1095,41 @@ def start_sandbox(
     fds = {"info": report, "block": wait, "seccomp": seccomp}
     site = connect and confinement["site_hosts"](env, fds)
     try:
-        process = subprocess.Popen(
-            confinement["sandbox_argv"](
-                argv,
-                bwrap=bwrap,
-                owner=owner,
-                home=home,
-                store=execution_root(owner) / "store" / home.parent.name,
-                toolchain=execution_root(owner) / "toolchain",
-                tmp=home / PLATFORM_DIR / "tmp",
-                releases=release_store(owner),
-                workdir=home / CHECKOUT_DIR,
-                claude=claude,
-                sockets=sockets,
-                platform=platform,
-                fds=fds,
-                programs=[execution_root(owner) / "runtime/git"],
-                network=connect,
-            ),
-            start_new_session=True,
-            pass_fds=tuple(fds.values()),
-            env=env,
-            **options,
-        )
+        with contextlib.ExitStack() as images:
+            image_root, image_lease = None, None
+            if connect:
+                manager = runpy.run_path(
+                    str(release / "remote-execution/sandbox_image.py")
+                )
+                image_root, image_lease = images.enter_context(manager["lease"](image))
+            process = subprocess.Popen(
+                confinement["sandbox_argv"](
+                    argv,
+                    bwrap=bwrap,
+                    owner=owner,
+                    home=home,
+                    store=execution_root(owner) / "store" / home.parent.name,
+                    toolchain=execution_root(owner) / "toolchain",
+                    tmp=home / PLATFORM_DIR / "tmp",
+                    releases=release_store(owner),
+                    workdir=home / CHECKOUT_DIR,
+                    claude=claude,
+                    sockets=sockets,
+                    platform=platform,
+                    fds=fds,
+                    programs=[execution_root(owner) / "runtime/git"],
+                    network=connect,
+                    image_root=image_root,
+                    image_lease=image_lease,
+                ),
+                start_new_session=True,
+                pass_fds=(
+                    *fds.values(),
+                    *(() if image_lease is None else (image_lease,)),
+                ),
+                env=env,
+                **options,
+            )
     except BaseException:
         os.close(info)
         os.close(go)
@@ -1315,6 +1328,7 @@ def prepared(
             "mcp_servers": {},
             "release": str(release),
             "sandbox": payload.get("sandbox") or False,
+            "sandbox_image": payload.get("sandbox_image"),
         }
         mcp = read_json_beneath(home, Path(CHECKOUT_DIR) / ".mcp.json")
         if mcp is not None:
@@ -1344,7 +1358,14 @@ def prepared(
             except (ConnectionError, FileNotFoundError):
                 info = None
             if info:
-                unchanged = {"env", "env_reset", "claude", "release", "sandbox"}
+                unchanged = {
+                    "env",
+                    "env_reset",
+                    "claude",
+                    "release",
+                    "sandbox",
+                    "sandbox_image",
+                }
                 if {k: v for k, v in previous.items() if k not in unchanged} != {
                     k: v for k, v in config.items() if k not in unchanged
                 }:
@@ -1365,6 +1386,7 @@ def prepared(
                     previous.get("release") != str(release)
                     or previous.get("claude") != config["claude"]
                     or previous.get("sandbox", False) != config["sandbox"]
+                    or previous.get("sandbox_image") != config["sandbox_image"]
                     or info.get("upgrading", False)
                 )
                 if changed:
@@ -1623,6 +1645,7 @@ def configure_idle(payload):
                     env=env,
                     connect=platform_machine,
                     release=release,
+                    image=config.get("sandbox_image"),
                     **options,
                 )
                 record_sandbox_process(Path.home(), home, network["first"])
