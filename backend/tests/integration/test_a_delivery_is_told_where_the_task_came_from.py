@@ -103,6 +103,12 @@ def test_handing_in_and_returning_are_told_in_the_main_line(client, app_world):
     second = _file(client, room)
 
     lines = _told(client, room, task_id)
+    # Each line carries its sentence, so every reader sees it in their language.
+    assert [line["meta"]["i18n"]["content"]["key"] for line in lines] == [
+        "taskFiledForReview",
+        "taskReturned",
+        "taskFiledForReview",
+    ]
     assert [line["meta"].get("delivery") for line in lines] == [
         {"card_id": first, "subject": _SUBJECT, "version": 1},
         None,

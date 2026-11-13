@@ -36,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
-from app.core.sentences import say
+from app.core.sentences import say, with_keys
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent
@@ -412,7 +412,11 @@ async def _tell_origin(
         author_type=AuthorType.participant,
         kind=BlockKind.message,
         content=str(content),
-        meta={"task_result": str(task.id), **(refers or {})},
+        # The sentence's key goes with it, so each reader sees it in their own
+        # language (`with_keys`).
+        meta=with_keys(
+            {"task_result": str(task.id), **(refers or {})}, content=content
+        ),
     )
     session.add(said)
     await session.flush()
