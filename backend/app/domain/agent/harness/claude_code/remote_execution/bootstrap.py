@@ -1059,6 +1059,7 @@ def start_sandbox(
     release,
     platform=None,
     image=None,
+    root_snapshot=None,
     **options,
 ):
     """Start `argv` in a sandbox (`confinement.sandbox_argv`) and, with `connect`, give
@@ -1092,6 +1093,7 @@ def start_sandbox(
             **options,
         )
     confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
+    restored = None
     info, report = os.pipe()
     wait, go = os.pipe()
     seccomp, program = os.pipe()
@@ -1109,6 +1111,31 @@ def start_sandbox(
                 )
                 image_root, image_lease = images.enter_context(manager["lease"](image))
                 userns, _ = images.enter_context(manager["namespace"]())
+            if image_root is not None and root_snapshot:
+                store = execution_root(owner) / "store" / home.parent.name
+                store.mkdir(parents=True, exist_ok=True, mode=0o700)
+                command = [SANDBOX_HOST, "disk", home.name, "--home", str(home)]
+                for name in (
+                    "memory_mb",
+                    "swap_mb",
+                    "cpus",
+                    "pids",
+                    "disk_mib",
+                    "inodes",
+                ):
+                    command += ["--" + name.replace("_", "-"), str(limits[name])]
+                sudo(command, "The sandbox's disk quota could not be set up")
+                archive = runpy.run_path(
+                    str(release / "remote-execution/rootfs_snapshot.py")
+                )
+                restored = archive["restore"](
+                    home,
+                    image,
+                    root_snapshot,
+                    bwrap=bwrap,
+                    namespace=confinement["image_user_namespace"](userns),
+                    fds=(userns,),
+                )
             if image_root is not None:
                 argv = ["/usr/bin/setpriv", "--clear-groups", "--", *argv]
                 env = {
@@ -1174,6 +1201,8 @@ def start_sandbox(
                 sudo(command, "The sandbox's network and limits could not be set up")
             )
         answer["first"] = first
+        if restored is not None:
+            answer["root_snapshot"] = restored
     except BaseException:
         os.close(go)
         process.kill()
@@ -1570,6 +1599,7 @@ def configure_idle(payload):
     # How long each step of bringing the executor up took, in seconds: what
     # the platform keeps of a slow preparation (`infra_records.keep_prepared`).
     timings = {}
+    network = {}
     with prepared(
         payload, Path.home(), refresh_runtime=True, disk=disk, timings=timings
     ) as (
@@ -1675,6 +1705,7 @@ def configure_idle(payload):
                     connect=platform_machine,
                     release=release,
                     image=config.get("sandbox_image"),
+                    root_snapshot=payload.get("root_snapshot"),
                     **options,
                 )
                 record_sandbox_process(Path.home(), home, network["first"])
@@ -1746,6 +1777,13 @@ def configure_idle(payload):
                     "mcp_servers": process_servers(config),
                     "state": str(recorded),
                     "timings": timings,
+                    **(
+                        {"root_snapshot": network["root_snapshot"]}
+                        if payload.get("root_snapshot")
+                        and config.get("sandbox")
+                        and "root_snapshot" in network
+                        else {}
+                    ),
                     **disk,
                 }
             )

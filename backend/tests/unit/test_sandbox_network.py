@@ -427,10 +427,9 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
     rooms, machine_service, small_disk
 ):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
-    # Its limit is 953 MiB: most of it at once, the rest written to the end.
-    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+    fill(room)
 
-    result = room.bash("echo more >> big; echo exit=$?")
+    result = room.bash("head -c 1G /dev/zero >> big; echo exit=$?")
 
     assert "No space left on device" in result["stdout"] + result["stderr"]
     assert "exit=1" in result["stdout"]
@@ -438,8 +437,9 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
 
 
 def fill(room: "Room") -> None:
-    """The room's disk, 953 MiB here, filled to the last block."""
-    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+    """Write past the room's 953 MiB disk limit."""
+    result = room.bash("head -c 1G /dev/zero > big")
+    assert "No space left on device" in result["stdout"] + result["stderr"], result
 
 
 @with_sandbox_host
@@ -467,7 +467,8 @@ def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     fill(room)
 
-    result = room.bash("echo more >> big")
+    # A small append can reuse blocks already charged to the quota.
+    result = room.bash("head -c 1G /dev/zero >> big")
     # The same command through the shell a session's own build runs it in
     # (`shell_prefix`), which reads the command's end from the executor.
     shell = {"subtype": "shell", "command_id": "full-disk"}
@@ -478,7 +479,7 @@ def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
             **shell,
             "operation": "start",
             "kind": "sh",
-            "body": "echo more >> big",
+            "body": "head -c 1G /dev/zero >> big",
             "cwd": str(room.home / "room"),
             "env": {},
             "merge": True,
@@ -603,7 +604,12 @@ def test_no_sandbox_runs_where_its_home_has_no_disk_limit(
 @with_sandbox_host
 def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
-    room.bash("head -c 300M /dev/urandom > blob && cat blob > /dev/null")
+    # Sync before measuring reclaim; reading alone does not flush dirty pages.
+    written = room.bash(
+        "head -c 300M /dev/urandom > blob && sync blob"
+        " && cat blob > /dev/null && wc -c < blob"
+    )
+    assert written["stdout"].strip() == "314572800", written
     group = sandbox_host.CGROUP / str(room.resource)
     held = int((group / "memory.current").read_text())
 
@@ -614,6 +620,7 @@ def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
     )
 
     assert answer.returncode == 0, answer.stderr
+    assert str(room.resource) in json.loads(answer.stdout)["reclaimed"]
     assert int((group / "memory.current").read_text()) < held - (200 << 20)
     assert room.bash("echo ok")["stdout"].strip() == "ok"
 

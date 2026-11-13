@@ -17,6 +17,7 @@ from app.domain.agent import (
     machine_tunnel,
     package_mirrors,
     preview_tunnel,
+    rootfs_snapshot,
     sandbox_image,
     toolchain,
 )
@@ -114,6 +115,9 @@ def _file_sources():
         "remote-execution/sandbox_host.py": Path(sandbox_host.__file__).read_text(),
         "remote-execution/sandbox_image.py": Path(sandbox_image.__file__).read_text(),
         "remote-execution/confinement.py": Path(confinement.__file__).read_text(),
+        "remote-execution/rootfs_snapshot.py": Path(
+            rootfs_snapshot.__file__
+        ).read_text(),
         **{
             name: (BACKEND / source).read_text()
             for name, source in runtime.RELEASE_FILES.items()
@@ -152,6 +156,7 @@ def payload_for(
         else None
     )
     image = values.pop("CHEESE_SANDBOX_IMAGE", None)
+    root_snapshot = values.pop("CHEESE_ROOT_SNAPSHOT", None)
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
         "toolchain_fonts": toolchain.fonts_pin(),
@@ -171,6 +176,7 @@ def payload_for(
         else None,
         "platform_machine": platform_machine,
         "sandbox_image": (image or None) if sandbox and platform_machine else None,
+        "root_snapshot": json.loads(root_snapshot) if root_snapshot else None,
         "project": str(project_id),
         "resource": str(resource_id),
         "proxy_proof": hmac.new(

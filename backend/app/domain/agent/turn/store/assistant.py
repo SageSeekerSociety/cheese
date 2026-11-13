@@ -23,6 +23,7 @@ from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 from app.domain.topic.models import Topic, is_private_chat
 
 
@@ -88,32 +89,46 @@ async def stored_publication(
 
 
 async def _question_talked_past(
-    session: AsyncSession, conversation_id: uuid.UUID, turn_id: uuid.UUID, author: str
+    session: AsyncSession, conversation_id: uuid.UUID, turn_id: uuid.UUID
 ) -> uuid.UUID | None:
-    """The message a turn in a channel's main line answers, when somebody else
+    """The message a turn in a channel's main line answers, when another person
     spoke between it and this answer: the answer then quotes it, so a reader
     sees which line it answers. A turn a message started is named after that
-    message (``turn_id``). None when nobody else spoke, when ``author`` already
-    answered after it, or when the turn was not started by a message here."""
+    message (``turn_id``).
+
+    None when the turn was not started by a person's message here, when nobody
+    but its asker spoke after it, or when an AI teammate already said something
+    after it: the teammate's first message of the turn is the answer, and a
+    second one follows its own. Who spoke is told by the handle's kind
+    (`agent_handle_column`), not compared with the author of this message: a
+    teammate is written under its seat in one place and its instance in
+    another."""
     asked = await session.get(Block, turn_id)
     if (
         asked is None
         or asked.conversation_id != conversation_id
         or asked.kind != BlockKind.message
+        or looks_like_agent_handle(asked.author)
     ):
         return None
-    since = set(
-        await session.scalars(
-            select(Block.author).where(
-                Block.conversation_id == conversation_id,
-                Block.kind == BlockKind.message,
-                Block.created_at > asked.created_at,
-            )
+    said_since = select(Block.author).where(
+        Block.conversation_id == conversation_id,
+        Block.kind == BlockKind.message,
+        Block.created_at > asked.created_at,
+    )
+    answered = await session.scalar(
+        select(said_since.where(agent_handle_column(Block.author)).exists())
+    )
+    if answered:
+        return None
+    others = await session.scalar(
+        select(
+            said_since.where(
+                Block.author != asked.author, ~agent_handle_column(Block.author)
+            ).exists()
         )
     )
-    if author in since or not since - {asked.author}:
-        return None
-    return asked.id
+    return asked.id if others else None
 
 
 async def persist_assistant_message(
@@ -225,15 +240,20 @@ async def persist_assistant_message(
         ):
             return StoredAssistant(None, False, None)
         author = author or await resolve_author(session, topic_id)
+        # In a channel's main line, whether an answer quotes the question its
+        # turn answers is the platform's rule alone, whoever asked for the
+        # quote: added when another person spoke in between, and dropped when
+        # nobody did, even if the teammate passed it. A quote of any other
+        # message is the teammate's own and stays.
         if (
-            reply_to is None
+            (reply_to is None or reply_to == turn_id)
             and turn_id is not None
             and inner_id is None
             and topic is not None
             and not is_private_chat(topic)
             and CHECKLIST_META_KEY not in (meta or {})
         ):
-            reply_to = await _question_talked_past(session, topic_id, turn_id, author)
+            reply_to = await _question_talked_past(session, topic_id, turn_id)
         # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
         # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
         # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
