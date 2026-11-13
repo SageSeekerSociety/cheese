@@ -1,0 +1,43 @@
+# pnpm's own settings for the frontend. pnpm 11 and later read them only from
+# this file: the `pnpm` field in package.json and non-auth lines in .npmrc are
+# ignored, so an override left there would silently stop applying.
+
+overrides:
+  '@parcel/watcher': 2.5.4
+  '@tiptap/extension-bubble-menu': 3.30.5
+  '@tiptap/extension-floating-menu': 3.30.5
+  body-parser: 2.3.0
+  'brace-expansion@1': 1.1.21
+  'brace-expansion@2': 2.1.7
+  dompurify: 3.4.17
+  fast-uri: 3.1.7
+  flatted: 3.4.2
+  follow-redirects: 1.16.1
+  immutable: 5.1.8
+  'js-yaml@4': 4.3.2
+  'minimatch@3': 3.1.4
+  'nanoid@3.3.11': 3.3.18
+  'picomatch@2': 2.3.2
+  'postcss@8.5.6': 8.5.18
+  prosemirror-model: 1.25.11
+  prosemirror-state: 1.4.4
+  prosemirror-transform: 1.12.0
+  prosemirror-view: 1.42.3
+  qs: 6.16.0
+  source-map-js: 1.2.2
+
+patchedDependencies:
+  '@tiptap/y-tiptap@3.0.7': patches/@tiptap__y-tiptap@3.0.7.patch
+  '@handlewithcare/prosemirror-suggest-changes@0.1.8': patches/@handlewithcare__prosemirror-suggest-changes@0.1.8.patch
+  'exceljs@4.4.0': patches/exceljs@4.4.0.patch
+
+# pnpm 10 and later run no dependency's install script unless it is named here,
+# and with pnpm 11's strictDepBuilds an unnamed one fails the install. These are
+# the four the lockfile has. msw's only copies its service worker into the
+# directory package.json's `msw.workerDirectory` names, and this package names
+# none, so it stays off.
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  msw: false
+  vue-demi: true
