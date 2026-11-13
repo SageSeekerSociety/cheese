@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { api, apiLogin } from './helpers';
 
-// 支线：主线上叫芝士，回答不落在主线上，落在那条消息下面的支线里。组件测试钉住了
-// 每一块自己的规矩（悬停条上的那颗、打开就记已读、输入框先带上 @），这里钉的是接缝：
-// 发出去的那条消息下面真的长出那一行，点开真的是它的支线，芝士那一轮真的在支线里。
+// 支线：主线上叫芝士，回答落在主线上；支线由人在一条消息下面开。组件测试钉住了每一块
+// 自己的规矩（悬停条上的那颗、打开就记已读、输入框先带上 @），这里钉的是接缝：主线上
+// 叫芝士不长出支线那一行，点「在支线中回复」真的开出这条消息的支线。
 
 async function openChannel(page: Page) {
   const projects = (await api(page, 'get', '/projects')).data as { id: string }[];
@@ -24,12 +24,12 @@ test.describe('支线', () => {
     await apiLogin(page);
   });
 
-  test('主线上叫芝士：它在这条消息的支线里回答', async ({ page }) => {
+  test('主线上叫芝士：它在主线上回答，消息下面不长出支线', async ({ page }) => {
     const composer = await openChannel(page);
     const button = page.locator('.summon__btn');
     await expect(button).toBeEnabled({ timeout: 15_000 });
 
-    const text = `e2e thread question ${Date.now()}`;
+    const text = `e2e main line question ${Date.now()}`;
     await composer.fill(text);
     await button.click();
     await composer.press('Enter');
@@ -38,23 +38,12 @@ test.describe('支线', () => {
     const asked = main.locator('.im-text', { hasText: text }).last();
     await expect(asked).toBeVisible({ timeout: 15_000 });
 
-    // 消息下面那一行：还在回答时写「正在回复」，有了回复写几条回复，这一轮出错了写
-    // 「回复失败」（e2e 里没有工作电脑，多半是这一种）。点它打开支线。
-    const line = main
-      .locator('[data-testid="thread-replying"], [data-testid="thread-line"], [data-testid="thread-failed"]')
-      .last();
-    await expect(line).toBeVisible({ timeout: 15_000 });
-    await line.click();
-
-    const pane = page.getByTestId('thread-pane');
-    await expect(pane).toBeVisible({ timeout: 15_000 });
-    await expect(pane.locator('.thread-root', { hasText: text })).toBeVisible();
-    // 页头那条消息在对话自己的滚动区里：它跟着回复一起滚，不钉在面板顶上（钉着的话，
-    // 一条长消息展开就把回复挤没，还把自己末尾那颗「收起」顶到看不见的地方）。
-    await expect(pane.locator('[data-testid="chat-scroll"] .thread-root')).toHaveCount(1);
-
-    // 芝士那一轮留下的东西（回答，或者这一轮为什么没成的那一行）落在支线里。
-    await expect(pane.locator('[data-row-id]').first()).toBeVisible({ timeout: 60_000 });
+    // 芝士那一轮留下的东西（回答，或者这一轮为什么没成的那一行；e2e 里没有工作电脑，多半
+    // 是后一种）落在主线上，排在问的那条后面。
+    await expect(main.locator('[data-row-id]').last()).not.toContainText(text, { timeout: 60_000 });
+    await expect(
+      main.locator('[data-testid="thread-replying"], [data-testid="thread-line"], [data-testid="thread-failed"]')
+    ).toHaveCount(0);
   });
 
   test('悬停一条消息「在支线中回复」，回复挂在它下面', async ({ page }) => {

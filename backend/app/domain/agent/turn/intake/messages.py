@@ -47,7 +47,6 @@ from app.domain.agent.turn_ledger import project_pool
 from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.handles import names_a_person, recipient_seat
-from app.domain.thread.services import answer_place
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 
 logger = logging.getLogger("cheesex.runtime")
@@ -207,22 +206,9 @@ class RunnerIntake:
         )
         if duplicate:
             return turn_id
-        # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = (
-            topic_id
-            if not mentioned
-            or (
-                handoff is not None
-                and handoff.place is not None
-                and handoff.place.inner_id is not None
-            )
-            else await answer_place(
-                chat_service.session_factory, user_block_id, topic_id
-            )
-        )
         self._schedule_message(
             chat_service,
-            answer_in,
+            topic_id,
             turn_id,
             addressed=addressed,
             continuation_id=turn_id,

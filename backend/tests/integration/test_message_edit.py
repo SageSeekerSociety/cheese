@@ -319,12 +319,14 @@ def _two_teammates(client) -> dict:
     """A channel of alice's with two AI seats on it, and a 支线 of that channel.
 
     `place` is the 支线 — where a person talks when they call a teammate;
-    `channel` is the main line, where a message is answered in its own 支线.
+    `channel` is the main line, where a message is answered too. bob is in the
+    project, so a message there that names nobody calls nobody.
     `own` is the seat the channel falls back to, `other` the one it does not.
     """
     project = post_project(client, json={"name": "编辑点名"}, owner="alice").json()[
         "data"
     ]
+    join_project_team(client, project["id"], "bob")
     channel = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "话题"},
@@ -443,10 +445,10 @@ def test_an_edit_does_not_wake_a_teammate_the_message_already_named(client, stub
     assert len(_deliveries(client, place)) == before
 
 
-def test_an_edit_to_a_main_line_message_hands_the_teammate_to_its_thread(
+def test_an_edit_to_a_main_line_message_hands_the_teammate_the_main_line(
     client, stub_hooks
 ):
-    """主线上那条消息被编辑后点到的队友，在那条消息的支线里开这一轮。"""
+    """主线上那条消息被编辑后点到的队友，就在主线上开这一轮，不开支线。"""
     room = _two_teammates(client)
     channel, other = room["channel"], room["other"]
     said = _say(client, channel, "alice", "接口先别动")
@@ -456,9 +458,10 @@ def test_an_edit_to_a_main_line_message_hands_the_teammate_to_its_thread(
     _edit(client, said, f"<@{other}> 接口先别动", session_auth_headers("alice"))
     wait_work_idle()
 
-    thread = asyncio.run(_thread_of(client, said))
-    assert thread is not None, "a main-line message is answered in its 支线"
-    [row] = _deliveries(client, str(thread.id))
+    assert asyncio.run(_thread_of(client, said)) is None
+    [row] = [
+        row for row in _deliveries(client, channel) if row.recipient_handle == other
+    ]
     assert row.recipient_handle == other
     assert row.payload["eventType"] == mention.BY_PERSON
     assert row.state == "received", row.last_error

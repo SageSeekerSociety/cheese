@@ -5,12 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
 from app.core.sentences import say
 from app.domain.agent.turn.store.events import EventAuthorResolver
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import CHECKLIST_META_KEY, Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import (
     any_output_event_exists,
@@ -22,7 +23,7 @@ from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, is_private_chat
 
 
 class TopicLoader(Protocol):
@@ -84,6 +85,35 @@ async def stored_publication(
     key = action_key(topic_id, "chat-publish", author, publication_id)
     async with sessions() as session:
         return await idem.stored_result(session, key)
+
+
+async def _question_talked_past(
+    session: AsyncSession, conversation_id: uuid.UUID, turn_id: uuid.UUID, author: str
+) -> uuid.UUID | None:
+    """The message a turn in a channel's main line answers, when somebody else
+    spoke between it and this answer: the answer then quotes it, so a reader
+    sees which line it answers. A turn a message started is named after that
+    message (``turn_id``). None when nobody else spoke, when ``author`` already
+    answered after it, or when the turn was not started by a message here."""
+    asked = await session.get(Block, turn_id)
+    if (
+        asked is None
+        or asked.conversation_id != conversation_id
+        or asked.kind != BlockKind.message
+    ):
+        return None
+    since = set(
+        await session.scalars(
+            select(Block.author).where(
+                Block.conversation_id == conversation_id,
+                Block.kind == BlockKind.message,
+                Block.created_at > asked.created_at,
+            )
+        )
+    )
+    if author in since or not since - {asked.author}:
+        return None
+    return asked.id
 
 
 async def persist_assistant_message(
@@ -195,6 +225,15 @@ async def persist_assistant_message(
         ):
             return StoredAssistant(None, False, None)
         author = author or await resolve_author(session, topic_id)
+        if (
+            reply_to is None
+            and turn_id is not None
+            and inner_id is None
+            and topic is not None
+            and not is_private_chat(topic)
+            and CHECKLIST_META_KEY not in (meta or {})
+        ):
+            reply_to = await _question_talked_past(session, topic_id, turn_id, author)
         # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
         # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
         # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
