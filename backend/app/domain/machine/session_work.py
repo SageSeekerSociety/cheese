@@ -451,10 +451,12 @@ async def _start_executor(
     sandbox. ``on_stderr`` hears what the install writes to stderr while it
     runs (`install_progress`).
 
-    Every call into the machine is bounded by ``lease_claim.INSTALL_MOST_S``:
-    a machine that stopped answering — its connector gone silent, its executor
-    hung — fails this attempt instead of holding the tool call that asked for
-    its hands. What the failure leaves behind is answered by the caller.
+    Ordinary calls are bounded by ``lease_claim.INSTALL_MOST_S``. An install
+    restoring a root backup uses ``root_snapshots.RESTORE_TIMEOUT_S`` for the
+    installation command, including download and unpack, with a longer claim.
+    A caller can receive
+    "preparing" while that installation continues. What failure leaves behind
+    is answered by the caller.
 
     A machine that stopped answering is not only one that says nothing: the
     connector answers a command it had to kill with an ordinary result carrying
@@ -513,7 +515,11 @@ async def _start_executor(
             sandbox=sandbox,
             platform_machine=platform_machine,
         ),
-        timeout=lease_claim.INSTALL_MOST_S,
+        timeout=(
+            root_snapshots.RESTORE_TIMEOUT_S
+            if setup.get("CHEESE_ROOT_SNAPSHOT")
+            else lease_claim.INSTALL_MOST_S
+        ),
         on_stderr=on_stderr,
     )
     if (refusal := launch.refused(installed)) is not None:
@@ -711,9 +717,11 @@ async def switch_environment(
         if home is not None and home.sandbox_image:
             home.stopped_at = datetime.now(UTC)
             await db.commit()
-            await root_snapshots.save(
+            saved = await root_snapshots.save(
                 db, home, old["device_id"], hub=device_hub, run_on_host=run_on_host
             )
+            if saved is not None and saved["status"] == "superseded":
+                raise ConflictError(say("workComputerJustSwitched"))
         await TopicService(db).lock_for_execution(topic_id)
         row = await sessions.by_id(session_id, lock=True)
         if row is None:
@@ -1391,7 +1399,14 @@ async def _install(
         thaw_s = None
         install_steps: dict[str, float] = {}
         try:
-            async with lease_claim.kept(bind, session_id, claim, since=now):
+            claim_most_s = lease_claim.CLAIM_MOST_S + (
+                root_snapshots.RESTORE_TIMEOUT_S - lease_claim.INSTALL_MOST_S
+                if setup.get("CHEESE_ROOT_SNAPSHOT")
+                else 0
+            )
+            async with lease_claim.kept(
+                bind, session_id, claim, since=now, most_s=claim_most_s
+            ):
                 thawed = await thaw_if_asked(
                     db,
                     hub,

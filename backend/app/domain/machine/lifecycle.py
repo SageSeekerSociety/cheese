@@ -1443,6 +1443,8 @@ class SandboxLifecycle:
             saved = await root_snapshots.save(
                 self._session, home, device_id, hub=self._hub, run_on_host=run_on_host
             )
+            if saved is not None and saved["status"] == "superseded":
+                return False
             answered = await run_on_host(
                 self._hub,
                 device_id,
