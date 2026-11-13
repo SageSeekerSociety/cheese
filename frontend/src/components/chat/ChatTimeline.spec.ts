@@ -176,6 +176,42 @@ describe('each task made on its own in the channel keeps its own card', () => {
   })
 })
 
+describe('a version handed in for review is told where the task came from', () => {
+  function handedIn(): Block {
+    return {
+      id: 'd1',
+      conversation_id: 't',
+      kind: 'message',
+      author_type: 'participant',
+      author: 'cheese-0a1b2c3d4e5f',
+      content: '「报名表」已提交审阅',
+      created_at: '2026-11-10T09:00:00Z',
+      meta: {
+        task_result: 'task-7',
+        delivery: { card_id: 'c2', subject: 'feat: shorter form', version: 2 },
+        i18n: { content: { key: 'taskFiledForReview', params: { title: '报名表' } } },
+      },
+    } as Block
+  }
+
+  it('shows what was handed in and which version, and opens that task', async () => {
+    const rows = collapseNotices([handedIn()])
+    const { emitted } = mount({ rows, runEdges: ['start'], isMine: () => false })
+    const card = screen.getByTestId('delivery-card')
+    expect(card.textContent).toContain('feat: shorter form')
+    expect(card.textContent).toContain('第 2 版')
+    await fireEvent.click(card)
+    expect(emitted('open-card')).toEqual([['task-7']])
+  })
+
+  it('says the line in the reader’s language', () => {
+    setLocale('en')
+    const rows = collapseNotices([handedIn()])
+    mount({ rows, runEdges: ['start'], isMine: () => false })
+    expect(screen.getByText('"报名表" was submitted for review')).toBeTruthy()
+  })
+})
+
 describe('every row in the timeline has a name, on screen or not', () => {
   // A row off screen is not rendered (content-visibility) and the browser then has
   // no contents to name it from; emptying the rows stands in for that.

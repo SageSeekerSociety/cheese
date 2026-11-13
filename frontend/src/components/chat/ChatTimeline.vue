@@ -29,6 +29,7 @@ import { askGroupFolds } from '../../lib/askGroups'
 import { replySnippet } from '../../lib/blockDisplay'
 import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
+import { deliveryOf } from '../../lib/deliveryLine'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
 import { rowKeys } from '../../lib/platformNotice'
@@ -37,6 +38,7 @@ import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import DeliveryCard from '../room/DeliveryCard.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
 import RoomNotice from '../room/RoomNotice.vue'
@@ -814,6 +816,15 @@ const rowLabels = computed(() =>
                 :owner-avatar="task.owner ? avatarOf(task.owner) : undefined"
                 in-list
                 :lone="!(threadable && m.thread) && madeFrom(m).length === 1"
+                @open="emit('open-card', $event)"
+              />
+            </div>
+            <!-- A task handed a version in for review: the card it filed, under that line. -->
+            <div v-if="!notice && deliveryOf(m)" class="tl-thread msg-links" :data-feed-of="m.id">
+              <DeliveryCard
+                :task-id="deliveryOf(m)!.taskId"
+                :subject="deliveryOf(m)!.subject"
+                :version="deliveryOf(m)!.version"
                 @open="emit('open-card', $event)"
               />
             </div>

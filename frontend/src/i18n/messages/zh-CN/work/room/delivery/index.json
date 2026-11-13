@@ -1,0 +1,9 @@
+{
+  "close": "关闭",
+  "count": "共 {n} 项",
+  "loadFailed": "加载失败，稍后重试",
+  "openTask": "打开任务",
+  "title": "审阅",
+  "version": "第 {n} 版",
+  "waiting": "待你审阅"
+}

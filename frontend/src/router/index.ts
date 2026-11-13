@@ -264,7 +264,13 @@ router.beforeEach((to, from) => {
 // 手上那份还新鲜就不取（`query/blocks`）；没登录就什么都不发。任务页读的是任务
 // 自己那段对话（任务的 id），不是它所在的频道。
 router.beforeEach((to, from) => {
-  if ((to.name !== 'workspace-topic' && to.name !== 'workspace-task' && to.name !== 'workspace-thread') || !myId())
+  if (
+    (to.name !== 'workspace-topic' &&
+      to.name !== 'workspace-task' &&
+      to.name !== 'workspace-thread' &&
+      to.name !== 'workspace-review') ||
+    !myId()
+  )
     return
   const ids = routeIds(to.params)
   const conversation = to.name === 'workspace-task' ? ids.taskId : ids.topicId
@@ -293,8 +299,9 @@ router.beforeEach((to, from) => {
 // ——它是顺手做的事。只问任务：频道没有「预览」那一格。地址上还是编号、认不出是哪
 // 一件的，交给面板挂上来之后自己问。
 router.beforeEach((to) => {
-  if (to.name !== 'workspace-task' || !myId()) return
-  const taskId = routeIds(to.params).taskId
+  if ((to.name !== 'workspace-task' && to.name !== 'workspace-review') || !myId()) return
+  const ids = routeIds(to.params)
+  const taskId = to.name === 'workspace-task' ? ids.taskId : ids.reviewTaskId
   if (taskId && isUuid(taskId)) void prefetchPreview(taskId)
 })
 
