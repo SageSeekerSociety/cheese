@@ -139,6 +139,7 @@ def _make_flow(*, path="/v1/messages", caller_bearer=SESSION_CREDENTIAL):
     session's own Claude credential."""
     request = SimpleNamespace(
         path=path,
+        http_version="HTTP/1.1",
         host="api.anthropic.com",
         headers={"authorization": f"Bearer {caller_bearer}"},
     )
@@ -3050,6 +3051,7 @@ def _gateway_request(
     request = SimpleNamespace(
         method=method,
         path=path,
+        http_version="HTTP/1.1",
         host="chatgpt.com",
         port=443,
         scheme="https",

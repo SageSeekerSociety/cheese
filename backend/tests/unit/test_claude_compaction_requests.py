@@ -389,6 +389,7 @@ class _Request:
 
     def __init__(self, path: str, headers: dict[str, str]):
         self.path = path
+        self.http_version = "HTTP/1.1"
         self.host = ANTHROPIC
         self.scheme = "https"
         self.port = 443
