@@ -16,17 +16,16 @@ import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
-import ReviewWaitingBar from '@/components/room/ReviewWaitingBar.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 import { artifactName } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
-import { taskTitle, topicTitle } from '@/lib/topicState'
+import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { openRoomTasksQuery, roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
+import { roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
 import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -96,6 +95,8 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
+  // 页面开着时主线上实时来了一行交付（打开时已经在的不算）：页面决定要不要打开它。
+  (e: 'delivery-arrived', taskId: string): void
   // 消息的 ⋯ 里钉成章节/取消章节，或书签条里取消：这一页拿着这段对话的地址，由它去改。
   (e: 'chapter', block: Block): void
   (e: 'unchapter', target: Block | string): void
@@ -182,22 +183,6 @@ const madeHere = computed(() => {
     )
     .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
-// 频道主线上「待你审阅」那一条：这个频道里交了一版、等我审阅的任务，最早交上来的在前。
-// 读的是频道概览和侧栏那一份开着的任务清单，不另问。
-const mainLine = computed(() => !props.taskId && !props.threadId && !props.beside)
-const openTasks = useQuery(
-  computed(() => ({ ...openRoomTasksQuery(props.topic.id), enabled: mainLine.value })),
-  queryClient
-)
-const waitingForMe = computed(() => {
-  if (!mainLine.value) return []
-  const me = myHandle()
-  return (openTasks.data.value?.data ?? [])
-    .filter((row) => row.card?.status === 'pending' && (row.card.reviewer ?? '').split('、').includes(me))
-    .sort((a, b) => (a.card?.since ?? '').localeCompare(b.card?.since ?? ''))
-    .map((row) => ({ taskId: row.id, title: taskTitle(row) }))
-})
-
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
   mentionNames: props.memberNames ?? {},
@@ -281,6 +266,7 @@ defineExpose({
       @activity="emit('activity', $event)"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
+      @delivery-arrived="emit('delivery-arrived', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path) => emit('open-file', path)"
       @open-resource="
@@ -296,7 +282,6 @@ defineExpose({
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
            见，但平时只占一行，不把对话挤到只剩几行。 -->
       <template #above-composer>
-        <ReviewWaitingBar v-if="mainLine && !rejecting" :items="waitingForMe" @open="emit('open-card', $event)" />
         <TopicAcceptCard
           v-if="!acceptElsewhere && !threadId"
           class="chat-dock"

@@ -173,74 +173,43 @@ describe('对话栏的接线', () => {
   })
 })
 
-describe('频道主线上「待你审阅」', () => {
-  function task(id: string, title: string, card: Record<string, unknown> | null) {
+describe('主线上来了一行交付', () => {
+  function deliveryLine(id: string, taskId: string) {
     return {
       id,
       project_id: 'p1',
-      room_id: topic.id,
-      title,
-      title_source: 'human',
-      status: 'open',
-      created_at: '2026-11-01T00:00:00Z',
-      updated_at: '2026-11-01T00:00:00Z',
-      presentation: { column: 'needs_you', phrase: 'awaiting_review' },
-      card,
+      conversation_id: topic.id,
+      kind: 'message',
+      author_type: 'participant',
+      author: 'agent-seat',
+      content: '「报名表」已提交审阅',
+      reply_to: null,
+      refs: [],
+      meta: { task_result: taskId, delivery: { card_id: `card-${taskId}`, subject: '报名表', version: 1 } },
+      created_at: new Date().toISOString(),
     }
   }
-  const tasks = [
-    // One card asks two people: either of them is asked.
-    task('t-new', '后交的', { id: 'c2', status: 'pending', reviewer: 'bob、me', since: '2026-11-03T00:00:00Z' }),
-    task('t-old', '先交的', { id: 'c1', status: 'pending', reviewer: 'me', since: '2026-11-02T00:00:00Z' }),
-    task('t-other', '等别人的', { id: 'c3', status: 'pending', reviewer: 'bob', since: '2026-11-01T00:00:00Z' }),
-    task('t-done', '采纳过的', { id: 'c4', status: 'accepted', reviewer: 'me', since: '2026-11-01T00:00:00Z' }),
-  ]
 
-  function withTasks(rows: unknown[]) {
-    vi.stubGlobal('fetch', async (url: string) => ({
-      ok: true,
-      status: 200,
-      json: async () =>
-        String(url).includes('/tasks')
-          ? { code: 200, data: { data: rows, total: rows.length } }
-          : { code: 200, data: { data: [], total: 0, has_more: false } },
-    }))
-  }
-
-  it('写最早交上来、等我审阅的那一件，点它在频道里打开；还有几件写件数', async () => {
-    withTasks(tasks)
-    const { findByTestId, getByText, emitted } = render(Column, {
-      props: { topic, members: [], topicList: [] },
-      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
-    })
-    const bar = await findByTestId('review-waiting')
-    expect(bar.textContent).toContain('先交的')
-    expect(bar.textContent).toContain('共 2 项')
-    expect(bar.textContent).not.toContain('等别人的')
-    getByText('先交的').click()
-    expect(emitted()['open-card']).toEqual([['t-old']])
-  })
-
-  it('没有等我审阅的就没有这一条', async () => {
-    // Only bob's pending card and an accepted one of mine are left.
-    withTasks(tasks.filter((row) => ['t-other', 't-done'].includes(row.id)))
-    const { queryByTestId } = render(Column, {
+  // 页面据此决定要不要当场打开那件交付：打开频道时已经在主线上的那一行不算到达。
+  it('页面开着时实时到的才报，打开时已经在的不报', async () => {
+    history = [deliveryLine('old-line', 't-old')]
+    const { emitted } = render(Column, {
       props: { topic, members: [], topicList: [] },
       global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
     })
     await settle()
     await settle()
-    expect(queryByTestId('review-waiting')).toBeNull()
-  })
-
-  it('任务页上不出现', async () => {
-    withTasks(tasks)
-    const { queryByTestId } = render(Column, {
-      props: { topic, taskId: 't-old', members: [], topicList: [] },
-      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
+    sockets.at(-1)?.onopen?.()
+    sockets.at(-1)?.onmessage?.({
+      data: JSON.stringify({ type: 'user_block', block: deliveryLine('new-line', 't-new') }),
     })
     await settle()
+    expect(emitted()['delivery-arrived']).toEqual([['t-new']])
+    // A reconnect replays what the room already showed: the same line is not a new arrival.
+    sockets.at(-1)?.onmessage?.({
+      data: JSON.stringify({ type: 'user_block', block: deliveryLine('new-line', 't-new') }),
+    })
     await settle()
-    expect(queryByTestId('review-waiting')).toBeNull()
+    expect(emitted()['delivery-arrived']).toEqual([['t-new']])
   })
 })

@@ -36,6 +36,9 @@ export interface ChatPanelEmit {
   // 的卡，当前预览跟着它换。对话栏是这条 socket 的家，面板自己听不到，所以往上报一
   // 声，面板据此立刻去问一次指针——而不是等下一次轮询（那要十几秒）。
   (e: 'preview-shown'): void
+  // 页面开着时，这段对话里实时来了一行任务交付（`lib/deliveryLine`），`taskId` 是那件任务。
+  // 打开时从历史读回来的、重连后重放的都不报：页面据此决定要不要当场打开它。
+  (e: 'delivery-arrived', taskId: string): void
   (e: 'turn-done'): void
   // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
   // turn_active 开，turn_finished / done / error 关），不是跟着它第一次动手

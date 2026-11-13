@@ -24,6 +24,7 @@ import { useEventListener } from '@vueuse/core'
 import { useErrorFade } from '../../components/room/composables/useErrorFade'
 import { useRoomSocket } from '../../components/room/composables/useRoomSocket'
 import { runRecordOf, streamAt, threadStatusOf } from '../../components/room/composables/useRunRecords'
+import { deliveryOf } from '../../lib/deliveryLine'
 import { renderNoticeMessage } from '../../lib/noticeText'
 import { ANNOUNCED, SNAPSHOT_RESOURCES } from '../chatPanelContract'
 import { applyRoomState } from '../useRoomResync'
@@ -168,6 +169,8 @@ export function usePanelSocket(deps: {
     const landing = deps.timeline.append(b)
     if (landing === 'known' || landing === 'above' || deps.history.reading() || b.author === deps.author) return
     if (b.kind === 'artifact') deps.emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
+    const delivery = deliveryOf(b)
+    if (delivery) deps.emit('delivery-arrived', delivery.taskId)
     if (landing === 'shown') deps.arrived().add(b.id)
     if ((landing === 'held' || !deps.atBottom.value) && b.kind !== 'event') deps.unseen.value.push(b.id)
   }

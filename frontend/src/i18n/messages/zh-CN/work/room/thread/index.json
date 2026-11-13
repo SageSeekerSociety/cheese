@@ -1,6 +1,6 @@
 {
+  "back": "返回",
   "backToThread": "返回支线",
-  "close": "关闭",
   "createFailed": "支线创建失败，稍后重试",
   "empty": "暂无支线",
   "emptyHint": "支线是从某条消息上分出来的一小段对话，聊完不打断主线。",
