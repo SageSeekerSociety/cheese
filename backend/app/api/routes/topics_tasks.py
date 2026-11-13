@@ -642,8 +642,10 @@ async def create_teammate_task(
 ) -> dict:
     """An AI teammate makes a task (`cheese_task(action=open)`) on someone's word, from the
     conversation it is in: the 支线 itself (``here``), or a new task that hangs
-    under the message the 支线 is under. A teammate whose own idea it is asks
-    first (`cheese_ask`), and the person who answers is who it does it for."""
+    under the message the 支线 is under. In a channel's main line it is always
+    a new task, hanging under the message that asked for it. A teammate whose
+    own idea it is asks first (`cheese_ask`), and the person who answers is who
+    it does it for."""
     place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
@@ -696,16 +698,12 @@ async def create_teammate_task(
     ):
         prior = await idem.stored_result(db, key)
         return ok(prior or {"skipped": True})
-    origin = (
-        await BlockRepository(db).get(place.thread.root_block_id)
-        if place.thread is not None
-        else None
-    )
     named = (body.owner_handle or "").strip().lstrip("@")
     if named and named not in await TopicMemberService(db).project_people(
         place.project_id, team=project_team
     ):
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
+    main_line = place.thread is None and place.task is None
     # What the person said that this turn answers is where the task came from;
     # in a 支线 that is usually a reply, not the message the 支线 hangs under.
     # The owner's word may have been given in their private chat with the
@@ -720,7 +718,14 @@ async def create_teammate_task(
         db,
         place.conversation_id,
         actor.handle,
-        main_line=place.thread is None and place.task is None,
+        main_line=main_line,
+    )
+    origin = (
+        await BlockRepository(db).get(place.thread.root_block_id)
+        if place.thread is not None
+        else asked
+        if main_line
+        else None
     )
     owner = (
         named

@@ -13,6 +13,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from tests.integration.conftest import (
+    join_project_team,
     open_task,
     post_message,
     post_project,
@@ -137,6 +138,9 @@ def test_an_at_for_a_teammate_not_in_the_room_is_plain_words(client):
     """@ 一位没坐在这间房里的 AI 队友不是点名：什么都不起，字面也不变成一个
     点得动的名字。坐在房间里的那位照常被点到。"""
     project = _project(client, "One seated, one not")
+    # Someone else in the project: a message that calls no seated teammate
+    # calls nobody.
+    join_project_team(client, project, "bob")
     seated = _agent(client, project, "planner", "规划师")
     elsewhere = _agent(client, project, "reviewer", "审稿人")
     topic = client.post(

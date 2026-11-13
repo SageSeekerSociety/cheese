@@ -46,46 +46,27 @@ describe('新手引导的后半程', () => {
     expect(guide.current.value?.key).toBe('reply')
   })
 
-  it('moves past the reply once the thread is open, and past the task once its page is open', () => {
+  it('moves past the reply once 芝士 has answered in the channel, and past the task once its page is open', () => {
     const guide = useProjectTour()
-    const facts = { ...none, asked: true }
-    noteFacts(facts)
+    const asked = { ...none, asked: true }
+    noteFacts(asked)
     guide.stop.value = at('reply')
-    guide.settle({ facts, has: onPage('timeline') })
+    guide.settle({ facts: asked, has: onPage('timeline') })
     expect(guide.current.value?.key).toBe('reply')
-    guide.settle({ facts, has: onPage('reply-thread', 'thread-pane') })
+    const answered = { ...asked, answered: true }
+    guide.settle({ facts: answered, has: onPage('timeline', 'agent-reply') })
     expect(guide.current.value?.key).toBe('confirm')
     guide.next()
-    guide.settle({ facts, has: onPage('task-page') })
+    guide.settle({ facts: answered, has: onPage('task-page') })
     expect(guide.current.value?.key).toBe('taskPage')
   })
 
-  it('a thread already turned into a task opens on the task page, and the reply step still moves on there', () => {
+  it('waits on the reply while 芝士 is still working, even with an earlier reply of its on the page', () => {
     const guide = useProjectTour()
-    const facts = { ...none, asked: true }
+    const facts = { ...none, asked: true, answered: true }
     noteFacts(facts)
     guide.stop.value = at('reply')
-    guide.settle({ facts, has: onPage('task-page') })
-    expect(guide.current.value?.key).toBe('confirm')
-  })
-
-  it('stays on the reply while 芝士 could not reply, even with the thread open', () => {
-    const guide = useProjectTour()
-    const facts = { ...none, asked: true }
-    noteFacts(facts)
-    guide.stop.value = at('reply')
-    guide.settle({ facts, has: onPage('reply-failed', 'thread-pane') })
-    expect(guide.current.value?.key).toBe('reply')
-    guide.settle({ facts, has: onPage('reply-thread', 'thread-pane') })
-    expect(guide.current.value?.key).toBe('confirm')
-  })
-
-  it('waits on the reply while 芝士 is still writing it, even with the thread open', () => {
-    const guide = useProjectTour()
-    const facts = { ...none, asked: true }
-    noteFacts(facts)
-    guide.stop.value = at('reply')
-    guide.settle({ facts, has: onPage('reply-coming', 'thread-pane') })
+    guide.settle({ facts, has: onPage('reply-coming', 'agent-reply') })
     expect(guide.current.value?.key).toBe('reply')
   })
 
@@ -134,8 +115,7 @@ describe('新手引导的后半程', () => {
       'composer-input',
       'composer-send',
       'timeline',
-      'reply-thread',
-      'thread-pane',
+      'agent-reply',
       'task-page',
       'page-workspace-overview'
     )
@@ -170,7 +150,7 @@ describe('导览这一站指哪里', () => {
     (name: string) =>
       anchors.includes(name) ? el(name) : null
 
-  it('确认那一站：支线已经转成任务、人在任务页上时，浮窗落在任务页上，不丢', () => {
+  it('确认那一站：人已经在任务页上时，浮窗落在任务页上，不丢', () => {
     const stop = resolveGuideStep(GUIDE_STEPS[at('confirm')], onPageEls('task-page'))
     expect(stop?.target).toBe(el('task-page'))
   })
@@ -198,9 +178,13 @@ describe('导览这一站指哪里', () => {
     expect(stop?.area).toBe(true)
   })
 
-  it('该出现的东西出了错时用重试那句', () => {
-    const stop = resolveGuideStep(GUIDE_STEPS[at('reply')], onPageEls('reply-failed'))
-    expect(stop?.text).toBe('textFailed')
+  it('芝士还在工作时，回复那一站指着工作那一行等，不说「回复了」', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('reply')], onPageEls('reply-coming', 'agent-reply'))
+    expect(stop?.target).toBe(el('reply-coming'))
+    expect(stop?.text).toBe('textWaiting')
+    const done = resolveGuideStep(GUIDE_STEPS[at('reply')], onPageEls('agent-reply'))
+    expect(done?.target).toBe(el('agent-reply'))
+    expect(done?.text).toBe('text')
   })
 
   it('一个能指的都没有时不出浮窗', () => {

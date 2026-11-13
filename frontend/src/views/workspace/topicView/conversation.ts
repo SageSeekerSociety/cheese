@@ -48,11 +48,12 @@ export function useTopicConversation(opts: {
 
   // ---- 支线 ----
   const channelThreads = useChannelThreads(() => (opts.place().taskId ? null : opts.place().topicId))
-  const { showThread, onOpenThread, openTaskPage, showAsTask, upgradeMessage } = useConversationOpening({
-    router,
-    place: opts.place,
-    markSeen: channelThreads.markSeen,
-  })
+  const { showThread, onOpenThread, openTaskPage, showAsTask, upgradeMessage, upgradeInColumn } =
+    useConversationOpening({
+      router,
+      place: opts.place,
+      markSeen: channelThreads.markSeen,
+    })
 
   const newThreadOpen = ref(false)
   const creatingThread = ref(false)
@@ -171,6 +172,7 @@ export function useTopicConversation(opts: {
     openTaskPage,
     showAsTask,
     upgradeMessage,
+    upgradeInColumn,
     newThreadOpen,
     creatingThread,
     canOpenThread,

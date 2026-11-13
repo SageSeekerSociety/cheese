@@ -49,7 +49,7 @@ from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
-from app.domain.thread.services import open_thread
+from app.domain.thread.services import open_thread, thread_of
 from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
@@ -299,12 +299,16 @@ async def tell_origin(
     *,
     task_teammate: TaskTeammate | None,
 ) -> None:
-    """Say ``content`` in the 支线 under the message ``task`` was made from,
-    opening it if nobody has replied there yet. It is said by the task's AI
-    teammate, as a reply: whoever took part in the discussion hears it, and the
-    line under the message shows it. A task made on its own, or from something
-    that is not a message in a live channel, has nowhere to say it; nor does a
-    task that is that 支线, turned into the task in place.
+    """Say ``content`` in the conversation ``task`` was opened from. It is said
+    by the task's AI teammate: whoever took part in the discussion hears it.
+
+    A task opened from something said in the channel's main line is told
+    there. One opened from a 支线 is told in the 支线 under the message it
+    hangs under (opened if nobody has replied there yet), as a reply the line
+    under the message shows. A task made on its own, or from something that
+    is not a message in a live channel, has nowhere to say it; nor does a task
+    that is a 支线 turned into the task in place: the discussion is the task's
+    own conversation, which the landing already speaks in.
 
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
@@ -343,17 +347,25 @@ async def _tell_origin(
     if teammate is None:
         return
     instance_id, _handle = teammate
-    thread = await open_thread(
-        session, origin.id, by=task.owner_handle or origin.author
-    )
-    if thread.id == task.id:
-        # The 支线 became this task: the discussion is the task's own
-        # conversation, which the landing already speaks in.
+    if await thread_of(session, task.id) is not None:
         return
+    source = (
+        await session.get(Block, task.source_block_id)
+        if task.source_block_id is not None
+        else None
+    )
+    in_main_line = source is not None and source.conversation_id == task.room_id
+    told_in = (
+        task.room_id
+        if in_main_line
+        else (
+            await open_thread(session, origin.id, by=task.owner_handle or origin.author)
+        ).id
+    )
     said = Block(
         id=uuid.uuid4(),
         project_id=task.project_id,
-        conversation_id=thread.id,
+        conversation_id=told_in,
         author=agent_instance_handle(instance_id),
         author_type=AuthorType.participant,
         kind=BlockKind.message,
@@ -365,7 +377,10 @@ async def _tell_origin(
     show_once_committed(
         session, said.conversation_id, {"type": "user_block", "block": _out(said)}
     )
-    show_once_committed(session, task.room_id, {"type": "state", "resource": "threads"})
+    if not in_main_line:
+        show_once_committed(
+            session, task.room_id, {"type": "state", "resource": "threads"}
+        )
 
 
 def _out(block) -> dict:
