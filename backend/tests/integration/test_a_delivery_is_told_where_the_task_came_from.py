@@ -21,7 +21,11 @@ from sqlalchemy import func, select
 from app.domain.agent.models import AgentTurn
 from app.domain.room_task.models import Task
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
-from tests.integration.conftest import post_message, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_message,
+    session_auth_headers,
+)
 from tests.integration.test_accept_pr import (
     _accept,
     _give_card_a_pr,
@@ -118,6 +122,44 @@ def test_handing_in_and_returning_are_told_in_the_main_line(client, app_world):
     assert "退回" in lines[1]["content"]
     assert "再短一点" not in lines[1]["content"]
     assert _turns(client, room) == turns
+
+
+def _card_on_rows(client, room: str, task_id: uuid.UUID, viewer: str) -> list[dict]:
+    """The card of ``task_id`` as each list a reader sees it on carries it: the
+    channel's open tasks, and the task's own page."""
+    listed = client.get(
+        f"/topics/{room}/tasks",
+        params={"status": "open", "limit": 0},
+        headers=session_auth_headers(viewer),
+    ).json()["data"]["data"]
+    page = client.get(
+        f"/topics/{task_id}/task", headers=session_auth_headers(viewer)
+    ).json()["data"]
+    [row] = [row for row in listed if row["id"] == str(task_id)]
+    return [row["card"], page["card"]]
+
+
+def test_a_card_waiting_for_review_names_its_reviewers_wherever_it_is_listed(
+    client, app_world
+):
+    """The channel's 「待你审阅」 reads whom a pending card waits on from the
+    list: every reviewer of it is named there, as on the task page, and the
+    task's owner who is not one is not."""
+    project = _make_project(client)
+    join_project_team(client, project, "carol")
+    room = _make_topic(client, project)
+    task_id = _opened_in_the_main_line(client, room)
+    r = client.post(
+        f"/topics/{delivery_task_id(client, room)}/accept-card",
+        headers=delivery_headers(client, room),
+        json={"change_subject": _SUBJECT, "reviewer_handles": ["bob", "carol"]},
+    )
+    assert r.status_code == 200, r.text
+
+    # alice owns the task and is not asked to review it.
+    for card in _card_on_rows(client, room, task_id, "alice"):
+        assert card["status"] == "pending"
+        assert sorted((card["reviewer"] or "").split("、")) == ["bob", "carol"]
 
 
 def _accepted_last_step(client, app_world) -> tuple[str, uuid.UUID]:

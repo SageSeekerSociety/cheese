@@ -189,7 +189,8 @@ describe('频道主线上「待你审阅」', () => {
     }
   }
   const tasks = [
-    task('t-new', '后交的', { id: 'c2', status: 'pending', reviewer: 'me', since: '2026-11-03T00:00:00Z' }),
+    // One card asks two people: either of them is asked.
+    task('t-new', '后交的', { id: 'c2', status: 'pending', reviewer: 'bob、me', since: '2026-11-03T00:00:00Z' }),
     task('t-old', '先交的', { id: 'c1', status: 'pending', reviewer: 'me', since: '2026-11-02T00:00:00Z' }),
     task('t-other', '等别人的', { id: 'c3', status: 'pending', reviewer: 'bob', since: '2026-11-01T00:00:00Z' }),
     task('t-done', '采纳过的', { id: 'c4', status: 'accepted', reviewer: 'me', since: '2026-11-01T00:00:00Z' }),
@@ -221,7 +222,8 @@ describe('频道主线上「待你审阅」', () => {
   })
 
   it('没有等我审阅的就没有这一条', async () => {
-    withTasks(tasks.filter((row) => row.card?.reviewer !== 'me' || row.card?.status !== 'pending'))
+    // Only bob's pending card and an accepted one of mine are left.
+    withTasks(tasks.filter((row) => ['t-other', 't-done'].includes(row.id)))
     const { queryByTestId } = render(Column, {
       props: { topic, members: [], topicList: [] },
       global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
