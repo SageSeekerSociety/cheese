@@ -38,6 +38,7 @@ import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue
 import { useElementSize } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
+import { provideAcceptCard } from '../composables/useAcceptCard'
 import { usePanelSplit } from '../composables/usePanelSplit'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTopicMemory } from '../composables/useTopicMemory'
@@ -61,6 +62,7 @@ import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
+import TopicAcceptCard from './TopicAcceptCard.vue'
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -134,6 +136,11 @@ const props = withDefaults(
     activity?: MemberActivityLine[]
     // 「支线」那一格里有我没读过的回复：页签上挂一个点。
     threadsNew?: boolean
+    // 在频道里审阅一件任务交上来的那一版（`taskId` 是它）：只有「改动」「预览」两格，开在
+    // 「改动」上，底部是这件任务的退回 / 采纳。采纳卡是这一栏自己的一份（页面上那一份是频道
+    // 的），「改动」页顶部和底部那一条读的都是它。页签不进地址，也不进命令面板：频道页上那
+    // 一栏工作面板还在，地址和命令是它的。
+    review?: boolean
   }>(),
   {
     taskId: null,
@@ -155,8 +162,23 @@ const props = withDefaults(
     agentHandle: null,
     members: () => [],
     activity: () => [],
+    review: false,
   }
 )
+// 审阅时这一栏的采纳卡（见 `review`）。一栏一份，换一件任务就换一栏（页面按任务给 key）。
+if (props.review) {
+  provideAcceptCard({
+    get topicId() {
+      return props.topic?.id ?? ''
+    },
+    get topicStatus() {
+      return props.topic?.status ?? ''
+    },
+    get taskId() {
+      return props.taskId
+    },
+  })
+}
 
 const emit = defineEmits<{
   /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
@@ -176,7 +198,7 @@ const emit = defineEmits<{
 // 同一份表画这条栏，一个名字只有一个出处。
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
 // 的），桌面上对话就在旁边那一栏，所以是总览。
-const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview'))
+const defaultTab = computed<TabKey>(() => (props.review ? 'changes' : props.withChat ? 'chat' : 'overview'))
 // 旧地址还带着 ?tab=doc / ?tab=tasks —— 两个 tab 都并进概览了，所以它们指的就是
 // 概览。链接不该因为我们合并了界面而失效。
 const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
@@ -451,14 +473,15 @@ function hasContent(key: TabKey): boolean {
 // 支线、文件和例行事务，其余几格都有。
 const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
 const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
+const REVIEW_TABS: ReadonlySet<string> = new Set(['changes', 'preview'])
 const tabs = computed(() =>
   workPanelTabs(props.withChat).filter((tab) =>
-    props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
+    props.review ? REVIEW_TABS.has(tab.key) : props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
   )
 )
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
-  tabs.value.map((tab) => ({
+  (props.review ? [] : tabs.value).map((tab) => ({
     id: `room.tab.${tab.key}`,
     title: t('navigation.palette.showTab', { tab: tab.label }),
     icon: tab.icon,
@@ -1002,6 +1025,7 @@ defineExpose({
           </template>
         </div>
       </ErrorBoundary>
+      <TopicAcceptCard v-if="review" :topic-id="topic.id" :task-id="taskId ?? undefined" :topic-status="topic.status" />
       <DocumentActions
         ref="docActions"
         :project-id="projectId ?? topic?.project_id ?? ''"

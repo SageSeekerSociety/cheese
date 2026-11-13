@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { RoomTask } from '@/cx_types'
 import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
 import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
@@ -6,9 +7,11 @@ import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChapters } from '@/composables/useChapters'
+import { usePageTitle } from '@/composables/usePageTitle'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { useTopicActions } from './topicView/actions'
@@ -25,6 +28,7 @@ import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import NewThreadDialog from '@/components/channel/NewThreadDialog.vue'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
+import DeliveryHead from '@/components/room/DeliveryHead.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskOverview from '@/components/task/TaskOverview.vue'
@@ -37,6 +41,8 @@ import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { VIEWING_CONTEXT } from '@/lib/viewingContext'
+import { queryClient } from '@/query/client'
+import { roomTaskQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
@@ -62,8 +68,17 @@ defineOptions({ name: 'TopicView' })
 const ThreadPane = defineAsyncComponent(() => import('@/views/workspace/ThreadPane.vue'))
 
 // `taskId`：地址指着这个房间里的一个任务时，画的是任务页。`threadId`：指着频道里的一条
-// 支线时，桌面上支线占右边那一半，手机上是一整页。
-const props = defineProps<{ projectId: string; topicId: string; taskId?: string; threadId?: string }>()
+// 支线时，桌面上支线占右边那一半，手机上是一整页。`reviewTaskId`：在频道里审阅一件任务，
+// 摆法和支线一样。
+const props = defineProps<{
+  projectId: string
+  topicId: string
+  taskId?: string
+  threadId?: string
+  reviewTaskId?: string
+}>()
+// 右边那一半此刻是支线或审阅，不是工作面板。
+const beside = computed(() => !!props.threadId || !!props.reviewTaskId)
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 const route = useRoute()
@@ -105,7 +120,7 @@ const panelState = useTopicPanelState({
   panes: panesRef,
   tab: panelTab,
   desktop: mdAndUp,
-  thread: computed(() => !!props.threadId),
+  thread: beside,
   setTab: (tab) => void router.replace({ query: { ...route.query, tab } }),
   showing: () => panelRef.value?.activeTab(),
   backToRoom,
@@ -170,6 +185,7 @@ const {
   showThread,
   onOpenThread,
   openTaskPage,
+  openTask,
   showAsTask,
   upgradeMessage,
   upgradeInColumn,
@@ -251,8 +267,49 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   openTopic,
   me: AUTHOR,
 })
+// ---- 在频道里审阅的那件任务（`reviewTaskId`）：页头写它的名字，右边那一栏是它的改动和预览 ----
+const reviewRead = useQuery(
+  computed(() => ({ ...roomTaskQuery(props.reviewTaskId ?? ''), enabled: !!props.reviewTaskId })),
+  queryClient
+)
+const reviewTask = computed<RoomTask | null>(() => (props.reviewTaskId ? reviewRead.data.value ?? null : null))
+const reviewHead = computed(() => ({ heading: reviewTask.value ? taskTitle(reviewTask.value) : '' }))
+// 这一页的标题是在审阅的那件任务（频道主线还在旁边，审阅是这一页正在做的事）。
+const pageTitle = usePageTitle()
+watch(
+  reviewHead,
+  ({ heading }) => {
+    if (heading) pageTitle.setDynamicTitle(heading, 'workspace-review')
+    else pageTitle.clearDynamicTitle('workspace-review')
+  },
+  { immediate: true }
+)
+onUnmounted(() => pageTitle.clearDynamicTitle('workspace-review'))
+const reviewPanel = computed(() => ({
+  review: true,
+  topic: selectedTopic.value,
+  taskId: props.reviewTaskId ?? null,
+  taskReadOnly: !reviewTask.value || reviewTask.value.status !== 'open',
+  taskHasBranch: reviewTask.value?.branch_name !== null,
+  activityTick: activityTick.value,
+  agentName: store.agentName,
+  agentHandle: reviewTask.value?.agent_handle ?? store.agentHandle,
+  members: store.members,
+  memberNames: memberNames.value,
+  topicList: store.topics,
+}))
+
 useScreenHeader(() => {
-  if (mdAndUp.value || props.threadId) return null
+  if (!mdAndUp.value && props.reviewTaskId) {
+    const reviewing = props.reviewTaskId
+    return {
+      content: {
+        component: DeliveryHead,
+        props: { ...reviewHead.value, bar: true, onOpenTask: () => openTaskPage(reviewing) },
+      },
+    }
+  }
+  if (mdAndUp.value || beside.value) return null
   const [component, binding] = props.taskId
     ? [TaskHeader, taskHeaderBinding.value]
     : [TopicHeader, topicHeaderBinding.value]
@@ -306,7 +363,7 @@ const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } 
   onReview,
   reloadAccept,
   loadSkills,
-  opening: { onOpenThread, openTaskPage, upgradeInColumn },
+  opening: { onOpenThread, openTask, upgradeInColumn },
   openTopic,
   panelRef,
   chatColumn,
@@ -392,6 +449,17 @@ void openPlace()
         @open-file="(path: string) => panelRef?.openFile?.(path)"
         @open-topic="openTopic"
         @mention-click="handleMentionClick"
+      />
+      <!-- Phone: reviewing a task is a whole page, ← back to the channel; its head is the top bar's content. -->
+      <WorkPanel
+        v-else-if="reviewTaskId && !mdAndUp"
+        :key="reviewTaskId"
+        class="flex-grow-1"
+        v-bind="reviewPanel"
+        @open-topic="openTopic"
+        @open-card="openTaskPage"
+        @mention-click="handleMentionClick"
+        @navigate="router.push($event)"
       />
       <div
         v-else
@@ -482,8 +550,26 @@ void openPlace()
             @open-topic="openTopic"
             @mention-click="handleMentionClick"
           />
+          <!-- Desktop: reviewing a task takes this half, like a thread: its head, then its 改动 and 预览. -->
+          <section
+            v-else-if="reviewTaskId && mdAndUp"
+            :key="reviewTaskId"
+            class="review-pane"
+            :aria-label="t('work.room.delivery.title')"
+            data-testid="review-pane"
+          >
+            <DeliveryHead v-bind="reviewHead" closable @open-task="openTaskPage(reviewTaskId)" @close="backToRoom" />
+            <WorkPanel
+              class="review-pane__panel"
+              v-bind="reviewPanel"
+              @open-topic="openTopic"
+              @open-card="openTaskPage"
+              @mention-click="handleMentionClick"
+              @navigate="router.push($event)"
+            />
+          </section>
           <WorkPanel
-            v-show="!(threadId && mdAndUp)"
+            v-show="!(beside && mdAndUp)"
             ref="panelRef"
             :submit-question="submitQuestion"
             :ask-personal="askPersonal"
@@ -673,6 +759,17 @@ void openPlace()
   background: var(--surface);
   /* Switching topics on a wide screen cross-fades this view only (lib/viewTransition.ts). */
   view-transition-name: topic-view;
+}
+.review-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface);
+}
+.review-pane__panel {
+  flex: 1;
+  min-height: 0;
 }
 .task-state {
   display: flex;

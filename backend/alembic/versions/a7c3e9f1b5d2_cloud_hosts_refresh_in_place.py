@@ -10,7 +10,7 @@ Both are additive: the release still serving while the migration runs never
 reads them, and the default (false, NULL) is how it treats every host now.
 
 Revision ID: a7c3e9f1b5d2
-Revises: e9d4b023c781
+Revises: 9aac1f78ad6d
 """
 
 from collections.abc import Sequence
@@ -21,7 +21,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "a7c3e9f1b5d2"
-down_revision: str | Sequence[str] | None = "e9d4b023c781"
+down_revision: str | Sequence[str] | None = "9aac1f78ad6d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
