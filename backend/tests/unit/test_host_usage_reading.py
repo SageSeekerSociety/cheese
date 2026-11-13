@@ -4,7 +4,7 @@
   whose values are in KiB, and so is its swap;
 - memory pressure is /proc/pressure/memory's ``some`` and ``full``, a minute
   and five across;
-- whether zswap is loaded is whether /sys/module/zswap is there;
+- whether zswap is on is what /sys/module/zswap/parameters/enabled says;
 - the CPU time its processes have taken is the cgroup root's ``usage_usec``;
 - each sandbox's memory, now and at most, its anonymous and file pages, its
   swap and its OOM kills, are reported under the name of the cgroup the
@@ -65,7 +65,8 @@ def test_a_machines_swap_and_pressure_are_read(kernel):
         "some avg10=2.40 avg60=1.10 avg300=0.30 total=1234\n"
         "full avg10=0.20 avg60=0.10 avg300=0.00 total=42\n"
     )
-    (kernel / "zswap").mkdir()
+    (kernel / "zswap" / "parameters").mkdir(parents=True)
+    (kernel / "zswap" / "parameters" / "enabled").write_text("Y\n")
 
     found = sandbox_home.machine()
 

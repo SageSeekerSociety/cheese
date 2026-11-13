@@ -16,16 +16,17 @@ import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
+import ReviewWaitingBar from '@/components/room/ReviewWaitingBar.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 import { artifactName } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
-import { topicTitle } from '@/lib/topicState'
+import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
+import { openRoomTasksQuery, roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
 import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -181,6 +182,22 @@ const madeHere = computed(() => {
     )
     .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
+// 频道主线上「待你审阅」那一条：这个频道里交了一版、等我审阅的任务，最早交上来的在前。
+// 读的是频道概览和侧栏那一份开着的任务清单，不另问。
+const mainLine = computed(() => !props.taskId && !props.threadId && !props.beside)
+const openTasks = useQuery(
+  computed(() => ({ ...openRoomTasksQuery(props.topic.id), enabled: mainLine.value })),
+  queryClient
+)
+const waitingForMe = computed(() => {
+  if (!mainLine.value) return []
+  const me = myHandle()
+  return (openTasks.data.value?.data ?? [])
+    .filter((row) => row.card?.status === 'pending' && (row.card.reviewer ?? '').split('、').includes(me))
+    .sort((a, b) => (a.card?.since ?? '').localeCompare(b.card?.since ?? ''))
+    .map((row) => ({ taskId: row.id, title: taskTitle(row) }))
+})
+
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
   mentionNames: props.memberNames ?? {},
@@ -279,6 +296,7 @@ defineExpose({
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
            见，但平时只占一行，不把对话挤到只剩几行。 -->
       <template #above-composer>
+        <ReviewWaitingBar v-if="mainLine && !rejecting" :items="waitingForMe" @open="emit('open-card', $event)" />
         <TopicAcceptCard
           v-if="!acceptElsewhere && !threadId"
           class="chat-dock"

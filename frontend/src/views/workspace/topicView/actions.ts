@@ -43,7 +43,8 @@ export function useTopicActions(opts: {
   /** 支线：打开一条、开任务页、把一条消息转成任务。 */
   opening: {
     onOpenThread: (block: Block) => void
-    openTaskPage: (taskId: string) => void
+    /** 对话里点开一件任务：频道主线上在右边审阅，别处去任务页。 */
+    openTask: (taskId: string) => void
     upgradeInColumn: (messageId: string) => void
   }
   openTopic: (topicId: string) => void
@@ -96,7 +97,7 @@ export function useTopicActions(opts: {
     'upgrade-message': opts.opening.upgradeInColumn,
     'open-thread': opts.opening.onOpenThread,
     'open-topic': opts.openTopic,
-    'open-card': opts.opening.openTaskPage,
+    'open-card': opts.opening.openTask,
     review: opts.onReview,
   }
 
