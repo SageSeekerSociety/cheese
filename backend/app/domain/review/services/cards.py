@@ -160,9 +160,6 @@ async def create_card(
     focus = clean_focus(focus)
     topic = await self._topic_or_404(topic_id)
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
-    # Filing writes in the task and at the conversation it came from: both
-    # named first, in the task lock order (`room_task.lock_order`).
-    await lock_task_for_change(self._session, task.id)
     if topic.status == TopicStatus.archived:
         raise ValidationError(say("topicArchivedNoReview"))
     # A task whose last delivery landed is over, even while its AI teammate is
@@ -262,6 +259,13 @@ async def create_card(
             hidden=await artifacts.hidden_from_room(self._session, topic.id),
         )
         await artifacts.describe(self._session, declared, about=about)
+    # Filing writes in the task and at the conversation it came from: both
+    # named first, in the task lock order (`room_task.lock_order`). Taken here,
+    # after the forge and machine reads above, so those seconds hold up no one
+    # writing in the task; read again under it, the task may have ended since.
+    await lock_task_for_change(self._session, task.id)
+    if task.status != TaskStatus.open or task.closing_since is not None:
+        raise ValidationError(say("taskEndedOrNoBranch"))
     card = await self._repo.add(
         topic_id=topic_id,
         task_id=task.id,
