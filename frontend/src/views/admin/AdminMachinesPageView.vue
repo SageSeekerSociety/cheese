@@ -138,8 +138,14 @@ function spec(h: MachineHost | WarmMachineRow): string {
   return t('admin.machines.spec', { cores: h.cores, memory: Math.round(h.memory_mb / 1024), disk: h.disk_gb })
 }
 
-/** 这一台此刻最该让人知道的一句：为什么坏、从什么时候起。 */
+/** 这一台此刻最该让人知道的一句：为什么坏、从什么时候起；留着停机留盘的沙箱时，再说留了几个、占多少盘。 */
 function hostNote(h: MachineHost): string {
+  const state = hostState(h)
+  if (!h.parked) return state
+  const parked = t('admin.machines.note.parked', { n: h.parked, size: gb(h.parked_bytes) })
+  return state ? `${state} · ${parked}` : parked
+}
+function hostState(h: MachineHost): string {
   if (h.phase === 'failed') return t('admin.machines.note.failed', { at: stamp(h.failed_at) })
   if (h.draining && h.draining_since) return t('admin.machines.note.draining', { for: since(h.draining_since) })
   if (h.phase === 'releasing') return t('admin.machines.note.releasing', { at: stamp(h.released_at) })
@@ -400,7 +406,13 @@ const failureNote = computed(() =>
           :label="t('admin.machines.kpi.slots')"
           :value="pool ? `${n(pool.used)} / ${n(pool.slots)}` : ''"
           :loading="first"
-          :note="pool ? t('admin.machines.kpi.slotsNote', { free: pool.free, min: pool.min_free }) : undefined"
+          :note="
+            pool
+              ? pool.parked
+                ? t('admin.machines.kpi.slotsNoteParked', { free: pool.free, min: pool.min_free, parked: pool.parked })
+                : t('admin.machines.kpi.slotsNote', { free: pool.free, min: pool.min_free })
+              : undefined
+          "
         />
         <AdminKpiCard
           :label="t('admin.machines.kpi.waiting')"

@@ -95,7 +95,11 @@ export interface MachineHost {
   memory_mb: number
   disk_gb: number
   slots: number
+  /** 占着位置的沙箱：停机留盘的不算。 */
   used: number
+  /** 停机留盘的沙箱个数，和它们的目录最近一次读到占了多少盘。 */
+  parked: number
+  parked_bytes: number
   created_at: string | null
   enrolled_at: string | null
   last_seen_at: string | null
@@ -144,6 +148,7 @@ export interface MachinesOverview {
     slots: number
     used: number
     free: number
+    parked: number
     min_free: number
     waiting: number
     oldest_wait_since: string | null

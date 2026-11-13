@@ -106,6 +106,7 @@
       "vms": "其中 {n} 台是整机虚拟机。",
       "slots": "沙箱槽位",
       "slotsNote": "空闲 {free} 格，池子至少留 {min} 格，不够就加一台",
+      "slotsNoteParked": "空闲 {free} 格，池子至少留 {min} 格，不够就加一台；另有 {parked} 个停机留盘，不占位置",
       "waiting": "等沙箱的 AI 队友",
       "waitingNote": "等得最久的已经 {for}",
       "failures": "provider 失败",
@@ -157,7 +158,8 @@
       "offline": "连接器已断开 {for}",
       "idle": "已空闲 {for}",
       "vm": "{project} 的整机虚拟机",
-      "draining": "正在滚动重建，已 {for}；等它空了就释放换新"
+      "draining": "正在滚动重建，已 {for}；等它空了就释放换新",
+      "parked": "停机留盘 {n} 个，占 {size} GB"
     },
     "when": {
       "waiting": "已等 {for}",
