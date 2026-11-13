@@ -66,8 +66,9 @@ from app.domain.machine.lifecycle import (
     thaw_if_asked,
     use_session_work,
 )
-from app.domain.machine.models import CloudHost
+from app.domain.machine.models import CloudHost, sandbox_image_ready
 from app.domain.machine.progress import publish_line
+from app.domain.machine.sandbox_images import image_for_session
 from app.domain.machine.sandbox_wait import (
     DISK_FULL,
     DISK_FULL_NOTICE,
@@ -479,7 +480,9 @@ async def _start_executor(
         except RuntimeError:
             # Installation resumes the same resource, never a tool call.
             running = {}
-        if launch.can_prepare(running, sandbox):
+        if launch.can_prepare(
+            running, sandbox, image=setup.get("CHEESE_SANDBOX_IMAGE")
+        ):
             return await execution.call(
                 lease,
                 "prepare",
@@ -613,7 +616,12 @@ async def restart_executor(db, row, lease):
         sandbox=await _sandboxed(chosen, db, lease["device_id"]),
         platform_machine=await _platform_machine(db, lease["device_id"]),
         setup=_executor_env(
-            {"CHEESE_ENVIRONMENT": json.dumps(environment)},
+            {
+                "CHEESE_ENVIRONMENT": json.dumps(environment),
+                "CHEESE_SANDBOX_IMAGE": await image_for_session(
+                    db, lease["device_id"], row.id
+                ),
+            },
             api=api,
             token=token,
             project_id=project.id,
@@ -1140,7 +1148,11 @@ async def _attempt(
             await db.commit()
             return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
         placed_s = time.monotonic() - placing
-        if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
+        if (
+            not cloud_host.device_id
+            or not hub.is_online(cloud_host.device_id)
+            or not sandbox_image_ready(cloud_host)
+        ):
             line = await pool.tell_waiting(session_id)
             await db.commit()
             await publish_line(topic_id, line)
@@ -1339,6 +1351,11 @@ async def _install(
             author=actor_handle,
             work_resource=work_resource,
         )
+        if platform_machine and sandbox:
+            setup["CHEESE_SANDBOX_IMAGE"] = await image_for_session(
+                db, device_id, session_id
+            )
+            await db.commit()
         disk_full_mb = None
         # On a person's own computer the room sees the runtime download
         # (`install_progress`); a Cloud machine's getting ready is the

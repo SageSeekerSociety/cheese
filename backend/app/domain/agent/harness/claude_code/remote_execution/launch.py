@@ -17,6 +17,7 @@ from app.domain.agent import (
     machine_tunnel,
     package_mirrors,
     preview_tunnel,
+    sandbox_image,
     toolchain,
 )
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -63,13 +64,20 @@ def refused(installed: dict) -> SandboxRefused | None:
     return SandboxRefused(json.loads(said[-1] if said else ""))
 
 
-def can_prepare(info, sandbox=None):
+_IMAGE_UNSPECIFIED = object()
+
+
+def can_prepare(info, sandbox=None, image=_IMAGE_UNSPECIFIED):
     """Whether the running executor that answered `info` can be prepared in
     place: it runs this release, and, when `sandbox` is given, runs in a
     sandbox exactly when asked to. One that does not is installed again, and
     the install replaces it once it is idle (`bootstrap.prepared`)."""
     return (
         (sandbox is None or bool(info.get("sandbox")) == bool(sandbox))
+        and (
+            image is _IMAGE_UNSPECIFIED
+            or (info.get("sandbox_image") or None) == (image or None)
+        )
         and "prepare" in info.get("capabilities", [])
         and not info.get("upgrading")
         and info.get("protocol_version") == runtime.PROTOCOL_VERSION
@@ -104,6 +112,7 @@ def _file_sources():
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
         "remote-execution/sandbox_host.py": Path(sandbox_host.__file__).read_text(),
+        "remote-execution/sandbox_image.py": Path(sandbox_image.__file__).read_text(),
         "remote-execution/confinement.py": Path(confinement.__file__).read_text(),
         **{
             name: (BACKEND / source).read_text()
@@ -142,6 +151,7 @@ def payload_for(
         if values.get("CHEESE_ENVIRONMENT")
         else None
     )
+    image = values.pop("CHEESE_SANDBOX_IMAGE", None)
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
         "toolchain_fonts": toolchain.fonts_pin(),
@@ -160,6 +170,7 @@ def payload_for(
         if sandbox
         else None,
         "platform_machine": platform_machine,
+        "sandbox_image": (image or None) if sandbox and platform_machine else None,
         "project": str(project_id),
         "resource": str(resource_id),
         "proxy_proof": hmac.new(

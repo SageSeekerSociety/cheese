@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -28,7 +29,7 @@ from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.agent import connector_build, toolchain
+from app.domain.agent import connector_build, sandbox_image, toolchain
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
@@ -43,6 +44,7 @@ logger = logging.getLogger("cheese.machine.enrollment")
 # One attempt should be slow enough to survive a cold download on a fresh
 # machine, and fast enough that a stuck one doesn't wedge the sweep.
 SSH_TIMEOUT_S = 180.0
+IMAGE_PREWARM_TIMEOUT_S = sandbox_image.PREWARM_TIMEOUT_S + SSH_TIMEOUT_S
 
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
@@ -76,7 +78,11 @@ SSH_OPTS = [
 
 # What a Linux connector places for its rooms' sandboxes whatever the system
 # has (`cli/internal/devenv`), and enrollment hands a cloud machine first.
-SANDBOX_TOOLS = ("bubblewrap", "host-tools")
+SANDBOX_TOOLS = (
+    "bubblewrap",
+    "host-tools",
+    *(entry[0] for entry in toolchain.CLOUD_PLACEMENTS),
+)
 
 
 class EnrollmentError(RuntimeError):
@@ -279,6 +285,22 @@ def bootstrap_script(
         if sandbox_disk
         else ""
     )
+    image = sandbox_image.default_image() if sandbox_disk else None
+    prewarm = (
+        "sudo -n install -D -o root -g root -m 0755 "
+        '"$HOME/.cheese/runtime/crane/crane" '
+        + shlex.quote(sandbox_image.CRANE)
+        + "\nsudo -n install -d -m 0755 /data/cheese-sandbox-images\n"
+        'sudo -n install -m 0644 "$HOME/.cheese/runtime/crane.sha256" /data/cheese-sandbox-images/crane.sha256'
+        + "\nsudo -n install -D -o root -g root -m 0755 "
+        '"$HOME/.cheese/runtime/sandbox-image.py" /usr/local/libexec/cheese-sandbox-image\n'
+        "sudo -n /usr/bin/python3 -I /usr/local/libexec/cheese-sandbox-image "
+        + shlex.quote(image["reference"])
+        + f" --keep {int(image['keep_old'])}"
+        + ' --host-helper "$(cat "$HOME/.cheese/runtime/sandbox-host.py")"'
+        if image
+        else ""
+    )
     return f"""set -eu
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
@@ -351,6 +373,7 @@ for tool in tmux git python3; do
     || {{ echo "$tool is missing and cheesehost could not place it" >&2; exit 1; }}
 done
 {data_disk}
+{prewarm}
 # A retried enrollment writes a new device identity. Starting an active service
 # leaves the old token in memory, so the room waits for a device that never joins.
 systemctl --user restart cheese
@@ -408,6 +431,10 @@ def bootstrap_digest(*, sandbox_disk: bool) -> str:
         device_id=_VERSION_PLACEHOLDER,
         sandbox_disk=sandbox_disk,
     )
+    if sandbox_disk:
+        script = script.replace(
+            sandbox_image.default_image()["reference"], _VERSION_PLACEHOLDER
+        )
     return hashlib.sha256(script.encode()).hexdigest()
 
 
@@ -621,14 +648,25 @@ async def run_bootstrap(
                 ) from exc
             digest = toolchain.ARTIFACTS[(tool, platform_key)].sha256
             placed, staged = f"{runtime}/{tool}", f"{runtime}/{tool}.ssh-new"
+            strip = 0 if tool == "crane" else 1
             await run(
                 *ssh,
                 f'set -e; mkdir -p "{runtime}"; rm -rf "{staged}"; '
                 f'mkdir -m 700 "{staged}"; '
-                f'tar -xzf - -C "{staged}" --strip-components=1; '
+                f'tar -xzf - -C "{staged}" --strip-components={strip}; '
                 f'rm -rf "{placed}"; mv "{staged}" "{placed}"; '
                 f'(umask 077; echo {digest} > "{placed}.sha256")',
                 stdin=archive,
+            )
+        if sandboxes:
+            await push(
+                Path(sandbox_image.__file__),
+                f"{footprint_root()}/runtime/sandbox-image.py",
+            )
+            await push(
+                Path(sandbox_image.__file__).parent
+                / "harness/claude_code/remote_execution/sandbox_host.py",
+                f"{footprint_root()}/runtime/sandbox-host.py",
             )
         command = [
             "ssh",
@@ -667,13 +705,12 @@ async def run_bootstrap(
             return bytes(output)
 
         try:
-            stdout = await asyncio.wait_for(collect(), timeout=SSH_TIMEOUT_S)
+            timeout = IMAGE_PREWARM_TIMEOUT_S if sandboxes else SSH_TIMEOUT_S
+            stdout = await asyncio.wait_for(collect(), timeout=timeout)
         except TimeoutError as exc:
             process.kill()
             await process.wait()
-            raise EnrollmentError(
-                f"bootstrap timed out after {SSH_TIMEOUT_S:.0f}s"
-            ) from exc
+            raise EnrollmentError(f"bootstrap timed out after {timeout:.0f}s") from exc
         except BaseException:
             if process.returncode is None:
                 process.kill()

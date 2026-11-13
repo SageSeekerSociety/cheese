@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import environment_runner
+from app.domain.agent import environment_runner, sandbox_image
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
@@ -40,6 +40,11 @@ from tests.support import bubblewrap, sandbox_disk
 
 HELPER = Path(sandbox_host.__file__)
 RUNNER = Path(environment_runner.__file__)
+
+
+@pytest.fixture(autouse=True)
+def image_lower(monkeypatch, tmp_path):
+    bubblewrap.image(monkeypatch, tmp_path)
 
 
 def _sandbox_host_runs() -> bool:
@@ -96,7 +101,12 @@ class Room:
         self.project, self.resource = uuid.uuid4(), uuid.uuid4()
         self.home = owner / ".cheese/home" / str(self.project) / str(self.resource)
         self.state = self.home / ".cheese/executor"
-        self.env = {"CHEESE_API": api, "CHEESE_TOKEN": "test", **(env or {})}
+        self.env = {
+            "CHEESE_API": api,
+            "CHEESE_TOKEN": "test",
+            "CHEESE_SANDBOX_IMAGE": sandbox_image.default_image()["reference"],
+            **(env or {}),
+        }
         self.capsys = capsys
         payload = self.payload()
         try:
@@ -726,7 +736,7 @@ def test_a_machine_keeps_a_quarter_of_its_memory_and_at_least_a_gib(
 
 
 @with_sandbox_host
-def test_a_sandbox_may_not_trace_nest_namespaces_or_use_io_uring(
+def test_a_sandbox_may_trace_but_not_nest_namespaces_or_use_io_uring(
     rooms, machine_service
 ):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
@@ -742,7 +752,7 @@ def test_a_sandbox_may_not_trace_nest_namespaces_or_use_io_uring(
         " errno(lambda: libc.syscall(nr, 8, 0)))"
     ).split()
 
-    assert errors == ["1", "1", "38"]
+    assert errors == ["0", "1", "38"]
     assert room.bash("echo ok")["stdout"].strip() == "ok"
 
 

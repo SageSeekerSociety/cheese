@@ -2,7 +2,7 @@
 
 Cheese's **Cloud** compute (see `where-a-turn-runs.md`) is a sandbox per agent session,
 on a pool of hosts the platform opens on [MicroCloud](https://github.com/micro-teams/micro-cloud).
-MicroCloud is Lg's team's project; cheese is one tenant of it. This file is the
+MicroCloud is maintained by the cheese team itself; cheese is one tenant of it. This file is the
 cheese-side view: what we ask it for, what its answers mean, how the pool is kept, and the
 procedure for getting a change into MicroCloud when cheese needs one. MicroCloud's own
 architecture (Proxmox, LXC vs VM, its built-in AI channels) is in its README and is not
@@ -67,6 +67,16 @@ sweep's `grow` puts a fresh host in its place with the current version. At most 
 drains at a time, and no host is drained while the others' free slots cannot hold what it
 carries — a rebuild never interrupts a running sandbox, it only waits it out. Demand mode
 does not rebuild (a host that empties is released and replaced by demand anyway).
+
+### 云端 sandbox 的系统环境
+
+标准 sandbox 的系统包由 cheese 仓库的 `backend/sandbox/image/Dockerfile` 定义，CI 构建 OCI 镜像，`default.json` 固定 digest。MicroCloud VM 模板提供主机内核及主机运行环境；给标准 sandbox 增加系统软件包只修改 cheese 镜像配方。整台 VM 规格继续使用 VM 模板自己的系统。
+
+主机接入及 warm-host 准备在数据盘就绪后先拉取、解包默认镜像，完成后才可接单。发布新默认 digest 时，已有镜像的主机继续用其当前 digest 接单，后台准备完成后再更新主机引用；已有 sandbox 及停放恢复的 sandbox 保持其生命周期镜像。主机和 warm host 的引用记录在 `cloud_hosts.sandbox_image`、`warm_machines.sandbox_image`，会话引用记录在 `sandbox_homes.sandbox_image`；镜像变化不触发 VM 模板滚动重建。
+
+共享 rootfs 缓存在数据盘。容量按实测 rootfs、tar 大小和 `keep_old` 计算缓存准备峰值，加 10% 余量并向上取整；当前为 8 GB。每个 sandbox 槽位还预留一份镜像大小的空间，当前为 2 GB，以覆盖生命周期内仍被引用的旧镜像。overlay upper/work 位于自己的 home，与 home 共用原有 XFS project quota。缓存生命周期、预算算式、固定工具分发和用户设备范围见 [云端 sandbox 镜像](remote-execution.md#云端-sandbox-镜像)。
+
+云主机在预热前安装 root helper，为 connector 预留 `/etc/subuid`、`/etc/subgid` 的同一个 65536-ID 区段。内部 root 映射到 connector，内部 `1..65535` 的 UID/GID 映射到这个主机共用区段。解包时按映射保留镜像归属，同一 digest 的所有 sandbox 共用 lower；删除 home 和带有服务用户归属的 upper 由 root helper 完成。主机管理不得把预留区段分配给普通账户，也不得在保留缓存或 home 时更换它。用户自行接入的设备不预留该范围。
 
 ### Each sandbox's disk has a limit of its own
 

@@ -44,7 +44,7 @@
 #                        value is worse than too high — 10 minutes on a five-file
 #                        change ended every group as `timeout` and produced nothing
 #   OCR_WALL_CLOCK       hard ceiling in minutes on the whole run (25), enforced by
-#                        `timeout` in this script rather than by OCR: at it OCR is
+#                        a process supervisor here rather than by OCR: at it OCR is
 #                        sent SIGTERM, which OCR treats as a graceful stop — it
 #                        writes the findings it has and the coverage ledger, then
 #                        exits. A run cut this way is a partial result, not a run
@@ -132,18 +132,12 @@ WALL_CLOCK_MIN=$(read_ceiling "$WALL_CLOCK_MIN")
 # Run the CLI under the wall clock, writing the run's result to $1 and its own
 # output to the log $2. Everything after those two is the command.
 #
-# The run gets a session of its own: `setsid` puts the wrapper, the native
-# binary and the git subprocesses it spawns in one process group, which is what
-# lets the wall clock reach all of them. Anything left in this shell's group
-# would outlive the ceiling and keep billing. The signal is SIGTERM because OCR
-# handles it — it writes the findings it has and the coverage ledger before
-# exiting, which is the whole point of having a ceiling at all.
-#
-# 0 disables the ceiling, for a caller that knows its own deadline and wants
-# OCR's own accounting to be the only thing that stops it. Without
-# --foreground, `timeout` runs the child in a process group of its own and
-# signals the group, so nothing under the CLI outlives the ceiling;
-# --kill-after fires only when the grace period runs out.
+# The native CLI and its children get their own process group. Send TERM once:
+# OCR treats a second signal as a forced exit without waiting for the report flush.
+# GNU timeout can signal both its child and the group, and the npm launcher
+# forwards another TERM, so neither is on this shutdown path. After TERM, once
+# the CLI exits or its grace expires, KILL remaining children so they cannot
+# continue making API calls.
 #
 # Prints a note on stdout when the ceiling is what ended the run, so the caller
 # can say so: a run cut this way is a partial result, not a failed one.
@@ -159,18 +153,66 @@ run_ocr() {
     # bash's arithmetic is integer-only.
     local ceiling
     ceiling=$(awk -v m="$WALL_CLOCK_MIN" 'BEGIN { printf "%d", m * 60 }')
-    # -w: wait for the child even when setsid had to fork (it does when the
-    # caller is already a process-group leader), so the status below is the
-    # run's, not setsid's.
-    if setsid -w timeout --signal=TERM --kill-after="$GRACE_S" "${ceiling}s" \
-         "$@" >"$out" 2>"$log"; then
+    if python3 - "$ceiling" "$GRACE_S" "$@" >"$out" 2>"$log" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import time
+
+process = subprocess.Popen(sys.argv[3:], start_new_session=True)
+grace = float(sys.argv[2])
+deadline = time.monotonic() + float(sys.argv[1])
+stopping = False
+interrupted = 0
+forced = False
+
+def send_group(signum):
+    try:
+        os.killpg(process.pid, signum)
+    except ProcessLookupError:
+        pass
+
+def stop(signum, frame):
+    global stopping, interrupted, deadline
+    if not stopping:
+        stopping = True
+        interrupted = signum
+        deadline = time.monotonic() + grace
+        send_group(signal.SIGTERM)
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+while process.poll() is None:
+    if time.monotonic() >= deadline:
+        if stopping:
+            forced = True
+            print(
+                "ocr-review: cancellation grace expired; killing process group"
+                if interrupted else "ocr-review: grace expired; killing process group",
+                file=sys.stderr,
+            )
+            send_group(signal.SIGKILL)
+            process.wait()
+            break
+        stop(0, None)
+    time.sleep(0.05)
+if stopping:
+    send_group(signal.SIGKILL)
+    sys.exit(137 if forced else 128 + interrupted if interrupted else 124)
+sys.exit(process.returncode if process.returncode >= 0 else 128 - process.returncode)
+PY
+    then
       status=0
     else
       status=$?
     fi
     case "$status" in
-      124) printf ' (closed at the %sm wall clock; OCR wrote what it had)' "$WALL_CLOCK_MIN" ;;
-      137) printf ' (closed at the %sm wall clock; it ignored SIGTERM and was killed, so the partial result may be incomplete)' "$WALL_CLOCK_MIN" ;;
+      124) printf ' (closed at the %sm wall clock; CLI exited within the grace period)' "$WALL_CLOCK_MIN" ;;
+      137)
+        if grep -qFx 'ocr-review: grace expired; killing process group' "$log"; then
+          printf ' (closed at the %sm wall clock; it ignored SIGTERM and was killed, so the partial result may be incomplete)' "$WALL_CLOCK_MIN"
+        fi ;;
     esac
   fi
   return "$status"
@@ -178,8 +220,9 @@ run_ocr() {
 
 # Whether a run that exited non-zero still produced a review worth keeping.
 #
-# 124 is timeout's own status: the ceiling sent SIGTERM and OCR came back with
-# what it had. A 137 means it had to be killed, which does not prove the ceiling
+# 124 means the wall clock initiated shutdown and the CLI exited within the
+# grace period; it does not guarantee a report. A 137 means it was killed,
+# which does not prove the ceiling
 # did it — the OOM killer yields the same status — and what it wrote may be
 # truncated. Either way the file has to be a report, not just parseable JSON:
 # OCR writes an object carrying a coverage manifest, and a stray `{}` is not a
@@ -403,7 +446,7 @@ install_ocr() {
 # protects the default path, not a caller's own choice. `--self-test` uses it to
 # exercise the wall clock without a 54 MB download.
 if [ -z "${OCR_CLI:-}" ]; then
-  CLI="$CACHE/node_modules/.bin/ocr"
+  CLI="$BIN"
   if [ ! -x "$BIN" ]; then
     install_ocr
   fi
@@ -417,11 +460,9 @@ if [ -z "${OCR_CLI:-}" ]; then
     [ "$ACTUAL_SHA" = "$PINNED_SHA" ] \
       || die "binary sha256 $ACTUAL_SHA does not match the pinned $PINNED_SHA"
   fi
-  # The hash above covers the native binary. What actually runs is the JS wrapper
-  # in the package, which picks that binary and execs it, so this is the other half
-  # of the pin: the installed package's own version, read from npm's metadata. It
-  # is a version rather than a hash — the wrapper changes with the release, and its
-  # bytes under one version number are the registry's to keep honest.
+  # Keep package metadata consistent with the checked native binary. Run that
+  # binary directly: the npm launcher's signal forwarding can make a graceful
+  # stop look like the second signal that forces OCR to exit before flushing.
   INSTALLED_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).version)' \
     "$CACHE/node_modules/@alibaba-group/open-code-review/package.json" 2>/dev/null || true)"
   [ "$INSTALLED_VERSION" = "$VERSION" ] \
