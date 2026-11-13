@@ -6507,6 +6507,23 @@ def _checkout() -> Path:
     return target
 
 
+#: How long each step of the last `_task_worktree` took, in seconds: waiting
+#: for the repository lock, starting from the host's copy, fetching from the
+#: forge and checking out, giving the host what was fetched, and preparing the
+#: dependencies. A step that did not run is absent. `cheese worktree` reports
+#: them when the platform asks (`CHEESE_CHECKOUT_TIMINGS`, `task_checkout`).
+_CHECKOUT_STEPS: dict[str, float] = {}
+
+
+@contextlib.contextmanager
+def _checkout_step(name: str):
+    began = monotonic()
+    try:
+        yield
+    finally:
+        _CHECKOUT_STEPS[name] = round(monotonic() - began, 3)
+
+
 def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
@@ -6521,7 +6538,8 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     # Native subagents can request worktrees concurrently. Serialize creation
     # so an interrupted clone cannot be mistaken for a complete repository.
     with (cache / f"{project}.lock").open("a") as lock:
-        _lock(lock)
+        with _checkout_step("lock"):
+            _lock(lock)
         # A checkout already on the task's branch and wired to its forge is
         # used as it is: the forge round trips below were most of what opening
         # it again cost (dev, 2026-10-12..17: a reopen within ten minutes took
@@ -6530,9 +6548,12 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         # fetch` brings them up to date.
         if not _opened_as_left(task_dir, data):
             if not repo.exists():
-                _seed_from_host(repo)
-            _open_from_forge(repo, task_dir, data)
-            _give_to_host(repo, data["base"])
+                with _checkout_step("seed"):
+                    _seed_from_host(repo)
+            with _checkout_step("fetch"):
+                _open_from_forge(repo, task_dir, data)
+            with _checkout_step("give"):
+                _give_to_host(repo, data["base"])
         marker = Path(
             _git_task(task_dir, "rev-parse", "--git-path", "cheese-task.json")
         )
@@ -6596,9 +6617,10 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         wanted = _prepared_from(task_dir, config)
         if reinstall or not _still_prepared(task_dir, stamp, wanted):
             stamp.unlink(missing_ok=True)
-            result = subprocess.run(
-                [sys.executable, str(runner), "task", str(task_dir)]
-            )
+            with _checkout_step("deps"):
+                result = subprocess.run(
+                    [sys.executable, str(runner), "task", str(task_dir)]
+                )
             if result.returncode:
                 # Again: another open's run may have finished in between.
                 stamp.unlink(missing_ok=True)
@@ -8121,7 +8143,10 @@ def main() -> None:
     a = parser.parse_args()
 
     if a.cmd == "worktree":
-        print(_task_worktree(a.task_id, reinstall=a.prepare))
+        opened = _task_worktree(a.task_id, reinstall=a.prepare)
+        if os.environ.get("CHEESE_CHECKOUT_TIMINGS"):
+            print("cheese-timings " + json.dumps(_CHECKOUT_STEPS), file=sys.stderr)
+        print(opened)
     elif a.cmd == "checkout":
         print(_checkout())
     elif a.cmd == "sync":

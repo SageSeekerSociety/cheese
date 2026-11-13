@@ -33,6 +33,8 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
     disk_gb: 40,
     slots: 5,
     used: 1,
+    parked: 0,
+    parked_bytes: 0,
     created_at: '2026-10-12T08:00:00Z',
     enrolled_at: '2026-10-12T08:02:00Z',
     last_seen_at: NOW,
@@ -103,6 +105,7 @@ function overview(
       slots: 5,
       used: 1,
       free: 4,
+      parked: 0,
       min_free: 2,
       waiting: 0,
       oldest_wait_since: null,
@@ -213,6 +216,14 @@ describe('机器', () => {
     const { getByText } = mount({ overview: page })
     expect(getByText(/Preparing a sandbox \(3\)|准备沙箱（3 次）/)).toBeTruthy()
     expect(getByText(/(total|合计) 12 ?(s|秒).*(executor|装执行器) 9 ?(s|秒)/)).toBeTruthy()
+  })
+
+  it('停机留盘的沙箱不占位置：主机和池子分开说留了几个、占多少盘', () => {
+    const { queryByText } = mount({
+      overview: overview({ parked: 3 }, [host({ parked: 3, parked_bytes: 4.5e9 })]),
+    })
+    expect(queryByText(/3 parked, 4\.5 GB|停机留盘 3 个，占 4\.5 GB/)).not.toBeNull()
+    expect(queryByText(/3 parked take no slot|另有 3 个停机留盘/)).not.toBeNull()
   })
 
   it('点开一台宿主机，看见它上面的沙箱', async () => {

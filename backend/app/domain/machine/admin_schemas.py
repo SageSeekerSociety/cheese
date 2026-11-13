@@ -71,6 +71,8 @@ class MachineHostOut(BaseModel):
     disk_gb: int
     slots: int
     used: int
+    parked: int
+    parked_bytes: int
     created_at: str | None
     enrolled_at: str | None
     last_seen_at: str | None
@@ -112,6 +114,7 @@ class MachinePoolOut(BaseModel):
     slots: int
     used: int
     free: int
+    parked: int
     min_free: int
     waiting: int
     oldest_wait_since: str | None
