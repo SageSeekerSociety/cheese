@@ -15,8 +15,9 @@ from aiohttp import web
 
 from app.core import content_review
 from app.core.config import settings
-from app.core.content_review import TextKind, review_text
+from app.core.content_review import TextKind, review_image, review_text
 from app.core.errors import UnprocessableEntityError
+from tests.support.content_review import Green
 
 
 @pytest.fixture
@@ -59,3 +60,40 @@ async def test_the_real_client_asks_the_service_and_acts_on_its_answer(
     await review_text(TextKind.NAME, ["小明"])
     with pytest.raises(UnprocessableEntityError):
         await review_text(TextKind.PUBLIC_TEXT, ["招新 BANNED"])
+
+
+@pytest.fixture
+async def upload_bucket(green: Green, monkeypatch) -> AsyncIterator[list[bytes]]:
+    """A local server where the upload token says the service's bucket is, as
+    the real OSS client reaches it; yields what was stored there."""
+    stored: list[bytes] = []
+
+    async def store(request: web.Request) -> web.Response:
+        stored.append(await request.read())
+        return web.Response(headers={"ETag": '"local"'})
+
+    app = web.Application()
+    app.router.add_put("/{name:.*}", store)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    green.oss_endpoint = f"http://127.0.0.1:{port}"
+    # The stand-in stores pictures itself; this test keeps the real upload.
+    monkeypatch.setattr(content_review, "_put_for_review", real_put_for_review)
+    try:
+        yield stored
+    finally:
+        await runner.cleanup()
+
+
+real_put_for_review = content_review._put_for_review
+
+
+async def test_a_picture_is_stored_where_the_upload_token_says(
+    upload_bucket: list[bytes],
+) -> None:
+    await review_image(b"a picture")
+
+    assert upload_bucket == [b"a picture"]
