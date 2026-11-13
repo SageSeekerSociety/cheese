@@ -123,5 +123,7 @@
   "mainChecksFailed": "合并后检查未通过：{checks}。{agent} 会在这一步一起修复",
   "mainChecksFailedReopened": "合并后检查未通过：{checks}。任务已重新打开，由 {agent} 修复",
   "deployedTo": "已部署到 {environment}",
-  "deployFailedTo": "部署到 {environment} 失败"
+  "deployFailedTo": "部署到 {environment} 失败",
+  "taskFiledForReview": "「{title}」已提交审阅",
+  "taskReturned": "{who} 退回了「{title}」"
 }

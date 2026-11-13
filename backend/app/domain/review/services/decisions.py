@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, say
+from app.domain.identity.actor import acted_by
 from app.domain.membership.services import MemberService
 from app.domain.project_permissions import Permission
 from app.domain.review import (
@@ -23,9 +24,11 @@ from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
 )
+from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import heard, progress
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -455,6 +458,13 @@ async def reject(
         raise ValidationError(say("reviewEndedNoReturn"))
     if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("returnReviewerOnly"))
+    # A return writes in the task and where it came from: both named first, in
+    # the task lock order (`room_task.lock_order`).
+    returned = (
+        await lock_task_for_change(self._session, card.task_id)
+        if card.task_id is not None
+        else None
+    )
 
     await self._cancel_queued_accept(card)
     card.status = AcceptStatus.rejected
@@ -465,6 +475,19 @@ async def reject(
     card.decided_at = decided = datetime.now(UTC)
     await _back_to_work(self, card, at=decided)
     notes.record(card, None, note)
+    # Where the task came from hears that the version was returned; why stays
+    # in the task, where the work is redone.
+    if returned is not None:
+        await tell_origin(
+            self._session,
+            returned,
+            say(
+                "taskReturned",
+                who=acted_by(decided_by, by_assistant=by_assistant),
+                title=said_title(returned),
+            ),
+            task_teammate=self._task_teammate,
+        )
 
     # Topic stays active on rejection.
     await self._session.flush()

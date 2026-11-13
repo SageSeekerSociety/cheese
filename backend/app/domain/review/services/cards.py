@@ -33,10 +33,12 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import progress
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -158,6 +160,9 @@ async def create_card(
     focus = clean_focus(focus)
     topic = await self._topic_or_404(topic_id)
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
+    # Filing writes in the task and at the conversation it came from: both
+    # named first, in the task lock order (`room_task.lock_order`).
+    await lock_task_for_change(self._session, task.id)
     if topic.status == TopicStatus.archived:
         raise ValidationError(say("topicArchivedNoReview"))
     # A task whose last delivery landed is over, even while its AI teammate is
@@ -299,6 +304,21 @@ async def create_card(
     # reported before it is over.
     progress.clear(task)
     await self._announce_filed(topic, card, task)
+    # Where the task came from hears that a version is in for review: one line
+    # and the card it filed, as filed. The card's state is told elsewhere.
+    await tell_origin(
+        self._session,
+        task,
+        say("taskFiledForReview", title=said_title(task)),
+        task_teammate=self._task_teammate,
+        refers={
+            "delivery": {
+                "card_id": str(card.id),
+                "subject": card.change_subject or card.deliverable_name,
+                "version": len(existing) + 1,
+            }
+        },
+    )
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)
