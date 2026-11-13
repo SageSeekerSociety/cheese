@@ -60,6 +60,7 @@ DEPENDENCIES = (
     ("cli/go.sum", {"go"}),
     ("frontend/pnpm-lock.yaml", {"pnpm"}),
     ("frontend/package.json", {"pnpm"}),
+    ("frontend/pnpm-workspace.yaml", {"pnpm"}),
 )
 
 # Files that exist before the first push, so a delete and a rename have
@@ -497,10 +498,12 @@ class WorkflowTests(unittest.TestCase):
         for name in JOBS:
             with self.subTest(job=name):
                 job = job_block(self.text, name)
-                self.assertEqual(
-                    concurrency_field(job, "group"),
-                    f"warm-caches-{name}-${{{{ github.ref }}}}",
-                )
+                # A matrix job's legs each get their own group, or one leg
+                # waits behind the other and a newer push can replace it.
+                own = f"warm-caches-{name}-${{{{ github.ref }}}}"
+                if "matrix:" in job:
+                    own += "-${{ matrix.runner }}"
+                self.assertEqual(concurrency_field(job, "group"), own)
                 self.assertEqual(concurrency_field(job, "cancel-in-progress"), "false")
 
     def test_an_exact_cache_hit_skips_the_install_and_nothing_else_does(self):

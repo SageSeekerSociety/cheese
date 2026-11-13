@@ -50,6 +50,7 @@ on:
       - cli/go.sum
       - frontend/pnpm-lock.yaml
       - frontend/package.json
+      - frontend/pnpm-workspace.yaml
       - .github/workflows/warm-caches.yml
       # The selector and its test: a change to either can change which jobs a
       # push warms, so it re-plans against everything.
@@ -382,10 +383,17 @@ jobs:
   pnpm:
     needs: plan
     if: always() && !cancelled() && needs.plan.outputs.pnpm != 'false'
-    runs-on: ubuntu-latest
+    # Both architectures: the key carries `runner.arch`, and frontend.yml's jobs
+    # run on arm64 while e2e.yml's run on x64. Warming x64 alone left every
+    # frontend job installing from nothing (only an X64 key existed, 2026-11-13).
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     concurrency:
-      group: warm-caches-pnpm-${{ github.ref }}
+      group: warm-caches-pnpm-${{ github.ref }}-${{ matrix.runner }}
       cancel-in-progress: false
     defaults:
       run:
