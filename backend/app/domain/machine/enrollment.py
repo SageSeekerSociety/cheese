@@ -272,11 +272,18 @@ def sandbox_disk_gb(output: str) -> int:
 
 
 def bootstrap_script(
-    *, origin: str, token: str, device_id: str, sandbox_disk: bool
+    *,
+    origin: str,
+    token: str,
+    device_id: str,
+    sandbox_disk: bool,
+    identity: bool = True,
 ) -> str:
     """What runs on the machine. Writes the cli's config, then connects.
     With ``sandbox_disk``, first sets up the data disk a pool host keeps its
-    sandboxes' homes on (``DATA_DISK``); a whole VM runs none.
+    sandboxes' homes on (``DATA_DISK``); a whole VM runs none. Without
+    ``identity`` the config the machine has is kept: what a host brought up
+    to date in place runs (`host_refresh`), the same machine to the platform.
 
     The connector is already on the machine: ``run_bootstrap`` put it there
     over the same SSH connection before this runs.
@@ -337,16 +344,21 @@ def bootstrap_script(
         if image
         else ""
     )
-    return f"""set -eu
-mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
-export PATH="$HOME/.local/bin:$PATH"
-# The credential the device flow would have stored. umask first: this file is
+    credential = (
+        f"""# The credential the device flow would have stored. umask first: this file is
 # the machine's identity to the platform.
 umask 077
 cat > "$HOME/.config/cheese/config.json" <<'CHEESE_CONFIG_EOF'
 {config}
 CHEESE_CONFIG_EOF
-# claude — the agent itself. A machine with no claude, or one too old, does not
+"""
+        if identity
+        else "umask 077\n"
+    )
+    return f"""set -eu
+mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
+export PATH="$HOME/.local/bin:$PATH"
+{credential}# claude — the agent itself. A machine with no claude, or one too old, does not
 # fail here: it enrolls cleanly, reports healthy, and then every topic assigned
 # to it never starts, because the launcher refuses a build below the floor.
 # A loud failure now beats a silent one per topic later (#489, #501 are the
@@ -447,9 +459,22 @@ echo "cheese.service active"
 """
 
 
-#: Characters of an image version kept: wide enough that two versions do not
-#: collide by accident, short enough to read on the admin page.
+#: Characters of each half of an image version (`host_image_version`): wide
+#: enough that two versions do not collide by accident, short enough to read
+#: on the admin page.
 IMAGE_VERSION_CHARS = 16
+
+
+def same_machine(recorded: str | None, current: str) -> bool:
+    """Whether a host recorded as ``recorded`` is the machine a host created
+    now would be, its enrollment script aside. A version from before the two
+    halves (16 characters) or none at all says nothing of that."""
+    return (
+        recorded is not None
+        and len(recorded) == 2 * IMAGE_VERSION_CHARS
+        and recorded[:IMAGE_VERSION_CHARS] == current[:IMAGE_VERSION_CHARS]
+    )
+
 
 #: What stands in for the parts of the script that name ONE machine (its
 #: origin, token and device), so a version can be taken of what every machine
@@ -480,7 +505,80 @@ def host_image_version(
     """What a host created now would be made of, as one value a host row keeps
     and the sweep compares it against: the offering and its template, the size
     the machine gets, its login user, and the script it enrolls with. Change any
-    of those and a host enrolled before is out of date, due to be rolled."""
+    of those and a host enrolled before is out of date, due to be rolled.
+
+    Two halves: the machine (`machine_version`) and then the script. A host
+    whose machine half still matches needs only the script run again, which
+    it gets where it is (`host_refresh`); any other needs a new machine."""
+    machine = machine_version(
+        offering, cores=cores, memory_mb=memory_mb, disk_gb=disk_gb
+    )
+    script = bootstrap_digest(sandbox_disk=True)[:IMAGE_VERSION_CHARS]
+    return machine + script
+
+
+def machine_version(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> str:
+    """The machine half of a host's image version: what only a new machine
+    changes — the offering and its template, the size, the login user."""
+    payload = {
+        "offering": [
+            offering.get(key)
+            for key in (
+                "id",
+                "machineTypeName",
+                "zoneName",
+                "templateName",
+                "dataDiskGb",
+            )
+        ],
+        "spec": [int(cores), int(memory_mb), int(disk_gb)],
+        "user": settings.microcloud_login_user,
+        # The provider re-bakes a template under the same name (MicroCloud
+        # keeps `templateName` and makes a new image behind it), so nothing
+        # above changes when the image does: this does, bumped by hand.
+        "template_epoch": settings.cloud_host_template_epoch,
+    }
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]
+
+
+async def current_host_image_version(client: MicroCloudClient | None = None) -> str:
+    """The version a host created right now would record: the pool's offering
+    today, the size it asks for today, and the script it would enroll with.
+    Reads the provider, so call it with no lock held."""
+    return (await current_host_versions(client))[0]
+
+
+async def current_host_versions(
+    client: MicroCloudClient | None = None,
+) -> tuple[str, str]:
+    """``current_host_image_version``, and what a host made of the same
+    things recorded before the version had two halves (`legacy_image_version`).
+    Reads the provider, so call it with no lock held."""
+    offering = await pick_offering(client or MicroCloudClient())
+    spec = effective_spec(
+        offering,
+        cores=settings.microcloud_default_cores,
+        memory_mb=settings.microcloud_default_memory_mb,
+        disk_gb=settings.microcloud_default_disk_gb,
+    )
+    size = {
+        "cores": spec["cores"],
+        "memory_mb": spec["memoryMb"],
+        "disk_gb": spec["diskGb"],
+    }
+    return host_image_version(offering, **size), legacy_image_version(offering, **size)
+
+
+def legacy_image_version(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> str:
+    """The one-digest version hosts recorded before it had two halves. A
+    host whose recorded version equals this for today's settings is made of
+    exactly what a host created now would be: it is given today's version
+    as it is, rather than rebuilt to learn what it already is."""
     payload = {
         "offering": [
             offering.get(key)
@@ -495,32 +593,10 @@ def host_image_version(
         "spec": [int(cores), int(memory_mb), int(disk_gb)],
         "user": settings.microcloud_login_user,
         "bootstrap": bootstrap_digest(sandbox_disk=True),
-        # The provider re-bakes a template under the same name (MicroCloud
-        # keeps `templateName` and makes a new image behind it), so nothing
-        # above changes when the image does: this does, bumped by hand.
         "template_epoch": settings.cloud_host_template_epoch,
     }
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]
-
-
-async def current_host_image_version(client: MicroCloudClient | None = None) -> str:
-    """The version a host created right now would record: the pool's offering
-    today, the size it asks for today, and the script it would enroll with.
-    Reads the provider, so call it with no lock held."""
-    offering = await pick_offering(client or MicroCloudClient())
-    spec = effective_spec(
-        offering,
-        cores=settings.microcloud_default_cores,
-        memory_mb=settings.microcloud_default_memory_mb,
-        disk_gb=settings.microcloud_default_disk_gb,
-    )
-    return host_image_version(
-        offering,
-        cores=spec["cores"],
-        memory_mb=spec["memoryMb"],
-        disk_gb=spec["diskGb"],
-    )
 
 
 def _last_result(state: RetryCallState):

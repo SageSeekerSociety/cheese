@@ -68,6 +68,20 @@ drains at a time, and no host is drained while the others' free slots cannot hol
 carries — a rebuild never interrupts a running sandbox, it only waits it out. Demand mode
 does not rebuild (a host that empties is released and replaced by demand anyway).
 
+The version has two halves, the machine (offering, template, size, login user,
+`CLOUD_HOST_TEMPLATE_EPOCH`) and the enrollment script, 16 characters each. A host whose
+machine half still matches, and that is not past the fallback age, is not rebuilt but brought
+up to date where it is (`host_refresh`, `cloud_hosts.refresh_in_place`; off with
+`CLOUD_HOST_REFRESH_IN_PLACE=false`). It drains the same way, except that its frozen sandboxes
+are parked rather than destroyed; once nothing but parked sandboxes is on it, the sweep sends
+the enrollment script to it through its connector, with the machine's own config kept, and
+runs it as a transient `systemd-run --user` unit so the connector's restart does not end it
+(`~/.cheese/refresh/`). When the run exits 0 the host records today's version and takes
+sandboxes again, its homes, package stores, repository copies and parked sandboxes intact; a
+run that fails, does not start or outlasts 40 minutes turns the host over to the rebuild. A
+host recorded before the two halves whose one-digest version equals today's for the same
+settings (`enrollment.legacy_image_version`) is given today's version as it is.
+
 ### 云端 sandbox 的系统环境
 
 标准 sandbox 的系统包由 cheese 仓库的 `backend/sandbox/image/Dockerfile` 定义，CI 构建 OCI 镜像，`default.json` 固定 digest。MicroCloud VM 模板提供主机内核及主机运行环境；给标准 sandbox 增加系统软件包只修改 cheese 镜像配方。整台 VM 规格继续使用 VM 模板自己的系统。

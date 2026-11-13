@@ -688,3 +688,30 @@ def test_parked_homes_past_their_hosts_budget_go_oldest_first(icy, monkeypatch):
 
     assert freeze_sweep(icy)["destroyed"] == 1
     assert home_row(icy, seat) is None
+
+
+def test_a_host_updated_in_place_parks_its_frozen_sandboxes_instead_of_deleting(
+    icy,
+):
+    """A host being brought up to date where it is (`host_refresh`) keeps its
+    sandboxes' homes: a frozen one is parked, not destroyed, while a host
+    being rebuilt destroys it at once."""
+    seat, home, device = a_seat_working(icy)
+
+    async def drain():
+        async with icy.client.test_request_factory() as db:
+            await db.execute(
+                update(CloudHost)
+                .where(CloudHost.device_id == device)
+                .values(draining_since=datetime.now(UTC), refresh_in_place=True)
+            )
+            await db.commit()
+
+    run(icy, drain)
+    freeze_sweep(icy)
+
+    row = home_row(icy, seat)
+    assert row is not None and row.parked_at is not None
+    asked = [action for (_, action) in actions(icy)]
+    assert "park" in asked and "destroy" not in asked
+    assert (home / "room" / "notes.md").read_text() == "not committed anywhere\n"

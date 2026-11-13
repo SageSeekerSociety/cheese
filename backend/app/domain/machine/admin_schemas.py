@@ -84,6 +84,7 @@ class MachineHostOut(BaseModel):
     image_outdated: bool | None
     draining: bool
     draining_since: str | None
+    refresh_in_place: bool
     enroll_attempts: int
     enroll_error: str | None
     usage: HostUsageOut | None
