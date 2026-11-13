@@ -110,7 +110,7 @@
     "vee-validate": "^4.15.1",
     "virtua": "^0.52.10",
     "vue": "3.5.42",
-    "vue-i18n": "^9.14.5",
+    "vue-i18n": "^11.4.19",
     "vue-router": "^4.5.1",
     "vuetify": "^3.13.5",
     "vuetify-sonner": "^0.3.21",
