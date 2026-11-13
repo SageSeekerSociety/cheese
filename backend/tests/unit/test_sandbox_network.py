@@ -429,7 +429,7 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     fill(room)
 
-    result = room.bash("echo more >> big; echo exit=$?")
+    result = room.bash("head -c 1G /dev/zero >> big; echo exit=$?")
 
     assert "No space left on device" in result["stdout"] + result["stderr"]
     assert "exit=1" in result["stdout"]
@@ -437,7 +437,7 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
 
 
 def fill(room: "Room") -> None:
-    """The room's disk, 953 MiB here, filled to the last block."""
+    """Write past the room's 953 MiB disk limit."""
     result = room.bash("head -c 1G /dev/zero > big")
     assert "No space left on device" in result["stdout"] + result["stderr"], result
 
@@ -467,7 +467,8 @@ def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     fill(room)
 
-    result = room.bash("echo more >> big")
+    # A small append can reuse blocks already charged to the quota.
+    result = room.bash("head -c 1G /dev/zero >> big")
     # The same command through the shell a session's own build runs it in
     # (`shell_prefix`), which reads the command's end from the executor.
     shell = {"subtype": "shell", "command_id": "full-disk"}
@@ -478,7 +479,7 @@ def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
             **shell,
             "operation": "start",
             "kind": "sh",
-            "body": "echo more >> big",
+            "body": "head -c 1G /dev/zero >> big",
             "cwd": str(room.home / "room"),
             "env": {},
             "merge": True,
