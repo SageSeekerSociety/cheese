@@ -445,8 +445,10 @@ async def repository_data(
         raise GatewayUnavailableError(say("forgeRepositoryUnavailable"))
     if release_session:
         await release_read_session(session)
-    token, _ = await tokens.installation_token()
     try:
+        # The mint is itself a call to GitHub, so it fails the same ways the
+        # read does and is answered the same way.
+        token, _ = await tokens.installation_token()
         async with forge_client(timeout=30) as client:
             response = await client.get(
                 f"{binding.api_url.rstrip('/')}/repos/{binding.repo}{path}",
@@ -461,6 +463,8 @@ async def repository_data(
         raise GatewayUnavailableError(say("forgeTimeout")) from exc
     except httpx.RequestError as exc:
         raise GatewayUnavailableError(say("forgeUnreachable")) from exc
+    except GitHubAppError as exc:
+        raise GatewayUnavailableError(say("forgeRepositoryUnavailable")) from exc
     if response.status_code == 404:
         return None
     if forge_quota.rate_limited(response):
