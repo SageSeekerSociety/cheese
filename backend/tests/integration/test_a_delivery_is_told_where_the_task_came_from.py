@@ -124,6 +124,31 @@ def test_handing_in_and_returning_are_told_in_the_main_line(client, app_world):
     assert _turns(client, room) == turns
 
 
+def test_the_return_line_names_who_returned_it_without_mentioning_them(
+    client, app_world
+):
+    """A ``<@handle>`` in a message tells that person, and the room draws it as
+    an @ that notified them. Nobody is told by the line saying who returned a
+    version, so it names them in plain words, in every language it renders in."""
+    room = _make_topic(client, _make_project(client))
+    task_id = _opened_in_the_main_line(client, room)
+    returned = client.post(
+        f"/accept-cards/{_file(client, room)}/reject",
+        json={"note": "", "decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert returned.status_code == 200, returned.text
+
+    [line] = [
+        line
+        for line in _told(client, room, task_id)
+        if line["meta"]["i18n"]["content"]["key"] == "taskReturned"
+    ]
+    assert "alice" in line["content"]
+    assert "<@" not in line["content"]
+    assert "<@" not in str(line["meta"]["i18n"]["content"])
+
+
 def _card_on_rows(client, room: str, task_id: uuid.UUID, viewer: str) -> list[dict]:
     """The card of ``task_id`` as each list a reader sees it on carries it: the
     channel's open tasks, and the task's own page."""
