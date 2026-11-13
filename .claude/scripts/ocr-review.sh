@@ -187,7 +187,11 @@ while process.poll() is None:
     if time.monotonic() >= deadline:
         if stopping:
             forced = True
-            print("ocr-review: grace expired; killing process group", file=sys.stderr)
+            print(
+                "ocr-review: cancellation grace expired; killing process group"
+                if interrupted else "ocr-review: grace expired; killing process group",
+                file=sys.stderr,
+            )
             send_group(signal.SIGKILL)
             process.wait()
             break
