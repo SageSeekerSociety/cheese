@@ -53,7 +53,7 @@ export interface HostUsage {
   memory_pressure_some_avg60: number | null
   memory_pressure_full_avg10: number | null
   memory_pressure_full_avg60: number | null
-  /** 是否加载了 zswap。 */
+  /** zswap 是否打开（内核带了它也要打开才算）。 */
   zswap: boolean | null
   /** 两次读数之间占满了几成核（0–1）；只读到一次时为 null。 */
   cpu_busy: number | null

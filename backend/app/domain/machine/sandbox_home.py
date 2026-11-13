@@ -307,7 +307,15 @@ def machine() -> dict:
     pressure = _pressure(PRESSURE_MEMORY)
     if pressure is not None:
         found["memory_pressure"] = pressure
-    found["zswap"] = ZSWAP.is_dir()
+    # On, not only built in: a kernel that has zswap keeps it off until
+    # something turns it on (the enrollment does, `enrollment.DATA_DISK`).
+    try:
+        found["zswap"] = (ZSWAP / "parameters/enabled").read_text().strip() in {
+            "Y",
+            "1",
+        }
+    except OSError:
+        found["zswap"] = False
     usage = _number(CGROUP_ROOT / "cpu.stat", "usage_usec")
     if usage is not None:
         found["cpu_usage_usec"] = usage
