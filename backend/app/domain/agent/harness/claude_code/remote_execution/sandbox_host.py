@@ -377,6 +377,7 @@ def subordinate_ids(uid, gid):
             if (mapping["uid"], mapping["gid"]) != (uid, gid) or not (
                 available(mapping["base"]) and reserved(mapping["base"])
             ):
+                # i18n-exempt: root helper diagnostic emitted on stderr during namespace setup
                 raise Refused("the host's recorded subordinate IDs have changed")
             return mapping
         candidates = sorted(
@@ -433,6 +434,7 @@ def userns():
             os.setuid(uid)
             libc = ctypes.CDLL(None, use_errno=True)
             if libc.unshare(0x10000000) != 0:
+                # i18n-exempt: root helper diagnostic emitted on stderr during namespace setup
                 raise OSError(ctypes.get_errno(), "unshare user namespace")
             os.write(announced, b"1")
             os.read(proceed, 1)
@@ -445,6 +447,7 @@ def userns():
     descriptor = None
     try:
         if os.read(ready, 1) != b"1":
+            # i18n-exempt: root helper diagnostic emitted on stderr during namespace setup
             raise Refused("could not create the sandbox user namespace")
         base = mapping["base"]
         Path(f"/proc/{pid}/uid_map").write_text(f"0 {uid} 1\n1 {base + 1} 65535\n")

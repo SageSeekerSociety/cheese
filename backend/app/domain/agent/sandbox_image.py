@@ -92,6 +92,7 @@ def namespace():
 def enter_namespace(descriptor):
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.setns(descriptor, 0x10000000) != 0:
+        # i18n-exempt: host bootstrap diagnostic, stdlib-only module
         raise OSError(ctypes.get_errno(), "setns user namespace")
     os.setgroups([])
     os.setgid(0)

@@ -994,7 +994,7 @@ def user_namespaces_advice():
     return "sandboxNoUserNamespaces"
 
 
-def record_sandbox(owner, home, release):
+def record_sandbox(owner, home, release, *, cloud=False):
     """Record, outside the room, that it runs in a sandbox started from
     `release`. The teardown and the environment reset run outside the sandbox;
     this is how they know to run only what is in the release store, and to
@@ -1004,6 +1004,11 @@ def record_sandbox(owner, home, release):
     temporary = marker.with_name(marker.name + "." + uuid.uuid4().hex)
     temporary.write_text(str(release))
     temporary.replace(marker)
+    cloud_marker = marker.with_suffix(".cloud")
+    if cloud:
+        cloud_marker.touch()
+    else:
+        cloud_marker.unlink(missing_ok=True)
 
 
 def record_sandbox_process(owner, home, pid):
@@ -1640,7 +1645,7 @@ def configure_idle(payload):
             if config["sandbox"]:
                 if bwrap is None:
                     bwrap = sandbox_tools(release, platform_machine=True)
-                record_sandbox(Path.home(), home, release)
+                record_sandbox(Path.home(), home, release, cloud=platform_machine)
                 # WSL runs a Windows program through this socket, outside every
                 # sandbox; the directory it is in is hidden too (`confinement.HIDDEN_MOUNTS`).
                 env = {k: v for k, v in env.items() if k != "WSL_INTEROP"}

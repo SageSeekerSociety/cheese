@@ -259,6 +259,7 @@ def proc_index(paths: list[Path]) -> set:
                 ["sudo", "-n", SANDBOX_HOST, "index-home", path.name, str(path)]
             )
             if result.returncode:
+                # i18n-exempt: runs on the machine; cleanup diagnostic for its log
                 raise RuntimeError(
                     "sandbox home could not be indexed: " + result.stderr
                 )
@@ -830,7 +831,7 @@ def cloud_home(path: Path) -> bool:
         sys.platform == "linux"
         and Path(SANDBOX_HOST).exists()
         and path.parent.parent.name == "home"
-        and sandbox_marker(path).is_file()
+        and sandbox_marker(path).with_suffix(".cloud").is_file()
     )
 
 
@@ -840,6 +841,7 @@ def remove_tree(path: Path) -> None:
             ["sudo", "-n", SANDBOX_HOST, "remove-home", path.name, str(path)]
         )
         if result.returncode:
+            # i18n-exempt: runs on the machine; cleanup diagnostic for its log
             raise RuntimeError("sandbox home could not be removed: " + result.stderr)
         return
 
@@ -1573,6 +1575,7 @@ def main() -> None:
         # Last: until the room's directories are gone, they are a sandboxed
         # room's to have written.
         sandbox_marker(home).unlink(missing_ok=True)
+        sandbox_marker(home).with_suffix(".cloud").unlink(missing_ok=True)
         print(json.dumps({"removed": True, "kept": kept}))
     elif action == "tasks":
         # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.
