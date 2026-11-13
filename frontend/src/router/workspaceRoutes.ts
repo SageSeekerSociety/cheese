@@ -100,6 +100,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-topic' },
     },
     {
+      // 在频道里审阅一件任务交上来的那一版：同一个组件——桌面上频道主线还在左边，审阅占右边
+      // 那一半；手机上是一整页，← 回到频道。地址里只有任务的编号。
+      name: 'workspace-review',
+      path: `channels/:topicId${NUMBER_OR_ID}/review/:reviewTaskId${NUMBER_OR_ID}`,
+      component: () => import('@/views/workspace/TopicView.vue'),
+      props: addressProps,
+      meta: { hideTabs: true, backTo: 'workspace-topic' },
+    },
+    {
       // 一个频道的全部任务就是项目的全部任务带上这个频道的筛选：发出去的旧地址落到那里。
       path: 'topics/:topicId/tasks',
       redirect: (to) => ({

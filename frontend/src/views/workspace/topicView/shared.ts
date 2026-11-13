@@ -9,6 +9,8 @@ export interface TopicPlace {
   topicId: string
   taskId?: string
   threadId?: string
+  /** 在频道右边审阅的那件任务。 */
+  reviewTaskId?: string
 }
 
 /** 工作面板往回够的那几处：它自己画自己的，但有几件事只有它做得了。 */

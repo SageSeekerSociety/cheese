@@ -36,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
-from app.core.sentences import say
+from app.core.sentences import say, with_keys
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent
@@ -122,19 +122,46 @@ async def delivery_landed(
             closes=True,
         )
     await session.flush()
-    await tell_origin(
-        session,
-        task,
-        say("taskStepLanded", title=said_title(task), pr=pr_number)
-        if goes_on and pr_number is not None
-        else say("taskStepLandedNoPr", title=said_title(task))
-        if goes_on
-        else say("taskLanded", title=said_title(task), pr=pr_number)
-        if pr_number is not None
-        else say("taskLandedNoPr", title=said_title(task)),
-        task_teammate=task_teammate,
-    )
+    # The last step says nothing at the origin now: the task's ending is said
+    # there once, when it closes (`tell_origin_ended`), whichever way it does.
+    if goes_on:
+        await tell_origin(
+            session,
+            task,
+            _step_landed(task, pr_number),
+            task_teammate=task_teammate,
+        )
     return True
+
+
+def _step_landed(task: Task, pr_number: int | None) -> str:
+    """The origin's line for a step that landed with the task going on."""
+    if pr_number is not None:
+        return say("taskStepLanded", title=said_title(task), pr=pr_number)
+    return say("taskStepLandedNoPr", title=said_title(task))
+
+
+async def tell_origin_ended(
+    session: AsyncSession, task: Task, *, task_teammate: TaskTeammate | None
+) -> None:
+    """Say at ``task``'s origin how it ended, once it is closed: its write-up
+    when it has one; that it was accepted, when its last delivery landed and
+    nobody wrote it up (the write-up was given up on, or ran out of time);
+    otherwise that it was closed. Every path that closes a task calls this, so
+    the conversation the task came from always hears the end."""
+    if task.conclusion:
+        content = say(
+            "taskCompleted", title=said_title(task), conclusion=task.conclusion
+        )
+    elif task.accepted_at is not None:
+        content = (
+            say("taskLanded", title=said_title(task), pr=task.pr_number)
+            if task.pr_number is not None
+            else say("taskLandedNoPr", title=said_title(task))
+        )
+    else:
+        content = say("taskClosed", title=said_title(task))
+    await tell_origin(session, task, content, task_teammate=task_teammate)
 
 
 async def go_on_while_working(
@@ -210,6 +237,14 @@ async def _go_on_if_asked(
         task.closing_since = None
         await _go_on(
             session, task, base_branch=base, record_instruction=record_instruction
+        )
+        # Its landing said nothing at the origin, as a last step's does; it is
+        # a step now, and the origin hears it as one.
+        await tell_origin(
+            session,
+            task,
+            _step_landed(task, task.pr_number),
+            task_teammate=task_teammate,
         )
         await session.commit()
     return True
@@ -298,6 +333,7 @@ async def tell_origin(
     content: str,
     *,
     task_teammate: TaskTeammate | None,
+    refers: dict | None = None,
 ) -> None:
     """Say ``content`` in the conversation ``task`` was opened from. It is said
     by the task's AI teammate: whoever took part in the discussion hears it.
@@ -310,11 +346,16 @@ async def tell_origin(
     that is a 支线 turned into the task in place: the discussion is the task's
     own conversation, which the landing already speaks in.
 
+    ``refers`` is what else the line points at, besides the task, kept on it
+    as it was said: a delivery line names the card and the version it filed.
+
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
     try:
         async with session.begin_nested():
-            await _tell_origin(session, task, content, task_teammate=task_teammate)
+            await _tell_origin(
+                session, task, content, task_teammate=task_teammate, refers=refers
+            )
     except Exception:  # a courtesy line never undoes a landing
         logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
 
@@ -325,6 +366,7 @@ async def _tell_origin(
     content: str,
     *,
     task_teammate: TaskTeammate | None,
+    refers: dict | None,
 ) -> None:
 
     if task.upgraded_from_block_id is None:
@@ -370,7 +412,11 @@ async def _tell_origin(
         author_type=AuthorType.participant,
         kind=BlockKind.message,
         content=str(content),
-        meta={"task_result": str(task.id)},
+        # The sentence's key goes with it, so each reader sees it in their own
+        # language (`with_keys`).
+        meta=with_keys(
+            {"task_result": str(task.id), **(refers or {})}, content=content
+        ),
     )
     session.add(said)
     await session.flush()

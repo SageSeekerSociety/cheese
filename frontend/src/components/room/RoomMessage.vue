@@ -28,6 +28,7 @@ import {
 } from '../../lib/blockDisplay'
 import { fileIcon, hasPagePreview, previewCanShowInRoom, suffixOf } from '../../lib/fileKind'
 import { MCP_APP_MIME } from '../../lib/mcpAppBridge'
+import { noticeText } from '../../lib/noticeText'
 import { toldByMessage } from '../../lib/refChip'
 import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
@@ -240,6 +241,10 @@ const {
 // edited, so each one told its person (drawn as the @chip), unless a
 // members-only channel could not reach them.
 const told = computed(() => toldByMessage(props.refs))
+// What the message says, in the reader's language: a line the platform wrote for
+// a teammate — a task telling where it came from how it is going (`task_result`)
+// — carries its sentence's key; anything a person or a teammate wrote is its own words.
+const said = computed(() => (props.block.meta?.task_result ? noticeText(props.block) : props.block.content))
 
 // 这道题问的是别人、不是我：频道里收成一行，点开才是整张卡。问到我自己的照整张卡
 // 画——我正要作答。判据在 `lib/askGroups`，和谁答得上这道题是同一条。
@@ -481,13 +486,7 @@ const askOpen = ref(false)
           <!-- 人说的话和芝士的一样按 Markdown 画：输入框里写成代码的，发出去也是代码。
                单个回车照样是换行（as="chat"）。还没落库的那条（正在写、正在送）不带
                「复制」：它的代码块还在长。 -->
-          <MarkdownView
-            class="im-text md-content"
-            :source="block.content"
-            as="chat"
-            :names="told"
-            :copy-code="!outgoing"
-          />
+          <MarkdownView class="im-text md-content" :source="said" as="chat" :names="told" :copy-code="!outgoing" />
           <!-- Fade at the cut edge, so a folded reply reads as "there is more" rather than "it ends here". -->
           <div v-if="clamped" class="fold-fade" aria-hidden="true" />
         </div>
