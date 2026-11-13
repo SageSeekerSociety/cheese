@@ -1,10 +1,9 @@
 """Send one prepared turn, with explicit transport and lifecycle effects."""
 
-import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -113,7 +112,6 @@ class FailedRetirement(Protocol):
 class SendEffects:
     post_system_event: SystemEvent
     consume_hook_event: HookEventConsumer
-    known_commits: Callable[[uuid.UUID, uuid.UUID], Awaitable[set[str] | None]]
     register_input: InputRegistration
     open_interval: IntervalOpening
     retire_failed: FailedRetirement
@@ -184,19 +182,6 @@ async def send_prepared(
             ),
         )
 
-    # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
-    # but deliberately NOT awaited here: git_log ensures the repo exists, and
-    # on a cold project that is a git init plus a base commit. Awaited in
-    # front of the provider, that delay is charged to the start of every
-    # turn, and a turn cancelled inside the window dies before it can store
-    # its session id. What it measures only becomes commits at the
-    # checkpoint, so finishing the read any time before turn end is soon
-    # enough. Both backends need it, and the hooks backend returns from this
-    # function long before its turn ends — so it is started once here and
-    # carried on the work state rather than read twice in two places.
-    known_commits = asyncio.ensure_future(
-        effects.known_commits(project_id, prepared.room_id)
-    )
     marked_work_ids: list[uuid.UUID] = []
 
     def _register_work(marked_work_id: uuid.UUID) -> None:
@@ -226,7 +211,6 @@ async def send_prepared(
                 user_text=prompt_text,
                 started_at=datetime.now(UTC),
                 agent_instance_handle=prepared.agent_handle,
-                known_commits=known_commits,
             )
             return
         state.pending_ids.update(consumed_ids)

@@ -5,11 +5,6 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.domain.agent.event_lines import (
-    _change_summary_meta,
-    _Changeset,
-    _format_change_summary,
-)
 from app.domain.agent.queries import _agent_handle
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
@@ -74,32 +69,4 @@ async def _persist_room_event(
         inner_id=inner_id,
         author=author,
         at=at,
-    )
-
-
-async def _persist_change_summary(
-    sessions: async_sessionmaker,
-    live: LiveWork,
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    turn_id: uuid.UUID | None,
-    changeset: _Changeset,
-) -> dict | None:
-    """Land 「这一轮改了 N 个文件」 in the room timeline.
-
-    This one goes in the ROOM, not just 现场 (spec §8.5 变更提醒). What 芝士
-    changed is the one thing about a turn that is nowhere else in the
-    conversation: the doc panel lights up on its own and the accept card
-    speaks for itself, but "this turn touched these files" was only ever a
-    grey line in a drawer nobody has open."""
-    return await _persist_room_event(
-        sessions,
-        live,
-        project_id=project_id,
-        topic_id=topic_id,
-        content=_format_change_summary(changeset.files),
-        meta=_change_summary_meta(changeset),
-        turn_id=turn_id,
-        author_type=AuthorType.platform,  # 平台自己数出来的，不是芝士说的
     )

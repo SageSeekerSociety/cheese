@@ -15,7 +15,6 @@ Turn intake, transport steps, durable writes and live state have separate owners
 import asyncio
 import logging
 import uuid
-from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,18 +30,6 @@ from app.domain.agent.chat_lifecycle import TurnLifecycle
 from app.domain.agent.chat_live_input import LiveInput
 from app.domain.agent.chat_places import ConversationPlaces
 from app.domain.agent.compute import ComputePool
-
-# 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
-# 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面
-# 带 noqa 的几个本文件不用 —— 它们是被搬走的落库那几步的零件，测试仍然从
-# chat.py 导它们。
-from app.domain.agent.event_lines import (
-    _CHANGE_FILES_LISTED,  # noqa: F401 — 搬走的常量，这里仍然导得出来
-    _change_summary_meta,  # noqa: F401 — 测试仍从 chat.py 导它
-    _Changeset,  # noqa: F401 — 测试仍从 chat.py 导它
-    _diff_file_stats,  # noqa: F401 — 测试仍从 chat.py 导它
-    _format_change_summary,  # noqa: F401 — 测试仍从 chat.py 导它
-)
 from app.domain.agent.gateway import LlmGateway
 
 # 兼容门面：这一轮的模型与它的用量账（准入前解析模型/环境/网关 key，轮次结束后把
@@ -113,18 +100,11 @@ from app.domain.agent.reads import Report
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-
-# Compose the actual changeset/event owners with this root's session capability.
-from app.domain.agent.room_events import (
-    _known_commits,
-    _turn_changeset,
-)
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 from app.domain.agent.turn.intake.assistant import AssistantMessages
 from app.domain.agent.turn.intake.completion import TurnCompletion
-from app.domain.agent.turn.intake.events import _persist_change_summary
 from app.domain.agent.turn.intake.hooks import HookEvents
 from app.domain.agent.turn.intake.human import HumanMessages
 from app.domain.agent.turn.intake.native_turns import NativeTurns
@@ -260,7 +240,6 @@ class ChatService(
                 send_effects=SendEffects(
                     post_system_event=self.post_system_event,
                     consume_hook_event=self.hook_events.accept,
-                    known_commits=partial(_known_commits, self._sessions),
                     register_input=self._input_registrar,
                     open_interval=turn_inputs.open_interval_with_input,
                     retire_failed=turn_inputs.retire_failed,
@@ -295,9 +274,6 @@ class ChatService(
                 own_waiting=own_limit.after_turn,
             ),
             post_event=self.post_system_event,
-            room_of_conversation=self._room_of_conversation,
-            turn_changeset=partial(_turn_changeset, self._sessions),
-            persist_summary=partial(_persist_change_summary, self._sessions, self.live),
         )
 
     @property
@@ -388,7 +364,6 @@ class ChatService(
             self._sessions,
             self.live,
             self._open_session_turn,
-            partial(_known_commits, self._sessions),
         )
 
     async def _open_session_turn(
