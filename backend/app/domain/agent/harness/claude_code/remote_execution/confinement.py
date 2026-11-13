@@ -266,6 +266,19 @@ def start_seatbelt(
 HIDDEN_MOUNTS = ("/mnt", "/media", "/run/media", "/run/WSL")
 
 
+def image_user_namespace(userns=None):
+    """The root mapping shared by execution and numeric-owner root backups."""
+    return [
+        *(["--userns", str(userns)] if userns is not None else ["--unshare-user"]),
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "--cap-add",
+        "ALL",
+    ]
+
+
 def sandbox_argv(
     argv,
     *,
@@ -347,9 +360,11 @@ def sandbox_argv(
         root_mount = ["--ro-bind", "/", "/"]
     command = [
         bwrap,
-        *(["--userns", str(userns)] if userns is not None else ["--unshare-user"]),
-        *(["--uid", "0", "--gid", "0"] if image_root is not None else []),
-        *(["--cap-add", "ALL"] if image_root is not None else []),
+        *(
+            image_user_namespace(userns)
+            if image_root is not None
+            else ["--unshare-user"]
+        ),
         "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",

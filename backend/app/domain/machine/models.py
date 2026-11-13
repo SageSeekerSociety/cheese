@@ -414,6 +414,25 @@ class HostProjectStore(Base):
     last_placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SandboxRootSnapshot(Timestamps, Base):
+    """The last root diff saved for a session, independent of any host home."""
+
+    __tablename__ = "sandbox_root_snapshots"
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "agent_sessions.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_root_snapshots_session_id_agent_sessions",
+        ),
+        primary_key=True,
+    )
+    image: Mapped[str] = mapped_column(String(255))
+    key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(32))
+
+
 class RetainedHomeArchive(UuidPk, Timestamps, Base):
     """An archive of a session's home, written to the private bucket while
     idle sandboxes were archived rather than destroyed. Kept until

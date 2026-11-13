@@ -110,7 +110,7 @@ This upgrade path applies to ordinary room executors. Private execution containe
 
 ### 可写层和权限
 
-`confinement.sandbox_argv` 使用 bubblewrap 原生 `--overlay-src` / `--overlay`。lower 来自共享镜像，upper 和 work 在该 sandbox home 的 `.cheese/rootfs/<digest>/` 内，与 home 共用同一个 XFS project quota；这两个目录在 sandbox 内被隐藏，程序只访问合并后的 `/`。可写层在 executor 重启和 sandbox 停放恢复后保留，随 sandbox home 销毁。主机镜像升级不切换已有 home 的 lower，因此不会留下按新旧 digest 分裂的会话可写层。
+`confinement.sandbox_argv` 使用 bubblewrap 原生 `--overlay-src` / `--overlay`。lower 来自共享镜像，upper 和 work 在该 sandbox home 的 `.cheese/rootfs/<digest>/` 内，与 home 共用同一个 XFS project quota；这两个目录在 sandbox 内被隐藏，程序只访问合并后的 `/`。可写层在 executor 重启和 sandbox 停放恢复后保留。空闲删除 home 或会话换环境前，平台停止旧 sandbox，保存 upper；快照保存成功且 digest 相同时，新的 home 在 executor 启动前恢复。主机镜像升级不切换已有 home 的 lower。
 
 云端镜像 sandbox 使用两行 UID/GID 映射。以主机预留的 65536-ID 区段起点为 `B`，内部 `0:0` 对应 connector 用户及其主组，内部 `1..65535` 对应主机的 `B+1..B+65535`。root helper 为 connector 在 `/etc/subuid`、`/etc/subgid` 中预留同一个区段，避开已有主机用户、组及其他账户的从属范围。`B` 至少为 100000，主机管理不得把这个区段分配给普通用户或组；helper 每次检查冲突，发现预留变化就拒绝启动。映射持久化在 `/var/lib/cheese-sandbox/subids.json`，同一主机所有 sandbox 和缓存解包共用，不能在保留镜像或 home 时重分配。
 
@@ -120,9 +120,40 @@ This upgrade path applies to ordinary room executors. Private execution containe
 
 home、项目 package store、平台 toolchain、固定 Claude Code、release store 和 executor/platform socket 继续挂入，`/tmp` 和 `/var/tmp` 继续落在 home 中，`/sys` 保持只读。`CHEESE_CONNECTOR_UID` 保留主机 connector 的 UID，使内部 UID 0 的 executor 和 session runner 继续使用 connector 约定的 socket 路径。`USER`、`LOGNAME` 为 root，`HOME` 仍是会话目录，系统管理命令目录加入 `PATH`；`IS_SANDBOX=1` 允许固定 Claude Code 在此环境启动。原有 pid、mount、IPC、UTS 和网络 namespace、cgroup、网络规则继续生效。seccomp 允许 ptrace 和 process_vm_readv/writev，用于 gdb、strace，pid namespace 外的进程不可通过其宿主 pid 访问。
 
-系统包安装写入当前会话的可写层，随 sandbox 销毁；长期依赖写入镜像 Dockerfile。服务可以使用映射范围内的独立用户和组，`useradd` 创建的用户记录和家目录同样位于可写层。内部 root 在会话 home 和项目 package store 中创建的文件，在主机上仍归 connector；显式 chown 到其他用户的文件使用从属 ID。销毁前的 inode 索引和最终 home 递归删除交给 root helper，覆盖服务用户的私有目录，并由原有 cgroup teardown 结束全部 sandbox 用户的进程。包表、git、npm/pip、Claude 启动及隔离实测见 PR。Python 虚拟环境使用平台提供的 uv；Debian 的 `python3 -m venv` 需要额外安装 `python3-venv`。
+系统包安装写入当前会话的可写层；快照保存成功且目标镜像 digest 相同时，这些修改可恢复到新的 home。所有会话都需要的依赖写入镜像 Dockerfile。服务可以使用映射范围内的独立用户和组，`useradd` 创建的用户记录和家目录同样位于可写层。内部 root 在会话 home 和项目 package store 中创建的文件，在主机上仍归 connector；显式 chown 到其他用户的文件使用从属 ID。销毁前的 inode 索引和最终 home 递归删除交给 root helper，覆盖服务用户的私有目录，并由原有 cgroup teardown 结束全部 sandbox 用户的进程。包表、git、npm/pip、Claude 启动及隔离实测见 PR。Python 虚拟环境使用平台提供的 uv；Debian 的 `python3 -m venv` 需要额外安装 `python3-venv`。
 
 验证脚本是 `scripts/remote_execution/sandbox_image.py`：在独立临时 VM 上准备数据盘和 release，比较首次 ping 的 ready 时间，验证 C/C++、UID map、可写系统目录、gdb 断点、strace、pid namespace 外进程不可见、网络和 quota；`--packages` 在各自独立的 sandbox 中安装常用包。测量数字、包表及 lazy-pull 取舍见 [PR #5243 的 Design notes 和 Hands-on check](https://github.com/SageSeekerSociety/cheese/pull/5243)。
+
+### 根目录快照
+
+`machine/root_snapshots.py` 复用 home 归档和会话记录所用的私有桶、签名 URL 与上传校验。任务代码继续由原有 checkpoint 推送任务分支；根目录快照只保存 OCI 镜像之上的 upper，不包含 home、共享 lower 或 overlay work。`sandbox_root_snapshots` 为每个会话记录最后一次保存的 image digest、对象 key、大小、MD5 和状态，会话换主机后仍使用同一条记录。
+
+空闲回收在标记 home 正在删除后保存；换环境时，对未冻结的 sandbox 执行 checkpoint 后保存 upper，已经冻结的 sandbox 直接保存 upper。保存时结束 executor 和仍占用 home 的进程，卸载 overlay，再用 GNU tar 打包 upper。执行器和归档共用 `confinement.image_user_namespace` 的映射入口，tar 中的 numeric ownership 使用 sandbox 内的 UID/GID；目标主机按自己的同一映射解包，归档不依赖源主机的 connector UID。硬链接、符号链接、文件模式以及 overlay whiteout、opaque directory 的 xattr 一并保留。
+
+| 情况 | 行为 |
+|---|---|
+| 上传成功且桶的大小、MD5 相符 | 原子更新会话记录，再删除前一份对象；之后才删除旧 home 或完成换环境 |
+| 上传失败或校验不符 | 保留旧 home，空闲回收下轮重试；换环境请求报错，保存的记录保持原值 |
+| 压缩后超过 512 MiB、文件内容合计超过 2 GiB，或条目超过 200000 | 记录超限，清除较旧快照，继续回收或换环境；下一次工具结果说明根目录未保存、需要重新安装 |
+| 新 home 选定的 digest 与快照相同 | 取得已预热镜像的租约，先设置 home 的 XFS quota，再下载、校验并解包 upper，最后启动 executor |
+| 新 home 选定的 digest 与快照不同 | 跳过恢复，首次工具结果说明基础镜像已更新、需要重新安装；快照不会叠加到新系统上 |
+| 同一 home 已有 upper | 保持本地 upper，避免较旧快照覆盖后来的安装 |
+| 下载、校验或解包失败 | 删除临时解包目录，保留桶中的快照，启动报错；不会以半份 upper 启动 |
+
+下载文件和解包目录均在目标 home quota 内。恢复需要同时容纳压缩包和 upper，空间不足时由 XFS 拒绝写入。保存的临时压缩包位于 home quota 外，已写满配额的 sandbox 仍可备份。归档进程有文件大小和 600 秒超时上限，主机保存请求最多等待 1500 秒；清扫对镜像 home 的删除占用等待 28 分钟后才重试，覆盖保存和删除的时间。源主机突然失联时无法读取新的 upper，最多只能恢复先前已保存的快照。
+
+digest 不同选择跳过恢复：旧 upper 可能含有包数据库、动态库和系统配置，叠加到更新后的 lower 会形成混合系统。快照随会话保留；每小时清理已删除会话的对象及未完成上传的对象，对尚未写入数据库的上传留出 24 小时，覆盖签名 URL 和保存超时。
+
+跨主机测量使用 `scripts/remote_execution/sandbox_root_snapshot.py`，在两台独立临时 VM 上分别执行 `save` 和 `restore`。输入为同一已预热 digest、平台 release、固定 Claude Code，以及私有签名 URL 文件；输出记录安装结果、upper 大小、保存及恢复时间、首次 ping 的 ready 时间，并检查 `psql`、ffmpeg 编码、根文件、硬链接和删除标记。签名 URL 文件及原始输出只留在忽略的本地目录。
+
+两台 VM 按本节镜像验收方法准备同一 PR head 的 executor release。测量使用的公开镜像为 `ghcr.io/sageseekersociety/cheese/sandbox-rootfs@sha256:2b3272dd02b81ce4e3b8aa5a178a119b97312667cca3185699e28a38ddd7521d`，Claude Code 为 2.1.316。以下变量分别指向已准备的 release、Claude Code、镜像引用、私有描述文件和输出目录。
+
+```sh
+python3 scripts/remote_execution/sandbox_root_snapshot.py save --release "$RELEASE" --claude "$CLAUDE" --image "$IMAGE" --transfer "$TRANSFER" --output "$OUTPUT"
+python3 scripts/remote_execution/sandbox_root_snapshot.py restore --release "$RELEASE" --claude "$CLAUDE" --image "$IMAGE" --transfer "$TRANSFER" --output "$OUTPUT"
+```
+
+源 VM 的 transfer JSON 为 `{"url":"<presigned PUT URL>"}`。目标 VM 使用同一对象的 GET URL，描述文件为 `{"image":"<IMAGE>","url":"<presigned GET URL>","size":243610973,"md5":"01311985b729d749ae01df213a140b10"}`；实际复测时从源 VM 的 `result.json` 读取 size 和 md5，image 使用完整 digest 引用。
 
 ## Central session upgrades
 

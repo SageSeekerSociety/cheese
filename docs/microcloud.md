@@ -166,19 +166,24 @@ four hours, a day) repeats it while it lasts. A person's computer's reading is n
   itself, such as a dev server started with `nohup … &`, keeps nothing up.
 - **Destroyed**: the executor is stopped, whatever still holds the home (a dev server) is
   ended, and the home is deleted from the host; then its row goes and its slot is free. The
-  room's 现场 records 「环境 N 分钟没有活动，已释放……」. Nothing of the sandbox is kept:
-  what lasts is the conversation and the commits the session pushed. The next tool call
+  room's 现场 records 「环境 N 分钟没有活动，已释放……」. An image-backed standard
+  sandbox saves its root diff to the existing private backup bucket before deletion.
+  The conversation and pushed commits survive; a successfully saved root backup can be
+  restored when the image digest matches. The next tool call
   places the session in a new sandbox on any host with a free slot, which starts from the
-  task branch like any new sandbox, and that call's result tells the agent once that it is in a new one. A tool call that arrives
+  task branch like any new sandbox, restores the root diff when the image digest matches,
+  and tells the agent the outcome in that call's result. Limits, quota handling and image
+  changes are described in [根目录快照](remote-execution.md#根目录快照). A tool call that arrives
   while the home is being deleted waits for it to go. A deletion that does not finish is
-  done again by a later sweep three minutes on.
+  retried after three minutes, or 28 minutes for an image-backed home to allow its root backup.
 - A project whose credits ran out has its sandboxes destroyed as soon as its rooms run no
   turn, and the conversation is told so.
 
 A host is released once it has had no sandbox on it for `CLOUD_HOST_IDLE_HOLD_S` — in fixed
 mode only while the pool is over its size, since the size is what keeps a host up. A session
 that switches away leaves its sandbox after one best-effort checkpoint (`cheese sync --all`),
-whether or not the checkpoint went through; the sandbox it left is destroyed by the idle sweep
+whether or not the checkpoint went through. An image-backed home must also save its root diff;
+if that transfer fails, the switch fails and keeps the home. The sandbox it left is destroyed by the idle sweep
 like any other, and holds its slot until then. A host the provider fails before it is enrolled
 holds nothing of anyone's: the pool gives it up, deletes it, and places its sessions again;
 after three such failures within an hour it stops creating hosts for the rest of the hour.
