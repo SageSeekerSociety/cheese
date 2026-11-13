@@ -72,9 +72,9 @@ does not rebuild (a host that empties is released and replaced by demand anyway)
 
 标准 sandbox 的系统包由 cheese 仓库的 `backend/sandbox/image/Dockerfile` 定义，CI 构建 OCI 镜像，`default.json` 固定 digest。MicroCloud VM 模板提供主机内核及主机运行环境；给标准 sandbox 增加系统软件包只修改 cheese 镜像配方。整台 VM 规格继续使用 VM 模板自己的系统。
 
-主机接入及 warm-host 准备在数据盘就绪后先拉取、解包默认镜像，完成后才可接单。后端发布新的默认 digest 时，独立维护循环先为已经接入的主机准备新版本，准备期间已有 sandbox 继续使用原镜像，新 sandbox 只分配到已准备好当前默认 digest 的主机。镜像引用单独记录在 `cloud_hosts.sandbox_image` 和 `warm_machines.sandbox_image`，不把它作为 VM 模板版本变化来滚动重建主机。
+主机接入及 warm-host 准备在数据盘就绪后先拉取、解包默认镜像，完成后才可接单。发布新默认 digest 时，已有镜像的主机继续用其当前 digest 接单，后台准备完成后再更新主机引用；已有 sandbox 及停放恢复的 sandbox 保持其生命周期镜像。主机和 warm host 的引用记录在 `cloud_hosts.sandbox_image`、`warm_machines.sandbox_image`，会话引用记录在 `sandbox_homes.sandbox_image`；镜像变化不触发 VM 模板滚动重建。
 
-共享 rootfs 缓存在数据盘，容量计算为缓存和解包暂存额外预留 8 GB。每个 sandbox 的 overlay upper/work 位于自己的 home，与 home 共用原有 XFS project quota；不会把可写层放到 tmpfs。镜像生命周期、固定工具分发和用户设备范围见 [云端 sandbox 镜像](remote-execution.md#云端-sandbox-镜像)。
+共享 rootfs 缓存在数据盘。容量按实测 rootfs、tar 大小和 `keep_old` 计算缓存准备峰值，加 10% 余量并向上取整；当前为 8 GB。每个 sandbox 槽位还预留一份镜像大小的空间，当前为 2 GB，以覆盖生命周期内仍被引用的旧镜像。overlay upper/work 位于自己的 home，与 home 共用原有 XFS project quota。缓存生命周期、预算算式、固定工具分发和用户设备范围见 [云端 sandbox 镜像](remote-execution.md#云端-sandbox-镜像)。
 
 ### Each sandbox's disk has a limit of its own
 
