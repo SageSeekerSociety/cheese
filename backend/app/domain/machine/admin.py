@@ -353,8 +353,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 # last reading (`cloud_host_parked_budget_gb` caps it).
                 "parked": len(kept),
                 "parked_bytes": sum(
-                    (sandbox_usage.get(h.id) or {}).get("disk_bytes") or 0
-                    for h in kept
+                    (sandbox_usage.get(h.id) or {}).get("disk_bytes") or 0 for h in kept
                 ),
                 "created_at": _iso(host.created_at),
                 "enrolled_at": _iso(host.enrolled_at),
