@@ -495,6 +495,10 @@ def host_image_version(
         "spec": [int(cores), int(memory_mb), int(disk_gb)],
         "user": settings.microcloud_login_user,
         "bootstrap": bootstrap_digest(sandbox_disk=True),
+        # The provider re-bakes a template under the same name (MicroCloud
+        # keeps `templateName` and makes a new image behind it), so nothing
+        # above changes when the image does: this does, bumped by hand.
+        "template_epoch": settings.cloud_host_template_epoch,
     }
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]

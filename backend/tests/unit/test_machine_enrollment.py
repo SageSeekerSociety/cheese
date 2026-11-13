@@ -1054,3 +1054,23 @@ def test_zswap_stays_off_when_the_pool_share_is_zero(tmp_path):
 
     assert done.returncode == 0, done.stderr
     assert not (tmp_path / "zswap.conf").exists()
+
+
+def test_a_rebaked_template_rolls_the_hosts_when_its_epoch_is_bumped(monkeypatch):
+    """The provider re-bakes a template under the same name: nothing the
+    offering says changes, so the epoch is what moves the hosts onto it."""
+    offering = {
+        "id": 1,
+        "machineTypeName": "standard",
+        "zoneName": "cn-east",
+        "templateName": "debian13",
+        "dataDiskGb": 64,
+    }
+    before = enrollment.host_image_version(
+        offering, cores=4, memory_mb=16384, disk_gb=40
+    )
+    monkeypatch.setattr(enrollment.settings, "cloud_host_template_epoch", 2)
+    after = enrollment.host_image_version(
+        offering, cores=4, memory_mb=16384, disk_gb=40
+    )
+    assert before != after

@@ -106,6 +106,12 @@ class MachineSettings(BaseModel):
     # the swap file; 0 leaves zswap off. Turned on only on a kernel that has
     # it (`enrollment.DATA_DISK`). 20 is the kernel's own default.
     cloud_host_zswap_max_pool_percent: int = Field(default=20, ge=0, le=50)
+    # Which bake of the provider's host template the pool's hosts should be
+    # on. A re-bake keeps the template's name, so a host made from the old
+    # image looks current; bumping this after one rolls every host onto the
+    # new image (`enrollment.host_image_version`). 2: MicroCloud's Debian 13
+    # VM template on the generic kernel, which has zswap.
+    cloud_host_template_epoch: int = Field(default=1, ge=1)
     # What one sandbox on a platform host may hold, however much room the rest
     # of the disk has: its home's project quota (`sandbox_host.py`), past
     # which its writes are refused (ENOSPC). Each project's package store on
