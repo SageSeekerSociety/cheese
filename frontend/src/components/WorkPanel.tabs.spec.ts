@@ -211,7 +211,10 @@ describe('交付那一格', () => {
   })
 
   it('从「支线」打开交付，关掉它回到「支线」', async () => {
-    const { container, emitted, getByTestId, rerender } = mount({ tab: 'threads', delivery: { id: 'k1', title: '报名表改短' } })
+    const { container, emitted, getByTestId, rerender } = mount({
+      tab: 'threads',
+      delivery: { id: 'k1', title: '报名表改短' },
+    })
     await waitFor(() => expect(selected(container)).toBe('支线'))
     await rerender({ tab: 'delivery', delivery: { id: 'k1', title: '报名表改短' } })
     await waitFor(() => expect(selected(container)).toBe('报名表改短'))
@@ -221,7 +224,10 @@ describe('交付那一格', () => {
   })
 
   it('没被选中时关掉它，人留在原来那一格', async () => {
-    const { container, emitted, getByTestId } = mount({ tab: 'files', delivery: { id: 'k1', title: '报名表改短', dot: true } })
+    const { container, emitted, getByTestId } = mount({
+      tab: 'files',
+      delivery: { id: 'k1', title: '报名表改短', dot: true },
+    })
     await waitFor(() => expect(selected(container)).toBe('文件'))
     getByTestId('panel-tab-close').click()
     await waitFor(() => expect(emitted()['close-delivery']).toHaveLength(1))
