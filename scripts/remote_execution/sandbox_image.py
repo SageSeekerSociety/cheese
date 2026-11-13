@@ -113,7 +113,7 @@ class Sandbox:
             Path(self.runtime.socket_directory(self.state)) / "executor.sock"
         )
 
-    def start(self):
+    def start(self, snapshot=None):
         began = time.monotonic()
         args = dict(
             bwrap=str(self.owner / ".cheese/runtime/bubblewrap/bwrap"),
@@ -132,7 +132,9 @@ class Sandbox:
         )
         if self.image:
             args["image"] = self.image
-        self.process, _ = self.bootstrap.start_sandbox(
+        if snapshot is not None:
+            args["root_snapshot"] = snapshot
+        self.process, self.started = self.bootstrap.start_sandbox(
             [
                 sys.executable,
                 str(self.release / "remote-execution/runtime.py"),
@@ -194,21 +196,25 @@ class Sandbox:
             if time.monotonic() >= deadline:
                 raise TimeoutError(body)
 
+    def stop(self):
+        if self.process is not None:
+            subprocess.run(
+                [
+                    "sudo",
+                    "-n",
+                    "/usr/local/libexec/cheese-sandbox",
+                    "down",
+                    self.name,
+                ],
+                check=True,
+                capture_output=True,
+            )
+            self.process.wait(timeout=15)
+            self.process = None
+
     def close(self):
         try:
-            if self.process is not None:
-                subprocess.run(
-                    [
-                        "sudo",
-                        "-n",
-                        "/usr/local/libexec/cheese-sandbox",
-                        "down",
-                        self.name,
-                    ],
-                    check=True,
-                    capture_output=True,
-                )
-                self.process.wait(timeout=15)
+            self.stop()
         finally:
             self.log.close()
             if self.home.exists():

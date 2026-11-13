@@ -913,6 +913,16 @@ def free_disk(name, uid):
         limit_project(entry["mount"], entry["id"], 0, 0)
 
 
+def prepare_disk(name, home, limits):
+    """Set quota before a saved upper is restored or any executor is started."""
+    uid = caller()
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    with open(STATE / "lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        disk(name, uid, home, limits)
+    return {}
+
+
 def up(name, pid, home, limits, forward, site=None):
     uid = caller()
     if owner_of(pid) != uid:
@@ -1140,15 +1150,16 @@ def parse(argv):
         return argv[0], {"names": argv[1:]}
     if len(argv) == 3 and argv[0] == "swap" and NAME.fullmatch(argv[1]):
         return "swap", {"name": argv[1], "mib": number(argv[2], 0, 1 << 20)}
-    if len(argv) < 3 or argv[0] != "up" or not NAME.fullmatch(argv[1]):
+    if len(argv) < 3 or argv[0] not in {"up", "disk"} or not NAME.fullmatch(argv[1]):
         # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused(
             "usage: up NAME PID --home PATH ... | down NAME | reclaim NAME..."
             " | swap NAME MIB | freeze NAME... | thaw NAME..."
         )
-    pid = number(argv[2], 2, 1 << 22)
+    disk_only = argv[0] == "disk"
+    pid = None if disk_only else number(argv[2], 2, 1 << 22)
     limits, forward, site, home = {}, [], None, None
-    options = argv[3:]
+    options = argv[2:] if disk_only else argv[3:]
     if len(options) % 2:
         raise Refused("every option takes a value")
     for option, value in zip(options[::2], options[1::2], strict=True):
@@ -1168,6 +1179,11 @@ def parse(argv):
     if len(limits) != len(LIMITS) or home is None:
         # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused("the home and every limit are required")
+    if disk_only:
+        if forward or site is not None:
+            # i18n-exempt: root helper CLI protocol validation
+            raise Refused("disk preparation takes no network options")
+        return "disk", {"name": argv[1], "home": home, "limits": limits}
     return "up", {
         "name": argv[1],
         "pid": pid,
@@ -1187,6 +1203,7 @@ def main(argv):
             "index-home": index_home,
             "remove-home": remove_home,
             "up": up,
+            "disk": prepare_disk,
             "down": down,
             "reclaim": reclaim,
             "swap": swap,
