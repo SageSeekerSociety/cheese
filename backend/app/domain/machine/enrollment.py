@@ -251,6 +251,9 @@ if [ "$zswap_percent" -gt 0 ] && [ -e "$zswap/enabled" ]; then
   {{
     [ -n "$compressor" ] && echo "w $zswap/compressor - - - - $compressor"
     [ -n "$pool" ] && echo "w $zswap/zpool - - - - $pool"
+    # Cold compressed pages go on to the swap file instead of holding the pool
+    # (6.8 and later): what frozen sandboxes gave up leaves RAM in the end.
+    [ -e "$zswap/shrinker_enabled" ] && echo "w $zswap/shrinker_enabled - - - - Y"
     echo "w $zswap/max_pool_percent - - - - $zswap_percent"
     echo "w $zswap/enabled - - - - Y"
   }} | sudo -n tee /etc/tmpfiles.d/90-cheese-zswap.conf >/dev/null
