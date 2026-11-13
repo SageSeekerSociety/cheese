@@ -28,7 +28,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import enrollment, owner_reads, reaper, services
+from app.domain.machine import enrollment, owner_reads, reaper, sandbox_images, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -38,6 +38,7 @@ from app.domain.machine.models import (
     SandboxHome,
     WarmMachine,
 )
+from app.domain.machine.sandbox_images import image_for_session
 from app.domain.machine.services import (
     CUSTOMER_REF,
     CloudKeepsFailing,
@@ -1256,8 +1257,6 @@ def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
 
 
 def test_an_existing_sandbox_keeps_its_image_when_its_host_switches(pool):
-    from app.domain.machine.sandbox_images import image_for_session
-
     first, second = pool.room("alice", 2)
     host_id = pool.place("alice", first)
     device = pool.up(host_id)
@@ -1287,8 +1286,6 @@ def test_an_existing_sandbox_keeps_its_image_when_its_host_switches(pool):
 def test_a_prepared_host_finishes_maintenance_without_waiting_for_prewarm(
     pool, monkeypatch
 ):
-    from app.domain.machine import sandbox_images
-
     (first,) = pool.room("alice", 1)
     host_id = pool.place("alice", first)
     pool.up(host_id)

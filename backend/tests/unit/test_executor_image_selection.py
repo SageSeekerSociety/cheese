@@ -1,6 +1,8 @@
 import hashlib
 
 from app.domain.agent.harness.claude_code.remote_execution import launch, runtime
+from app.domain.machine.models import CloudHost
+from app.domain.machine.reaper import accepting
 
 
 def test_a_host_root_executor_can_prepare_with_an_empty_image_setting():
@@ -39,9 +41,6 @@ def test_a_launch_uses_the_ready_image_selected_for_its_sandbox():
 
 
 def test_an_enrolled_host_keeps_accepting_while_the_default_image_changes():
-    from app.domain.machine.models import CloudHost
-    from app.domain.machine.reaper import accepting
-
     host = CloudHost(
         cores=4,
         memory_mb=8192,
