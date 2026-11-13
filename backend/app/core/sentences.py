@@ -184,6 +184,12 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "deployFailedTo",
         "mainChecksFailed",
         "mainChecksFailedReopened",
+        # A turn in a channel's own line summed up the commits made while it
+        # ran; no such turn keeps work any more, and old room lines still say
+        # what an earlier one changed.
+        "changeSummary",
+        "changeSummaryFiles",
+        "changeSummaryFilesMore",
         # The room-wide machine choice (#2320): old room lines and proposals
         # still name it.
         "computeAnyDevice",

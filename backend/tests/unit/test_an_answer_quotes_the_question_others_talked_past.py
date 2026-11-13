@@ -1,6 +1,9 @@
 """In a channel's main line, the AI teammate's answer quotes the message it
-answers when someone else spoke between the question and the answer, so a
-reader sees which line it answers. Where nobody else spoke it does not.
+answers when another person spoke between the question and the answer, so a
+reader sees which line it answers. Where nobody else spoke it does not, and
+the teammate's second message of the turn does not either: its own first
+message is not somebody else talking, whichever handle it was written under (a
+teammate is written under its seat in one place and its instance in another).
 """
 
 import pytest
@@ -29,13 +32,14 @@ async def _seat(_session, _topic_id):
     return SEAT
 
 
-async def _answer(factory, room, question) -> dict:
+async def _answer(factory, room, question, *, author: str | None = None) -> dict:
     stored = await persist_assistant_message(
         factory,
         load_topic=_load,
         prepare_mentions=_quiet,
         notify_mentions=_quiet,
         resolve_author=_seat,
+        author=author,
         project_id=room.project_id,
         topic_id=room.id,
         text="在资料库的「组会」文件夹里。",
@@ -92,5 +96,38 @@ async def test_an_answer_nobody_talked_past_quotes_nothing(db_factory):
     await _say(db_factory, room, "alice", "就是上学期那份。")
 
     answer = await _answer(db_factory, room, question)
+
+    assert answer["reply_to"] is None
+
+
+async def test_the_second_message_of_the_turn_quotes_nothing(db_factory):
+    room = await _room(db_factory)
+    question = await _say(db_factory, room, "alice", f"<@{SEAT}> 报名说明放在哪？")
+    await _say(db_factory, room, "bob", "周四的组会改在 B201。")
+    # The first message of the turn, under the teammate's instance handle.
+    first = await _answer(db_factory, room, question, author="cheese-57f62f24d959")
+
+    second = await _answer(db_factory, room, question)
+
+    assert first["reply_to"] == str(question.id)
+    assert second["reply_to"] is None
+
+
+async def test_nobody_talked_past_a_question_the_teammate_already_answered(db_factory):
+    room = await _room(db_factory)
+    question = await _say(db_factory, room, "alice", f"<@{SEAT}> 报名说明放在哪？")
+    await _say(db_factory, room, "cheese-57f62f24d959", "我看一眼就告诉你。")
+
+    answer = await _answer(db_factory, room, question)
+
+    assert answer["reply_to"] is None
+
+
+async def test_an_answer_to_no_persons_message_quotes_nothing(db_factory):
+    room = await _room(db_factory)
+    said = await _say(db_factory, room, "cheese-57f62f24d959", "欢迎来到这个项目。")
+    await _say(db_factory, room, "alice", "首页要改哪些地方？")
+
+    answer = await _answer(db_factory, room, said)
 
     assert answer["reply_to"] is None
