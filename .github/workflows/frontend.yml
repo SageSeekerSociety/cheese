@@ -371,6 +371,12 @@ jobs:
       # runs the editors' own document schema, but it is a Node process, not
       # part of the app: its own types (Node, no DOM app), and tests that start
       # a real server and real clients over real sockets.
+      #
+      # Its type check runs on TypeScript 7 (`@typescript/native`, the Go
+      # compiler): 1.0 s against 6.0 s on 5.9 for this project. The app's own
+      # check stays on `typescript` 5.9 under vue-tsc 2, because TS 7.0 has no
+      # programmatic API for vue-tsc or typescript-eslint to load (7.1 brings it
+      # back). The script names the 7 binary by path: both packages ship a `tsc`.
       - name: Collaboration service type check
         run: pnpm run typecheck:collab
 
