@@ -58,8 +58,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     key: 'task',
     anchors: ['task-card', 'task-row'],
     waiting: ['timeline'],
-    // 任务在任务页上打开：去不去由人自己点。
-    done: (c) => c.has('task-page'),
+    // 频道里点开任务，先在频道右边审阅它（那里有「打开任务」）；任务页也算点开了。
+    done: (c) => c.has('task-page') || c.has('review-open-task'),
   },
   // 任务页是一整块区域：正文可能还是空的，只圈标题栏那一条什么也说明不了，浮窗就落在
   // 页面上。
@@ -67,7 +67,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     key: 'taskPage',
     anchors: ['task-page'],
     areas: ['task-page'],
-    waiting: ['task-card', 'task-row'],
+    // 人还在频道右边那一栏里：指着那里的「打开任务」。
+    waiting: ['review-open-task', 'task-card', 'task-row'],
   },
   // 芝士做到一半摆出来的那份东西（`cheese show` 落成的预览卡）。看到就讲怎么点开、
   // 怎么提修改；交付一到（或已经采纳过）就往下走，芝士没摆预览也不会卡在这里。

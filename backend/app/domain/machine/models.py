@@ -485,7 +485,7 @@ class HostReading(UuidPk, Base):
     )
     # The host's swap file, and the pressure the kernel reports on its memory
     # (percent of the last minute and five the kernel spent stalled, from
-    # /proc/pressure/memory), and whether zswap is loaded — NULL on a machine
+    # /proc/pressure/memory), and whether zswap is on — NULL on a machine
     # that reports none of them, as macOS's does.
     swap_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     swap_free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

@@ -90,7 +90,7 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project_permissions import Permission
 from app.domain.review.archive import OPEN_CARD_STATUSES, close_cards_for_closed_task
 from app.domain.review.services import AcceptService
-from app.domain.review.task_landing import tell_origin
+from app.domain.review.task_landing import tell_origin_ended
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard
@@ -338,9 +338,9 @@ async def conclude_task(
             closed, heard.task_closed(by=actor.handle, conclusion=task.conclusion)
         ),
     )
-    # The 支线 line under the message the task was made from is said by its AI
-    # teammate, so whose teammate it is comes in here too.
-    await tell_origin(db, task, ended, task_teammate=task_teammate)
+    # The conversation the task was made from hears how it ended, said by its
+    # AI teammate, so whose teammate it is comes in here too.
+    await tell_origin_ended(db, task, task_teammate=task_teammate)
     out = await task_out(db, task, latest_card, me=actor.handle or "")
     await db.commit()
     return ok(out)
