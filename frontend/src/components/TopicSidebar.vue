@@ -157,6 +157,19 @@ const {
   topicById,
 } = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
 
+// 项目里我看得到的、没归档的频道只有一个（没加入的也算进总数）：不画「频道」这一组的标题
+// 和「全部频道」，那一个频道的行写「对话」，新建频道的 ＋ 挂在那一行上。有了第二个就回到
+// 分组的样子。清单还没读回来（或读失败）时不下这个结论，免得先画一种再跳成另一种。整页形态的
+// 那份列表（`page`，手机和平板竖放）始终分组。
+const singleChannel = computed(
+  () =>
+    !props.page &&
+    !props.loadingTopics &&
+    !props.error &&
+    !!rootTopic.value &&
+    props.topics.filter((topic) => topic.status !== 'archived').length === 1
+)
+
 function ownTasks(channelId: string): RailTask[] {
   return props.roomTasks?.[channelId] ?? []
 }
@@ -575,7 +588,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <!-- 新建频道就在这一组标题右边：常驻可见、不藏进 hover，点一下就地弹对话框，
                不再跳到「浏览频道」那一页（那里只管找和加入别人的频道）。位置钉在这一
                行上，频道再多也不动。 -->
-          <div class="t-eyebrow side-subhead">
+          <div v-if="!singleChannel" class="t-eyebrow side-subhead">
             <span class="side-subhead__label">{{ t('work.sidebar.topics') }}</span>
             <button
               v-if="canCreate"
@@ -603,7 +616,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :tasks-collapsed="!!rootTopic && tasksFoldOf(rootTopic.id)"
             :task-count="rootTopic ? taskCountOf(rootTopic.id) : undefined"
             :task-light="rootTopic ? tasksLight(rootTopic.id) : null"
+            :single="singleChannel"
+            :can-create="canCreate === true"
             @select-topic="emit('select-topic', $event)"
+            @new-channel="emit('new-channel')"
             @hover-topic="emit('hover-topic', $event)"
             @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
@@ -779,6 +795,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                  底下只剩这一行——「进行中的任务」那一行撤了，它的位置换成了项目名下面的
                  「总览」（.claude/rules/project-sidebar.md）。 -->
             <TopicRailBrowseRow
+              v-if="!singleChannel"
               :label="t('work.channel.browse')"
               icon="mdi-magnify"
               :selected="browsingChannels === true"

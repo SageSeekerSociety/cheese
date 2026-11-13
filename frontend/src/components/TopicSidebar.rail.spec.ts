@@ -455,7 +455,8 @@ describe('C6 等你的那一盏黄灯', () => {
     expect(row.querySelectorAll('.row-light')).toHaveLength(1)
     expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
     expect(row.querySelector('.unread-badge')).toBeNull()
-    expect(row.textContent?.trim()).toBe('综合')
+    // 项目里只有这一个频道：桌面上那一行写「对话」，整页列表照旧写「综合」；后面都不挂数量。
+    expect(row.textContent?.trim()).toBe(page ? '综合' : '对话')
     expect(arrow.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     await fireEvent.click(arrow)
