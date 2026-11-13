@@ -200,6 +200,9 @@ def test_the_asking_message_is_found_with_one_identity_question_per_window(clien
     most twice: the handles once, and which of them carry a binding once.
     """
     project, channel, seat = _channel(client)
+    # With someone else in the project, the message the 支线 hangs under calls
+    # nobody: no turn runs alongside the read this test counts.
+    join_project_team(client, project, "bob")
     root = post_message(client, channel, "alice", {"content": "对话栏有问题"})
     thread = _thread(client, root["id"])
     asked = _seed_asked_window(client, project, thread, seat)
