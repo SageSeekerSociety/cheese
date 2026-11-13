@@ -154,15 +154,22 @@ run_ocr() {
     local ceiling
     ceiling=$(awk -v m="$WALL_CLOCK_MIN" 'BEGIN { printf "%d", m * 60 }')
     if python3 - "$ceiling" "$GRACE_S" "$@" >"$out" 2>"$log" <<'PY'
+import math
 import os
 import signal
 import subprocess
 import sys
 import time
 
+# Reject invalid budgets before starting a CLI that can make paid model calls.
+try:
+    ceiling, grace = map(float, sys.argv[1:3])
+    if not all(math.isfinite(value) and value >= 0 for value in (ceiling, grace)):
+        raise ValueError
+except ValueError:
+    sys.exit("ocr-review: ceiling and OCR_GRACE must be finite nonnegative seconds")
 process = subprocess.Popen(sys.argv[3:], start_new_session=True)
-grace = float(sys.argv[2])
-deadline = time.monotonic() + float(sys.argv[1])
+deadline = time.monotonic() + ceiling
 stopping = False
 interrupted = 0
 forced = False
@@ -343,6 +350,24 @@ STUB
     got=$(read_ceiling "$zero") || { echo "self-test FAILED: OCR_WALL_CLOCK='$zero' was refused" >&2; fail=1; continue; }
     [ "$got" = 0 ] \
       || { echo "self-test FAILED: OCR_WALL_CLOCK='$zero' read as '$got', not disarmed" >&2; fail=1; }
+  done
+
+  # A rejected grace must not start the reviewer: its API calls would outlive
+  # a supervisor that failed while parsing its budget.
+  for bad in bad 60s 5m -1 nan inf; do
+    local refused_start="$dir/grace-started-$bad"
+    if WALL_CLOCK_MIN=0.02 GRACE_S="$bad" \
+      run_ocr "$dir/grace.json" "$dir/grace.log" \
+      sh -c 'printf started >"$1"' sh "$refused_start" >/dev/null; then
+      echo "self-test FAILED: OCR_GRACE='$bad' was accepted" >&2
+      fail=1
+    fi
+    # A wrongly spawned child may still be scheduled after its supervisor dies.
+    sleep 0.1
+    if [ -e "$refused_start" ]; then
+      echo "self-test FAILED: invalid OCR_GRACE='$bad' started the reviewer" >&2
+      fail=1
+    fi
   done
 
   # Which non-zero exits count as a kept partial review. 124 is the ceiling's
