@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && echo '1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570  /etc/apt/keyrings/docker.asc' | sha256sum -c - \
     && echo 'deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable' > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends $(cut -f1 /usr/share/cheese/template-packages.tsv) build-essential gdb \
+    && apt-get install -y --no-install-recommends $(cut -f1 /usr/share/cheese/template-packages.tsv) build-essential gdb strace \
+    && printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/99cheese-session \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
     && rm -f /etc/ssh/ssh_host_* /etc/ssl/private/* /etc/machine-id /var/lib/dbus/machine-id /var/lib/systemd/random-seed \
     && dpkg-query -W -f='${binary:Package}\t${Version}\n' > /usr/share/cheese/image-packages.tsv \
