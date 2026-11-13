@@ -102,6 +102,10 @@ class MachineSettings(BaseModel):
     # to the case the file is for — memory actually short. Written to
     # /etc/sysctl.d/90-cheese-swap.conf beside the file.
     cloud_host_swappiness: int = Field(default=10, ge=0, le=100)
+    # zswap's share of the host's memory for pages compressed on their way to
+    # the swap file; 0 leaves zswap off. Turned on only on a kernel that has
+    # it (`enrollment.DATA_DISK`). 20 is the kernel's own default.
+    cloud_host_zswap_max_pool_percent: int = Field(default=20, ge=0, le=50)
     # What one sandbox on a platform host may hold, however much room the rest
     # of the disk has: its home's project quota (`sandbox_host.py`), past
     # which its writes are refused (ENOSPC). Each project's package store on

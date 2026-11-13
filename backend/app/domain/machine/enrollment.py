@@ -224,6 +224,31 @@ if [ "$swap_mb" -gt 0 ]; then
   echo "vm.swappiness={swappiness}" | sudo -n tee "$swap_sysctl" >/dev/null
   sudo -n sysctl -p "$swap_sysctl" >/dev/null
 fi
+# zswap: pages on their way to the swap file are compressed into RAM first,
+# so what a frozen sandbox gives up costs about a third of its size and comes
+# back without a disk read (`cloud_host_zswap_max_pool_percent`). Only where
+# the kernel was built with it: Debian's cloud kernel was not, its generic one
+# is (the host template, MicroCloud's templates/vm/debian13/build.sh). Set now
+# and at every boot (systemd-tmpfiles writes the same values), and nothing
+# installed: the compressor is the first of zstd, lz4, lzo the kernel has.
+zswap=/sys/module/zswap/parameters
+zswap_percent={zswap_percent}
+if [ "$zswap_percent" -gt 0 ] && [ -e "$zswap/enabled" ]; then
+  compressor=
+  for one in zstd lz4 lzo; do
+    if grep -qw "$one" /proc/crypto 2>/dev/null || sudo -n modprobe -q "$one" 2>/dev/null; then
+      compressor=$one
+      break
+    fi
+  done
+  {{
+    [ -n "$compressor" ] && echo "w $zswap/compressor - - - - $compressor"
+    echo "w $zswap/max_pool_percent - - - - $zswap_percent"
+    echo "w $zswap/enabled - - - - Y"
+  }} | sudo -n tee /etc/tmpfiles.d/90-cheese-zswap.conf >/dev/null
+  sudo -n systemd-tmpfiles --create /etc/tmpfiles.d/90-cheese-zswap.conf \
+    || echo "zswap could not be turned on; the swap file is used as it is" >&2
+fi
 set -- $(stat -f -c '%b %S' /data)
 echo "CHEESE_SANDBOX_DISK_BYTES=$(( $1 * $2 ))"
 """
@@ -281,6 +306,9 @@ def bootstrap_script(
         DATA_DISK.format(
             swap_mb=settings.cloud_host_swap_mb,
             swappiness=settings.cloud_host_swappiness,
+            zswap_percent=settings.cloud_host_zswap_max_pool_percent
+            if settings.cloud_host_swap_mb
+            else 0,
         )
         if sandbox_disk
         else ""

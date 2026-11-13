@@ -89,7 +89,11 @@ deletes goes back to the thin pool under the VM), and bound over `~/.cheese/home
 pool, and a `dd`'d file would claim every block it wrote before anything trimmed it back —
 `chmod 600`, `mkswap`, `swapon`, its fstab line (`swap,nofail`) and `vm.swappiness` in
 `/etc/sysctl.d/90-cheese-swap.conf` (`CLOUD_HOST_SWAPPINESS`, 10). A host whose disk cannot
-hold it does not enroll. The step is idempotent because enrollment is retried as a whole: a
+hold it does not enroll. Where the kernel has zswap (Debian's generic kernel; its cloud kernel
+does not), the step also turns it on with the first of zstd, lz4, lzo the kernel has and a pool
+of `CLOUD_HOST_ZSWAP_MAX_POOL_PERCENT` (20) percent of memory, written to
+`/etc/tmpfiles.d/90-cheese-zswap.conf` so every boot applies it again; nothing is installed.
+The step is idempotent because enrollment is retried as a whole: a
 file already swapped on is left alone (swapping it off to resize would push a host that is
 short of memory into the case the file exists for), and one that is not swapped on but of
 another size is made again. It buys the

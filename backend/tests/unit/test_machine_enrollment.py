@@ -618,11 +618,16 @@ LTS = [
 ]
 
 
-def _swap_block(*, swap_mb=8192, swappiness=10) -> str:
+def _swap_block(*, swap_mb=8192, swappiness=10, zswap_percent=20, zswap=None) -> str:
     """The data disk step's mounts and swap file, as the host runs it, from
-    the fstab helper through the swap file (the disk discovery and mkfs are
-    `_format_block`'s to test)."""
-    script = enrollment.DATA_DISK.format(swap_mb=swap_mb, swappiness=swappiness)
+    the fstab helper through the swap file and zswap (the disk discovery and
+    mkfs are `_format_block`'s to test). ``zswap``: where the kernel's zswap
+    parameters are, a directory of the test's own."""
+    script = enrollment.DATA_DISK.format(
+        swap_mb=swap_mb, swappiness=swappiness, zswap_percent=zswap_percent
+    )
+    if zswap is not None:
+        script = script.replace("/sys/module/zswap/parameters", str(zswap))
     start = script.index("mount_line() {")
     return script[start : script.index("set -- $(stat -f", start)]
 
@@ -683,6 +688,7 @@ sudo() {{
     "rm -f /data/swapfile") rm -f "$SIZE" {home}/swapfile; return 0 ;;
     "tee -a /etc/fstab") cat >> "$FSTAB"; return 0 ;;
     "tee /etc/sysctl.d/90-cheese-swap.conf") cat > "$SYSCTL"; return 0 ;;
+    "tee /etc/tmpfiles.d/90-cheese-zswap.conf") cat > {home}/zswap.conf; return 0 ;;
     *) return 0 ;;
   esac
 }}
@@ -1002,3 +1008,47 @@ def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
 
     # The HTTP identity is unchanged either way — only the control channel moved.
     assert config["base"] == "https://cheese.test/api/connector"
+
+
+def _zswap_parameters(tmp_path):
+    parameters = tmp_path / "zswap-parameters"
+    parameters.mkdir()
+    (parameters / "enabled").write_text("N\n")
+    return parameters
+
+
+def test_a_kernel_with_zswap_has_it_turned_on_now_and_at_boot(tmp_path):
+    """A host whose kernel has zswap gets it on, with a compressor the kernel
+    has and the pool share asked for, written where systemd-tmpfiles applies
+    it at every boot. Nothing is installed for it."""
+    parameters = _zswap_parameters(tmp_path)
+    done, calls, _, _ = _run_swap(tmp_path, _swap_block(zswap=parameters))
+
+    assert done.returncode == 0, done.stderr
+    conf = (tmp_path / "zswap.conf").read_text().splitlines()
+    assert f"w {parameters}/compressor - - - - zstd" in conf
+    assert f"w {parameters}/max_pool_percent - - - - 20" in conf
+    assert f"w {parameters}/enabled - - - - Y" in conf
+    assert "systemd-tmpfiles --create /etc/tmpfiles.d/90-cheese-zswap.conf" in calls
+    assert "apt" not in calls
+
+
+def test_a_kernel_without_zswap_is_left_as_it_is(tmp_path):
+    """Debian's cloud kernel has no zswap: the swap file is used as it is."""
+    done, calls, _, _ = _run_swap(
+        tmp_path, _swap_block(zswap=tmp_path / "no-such-parameters")
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert not (tmp_path / "zswap.conf").exists()
+    assert "systemd-tmpfiles" not in calls
+
+
+def test_zswap_stays_off_when_the_pool_share_is_zero(tmp_path):
+    parameters = _zswap_parameters(tmp_path)
+    done, calls, _, _ = _run_swap(
+        tmp_path, _swap_block(zswap=parameters, zswap_percent=0)
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert not (tmp_path / "zswap.conf").exists()
