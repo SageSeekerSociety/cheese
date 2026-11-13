@@ -220,7 +220,7 @@ def _put_for_review(
     file 30 minutes) and name the object: the service reads a picture from a
     URL or from that bucket, and the deployment's own URLs need not be
     reachable from it."""
-    endpoint = token.oss_internet_end_point
+    endpoint = token.oss_internet_end_point or ""
     # The service names the endpoint with its scheme (`https://…`); a second
     # one in front made every upload go to the host `<bucket>.https`.
     if "://" not in endpoint:
