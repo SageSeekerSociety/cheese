@@ -1014,6 +1014,7 @@ def _zswap_parameters(tmp_path):
     parameters = tmp_path / "zswap-parameters"
     parameters.mkdir()
     (parameters / "enabled").write_text("N\n")
+    (parameters / "zpool").write_text("zbud\n")
     return parameters
 
 
@@ -1027,6 +1028,7 @@ def test_a_kernel_with_zswap_has_it_turned_on_now_and_at_boot(tmp_path):
     assert done.returncode == 0, done.stderr
     conf = (tmp_path / "zswap.conf").read_text().splitlines()
     assert f"w {parameters}/compressor - - - - zstd" in conf
+    assert f"w {parameters}/zpool - - - - zsmalloc" in conf
     assert f"w {parameters}/max_pool_percent - - - - 20" in conf
     assert f"w {parameters}/enabled - - - - Y" in conf
     assert "systemd-tmpfiles --create /etc/tmpfiles.d/90-cheese-zswap.conf" in calls

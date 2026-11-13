@@ -228,7 +228,8 @@ fi
 # so what a frozen sandbox gives up costs about a third of its size and comes
 # back without a disk read (`cloud_host_zswap_max_pool_percent`). Only where
 # the kernel was built with it: Debian's cloud kernel was not, its generic one
-# is (the host template, MicroCloud's templates/vm/debian13/build.sh). Set now
+# is (CONFIG_ZSWAP=y in debian/config/config, unset in config.cloud; the host
+# template, MicroCloud's templates/vm/debian13/build.sh). Set now
 # and at every boot (systemd-tmpfiles writes the same values), and nothing
 # installed: the compressor is the first of zstd, lz4, lzo the kernel has.
 zswap=/sys/module/zswap/parameters
@@ -241,8 +242,15 @@ if [ "$zswap_percent" -gt 0 ] && [ -e "$zswap/enabled" ]; then
       break
     fi
   done
+  # zsmalloc packs compressed pages densely; Debian builds it as a module
+  # and leaves zbud as zswap's default, which fits at most two to a page.
+  pool=
+  if [ -e "$zswap/zpool" ] && sudo -n modprobe -q zsmalloc 2>/dev/null; then
+    pool=zsmalloc
+  fi
   {{
     [ -n "$compressor" ] && echo "w $zswap/compressor - - - - $compressor"
+    [ -n "$pool" ] && echo "w $zswap/zpool - - - - $pool"
     echo "w $zswap/max_pool_percent - - - - $zswap_percent"
     echo "w $zswap/enabled - - - - Y"
   }} | sudo -n tee /etc/tmpfiles.d/90-cheese-zswap.conf >/dev/null
