@@ -46,6 +46,7 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
     image_outdated: null,
     draining: false,
     draining_since: null,
+    refresh_in_place: false,
     enroll_attempts: 1,
     enroll_error: null,
     usage: null,
@@ -398,6 +399,16 @@ describe('机器', () => {
     await fireEvent.click(getByText('pool-a'))
     expect(queryByText(/past its idle time|已过空闲期/)).not.toBeNull()
     expect(queryByText(/discarded at latest|最迟 .*后销毁/)).toBeNull()
+  })
+
+  it('只改了接入脚本的宿主机说它在原地更新、盘上的东西留着', () => {
+    const { queryByText } = mount({
+      overview: overview({}, [
+        host({ draining: true, draining_since: '2026-10-12T09:50:00Z', refresh_in_place: true }),
+      ]),
+    })
+    expect(queryByText(/Updating in place|正在原地更新/)).not.toBeNull()
+    expect(queryByText(/Rolling rebuild started|正在滚动重建/)).toBeNull()
   })
 
   it('滚动重建的宿主机标出「重建中」，版本旧了的标出「镜像过期」', () => {

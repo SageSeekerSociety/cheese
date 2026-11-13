@@ -112,6 +112,11 @@ class MachineSettings(BaseModel):
     # new image (`enrollment.host_image_version`). 2: MicroCloud's Debian 13
     # VM template on the generic kernel, which has zswap.
     cloud_host_template_epoch: int = Field(default=1, ge=1)
+    # Whether a host whose enrollment script alone changed is brought up to
+    # date where it is (`host_refresh`) rather than rebuilt: its sandbox
+    # homes, package stores, repository copies and parked sandboxes stay.
+    # Off: every out-of-date host is rebuilt, as before.
+    cloud_host_refresh_in_place: bool = True
     # What one sandbox on a platform host may hold, however much room the rest
     # of the disk has: its home's project quota (`sandbox_host.py`), past
     # which its writes are refused (ENOSPC). Each project's package store on

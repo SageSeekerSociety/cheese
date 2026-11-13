@@ -432,3 +432,264 @@ def test_the_admin_page_shows_the_size_and_which_hosts_are_out_of_date(
     assert hosts["host-old"]["draining"] is True
     assert hosts["host-young"]["image_outdated"] is False
     assert hosts["host-young"]["draining"] is False
+
+
+def _script_changed(current: str) -> str:
+    """The version of a host of today's machine made with another script."""
+    half = enrollment.IMAGE_VERSION_CHARS
+    return current[:half] + "0" * half
+
+
+class _Host:
+    """The connector of a host being brought up to date: what it was asked to
+    run, and what its run says when read back."""
+
+    def __init__(self):
+        self.started: list[str] = []
+        self.status = "running"
+        self.fail_start = False
+
+    async def exec(self, device_id, argv, *, stdin=None, timeout=60, **_):
+        command = argv[-1]
+        if "systemd-run" in command:
+            if self.fail_start:
+                return {"exit": 1, "stdout": "", "stderr": "no user manager"}
+            self.started.append(stdin or "")
+            return {"exit": 0, "stdout": "", "stderr": ""}
+        return {"exit": 0, "stdout": f"{self.status}\nsome output\n", "stderr": ""}
+
+
+def _park(case: Case, host_id: uuid.UUID) -> uuid.UUID:
+    """A parked sandbox on the host, of a room of its own."""
+    home_id = uuid.uuid4()
+    case.room("parker", 1)
+    room = case.projects["parker"]["room"]
+
+    async def go():
+        async with case.client.test_request_factory() as db:
+            now = datetime.now(UTC)
+            db.add(
+                SandboxHome(
+                    id=home_id,
+                    host_id=host_id,
+                    spec="standard",
+                    topic_id=room,
+                    room_resource_id=str(room),
+                    resource_id=str(uuid.uuid4()),
+                    active_at=now - timedelta(hours=4),
+                    frozen_at=now - timedelta(hours=3),
+                    parked_at=now - timedelta(hours=1),
+                )
+            )
+            await db.commit()
+
+    case.run(go)
+    return home_id
+
+
+def test_a_host_whose_script_alone_changed_is_refreshed_in_place(pool, monkeypatch):
+    """Its machine is today's: it is drained the same way, but marked to have
+    the script run again where it is rather than to be rebuilt."""
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    current = _current_version(pool)
+    script = _seed_host(
+        pool,
+        "host-script",
+        image_version=_script_changed(current),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    _seed_host(pool, "host-young", image_version=current)
+    _seed_host(pool, "host-young-2", image_version=current)
+    monkeypatch.setattr(pool_hub(), "exec", _Host().exec)
+
+    pool.pool("maintain")
+
+    host = pool.host(script)
+    assert host.draining_since is not None
+    assert host.refresh_in_place is True
+
+
+def test_a_host_of_another_machine_or_of_unknown_halves_is_rebuilt(pool, monkeypatch):
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    current = _current_version(pool)
+    machine = _seed_host(
+        pool,
+        "host-machine",
+        image_version="f" * 16 + current[16:],
+        created_at=datetime.now(UTC) - timedelta(hours=2),
+    )
+    _seed_host(pool, "host-young", image_version=current)
+    _seed_host(pool, "host-young-2", image_version=current)
+
+    pool.pool("maintain")
+
+    assert pool.host(machine).draining_since is not None
+    assert pool.host(machine).refresh_in_place is False
+
+
+def pool_hub():
+    from app.domain.agent.device_hub import device_hub
+
+    return device_hub
+
+
+def test_a_host_refreshed_in_place_keeps_its_parked_sandboxes(pool, monkeypatch):
+    """Once only parked sandboxes are on it, the script runs on the host; when
+    it succeeds the host is current, back in rotation, never released, and its
+    parked sandbox is still there."""
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    current = _current_version(pool)
+    host_id = _seed_host(
+        pool,
+        "host-script",
+        image_version=_script_changed(current),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    _seed_host(pool, "host-young", image_version=current)
+    _seed_host(pool, "host-young-2", image_version=current)
+    parked = _park(pool, host_id)
+    machine = _Host()
+    monkeypatch.setattr(pool_hub(), "exec", machine.exec)
+
+    pool.pool("maintain")  # drained, marked for a refresh
+    pool.pool("maintain")  # started on the host
+
+    assert len(machine.started) == 1
+    # The machine's own config is kept: the script does not write it.
+    assert "config.json" not in machine.started[0]
+    assert "systemctl --user restart cheese" in machine.started[0]
+    assert pool.host(host_id).refresh_started_at is not None
+
+    pool.pool("maintain")  # still running
+    assert pool.host(host_id).draining_since is not None
+
+    machine.status = "0"
+    pool.pool("maintain")
+
+    host = pool.host(host_id)
+    assert host.image_version == current
+    assert host.draining_since is None
+    assert host.refresh_in_place is False
+    assert host.released_at is None
+    assert host.machine_id not in pool.cloud.deleted
+
+    async def still_there():
+        async with pool.client.test_request_factory() as db:
+            return await db.get(SandboxHome, parked)
+
+    assert pool.run(still_there) is not None
+
+
+def test_a_refresh_that_fails_turns_into_the_rebuild(pool, monkeypatch):
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    current = _current_version(pool)
+    host_id = _seed_host(
+        pool,
+        "host-script",
+        image_version=_script_changed(current),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    _seed_host(pool, "host-young", image_version=current)
+    _seed_host(pool, "host-young-2", image_version=current)
+    machine = _Host()
+    monkeypatch.setattr(pool_hub(), "exec", machine.exec)
+    pool.pool("maintain")
+    pool.pool("maintain")
+    assert len(machine.started) == 1
+
+    machine.status = "1"
+    pool.pool("maintain")
+    assert pool.host(host_id).refresh_in_place is False
+
+    pool.pool("maintain")
+    released = pool.host(host_id)
+    assert released.released_at is not None
+    assert released.machine_id in pool.cloud.deleted
+
+
+def test_a_refresh_that_does_not_start_or_does_not_finish_is_a_rebuild(
+    pool, monkeypatch
+):
+    from app.domain.machine import host_refresh
+
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    current = _current_version(pool)
+    host_id = _seed_host(
+        pool,
+        "host-script",
+        image_version=_script_changed(current),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    _seed_host(pool, "host-young", image_version=current)
+    _seed_host(pool, "host-young-2", image_version=current)
+    machine = _Host()
+    machine.fail_start = True
+    monkeypatch.setattr(pool_hub(), "exec", machine.exec)
+    pool.pool("maintain")
+    pool.pool("maintain")
+    assert pool.host(host_id).refresh_in_place is False
+
+    # Another one that starts and then outlasts the wait.
+    other = _seed_host(
+        pool,
+        "host-script-2",
+        image_version=_script_changed(current),
+        created_at=datetime.now(UTC) - timedelta(minutes=50),
+    )
+    machine.fail_start = False
+    _edit(pool, host_id, released_at=datetime.now(UTC))
+    pool.pool("maintain")
+    pool.pool("maintain")
+    if pool.host(other).refresh_started_at is not None:
+        _edit(
+            pool,
+            other,
+            refresh_started_at=datetime.now(UTC)
+            - host_refresh.REFRESH_WAIT
+            - timedelta(minutes=1),
+        )
+        pool.pool("maintain")
+        assert pool.host(other).refresh_in_place is False
+
+
+def test_refresh_in_place_can_be_turned_off(pool, monkeypatch):
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    monkeypatch.setattr(settings, "cloud_host_refresh_in_place", False)
+    current = _current_version(pool)
+    host_id = _seed_host(
+        pool,
+        "host-script",
+        image_version=_script_changed(current),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    _seed_host(pool, "host-young", image_version=current)
+    _seed_host(pool, "host-young-2", image_version=current)
+
+    pool.pool("maintain")
+
+    assert pool.host(host_id).draining_since is not None
+    assert pool.host(host_id).refresh_in_place is False
+
+
+def test_a_host_of_todays_one_digest_version_is_given_the_two_halves(pool, monkeypatch):
+    """A host recorded before the version had two halves, but made of what a
+    host created now is, is not rebuilt to learn so: it gets today's version."""
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 2)
+    current = _current_version(pool)
+
+    async def legacy():
+        return (await enrollment.current_host_versions(pool.cloud))[1]
+
+    old = _seed_host(
+        pool,
+        "host-legacy",
+        image_version=pool.run(legacy),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    _seed_host(pool, "host-young", image_version=current)
+
+    pool.pool("maintain")
+
+    host = pool.host(old)
+    assert host.draining_since is None
+    assert host.image_version == current
