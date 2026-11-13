@@ -28,6 +28,8 @@ on:
     paths:
       - frontend/package.json
       - frontend/pnpm-lock.yaml
+      # The overrides that pin patched versions live here since pnpm 11.
+      - frontend/pnpm-workspace.yaml
       - backend/pyproject.toml
       - backend/uv.lock
       - .github/workflows/dependency-audit.yml
