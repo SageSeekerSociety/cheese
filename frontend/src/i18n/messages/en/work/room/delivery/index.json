@@ -1,7 +1,6 @@
 {
   "close": "Close",
   "count": "{n} in all",
-  "loadFailed": "Couldn't load. Try again later",
   "openTask": "Open task",
   "title": "Review",
   "version": "Version {n}",
