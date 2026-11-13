@@ -7,6 +7,9 @@ The rules, as a person would state them:
 - 芝士's second message in the same turn quotes nothing either: its own first
   message is not somebody else talking.
 - Somebody else spoke in between: the answer quotes the question.
+- The same holds when 芝士 itself names the question as the message it replies
+  to: whether the answer quotes it is that one rule. A quote of any other,
+  earlier message is 芝士's own and stays.
 
 The messages go the way a running turn sends them (`chat_send`, the agent's
 own credential, while its turn is live).
@@ -66,8 +69,11 @@ def _until(check, timeout: float = 15.0) -> None:
         time.sleep(0.05)
 
 
-def _send(client, project: str, room: str, content: str) -> dict:
-    """What 芝士 says with `chat_send` while its turn runs."""
+def _send(
+    client, project: str, room: str, content: str, reply_to: str | None = None
+) -> dict:
+    """What 芝士 says with `chat_send` while its turn runs; ``reply_to`` is the
+    message it names as the one it replies to."""
     token = mint_scoped_token(
         project_id=project, topic_id=room, agent_handle=room_agent_seat(client, room)
     )
@@ -75,7 +81,11 @@ def _send(client, project: str, room: str, content: str) -> dict:
     try:
         sent = client.post(
             f"/topics/{room}/messages",
-            json={"request_id": str(uuid.uuid4()), "content": content},
+            json={
+                "request_id": str(uuid.uuid4()),
+                "content": content,
+                **({"reply_to": reply_to} if reply_to else {}),
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
     finally:
@@ -117,3 +127,52 @@ def test_an_answer_somebody_talked_past_quotes_the_question(client, stub_hooks):
 
     assert first["reply_to"] == asked["id"]
     assert second["reply_to"] is None
+
+
+def test_quoting_its_own_question_when_nobody_talked_past_is_dropped(
+    client, stub_hooks
+):
+    project, room = _channel(client)
+    started = _turn_held_open(stub_hooks)
+    asked = post_message(client, room, "alice", {"content": "首页要改哪些地方？"})
+    _until(lambda: started)
+
+    first = _send(client, project, room, "我看一眼就告诉你。", asked["id"])
+    second = _send(client, project, room, "要改标题和配色。", asked["id"])
+    stub_hooks.stops(started[0], "要改标题和配色。")
+    wait_work_idle()
+
+    assert first["reply_to"] is None
+    assert second["reply_to"] is None
+
+
+def test_quoting_its_own_question_somebody_talked_past_is_kept(client, stub_hooks):
+    project, room = _channel(client, "bob")
+    started = _turn_held_open(stub_hooks)
+    seat = room_agent_seat(client, room)
+    asked = post_message(
+        client, room, "alice", {"content": f"<@{seat}> 首页要改哪些地方？"}
+    )
+    _until(lambda: started)
+    post_message(client, room, "bob", {"content": "周四的组会改在 B201。"})
+
+    answer = _send(client, project, room, "要改标题和配色。", asked["id"])
+    stub_hooks.stops(started[0], "要改标题和配色。")
+    wait_work_idle()
+
+    assert answer["reply_to"] == asked["id"]
+
+
+def test_quoting_an_earlier_message_is_kept(client, stub_hooks):
+    project, room = _channel(client)
+    earlier = post_message(client, room, "alice", {"content": "上周定过配色用蓝色。"})
+    wait_work_idle()
+    started = _turn_held_open(stub_hooks)
+    post_message(client, room, "alice", {"content": "首页要改哪些地方？"})
+    _until(lambda: started)
+
+    answer = _send(client, project, room, "按上周定的蓝色改。", earlier["id"])
+    stub_hooks.stops(started[0], "按上周定的蓝色改。")
+    wait_work_idle()
+
+    assert answer["reply_to"] == earlier["id"]

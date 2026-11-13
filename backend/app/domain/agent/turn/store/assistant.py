@@ -240,8 +240,13 @@ async def persist_assistant_message(
         ):
             return StoredAssistant(None, False, None)
         author = author or await resolve_author(session, topic_id)
+        # In a channel's main line, whether an answer quotes the question its
+        # turn answers is the platform's rule alone, whoever asked for the
+        # quote: added when another person spoke in between, and dropped when
+        # nobody did, even if the teammate passed it. A quote of any other
+        # message is the teammate's own and stays.
         if (
-            reply_to is None
+            (reply_to is None or reply_to == turn_id)
             and turn_id is not None
             and inner_id is None
             and topic is not None
