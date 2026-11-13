@@ -40,6 +40,7 @@ import { teamDataInjectionKey } from '@/keys'
 import { closeOverlay } from '@/lib/backOut'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
+import { teamAllows } from '@/lib/teamPermissions'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { usePageTitleStore } from '@/stores/title'
@@ -55,6 +56,8 @@ const notFound = ref(false)
 /** 这一次没读到的那个错。404 是「没有这个团队」，另走一条；其余是非空就画失败。 */
 const loadError = ref<unknown>(null)
 const isMember = computed(() => teamData.value?.joinStatus === 'member')
+// 设置这一层给管得了它的人：成员，以及不在这个团队里、管着每个团队的平台管理员。
+const managesFromOutside = computed(() => !isMember.value && teamAllows(teamData.value, 'edit_settings'))
 // 「不给你看」和「这次没读到」在这里判，画面只收结论：它不碰判据模块。
 const failed = computed(() => loadError.value !== null)
 const failureReason = computed(() => loadFailureReason(loadError.value))
@@ -74,8 +77,8 @@ const inSettings = computed(() => route.matched.some((record) => record.meta.set
 const pageTitle = computed(() =>
   inSettings.value ? t('home.nav.teamSettings') : t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects')
 )
-// 没读到团队、或者还不是成员时，设置的几栏照旧落在团队页的外框里：由外框说没有这个团队、
-// 不给看，或者给出「加入」。
+// 没读到团队、或者既不是成员也管不了它时，设置的几栏照旧落在团队页的外框里：由外框说没有
+// 这个团队、不给看，或者给出「加入」。
 const pageWidth = computed(() => (inSettings.value ? 'read' : 'full'))
 
 const GROUPS = [
@@ -100,9 +103,9 @@ const GROUPS = [
 
 const settings = computed(() => {
   const team = teamData.value
-  if (!team || !inSettings.value || !isMember.value || team.personal) return null
+  if (!team || !inSettings.value || !(isMember.value || managesFromOutside.value) || team.personal) return null
   const to = (name: string) => ({ name, params: { handle: team.handle } })
-  const owner = team.role === 'OWNER'
+  const owner = teamAllows(team, 'transfer')
   return {
     groups: [
       ...GROUPS.map((group) => ({

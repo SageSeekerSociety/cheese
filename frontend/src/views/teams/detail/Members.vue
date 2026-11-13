@@ -29,9 +29,9 @@ import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { onInboxChange } from '@/lib/inboxLive'
+import { teamAllows } from '@/lib/teamPermissions'
 import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
-import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 
 const route = useRoute()
@@ -45,15 +45,10 @@ const dialog = useDialog()
 
 const activeTab = ref('members')
 
-const isSelfOwner = computed(() => {
-  if (!teamData.value) {
-    return false
-  }
-  return AccountService.user?.id === teamData.value.owner.id
-})
-
-// 看服务端给的 role，不看 admins.examples：那份名单最多只有 3 个人，第 4 个管理员会被当成普通成员。
-const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
+// 看服务端说读者能做什么（`viewerPermissions`），不看 admins.examples：那份名单最多只有
+// 3 个人；也不看 role：平台管理员不在这个团队里，照样管它。
+const isSelfOwner = computed(() => teamAllows(teamData.value, 'change_roles'))
+const isSelfAdmin = computed(() => teamAllows(teamData.value, 'manage_members'))
 
 // 邀请、加入链接、加入申请：把人带进团队的几样。移出成员不在其内：那是往外走，不是往里进。
 const canBringPeopleIn = computed(() => isSelfAdmin.value && !teamData.value?.personal)
@@ -107,6 +102,8 @@ const {
 const alreadyIn = computed(() => !!found.value && teamMembers.value.some((m) => m.user.id === found.value?.id))
 const inviteRoleInput = ref('MEMBER')
 const inviteMessageInput = ref('')
+// 邀请发出去、还没回话：按钮按不动，连点或回车再提交都只发一次。回话了（成功或失败）就放开，失败了能再点。
+const inviting = ref(false)
 
 const joinRequests = ref<TeamMembershipApplication[]>([])
 // 正在批准或拒绝的那条申请：回话之前两个按钮都按不动，连点只发一次。
@@ -215,7 +212,8 @@ onMounted(() => {
 
   updateActiveTabFromRoute()
 })
-watch(() => route.query.invite, updateActiveTabFromRoute)
+// 侧栏的缓存行不带 `viewerPermissions`，整份团队到了才知道能不能邀请：那时再看一次 `invite=1`。
+watch([() => route.query.invite, canBringPeopleIn], updateActiveTabFromRoute)
 
 watch(
   () => route.query,
@@ -255,17 +253,23 @@ useEventListener(document, 'visibilitychange', () => {
 // 拿真假判断会把成功当失败——不提示、不刷新，那一行还挂着，再点一次就是「找不到」。
 const confirmInvite = async () => {
   const invitee = found.value
-  if (!teamData.value || !invitee || alreadyIn.value) {
+  if (!teamData.value || !invitee || alreadyIn.value || inviting.value) {
     return
   }
 
-  const result = await errorHandler.withErrorHandling(async () => {
-    return await TeamsApi.createInvitation(teamData.value!.id, {
-      userId: invitee.id,
-      role: inviteRoleInput.value as any,
-      message: inviteMessageInput.value || undefined,
+  inviting.value = true
+  let result: unknown
+  try {
+    result = await errorHandler.withErrorHandling(async () => {
+      return await TeamsApi.createInvitation(teamData.value!.id, {
+        userId: invitee.id,
+        role: inviteRoleInput.value as any,
+        message: inviteMessageInput.value || undefined,
+      })
     })
-  })
+  } finally {
+    inviting.value = false
+  }
 
   if (result !== undefined) {
     toast.success(t('teams.members.inviteSent'))
@@ -530,6 +534,7 @@ const copyJoinLink = async (url: string) => {
     :found="found"
     :looking-up="lookingUp"
     :lookup-error="lookupError"
+    :inviting="inviting"
     @retry-members="retryMembers"
     @promote="promoteToAdmin"
     @demote="demoteToMember"

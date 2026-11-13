@@ -62,14 +62,14 @@ covers:
 
 ```
 到点/事件 → _fire：写 RoutineRun（queued）→ 主线上落 AI 队友的一条消息（message_id）
-        → answered_in 给它开支线 → 支线里落「开始执行」→ 往支线派一个投递事件（ROOM_NOTICE）
+        → 给它开支线 → 支线里落「开始执行」→ 往支线派一个投递事件（ROOM_NOTICE）
         → 芝士的一轮在支线里跑起来 → run.turn_id → 交回结果 → report
         → _announce_finished：结果写进那条消息、消息挪到结账的时刻 → 通知规则的主人
 ```
 
-**一次执行是主线上的一条消息。** `_fire` 先在规则所在频道的主线落一条 AI 队友署名、正文为空的消息，`RoutineRun.message_id` 记下它；再用 `thread.services.answered_in` 决定在哪里答：频道主线上的消息在它的支线里，私聊没有支线，就在私聊里。「开始执行」那一行和投递都落在那里。消息下面那一行（规则名、运行中 / 未能执行、查看这次运行）由 `routine/reads.runs_under` 在频道翻页时挂上，前端是 `RoutineRunLine`。规则的主人算这条支线的参与者（`thread/reads._participants`），所以支线里有人追问，回复会通知到他。
+**一次执行是主线上的一条消息。** `_fire` 先在规则所在频道的主线落一条 AI 队友署名、正文为空的消息，`RoutineRun.message_id` 记下它；再决定这次执行在哪里跑（`firing._run_place`）：频道主线上的消息给它开一条支线，执行在支线里；私聊没有支线，就在私聊里。「开始执行」那一行和投递都落在那里。消息下面那一行（规则名、运行中 / 未能执行、查看这次运行）由 `routine/reads.runs_under` 在频道翻页时挂上，前端是 `RoutineRunLine`。规则的主人算这条支线的参与者（`thread/reads._participants`），所以支线里有人追问，回复会通知到他。
 
-**这一轮留得下，追问留不下。** 支线里芝士的改动本来留不下；执行的那一轮从投递上认出来（`turn_speakers.is_routine_run`，`eventType == routine_run`），凭证不带 `scratch`，开场提示也换成「这一轮就是这次执行，可以保存结果」。之后有人在这条支线里追问，那几轮照支线的规矩改动留不下，会话按新参数重启一次，接着同一段对话。执行那一轮也不改代码：它和支线一样只拿到只读的仓库令牌，要改代码就转为任务（见[支线的会话](/dev/session#scratch)）。
+**这一轮留得下，追问留不下。** 支线里芝士的改动本来留不下；执行的那一轮从投递上认出来（`turn_speakers.is_routine_run`，`eventType == routine_run`），凭证不带 `scratch`，开场提示也换成「这一轮就是这次执行，可以保存结果」。之后有人在这条支线里追问，那几轮照支线的规矩改动留不下，会话按新参数重启一次，接着同一段对话。执行那一轮也不改代码：它和支线一样只拿到只读的仓库令牌，要改代码就转为任务（见[频道里的会话](/dev/session#scratch)）。
 
 **投递和交回。** 投递事件的 payload 里是这段工作本身：`run_prompt` 把目标、补充说明（有才写）、上一次成功执行交回的结果，以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行用哪些资料、结果放哪，提示词里明说由它这次自己定。执行的 `turn_id` 就是那一轮。
 

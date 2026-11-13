@@ -2,6 +2,7 @@
   "allContests": "全部题目",
   "announcements": "公告",
   "auditTasks": {
+    "adminHelp": "所有空间里等审核的题目，最早发布的在前。平台管理员不在那个空间里也能通过或驳回。",
     "applyDeadline": "申请截止 {date}",
     "approve": "通过",
     "by": "{name} 发布",

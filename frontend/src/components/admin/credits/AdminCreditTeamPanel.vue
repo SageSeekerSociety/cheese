@@ -9,6 +9,7 @@ import AdminFlash from '@/components/admin/AdminFlash.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { fmtCredits, fmtDate, fmtDateTime, fmtMonth, meterTone, teamTitle } from '@/lib/adminCredits'
 
 // 一个团队的额度：挂哪个方案、开没开通需开通才能用的模型、手上每一笔额度用了多少、
@@ -61,6 +62,13 @@ const title = computed(() => {
   const team = props.team
   if (!team) return ''
   return teamTitle(team)
+})
+
+/** 共享团队的设置：平台管理员管它的成员与设置。个人团队只属于它的主人，不给入口。 */
+const teamAt = computed(() => {
+  const team = props.team
+  if (!team || team.personal_owner) return null
+  return { name: 'TeamsDetailSettings', params: { handle: team.handle } }
 })
 
 const meta = computed(() => {
@@ -135,7 +143,9 @@ function historyLine(entry: CreditAudit): string {
     <div class="actp">
       <header class="actp__head">
         <div class="actp__id">
-          <span class="actp__title t-title">{{ title }}</span>
+          <!-- A shared team's name opens its settings: platform admins manage every shared team. -->
+          <NavLink v-if="teamAt" class="actp__title actp__title--link t-title" :to="teamAt">{{ title }}</NavLink>
+          <span v-else class="actp__title t-title">{{ title }}</span>
           <span class="actp__meta t-meta-read">{{ meta }}</span>
         </div>
         <BaseButton
@@ -277,6 +287,14 @@ function historyLine(entry: CreditAudit): string {
   color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.actp__title--link {
+  text-decoration: none;
+}
+
+.actp__title--link:hover {
+  text-decoration: underline;
 }
 
 .actp__meta {

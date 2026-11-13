@@ -8,8 +8,10 @@ a fixed set of the permissions below; the owner holds all of them. ``seat_of`` s
 holds a permission; a route declares what it needs and ``app.auth.can`` asks
 these. The space's services keep only the space's own rules.
 
-Anyone with no seat does not see the space at all: what you
-cannot see does not exist for you.
+The platform's admins hold every permission but ``publish`` on every space,
+with or without a seat (:attr:`SpacePolicy.overseen`): they manage it, and
+publishing is what a member does. Anyone else with no seat does not see the
+space at all: what you cannot see does not exist for you.
 """
 
 import enum
@@ -125,12 +127,14 @@ async def seat_of(session: AsyncSession, space_id: int, user_id: int) -> Seat | 
 
 
 class SpacePolicy(SeatPolicy[Space, Permission, Seat]):
-    """Anyone with no seat does not see the space at all."""
+    """Anyone with no seat, and not a platform admin, does not see the space
+    at all."""
 
     kind = "space"
     path_param = "spaceId"
     permissions = Permission
     grants = GRANTS
+    overseen = frozenset(Permission) - {Permission.publish}
 
     async def load(self, session: AsyncSession, id: int) -> Space | None:
         return await SpaceRepository(session).get_by_id(id)

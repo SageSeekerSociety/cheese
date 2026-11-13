@@ -4,7 +4,16 @@ import type { Block } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
-import { askGroupKey, askHeader, askMultiSelect, groupAskBlocks } from './askGroups'
+import {
+  askAnswered,
+  askAsksViewer,
+  askGroupFolds,
+  askGroupKey,
+  askHeader,
+  askMultiSelect,
+  askWithdrawn,
+  groupAskBlocks,
+} from './askGroups'
 
 function ask(id: string, notice: string | null, extra: Record<string, unknown> = {}): Block {
   return {
@@ -91,5 +100,70 @@ describe('askGroups', () => {
     expect(askMultiSelect(bare)).toBe(false)
     expect(askGroupKey(bare)).toBe('g')
     expect(askGroupKey(plain('x'))).toBeNull()
+  })
+
+  it('问到没问到：点名时只看名单，问所有人、没点名都算问到', () => {
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'] }), 'alice')).toBe(true)
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'] }), 'bob')).toBe(false)
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice', 'bob'] }), 'bob')).toBe(true)
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'], asked_all: true }), 'bob')).toBe(true)
+    // 没点名（平台发起的那一轮里问的）：频道里谁都答得上。
+    expect(askAsksViewer(ask('a', 'g', { asked: [] }), 'bob')).toBe(true)
+    // 还不知道看的人是谁：不替他判断。
+    expect(askAsksViewer(ask('a', 'g', { asked: ['alice'] }), null)).toBe(true)
+  })
+
+  it('撤回的题整行不画；过期的还画（它还能答）', () => {
+    const withdrawn = ask('a', 'g', {
+      answer_log: [{ kind: 'withdrawn', by: 'cheese', at: '2026-10-22T00:01:00Z' }],
+    })
+    const expired = ask('b', 'g', { answer_log: [{ kind: 'expired', by: 'cheese', at: '2026-10-22T00:01:00Z' }] })
+
+    expect(askWithdrawn(withdrawn)).toBe(true)
+    expect(askWithdrawn(expired)).toBe(false)
+    expect(askWithdrawn(ask('c', 'g'))).toBe(false)
+  })
+
+  it('答过就是答过：跳过不算', () => {
+    const answered = ask('a', 'g', {
+      answer_log: [{ kind: 'option', option: 'A', by: 'alice', at: '2026-10-22T00:01:00Z' }],
+    })
+    const skipped = ask('b', 'g', {
+      answer_log: [{ kind: 'skipped', by: 'alice', at: '2026-10-22T00:01:00Z' }],
+    })
+
+    expect(askAnswered(answered)).toBe(true)
+    expect(askAnswered(skipped)).toBe(false)
+    expect(askAnswered(ask('c', 'g'))).toBe(false)
+  })
+
+  it('整组问答完就收成一行；问到还没答的照整张卡，只答了一部分也不收', () => {
+    const mineOpen = [ask('a', 'g', { asked: ['me'] }), ask('b', 'g', { asked: ['me'] })]
+    const answer = { kind: 'option', option: 'A', by: 'me', at: '2026-10-22T00:01:00Z' }
+    const halfDone = [ask('a', 'g', { asked: ['me'], answer_log: [answer] }), ask('b', 'g', { asked: ['me'] })]
+    const allDone = [
+      ask('a', 'g', { asked: ['me'], answer_log: [answer] }),
+      ask('b', 'g', { asked: ['me'], answer_log: [answer] }),
+    ]
+    const othersDone = [
+      ask('a', 'g', { asked: ['alice'], answer_log: [{ ...answer, by: 'alice' }] }),
+      ask('b', 'g', { asked: ['alice'], answer_log: [{ ...answer, by: 'alice' }] }),
+    ]
+    const othersOpen = [ask('a', 'g', { asked: ['alice'] }), ask('b', 'g', { asked: ['alice'] })]
+
+    expect(askGroupFolds(mineOpen, 'me')).toBe(false)
+    expect(askGroupFolds(halfDone, 'me')).toBe(false)
+    expect(askGroupFolds(allDone, 'me')).toBe(true)
+    expect(askGroupFolds(othersOpen, 'me')).toBe(true)
+    expect(askGroupFolds(othersDone, 'me')).toBe(true)
+    // 还不知道看的人是谁：照整张卡画，不替他收。
+    expect(askGroupFolds(mineOpen, null)).toBe(false)
+    // 组里每一道都被撤回了：没有人还在等，收起来。
+    const allWithdrawn = [
+      ask('a', 'g', { asked: ['me'], answer_log: [{ kind: 'withdrawn', by: 'cheese', at: '2026-10-22T00:01:00Z' }] }),
+      ask('b', 'g', { asked: ['me'], answer_log: [{ kind: 'withdrawn', by: 'cheese', at: '2026-10-22T00:01:00Z' }] }),
+    ]
+    expect(askGroupFolds(allWithdrawn, 'me')).toBe(true)
+    expect(askGroupFolds([], 'me')).toBe(false)
   })
 })

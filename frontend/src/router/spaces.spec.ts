@@ -1,8 +1,9 @@
 // 两件事钉在路由层：
 // 1. 空间设置的每一栏都能单独链接：把地址发给另一位管理员，他打开的就是那一栏，
 //    不是被带回第一栏。
-// 2. 管理那一段（`/spaces/:spaceId/manage/*`）有门：所有者与管理员放行，别人被领到
-//    无权限页，而不是让页面自己拉到 403 再画一个原始报错框。
+// 2. 管理那一段（`/spaces/:spaceId/manage/*`）有门：服务端说能管的人放行（所有者、
+//    管理员与平台管理员），别人被领到无权限页，而不是让页面自己拉到 403 再画一个
+//    原始报错框。
 // 3. 整个空间有登录门：没登录的人被送去登录页，登录完回到他点开的那条地址，而不是让
 //    每个面板各自拉到 401 再画一个原始报错框。
 //
@@ -64,12 +65,19 @@ function router() {
   return createRouter({ history: createMemoryHistory(), routes: [withoutViews(spaces), signIn] })
 }
 
-/** 这次导航里「我是谁」和「这块板的管理员是谁」。 */
-function signedInAs(userId: number, admins: Admin[]) {
+/** 服务端按席位给的「读者能做什么」（`app/domain/space/permissions.py`）。 */
+const MANAGES = ['view', 'publish', 'teach', 'edit_settings', 'manage_members']
+const OWNS = [...MANAGES, 'manage_admins', 'delete']
+const READS = ['view', 'publish']
+
+/** 这次导航里「我是谁」「这块板的管理员是谁」，以及服务端说我能做什么。 */
+function signedInAs(userId: number, admins: Admin[], viewerPermissions?: string[]) {
   setActivePinia(createPinia())
   // 只关心「我是谁」这一个字段，界面上别的字段这里用不到。
   ;(AccountService._user as { value: { id: number } | null }).value = { id: userId }
-  detail.mockResolvedValue({ space: { id: SPACE_ID, name: '数据结构空间', admins } })
+  const mine = admins.find((admin) => admin.user.id === userId)?.role
+  const held = viewerPermissions ?? (mine === 'OWNER' ? OWNS : mine === 'ADMIN' ? MANAGES : READS)
+  detail.mockResolvedValue({ space: { id: SPACE_ID, name: '数据结构空间', admins, viewerPermissions: held } })
 }
 
 beforeEach(() => {
@@ -136,6 +144,13 @@ describe('管理那一段的门', () => {
 
   it('管理员放行', async () => {
     signedInAs(ADMIN_ID, [owner(), { user: { id: ADMIN_ID }, role: 'ADMIN' }])
+    const r = router()
+    await r.push(`/spaces/${SPACE_ID}/manage/members`)
+    expect(r.currentRoute.value.name).toBe('SpacesDetailMembers')
+  })
+
+  it('平台管理员不在管理员名单上，服务端说他管这块板：放行', async () => {
+    signedInAs(MEMBER_ID, [owner()], MANAGES)
     const r = router()
     await r.push(`/spaces/${SPACE_ID}/manage/members`)
     expect(r.currentRoute.value.name).toBe('SpacesDetailMembers')

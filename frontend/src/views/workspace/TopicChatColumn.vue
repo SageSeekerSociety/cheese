@@ -16,16 +16,17 @@ import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
+import ReviewWaitingBar from '@/components/room/ReviewWaitingBar.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 import { artifactName } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
-import { topicTitle } from '@/lib/topicState'
+import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
+import { openRoomTasksQuery, roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
 import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -33,7 +34,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 //
 // 它是一个组件而不是 TopicView 模板里的一段，因为同一段对话要挂在好几个地方：频道
 // 主线和任务页左边那一栏、手机上工作面板「对话」那一格，以及频道页右半边打开的支线
-// 和任务（`beside`，外面套 ThreadPane 的页头）。同一份接线写两遍是这几处早晚长歪的
+// （`beside`，外面套 ThreadPane 的页头）。同一份接线写两遍是这几处早晚长歪的
 // 原因：谁说话叫醒 AI 队友、输入框写什么、任务等审阅时那一条，都只在这里定。
 defineOptions({ name: 'TopicChatColumn' })
 
@@ -131,7 +132,7 @@ const rejecting = ref(false)
 const conversationId = computed(() => props.taskId ?? props.threadId ?? props.topic.id)
 const store = useWorkspaceStore()
 
-// 这一栏是任务时，那件任务（任务页、右半边页头读的是同一份）。
+// 这一栏是任务时，那件任务（任务页页头读的是同一份）。
 const taskRead = useQuery(
   computed(() => ({ ...roomTaskQuery(props.taskId ?? ''), enabled: !!props.taskId })),
   queryClient
@@ -147,12 +148,9 @@ const alwaysSummon = computed(
     !closed.value &&
     (task.value.owner_handle === viewer.value || (task.value.contributor_handles ?? []).includes(viewer.value))
 )
-const hint = computed(() => {
-  if (closed.value) return t('work.task.closedHint')
-  return props.beside && task.value ? t('work.room.thread.taskPlaceholder') : null
-})
+const hint = computed(() => (closed.value ? t('work.task.closedHint') : null))
 
-// 它挂着的那条主线消息：右半边打开的支线和任务都有；任务页上只有支线原地转成的那件
+// 它挂着的那条主线消息：右半边打开的支线有；任务页上只有支线原地转成的那件
 // 有，前面写它来自哪个频道（另开的任务，来源在「概览」顶上那一行）。
 const fromThread = computed(() => !!task.value?.from_thread)
 const threadRead = useQuery(
@@ -165,7 +163,7 @@ const threadRead = useQuery(
 const thread = computed(() => threadRead.data.value ?? null)
 const root = computed<Block | null>(() => (props.beside || fromThread.value ? thread.value?.root ?? null : null))
 // 从那条消息本身另开的任务，列在它下面；从支线里某句回复拆出去的，挂在那句下面
-// （ChatPanel）；这段对话自己转成的那件写在页头，不再列一遍。
+// （ChatPanel）。
 const madeRead = useQuery(
   computed(() => {
     const rootId = props.beside ? root.value?.id : undefined
@@ -184,6 +182,22 @@ const madeHere = computed(() => {
     )
     .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
+// 频道主线上「待你审阅」那一条：这个频道里交了一版、等我审阅的任务，最早交上来的在前。
+// 读的是频道概览和侧栏那一份开着的任务清单，不另问。
+const mainLine = computed(() => !props.taskId && !props.threadId && !props.beside)
+const openTasks = useQuery(
+  computed(() => ({ ...openRoomTasksQuery(props.topic.id), enabled: mainLine.value })),
+  queryClient
+)
+const waitingForMe = computed(() => {
+  if (!mainLine.value) return []
+  const me = myHandle()
+  return (openTasks.data.value?.data ?? [])
+    .filter((row) => row.card?.status === 'pending' && (row.card.reviewer ?? '').split('、').includes(me))
+    .sort((a, b) => (a.card?.since ?? '').localeCompare(b.card?.since ?? ''))
+    .map((row) => ({ taskId: row.id, title: taskTitle(row) }))
+})
+
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
   mentionNames: props.memberNames ?? {},
@@ -282,6 +296,7 @@ defineExpose({
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
            见，但平时只占一行，不把对话挤到只剩几行。 -->
       <template #above-composer>
+        <ReviewWaitingBar v-if="mainLine && !rejecting" :items="waitingForMe" @open="emit('open-card', $event)" />
         <TopicAcceptCard
           v-if="!acceptElsewhere && !threadId"
           class="chat-dock"

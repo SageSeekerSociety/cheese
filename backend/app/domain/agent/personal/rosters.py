@@ -105,10 +105,14 @@ async def team(session: AsyncSession, user_id: int, team_id: int) -> Read:
 
 async def space(session: AsyncSession, user_id: int, space_id: int) -> Read:
     """A space the person is in or runs: its managers and its members."""
-    runs = await space_seats.runs(session, space_id, user_id)
     spaces = SpaceService.for_routes(session)
-    if not runs and not await spaces.is_reader(space_id=space_id, user_id=user_id):
+    if not await space_seats.SPACE.allows(
+        session, space_id, user_id, space_seats.Permission.view
+    ):
         raise NotFoundError.for_resource("space", str(space_id))
+    runs = await space_seats.SPACE.allows(
+        session, space_id, user_id, space_seats.Permission.manage_members
+    )
     label = (await SpaceLabels(session).describe([space_id])).get(space_id)
     managers = sorted(await space_seats.managers(session, space_id))
     found = await spaces.get_space(space_id)

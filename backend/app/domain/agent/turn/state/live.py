@@ -71,12 +71,6 @@ class HookWorkState:
     model: str = ""
     assistant_count: int = 0
 
-    # The topic branch's commits as of turn start — what makes "this turn's
-    # changes" answerable at turn end. A task rather than a value, because the
-    # read shells out to git and creates the repo on first use; see where it is
-    # started. `None` (or a read that failed) means the turn lands NO change
-    # summary rather than a wrong one: with no baseline, every commit looks new.
-    known_commits: asyncio.Task[set[str] | None] | None = None
     # Did the SESSION open this work rather than the platform? Then its
     # bookkeeping has no coroutine to fall out of, and turn end is the only
     # place the marks it left in the runner can be dropped.

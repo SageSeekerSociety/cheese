@@ -23,6 +23,7 @@ import type { TaskLine } from '@/lib/channelTasks'
 import type { TaskState } from '@/lib/taskState'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import AskFoldLine from '../../components/ask/AskFoldLine.vue'
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
@@ -36,6 +37,7 @@ import ComposerSummon from '@/components/room/ComposerSummon.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import TaskLink from '@/components/room/TaskLink.vue'
 import ThreadHead from '@/components/room/ThreadHead.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
@@ -443,6 +445,32 @@ const TASK_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'room-task-link',
+    title: 'TaskLink',
+    about: '芝士在频道主线上建的一件任务：它回复下面的一行，任务名、谁负责、箭头，点一下打开这件任务。不写状态。',
+    file: 'src/components/room/TaskLink.vue',
+    component: TaskLink,
+    needs: UI_T,
+    states: [
+      {
+        name: '有负责人',
+        note: '只记下建了这件任务；此刻到哪一步看侧栏和任务页。',
+        props: { taskId: 't-demo', title: '整理第一周的课件', ownerName: '王一鸣' },
+        expect: '王一鸣 负责',
+      },
+      {
+        name: '标题很长',
+        note: '标题一行放不下时截断，负责人和箭头留在右边。',
+        props: {
+          taskId: 't-demo-long',
+          title: '把第一周到第八周的课件按新的模板重新整理一遍，并补上每一讲的习题和答案',
+          ownerName: '王一鸣',
+        },
+        expect: '王一鸣 负责',
+      },
+    ],
+  },
+  {
     id: 'room-thread-root',
     title: 'ThreadRoot',
     about: '一条支线挂着的那条主线消息，画在这段对话最上面：支线的右半边和支线转成的任务页开头都是它。',
@@ -474,36 +502,23 @@ const TASK_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-thread-head',
     title: 'ThreadHead',
-    about:
-      '支线的页头一行：它挂着的那条消息说的事和「转为任务」；转成以后是任务名、状态、负责人和「整页打开」。桌面上在支线那一栏顶上，手机上是顶栏的内容。',
+    about: '支线的页头一行：它挂着的那条消息说的事和「转为任务」。桌面上在支线那一栏顶上，手机上是顶栏的内容。',
     file: 'src/components/room/ThreadHead.vue',
     component: ThreadHead,
     needs: UI_T,
-    args: { viewer: 'alice', members: [], memberNames: { alice: 'Alice' }, canToTask: true },
+    args: { canToTask: true },
     states: [
       {
-        name: '还是支线',
+        name: '桌面那一栏',
         note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
-        props: { heading: '登录要不要加手机验证码？', task: null, closable: true },
+        props: { heading: '登录要不要加手机验证码？', closable: true },
         expect: '登录要不要加手机验证码',
-      },
-      {
-        name: '转成了任务',
-        note: '同一行换成任务：任务名、状态、负责人，「整页打开」进任务页。',
-        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, closable: true },
-        expect: '登录页加「记住我」',
       },
       {
         name: '在手机顶栏里',
         note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
-        props: { heading: '登录要不要加手机验证码？', task: null, bar: true },
+        props: { heading: '登录要不要加手机验证码？', bar: true },
         expect: '登录要不要加手机验证码',
-      },
-      {
-        name: '转成任务，在手机顶栏里',
-        note: '两行：任务名独占第一行，状态和负责人退到第二行，同一号字、同一种灰，各成一格。',
-        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, bar: true },
-        expect: '登录页加「记住我」',
       },
     ],
   },
@@ -755,6 +770,57 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '解析不出 handle 的那一瞬间不接受点击：少一个入口，好过一个点了不算数的入口。',
         props: { ...SUMMON_BASE, ready: false },
         expectSelector: '.summon__btn[disabled]',
+      },
+    ],
+  },
+
+  {
+    id: 'ask-fold-line',
+    title: 'AskFoldLine',
+    about:
+      '问别人的一道题在频道里收成的那一行：谁问、问谁、题目一句、等没等到答案（或已经答了什么）。点开才是整张提问卡，再点收起。问到你自己的题不走这一件——照整张卡画，因为你正要作答。',
+    file: 'src/components/ask/AskFoldLine.vue',
+    component: AskFoldLine,
+    needs: UI_T,
+    states: [
+      {
+        name: '收起来了',
+        note: '一行 13px：谁问谁、题目、还没有回答。没有外框，箭头在右端；点整行展开。',
+        props: {
+          blocks: [askBlock([])],
+          asker: AGENT_NAME,
+          names: { alice: 'Alice' },
+          refs: { mentionNames: { alice: 'Alice' }, topicTitles: {} },
+          expanded: false,
+          viewer: 'bob',
+        },
+        expectSelector: '.ask-fold__chevron',
+      },
+      {
+        name: '点开了',
+        note: '上面的那一行还在（收的作用），下面接的是问 alice 的那张完整的卡：选项、末行的输入框都在，灰着——问的不是看的人。',
+        props: {
+          blocks: [askBlock([])],
+          asker: AGENT_NAME,
+          names: { alice: 'Alice' },
+          refs: { mentionNames: { alice: 'Alice' }, topicTitles: {} },
+          expanded: true,
+          viewer: 'bob',
+        },
+        expectSelector: '.ask-fold',
+      },
+      {
+        name: '已经有人答了',
+        note: '状态那一格换成是谁答的、答了什么；题目还在一行里。',
+        props: {
+          blocks: [askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }])],
+          asker: AGENT_NAME,
+          names: { alice: 'Alice' },
+          refs: { mentionNames: { alice: 'Alice' }, topicTitles: {} },
+          expanded: false,
+          viewer: 'bob',
+        },
+        expect: 'Alice：按部门',
       },
     ],
   },

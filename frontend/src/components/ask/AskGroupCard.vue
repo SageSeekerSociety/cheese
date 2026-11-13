@@ -16,7 +16,7 @@
 import type { Block } from '../../cx_types'
 import type { GroupAnswer } from '../../lib/askGroups'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { askHeader, askMultiSelect } from '../../lib/askGroups'
 import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
@@ -85,15 +85,49 @@ function recordedAnswers(): Draft[] {
 }
 
 const editing = ref(false)
-/** 现在是不是在答题那一屏：没交过，或者点了「改答案」重开。 */
-const answering = computed(() => (!submitted.value || editing.value) && !reviewing.value)
-/** 已交、且没在改：这一屏是「答案」，不是「确认」。 */
-const showingAnswers = computed(() => submitted.value && !editing.value)
+/** 这一组里有题已经有答案了（谁答的都算）：题的答案不因为答题的人不同而不同。 */
+const answeredAny = computed(() => questions.value.some((q) => askAnswers(q).some((a) => !a.skipped)))
+/** 还没答的题都有答案了（撤回的那几道不用答，不算）。 */
+const allAnswered = computed(() => {
+  const waiting = questions.value.filter((q) => askClosedByAsker(q) !== 'withdrawn')
+  return waiting.length > 0 && waiting.every((q) => askAnswers(q).some((a) => !a.skipped))
+})
 // 每题一个草稿。没交之前它只活在这个组件里，换设备/刷新就没了（v1 的取舍）；
 // 「改答案」时用服务端记下的答案把它填回去。
 const drafts = ref<Draft[]>(recordedAnswers())
 const at = ref(0)
 const reviewing = ref(false)
+/** 这一屏上有人动过手（选了选项、或者写了一句话），还没交上去。打开时预填进去的
+ *  服务端答案不算。 */
+const touched = ref(false)
+const localTouched = computed(() => touched.value && drafts.value.some((d) => d.options.length > 0 || d.note.trim()))
+/** 答案不是在这一屏交的：别人答了、在另一台设备上交了、或者房间里的一条回复被记成了答案。 */
+const cameFromElsewhere = computed(() => answeredAny.value && !submitted.value)
+/**
+ * 已交、没在改：这一屏是「答案」，不是「确认」。自己交过（哪怕只答了一部分）就算；
+ * 整组在别处答完了也算——那边已经答了，这里不该再摆一遍选项等人再答一次。只答了一
+ * 部分的仍留在答题屏（已答的题预填好），手上正有没交的选择时也不换走。
+ */
+const showingAnswers = computed(() => !editing.value && (submitted.value || (allAnswered.value && !localTouched.value)))
+/** 现在是不是在答题那一屏：没有答案可看，或者点了「改答案」重开。 */
+const answering = computed(() => !showingAnswers.value && !reviewing.value)
+
+// 服务端那几份答案一变，草稿跟着换——否则答案页会拿打开这一屏时的空草稿，把已经
+// 答过的题画成「未作答」。手上还有没交的选择时不动它。
+watch(
+  () =>
+    questions.value
+      .map((q) =>
+        askAnswers(q)
+          .map((a) => `${a.by}|${a.skipped}|${a.text}`)
+          .join('~')
+      )
+      .join('|'),
+  () => {
+    if (cameFromElsewhere.value && localTouched.value) return
+    drafts.value = recordedAnswers()
+  }
+)
 
 const answeredCount = computed(() => drafts.value.filter((d) => d.options.length > 0 || d.note.trim()).length)
 const missing = computed(() => total.value - answeredCount.value)
@@ -107,6 +141,7 @@ function chosen(index: number, text: string): boolean {
 
 function pick(index: number, text: string, multi: boolean) {
   if (!canAnswer.value || !answering.value) return
+  touched.value = true
   const draft = draftFor(index)
   if (multi) {
     const at2 = draft.options.indexOf(text)
@@ -120,6 +155,7 @@ function pick(index: number, text: string, multi: boolean) {
 }
 
 function typeNote(index: number, value: string) {
+  touched.value = true
   const draft = draftFor(index)
   draft.note = value
   if (value.trim()) draft.options = []
@@ -147,11 +183,13 @@ function submit() {
   emit('submit', { questionId: questions.value[0]!.id, answers })
   reviewing.value = false
   editing.value = false
+  touched.value = false
 }
 
 function reopen() {
   // 把服务端记下的答案填回草稿，改的是同一件事的下一版；再交一次整组覆盖。
   drafts.value = recordedAnswers()
+  touched.value = false
   editing.value = true
   reviewing.value = false
   at.value = 0

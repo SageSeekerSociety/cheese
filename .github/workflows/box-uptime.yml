@@ -36,17 +36,31 @@ jobs:
   # behind a merge burst and report that as death — which is why the old check
   # asked only whether ONE machine answered, and why two of three being down on
   # 2026-09-15 looked like nothing but slow CI.
+  #
+  # Listing a repository's runners needs the Administration (read) permission,
+  # and the workflow token can never be granted it, so `github.token` is
+  # refused with 403 on every run. The check reads its own credential,
+  # CI_POOL_RUNNERS_TOKEN, one that holds Administration: read on this
+  # repository. Without it the pool is not looked at, which the run says as a
+  # notice, and nothing is sent: an alert that can only ever say "could not
+  # look" on every run carries no information.
   ci-pool:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       WEBHOOK: ${{ secrets.FEISHU_ALERT_WEBHOOK }}
+      RUNNERS_TOKEN: ${{ secrets.CI_POOL_RUNNERS_TOKEN }}
     steps:
+      - name: Say that the pool is not being checked
+        if: ${{ env.RUNNERS_TOKEN == '' }}
+        run: echo "::notice::CI pool not checked — CI_POOL_RUNNERS_TOKEN is not set, and the workflow token cannot list runners"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: ${{ env.RUNNERS_TOKEN != '' }}
       - name: Which machines are in the pool
         id: pool
+        if: ${{ env.RUNNERS_TOKEN != '' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ env.RUNNERS_TOKEN }}
           REPO: ${{ github.repository }}
         run: python3 .github/scripts/ci-pool-health.py
 

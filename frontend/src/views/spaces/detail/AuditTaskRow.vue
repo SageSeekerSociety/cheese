@@ -10,7 +10,8 @@ import dayjs from 'dayjs'
 import BaseButton from '@/components/base/BaseButton.vue'
 import TaskDescription from '@/components/tasks/TaskDescription.vue'
 
-const props = defineProps<{ task: Task; open: boolean }>()
+/** `showSpace`：几个空间的题排在一起时（平台管理员的待审核题目），每行写上它在哪个空间。 */
+const props = defineProps<{ task: Task; open: boolean; showSpace?: boolean }>()
 defineEmits<{ toggle: []; approve: []; reject: [] }>()
 
 const { t } = useI18n()
@@ -48,6 +49,7 @@ const facts = computed(() => {
         <span class="ar__name">{{ task.name }}</span>
         <span v-if="task.intro" class="ar__intro">{{ task.intro }}</span>
         <span class="ar__meta">
+          <span v-if="showSpace && task.space?.name">{{ task.space.name }}</span>
           <span>{{ t('spaces.detail.auditTasks.by', { name: publisher }) }}</span>
           <span>{{ date(task.createdAt) }}</span>
           <span v-if="task.category" class="ar__tag">{{ task.category.name }}</span>

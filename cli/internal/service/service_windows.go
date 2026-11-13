@@ -129,7 +129,9 @@ func RunForeground(cfgPath string) error {
 		fmt.Fprintf(logFile, "cheese: started %s\n", time.Now().UTC().Format(time.RFC3339))
 	}
 	if self, err := update.SelfPath(); err == nil {
-		update.CleanupReplaced(self)
+		if n, size := update.Cleanup(self); n > 0 {
+			fmt.Fprintf(os.Stderr, "cheese: removed %d abandoned update downloads (%d MB)\n", n, size>>20)
+		}
 	}
 	cfg, err := host.LoadConfig(cfgPath)
 	if err != nil {

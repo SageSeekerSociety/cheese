@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -28,7 +29,7 @@ from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.agent import connector_build, toolchain
+from app.domain.agent import connector_build, sandbox_image, toolchain
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
@@ -43,6 +44,7 @@ logger = logging.getLogger("cheese.machine.enrollment")
 # One attempt should be slow enough to survive a cold download on a fresh
 # machine, and fast enough that a stuck one doesn't wedge the sweep.
 SSH_TIMEOUT_S = 180.0
+IMAGE_PREWARM_TIMEOUT_S = sandbox_image.PREWARM_TIMEOUT_S + SSH_TIMEOUT_S
 
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
@@ -76,7 +78,11 @@ SSH_OPTS = [
 
 # What a Linux connector places for its rooms' sandboxes whatever the system
 # has (`cli/internal/devenv`), and enrollment hands a cloud machine first.
-SANDBOX_TOOLS = ("bubblewrap", "host-tools")
+SANDBOX_TOOLS = (
+    "bubblewrap",
+    "host-tools",
+    *(entry[0] for entry in toolchain.CLOUD_PLACEMENTS),
+)
 
 
 class EnrollmentError(RuntimeError):
@@ -218,6 +224,39 @@ if [ "$swap_mb" -gt 0 ]; then
   echo "vm.swappiness={swappiness}" | sudo -n tee "$swap_sysctl" >/dev/null
   sudo -n sysctl -p "$swap_sysctl" >/dev/null
 fi
+# zswap: pages on their way to the swap file are compressed into RAM first,
+# so what a frozen sandbox gives up costs about a third of its size and comes
+# back without a disk read (`cloud_host_zswap_max_pool_percent`). Only where
+# the kernel was built with it: Debian's cloud kernel was not, its generic one
+# is (CONFIG_ZSWAP=y in debian/config/config, unset in config.cloud; the host
+# template, MicroCloud's templates/vm/debian13/build.sh). Set now
+# and at every boot (systemd-tmpfiles writes the same values), and nothing
+# installed: the compressor is the first of zstd, lz4, lzo the kernel has.
+zswap=/sys/module/zswap/parameters
+zswap_percent={zswap_percent}
+if [ "$zswap_percent" -gt 0 ] && [ -e "$zswap/enabled" ]; then
+  compressor=
+  for one in zstd lz4 lzo; do
+    if grep -qw "$one" /proc/crypto 2>/dev/null || sudo -n modprobe -q "$one" 2>/dev/null; then
+      compressor=$one
+      break
+    fi
+  done
+  # zsmalloc packs compressed pages densely; Debian builds it as a module
+  # and leaves zbud as zswap's default, which fits at most two to a page.
+  pool=
+  if [ -e "$zswap/zpool" ] && sudo -n modprobe -q zsmalloc 2>/dev/null; then
+    pool=zsmalloc
+  fi
+  {{
+    [ -n "$compressor" ] && echo "w $zswap/compressor - - - - $compressor"
+    [ -n "$pool" ] && echo "w $zswap/zpool - - - - $pool"
+    echo "w $zswap/max_pool_percent - - - - $zswap_percent"
+    echo "w $zswap/enabled - - - - Y"
+  }} | sudo -n tee /etc/tmpfiles.d/90-cheese-zswap.conf >/dev/null
+  sudo -n systemd-tmpfiles --create /etc/tmpfiles.d/90-cheese-zswap.conf \
+    || echo "zswap could not be turned on; the swap file is used as it is" >&2
+fi
 set -- $(stat -f -c '%b %S' /data)
 echo "CHEESE_SANDBOX_DISK_BYTES=$(( $1 * $2 ))"
 """
@@ -275,8 +314,27 @@ def bootstrap_script(
         DATA_DISK.format(
             swap_mb=settings.cloud_host_swap_mb,
             swappiness=settings.cloud_host_swappiness,
+            zswap_percent=settings.cloud_host_zswap_max_pool_percent
+            if settings.cloud_host_swap_mb
+            else 0,
         )
         if sandbox_disk
+        else ""
+    )
+    image = sandbox_image.default_image() if sandbox_disk else None
+    prewarm = (
+        "sudo -n install -D -o root -g root -m 0755 "
+        '"$HOME/.cheese/runtime/crane/crane" '
+        + shlex.quote(sandbox_image.CRANE)
+        + "\nsudo -n install -d -m 0755 /data/cheese-sandbox-images\n"
+        'sudo -n install -m 0644 "$HOME/.cheese/runtime/crane.sha256" /data/cheese-sandbox-images/crane.sha256'
+        + "\nsudo -n install -D -o root -g root -m 0755 "
+        '"$HOME/.cheese/runtime/sandbox-image.py" /usr/local/libexec/cheese-sandbox-image\n'
+        "sudo -n /usr/bin/python3 -I /usr/local/libexec/cheese-sandbox-image "
+        + shlex.quote(image["reference"])
+        + f" --keep {int(image['keep_old'])}"
+        + ' --host-helper "$(cat "$HOME/.cheese/runtime/sandbox-host.py")"'
+        if image
         else ""
     )
     return f"""set -eu
@@ -351,6 +409,7 @@ for tool in tmux git python3; do
     || {{ echo "$tool is missing and cheesehost could not place it" >&2; exit 1; }}
 done
 {data_disk}
+{prewarm}
 # A retried enrollment writes a new device identity. Starting an active service
 # leaves the old token in memory, so the room waits for a device that never joins.
 systemctl --user restart cheese
@@ -408,6 +467,10 @@ def bootstrap_digest(*, sandbox_disk: bool) -> str:
         device_id=_VERSION_PLACEHOLDER,
         sandbox_disk=sandbox_disk,
     )
+    if sandbox_disk:
+        script = script.replace(
+            sandbox_image.default_image()["reference"], _VERSION_PLACEHOLDER
+        )
     return hashlib.sha256(script.encode()).hexdigest()
 
 
@@ -432,6 +495,10 @@ def host_image_version(
         "spec": [int(cores), int(memory_mb), int(disk_gb)],
         "user": settings.microcloud_login_user,
         "bootstrap": bootstrap_digest(sandbox_disk=True),
+        # The provider re-bakes a template under the same name (MicroCloud
+        # keeps `templateName` and makes a new image behind it), so nothing
+        # above changes when the image does: this does, bumped by hand.
+        "template_epoch": settings.cloud_host_template_epoch,
     }
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]
@@ -621,14 +688,25 @@ async def run_bootstrap(
                 ) from exc
             digest = toolchain.ARTIFACTS[(tool, platform_key)].sha256
             placed, staged = f"{runtime}/{tool}", f"{runtime}/{tool}.ssh-new"
+            strip = 0 if tool == "crane" else 1
             await run(
                 *ssh,
                 f'set -e; mkdir -p "{runtime}"; rm -rf "{staged}"; '
                 f'mkdir -m 700 "{staged}"; '
-                f'tar -xzf - -C "{staged}" --strip-components=1; '
+                f'tar -xzf - -C "{staged}" --strip-components={strip}; '
                 f'rm -rf "{placed}"; mv "{staged}" "{placed}"; '
                 f'(umask 077; echo {digest} > "{placed}.sha256")',
                 stdin=archive,
+            )
+        if sandboxes:
+            await push(
+                Path(sandbox_image.__file__),
+                f"{footprint_root()}/runtime/sandbox-image.py",
+            )
+            await push(
+                Path(sandbox_image.__file__).parent
+                / "harness/claude_code/remote_execution/sandbox_host.py",
+                f"{footprint_root()}/runtime/sandbox-host.py",
             )
         command = [
             "ssh",
@@ -667,13 +745,12 @@ async def run_bootstrap(
             return bytes(output)
 
         try:
-            stdout = await asyncio.wait_for(collect(), timeout=SSH_TIMEOUT_S)
+            timeout = IMAGE_PREWARM_TIMEOUT_S if sandboxes else SSH_TIMEOUT_S
+            stdout = await asyncio.wait_for(collect(), timeout=timeout)
         except TimeoutError as exc:
             process.kill()
             await process.wait()
-            raise EnrollmentError(
-                f"bootstrap timed out after {SSH_TIMEOUT_S:.0f}s"
-            ) from exc
+            raise EnrollmentError(f"bootstrap timed out after {timeout:.0f}s") from exc
         except BaseException:
             if process.returncode is None:
                 process.kill()

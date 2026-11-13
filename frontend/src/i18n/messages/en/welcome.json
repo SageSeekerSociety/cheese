@@ -15,7 +15,9 @@
     "researchHint": "Graduate student or researcher",
     "maker": "My own project",
     "makerHint": "Hobby or startup",
-    "other": "Something else"
+    "other": "Something else",
+    "highschool": "In high school",
+    "highschoolHint": "High-school student"
   },
   "task": {
     "q": "What would you like to get done first?",
@@ -164,7 +166,7 @@
     "files": "Files",
     "members": "Members",
     "about": "Knows that",
-    "hint": "Each answer adds to this card. The project is made when you click Create project.",
+    "hint": "Each answer adds to this card. The project is made only when you confirm on the last step.",
     "nameFallback": "{name}'s project",
     "listSep": ", ",
     "aboutSep": ", ",
@@ -195,24 +197,28 @@
     },
     "reply": {
       "title": "{agent}'s reply",
-      "text": "{agent} has replied, in a thread under your message. Open it.",
-      "textWaiting": "The reply is in a thread under your message; open it. If it is still being written, you can leave and will be notified.",
-      "textFailed": "{agent} could not reply this time; the thread says why. Open it, and once that is sorted, press Retry."
+      "text": "{agent} has replied in the channel, starting with a plan.",
+      "textWaiting": "{agent} is working on it; the reply will appear in the channel."
     },
     "confirm": {
-      "title": "Confirm in the thread",
-      "text": "{agent} shows you a plan first. Reply in this thread (for example \"Looks good, go ahead\") and it starts; ask for changes the same way.",
-      "textWaiting": "Open the thread under your message to read {agent}'s plan."
+      "title": "Confirm the plan",
+      "text": "Reply here (for example \"Looks good, go ahead\") and {agent} starts; ask for changes the same way.",
+      "textWaiting": "{agent}'s plan is in its reply. Read it, then answer in the message box."
     },
     "task": {
       "title": "Task",
-      "text": "{agent} turned this thread into a task. Open it to follow progress and changes.",
-      "textWaiting": "This thread becomes a task listed under your message: open it to follow progress and changes."
+      "text": "{agent} created a task, listed under its reply. Open it to follow progress and changes.",
+      "textWaiting": "When {agent} starts, it creates a task listed under its reply: open it to follow progress and changes."
     },
     "taskPage": {
       "title": "Task page",
       "text": "Progress, changes and the delivery are all on the task page. When it is done {agent} hands the result to you to review.",
       "textWaiting": "Open the task {agent} created; progress and the delivery are inside."
+    },
+    "preview": {
+      "title": "Preview",
+      "text": "{agent} is halfway and has put up a preview. Open it; if you want something changed, say so in the conversation, and it will show you again.",
+      "textWaiting": "Halfway through, {agent} puts up a preview for you. Open it when it appears and say what to change. You can leave meanwhile; you will be notified."
     },
     "accept": {
       "title": "Accept",
@@ -221,8 +227,43 @@
     },
     "overview": {
       "title": "Overview",
-      "text": "Accepted results show up here: a new version of the project under What was made, and the acceptance under Recent progress.",
-      "textWaiting": "Accepted results are on the Overview in the sidebar: What was made gains a new version of the project."
+      "text": "Accepted results show up here: What was made gains a new version of the project. Next, invite classmates or colleagues from Members, or start a new project and hand your AI teammate something of your own.",
+      "textWaiting": "Accepted results are on the Overview in the sidebar: What was made gains a new version of the project. Then invite others in, or start a project of your own."
     }
+  },
+  "starter": {
+    "q": "Start with a starter task",
+    "why": "Everything it needs is ready. Your AI teammate walks you through it in about ten minutes, with one preview and one round of changes on the way. What you make is yours, and you can swap in your own content.",
+    "recommended": "Suggested",
+    "yields": "You get: {what}",
+    "take": "Take this one",
+    "own": "Write my own first task",
+    "back": "Take a starter task",
+    "request": "The requirements for this starter are in the project brief, and the materials are in the task folder of the library. Start with a three-line plan and a few styles for me to pick from.",
+    "web": {
+      "label": "Build an event page",
+      "hint": "One web page for a campus tech talk: time and place, speakers, schedule, sign-up button",
+      "yields": "a web page you can open and share",
+      "name": "Starter: event page",
+      "brief": "Build a one-page site for a campus tech talk",
+      "files": "Event details"
+    },
+    "slides": {
+      "label": "Turn a term report into slides",
+      "hint": "Make a teaching team's term report into about 8 consistent slides",
+      "yields": "a .pptx deck",
+      "name": "Starter: report slides",
+      "brief": "Turn a teaching team's term report into slides",
+      "files": "Term report, data table"
+    },
+    "lesson": {
+      "label": "Make an interactive worked problem",
+      "hint": "Explain a projectile-motion problem: step-by-step, a draggable trajectory, three variations",
+      "yields": "an interactive lesson page",
+      "name": "Starter: projectile motion",
+      "brief": "Make an interactive page explaining a projectile-motion problem",
+      "files": "Problem and worked solution"
+    },
+    "hint": "Nothing is made until you click Take this one; the materials and credits come with the task."
   }
 }

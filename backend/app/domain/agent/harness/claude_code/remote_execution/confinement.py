@@ -46,9 +46,6 @@ SYSCALLS = {
     "x86_64": (
         0xC000003E,
         {
-            "ptrace": 101,
-            "process_vm_readv": 310,
-            "process_vm_writev": 311,
             "add_key": 248,
             "request_key": 249,
             "keyctl": 250,
@@ -62,9 +59,6 @@ SYSCALLS = {
     "aarch64": (
         0xC00000B7,
         {
-            "ptrace": 117,
-            "process_vm_readv": 270,
-            "process_vm_writev": 271,
             "add_key": 217,
             "request_key": 218,
             "keyctl": 219,
@@ -84,11 +78,8 @@ def seccomp_filter(machine=None):
     """The seccomp program a sandbox runs under, as bubblewrap's `--seccomp`
     reads it: classic BPF over `struct seccomp_data`.
 
-    It refuses what lets one process read or steer another, or that has been
-    the way into the kernel more often than it is needed for development
-    work: `ptrace` and `process_vm_readv`/`writev`; io_uring, refused as
-    absent so a runtime falls back to ordinary I/O as it does on an old
-    kernel; the kernel keyring; and a further user namespace, which is what
+    It reports io_uring as absent so a runtime falls back to ordinary I/O as on an old
+    kernel. It refuses the kernel keyring and a further user namespace, which is what
     makes most of the kernel's privileged interfaces reachable to an
     unprivileged process. The namespace one is refused by its flag on
     `clone` and `unshare`, and `clone3`, whose flags this cannot read, is
@@ -275,6 +266,19 @@ def start_seatbelt(
 HIDDEN_MOUNTS = ("/mnt", "/media", "/run/media", "/run/WSL")
 
 
+def image_user_namespace(userns=None):
+    """The root mapping shared by execution and numeric-owner root backups."""
+    return [
+        *(["--userns", str(userns)] if userns is not None else ["--unshare-user"]),
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "--cap-add",
+        "ALL",
+    ]
+
+
 def sandbox_argv(
     argv,
     *,
@@ -292,8 +296,11 @@ def sandbox_argv(
     platform=None,
     programs=(),
     network=True,
+    image_root=None,
+    image_lease=None,
+    userns=None,
 ):
-    """`argv` run in a bubblewrap sandbox: the room's processes see the machine
+    """Run `argv` with an image overlay on cloud hosts or the device's system
     read-only, and of the owner's home only what is bound back below.
 
     Writable: the room's home and its project's package store. Read-only: the
@@ -328,12 +335,36 @@ def sandbox_argv(
     """
     for directory in (store, toolchain, tmp):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if image_root is not None:
+        tmp.chmod(0o1777)
     sockets.mkdir(exist_ok=True, mode=0o700)
     if platform is not None:
         own_directory(platform)
+    if image_root is not None:
+        layer = home / ".cheese/rootfs" / image_root.parent.name
+        upper, work = layer / "upper", layer / "work"
+        for directory in (upper, work):
+            # The upper's mode becomes `/`; service users must traverse it.
+            directory.mkdir(
+                parents=True, exist_ok=True, mode=0o755 if directory == upper else 0o700
+            )
+        root_mount = [
+            "--overlay-src",
+            str(image_root),
+            "--overlay",
+            str(upper),
+            str(work),
+            "/",
+        ]
+    else:
+        root_mount = ["--ro-bind", "/", "/"]
     command = [
         bwrap,
-        "--unshare-user",
+        *(
+            image_user_namespace(userns)
+            if image_root is not None
+            else ["--unshare-user"]
+        ),
         "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",
@@ -348,9 +379,8 @@ def sandbox_argv(
         str(fds["block"]),
         "--seccomp",
         str(fds["seccomp"]),
-        "--ro-bind",
-        "/",
-        "/",
+        *([] if image_lease is None else ["--sync-fd", str(image_lease)]),
+        *root_mount,
         "--dev",
         "/dev",
         "--proc",
@@ -373,21 +403,30 @@ def sandbox_argv(
     ]
     # Before the owner's home too, which may be kept on one of them.
     for mount in HIDDEN_MOUNTS:
-        if Path(mount).is_dir():
+        if image_root is None and Path(mount).is_dir():
             command += ["--tmpfs", mount]
     command += ["--tmpfs", str(owner)]
     names = resolv_conf()
-    if network and names != "/etc/resolv.conf":
+    if image_root is not None:
+        command += [
+            "--ro-bind",
+            names,
+            "/etc/resolv.conf",
+            "--ro-bind",
+            "/sys",
+            "/sys",
+        ]
+    elif network and names != "/etc/resolv.conf":
         # Onto the file it leads to: bwrap mounts on no link (systemd-resolved's).
         command += ["--ro-bind", names, os.path.realpath("/etc/resolv.conf")]
     command += bool(fd := fds.get("hosts")) * ["--ro-bind-data", str(fd), "/etc/hosts"]
     runtime_dir = Path(f"/run/user/{os.getuid()}")
-    if runtime_dir.is_dir():
+    if image_root is None and runtime_dir.is_dir():
         command += ["--tmpfs", str(runtime_dir)]
     # The docker group's socket is root on the machine, and a user namespace
     # keeps the owner's groups: a session would reach it through a read-only
     # mount as well, since connecting to a socket is not a write to the mount.
-    if Path("/run/docker.sock").exists():
+    if image_root is None and Path("/run/docker.sock").exists():
         command += ["--ro-bind", "/dev/null", "/run/docker.sock"]
     # The Python the executor runs on, when the person keeps it in their home
     # (pyenv, uv, conda): shown read-only, as the machine's own would be, at
@@ -405,6 +444,9 @@ def sandbox_argv(
         *(("--ro-bind", path) for path in programs if path.is_dir()),
     ):
         command += [option, str(path), str(path)]
+    if image_root is not None:
+        # The upper is charged to the home, but only overlayfs may modify it.
+        command += ["--tmpfs", str(home / ".cheese/rootfs")]
     command += [
         "--bind",
         str(sockets),

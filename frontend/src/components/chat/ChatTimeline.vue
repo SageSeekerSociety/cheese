@@ -21,25 +21,30 @@ import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformN
 import type { RefNames } from '../../lib/refChip'
 import type { ChapterRow } from '../../types/chapters'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { vGuideAnchor } from '@/composables/useGuideAnchors'
+import { pointGuideAnchor, vGuideAnchor } from '@/composables/useGuideAnchors'
 
+import { askGroupFolds } from '../../lib/askGroups'
 import { replySnippet } from '../../lib/blockDisplay'
 import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
+import { deliveryOf } from '../../lib/deliveryLine'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
 import { rowKeys } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
+import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import DeliveryCard from '../room/DeliveryCard.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
 import RoomNotice from '../room/RoomNotice.vue'
 import TaskCard from '../room/TaskCard.vue'
 import TaskCreatedPost from '../room/TaskCreatedPost.vue'
+import TaskLink from '../room/TaskLink.vue'
 import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
 
@@ -159,6 +164,8 @@ const props = defineProps<{
   taskOf?: (taskId: string) => TaskLine | null
   /** 从这条消息（或它的支线）出来的任务，按创建的先后。 */
   tasksUnder?: (blockId: string) => TaskLine[]
+  /** AI 队友在主线上开的、画在这条回复下面的任务：一件一行，只有任务名和负责人。 */
+  taskLinksUnder?: (blockId: string) => TaskLine[]
 }>()
 
 const emit = defineEmits<{
@@ -194,6 +201,20 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+// 组头 id → 这一组现在点开了没有。一次问的几道题问到别人时收成一行，点开才是那张
+// 卡；点开只活在这一屏里，切走再回来又是收起的（和单题的折叠一样）。
+const openAskGroups = ref<Set<string>>(new Set())
+function toggleAskGroup(id: string) {
+  const next = new Set(openAskGroups.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  openAskGroups.value = next
+}
+/** 这一组收不收成一行（判据在 `lib/askGroups`）：没问到看的人，或整组已经答完。 */
+function askGroupForOthers(blocks: Block[]): boolean {
+  return askGroupFolds(blocks, props.viewer)
+}
 
 // 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
 // 来一条时，人点开的那一串不被换成一行新的、收起来的。上一次的名字只在这里读写，
@@ -251,11 +272,36 @@ const createdCont = computed(() =>
   })
 )
 const NO_TASKS: TaskLine[] = []
+// 频道主线上 AI 队友最近的一条回复：新手引导指着它说「回复了」。按 id 找到那一行再登记，
+// 不在每一行上挂指令（`pointGuideAnchor`）。
+const newestAgentReply = computed(() => {
+  if (!props.threadable) return null
+  for (let i = props.rows.length - 1; i >= 0; i--) {
+    const block = props.rows[i].block
+    if (block.kind === 'message' && props.isAgentBlock(block)) return block.id
+  }
+  return null
+})
+let replyAnchor: HTMLElement | null = null
+watch(
+  newestAgentReply,
+  async (id) => {
+    await nextTick()
+    const el = id ? props.contentRef.value?.querySelector<HTMLElement>(`[data-row-id="${id}"]`) ?? null : null
+    pointGuideAnchor('agent-reply', el, replyAnchor)
+    replyAnchor = el
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => pointGuideAnchor('agent-reply', null, replyAnchor))
 function ownerName(task: TaskLine): string | null {
   return task.owner ? (props.nameOf ?? String)(task.owner) : null
 }
 function under(blockId: string): TaskLine[] {
   return props.tasksUnder?.(blockId) ?? NO_TASKS
+}
+function links(blockId: string): TaskLine[] {
+  return props.taskLinksUnder?.(blockId) ?? NO_TASKS
 }
 /** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
 function became(m: Block): TaskLine | undefined {
@@ -627,7 +673,32 @@ const rowLabels = computed(() =>
               tabindex="-1"
               :aria-label="rowLabels[i]"
             >
+              <!-- 问的是别人：整组收成一行，点开才是那张卡。问到我了就照整张卡画。 -->
+              <template v-if="askGroupForOthers(askGroups!.get(m.id)!)">
+                <AskFoldLine
+                  :blocks="askGroups!.get(m.id)!"
+                  :asker="displayName(m)"
+                  :names="refs.mentionNames"
+                  :refs="refs"
+                  :expanded="openAskGroups.has(m.id)"
+                  :closed="askClosed"
+                  :viewer="viewer"
+                  @toggle="toggleAskGroup(m.id)"
+                />
+                <AskGroupCard
+                  v-if="openAskGroups.has(m.id)"
+                  :blocks="askGroups!.get(m.id)!"
+                  :asker="displayName(m)"
+                  :names="refs.mentionNames"
+                  :viewer="viewer"
+                  :closed="askClosed"
+                  :busy="askGroupBusy"
+                  :failure="askGroupFailure"
+                  @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+                />
+              </template>
               <AskGroupCard
+                v-else
                 :blocks="askGroups!.get(m.id)!"
                 :asker="displayName(m)"
                 :names="refs.mentionNames"
@@ -725,9 +796,6 @@ const rowLabels = computed(() =>
                   @open="emit('open-card', $event)"
                 />
                 <ThreadLine
-                  v-guide-anchor="
-                    replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'
-                  "
                   :summary="m.thread ?? null"
                   :replying="replyingFor?.(m) ?? null"
                   :replying-seats="replyingSeatsFor?.(m) ?? []"
@@ -748,6 +816,26 @@ const rowLabels = computed(() =>
                 :owner-avatar="task.owner ? avatarOf(task.owner) : undefined"
                 in-list
                 :lone="!(threadable && m.thread) && madeFrom(m).length === 1"
+                @open="emit('open-card', $event)"
+              />
+            </div>
+            <!-- A task handed a version in for review: the card it filed, under that line. -->
+            <div v-if="!notice && deliveryOf(m)" class="tl-thread msg-links" :data-feed-of="m.id">
+              <DeliveryCard
+                :task-id="deliveryOf(m)!.taskId"
+                :subject="deliveryOf(m)!.subject"
+                :version="deliveryOf(m)!.version"
+                @open="emit('open-card', $event)"
+              />
+            </div>
+            <div v-if="!notice && links(m.id).length" class="tl-thread msg-links" :data-feed-of="m.id">
+              <TaskLink
+                v-for="task in links(m.id)"
+                :key="task.id"
+                v-guide-anchor="'task-card'"
+                :task-id="task.id"
+                :title="task.title"
+                :owner-name="ownerName(task)"
                 @open="emit('open-card', $event)"
               />
             </div>
@@ -902,6 +990,13 @@ const rowLabels = computed(() =>
 }
 .msg-work__talk > :deep(.task-card--head + .thread-line) {
   padding-top: 2px;
+}
+/* AI 队友在主线上开的任务：它那条回复下面一件一行。 */
+.msg-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
 .msg-work :deep(.thread-line),
 .msg-work :deep(.thread-line:hover) {

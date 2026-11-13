@@ -172,3 +172,75 @@ describe('对话栏的接线', () => {
     expect(seen[0]?.length).toBe(2)
   })
 })
+
+describe('频道主线上「待你审阅」', () => {
+  function task(id: string, title: string, card: Record<string, unknown> | null) {
+    return {
+      id,
+      project_id: 'p1',
+      room_id: topic.id,
+      title,
+      title_source: 'human',
+      status: 'open',
+      created_at: '2026-11-01T00:00:00Z',
+      updated_at: '2026-11-01T00:00:00Z',
+      presentation: { column: 'needs_you', phrase: 'awaiting_review' },
+      card,
+    }
+  }
+  const tasks = [
+    // One card asks two people: either of them is asked.
+    task('t-new', '后交的', { id: 'c2', status: 'pending', reviewer: 'bob、me', since: '2026-11-03T00:00:00Z' }),
+    task('t-old', '先交的', { id: 'c1', status: 'pending', reviewer: 'me', since: '2026-11-02T00:00:00Z' }),
+    task('t-other', '等别人的', { id: 'c3', status: 'pending', reviewer: 'bob', since: '2026-11-01T00:00:00Z' }),
+    task('t-done', '采纳过的', { id: 'c4', status: 'accepted', reviewer: 'me', since: '2026-11-01T00:00:00Z' }),
+  ]
+
+  function withTasks(rows: unknown[]) {
+    vi.stubGlobal('fetch', async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        String(url).includes('/tasks')
+          ? { code: 200, data: { data: rows, total: rows.length } }
+          : { code: 200, data: { data: [], total: 0, has_more: false } },
+    }))
+  }
+
+  it('写最早交上来、等我审阅的那一件，点它在频道里打开；还有几件写件数', async () => {
+    withTasks(tasks)
+    const { findByTestId, getByText, emitted } = render(Column, {
+      props: { topic, members: [], topicList: [] },
+      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
+    })
+    const bar = await findByTestId('review-waiting')
+    expect(bar.textContent).toContain('先交的')
+    expect(bar.textContent).toContain('共 2 项')
+    expect(bar.textContent).not.toContain('等别人的')
+    getByText('先交的').click()
+    expect(emitted()['open-card']).toEqual([['t-old']])
+  })
+
+  it('没有等我审阅的就没有这一条', async () => {
+    // Only bob's pending card and an accepted one of mine are left.
+    withTasks(tasks.filter((row) => ['t-other', 't-done'].includes(row.id)))
+    const { queryByTestId } = render(Column, {
+      props: { topic, members: [], topicList: [] },
+      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
+    })
+    await settle()
+    await settle()
+    expect(queryByTestId('review-waiting')).toBeNull()
+  })
+
+  it('任务页上不出现', async () => {
+    withTasks(tasks)
+    const { queryByTestId } = render(Column, {
+      props: { topic, taskId: 't-old', members: [], topicList: [] },
+      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
+    })
+    await settle()
+    await settle()
+    expect(queryByTestId('review-waiting')).toBeNull()
+  })
+})

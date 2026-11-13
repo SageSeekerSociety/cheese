@@ -53,6 +53,7 @@ from tests.integration.test_sandbox_idle_stop import (
     tool_call,
     working_on,
 )
+from tests.support.files_bucket import files_bucket
 
 
 @pytest.fixture
@@ -61,7 +62,16 @@ def icy(cloud, monkeypatch):
     destroy (`test_sandbox_idle_stop`), since that is what its own tests
     measure."""
     monkeypatch.setattr(settings, "cloud_sandbox_freeze", True)
-    return cloud
+    with files_bucket() as config:
+        for name, value in (
+            ("s3_endpoint_url", config["files_bucket_endpoint_url"]),
+            ("s3_access_key", config["files_bucket_access_key"]),
+            ("s3_secret_key", config["files_bucket_secret_key"]),
+            ("s3_region", config["files_bucket_region"]),
+            ("transcript_s3_bucket", config["files_bucket"]),
+        ):
+            monkeypatch.setattr(settings, name, value)
+        yield cloud
 
 
 def freeze_sweep(case) -> dict:

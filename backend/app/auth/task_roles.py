@@ -7,7 +7,11 @@ are to it.
   (``app.domain.space.permissions``, ``teach``). They edit and delete it, grade
   what is handed in, and manage who takes part.
 - **Approving it**, taking it up on the board, is for whoever teaches the space,
-  never its own setter.
+  its setter included when they teach it too; a setter who does not cannot.
+- **The platform's admins** see every problem and teach, approve and download
+  it, in every space (:attr:`TaskPolicy.overseen`), from the space's own pages
+  or from their queue (``/admin/tasks``). Taking one up is a participant's
+  act and stays with those who see it on the board.
 - **Seeing it** depends on three things. An unapproved problem is seen only by
   those who teach it. Otherwise the person must see it on the board: in the
   space, and on its access list when the problem has one
@@ -102,11 +106,14 @@ class TaskPolicy(Policy[Task, Permission]):
     kind = "task"
     path_param = "taskId"
     permissions = Permission
+    overseen = frozenset(
+        {Permission.view, Permission.teach, Permission.approve, Permission.download}
+    )
 
     async def load(self, session: AsyncSession, id: int) -> Task | None:
         return await TaskRepository(session=session).get_by_id(id)
 
-    async def may(
+    async def decide(
         self, session: AsyncSession, obj: Task, user_id: int, permission: Permission
     ) -> bool:
         match permission:
@@ -126,7 +133,7 @@ class TaskPolicy(Policy[Task, Permission]):
                 claim = await claim_of(session, task=obj, user_id=user_id)
                 return claim is not None and claim.approved == APPROVE_APPROVED
 
-    async def sees(self, session: AsyncSession, obj: Task, user_id: int) -> bool:
+    async def visible(self, session: AsyncSession, obj: Task, user_id: int) -> bool:
         return await readable(session, obj, user_id)
 
 
@@ -174,7 +181,7 @@ class ClaimPolicy(Policy[TaskMembership, ClaimPermission]):
         claim = await session.get(TaskMembership, id)
         return None if claim is None or claim.deleted_at is not None else claim
 
-    async def may(
+    async def decide(
         self,
         session: AsyncSession,
         obj: TaskMembership,

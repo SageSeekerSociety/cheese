@@ -28,8 +28,11 @@ from app.domain.agent.harness.prompt import task_section
 from app.domain.agent.prompt import _topic_ref_lists, offered_attachments
 from app.domain.agent.queries import _acting_handle, _agent_at, require_pinned_seat
 from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.room.thread_context import (
+    channel_context as _channel_context,
+)
+from app.domain.agent.room.thread_context import channel_tasks as _channel_tasks
 from app.domain.agent.room.thread_context import thread_context as _thread_context
-from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.turn.intake.context import (
     TurnBail,
     TurnContext,
@@ -343,8 +346,19 @@ async def prepare(
             if root is not None
             else None
         )
+        # A channel's main line is told where it is as a 支线 is, minus the
+        # message a 支线 hangs under: what the main line said before what this
+        # session is handed.
+        in_main_line = place.inner_id is None and needs_place
+        channel_context = (
+            await _channel_context(session, topic, pending[0] if pending else None)
+            if in_main_line
+            else None
+        )
         thread_tasks = (
-            await _thread_tasks(session, topic, root) if root is not None else None
+            await _channel_tasks(session, topic, root)
+            if root is not None or in_main_line
+            else None
         )
         if place.thread is not None:
             # So the main line hears when an AI teammate starts and stops
@@ -449,6 +463,7 @@ async def prepare(
         prior_progress=prior_progress,
         earlier_messages=earlier_messages,
         thread_context=thread_context,
+        channel_context=channel_context,
         thread_tasks=thread_tasks,
         project_id=project_id,
         prompt_text=prompt_text,

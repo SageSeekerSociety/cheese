@@ -14,7 +14,9 @@ import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
 
+import { vGuideAnchor } from '../../composables/useGuideAnchors'
 import { useMessageFold } from '../../composables/useMessageFold'
+import { askAsksViewer } from '../../lib/askGroups'
 import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
@@ -26,7 +28,9 @@ import {
 } from '../../lib/blockDisplay'
 import { fileIcon, hasPagePreview, previewCanShowInRoom, suffixOf } from '../../lib/fileKind'
 import { MCP_APP_MIME } from '../../lib/mcpAppBridge'
+import { noticeText } from '../../lib/noticeText'
 import { toldByMessage } from '../../lib/refChip'
+import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import AttachmentVideo from '../AttachmentVideo.vue'
@@ -179,6 +183,8 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
+// 新手浮窗「预览」一站圈的是芝士摆出来的那份；人自己发的附件不算。
+const previewAnchor = computed(() => (props.block.kind === 'artifact' ? 'preview-card' : ''))
 const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
 /** 芝士摆出来的「正在跑的应用」：内容是一句说明，不是文件路径。 */
 const APP_MIME = 'application/x-cheesex-app'
@@ -235,6 +241,15 @@ const {
 // edited, so each one told its person (drawn as the @chip), unless a
 // members-only channel could not reach them.
 const told = computed(() => toldByMessage(props.refs))
+// What the message says, in the reader's language: a line the platform wrote for
+// a teammate — a task telling where it came from how it is going (`task_result`)
+// — carries its sentence's key; anything a person or a teammate wrote is its own words.
+const said = computed(() => (props.block.meta?.task_result ? noticeText(props.block) : props.block.content))
+
+// 这道题问的是别人、不是我：频道里收成一行，点开才是整张卡。问到我自己的照整张卡
+// 画——我正要作答。判据在 `lib/askGroups`，和谁答得上这道题是同一条。
+const askForOthers = computed(() => !!askOptions(props.block) && !askAsksViewer(props.block, props.viewer))
+const askOpen = ref(false)
 </script>
 
 <template>
@@ -329,12 +344,14 @@ const told = computed(() => toldByMessage(props.refs))
         />
         <!-- 芝士摆出来给人看的一份东西（`cheese show`），或对话里发来的可预览文档附件：
            点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+        <!-- 芝士摆出来的那份（artifact）登记成新手浮窗「预览」一站的目标（`previewAnchor`）。 -->
         <template v-else-if="canOpenFile">
           <!-- 能翻页的文档（PDF、Word、幻灯片）和表格画成富卡片（封面、版本、改过没有，
                底下自带打开/展开/下载）；芝士摆出来的应用画成带运行状态的卡片；其余（网页、
                markdown、代码）照旧一颗小卡片。 -->
           <MessageFileCard
             v-if="richFileCard"
+            v-guide-anchor="previewAnchor"
             :topic-id="topicId"
             :path="block.content"
             :name="artifactName(block)"
@@ -346,6 +363,7 @@ const told = computed(() => toldByMessage(props.refs))
           />
           <MessageAppCard
             v-else-if="block.mime_type === APP_MIME"
+            v-guide-anchor="previewAnchor"
             :conversation-id="block.conversation_id || topicId"
             :block-id="block.id"
             :description="block.content"
@@ -353,6 +371,7 @@ const told = computed(() => toldByMessage(props.refs))
           />
           <button
             v-else
+            v-guide-anchor="previewAnchor"
             type="button"
             class="im-artifact"
             :title="t('work.room.message.openFile', { name: artifactName(block) })"
@@ -426,21 +445,37 @@ const told = computed(() => toldByMessage(props.refs))
       />
       <!-- 芝士问的一道题：题目本身就是卡片的标题，和选项、末行的输入框收在同一张卡里，
            不再是上一条消息的最后一段。卡片页头写谁问的；这一条是一串的第一条时，名字
-           那一行就在卡片正上方，页头不再说一遍名字（「问你」而不是「芝士 问你」）。 -->
-      <AskQuickReplies
-        v-else-if="askOptions(block)"
-        :block="block"
-        :asker="runStart ? undefined : authorName"
-        :names="refs.mentionNames"
-        :closed="askClosed"
-        :answering="askAnswering"
-        :viewer="viewer"
-        @reply="emit('ask-reply', block, $event)"
-        @withdraw="emit('ask-withdraw', block)"
-        @skip="emit('ask-skip', block)"
-      >
-        <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
-      </AskQuickReplies>
+           那一行就在卡片正上方，页头不再说一遍名字（「问你」而不是「芝士 问你」）。
+
+           问到别人的题收成一行（`AskFoldLine`）：整张卡占满一栏，而频道里大部分题不是
+           问看的人的。点开才长出下面那句题目和整张卡；问到我自己的照整张卡画。 -->
+      <template v-else-if="askOptions(block)">
+        <AskFoldLine
+          v-if="askForOthers"
+          :blocks="[block]"
+          :asker="runStart ? undefined : authorName"
+          :names="refs.mentionNames"
+          :refs="refs"
+          :expanded="askOpen"
+          :closed="askClosed"
+          :viewer="viewer"
+          @toggle="askOpen = !askOpen"
+        />
+        <AskQuickReplies
+          v-if="askOpen || !askForOthers"
+          :block="block"
+          :asker="runStart ? undefined : authorName"
+          :names="refs.mentionNames"
+          :closed="askClosed"
+          :answering="askAnswering"
+          :viewer="viewer"
+          @reply="emit('ask-reply', block, $event)"
+          @withdraw="emit('ask-withdraw', block)"
+          @skip="emit('ask-skip', block)"
+        >
+          <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
+        </AskQuickReplies>
+      </template>
       <template v-else>
         <div
           ref="foldEl"
@@ -451,13 +486,7 @@ const told = computed(() => toldByMessage(props.refs))
           <!-- 人说的话和芝士的一样按 Markdown 画：输入框里写成代码的，发出去也是代码。
                单个回车照样是换行（as="chat"）。还没落库的那条（正在写、正在送）不带
                「复制」：它的代码块还在长。 -->
-          <MarkdownView
-            class="im-text md-content"
-            :source="block.content"
-            as="chat"
-            :names="told"
-            :copy-code="!outgoing"
-          />
+          <MarkdownView class="im-text md-content" :source="said" as="chat" :names="told" :copy-code="!outgoing" />
           <!-- Fade at the cut edge, so a folded reply reads as "there is more" rather than "it ends here". -->
           <div v-if="clamped" class="fold-fade" aria-hidden="true" />
         </div>

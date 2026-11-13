@@ -1,16 +1,17 @@
 <script setup lang="ts">
 // 一条支线：页头一行，写它挂着的那条消息说的事，右边是「转为任务」——这段讨论原地变成
-// 任务，还是这段对话、还是这位 AI 队友。转成以后页头写任务名、状态和负责人，多一颗
-// 「整页打开」。下面先是它挂着的那条消息和从这里另开的任务，再是支线自己的对话和输入框。
+// 任务，还是这段对话、还是这位 AI 队友。下面先是它挂着的那条消息和从这里另开的任务，再是
+// 支线自己的对话和输入框。读回来是一件任务（支线原地转成的、另开的、新建的）时不在这里
+// 画：交给外面换成任务页（`as-task`），和侧栏任务行点开的是同一处。
 //
 // 对话就是频道和任务页用的那一栏（TopicChatColumn 的 `beside`），换了一段对话来读：
-// 消息、连接、已读都走支线（或任务），名册和附件还是频道的。谁说话叫醒 AI 队友、输入
+// 消息、连接、已读都走支线，名册和附件还是频道的。谁说话叫醒 AI 队友、输入
 // 框写什么、等审阅时那一条，都由那一栏定，这里只管页头（ThreadHead）。桌面上它占频道页
 // 右边那一半，页头在这一栏顶上；手机上是一整页，页头是顶栏的内容。
 //
 // AI 队友的一条回复上点「查看过程」，这一栏换成那一轮的现场，「返回支线」回来。支线的
 // 对话只是藏起来，连接和滚动位置都还在。
-import type { Block, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { Block, ProjectMemberRow, Topic } from '@/cx_types'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { Thread } from '@/types/threads'
 
@@ -19,7 +20,6 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { useChannelSpeakers } from '@/composables/useChannelSpeakers'
-import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { ApiError } from '@/api'
@@ -30,11 +30,8 @@ import { t } from '@/i18n'
 import { threadHeading } from '@/lib/blockDisplay'
 import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
 import { proposalPage } from '@/lib/proposalNavigation'
-import { taskTitle } from '@/lib/topicState'
-import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { roomTaskQuery, threadQuery } from '@/query/room'
-import { currentUserName } from '@/services/account'
+import { threadQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 
@@ -50,18 +47,16 @@ const props = defineProps<{
   page?: boolean
   /** 地址点名的支线里那一条（`?block=`）：打开时停在它上面。 */
   focusBlock?: string | null
+  /** 一条消息转为任务：页头那颗是支线挂着的那条（这条支线原地转），支线里的一条回复
+   *  是另开一件。转完（成没成）它才返回，按钮的忙碌跟着它。 */
+  toTask: (blockId: string) => Promise<unknown>
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'open-task', taskId: string): void
-  /** 这一页此刻叫什么：转成任务后是任务名。 */
-  (e: 'title', title: string): void
-  /** 整页打开这条支线转成的任务：任务页，右边是概览、改动、预览。 */
-  (e: 'open-page', taskId: string): void
-  /** 一条消息转为任务：页头那颗是支线挂着的那条（这条支线原地转），支线里的一条回复
-   *  是另开一件。 */
-  (e: 'to-task', blockId: string): void
+  /** 读回来这是一件任务：在任务页上看它。 */
+  (e: 'as-task', taskId: string): void
   (e: 'open-file', path: string): void
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
@@ -69,18 +64,14 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const store = useWorkspaceStore()
-const viewer = computed(() => currentUserName.value ?? myHandle())
 
 // A thread occupies the room's panel, and on phones there is no WorkPanel.
-// Open its library-document cards on the document's own page instead, and a
-// task's own document (「编辑了文档」) on the task's page, where 概览 shows it.
+// Open its library-document cards on the document's own page instead.
 function openResource(resource: string, _turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
   // 提议的技能、例行事务：支线占着面板，去它在项目里的那一页。
   const page = document ? proposalPage(resource, props.room.project_id, document.id) : null
   if (page) return void router.push(page)
-  if (resource !== 'doc') return
-  if (document) return void openThreadDocument(router, props.room.project_id, document, review)
-  if (task.value) emit('open-page', task.value.id)
+  if (resource === 'doc' && document) openThreadDocument(router, props.room.project_id, document, review)
 }
 // 正在看哪一轮的过程；null 是在看支线本身。
 const processTurn = ref<string | null>(null)
@@ -112,58 +103,48 @@ watch(
 )
 
 const root = computed<Block | null>(() => thread.value?.root ?? null)
-// 这是一件任务（支线原地转成的、另开的、新建的）时：任务名、状态、负责人写在页头。
-const taskRead = useQuery(
-  computed(() => {
-    const id = thread.value?.task ?? ''
-    return { ...roomTaskQuery(id), enabled: !!id }
-  }),
-  queryClient
+// 是一件任务（打开时已经是，或开着时被人转成了）：任务页上看它。
+watch(
+  () => thread.value?.task,
+  (taskId) => {
+    if (taskId) emit('as-task', taskId)
+  },
+  { immediate: true }
 )
-const task = computed<RoomTask | null>(() => (thread.value?.task ? taskRead.data.value ?? null : null))
 // The 支线's messages: each `<@handle>` in them told its person, drawn as the @chip.
 const refs = computed(() => ({
   mentionNames: props.memberNames,
   topicTitles: {} as Record<string, string>,
   notified: true,
 }))
-// 支线转成了任务：页面标题（浏览器标签上那一行）跟着写任务名，不再写「支线」。
-watch(task, (made) => {
-  if (made) emit('title', taskTitle(made))
-})
 // 归档的频道只能看。
 // 主线只让部分角色发言、支线也不让人人回时，这里同样只读（#4795）。
 const speakers = useChannelSpeakers(() => props.room)
 const composerClosed = computed(() =>
   props.room.status === 'archived' ? t('work.channel.archivedNotice') : speakers.notice(true)
 )
-// 页头那一行：转成任务后是任务名，之前是它挂着的那条消息说的事。
-const heading = computed(() => {
-  if (task.value) return taskTitle(task.value)
-  return root.value ? threadHeading(root.value, refs.value) : ''
-})
+// 页头那一行：它挂着的那条消息说的事。
+const heading = computed(() => (root.value ? threadHeading(root.value, refs.value) : ''))
 
-function toTask() {
+// 转成了就已经去了任务页；没转成（失败了）按钮回来。
+async function convert() {
   if (!root.value || busy.value) return
   busy.value = true
-  emit('to-task', root.value.id)
-  // 转成以后页头跟着换成任务那一行；没转成（失败了）就让按钮回来。
-  setTimeout(() => (busy.value = false), 1500)
+  try {
+    await props.toTask(root.value.id)
+  } finally {
+    busy.value = false
+  }
 }
 // 页头那一行。桌面上画在这一栏顶上；手机上这一页就是一整屏，这一行交给顶栏
 // （useScreenHeader），页里不再写第二遍。还没读回来（或读不到）时不交，顶栏写路由的
 // 标题「支线」。
 const headBinding = computed(() => ({
   heading: heading.value,
-  task: task.value,
-  viewer: viewer.value,
-  members: props.members,
-  memberNames: props.memberNames,
   canToTask: !!root.value && props.room.status !== 'archived',
   busy: busy.value,
   closable: !props.page,
-  onToTask: toTask,
-  onOpenPage: (taskId: string) => emit('open-page', taskId),
+  onToTask: convert,
   onClose: () => emit('close'),
 }))
 useScreenHeader(() =>
@@ -174,12 +155,7 @@ useScreenHeader(() =>
 </script>
 
 <template>
-  <section
-    v-guide-anchor="'thread-pane'"
-    class="thread-pane"
-    :aria-label="t('work.room.thread.title')"
-    data-testid="thread-pane"
-  >
+  <section class="thread-pane" :aria-label="t('work.room.thread.title')" data-testid="thread-pane">
     <!-- Desktop: the head row tops this column. Phone: it is the top bar's content (useScreenHeader). -->
     <ThreadHead v-if="!page" v-bind="headBinding" />
 
@@ -190,12 +166,11 @@ useScreenHeader(() =>
         class="thread-pane__chat"
         beside
         :topic="room"
-        :task-id="task ? task.id : null"
-        :thread-id="task ? null : threadId"
-        :task-agent-handle="task ? task.agent_handle ?? thread?.teammate ?? null : thread?.teammate ?? null"
+        :thread-id="threadId"
+        :task-agent-handle="thread?.teammate ?? null"
         :focus-block="focusBlock ?? null"
         :composer-closed="composerClosed"
-        :ask-closed="room.status === 'archived' || task?.status === 'closed'"
+        :ask-closed="room.status === 'archived'"
         :members="members"
         :topic-list="topicList"
         :member-names="memberNames"
@@ -204,9 +179,8 @@ useScreenHeader(() =>
         @open-topic="emit('open-topic', $event)"
         @open-card="emit('open-task', $event)"
         @mention-click="emit('mention-click', $event)"
-        @upgrade-message="emit('to-task', $event as string)"
+        @upgrade-message="props.toTask($event as string)"
         @open-process="processTurn = $event"
-        @review="task && emit('open-page', task.id)"
       />
       <template v-if="processTurn">
         <div class="thread-pane__process-head">

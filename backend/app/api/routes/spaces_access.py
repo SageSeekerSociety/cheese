@@ -93,6 +93,6 @@ async def put_space_access(
     # Same reason as the commit in ``create_space``.
     await db.commit()
     space_data = await _build_full_space_payload(
-        space, service=service, db=db, include_private=True
+        space, service=service, db=db, viewer_id=auth_user.user_id, include_private=True
     )
     return ok({"space": space_data})
