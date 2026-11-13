@@ -109,7 +109,7 @@ async def start(hub, device_id: str) -> None:
         device_id, ["bash", "-c", START], stdin=refresh_script(), timeout=60
     )
     if answer.get("exit") != 0:
-        raise RuntimeError(
+        raise RuntimeError(  # i18n-exempt: a host-pool log line for operators, never shown in a room
             "refresh did not start: " + str(answer.get("stderr") or "")[-500:]
         )
 
