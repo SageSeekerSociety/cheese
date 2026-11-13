@@ -297,6 +297,7 @@ def bootstrap_script(
         "sudo -n /usr/bin/python3 -I /usr/local/libexec/cheese-sandbox-image "
         + shlex.quote(image["reference"])
         + f" --keep {int(image['keep_old'])}"
+        + ' --host-helper "$(cat "$HOME/.cheese/runtime/sandbox-host.py")"'
         if image
         else ""
     )
@@ -661,6 +662,11 @@ async def run_bootstrap(
             await push(
                 Path(sandbox_image.__file__),
                 f"{footprint_root()}/runtime/sandbox-image.py",
+            )
+            await push(
+                Path(sandbox_image.__file__).parent
+                / "harness/claude_code/remote_execution/sandbox_host.py",
+                f"{footprint_root()}/runtime/sandbox-host.py",
             )
         command = [
             "ssh",

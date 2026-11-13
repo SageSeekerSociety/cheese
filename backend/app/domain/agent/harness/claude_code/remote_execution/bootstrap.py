@@ -1097,18 +1097,23 @@ def start_sandbox(
     try:
         with contextlib.ExitStack() as images:
             image_root, image_lease = None, None
+            userns = None
             if connect and image:
                 manager = runpy.run_path(
                     str(release / "remote-execution/sandbox_image.py")
                 )
                 image_root, image_lease = images.enter_context(manager["lease"](image))
+                userns, _ = images.enter_context(manager["namespace"]())
             if image_root is not None:
+                argv = ["/usr/bin/setpriv", "--clear-groups", "--", *argv]
                 env = {
                     **env,
                     "USER": "root",
                     "LOGNAME": "root",
                     "IS_SANDBOX": "1",
                     "CHEESE_CONNECTOR_UID": str(os.getuid()),
+                    "PATH": env.get("PATH", os.defpath)
+                    + ":/usr/local/sbin:/usr/sbin:/sbin",
                 }
             process = subprocess.Popen(
                 confinement["sandbox_argv"](
@@ -1129,11 +1134,13 @@ def start_sandbox(
                     network=connect,
                     image_root=image_root,
                     image_lease=image_lease,
+                    userns=userns,
                 ),
                 start_new_session=True,
                 pass_fds=(
                     *fds.values(),
                     *(() if image_lease is None else (image_lease,)),
+                    *(() if userns is None else (userns,)),
                 ),
                 env=env,
                 **options,
@@ -1329,6 +1336,7 @@ def prepared(
                 LOGNAME="root",
                 IS_SANDBOX="1",
                 CHEESE_CONNECTOR_UID=str(os.getuid()),
+                PATH=env.get("PATH", os.defpath) + ":/usr/local/sbin:/usr/sbin:/sbin",
             )
             env.update(scoped_env)
         began = time.monotonic()

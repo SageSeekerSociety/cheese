@@ -61,7 +61,7 @@ order: 10
 
 标准沙箱使用平台统一构建的 Debian 13 环境，包含 gcc、g++、make、C 标准库头文件、gdb 和 strace。可写系统层与工作目录共用该沙箱的磁盘限额。团队设备上的沙箱继续使用那台电脑的软件，项目自己的 Dockerfile 或 devcontainer 暂不用于构建标准沙箱。
 
-标准云端沙箱内以 root 运行，可以使用 apt 安装临时系统包，并用 gdb、strace 调试本沙箱的进程。安装结果在同一沙箱重启、停放恢复后保留，随沙箱销毁；长期依赖由平台维护者加入环境镜像。需要切换到其他用户或组的软件可能安装失败，例如 nginx；需要这类软件时使用虚拟机沙箱。Python 虚拟环境可用平台提供的 uv 建立。
+标准云端沙箱内以 root 运行，可以使用 apt 安装临时系统包，创建用户，并让 nginx、PostgreSQL 等服务以各自的用户运行；gdb、strace 可以调试本沙箱的进程。安装结果和新用户在同一沙箱重启、停放恢复后保留，随沙箱销毁；长期依赖由平台维护者加入环境镜像。团队 Linux 设备上的沙箱以原有普通用户运行。Python 虚拟环境可用平台提供的 uv 建立。
 
 标准沙箱不能运行 Docker 或 `docker compose`。rootless Docker 和 rootless Podman 也不能运行。
 

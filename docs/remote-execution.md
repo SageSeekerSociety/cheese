@@ -104,19 +104,23 @@ This upgrade path applies to ordinary room executors. Private execution containe
 
 默认保留两个旧 digest。清理只在新镜像准备完成后运行，保留 sandbox home 引用的镜像，并跳过 bubblewrap 通过 `--sync-fd` 租用的镜像；因此被会话引用的旧版本可以超过两个。会话 home 销毁后，其引用可在后续新镜像准备时回收。已准备主机的每分钟检查跳过缓存清理，也不写回无变化的数据库行。
 
-容量根据 `default.json` 中的实测 rootfs 和导出 tar 大小计算。当前 rootfs 为 1,340,821,504 字节，tar 为 1,305,064,448 字节，普通缓存准备峰值为 `(2 + 2) × 1,340,821,504 + 1,305,064,448 = 6,668,350,464` 字节：当前、两个旧版本、新 rootfs 和导出 tar。加 10% 余量后向上取整为 8 GB。此外每个 sandbox 槽位为其生命周期镜像再预留 2 GB，覆盖仍被 home 引用的旧镜像；原有项目包缓存和 swap 预留继续单独计算。例如 64 GB 数据盘、10 GB 原有预留、8 GB swap、每个 sandbox 4 GB quota 时，磁盘上限为 `floor((64 − 10 − 8 − 8) / (4 + 2)) = 6`。核数和内存还会进一步限制数量。
+容量根据 `default.json` 中的实测 rootfs 和导出 tar 大小计算。当前 rootfs 为 1,340,813,312 字节，tar 为 1,305,063,424 字节，普通缓存准备峰值为 `(2 + 2) × 1,340,813,312 + 1,305,063,424 = 6,668,316,672` 字节：当前、两个旧版本、新 rootfs 和导出 tar。加 10% 余量后向上取整为 8 GB。此外每个 sandbox 槽位为其生命周期镜像再预留 2 GB，覆盖仍被 home 引用的旧镜像；原有项目包缓存和 swap 预留继续单独计算。例如 64 GB 数据盘、10 GB 原有预留、8 GB swap、每个 sandbox 4 GB quota 时，磁盘上限为 `floor((64 − 10 − 8 − 8) / (4 + 2)) = 6`。核数和内存还会进一步限制数量。
 
-准备中的下载、导出、解包、归属调整分别有 610、1200、600、600 秒进程上限，统计 rootfs 大小最多 60 秒。后台 exec 总预算 3300 秒，接入 bootstrap 预算为该值再加原有 SSH 步骤的 180 秒，共 3480 秒。
+准备中的工具下载、镜像导出、解包分别有 610、1200、600 秒进程上限，统计 rootfs 大小最多 60 秒，取得 user namespace 最多 30 秒。归属映射在解包时完成。后台 exec 总预算 3300 秒，接入 bootstrap 预算为该值再加原有 SSH 步骤的 180 秒，共 3480 秒。
 
 ### 可写层和权限
 
 `confinement.sandbox_argv` 使用 bubblewrap 原生 `--overlay-src` / `--overlay`。lower 来自共享镜像，upper 和 work 在该 sandbox home 的 `.cheese/rootfs/<digest>/` 内，与 home 共用同一个 XFS project quota；这两个目录在 sandbox 内被隐藏，程序只访问合并后的 `/`。可写层在 executor 重启和 sandbox 停放恢复后保留，随 sandbox home 销毁。主机镜像升级不切换已有 home 的 lower，因此不会留下按新旧 digest 分裂的会话可写层。
 
-主机解包后将 lower 的文件、目录和链接归 connector 用户所有。云端镜像 sandbox 用单 UID/GID 映射把 connector 映射为内部 `0:0`；不添加 UID 范围，宿主机上仍是普通 connector 用户。镜像内文件读为 root 所有，overlay 可以复制到可写层。镜像使用自己的 `/etc/passwd` 和 `/etc/group`，APT 配置为 `APT::Sandbox::User "root"`，下载不切换到 `_apt`。
+云端镜像 sandbox 使用两行 UID/GID 映射。以主机预留的 65536-ID 区段起点为 `B`，内部 `0:0` 对应 connector 用户及其主组，内部 `1..65535` 对应主机的 `B+1..B+65535`。root helper 为 connector 在 `/etc/subuid`、`/etc/subgid` 中预留同一个区段，避开已有主机用户、组及其他账户的从属范围。`B` 至少为 100000，主机管理不得把这个区段分配给普通用户或组；helper 每次检查冲突，发现预留变化就拒绝启动。映射持久化在 `/var/lib/cheese-sandbox/subids.json`，同一主机所有 sandbox 和缓存解包共用，不能在保留镜像或 home 时重分配。
 
-home、项目 package store、平台 toolchain、固定 Claude Code、release store 和 executor/platform socket 继续挂入，`/tmp` 和 `/var/tmp` 继续落在 home 中，`/sys` 保持只读。`CHEESE_CONNECTOR_UID` 保留主机 connector 的 UID，使内部 UID 0 的 executor 和 session runner 继续使用 connector 约定的 socket 路径。`USER`、`LOGNAME` 为 root，`HOME` 仍是会话目录，`IS_SANDBOX=1` 允许固定 Claude Code 在此环境启动。namespaces、cgroup、网络规则及单 UID 映射保持；seccomp 允许 ptrace 和 process_vm_readv/writev，用于 gdb、strace，pid namespace 外的进程不可通过其宿主 pid 访问。
+`sandbox_host.py userns` 先以 connector 身份创建 user namespace，再由 root 写入两行 `uid_map`、`gid_map`，通过 Unix socket 把 namespace fd 交给调用者。bubblewrap 使用 `--userns` 加入该 namespace，并保留 namespace 内的 capabilities，使服务能执行 chown、setuid、setgid 和 setgroups。映射中的 root 在宿主机仍对应 connector。预热也加入同样的映射，由 GNU tar 保留数值归属：镜像 UID/GID 0 落为 connector，范围内的其他 UID/GID 落为 `B+id`。lower 在 sandbox 内只读，文件归属在 overlay copy-up 后保留。
 
-系统包安装写入当前会话的可写层，随 sandbox 销毁；长期依赖写入镜像 Dockerfile。需要 chown/setuid 到其他用户或组的软件仍可能失败。例如 nginx 的 post-install 对 `/var/log/nginx` 的 chown 返回 `Invalid argument`。单 UID 方案的包表、git、npm/pip、Claude 启动及隔离实测见 PR。Python 虚拟环境使用平台提供的 uv；Debian 的 `python3 -m venv` 需要额外安装 `python3-venv`。
+镜像使用自己的 `/etc/passwd` 和 `/etc/group`，APT 按默认方式切换到 `_apt`。overlay upper 的初始权限为 `0755`，因为它的权限就是合并后 `/` 的权限；work 保持 `0700`。`/home` 使用计入 quota 的 overlay，connector 自己的宿主 home 单独隐藏。会话临时目录以 `1777` 挂到 `/tmp` 和 `/var/tmp`，供其他映射用户使用。Linux 用户设备继续使用 connector 自身的单 ID 映射，以普通用户运行，不安装 root helper 或预留从属范围；macOS 继续使用 Seatbelt。
+
+home、项目 package store、平台 toolchain、固定 Claude Code、release store 和 executor/platform socket 继续挂入，`/tmp` 和 `/var/tmp` 继续落在 home 中，`/sys` 保持只读。`CHEESE_CONNECTOR_UID` 保留主机 connector 的 UID，使内部 UID 0 的 executor 和 session runner 继续使用 connector 约定的 socket 路径。`USER`、`LOGNAME` 为 root，`HOME` 仍是会话目录，系统管理命令目录加入 `PATH`；`IS_SANDBOX=1` 允许固定 Claude Code 在此环境启动。原有 pid、mount、IPC、UTS 和网络 namespace、cgroup、网络规则继续生效。seccomp 允许 ptrace 和 process_vm_readv/writev，用于 gdb、strace，pid namespace 外的进程不可通过其宿主 pid 访问。
+
+系统包安装写入当前会话的可写层，随 sandbox 销毁；长期依赖写入镜像 Dockerfile。服务可以使用映射范围内的独立用户和组，`useradd` 创建的用户记录和家目录同样位于可写层。内部 root 在会话 home 和项目 package store 中创建的文件，在主机上仍归 connector；显式 chown 到其他用户的文件使用从属 ID。销毁前的 inode 索引和最终 home 递归删除交给 root helper，覆盖服务用户的私有目录，并由原有 cgroup teardown 结束全部 sandbox 用户的进程。包表、git、npm/pip、Claude 启动及隔离实测见 PR。Python 虚拟环境使用平台提供的 uv；Debian 的 `python3 -m venv` 需要额外安装 `python3-venv`。
 
 验证脚本是 `scripts/remote_execution/sandbox_image.py`：在独立临时 VM 上准备数据盘和 release，比较首次 ping 的 ready 时间，验证 C/C++、UID map、可写系统目录、gdb 断点、strace、pid namespace 外进程不可见、网络和 quota；`--packages` 在各自独立的 sandbox 中安装常用包。测量数字、包表及 lazy-pull 取舍见 [PR #5243 的 Design notes 和 Hands-on check](https://github.com/SageSeekerSociety/cheese/pull/5243)。
 

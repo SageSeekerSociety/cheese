@@ -95,6 +95,7 @@ class Sandbox:
                 LOGNAME="root",
                 IS_SANDBOX="1",
                 CHEESE_CONNECTOR_UID=str(os.getuid()),
+                PATH=self.env["PATH"] + ":/usr/local/sbin:/usr/sbin:/sbin",
             )
         config = {
             "workspace": str(self.work),
@@ -150,7 +151,7 @@ class Sandbox:
                 if self.process.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError(
                         "executor did not become ready; inspect " + self.log.name
-                    )
+                    ) from None
                 time.sleep(0.01)
 
     def command(self, body):
@@ -210,6 +211,20 @@ class Sandbox:
                 self.process.wait(timeout=15)
         finally:
             self.log.close()
+            if self.home.exists():
+                subprocess.run(
+                    [
+                        "sudo",
+                        "-n",
+                        "/usr/local/libexec/cheese-sandbox",
+                        "remove-home",
+                        self.name,
+                        str(self.home),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                assert not self.home.exists()
 
 
 @contextlib.contextmanager
@@ -245,6 +260,8 @@ def main():
                 "-I",
                 str(args.release / "remote-execution/sandbox_image.py"),
                 args.image,
+                "--host-helper",
+                (args.release / "remote-execution/sandbox_host.py").read_text(),
             ],
             capture_output=True,
             text=True,
@@ -262,6 +279,8 @@ def main():
             "-I",
             str(args.release / "remote-execution/sandbox_image.py"),
             args.image,
+            "--host-helper",
+            (args.release / "remote-execution/sandbox_host.py").read_text(),
         ],
         capture_output=True,
         text=True,
@@ -359,9 +378,26 @@ def main():
                     "dpkg-query -W -f='${Status} ${Version}\\n' " + package
                 )
                 outcome["layer_bytes"] = disk_bytes(sandbox.home / ".cheese/rootfs")
+                if outcome["exit"] == 0 and package == "nginx":
+                    outcome["service"] = sandbox.command(
+                        "nginx && curl -fsS http://127.0.0.1/ -o /tmp/nginx-response "
+                        '&& test "$(ps -C nginx -o uid= | sort -u | tail -1 | xargs)" = "$(id -u www-data)" '
+                        "&& ps -eo uid,gid,args | grep '[n]ginx: worker' "
+                        "&& wc -c /tmp/nginx-response; code=$?; nginx -s stop; exit $code"
+                    )
+                if outcome["exit"] == 0 and package == "postgresql":
+                    outcome["service"] = sandbox.command(
+                        "pg_ctlcluster 17 main start && runuser -u postgres -- "
+                        "psql -d postgres -Atqc 'select current_user, 42;' "
+                        '&& test "$(ps -C postgres -o uid= | sort -u | xargs)" = "$(id -u postgres)" '
+                        "&& ps -eo uid,gid,args | grep '[p]ostgres: 17/main'; "
+                        "code=$?; pg_ctlcluster 17 main stop; exit $code"
+                    )
                 (args.output / (package + ".json")).write_text(
                     json.dumps(outcome, indent=2)
                 )
+                if "service" in outcome:
+                    assert outcome["service"]["exit"] == 0, outcome["service"]
                 print(
                     json.dumps(
                         {
@@ -384,6 +420,7 @@ def main():
             "ripgrep",
             "unzip",
             "nginx",
+            "postgresql",
         )
         with ThreadPoolExecutor(max_workers=2) as workers:
             receipt["packages"] = dict(workers.map(install, packages))
@@ -401,6 +438,12 @@ def main():
                 "store_ownership": sandbox.command(
                     'touch "$HOME/home-file" "$CHEESE_STORE/store-file"; stat -c \'%u:%g\' "$HOME/home-file" "$CHEESE_STORE/store-file"'
                 ),
+                "useradd": sandbox.command(
+                    "useradd --create-home cheese-eval-user && "
+                    "runuser -u cheese-eval-user -- sh -c "
+                    "'id; umask 077; mkdir /home/cheese-eval-user/private; "
+                    "echo user-owned > /home/cheese-eval-user/private/file'"
+                ),
                 "claude_startup": sandbox.command(
                     "ANTHROPIC_BASE_URL=http://127.0.0.1:9 ANTHROPIC_API_KEY=cheese-eval-placeholder timeout 20 "
                     + str(args.claude)
@@ -415,7 +458,22 @@ def main():
                 .st_uid,
                 "connector": os.getuid(),
             }
+            assert receipt["root_compatibility"]["useradd"]["exit"] == 0
+            private = (
+                sandbox.home
+                / ".cheese/rootfs"
+                / ("sha256-" + args.image.split("sha256:")[1])
+                / "upper/home/cheese-eval-user/private/file"
+            )
+            receipt["subordinate_file_owner"] = int(
+                subprocess.check_output(
+                    ["sudo", "-n", "stat", "-c", "%u", str(private)], text=True
+                )
+            )
+            assert receipt["subordinate_file_owner"] != os.getuid()
     (args.output / "result.json").write_text(json.dumps(receipt, indent=2))
+    if args.packages:
+        assert all(result["exit"] == 0 for result in receipt["packages"].values())
     print(json.dumps(receipt, indent=2))
 
 

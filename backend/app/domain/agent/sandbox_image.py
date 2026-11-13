@@ -8,7 +8,9 @@ Standard library only, also shipped to hosts with their enrollment.
 """
 
 import argparse
+import array
 import contextlib
+import ctypes
 import fcntl
 import functools
 import hashlib
@@ -16,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -24,8 +27,75 @@ from pathlib import Path
 
 CACHE = Path("/data/cheese-sandbox-images")
 CRANE = "/usr/local/libexec/cheese-sandbox-tools/crane"
+ROOT_HELPER = "/usr/local/libexec/cheese-sandbox"
 PREWARM_TIMEOUT_S = 3300
 REFERENCE = re.compile(r"ghcr\.io/[a-z0-9._/-]+@sha256:([0-9a-f]{64})")
+
+
+def helper_source():
+    return (
+        Path(__file__).parent / "harness/claude_code/remote_execution/sandbox_host.py"
+    ).read_text()
+
+
+def install_helper(source):
+    target = Path(ROOT_HELPER)
+    if target.is_file() and target.read_text() == source:
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged = target.with_name(target.name + "." + uuid.uuid4().hex)
+    try:
+        staged.write_text(source)
+        staged.chmod(0o755)
+        staged.replace(target)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def namespace():
+    """Lease the host's ID mapping in a fresh connector-owned user namespace."""
+    channel, peer = socket.socketpair()
+    with channel, peer:
+        channel.settimeout(30)
+        command = ([] if os.geteuid() == 0 else ["sudo", "-n"]) + [
+            ROOT_HELPER,
+            "userns",
+        ]
+        process = subprocess.Popen(
+            command, stdin=peer.fileno(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        peer.close()
+        descriptors = array.array("i")
+        try:
+            _, messages, _, _ = channel.recvmsg(
+                1, socket.CMSG_SPACE(descriptors.itemsize)
+            )
+            for level, kind, data in messages:
+                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                    descriptors.frombytes(
+                        data[: len(data) - len(data) % descriptors.itemsize]
+                    )
+            stdout, stderr = process.communicate(timeout=30)
+            if process.returncode or len(descriptors) != 1:
+                # i18n-exempt: host bootstrap diagnostic
+                raise RuntimeError("could not prepare sandbox IDs: " + stderr.decode())
+            yield descriptors[0], json.loads(stdout)
+        finally:
+            for descriptor in descriptors:
+                os.close(descriptor)
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+
+def enter_namespace(descriptor):
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.setns(descriptor, 0x10000000) != 0:
+        raise OSError(ctypes.get_errno(), "setns user namespace")
+    os.setgroups([])
+    os.setgid(0)
+    os.setuid(0)
 
 
 def image_key(reference):
@@ -147,6 +217,7 @@ def prewarm(
     uid=None,
     gid=None,
     retained=(),
+    userns=None,
 ):
     """Publish a fully unpacked rootfs atomically, before admitting sandboxes."""
     key = image_key(reference)
@@ -193,6 +264,9 @@ def prewarm(
                 exported = time.monotonic() - began
                 rootfs = staged / "rootfs"
                 rootfs.mkdir(mode=0o755)
+                if userns is not None:
+                    for path in (staged, archive, rootfs):
+                        os.chown(path, uid, gid)
                 began = time.monotonic()
                 subprocess.run(
                     [
@@ -203,20 +277,17 @@ def prewarm(
                         "--directory",
                         str(rootfs),
                         "--numeric-owner",
-                        "--no-same-owner",
+                        "--same-owner",
                     ],
                     check=True,
                     timeout=600,
+                    preexec_fn=None
+                    if userns is None
+                    else functools.partial(enter_namespace, userns),
+                    pass_fds=() if userns is None else (userns,),
                 )
                 unpacked = time.monotonic() - began
                 archive_bytes = archive.stat().st_size
-                began = time.monotonic()
-                subprocess.run(
-                    ["chown", "-hR", f"{uid}:{gid}", str(rootfs)],
-                    check=True,
-                    timeout=600,
-                )
-                ownership_s = time.monotonic() - began
                 rootfs_bytes = int(
                     subprocess.check_output(
                         ["du", "-s", "-B1", str(rootfs)], text=True, timeout=60
@@ -231,11 +302,12 @@ def prewarm(
                     "export_s": round(exported, 3),
                     "unpack_s": round(unpacked, 3),
                     "archive_bytes": archive_bytes,
-                    "ownership_s": round(ownership_s, 3),
                     "rootfs_bytes": rootfs_bytes,
                 }
                 (staged / "ready.json").write_text(json.dumps(receipt))
                 (staged / "ready.json").chmod(0o644)
+                if userns is not None:
+                    os.chown(staged, 0, 0)
                 staged.chmod(0o755)
                 fcntl.flock(guard, fcntl.LOCK_EX)
                 staged.rename(directory)
@@ -254,24 +326,28 @@ def main(argv=None):
     parser.add_argument("--keep", type=int, default=2)
     parser.add_argument("--crane-artifacts", type=json.loads)
     parser.add_argument("--retain", type=json.loads, default=[])
+    parser.add_argument("--host-helper", required=True)
     args = parser.parse_args(argv)
     if os.getuid() != 0:
         parser.error("prewarm must run as root")
     artifact = None
     if args.crane_artifacts:
         artifact = args.crane_artifacts[os.uname().machine]
-    print(
-        json.dumps(
-            prewarm(
-                args.reference,
-                keep=args.keep,
-                crane_artifact=artifact,
-                uid=int(os.environ["SUDO_UID"]),
-                gid=int(os.environ["SUDO_GID"]),
-                retained=args.retain,
+    install_helper(args.host_helper)
+    with namespace() as (userns, mapping):
+        print(
+            json.dumps(
+                prewarm(
+                    args.reference,
+                    keep=args.keep,
+                    crane_artifact=artifact,
+                    uid=mapping["uid"],
+                    gid=mapping["gid"],
+                    retained=args.retain,
+                    userns=userns,
+                )
             )
         )
-    )
 
 
 if __name__ == "__main__":

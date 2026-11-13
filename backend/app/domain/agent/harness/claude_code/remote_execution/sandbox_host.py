@@ -1,10 +1,10 @@
 #!/usr/bin/python3 -I
-"""Give one session's sandbox its own network and resource limits, as root.
+"""Give a cloud sandbox its ID mapping, network and resource limits, as root.
 
-Installed on a Cloud machine as `bootstrap.SANDBOX_HOST` and run by the
-machine's connector user through `sudo -n`, once when a sandbox starts and
-once when it goes. Everything else about a sandbox is unprivileged
-bubblewrap; these things are not: a network namespace that reaches the
+Installed on a cloud machine as `bootstrap.SANDBOX_HOST` and called by the
+connector through `sudo -n`. Its `up` and `down` commands configure and remove
+a sandbox's network and resource limits. It also reserves subordinate IDs
+and creates the user namespace bubblewrap joins. A network namespace that reaches the
 internet needs a veth pair, NAT and filter rules in the machine's own tables,
 a memory or CPU limit needs a cgroup only root can create, and a disk limit
 needs a project quota only root can set.
@@ -16,6 +16,9 @@ needs a project quota only root can set.
     swap NAME MIB
     freeze NAME...
     thaw NAME...
+    userns
+    index-home NAME PATH
+    remove-home NAME PATH
 
 `PID` is the sandbox's first process, created by bubblewrap with a network
 namespace of its own and still waiting to start the session's program. `up`
@@ -54,8 +57,8 @@ over TLS, which the sandbox's /etc/hosts gives the site's name
 (`bootstrap.start_sandbox`, `confinement.site_hosts`).
 
 The caller is trusted with nothing but its own processes. Arguments are
-checked to the character, the process must be the caller's, and the only
-programs run are root's copies of the platform's own static `ip`, iptables
+checked to the character, and the process must be the caller's. Network and
+quota commands use root's copies of the platform's own static `ip`, iptables
 (its nf_tables build, as every current distribution's is) and `xfs_quota`, in
 `TOOLS` (`bootstrap.sandbox_tools`), never whatever the system has. A sandbox whose processes are gone is cleaned up by
 the next `up`, so one that died without its `down` leaves nothing for long.
@@ -69,15 +72,20 @@ dummy link), so a sandbox start does only what it must.
 Standard library only: this runs as root, from a copy outside every release.
 """
 
+import array
 import ctypes
 import errno
 import fcntl
+import grp
 import hashlib
 import ipaddress
 import json
 import os
+import pwd
 import re
+import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -325,6 +333,187 @@ def caller():
     if os.geteuid() != 0 or not uid.isdigit() or int(uid) == 0:
         raise Refused("run through sudo by the connector user")
     return int(uid)
+
+
+def subordinate_ids(uid, gid):
+    """Reserve one stable range shared by every cloud sandbox on this host."""
+    directory = PROJECTS.parent
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (directory / "subids.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        account = pwd.getpwuid(uid).pw_name
+        tables = []
+        for path in (Path("/etc/subuid"), Path("/etc/subgid")):
+            rows = []
+            for line in path.read_text().splitlines() if path.exists() else []:
+                name, start, count = line.split(":")
+                rows.append((name, int(start), int(count)))
+            tables.append(rows)
+        host_ids = {entry.pw_uid for entry in pwd.getpwall()} | {
+            entry.gr_gid for entry in grp.getgrall()
+        }
+
+        def available(base):
+            return not any(
+                base <= value < base + 65536 for value in host_ids
+            ) and not any(
+                name != account and start < base + 65536 and base < start + count
+                for table in tables
+                for name, start, count in table
+            )
+
+        def reserved(base):
+            return all(
+                any(
+                    name == account and start <= base and base + 65536 <= start + count
+                    for name, start, count in table
+                )
+                for table in tables
+            )
+
+        record = directory / "subids.json"
+        if record.exists():
+            mapping = json.loads(record.read_text())
+            if (mapping["uid"], mapping["gid"]) != (uid, gid) or not (
+                available(mapping["base"]) and reserved(mapping["base"])
+            ):
+                raise Refused("the host's recorded subordinate IDs have changed")
+            return mapping
+        candidates = sorted(
+            {
+                start
+                for name, start, count in tables[0]
+                if name == account and start >= 100000 and count >= 65536
+            }
+        )
+        base = next(
+            (value for value in candidates if available(value) and reserved(value)),
+            None,
+        )
+        if base is None:
+            occupied = [
+                (start, start + count) for table in tables for _, start, count in table
+            ]
+            base = 131072
+            while not available(base) or any(
+                start < base + 65536 and base < end for start, end in occupied
+            ):
+                base += 65536
+            run(
+                [
+                    "/usr/sbin/usermod",
+                    "--add-subuids",
+                    f"{base}-{base + 65535}",
+                    "--add-subgids",
+                    f"{base}-{base + 65535}",
+                    account,
+                ]
+            )
+        mapping = {"uid": uid, "gid": gid, "base": base}
+        temporary = record.with_suffix(".next")
+        temporary.write_text(json.dumps(mapping))
+        temporary.replace(record)
+        return mapping
+
+
+def userns():
+    """Send a connector-owned user namespace over the caller's stdin socket."""
+    uid = caller()
+    gid = int(os.environ["SUDO_GID"])
+    mapping = subordinate_ids(uid, gid)
+    ready, announced = os.pipe()
+    proceed, release = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(ready)
+        os.close(release)
+        try:
+            os.setgroups([])
+            os.setgid(gid)
+            os.setuid(uid)
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.unshare(0x10000000) != 0:
+                raise OSError(ctypes.get_errno(), "unshare user namespace")
+            os.write(announced, b"1")
+            os.read(proceed, 1)
+        except OSError as error:
+            print(str(error), file=sys.stderr, flush=True)
+            os._exit(1)
+        os._exit(0)
+    os.close(announced)
+    os.close(proceed)
+    descriptor = None
+    try:
+        if os.read(ready, 1) != b"1":
+            raise Refused("could not create the sandbox user namespace")
+        base = mapping["base"]
+        Path(f"/proc/{pid}/uid_map").write_text(f"0 {uid} 1\n1 {base + 1} 65535\n")
+        Path(f"/proc/{pid}/gid_map").write_text(f"0 {gid} 1\n1 {base + 1} 65535\n")
+        descriptor = os.open(f"/proc/{pid}/ns/user", os.O_RDONLY)
+        with socket.socket(fileno=0) as channel:
+            channel.sendmsg(
+                [b"1"],
+                [
+                    (
+                        socket.SOL_SOCKET,
+                        socket.SCM_RIGHTS,
+                        array.array("i", [descriptor]),
+                    )
+                ],
+            )
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(ready)
+        os.close(release)
+        os.waitpid(pid, 0)
+    return mapping
+
+
+def index_home(name, home):
+    """Index a home's files even when a sandbox user made them private."""
+    descriptor = open_directory(home, caller())
+    try:
+        quota_mount(descriptor)
+        found = []
+
+        def failed(error):
+            raise error
+
+        for _, directories, files, current in os.fwalk(
+            ".", dir_fd=descriptor, onerror=failed, follow_symlinks=False
+        ):
+            info = os.fstat(current)
+            found.append((info.st_dev, info.st_ino))
+            for entry in (*directories, *files):
+                try:
+                    info = os.stat(entry, dir_fd=current, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                found.append((info.st_dev, info.st_ino))
+        return {"inodes": found}
+    finally:
+        os.close(descriptor)
+
+
+def remove_home(name, home):
+    """Remove a stopped home, including files owned by subordinate users."""
+    uid = caller()
+    parent = open_directory(str(Path(home).parent), uid)
+    descriptor = open_directory(home, uid)
+    try:
+        quota_mount(descriptor)
+        down(name)
+        shutil.rmtree(name, dir_fd=parent)
+        with (STATE / "lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            table = projects()
+            forget_gone(table)
+            keep_projects(table)
+    finally:
+        os.close(descriptor)
+        os.close(parent)
+    return {}
 
 
 def owner_of(pid):
@@ -930,6 +1119,14 @@ def home_path(text, name):
 
 def parse(argv):
     """The command line, checked to the character: (command, arguments)."""
+    if argv == ["userns"]:
+        return "userns", {}
+    if (
+        len(argv) == 3
+        and argv[0] in {"index-home", "remove-home"}
+        and NAME.fullmatch(argv[1])
+    ):
+        return argv[0], {"name": argv[1], "home": home_path(argv[2], argv[1])}
     if len(argv) == 2 and argv[0] == "down" and NAME.fullmatch(argv[1]):
         return "down", {"name": argv[1]}
     if (
@@ -983,6 +1180,9 @@ def main(argv):
     try:
         command, arguments = parse(argv)
         answer: dict = {
+            "userns": userns,
+            "index-home": index_home,
+            "remove-home": remove_home,
             "up": up,
             "down": down,
             "reclaim": reclaim,

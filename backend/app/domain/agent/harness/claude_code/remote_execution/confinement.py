@@ -285,6 +285,7 @@ def sandbox_argv(
     network=True,
     image_root=None,
     image_lease=None,
+    userns=None,
 ):
     """Run `argv` with an image overlay on cloud hosts or the device's system
     read-only, and of the owner's home only what is bound back below.
@@ -321,6 +322,8 @@ def sandbox_argv(
     """
     for directory in (store, toolchain, tmp):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if image_root is not None:
+        tmp.chmod(0o1777)
     sockets.mkdir(exist_ok=True, mode=0o700)
     if platform is not None:
         own_directory(platform)
@@ -328,7 +331,10 @@ def sandbox_argv(
         layer = home / ".cheese/rootfs" / image_root.parent.name
         upper, work = layer / "upper", layer / "work"
         for directory in (upper, work):
-            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # The upper's mode becomes `/`; service users must traverse it.
+            directory.mkdir(
+                parents=True, exist_ok=True, mode=0o755 if directory == upper else 0o700
+            )
         root_mount = [
             "--overlay-src",
             str(image_root),
@@ -341,8 +347,9 @@ def sandbox_argv(
         root_mount = ["--ro-bind", "/", "/"]
     command = [
         bwrap,
-        "--unshare-user",
+        *(["--userns", str(userns)] if userns is not None else ["--unshare-user"]),
         *(["--uid", "0", "--gid", "0"] if image_root is not None else []),
+        *(["--cap-add", "ALL"] if image_root is not None else []),
         "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",
@@ -383,8 +390,6 @@ def sandbox_argv(
     for mount in HIDDEN_MOUNTS:
         if image_root is None and Path(mount).is_dir():
             command += ["--tmpfs", mount]
-    if image_root is not None:
-        command += ["--tmpfs", "/home"]
     command += ["--tmpfs", str(owner)]
     names = resolv_conf()
     if image_root is not None:

@@ -53,6 +53,8 @@ def preparation(reference, api, retained=()):
             json.dumps(artifacts),
             "--retain",
             json.dumps(list(retained)),
+            "--host-helper",
+            sandbox_image.helper_source(),
         ],
         Path(sandbox_image.__file__).read_text(),
     )

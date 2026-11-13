@@ -9,6 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from app.domain.agent import sandbox_image
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 
 SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -39,7 +40,7 @@ def image(monkeypatch, tmp_path):
 
     def load(path, *args, **kwargs):
         if Path(path).name == "sandbox_image.py":
-            return {"lease": lease}
+            return {"lease": lease, "namespace": sandbox_image.namespace}
         return run_path(path, *args, **kwargs)
 
     monkeypatch.setattr(bootstrap.runpy, "run_path", load)
