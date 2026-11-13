@@ -1363,3 +1363,89 @@ def test_the_host_copy_is_repacked_once_it_holds_enough_packs(
 
     packs = list((store / "git" / "repository.git" / "objects" / "pack").glob("*.pack"))
     assert len(packs) == 1
+
+
+def test_opening_a_task_asks_the_forge_once(two_sandboxes, monkeypatch):
+    """Each command to the forge is a round trip through the platform, 5–10 s
+    from a sandbox: the task's branch and the base come in one fetch, with no
+    lookup before it, whether or not the branch is on the forge yet."""
+    cli, tasks, remote, home, other, store = two_sandboxes
+    first, second = list(tasks)
+    asked = []
+    real = cli._git_task
+
+    def recording(cwd, *args, **kwargs):
+        if args and args[0] in {"fetch", "ls-remote", "pull"}:
+            asked.append(args[0])
+        return real(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "_git_task", recording)
+    # A task whose branch is not on the forge yet starts from the base.
+    git(remote, "branch", "-D", tasks[first]["branch"])
+    work = cli._task_worktree(first)
+    assert asked == ["fetch"]
+    assert (work / "same.txt").read_text() == "base\n"
+    assert git(work, "symbolic-ref", "--short", "HEAD") == tasks[first]["branch"]
+
+    # One whose branch is there starts from it.
+    branch = tasks[second]["branch"]
+    asked.clear()
+    monkeypatch.setenv("HOME", str(other))
+    work = cli._task_worktree(second)
+    assert asked == ["fetch"]
+    assert git(work, "symbolic-ref", "--short", "HEAD") == branch
+
+
+def test_a_host_missing_files_of_its_tip_is_given_them(
+    two_sandboxes, monkeypatch, tmp_path
+):
+    """A tip the host already has can still lack files: the sandbox that moved
+    it checked out its task's branch. A later sandbox gives it what it has."""
+    cli, tasks, remote, home, other, store = two_sandboxes
+    first, second = list(tasks)
+    cli._task_worktree(first)
+    host = store / "git" / "repository.git"
+    before = set((host / "objects" / "pack").glob("*.pack"))
+    # The second task's branch has a file the host was never given.
+    seed = tmp_path / "second"
+    git(tmp_path, "clone", "-q", "-b", tasks[second]["branch"], str(remote), str(seed))
+    git(seed, "config", "user.name", "worker")
+    git(seed, "config", "user.email", "worker@example.com")
+    (seed / "task.txt").write_text("task\n")
+    git(seed, "add", ".")
+    git(seed, "commit", "-qm", "task")
+    git(seed, "push", "-q", "origin", tasks[second]["branch"])
+
+    monkeypatch.setattr(cli, "_lacks_files", lambda repo, commit: True)
+    monkeypatch.setenv("HOME", str(other))
+    cli._task_worktree(second)
+
+    assert set((host / "objects" / "pack").glob("*.pack")) > before
+
+
+def test_what_a_repository_lacks_of_a_commit_is_read_without_asking_a_remote(
+    device, tmp_path
+):
+    cli = device[0]
+    whole = tmp_path / "whole"
+    git(tmp_path, "init", "-q", str(whole))
+    git(whole, "config", "user.name", "worker")
+    git(whole, "config", "user.email", "worker@example.com")
+    (whole / "a.txt").write_text("a\n")
+    git(whole, "add", ".")
+    git(whole, "commit", "-qm", "a")
+    git(whole, "config", "uploadpack.allowFilter", "true")
+    tip = git(whole, "rev-parse", "HEAD")
+    assert not cli._lacks_files(whole, tip)
+
+    partial = tmp_path / "partial.git"
+    git(
+        tmp_path,
+        "clone",
+        "-q",
+        "--bare",
+        "--filter=blob:none",
+        f"file://{whole}",
+        str(partial),
+    )
+    assert cli._lacks_files(partial, tip)
