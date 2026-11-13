@@ -994,7 +994,7 @@ def user_namespaces_advice():
     return "sandboxNoUserNamespaces"
 
 
-def record_sandbox(owner, home, release):
+def record_sandbox(owner, home, release, *, cloud=False):
     """Record, outside the room, that it runs in a sandbox started from
     `release`. The teardown and the environment reset run outside the sandbox;
     this is how they know to run only what is in the release store, and to
@@ -1004,6 +1004,11 @@ def record_sandbox(owner, home, release):
     temporary = marker.with_name(marker.name + "." + uuid.uuid4().hex)
     temporary.write_text(str(release))
     temporary.replace(marker)
+    cloud_marker = marker.with_suffix(".cloud")
+    if cloud:
+        cloud_marker.touch()
+    else:
+        cloud_marker.unlink(missing_ok=True)
 
 
 def record_sandbox_process(owner, home, pid):
@@ -1053,6 +1058,8 @@ def start_sandbox(
     connect,
     release,
     platform=None,
+    image=None,
+    root_snapshot=None,
     **options,
 ):
     """Start `argv` in a sandbox (`confinement.sandbox_argv`) and, with `connect`, give
@@ -1086,6 +1093,7 @@ def start_sandbox(
             **options,
         )
     confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
+    restored = None
     info, report = os.pipe()
     wait, go = os.pipe()
     seccomp, program = os.pipe()
@@ -1094,29 +1102,81 @@ def start_sandbox(
     fds = {"info": report, "block": wait, "seccomp": seccomp}
     site = connect and confinement["site_hosts"](env, fds)
     try:
-        process = subprocess.Popen(
-            confinement["sandbox_argv"](
-                argv,
-                bwrap=bwrap,
-                owner=owner,
-                home=home,
-                store=execution_root(owner) / "store" / home.parent.name,
-                toolchain=execution_root(owner) / "toolchain",
-                tmp=home / PLATFORM_DIR / "tmp",
-                releases=release_store(owner),
-                workdir=home / CHECKOUT_DIR,
-                claude=claude,
-                sockets=sockets,
-                platform=platform,
-                fds=fds,
-                programs=[execution_root(owner) / "runtime/git"],
-                network=connect,
-            ),
-            start_new_session=True,
-            pass_fds=tuple(fds.values()),
-            env=env,
-            **options,
-        )
+        with contextlib.ExitStack() as images:
+            image_root, image_lease = None, None
+            userns = None
+            if connect and image:
+                manager = runpy.run_path(
+                    str(release / "remote-execution/sandbox_image.py")
+                )
+                image_root, image_lease = images.enter_context(manager["lease"](image))
+                userns, _ = images.enter_context(manager["namespace"]())
+            if image_root is not None and root_snapshot:
+                store = execution_root(owner) / "store" / home.parent.name
+                store.mkdir(parents=True, exist_ok=True, mode=0o700)
+                command = [SANDBOX_HOST, "disk", home.name, "--home", str(home)]
+                for name in (
+                    "memory_mb",
+                    "swap_mb",
+                    "cpus",
+                    "pids",
+                    "disk_mib",
+                    "inodes",
+                ):
+                    command += ["--" + name.replace("_", "-"), str(limits[name])]
+                sudo(command, "The sandbox's disk quota could not be set up")
+                archive = runpy.run_path(
+                    str(release / "remote-execution/rootfs_snapshot.py")
+                )
+                restored = archive["restore"](
+                    home,
+                    image,
+                    root_snapshot,
+                    bwrap=bwrap,
+                    namespace=confinement["image_user_namespace"](userns),
+                    fds=(userns,),
+                )
+            if image_root is not None:
+                argv = ["/usr/bin/setpriv", "--clear-groups", "--", *argv]
+                env = {
+                    **env,
+                    "USER": "root",
+                    "LOGNAME": "root",
+                    "IS_SANDBOX": "1",
+                    "CHEESE_CONNECTOR_UID": str(os.getuid()),
+                    "PATH": env.get("PATH", os.defpath)
+                    + ":/usr/local/sbin:/usr/sbin:/sbin",
+                }
+            process = subprocess.Popen(
+                confinement["sandbox_argv"](
+                    argv,
+                    bwrap=bwrap,
+                    owner=owner,
+                    home=home,
+                    store=execution_root(owner) / "store" / home.parent.name,
+                    toolchain=execution_root(owner) / "toolchain",
+                    tmp=home / PLATFORM_DIR / "tmp",
+                    releases=release_store(owner),
+                    workdir=home / CHECKOUT_DIR,
+                    claude=claude,
+                    sockets=sockets,
+                    platform=platform,
+                    fds=fds,
+                    programs=[execution_root(owner) / "runtime/git"],
+                    network=connect,
+                    image_root=image_root,
+                    image_lease=image_lease,
+                    userns=userns,
+                ),
+                start_new_session=True,
+                pass_fds=(
+                    *fds.values(),
+                    *(() if image_lease is None else (image_lease,)),
+                    *(() if userns is None else (userns,)),
+                ),
+                env=env,
+                **options,
+            )
     except BaseException:
         os.close(info)
         os.close(go)
@@ -1141,6 +1201,8 @@ def start_sandbox(
                 sudo(command, "The sandbox's network and limits could not be set up")
             )
         answer["first"] = first
+        if restored is not None:
+            answer["root_snapshot"] = restored
     except BaseException:
         os.close(go)
         process.kill()
@@ -1302,6 +1364,15 @@ def prepared(
             # Python's own Path.home() among them, read USERPROFILE instead. The
             # room's home has to be the answer to both.
             env["USERPROFILE"] = scoped_env["USERPROFILE"] = str(home)
+        if payload.get("sandbox_image"):
+            scoped_env.update(
+                USER="root",
+                LOGNAME="root",
+                IS_SANDBOX="1",
+                CHEESE_CONNECTOR_UID=str(os.getuid()),
+                PATH=env.get("PATH", os.defpath) + ":/usr/local/sbin:/usr/sbin:/sbin",
+            )
+            env.update(scoped_env)
         began = time.monotonic()
         claude = binary(owner, env["CHEESE_API"], release)
         timings["claude"] = round(time.monotonic() - began, 3)
@@ -1315,6 +1386,7 @@ def prepared(
             "mcp_servers": {},
             "release": str(release),
             "sandbox": payload.get("sandbox") or False,
+            "sandbox_image": payload.get("sandbox_image"),
         }
         mcp = read_json_beneath(home, Path(CHECKOUT_DIR) / ".mcp.json")
         if mcp is not None:
@@ -1344,7 +1416,14 @@ def prepared(
             except (ConnectionError, FileNotFoundError):
                 info = None
             if info:
-                unchanged = {"env", "env_reset", "claude", "release", "sandbox"}
+                unchanged = {
+                    "env",
+                    "env_reset",
+                    "claude",
+                    "release",
+                    "sandbox",
+                    "sandbox_image",
+                }
                 if {k: v for k, v in previous.items() if k not in unchanged} != {
                     k: v for k, v in config.items() if k not in unchanged
                 }:
@@ -1365,6 +1444,7 @@ def prepared(
                     previous.get("release") != str(release)
                     or previous.get("claude") != config["claude"]
                     or previous.get("sandbox", False) != config["sandbox"]
+                    or previous.get("sandbox_image") != config["sandbox_image"]
                     or info.get("upgrading", False)
                 )
                 if changed:
@@ -1519,6 +1599,7 @@ def configure_idle(payload):
     # How long each step of bringing the executor up took, in seconds: what
     # the platform keeps of a slow preparation (`infra_records.keep_prepared`).
     timings = {}
+    network = {}
     with prepared(
         payload, Path.home(), refresh_runtime=True, disk=disk, timings=timings
     ) as (
@@ -1594,7 +1675,7 @@ def configure_idle(payload):
             if config["sandbox"]:
                 if bwrap is None:
                     bwrap = sandbox_tools(release, platform_machine=True)
-                record_sandbox(Path.home(), home, release)
+                record_sandbox(Path.home(), home, release, cloud=platform_machine)
                 # WSL runs a Windows program through this socket, outside every
                 # sandbox; the directory it is in is hidden too (`confinement.HIDDEN_MOUNTS`).
                 env = {k: v for k, v in env.items() if k != "WSL_INTEROP"}
@@ -1623,6 +1704,8 @@ def configure_idle(payload):
                     env=env,
                     connect=platform_machine,
                     release=release,
+                    image=config.get("sandbox_image"),
+                    root_snapshot=payload.get("root_snapshot"),
                     **options,
                 )
                 record_sandbox_process(Path.home(), home, network["first"])
@@ -1694,6 +1777,13 @@ def configure_idle(payload):
                     "mcp_servers": process_servers(config),
                     "state": str(recorded),
                     "timings": timings,
+                    **(
+                        {"root_snapshot": network["root_snapshot"]}
+                        if payload.get("root_snapshot")
+                        and config.get("sandbox")
+                        and "root_snapshot" in network
+                        else {}
+                    ),
                     **disk,
                 }
             )

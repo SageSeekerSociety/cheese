@@ -36,6 +36,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
 from app.core.db import Base
+from app.domain.agent import sandbox_image
 from app.domain.common import Timestamps, UuidPk
 
 
@@ -140,6 +141,7 @@ class WarmMachine(UuidPk, Timestamps, Base):
     # What the machine's data disk holds, found when it enrolled; handed to the
     # host it becomes (``CloudHost.sandbox_disk_gb``).
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class CloudHost(UuidPk, Timestamps, Base):
@@ -197,6 +199,7 @@ class CloudHost(UuidPk, Timestamps, Base):
     # it enrolled (`enrollment.bootstrap_script`). A pool host enrolls only with
     # one; NULL on a whole VM, which runs no sandbox.
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Why the last attempt failed. Kept so a stuck host explains itself.
     enroll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     enroll_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -285,6 +288,7 @@ class SandboxHome(UuidPk, Timestamps, Base):
     """
 
     __tablename__ = "sandbox_homes"
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     __table_args__ = (
         Index(
             "uq_sandbox_homes_current_session",
@@ -408,6 +412,25 @@ class HostProjectStore(Base):
     )
     project_key: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True)
     last_placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SandboxRootSnapshot(Timestamps, Base):
+    """The last root diff saved for a session, independent of any host home."""
+
+    __tablename__ = "sandbox_root_snapshots"
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "agent_sessions.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_root_snapshots_session_id_agent_sessions",
+        ),
+        primary_key=True,
+    )
+    image: Mapped[str] = mapped_column(String(255))
+    key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(32))
 
 
 class RetainedHomeArchive(UuidPk, Timestamps, Base):
@@ -547,6 +570,12 @@ def capacity(host: CloudHost) -> int:
     return max(0, min(hard_capacity(host), by_memory))
 
 
+def sandbox_image_ready(host: CloudHost | WarmMachine) -> bool:
+    return bool(host.sandbox_image) or (
+        isinstance(host, CloudHost) and bool(host.whole_machine)
+    )
+
+
 def hard_capacity(host: CloudHost) -> int:
     """The sandboxes a host runs at once at most, whatever their memory: per
     core, by the deployment's setting, and no more than fit on its data disk.
@@ -563,8 +592,11 @@ def hard_capacity(host: CloudHost) -> int:
     # is placed.
     swap_gb = -(-settings.cloud_host_swap_mb // 1024)
     by_disk = (
-        int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb - swap_gb
-    ) // settings.cloud_sandbox_disk_gb
+        int(host.sandbox_disk_gb)
+        - settings.cloud_host_disk_reserve_gb
+        - swap_gb
+        - sandbox_image.cache_reservation_gb()
+    ) // (settings.cloud_sandbox_disk_gb + sandbox_image.home_image_reservation_gb())
     return max(0, min(by_cores, by_disk))
 
 

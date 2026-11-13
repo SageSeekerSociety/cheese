@@ -21,9 +21,9 @@ import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformN
 import type { RefNames } from '../../lib/refChip'
 import type { ChapterRow } from '../../types/chapters'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { vGuideAnchor } from '@/composables/useGuideAnchors'
+import { pointGuideAnchor, vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { askGroupFolds } from '../../lib/askGroups'
 import { replySnippet } from '../../lib/blockDisplay'
@@ -42,6 +42,7 @@ import RoomMessage from '../room/RoomMessage.vue'
 import RoomNotice from '../room/RoomNotice.vue'
 import TaskCard from '../room/TaskCard.vue'
 import TaskCreatedPost from '../room/TaskCreatedPost.vue'
+import TaskLink from '../room/TaskLink.vue'
 import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
 
@@ -161,6 +162,8 @@ const props = defineProps<{
   taskOf?: (taskId: string) => TaskLine | null
   /** 从这条消息（或它的支线）出来的任务，按创建的先后。 */
   tasksUnder?: (blockId: string) => TaskLine[]
+  /** AI 队友在主线上开的、画在这条回复下面的任务：一件一行，只有任务名和负责人。 */
+  taskLinksUnder?: (blockId: string) => TaskLine[]
 }>()
 
 const emit = defineEmits<{
@@ -267,11 +270,36 @@ const createdCont = computed(() =>
   })
 )
 const NO_TASKS: TaskLine[] = []
+// 频道主线上 AI 队友最近的一条回复：新手引导指着它说「回复了」。按 id 找到那一行再登记，
+// 不在每一行上挂指令（`pointGuideAnchor`）。
+const newestAgentReply = computed(() => {
+  if (!props.threadable) return null
+  for (let i = props.rows.length - 1; i >= 0; i--) {
+    const block = props.rows[i].block
+    if (block.kind === 'message' && props.isAgentBlock(block)) return block.id
+  }
+  return null
+})
+let replyAnchor: HTMLElement | null = null
+watch(
+  newestAgentReply,
+  async (id) => {
+    await nextTick()
+    const el = id ? props.contentRef.value?.querySelector<HTMLElement>(`[data-row-id="${id}"]`) ?? null : null
+    pointGuideAnchor('agent-reply', el, replyAnchor)
+    replyAnchor = el
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => pointGuideAnchor('agent-reply', null, replyAnchor))
 function ownerName(task: TaskLine): string | null {
   return task.owner ? (props.nameOf ?? String)(task.owner) : null
 }
 function under(blockId: string): TaskLine[] {
   return props.tasksUnder?.(blockId) ?? NO_TASKS
+}
+function links(blockId: string): TaskLine[] {
+  return props.taskLinksUnder?.(blockId) ?? NO_TASKS
 }
 /** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
 function became(m: Block): TaskLine | undefined {
@@ -766,9 +794,6 @@ const rowLabels = computed(() =>
                   @open="emit('open-card', $event)"
                 />
                 <ThreadLine
-                  v-guide-anchor="
-                    replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'
-                  "
                   :summary="m.thread ?? null"
                   :replying="replyingFor?.(m) ?? null"
                   :replying-seats="replyingSeatsFor?.(m) ?? []"
@@ -789,6 +814,17 @@ const rowLabels = computed(() =>
                 :owner-avatar="task.owner ? avatarOf(task.owner) : undefined"
                 in-list
                 :lone="!(threadable && m.thread) && madeFrom(m).length === 1"
+                @open="emit('open-card', $event)"
+              />
+            </div>
+            <div v-if="!notice && links(m.id).length" class="tl-thread msg-links" :data-feed-of="m.id">
+              <TaskLink
+                v-for="task in links(m.id)"
+                :key="task.id"
+                v-guide-anchor="'task-card'"
+                :task-id="task.id"
+                :title="task.title"
+                :owner-name="ownerName(task)"
                 @open="emit('open-card', $event)"
               />
             </div>
@@ -943,6 +979,13 @@ const rowLabels = computed(() =>
 }
 .msg-work__talk > :deep(.task-card--head + .thread-line) {
   padding-top: 2px;
+}
+/* AI 队友在主线上开的任务：它那条回复下面一件一行。 */
+.msg-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
 .msg-work :deep(.thread-line),
 .msg-work :deep(.thread-line:hover) {

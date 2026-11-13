@@ -54,6 +54,8 @@ steps:
 
 沙箱不管在哪台机器上，生命周期都一样：每个沙箱在 `sandbox_homes` 里有一行（平台主机上的记 `host_id`，某人电脑上的记 `device_id`），带着它的规格；空闲超过规格的空闲时间（`Spec.idle_s`）就由 `machine/lifecycle.py` 删掉，机器离线时跳过。会话换走时，主机上的那一行当场还回去，某人电脑上的那一行留下、不再属于任何会话，由同一次清扫在空闲后删掉。
 
+使用 OCI 镜像的标准云端 sandbox 在空闲删除或换环境前，将根目录的 upper 和基础镜像 digest 保存到现有私有备份桶。下一次分配 home 时，同一 digest 的 upper 在 executor 启动前、home quota 内恢复；digest 更新时跳过恢复，首次工具结果说明需要重装软件包。压缩后 512 MiB、文件内容合计 2 GiB 或 200000 项的上限及失败处理见[根目录快照](../../remote-execution.md#根目录快照)。这份快照不包含 home 文件，任务代码继续由 checkpoint 推送任务分支。
+
 ## 连接 {#link}
 
 会话进程和干活的机器分开时，一次工具调用怎么落到机器上，见[执行通道](/dev/execution)；连接器的命令见 [cheese CLI 原理](/dev/cli#connector)。

@@ -24,12 +24,11 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.session_record.service import read
-from app.domain.thread.models import Thread
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, finish_turn, stub_compute
-from tests.integration.conftest import project_service, registered
+from tests.integration.conftest import project_service, registered, second_person
 from tests.support.hang import HANG_S
 from tests.support.quoted_context import prompt_quote, slide_quote
 from tests.support.run_records import records_of
@@ -445,6 +444,8 @@ async def test_backend_resolves_room_agent_mention(
     async with factory() as session:
         await registered(session, "u")
         project = await project_service(session).create(name="P", owner_handle="u")
+        # Someone else in the project: a message names the teammate or it does not.
+        await second_person(session, project.id)
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
@@ -528,17 +529,12 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
         )
         topic_id = topic.id
         await session.commit()
-    landed = await runner.receive_message(
-        svc, topic_id, author="u", content="@芝士 check this"
-    )
+    await runner.receive_message(svc, topic_id, author="u", content="@芝士 check this")
     # The turn ends when it ends. A deadline here raced it and cancelled it
     # mid-turn when a loaded runner was slower than the deadline.
     await runner.drain(timeout_s=60)
-    # Said in the main line, it is answered in the message's 支线.
-    async with factory() as session:
-        thread = await Thread.of_root(session, landed)
-    assert thread is not None
-    await finish_turn(svc, thread.id)
+    # Said in the main line, it is answered there.
+    await finish_turn(svc, topic_id)
     assert "check this" in screen.last_prompt
 
 

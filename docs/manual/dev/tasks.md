@@ -73,9 +73,11 @@ covers:
 
 任务建出来就在做，没有「开始」这一步：芝士从第一轮起就能改动项目。审阅人在建任务时定下（`TaskService.default_reviewer`）：负责人审阅得了就是负责人，审阅不了（协作模式里的 AI 队友）用项目默认审阅人，都没有时留空，第一次交付时再要（`review/services/reviewers.py`）。
 
-**原地转**（`app/api/thread_task.turn_into_task`）：任务沿用支线的 id，所以对话、AI 队友的会话（`agent_sessions` 按对话 id 记）、花费都留在原处；`threads` 那一行也留着，它把这段对话挂在主线消息下面。`conversations` 登记表里同一个 id 从 `thread` 改成 `task`，由触发器维护（迁移 `e4f7009313c1`：插任务时这个 id 已经是支线就只改 kind；删任务时支线还在就改回 `thread`；删支线时它已经是任务就不动），删了登记行会连带删掉对话和会话。做这件任务的队友沿用支线正在和它说话的那位（`thread_teammate`），换一位就是新的一段会话。`PlaceResolver.conversation` 先认任务再认支线，所以从下一轮起 `Place.keeps_work` 为真，执行凭证和仓库令牌按地点现问，一轮当中转也接得上（见[支线的会话](/dev/session#scratch)）。转的那一刻，对话里落一行「已转为任务，某某 负责」，平台提示附在这一行上（`became_task_prompt`），下一轮交给芝士。转过的支线在主线上不再画「N 条回复」那一行，「支线」页签也不再列它（`thread/reads.py` 的 `_became_a_task`）；任务行带 `from_thread`，前端据此在频道页右半边打开它。支线的结果回原处（`tell_origin`）对它不再发：原处就是它自己。
+**原地转**（`app/api/thread_task.turn_into_task`）：任务沿用支线的 id，所以对话、AI 队友的会话（`agent_sessions` 按对话 id 记）、花费都留在原处；`threads` 那一行也留着，它把这段对话挂在主线消息下面。`conversations` 登记表里同一个 id 从 `thread` 改成 `task`，由触发器维护（迁移 `e4f7009313c1`：插任务时这个 id 已经是支线就只改 kind；删任务时支线还在就改回 `thread`；删支线时它已经是任务就不动），删了登记行会连带删掉对话和会话。做这件任务的队友沿用支线正在和它说话的那位（`thread_teammate`），换一位就是新的一段会话。`PlaceResolver.conversation` 先认任务再认支线，所以从下一轮起 `Place.keeps_work` 为真，执行凭证和仓库令牌按地点现问，一轮当中转也接得上（见[频道里的会话](/dev/session#scratch)）。转的那一刻，对话里落一行「已转为任务，某某 负责」，平台提示附在这一行上（`became_task_prompt`），下一轮交给芝士。转过的支线在主线上不再画「N 条回复」那一行，「支线」页签也不再列它（`thread/reads.py` 的 `_became_a_task`）；任务行带 `from_thread`，前端据此在频道页右半边打开它。支线的结果回原处（`tell_origin`）对它不再发：原处就是它自己。
 
-一条消息可以另开好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面；单独新建的任务才在主线上落一行 `task_created`。
+一条消息可以另开好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面。AI 队友在主线上用 `cheese_task(action=open)` 开的任务，记在要做这件事的那条主线消息上，`source_block_id` 也是它；主线把它画成队友那一轮回答的最后一条消息下面的一行（那一轮以那条消息命名，`turn_id`），只有任务名和负责人，不画状态（前端 `lib/channelTasks.teammateTaskLines`）。主线上没有原地转（`here`）。单独新建的任务才在主线上落一行 `task_created`。
+
+任务交付被采纳、或做完关闭时，结果说回开出它的那段对话（`review/task_landing.tell_origin`）：出自主线的（`source_block_id` 在频道主线上）说在主线，出自支线的说在那条支线，支线原地转成的不说。
 
 任务另记它是从哪句话来的（`source_block_id`），可以是支线里的一条回复，也可以是另一个任务里的一条：转为任务的是被转的那一条；`cheese_task(action=open)` 建的是这个 AI 队友在那段对话里最近收到的一句人话，频道主线上只认点了它名字的那句。任务页顶上引这句话，点它回到那段对话并停在这一条上（`?block=`）。这一列加上之前建的任务没有它，退回 `upgraded_from_block_id`；两样都没有的（单独新建的任务）照实说是谁新建的。
 

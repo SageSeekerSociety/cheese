@@ -49,7 +49,11 @@ const store = reactive({ projects: [] as Project[], projectsSettled: false })
 vi.mock('@/me', () => ({ myHandle: () => 'lisi' }))
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
+import { __resetProjectTourForTests, useProjectTour } from '@/composables/useProjectTour'
+
 import WorkspaceEntry from './WorkspaceEntry.vue'
+
+import { clearComposerDrafts, saveComposerDraft } from '@/lib/composerDrafts'
 
 const Entry = WorkspaceEntry as unknown as Component
 
@@ -154,6 +158,45 @@ describe('桌面端: 第一屏听壳的', () => {
     store.projects = [project('p1')]
     mount()
     await waitFor(() => expect(replace).not.toHaveBeenCalled())
+  })
+})
+
+describe('桌面端: 导览第一句还没发出去', () => {
+  const ROOM = { name: 'workspace-topic', params: { projectId: 'p1', topicId: 'general' } }
+
+  beforeEach(() => {
+    localStorage.clear()
+    clearComposerDrafts()
+    __resetProjectTourForTests()
+    replace.mockReset()
+    store.projects = [{ ...project('p1'), root_topic_id: 'general' }]
+  })
+
+  it('回到那一句所在的「综合」，不落在总览上', async () => {
+    saveComposerDraft('general', { draft: '@芝士 先给我看提纲', reply: null, atts: [] })
+    mount()
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(ROOM))
+    expect(replace).not.toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } })
+  })
+
+  it('「综合」里没有草稿就照壳走', async () => {
+    mount()
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
+  })
+
+  it('导览走完或跳过之后，留着草稿也照壳走', async () => {
+    saveComposerDraft('general', { draft: '半句话', reply: null, atts: [] })
+    useProjectTour().skip()
+    mount()
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
+    expect(replace).not.toHaveBeenCalledWith(ROOM)
+  })
+
+  it('导览已经过了第一步也照壳走', async () => {
+    saveComposerDraft('general', { draft: '半句话', reply: null, atts: [] })
+    useProjectTour().next()
+    mount()
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
   })
 })
 

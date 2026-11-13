@@ -206,20 +206,18 @@ def test_a_turn_running_when_its_agent_is_taken_off_is_stopped_and_its_calls_ref
 
     stub_hooks.emit_turn = turn
     seat = room_agent_seat(client, room)
-    asked = post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-    # It works in the message's 支线, with that 支线's credential.
-    thread = _thread_of(client, asked["id"])
-    token = mint_session_token(pid, uuid.UUID(thread), seat)
-    assert _until(lambda: _working_in(client, thread) == [seat])
+    post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+    # It works in the channel's main line, with the channel's credential.
+    token = mint_session_token(pid, uuid.UUID(room), seat)
+    assert _until(lambda: _working_in(client, room) == [seat])
     assert _admission(client, token)["allow"] is True
 
     _take_off(client, room, seat)
 
-    assert _until(lambda: _working_in(client, thread) == [])
+    assert _until(lambda: _working_in(client, room) == [])
     assert _admission(client, token)["allow"] is False
     assert _model_call(client, token) == 403
-    # Its executor is addressed by its own conversation, the 支线.
-    assert _channels(client, pid, thread, token)["executor"] == 403
+    assert _channels(client, pid, room, token)["executor"] == 403
 
 
 def _working(client, room: str) -> list[str]:
@@ -244,15 +242,6 @@ def _working_in(client, conversation: str) -> list[str]:
                 break
     members = snapshots[-1]["members"] if snapshots else []
     return [entry["member"] for entry in members if entry["kind"] == "working"]
-
-
-def _thread_of(client, block_id: str) -> str:
-    """The 支线 a call to 芝士 in the main line is answered in."""
-    opened = client.post(
-        f"/blocks/{block_id}/thread", headers=session_auth_headers("alice")
-    )
-    assert opened.status_code == 200, opened.text
-    return opened.json()["data"]["id"]
 
 
 def _until(check, timeout: float = 10.0) -> bool:

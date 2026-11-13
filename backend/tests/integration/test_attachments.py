@@ -479,9 +479,8 @@ def test_raw_rejects_non_image_and_traversal(client):
 
 
 def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_hooks):
-    """An image sent with a call to 芝士 in the main line reaches 芝士 in the
-    message's 支线: the files stay with the message, and the 支线's first
-    turn reads both."""
+    """An image sent with a call to 芝士 in the main line reaches 芝士 there:
+    the files stay with the message, and the turn reads both."""
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
 
@@ -501,7 +500,6 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     assert att_block["mime_type"] == "image/png"
     assert not att_block["author"].startswith("cheese")
 
-    thread = client.post(f"/blocks/{asked['id']}/thread").json()["data"]["id"]
     deadline = time.monotonic() + 30
     while att["path"] not in (stub_hooks.last_prompt or ""):
         assert time.monotonic() < deadline, stub_hooks.last_prompt
@@ -514,23 +512,22 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     assert "已附在本条消息里" in prompt
 
     # The session hearing the prompt is not its answer having landed: what it
-    # says comes back through the reader afterwards. Wait for the 支线's turn
-    # to close before reading what it left there.
-    wait_turn_idle(client, thread)
+    # says comes back through the reader afterwards. Wait for the turn to close
+    # before reading what it left.
+    wait_turn_idle(client, topic_id)
     main = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert [b["kind"] for b in main] == ["message", "attachment"]
-    # The turn's record reaches the 支线 by its own path: the session's records
-    # are read back and written after the prompt was handed over, so seeing the
-    # prompt does not mean the record is there yet. Wait for it.
+    assert [b["id"] for b in main[:2]] == [asked["id"], att_block["id"]]
+    # The turn's record reaches the channel by its own path: the session's
+    # records are read back and written after the prompt was handed over, so
+    # seeing the prompt does not mean the record is there yet. Wait for it.
     while not (
-        answer := client.get(f"/topics/{thread}/session-records").json()["data"][
+        answer := client.get(f"/topics/{topic_id}/session-records").json()["data"][
             "items"
         ]
     ):
-        assert time.monotonic() < deadline, "the 支线's turn left no record"
+        assert time.monotonic() < deadline, "the turn left no record"
         time.sleep(0.2)
     assert any(item["record"].get("type") == "assistant" for item in answer)
-    assert client.get(f"/topics/{thread}/blocks").json()["data"]["data"] == []
 
 
 def test_image_only_message_allowed(client, stub_hooks):

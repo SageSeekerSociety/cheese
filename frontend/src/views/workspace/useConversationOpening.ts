@@ -1,7 +1,8 @@
 // 频道页上点开一段对话去哪：支线在右半边；任务（支线原地转成的、另开的、新建的）去任务页，
-// 和侧栏任务行点开的是同一处。转为任务之后接着去那件任务的任务页。
+// 和侧栏任务行点开的是同一处。在频道主线上转为任务，人留在频道里，任务挂在那条消息下面；
+// 在支线里转的，接着去那件任务的任务页。
 import type { Router } from 'vue-router'
-import type { Block } from '@/cx_types'
+import type { Block, RoomTask } from '@/cx_types'
 
 import { openThread } from '@/api/threads'
 import { t } from '@/i18n'
@@ -51,15 +52,27 @@ export function useConversationOpening(opts: {
     return opts.router.replace(taskPage(taskId))
   }
 
-  // 转为任务：主线上的一条消息（或支线页头那颗），是它的支线原地转成任务；支线里的一条
-  // 回复是另开一件。都接着去那件任务的任务页，不等侧栏的清单重取回来。
-  async function upgradeMessage(messageId: string) {
+  async function upgrade(messageId: string): Promise<RoomTask | null> {
     const made = await store.upgradeMessage(messageId)
-    if (!made) return
     // 手上那份支线还写着没转：作废，之后再点开它读回来的是任务。
-    void queryClient.invalidateQueries({ queryKey: keys.roomThread(made.id) })
+    if (made) void queryClient.invalidateQueries({ queryKey: keys.roomThread(made.id) })
+    return made
+  }
+
+  // 支线里转为任务：支线页头那颗是这条支线原地转成任务，支线里的一条回复是另开一件。都接着
+  // 去那件任务的任务页，不等侧栏的清单重取回来。
+  async function upgradeMessage(messageId: string) {
+    const made = await upgrade(messageId)
+    if (!made) return
     await (opts.place().threadId === made.id ? showAsTask(made.id) : openTaskPage(made.id))
   }
 
-  return { showThread, onOpenThread, openTaskPage, showAsTask, upgradeMessage }
+  // 对话栏里的一条消息转为任务。在频道主线上，人留在频道里：任务挂在那条消息下面，去不去
+  // 任务页由人自己点。任务页上的一条消息另开一件，接着去那件的任务页。
+  async function upgradeInColumn(messageId: string) {
+    if (opts.place().taskId) return upgradeMessage(messageId)
+    await upgrade(messageId)
+  }
+
+  return { showThread, onOpenThread, openTaskPage, showAsTask, upgradeMessage, upgradeInColumn }
 }

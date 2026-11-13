@@ -40,9 +40,23 @@ from app.domain.routine.service._shared import (
     TRIGGER_LABELS,
     now,
 )
-from app.domain.thread.services import answered_in
+from app.domain.thread.services import open_thread
+from app.domain.topic.models import Topic, TopicStatus, is_private_chat
 
 _OPEN = (RunStatus.queued.value, RunStatus.running.value)
+
+
+async def _run_place(
+    session: AsyncSession, routine: Routine, message: Block
+) -> uuid.UUID:
+    """Where a run happens: in the 支线 under its message in a channel's main
+    line; in the conversation itself in a private chat, which has no 支线, and
+    in an archived channel, where no 支线 opens and the turn is refused as any
+    turn there is."""
+    room = await session.get(Topic, message.conversation_id)
+    if room is None or is_private_chat(room) or room.status == TopicStatus.archived:
+        return message.conversation_id
+    return (await open_thread(session, message.id, by=routine.agent_handle)).id
 
 
 def run_prompt(routine: Routine, run: RoutineRun) -> str:
@@ -156,7 +170,7 @@ async def _fire(
     session.add(message)
     await session.flush()
     run.message_id = message.id
-    place = await answered_in(session, message)
+    place = await _run_place(session, routine, message)
     agent = await instance_for_seat(session, routine.project_id, routine.agent_handle)
     if agent is None or not agent.is_active:
         run.status = RunStatus.failed.value

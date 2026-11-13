@@ -91,6 +91,28 @@ def _caller_handle(headers: dict | None) -> str | None:
     return claims.handle if claims is not None else None
 
 
+async def second_person(session, project_id, handle: str = "bob") -> None:
+    """Put ``handle`` (registered on the way) in the project, on ``session``.
+
+    In a project with one person every message that person says in a channel's
+    main line is for the AI teammate; a test of what a message calls when it
+    names nobody needs someone else there. The caller commits."""
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+
+    user_id = await registered(session, handle)
+    now = datetime.now(UTC)
+    session.add(
+        TeamUserRelation(
+            team_id=await shared_team_of(session, project_id, joiner_user_id=user_id),
+            user_id=user_id,
+            role=TeamMemberRole.MEMBER,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await session.flush()
+
+
 async def shared_team_of(
     session, project_id, *, joiner_user_id: int | None = None
 ) -> int:
@@ -661,10 +683,32 @@ def room_socket(
 def in_thread(client, room_id: str, handle: str) -> str:
     """A 支线 in the channel ``room_id``, opened by ``handle`` under a message
     of theirs: where 芝士 answers once it is called. Its id works wherever a
-    room's did — `/messages`, `/blocks`, the chat socket."""
-    said = post_message(client, room_id, handle, {"content": "这件事在支线里说"})
+    room's did — `/messages`, `/blocks`, the chat socket.
+
+    The message is stored as it stands in the main line rather than sent: said
+    by the only person in a project, a send would hand it to the AI teammate
+    there, and what is being set up here is the 支线."""
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.event_author import AuthorType
+    from app.domain.topic.models import Topic
+
+    async def say() -> str:
+        async with client.test_factory() as session:
+            room = await session.get(Topic, uuid.UUID(str(room_id)))
+            assert room is not None, room_id
+            block = await BlockRepository(session).add(
+                project_id=room.project_id,
+                conversation_id=room.id,
+                author=handle,
+                author_type=AuthorType.participant,
+                content="这件事在支线里说",
+            )
+            await session.commit()
+            return str(block.id)
+
+    said = client.portal.call(say)
     response = client.post(
-        f"/blocks/{said['id']}/thread", headers=session_auth_headers(handle)
+        f"/blocks/{said}/thread", headers=session_auth_headers(handle)
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]

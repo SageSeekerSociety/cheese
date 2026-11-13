@@ -166,7 +166,7 @@
     "files": "Files",
     "members": "Members",
     "about": "Knows that",
-    "hint": "Each answer adds to this card. The project is made when you click Create project.",
+    "hint": "Each answer adds to this card. The project is made only when you confirm on the last step.",
     "nameFallback": "{name}'s project",
     "listSep": ", ",
     "aboutSep": ", ",
@@ -197,19 +197,18 @@
     },
     "reply": {
       "title": "{agent}'s reply",
-      "text": "{agent} has replied, in a thread under your message. Open it.",
-      "textWaiting": "The reply is in a thread under your message; open it. If it is still being written, you can leave and will be notified.",
-      "textFailed": "{agent} could not reply this time; the thread says why. Open it, and once that is sorted, press Retry."
+      "text": "{agent} has replied in the channel, starting with a plan.",
+      "textWaiting": "{agent} is working on it; the reply will appear in the channel."
     },
     "confirm": {
-      "title": "Confirm in the thread",
-      "text": "{agent} shows you a plan first. Reply in this thread (for example \"Looks good, go ahead\") and it starts; ask for changes the same way.",
-      "textWaiting": "Open the thread under your message to read {agent}'s plan."
+      "title": "Confirm the plan",
+      "text": "Reply here (for example \"Looks good, go ahead\") and {agent} starts; ask for changes the same way.",
+      "textWaiting": "{agent}'s plan is in its reply. Read it, then answer in the message box."
     },
     "task": {
       "title": "Task",
-      "text": "{agent} turned this thread into a task. Open it to follow progress and changes.",
-      "textWaiting": "This thread becomes a task listed under your message: open it to follow progress and changes."
+      "text": "{agent} created a task, listed under its reply. Open it to follow progress and changes.",
+      "textWaiting": "When {agent} starts, it creates a task listed under its reply: open it to follow progress and changes."
     },
     "taskPage": {
       "title": "Task page",
@@ -218,7 +217,7 @@
     },
     "preview": {
       "title": "Preview",
-      "text": "{agent} is halfway and has put up a preview. Open it; if you want something changed, say so in the conversation or tap one of the suggested changes, and it will show you again.",
+      "text": "{agent} is halfway and has put up a preview. Open it; if you want something changed, say so in the conversation, and it will show you again.",
       "textWaiting": "Halfway through, {agent} puts up a preview for you. Open it when it appears and say what to change. You can leave meanwhile; you will be notified."
     },
     "accept": {

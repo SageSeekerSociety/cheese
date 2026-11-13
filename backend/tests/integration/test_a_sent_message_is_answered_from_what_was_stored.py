@@ -8,13 +8,13 @@ the preview included); the copy is that, with no read back.
 
 import uuid
 
-from sqlalchemy import event, select
-from sqlalchemy.engine import Engine
+from sqlalchemy import select
 
 from app.domain.block.models import Block
 from app.domain.block.schemas import BlockOut
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import join_project_team, session_auth_headers
 from tests.integration.test_the_composer_shows_who_a_message_is_for import _channel
+from tests.support.counting_session import counting_sql
 
 
 def _send(client, room, **body):
@@ -26,21 +26,15 @@ def _send(client, room, **body):
 
 
 def test_the_senders_copy_is_the_stored_block_without_reading_it_back(client):
-    _, _root, room = _channel(client)
+    project, _root, room = _channel(client)
+    # No AI turn for these unaddressed messages in a two-person project.
+    join_project_team(client, project, "bob")
     first = _send(client, room, content="第一句")
     assert first.status_code == 200, first.text
-    seen: list[str] = []
-
-    def record(conn, cursor, statement, parameters, context, executemany):
-        seen.append(" ".join(statement.split()))
-
-    event.listen(Engine, "after_cursor_execute", record)
-    try:
+    with counting_sql(client) as seen:
         reply = _send(
             client, room, content="回第一句", reply_to=first.json()["data"]["id"]
         )
-    finally:
-        event.remove(Engine, "after_cursor_execute", record)
 
     assert reply.status_code == 200, reply.text
     # The write ends by recording its result for retries; the route reads

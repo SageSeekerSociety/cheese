@@ -26,7 +26,12 @@ from app.domain.project.models import Project
 # moving one of them carries the routes that read it here.
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.thread.models import Thread
-from app.domain.topic.models import Topic, TopicMembership, TopicStatus
+from app.domain.topic.models import (
+    Topic,
+    TopicMembership,
+    TopicStatus,
+    is_private_chat,
+)
 
 
 @dataclass(frozen=True)
@@ -76,15 +81,17 @@ class Place:
 
     @property
     def keeps_work(self) -> bool:
-        """Whether what a session does here may reach the project. Not from a
-        支线: what changes the project is done in a task or in the room's own
-        line. A 支线 that became a task resolves as the task
-        (`PlaceResolver.conversation`), so its session keeps its work from then
-        on. A closed task is talked in as a 支线 is: about what was done, with
-        nothing more done; reopening it is how the work goes on."""
-        return self.thread is None and (
-            self.task is None or self.task.status == TaskStatus.open
-        )
+        """Whether what a session does here may reach the project: only in an
+        open task. A channel's main line and its 支线 are talked in, and what
+        changes the project is done in a task. A 支线 that became a task
+        resolves as the task (`PlaceResolver.conversation`), so its session
+        keeps its work from then on. A closed task is talked in as a channel
+        is: about what was done, with nothing more done; reopening it is how
+        the work goes on. A private chat has no machine to keep work from and
+        answers as it always has."""
+        if self.task is not None:
+            return self.task.status == TaskStatus.open
+        return self.thread is None and is_private_chat(self.room)
 
 
 #: What a caller may have read with the room and its project, in the same

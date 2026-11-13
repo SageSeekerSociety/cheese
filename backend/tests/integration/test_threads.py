@@ -1,8 +1,8 @@
 """支线: the replies under a message in a channel.
 
-A person calling 芝士 in a channel's main line is answered in that message's
-支线, never in the main line. Anyone can reply under any message, and the
-支线 they open is the message's one 支线. Only the people who took part are
+A person calling 芝士 in a channel's main line is answered in the main line,
+and no 支线 opens for it. Anyone can reply under any message, and the 支线 they
+open is the message's one 支线, where 芝士 answers when called there. Only the people who took part are
 told of new replies, and only of what people said there.
 """
 
@@ -44,22 +44,15 @@ def _open(client, block_id: str, handle: str = "alice") -> dict:
     return r.json()["data"]
 
 
-def test_calling_cheese_in_the_main_line_runs_in_that_messages_thread(
-    client,
-):
+def test_calling_cheese_in_the_main_line_runs_in_the_main_line(client):
     _project, room = _channel(client)
     asked = post_message(client, room, "alice", {"content": "@芝士 首页要改哪些地方？"})
 
-    # The question has a 支线, and the session runs in it.
-    thread = _open(client, asked["id"])
+    # The session runs in the channel itself.
     output = wait_for_record(
-        client, thread["id"], lambda record: record.get("type") == "assistant"
+        client, room, lambda record: record.get("type") == "assistant"
     )
-    assert assistant_texts(records(client, thread["id"])) == ["Hello world"]
-
-    # The main line carries the question, not the answer.
-    main = _blocks(client, room)
-    assert [b["id"] for b in main] == [asked["id"]]
+    assert assistant_texts(records(client, room)) == ["Hello world"]
 
     async def replied_to() -> str:
         async with client.test_factory() as session:
@@ -68,7 +61,9 @@ def test_calling_cheese_in_the_main_line_runs_in_that_messages_thread(
             return str(turn.reply_to)
 
     assert asyncio.run(replied_to()) == asked["id"]
-    assert records(client, room) == []
+    # No 支线 opened under the question.
+    under = next(b for b in _blocks(client, room) if b["id"] == asked["id"])
+    assert not under.get("thread")
 
 
 def _until(ws, predicate) -> dict:
@@ -79,23 +74,21 @@ def _until(ws, predicate) -> dict:
             return frame
 
 
-def test_the_main_line_is_told_it_is_answering_the_moment_the_thread_opens(client):
-    """@ 芝士 在频道主线上：房间会收到「有人在答」，答在哪儿也说得准。
+def test_the_main_line_is_told_who_is_answering_in_a_thread(client):
+    """在一条支线里 @ 芝士：主线会收到「有人在这条支线里答」，答在哪儿也说得准。
 
-    从一次真的发出（`receive_message` 解析出点名的是哪个席位、把消息落进哪条
-    支线）走到房间那一帧，整条线在这儿锁住 —— 席位解析错了就一条支线都开不
-    起来，这一帧也就永远不来。
+    从一次真的发出（`receive_message` 解析出点名的是哪个席位）走到主线那一帧，
+    整条线在这儿锁住 —— 席位解析错了，这一帧就永远不来。
     """
     _project, room = _channel(client)
+    said = post_message(client, room, "alice", {"content": "<@bob> 首页要改哪些地方？"})
+    thread = _open(client, said["id"])
     with room_socket(client, room, "alice") as ws:
-        asked = post_message(
-            client, room, "alice", {"content": "@芝士 首页要改哪些地方？"}
-        )
+        post_message(client, thread["id"], "alice", {"content": "@芝士 你看看"})
         heard = _until(ws, lambda f: f["type"] == "thread_activity" and f["active"])
-    # 谁在答：芝士坐的那个席位。答在哪儿：这条消息的支线（`_open` 是幂等的，
-    # 拿回来的就是它）。
+    # 谁在答：芝士坐的那个席位。答在哪儿：这条支线。
     assert heard["member"]
-    assert heard["thread_id"] == _open(client, asked["id"])["id"]
+    assert heard["thread_id"] == thread["id"]
 
 
 def test_the_main_line_shows_how_a_thread_grew(client):

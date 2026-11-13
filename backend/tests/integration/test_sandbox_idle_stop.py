@@ -27,7 +27,7 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, sandbox_image
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
@@ -284,6 +284,7 @@ def host_comes_up(case, seat, device_id):
             )
             host.status = MachineStatus.running
             host.ai_status = AiStatus.disabled
+            host.sandbox_image = sandbox_image.default_image()["reference"]
             host.last_seen_at = datetime.now(UTC)
             await repo.mark_enrolled(
                 host,
