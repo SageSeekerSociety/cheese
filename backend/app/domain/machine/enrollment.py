@@ -44,7 +44,7 @@ logger = logging.getLogger("cheese.machine.enrollment")
 # One attempt should be slow enough to survive a cold download on a fresh
 # machine, and fast enough that a stuck one doesn't wedge the sweep.
 SSH_TIMEOUT_S = 180.0
-IMAGE_PREWARM_TIMEOUT_S = 1800.0
+IMAGE_PREWARM_TIMEOUT_S = sandbox_image.PREWARM_TIMEOUT_S + SSH_TIMEOUT_S
 
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
@@ -290,6 +290,8 @@ def bootstrap_script(
         "sudo -n install -D -o root -g root -m 0755 "
         '"$HOME/.cheese/runtime/crane/crane" '
         + shlex.quote(sandbox_image.CRANE)
+        + "\nsudo -n install -d -m 0755 /data/cheese-sandbox-images\n"
+        'sudo -n install -m 0644 "$HOME/.cheese/runtime/crane.sha256" /data/cheese-sandbox-images/crane.sha256'
         + "\nsudo -n install -D -o root -g root -m 0755 "
         '"$HOME/.cheese/runtime/sandbox-image.py" /usr/local/libexec/cheese-sandbox-image\n'
         "sudo -n /usr/bin/python3 -I /usr/local/libexec/cheese-sandbox-image "

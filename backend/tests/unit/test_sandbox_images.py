@@ -57,7 +57,7 @@ def test_pruning_waits_for_a_running_sandbox_to_release_its_image(tmp_path, prod
     with sandbox_image.lease(reference(1), cache=cache) as (root, _):
         sandbox_image.prewarm(reference(2), keep=0, cache=cache, crane=str(producer))
         assert (root / "file").read_text() == "from the image"
-    sandbox_image.prewarm(reference(2), keep=0, cache=cache, crane=str(producer))
+    sandbox_image.prewarm(reference(3), keep=0, cache=cache, crane=str(producer))
     assert not root.exists()
 
 

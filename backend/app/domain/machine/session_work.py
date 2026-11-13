@@ -66,8 +66,9 @@ from app.domain.machine.lifecycle import (
     thaw_if_asked,
     use_session_work,
 )
-from app.domain.machine.models import CloudHost
+from app.domain.machine.models import CloudHost, sandbox_image_ready
 from app.domain.machine.progress import publish_line
+from app.domain.machine.sandbox_images import image_for_session
 from app.domain.machine.sandbox_wait import (
     DISK_FULL,
     DISK_FULL_NOTICE,
@@ -617,12 +618,9 @@ async def restart_executor(db, row, lease):
         setup=_executor_env(
             {
                 "CHEESE_ENVIRONMENT": json.dumps(environment),
-                "CHEESE_SANDBOX_IMAGE": await db.scalar(
-                    select(CloudHost.sandbox_image).where(
-                        CloudHost.device_id == lease["device_id"]
-                    )
-                )
-                or "",
+                "CHEESE_SANDBOX_IMAGE": await image_for_session(
+                    db, lease["device_id"], row.id
+                ),
             },
             api=api,
             token=token,
@@ -1153,7 +1151,7 @@ async def _attempt(
         if (
             not cloud_host.device_id
             or not hub.is_online(cloud_host.device_id)
-            or (not cloud_host.whole_machine and not cloud_host.sandbox_image)
+            or not sandbox_image_ready(cloud_host)
         ):
             line = await pool.tell_waiting(session_id)
             await db.commit()
@@ -1354,9 +1352,10 @@ async def _install(
             work_resource=work_resource,
         )
         if platform_machine and sandbox:
-            setup["CHEESE_SANDBOX_IMAGE"] = await db.scalar(
-                select(CloudHost.sandbox_image).where(CloudHost.device_id == device_id)
+            setup["CHEESE_SANDBOX_IMAGE"] = await image_for_session(
+                db, device_id, session_id
             )
+            await db.commit()
         disk_full_mb = None
         # On a person's own computer the room sees the runtime download
         # (`install_progress`); a Cloud machine's getting ready is the

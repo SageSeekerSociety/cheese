@@ -26,6 +26,7 @@ from app.domain.machine.models import (
     CloudHost,
     MachineStatus,
     WarmMachine,
+    sandbox_image_ready,
     warm_pool_target,
 )
 from app.domain.machine.repositories import CloudHostRepository
@@ -132,8 +133,7 @@ class WarmPoolService:
             if (
                 not warm.device_id
                 or warm.sandbox_disk_gb is None
-                or warm.sandbox_image
-                != enrollment.sandbox_image.default_image()["reference"]
+                or not sandbox_image_ready(warm)
                 or not device_hub.is_online(warm.device_id)
             ):
                 continue

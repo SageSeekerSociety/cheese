@@ -57,12 +57,12 @@ def reading(
     )
 
 
-def test_the_default_host_reserves_four_slots_and_holds_eight_at_most():
+def test_the_default_host_reserves_four_slots_and_holds_six_with_image_pins():
     """Four at 3 GiB each fit the 12 GiB the host gives its sandboxes; its
-    four cores at two each, and its disk, allow eight."""
+    disk also reserves each sandbox's pinned image, allowing six."""
     one = host()
     assert capacity(one) == 4
-    assert hard_capacity(one) == 8
+    assert hard_capacity(one) == 6
 
 
 @pytest.mark.parametrize("prepared", [False, True])

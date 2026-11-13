@@ -1097,11 +1097,19 @@ def start_sandbox(
     try:
         with contextlib.ExitStack() as images:
             image_root, image_lease = None, None
-            if connect:
+            if connect and image:
                 manager = runpy.run_path(
                     str(release / "remote-execution/sandbox_image.py")
                 )
                 image_root, image_lease = images.enter_context(manager["lease"](image))
+            if image_root is not None:
+                env = {
+                    **env,
+                    "USER": "root",
+                    "LOGNAME": "root",
+                    "IS_SANDBOX": "1",
+                    "CHEESE_CONNECTOR_UID": str(os.getuid()),
+                }
             process = subprocess.Popen(
                 confinement["sandbox_argv"](
                     argv,
@@ -1315,6 +1323,14 @@ def prepared(
             # Python's own Path.home() among them, read USERPROFILE instead. The
             # room's home has to be the answer to both.
             env["USERPROFILE"] = scoped_env["USERPROFILE"] = str(home)
+        if payload.get("sandbox_image"):
+            scoped_env.update(
+                USER="root",
+                LOGNAME="root",
+                IS_SANDBOX="1",
+                CHEESE_CONNECTOR_UID=str(os.getuid()),
+            )
+            env.update(scoped_env)
         began = time.monotonic()
         claude = binary(owner, env["CHEESE_API"], release)
         timings["claude"] = round(time.monotonic() - began, 3)

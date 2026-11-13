@@ -49,6 +49,7 @@ from app.domain.machine.models import (
     MachineStatus,
     capacity,
     hard_capacity,
+    sandbox_image_ready,
 )
 from app.domain.machine.progress import (
     publish_line,
@@ -142,11 +143,7 @@ def accepting(host: CloudHost) -> bool:
         and host.disk_full_since is None
         and host.status not in {MachineStatus.error, MachineStatus.deleting, *GONE}
         and not _failed_unenrolled(host)
-        and (
-            host.device_id is None
-            or host.sandbox_image
-            == enrollment.sandbox_image.default_image()["reference"]
-        )
+        and (host.device_id is None or sandbox_image_ready(host))
     )
 
 

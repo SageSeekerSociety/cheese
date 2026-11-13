@@ -19,11 +19,13 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
 def load(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -46,7 +48,7 @@ def disk_inodes(path):
 
 
 class Sandbox:
-    def __init__(self, release, claude, image, output):
+    def __init__(self, release, claude, image, output, disk_mib=64):
         self.release, self.claude, self.image = release, claude, image
         self.name = str(uuid.uuid4())
         self.owner = Path.home()
@@ -60,7 +62,12 @@ class Sandbox:
         )
         self.runtime = load(release / "remote-execution/runtime.py", "bench_runtime")
         self.limits = dict(
-            memory_mb=3072, swap_mb=0, cpus=2, pids=4096, disk_mib=64, inodes=10000
+            memory_mb=3072,
+            swap_mb=0,
+            cpus=2,
+            pids=4096,
+            disk_mib=disk_mib,
+            inodes=100000,
         )
         self.env = {
             name: os.environ[name]
@@ -68,6 +75,27 @@ class Sandbox:
             if name in os.environ
         }
         self.env["HOME"] = str(self.home)
+        self.env["CHEESE_STORE"] = str(
+            self.owner / ".cheese/store" / self.home.parent.name
+        )
+        self.env["CHEESE_TOOLCHAIN"] = str(self.owner / ".cheese/toolchain")
+        bins = [
+            str(path) for path in (self.owner / ".cheese/toolchain/node").glob("*/bin")
+        ]
+        self.env["PATH"] = ":".join(
+            [
+                *bins,
+                str(self.owner / ".cheese/toolchain/bin"),
+                self.env.get("PATH", "/usr/bin:/bin"),
+            ]
+        )
+        if image:
+            self.env.update(
+                USER="root",
+                LOGNAME="root",
+                IS_SANDBOX="1",
+                CHEESE_CONNECTOR_UID=str(os.getuid()),
+            )
         config = {
             "workspace": str(self.work),
             "claude": str(claude),
@@ -141,7 +169,7 @@ class Sandbox:
                 "merge": True,
             },
         )
-        out, err, deadline = b"", b"", time.monotonic() + 120
+        out, err, deadline = b"", b"", time.monotonic() + 600
         while True:
             answer = self.runtime.request(
                 self.state,
@@ -201,6 +229,7 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--samples", type=int, default=5)
     parser.add_argument("--cold", action="store_true")
+    parser.add_argument("--packages", action="store_true")
     args = parser.parse_args()
     if os.getuid() == 0:
         parser.error("run as the connector's ordinary user")
@@ -225,6 +254,25 @@ def main():
         with started(args.release, args.claude, args.image, args.output) as (_, ready):
             receipt["cold_host_ready_s"] = round(time.monotonic() - began, 4)
             receipt["cold_executor_ready_s"] = ready
+    warm = subprocess.run(
+        [
+            "sudo",
+            "-n",
+            sys.executable,
+            "-I",
+            str(args.release / "remote-execution/sandbox_image.py"),
+            args.image,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    receipt["warm_prepare"] = json.loads(warm.stdout)
+    receipt["rootfs_bytes"] = disk_bytes(
+        Path("/data/cheese-sandbox-images")
+        / ("sha256-" + args.image.split("sha256:")[1])
+        / "rootfs"
+    )
     for name, release, image in (
         ("host_root", args.baseline_release, None),
         ("image_root", args.release, args.image),
@@ -254,14 +302,28 @@ def main():
             "claude": str(args.claude) + " --version",
             "uid_map": "cat /proc/self/uid_map; cat /proc/self/gid_map",
             "identity": 'id -un && getent passwd "$(id -u)"',
-            "apt": "apt-get install -y hello",
-            "gdb": "gdb -q -batch -ex run --args ./main",
+            "writable_root": "touch /usr/local/bin/cheese-eval && mkdir /opt/cheese-eval && echo cheese-eval >> /etc/debian_version && tail -1 /etc/debian_version",
+            "gdb": "gdb -q -batch -ex 'break main' -ex run -ex 'print 42' -ex continue --args ./main",
+            "strace": "strace -f -e trace=execve /bin/true",
+            "git": "git init && git status --porcelain && stat -c '%u:%g' .git/config",
             "network": "getent ahostsv4 github.com && curl -fsS --max-time 20 https://github.com/ -o /dev/null",
         }
         receipt["checks"] = {name: one.command(body) for name, body in checks.items()}
+        with subprocess.Popen(["sleep", "60"]) as outside:
+            try:
+                receipt["outside_ptrace"] = one.command(
+                    f"test ! -e /proc/{outside.pid} && strace -p {outside.pid}"
+                )
+                assert receipt["outside_ptrace"]["exit"] != 0
+                assert "No such process" in receipt["outside_ptrace"]["stdout"]
+                assert outside.poll() is None
+            finally:
+                outside.terminate()
         assert receipt["checks"]["compile"]["exit"] == 0, receipt["checks"]["compile"]
         assert receipt["checks"]["claude"]["exit"] == 0, receipt["checks"]["claude"]
         assert receipt["checks"]["identity"]["exit"] == 0, receipt["checks"]["identity"]
+        for name in ("writable_root", "gdb", "strace", "git"):
+            assert receipt["checks"][name]["exit"] == 0, receipt["checks"][name]
         receipt["home_write"] = one.command(
             "dd if=/dev/zero of=home-fill bs=1M count=32 status=none"
         )
@@ -279,6 +341,80 @@ def main():
         )
         assert receipt["neighbor"]["exit"] == 0, receipt["neighbor"]
         receipt["full_ping"] = bool(one.runtime.request(one.state, "ping"))
+    (args.output / "result.json").write_text(json.dumps(receipt, indent=2))
+    if args.packages:
+
+        def install(package):
+            with started(args.release, args.claude, args.image, args.output, 4096) as (
+                sandbox,
+                _,
+            ):
+                outcome = sandbox.command(
+                    "apt-get update && apt-get install -y "
+                    + package
+                    + " && dpkg-query -W "
+                    + package
+                )
+                outcome["installed"] = sandbox.command(
+                    "dpkg-query -W -f='${Status} ${Version}\\n' " + package
+                )
+                outcome["layer_bytes"] = disk_bytes(sandbox.home / ".cheese/rootfs")
+                (args.output / (package + ".json")).write_text(
+                    json.dumps(outcome, indent=2)
+                )
+                print(
+                    json.dumps(
+                        {
+                            "package": package,
+                            "exit": outcome["exit"],
+                            "layer_bytes": outcome["layer_bytes"],
+                        }
+                    ),
+                    flush=True,
+                )
+                return package, outcome
+
+        packages = (
+            "jq",
+            "ffmpeg",
+            "libpq-dev",
+            "postgresql-client",
+            "python3-dev",
+            "graphviz",
+            "ripgrep",
+            "unzip",
+            "nginx",
+        )
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            receipt["packages"] = dict(workers.map(install, packages))
+        with started(args.release, args.claude, args.image, args.output, 4096) as (
+            sandbox,
+            _,
+        ):
+            receipt["root_compatibility"] = {
+                "python": sandbox.command(
+                    "uv venv --seed .venv && .venv/bin/python -m pip install --no-index --no-deps pip && .venv/bin/python -m pip --version"
+                ),
+                "npm": sandbox.command(
+                    "npm init -y && npm install --package-lock-only --ignore-scripts"
+                ),
+                "store_ownership": sandbox.command(
+                    'touch "$HOME/home-file" "$CHEESE_STORE/store-file"; stat -c \'%u:%g\' "$HOME/home-file" "$CHEESE_STORE/store-file"'
+                ),
+                "claude_startup": sandbox.command(
+                    "ANTHROPIC_BASE_URL=http://127.0.0.1:9 ANTHROPIC_API_KEY=cheese-eval-placeholder timeout 20 "
+                    + str(args.claude)
+                    + " --dangerously-skip-permissions -p test --max-turns 0"
+                ),
+            }
+            receipt["host_file_ownership"] = {
+                "home": sandbox.home.joinpath("home-file").stat().st_uid,
+                "store": Path(sandbox.env["CHEESE_STORE"])
+                .joinpath("store-file")
+                .stat()
+                .st_uid,
+                "connector": os.getuid(),
+            }
     (args.output / "result.json").write_text(json.dumps(receipt, indent=2))
     print(json.dumps(receipt, indent=2))
 

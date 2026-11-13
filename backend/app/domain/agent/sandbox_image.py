@@ -19,12 +19,12 @@ import shutil
 import subprocess
 import sys
 import time
-import urllib.request
 import uuid
 from pathlib import Path
 
 CACHE = Path("/data/cheese-sandbox-images")
 CRANE = "/usr/local/libexec/cheese-sandbox-tools/crane"
+PREWARM_TIMEOUT_S = 3300
 REFERENCE = re.compile(r"ghcr\.io/[a-z0-9._/-]+@sha256:([0-9a-f]{64})")
 
 
@@ -44,21 +44,41 @@ def default_image():
     return spec
 
 
+def cache_reservation_gb():
+    image = default_image()
+    peak = (image["keep_old"] + 2) * image["rootfs_bytes"] + image["archive_bytes"]
+    return (peak * 11 + 10**10 - 1) // 10**10
+
+
+def home_image_reservation_gb():
+    return (default_image()["rootfs_bytes"] + 10**9 - 1) // 10**9
+
+
 def place_crane(url, expected, cache, target=CRANE):
     marker = cache / "crane.sha256"
-    if Path(target).is_file() and marker.is_file() and marker.read_text() == expected:
+    if (
+        Path(target).is_file()
+        and marker.is_file()
+        and marker.read_text().strip() == expected
+    ):
         return
     archive = cache / "crane.tar.gz.part"
     try:
-        digest = hashlib.sha256()
-        with (
-            urllib.request.urlopen(url, timeout=600) as source,
-            archive.open("wb") as out,
-        ):
-            while block := source.read(1 << 20):
-                digest.update(block)
-                out.write(block)
-        if digest.hexdigest() != expected:
+        subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--location",
+                "--max-time",
+                "600",
+                "--output",
+                str(archive),
+                url,
+            ],
+            check=True,
+            timeout=610,
+        )
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
             # i18n-exempt: host tool installation diagnostic
             raise RuntimeError("crane artifact failed its pinned checksum")
         placed = Path(target)
@@ -92,7 +112,7 @@ def lease(reference, cache=CACHE):
         os.close(descriptor)
 
 
-def prune(cache, current, keep):
+def prune(cache, current, keep, retained=()):
     """Keep the newest old digests; an image still leased is never removed."""
     entries = sorted(
         (p for p in cache.glob("sha256-*") if p.name != current),
@@ -100,17 +120,38 @@ def prune(cache, current, keep):
         reverse=True,
     )
     for directory in entries[keep:]:
-        with (directory / "lease").open("rb") as lock:
+        if directory.name in retained:
+            continue
+        with (
+            (cache / ".lock").open("rb") as guard,
+            (directory / "lease").open("rb") as lock,
+        ):
+            fcntl.flock(guard, fcntl.LOCK_EX)
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 continue
-            shutil.rmtree(directory)
+            discarded = cache / (".unpack-pruned-" + uuid.uuid4().hex)
+            directory.rename(discarded)
+            fcntl.flock(guard, fcntl.LOCK_UN)
+            shutil.rmtree(discarded)
 
 
-def prewarm(reference, *, keep=2, cache=CACHE, crane=CRANE, crane_artifact=None):
+def prewarm(
+    reference,
+    *,
+    keep=2,
+    cache=CACHE,
+    crane=CRANE,
+    crane_artifact=None,
+    uid=None,
+    gid=None,
+    retained=(),
+):
     """Publish a fully unpacked rootfs atomically, before admitting sandboxes."""
     key = image_key(reference)
+    uid = os.getuid() if uid is None else uid
+    gid = os.getgid() if gid is None else gid
     if keep < 0:
         # i18n-exempt: host CLI argument validation
         raise ValueError("old image retention must be nonnegative")
@@ -162,12 +203,25 @@ def prewarm(reference, *, keep=2, cache=CACHE, crane=CRANE, crane_artifact=None)
                         "--directory",
                         str(rootfs),
                         "--numeric-owner",
-                        "--same-owner",
+                        "--no-same-owner",
                     ],
                     check=True,
                     timeout=600,
                 )
                 unpacked = time.monotonic() - began
+                archive_bytes = archive.stat().st_size
+                began = time.monotonic()
+                subprocess.run(
+                    ["chown", "-hR", f"{uid}:{gid}", str(rootfs)],
+                    check=True,
+                    timeout=600,
+                )
+                ownership_s = time.monotonic() - began
+                rootfs_bytes = int(
+                    subprocess.check_output(
+                        ["du", "-s", "-B1", str(rootfs)], text=True, timeout=60
+                    ).split()[0]
+                )
                 archive.unlink()
                 (staged / "lease").touch(mode=0o644)
                 (staged / "lease").chmod(0o644)
@@ -176,18 +230,21 @@ def prewarm(reference, *, keep=2, cache=CACHE, crane=CRANE, crane_artifact=None)
                     "reference": reference,
                     "export_s": round(exported, 3),
                     "unpack_s": round(unpacked, 3),
+                    "archive_bytes": archive_bytes,
+                    "ownership_s": round(ownership_s, 3),
+                    "rootfs_bytes": rootfs_bytes,
                 }
                 (staged / "ready.json").write_text(json.dumps(receipt))
                 (staged / "ready.json").chmod(0o644)
                 staged.chmod(0o755)
                 fcntl.flock(guard, fcntl.LOCK_EX)
                 staged.rename(directory)
+                fcntl.flock(guard, fcntl.LOCK_UN)
+                prune(cache, key, keep, {image_key(ref) for ref in retained})
             finally:
                 if staged.exists():
                     shutil.rmtree(staged)
-        fcntl.flock(guard, fcntl.LOCK_EX)
         receipt = json.loads((directory / "ready.json").read_text())
-        prune(cache, key, keep)
     return {**receipt, "prepare_s": round(time.monotonic() - started, 3)}
 
 
@@ -196,13 +253,25 @@ def main(argv=None):
     parser.add_argument("reference")
     parser.add_argument("--keep", type=int, default=2)
     parser.add_argument("--crane-artifacts", type=json.loads)
+    parser.add_argument("--retain", type=json.loads, default=[])
     args = parser.parse_args(argv)
     if os.getuid() != 0:
         parser.error("prewarm must run as root")
     artifact = None
     if args.crane_artifacts:
         artifact = args.crane_artifacts[os.uname().machine]
-    print(json.dumps(prewarm(args.reference, keep=args.keep, crane_artifact=artifact)))
+    print(
+        json.dumps(
+            prewarm(
+                args.reference,
+                keep=args.keep,
+                crane_artifact=artifact,
+                uid=int(os.environ["SUDO_UID"]),
+                gid=int(os.environ["SUDO_GID"]),
+                retained=args.retain,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -64,14 +64,20 @@ def refused(installed: dict) -> SandboxRefused | None:
     return SandboxRefused(json.loads(said[-1] if said else ""))
 
 
-def can_prepare(info, sandbox=None, image=None):
+_IMAGE_UNSPECIFIED = object()
+
+
+def can_prepare(info, sandbox=None, image=_IMAGE_UNSPECIFIED):
     """Whether the running executor that answered `info` can be prepared in
     place: it runs this release, and, when `sandbox` is given, runs in a
     sandbox exactly when asked to. One that does not is installed again, and
     the install replaces it once it is idle (`bootstrap.prepared`)."""
     return (
         (sandbox is None or bool(info.get("sandbox")) == bool(sandbox))
-        and (image is None or info.get("sandbox_image") == image)
+        and (
+            image is _IMAGE_UNSPECIFIED
+            or (info.get("sandbox_image") or None) == (image or None)
+        )
         and "prepare" in info.get("capabilities", [])
         and not info.get("upgrading")
         and info.get("protocol_version") == runtime.PROTOCOL_VERSION
@@ -164,9 +170,7 @@ def payload_for(
         if sandbox
         else None,
         "platform_machine": platform_machine,
-        "sandbox_image": (image or sandbox_image.default_image()["reference"])
-        if sandbox and platform_machine
-        else None,
+        "sandbox_image": (image or None) if sandbox and platform_machine else None,
         "project": str(project_id),
         "resource": str(resource_id),
         "proxy_proof": hmac.new(

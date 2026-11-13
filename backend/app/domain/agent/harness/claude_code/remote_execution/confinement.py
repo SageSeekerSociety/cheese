@@ -46,9 +46,6 @@ SYSCALLS = {
     "x86_64": (
         0xC000003E,
         {
-            "ptrace": 101,
-            "process_vm_readv": 310,
-            "process_vm_writev": 311,
             "add_key": 248,
             "request_key": 249,
             "keyctl": 250,
@@ -62,9 +59,6 @@ SYSCALLS = {
     "aarch64": (
         0xC00000B7,
         {
-            "ptrace": 117,
-            "process_vm_readv": 270,
-            "process_vm_writev": 271,
             "add_key": 217,
             "request_key": 218,
             "keyctl": 219,
@@ -84,11 +78,8 @@ def seccomp_filter(machine=None):
     """The seccomp program a sandbox runs under, as bubblewrap's `--seccomp`
     reads it: classic BPF over `struct seccomp_data`.
 
-    It refuses what lets one process read or steer another, or that has been
-    the way into the kernel more often than it is needed for development
-    work: `ptrace` and `process_vm_readv`/`writev`; io_uring, refused as
-    absent so a runtime falls back to ordinary I/O as it does on an old
-    kernel; the kernel keyring; and a further user namespace, which is what
+    It reports io_uring as absent so a runtime falls back to ordinary I/O as on an old
+    kernel. It refuses the kernel keyring and a further user namespace, which is what
     makes most of the kernel's privileged interfaces reachable to an
     unprivileged process. The namespace one is refused by its flag on
     `clone` and `unshare`, and `clone3`, whose flags this cannot read, is
@@ -351,6 +342,7 @@ def sandbox_argv(
     command = [
         bwrap,
         "--unshare-user",
+        *(["--uid", "0", "--gid", "0"] if image_root is not None else []),
         "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",
@@ -404,8 +396,6 @@ def sandbox_argv(
             "/sys",
             "/sys",
         ]
-        for identity in ("/etc/passwd", "/etc/group"):
-            command += ["--ro-bind", identity, identity]
     elif network and names != "/etc/resolv.conf":
         # Onto the file it leads to: bwrap mounts on no link (systemd-resolved's).
         command += ["--ro-bind", names, os.path.realpath("/etc/resolv.conf")]
