@@ -71,3 +71,37 @@ async def test_without_a_fallback_a_failure_is_final(smtp, monkeypatch):
 
     assert await _send() is False
     assert smtp["sent"] == []
+
+
+async def test_a_primary_failure_the_fallback_recovers_is_not_an_error(
+    smtp, fallback, caplog
+):
+    smtp["down"].add("primary.example")
+
+    with caplog.at_level("WARNING", logger="app.core.email"):
+        assert await _send() is True
+
+    assert [r for r in caplog.records if r.levelname == "ERROR"] == []
+
+
+async def test_a_mail_that_fails_on_both_accounts_is_an_error(smtp, fallback, caplog):
+    smtp["down"].update({"primary.example", "fallback.example"})
+
+    with caplog.at_level("WARNING", logger="app.core.email"):
+        assert await _send() is False
+
+    assert [r.levelname for r in caplog.records if r.levelname == "ERROR"] == ["ERROR"]
+
+
+@pytest.mark.parametrize(
+    "address", ["bob@demo.test", "a@b.example", "x@nowhere.invalid", "me@localhost"]
+)
+async def test_no_mail_goes_to_a_reserved_domain(smtp, address):
+    sent = await email_module.get_email_sender().send(
+        to=[address, "user@example.com"], subject="s", body_html="<p>x</p>"
+    )
+
+    assert sent is True
+    assert smtp["sent"] == [
+        ("primary.example", "noreply@primary.example", "user@example.com")
+    ]
