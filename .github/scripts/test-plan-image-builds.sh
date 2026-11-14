@@ -193,13 +193,13 @@ collab_plan() {
 git -C "$test_repo" switch -q --detach "$base_sha"
 mkdir -p "$test_repo/frontend/collab" "$test_repo/frontend/src/lib/docSchema"
 touch "$test_repo/frontend/collab/service.ts" "$test_repo/frontend/src/lib/docSchema/index.ts" \
-  "$test_repo/frontend/pnpm-lock.yaml"
+  "$test_repo/frontend/pnpm-lock.yaml" "$test_repo/frontend/pnpm-workspace.yaml"
 add_build_jobs collab
 git -C "$test_repo" add .
 git -C "$test_repo" commit -qm 'add collab image'
 collab_base="$(git -C "$test_repo" rev-parse HEAD)"
 for collab_file in frontend/collab/service.ts frontend/src/lib/docSchema/index.ts \
-  frontend/pnpm-lock.yaml; do
+  frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml; do
   git -C "$test_repo" switch -q --detach "$collab_base"
   commit_path "$collab_file"
   [[ "$(collab_plan "$collab_base")" == true ]] \

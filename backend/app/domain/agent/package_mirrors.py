@@ -147,7 +147,12 @@ MIRRORS = (
     ),
     # Single-address tools from here down: nothing to fall back to inside the
     # tool, which is what the probe above is for.
-    Mirror(key="npm", exports=(("npm_config_registry", "{npm}"),)),
+    # pnpm 11 and later ignore `npm_config_*` and read `pnpm_config_*` instead;
+    # npm itself and older pnpm read only the first.
+    Mirror(
+        key="npm",
+        exports=(("npm_config_registry", "{npm}"), ("pnpm_config_registry", "{npm}")),
+    ),
     Mirror(key="playwright", exports=(("PLAYWRIGHT_DOWNLOAD_HOST", "{playwright}"),)),
     Mirror(key="uv_python", exports=(("UV_PYTHON_INSTALL_MIRROR", "{uv_python}"),)),
 )
