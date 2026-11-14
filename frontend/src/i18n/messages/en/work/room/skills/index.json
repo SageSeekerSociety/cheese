@@ -23,7 +23,10 @@
   "marketTabSkills": "Skills",
   "marketTitle": "Skill market",
   "noMachine": "This room has no work computer bound, so the machine's skills can't be read.",
+  "remove": "Take {name} off {agent}",
   "saveFailed": "Couldn't save the skill",
+  "socketLit": "{name}, available",
+  "socketUnlit": "{name}, unavailable or unchecked",
   "stale": "Someone else just changed this teammate",
   "title": "Skills"
 }

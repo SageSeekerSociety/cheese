@@ -24,6 +24,7 @@ import { getSkillHealth, listProjectSkills, listSkillCatalog } from '../api/proj
 import { listMyDevices, setAgentEditing, updateProjectAgent } from '@/api'
 import { ApiError } from '@/api/http'
 import { t } from '@/i18n'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { pickMyDevice } from '@/lib/myDevice'
 
 export type SkillSource = 'platform' | 'machine' | 'project'
@@ -32,6 +33,8 @@ export interface SkillItem {
   name: string
   description: string
   source: SkillSource
+  /** 带着、但这一次在池子里查不到（机器离线、扫描失败、项目技能停用）：来源是猜的。 */
+  unresolved?: boolean
 }
 
 function dedupe(items: SkillItem[]): SkillItem[] {
@@ -57,6 +60,12 @@ export function useAgentSkills(
   // 市场：两家厂商公开的技能 / 插件 / MCP。公开目录，和哪台机器无关。
   const market = ref<SkillMarket | null>(null)
   const marketLoading = ref(false)
+  // 目录没读出来时的那个错误：面板据此把失败和一条重试的路留在市场那块（design-system
+  // §3.10），401/403 不给重试。没读过、正在读都不算失败。
+  const marketError = ref<unknown>(null)
+  const marketFailed = computed(() => marketError.value !== null)
+  const marketForbidden = computed(() => isForbidden(marketError.value))
+  const marketFailureReason = computed(() => loadFailureReason(marketError.value))
   // 面板自己的名单：打开时从队友身上抄一份，保存后就地更新，父组件不必重拉。
   const carriedNames = ref<string[]>([])
   const loading = ref(false)
@@ -84,10 +93,12 @@ export function useAgentSkills(
 
   const carried = computed<string[]>(() => carriedNames.value)
 
-  /** 带上的技能，连池子里查不到的也画出来（名字认得、说明欠奉），从格子里消失更糟。 */
+  /** 带上的技能，连池子里查不到的也画出来（名字认得、说明欠奉），从格子里消失更糟。
+   *  查不到的标上 `unresolved`：来源只是猜的，面板别拿它当「平台发给每位队友」。 */
   const carriedItems = computed<SkillItem[]>(() =>
     carriedNames.value.map(
-      (name) => pool.value.find((p) => p.name === name) ?? { name, description: '', source: 'platform' }
+      (name) =>
+        pool.value.find((p) => p.name === name) ?? { name, description: '', source: 'platform', unresolved: true }
     )
   )
 
@@ -169,7 +180,9 @@ export function useAgentSkills(
   async function saveCarried(next: string[]) {
     const pid = projectId()
     const subject = agent()
-    if (!pid || !subject || saving.value) return
+    // 只读的这一轮不写名单：面板上灰掉的按钮挡不住所有路径（比如先点了「装」、占用的回答
+    // 后到），写入口自己也要守住。
+    if (!pid || !subject || saving.value || editingBlocked.value) return
     const before = [...carriedNames.value]
     carriedNames.value = next
     saving.value = true
@@ -224,10 +237,17 @@ export function useAgentSkills(
       editingBy.value = got.editing?.handle ?? null
     } catch (e) {
       if (!stillHere()) return
-      // 409 = 别人正拿着。名字从打开时那一行读，并如实说一声 —— 面板这一轮只读。
-      editingBlocked.value = true
-      editingBy.value = agent()?.editing ?? null
-      onError(e instanceof Error ? e.message : t('work.room.skills.editingBlocked'))
+      // 只有 409 才是别人正拿着：名字从打开时那一行读，并如实说一声 —— 面板这一轮只读。
+      // 占用请求自己失败（断网、5xx）不说明有人在改，租约本来只是礼貌提示：报一声，面板照常
+      // 可改，丢更新照旧由保存带的 expected_version 拦。
+      if (e instanceof ApiError && e.status === 409) {
+        editingBlocked.value = true
+        editingBy.value = agent()?.editing ?? null
+        onError(e.message || t('work.room.skills.editingBlocked'))
+      } else if (e instanceof Error) {
+        // 没有说法的失败不提示：「有人正在编辑」在这里是假话，而租约本来只是提示。
+        onError(e.message)
+      }
     }
   }
 
@@ -250,7 +270,8 @@ export function useAgentSkills(
     const device = deviceId.value
     const pid = projectId()
     const subject = agent()
-    if (!device || !pid || !subject || scanning.value) return
+    // 只读的这一轮连机器也不碰：装上去的技能收不回来，而面板说的是「这一轮只读」。
+    if (!device || !pid || !subject || scanning.value || editingBlocked.value) return
     // 装到机器上要等一阵：装完人已经换场了，就不能把它装备给现在面板上的那一位。技能已经
     // 落在机器上，下次打开面板会在池子里看到。
     const stillHere = boundTo(pid, subject.id)
@@ -276,14 +297,17 @@ export function useAgentSkills(
     }
   }
 
-  /** 读市场：两家厂商公开的技能 / 插件 / MCP。读不到就在那段说一声，别处照常。 */
+  /** 读市场：两家厂商公开的技能 / 插件 / MCP。读不到就把错误留在市场那块（面板上给重试），
+   *  别处照常；不再另弹一条提示，同一件事不说两遍。正在读时不再发第二份。 */
   async function openMarket() {
+    if (marketLoading.value) return
     marketLoading.value = true
+    marketError.value = null
     try {
       market.value = await fetchSkillMarket()
     } catch (e) {
       market.value = null
-      onError(e instanceof Error ? e.message : t('work.room.skills.marketFailed'))
+      marketError.value = e
     } finally {
       marketLoading.value = false
     }
@@ -300,6 +324,9 @@ export function useAgentSkills(
     workspaceRoots,
     market,
     marketLoading,
+    marketFailed,
+    marketForbidden,
+    marketFailureReason,
     editingBlocked,
     editingBy,
     deviceId,

@@ -102,4 +102,44 @@ describe('技能市场（共享）', () => {
     expect((button as HTMLButtonElement).disabled).toBe(true)
     expect(button.getAttribute('title')).toBe(t('work.room.skills.noMachine'))
   })
+
+  it('宿主说这一轮只读时 + 按不动，机器在也一样', async () => {
+    mount({ deviceId: 'dev1', disabled: true })
+
+    const button = await screen.findByLabelText(t('work.room.skills.marketInstall'))
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('目录没读出来：失败留在这块并给重试，点了往上发 retry', async () => {
+    const { emitted } = mount({ market: null, failed: true, failureReason: 'offline' })
+
+    expect(screen.getByText(t('work.room.skills.marketFailed'))).toBeTruthy()
+    expect(screen.getByText('offline')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
+    expect(emitted().retry).toHaveLength(1)
+  })
+
+  it('目录读失败是 401/403：说没权限，不摆重试', () => {
+    mount({ market: null, failed: true, forbidden: true })
+
+    expect(screen.getByText(t('global.loadError.forbidden'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('global.loadError.retry') })).toBeNull()
+  })
+
+  it('还在读时不画失败那块', () => {
+    mount({ market: null, loading: true })
+
+    expect(screen.getByText(t('work.room.skills.marketLoading'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('global.loadError.retry') })).toBeNull()
+  })
+
+  // 面板要等机器定下来才拉目录：那之前 market 为空、loading 也还是 false。这不是失败，
+  // 不能闪出红块和一颗会并发再读一次的「重试」。
+  it('宿主还没发出请求（没读过）时说读取中，不画失败那块', () => {
+    mount({ market: null, loading: false, failed: false })
+
+    expect(screen.getByText(t('work.room.skills.marketLoading'))).toBeTruthy()
+    expect(screen.queryByText(t('work.room.skills.marketFailed'))).toBeNull()
+    expect(screen.queryByRole('button', { name: t('global.loadError.retry') })).toBeNull()
+  })
 })
