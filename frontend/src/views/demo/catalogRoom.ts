@@ -883,6 +883,17 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         },
       },
       {
+        name: '自己答过了，答案收不回来',
+        note: '答题那一行就是自己答的：旁边没有撤回的入口——回答一旦发出去就算数，答错了到频道里说一声。和「有人答过了」摆在一起看，就是这一条改动。',
+        props: {
+          asker: AGENT_NAME,
+          block: askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }]),
+          names: { alice: 'Alice' },
+          viewer: 'alice',
+        },
+        expect: '按部门',
+      },
+      {
         name: '自己跳过了，能收回来',
         note: '跳过的题不再摆选项，题上写着「你：已跳过」，旁边有一颗「撤销」：点它题重新等你回答，旁边没有确认框。答过的题没有这一颗——回答撤不回来。',
         props: {
