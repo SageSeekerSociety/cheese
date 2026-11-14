@@ -510,13 +510,13 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '桌面那一栏',
-        note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
-        props: { heading: '登录要不要加手机验证码？', closable: true },
+        note: '左边返回支线列表，写挂着的那条消息说的事，右边「转为任务」。',
+        props: { heading: '登录要不要加手机验证码？', back: true },
         expect: '登录要不要加手机验证码',
       },
       {
         name: '在手机顶栏里',
-        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
+        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边。',
         props: { heading: '登录要不要加手机验证码？', bar: true },
         expect: '登录要不要加手机验证码',
       },

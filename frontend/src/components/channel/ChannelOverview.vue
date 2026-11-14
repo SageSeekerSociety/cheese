@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 频道的概览：一整列，自然往下滚。从上到下是频道说明（综合是项目总览）、置顶、
-// 进行中的任务（各带最后说的一句）、最近关闭。频道没有自己的实况文档：要一起看的
+// 频道的概览：一整列，自然往下滚。从上到下是等你处理的任务（有才出现）、频道说明（综合
+// 是项目目标）、置顶、进行中的任务（各带最后说的一句）、最近关闭。频道没有自己的实况文档：要一起看的
 // 东西钉在置顶里，要做成的事是任务。
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask, Topic } from '@/cx_types'
@@ -44,6 +44,8 @@ const emit = defineEmits<{
   (e: 'unpin', blockId: string): void
   (e: 'jump', blockId: string): void
   (e: 'open-task', taskId: string): void
+  /** 等我审阅的那一件：在频道里打开它交上来的那一版。 */
+  (e: 'open-delivery', taskId: string): void
   (e: 'open-all'): void
   (e: 'mention-click', handle: string): void
   (e: 'edit-overview', documentId: string): void
@@ -57,10 +59,31 @@ const LIVELY_MAX = 6
 const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 const nameOf = (handle: string) => props.memberNames[handle] || handle
 
-const running = computed(() =>
-  props.tasks.filter((task) => task.status === 'open' && task.presentation.column !== 'done')
-)
+const open = computed(() => props.tasks.filter((task) => task.status === 'open' && task.presentation.column !== 'done'))
 const movedAt = (task: RoomTask) => task.last_message?.created_at ?? task.created_at
+// 等你处理：这个频道里下一步在我手上的任务，等我审阅的交付和等我回答的提问，等得最久的在前。
+// 审阅按卡上的审阅人认：一张卡可以请几个人审，`needs_my_action` 只认得其中第一位。
+const awaitingReview = (task: RoomTask) => task.presentation.phrase === 'awaiting_review'
+const reviewsMine = (task: RoomTask) =>
+  awaitingReview(task) &&
+  task.card?.status === 'pending' &&
+  !!myHandle() &&
+  (task.card.reviewer ?? '').split('、').includes(myHandle())
+const asksMe = (task: RoomTask) => task.presentation.phrase === 'awaiting_answer' && task.needs_my_action === true
+const waitingOnMe = computed(() =>
+  props.tasks
+    .filter((task) => task.status === 'open' && (reviewsMine(task) || asksMe(task)))
+    .sort((a, b) => (a.card?.since ?? a.updated_at).localeCompare(b.card?.since ?? b.updated_at))
+)
+// 进行中：已经列在「等你处理」里的不再列一遍。
+const running = computed(() => {
+  const waiting = new Set(waitingOnMe.value.map((task) => task.id))
+  return open.value.filter((task) => !waiting.has(task.id))
+})
+function openWaiting(task: RoomTask) {
+  if (awaitingReview(task)) emit('open-delivery', task.id)
+  else emit('open-task', task.id)
+}
 const lively = computed(() => {
   const since = new Date(Date.now() - LIVELY_DAYS * 86_400_000).toISOString()
   return running.value
@@ -155,6 +178,23 @@ async function save() {
 
 <template>
   <div class="channel-overview" data-testid="channel-overview">
+    <section v-if="waitingOnMe.length" class="co-section" data-testid="channel-waiting">
+      <h3 class="co-title">{{ t('work.channel.overview.waiting') }}</h3>
+      <button
+        v-for="task in waitingOnMe"
+        :key="task.id"
+        type="button"
+        class="co-task"
+        data-testid="channel-waiting-task"
+        @click="openWaiting(task)"
+      >
+        <span class="co-task__head">
+          <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
+          <TaskStateMark class="co-task__state t-meta" :state="stateOf(task)" :emphasis="true" />
+        </span>
+        <span v-if="stateOf(task).line" class="co-task__latest t-meta">{{ stateOf(task).line }}</span>
+      </button>
+    </section>
     <section v-if="general" class="co-section co-section--overview" data-testid="project-overview">
       <div class="co-head">
         <h3 class="co-title">{{ t('work.channel.overview.project') }}</h3>
@@ -235,8 +275,8 @@ async function save() {
       @jump="emit('jump', $event)"
     />
 
-    <section class="co-section">
-      <h3 class="co-title">{{ t('work.channel.overview.running', { count: running.length }) }}</h3>
+    <section v-if="running.length || !waitingOnMe.length" class="co-section" data-testid="channel-running">
+      <h3 class="co-title">{{ t('work.channel.overview.running', { count: lively.length }) }}</h3>
       <p v-if="!running.length" class="t-meta c-faint">{{ t('work.channel.overview.noRunning') }}</p>
       <button
         v-for="task in lively"

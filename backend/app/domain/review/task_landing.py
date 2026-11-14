@@ -42,10 +42,11 @@ from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import SEVERITY_INFO, WHO_PLATFORM, notice
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.review.ports import RecordInstruction, TaskTeammate
+from app.domain.review.ports import Announce, RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
@@ -333,7 +334,6 @@ async def tell_origin(
     content: str,
     *,
     task_teammate: TaskTeammate | None,
-    refers: dict | None = None,
 ) -> None:
     """Say ``content`` in the conversation ``task`` was opened from. It is said
     by the task's AI teammate: whoever took part in the discussion hears it.
@@ -346,31 +346,70 @@ async def tell_origin(
     that is a 支线 turned into the task in place: the discussion is the task's
     own conversation, which the landing already speaks in.
 
-    ``refers`` is what else the line points at, besides the task, kept on it
-    as it was said: a delivery line names the card and the version it filed.
+    What happens to the task on the way — a version handed in, a version
+    returned — is the platform's record, not the teammate's words
+    (`record_at_origin`).
 
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
     try:
         async with session.begin_nested():
-            await _tell_origin(
-                session, task, content, task_teammate=task_teammate, refers=refers
-            )
+            await _tell_origin(session, task, content, task_teammate=task_teammate)
     except Exception:  # a courtesy line never undoes a landing
         logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
 
 
-async def _tell_origin(
+async def record_at_origin(
     session: AsyncSession,
     task: Task,
+    event_type: str,
     content: str,
     *,
-    task_teammate: TaskTeammate | None,
-    refers: dict | None,
+    announce: Announce,
+    refers: dict | None = None,
 ) -> None:
+    """Record in the conversation ``task`` was opened from that something
+    happened to it: a version handed in for review, a version returned.
 
+    It is the platform's record, not anyone's words: a platform line
+    (`kind=event`) under nobody's name that wakes nobody (``who`` is the
+    platform's), in the same place `tell_origin` speaks. Whoever waits on the
+    task is told by the task's own lines (`room_notices._announce_filed`).
+    ``refers`` is what else the line points at, besides the task: a hand-in
+    names the card and the version it filed.
+
+    Best effort, as `tell_origin`."""
+    try:
+        async with session.begin_nested():
+            told_in = await _origin_conversation(session, task)
+            if told_in is None:
+                return
+            await announce(
+                session,
+                place_id=task.room_id,
+                task_id=None if told_in == task.room_id else told_in,
+                content=content,
+                meta={
+                    **notice(event_type, severity=SEVERITY_INFO, who=WHO_PLATFORM),
+                    "task_id": str(task.id),
+                    **(refers or {}),
+                },
+            )
+            if told_in != task.room_id:
+                show_once_committed(
+                    session, task.room_id, {"type": "state", "resource": "threads"}
+                )
+    except Exception:  # a record never undoes what it records
+        logger.warning("could not record at task %s's origin", task.id, exc_info=True)
+
+
+async def _origin_conversation(session: AsyncSession, task: Task) -> uuid.UUID | None:
+    """The conversation ``task`` was opened from, where it is told how it goes:
+    the channel's main line, or the 支线 under the message it hangs under
+    (opened if nobody has replied there yet). None when it has nowhere to be
+    told (`tell_origin`)."""
     if task.upgraded_from_block_id is None:
-        return
+        return None
     origin = await session.get(Block, task.upgraded_from_block_id)
     room = await session.get(Topic, task.room_id)
     project = await session.get(Project, task.project_id)
@@ -382,6 +421,30 @@ async def _tell_origin(
         or room.status == TopicStatus.archived
         or project is None
     ):
+        return None
+    if await thread_of(session, task.id) is not None:
+        return None
+    source = (
+        await session.get(Block, task.source_block_id)
+        if task.source_block_id is not None
+        else None
+    )
+    if source is not None and source.conversation_id == task.room_id:
+        return task.room_id
+    return (
+        await open_thread(session, origin.id, by=task.owner_handle or origin.author)
+    ).id
+
+
+async def _tell_origin(
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    task_teammate: TaskTeammate | None,
+) -> None:
+
+    if task.upgraded_from_block_id is None:
         return
     teammate = await handed_in(task_teammate)(
         session, task.project_id, task.room_id, task.agent_handle
@@ -389,21 +452,10 @@ async def _tell_origin(
     if teammate is None:
         return
     instance_id, _handle = teammate
-    if await thread_of(session, task.id) is not None:
+    told_in = await _origin_conversation(session, task)
+    if told_in is None:
         return
-    source = (
-        await session.get(Block, task.source_block_id)
-        if task.source_block_id is not None
-        else None
-    )
-    in_main_line = source is not None and source.conversation_id == task.room_id
-    told_in = (
-        task.room_id
-        if in_main_line
-        else (
-            await open_thread(session, origin.id, by=task.owner_handle or origin.author)
-        ).id
-    )
+    in_main_line = told_in == task.room_id
     said = Block(
         id=uuid.uuid4(),
         project_id=task.project_id,
@@ -414,9 +466,7 @@ async def _tell_origin(
         content=str(content),
         # The sentence's key goes with it, so each reader sees it in their own
         # language (`with_keys`).
-        meta=with_keys(
-            {"task_result": str(task.id), **(refers or {})}, content=content
-        ),
+        meta=with_keys({"task_result": str(task.id)}, content=content),
     )
     session.add(said)
     await session.flush()

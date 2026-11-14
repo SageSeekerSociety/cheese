@@ -1,8 +1,6 @@
 {
-  "close": "关闭",
-  "count": "共 {n} 项",
   "openTask": "打开任务",
+  "returned": "已退回",
   "title": "审阅",
-  "version": "第 {n} 版",
-  "waiting": "待你审阅"
+  "version": "第 {n} 版"
 }
