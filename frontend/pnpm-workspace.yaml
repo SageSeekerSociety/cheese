@@ -2,6 +2,13 @@
 # this file: the `pnpm` field in package.json and non-auth lines in .npmrc are
 # ignored, so an override left there would silently stop applying.
 
+# The frontend is the one project here. pnpm 12 does not need this line; a
+# pnpm 9 still on PATH (a machine's setup script pinned 9.15.3) refuses a
+# pnpm-workspace.yaml without it before it can read .npmrc and hand over to the
+# pnpm 12 package.json names.
+packages:
+  - .
+
 overrides:
   '@parcel/watcher': 2.5.4
   '@tiptap/extension-bubble-menu': 3.30.5
