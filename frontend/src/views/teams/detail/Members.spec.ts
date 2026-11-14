@@ -560,3 +560,96 @@ describe('inviting someone by name', () => {
     expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
   })
 })
+
+describe('reading the member list', () => {
+  const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER', canRemove: true }
+  // 一个手动放行的回话：拿到它的人决定接口什么时候答、答什么。
+  function pending<T>() {
+    let resolve!: (v: T) => void
+    let reject!: (e: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  it('while the first read is in flight it spins, and never says there is nobody', async () => {
+    const read = pending<{ members: unknown[] }>()
+    vi.mocked(TeamsApi.getMembers).mockReturnValueOnce(read.promise as never)
+    mount({ role: 'MEMBER' })
+
+    await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledWith(7))
+    const card = document.getElementById('team-members')!
+    expect(card.querySelector('[role="progressbar"]')).not.toBeNull()
+    expect(screen.queryByText('暂无成员')).toBeNull()
+
+    read.resolve({ members: [] })
+    await screen.findByText('暂无成员')
+    expect(card.querySelector('[role="progressbar"]')).toBeNull()
+  })
+
+  it('a first read that fails shows the failure, not an empty team', async () => {
+    vi.mocked(TeamsApi.getMembers).mockRejectedValueOnce(new Error('boom') as never)
+    mount({ role: 'MEMBER' })
+
+    await screen.findByText('无法加载成员')
+    expect(screen.queryByText('暂无成员')).toBeNull()
+    expect(document.getElementById('team-members')!.querySelector('[role="progressbar"]')).toBeNull()
+  })
+
+  it('a reread after a change keeps the list while it runs, and a failed reread still shows the failure', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValueOnce({ members: [qinmo] } as never)
+    vi.mocked(TeamsApi.removeMember).mockResolvedValue(true as never)
+    mount({ role: 'ADMIN' })
+    await screen.findByText('qinmo')
+
+    const reread = pending<{ members: unknown[] }>()
+    vi.mocked(TeamsApi.getMembers).mockReturnValueOnce(reread.promise as never)
+    await fireEvent.click(await screen.findByRole('button', { name: 'qinmo 的操作' }))
+    await fireEvent.click(await screen.findByText('移除成员'))
+    await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledTimes(2))
+
+    // 在途：名单留在屏上，不换成转圈，也不说暂无。
+    const card = document.getElementById('team-members')!
+    expect(card.textContent).toContain('qinmo')
+    expect(card.querySelector('[role="progressbar"]')).toBeNull()
+    expect(screen.queryByText('暂无成员')).toBeNull()
+
+    // 失败：照原样换成失败态加重试，不悄悄留着旧名单。
+    reread.reject(new Error('blip'))
+    await screen.findByText('无法加载成员')
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
+    expect(screen.queryByText('暂无成员')).toBeNull()
+  })
+
+  it('an older read that answers last does not overwrite the newer list', async () => {
+    const zhaoyu = { user: { id: 10, nickname: 'zhaoyu', username: 'zhaoyu' }, role: 'MEMBER', canRemove: true }
+    dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
+    vi.mocked(TeamsApi.getMembers).mockResolvedValueOnce({ members: [qinmo, zhaoyu] } as never)
+    vi.mocked(TeamsApi.removeMember).mockResolvedValue(true as never)
+    mount({ role: 'ADMIN' })
+    await screen.findByText('zhaoyu')
+
+    const older = pending<{ members: unknown[] }>()
+    const newer = pending<{ members: unknown[] }>()
+    vi.mocked(TeamsApi.getMembers)
+      .mockReturnValueOnce(older.promise as never)
+      .mockReturnValueOnce(newer.promise as never)
+    await fireEvent.click(await screen.findByRole('button', { name: 'qinmo 的操作' }))
+    await fireEvent.click(await screen.findByText('移除成员'))
+    await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledTimes(2))
+    await fireEvent.click(await screen.findByRole('button', { name: 'zhaoyu 的操作' }))
+    // 上一份菜单还在收起动画里：点刚打开的那一份（最后挂上的）。
+    await fireEvent.click((await screen.findAllByText('移除成员')).at(-1)!)
+    await waitFor(() => expect(TeamsApi.getMembers).toHaveBeenCalledTimes(3))
+    expect(TeamsApi.removeMember).toHaveBeenNthCalledWith(2, 7, 10)
+
+    newer.resolve({ members: [] })
+    await screen.findByText('暂无成员')
+    older.resolve({ members: [zhaoyu] })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText('zhaoyu')).toBeNull()
+    expect(screen.getByText('暂无成员')).toBeTruthy()
+  })
+})

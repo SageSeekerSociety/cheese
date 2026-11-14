@@ -37,7 +37,9 @@ import errorHandler from '@/services/ErrorHandler'
 const route = useRoute()
 const isInviteDialogActive = ref(false)
 const teamMembers = ref<TeamMember[]>([])
-// 读失败和「还没有成员」是两件事：失败替换掉这一格的内容，空状态才说「暂无」。
+// 读成员有三种样子：在读、没读出来、读出来了（可能是空的）。只有读出来是空的才说「暂无」；
+// 第一次还在读时画转圈，没读出来时这一格换成失败态。
+const loadingMembers = ref(false)
 const failedMembers = ref(false)
 const membersError = ref<string | null>(null)
 const teamData = inject(teamDataInjectionKey, ref())
@@ -121,16 +123,26 @@ const invitationsError = ref<string | null>(null)
 let invitationsRead = 0
 let invitationsLoaded = false
 
+// 每次读都记一个序号：只有最新那一次的回包算数，换了团队之后到的旧回包也不算。
+// 已有名单时重读在途照旧画名单（转圈只在手里还没有名单时出现，见 MembersView）；
+// 读失败不论首次还是重读，都照原样换成失败态加重试。
+let membersRead = 0
 const fetchTeamMembers = async (teamId: number) => {
+  const read = ++membersRead
+  loadingMembers.value = true
   failedMembers.value = false
   membersError.value = null
   try {
     const { members } = await TeamsApi.getMembers(teamId)
+    if (read !== membersRead || teamData.value?.id !== teamId) return
     teamMembers.value = members
   } catch (error) {
+    if (read !== membersRead || teamData.value?.id !== teamId) return
     console.error('Failed to load team members', error)
     failedMembers.value = true
     membersError.value = error instanceof Error && error.message ? error.message : null
+  } finally {
+    if (read === membersRead) loadingMembers.value = false
   }
 }
 
@@ -520,6 +532,7 @@ const copyJoinLink = async (url: string) => {
     :can-bring-people-in="canBringPeopleIn"
     :already-in="alreadyIn"
     :members="teamMembers"
+    :loading-members="loadingMembers"
     :failed-members="failedMembers"
     :members-error="membersError"
     :join-requests="joinRequests"
