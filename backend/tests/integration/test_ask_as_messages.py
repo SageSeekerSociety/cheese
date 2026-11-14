@@ -452,7 +452,9 @@ def test_the_reply_an_answer_was_said_in_is_the_answerer_s_own(
     records it, and nothing rewrites either."""
     _, room = _room(client)
     question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
-    reply = _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
+    reply = _say(
+        client, room, "alice", {"content": "按部门", "reply_to": question["id"]}
+    )
 
     client.delete(
         f"/blocks/{question['id']}/answer", headers=session_auth_headers("alice")

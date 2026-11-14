@@ -27,7 +27,7 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent_instance.adapters import named_teammate, project_team
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.own import owned_by_seat, owner_of
-from app.domain.block.asked import SKIPPED, asked_of, settled, skipped_by_all
+from app.domain.block.asked import asked_of, settled, skipped_by_all
 from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import Block
 from app.domain.block.questions import (
