@@ -179,13 +179,20 @@ describe('主线上来了一行交付', () => {
       id,
       project_id: 'p1',
       conversation_id: topic.id,
-      kind: 'message',
-      author_type: 'participant',
-      author: 'agent-seat',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
       content: '「报名表」已提交审阅',
       reply_to: null,
       refs: [],
-      meta: { task_result: taskId, delivery: { card_id: `card-${taskId}`, subject: '报名表', version: 1 } },
+      shown_as: 'happening',
+      meta: {
+        event_type: 'task_filed',
+        severity: 'info',
+        who: 'platform',
+        task_id: taskId,
+        delivery: { card_id: `card-${taskId}`, version: 1 },
+      },
       created_at: new Date().toISOString(),
     }
   }
@@ -201,13 +208,13 @@ describe('主线上来了一行交付', () => {
     await settle()
     sockets.at(-1)?.onopen?.()
     sockets.at(-1)?.onmessage?.({
-      data: JSON.stringify({ type: 'user_block', block: deliveryLine('new-line', 't-new') }),
+      data: JSON.stringify({ type: 'event_block', block: deliveryLine('new-line', 't-new') }),
     })
     await settle()
     expect(emitted()['delivery-arrived']).toEqual([['t-new']])
     // A reconnect replays what the room already showed: the same line is not a new arrival.
     sockets.at(-1)?.onmessage?.({
-      data: JSON.stringify({ type: 'user_block', block: deliveryLine('new-line', 't-new') }),
+      data: JSON.stringify({ type: 'event_block', block: deliveryLine('new-line', 't-new') }),
     })
     await settle()
     expect(emitted()['delivery-arrived']).toEqual([['t-new']])

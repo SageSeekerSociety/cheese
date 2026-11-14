@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// 任务交了一版去审阅：挂在频道里那一行下面，交的是什么、第几版，点开在频道右边审阅。
-// 它记的是交上去的那一刻，不写审阅到哪一步了：退回、采纳在频道里各有自己的一行。
+// 任务交了一版去审阅：平台在任务出自的那段对话里记下的一张卡，哪件任务、第几版，点开
+// 在频道右边审阅。它不是谁说的话，不挂头像和名字。它记的是交上去的那一刻，不写审阅到
+// 哪一步了：退回在对话里另有一行。
 import { t } from '@/i18n'
 
 defineProps<{
   taskId: string
-  /** 交的是什么：改动的标题，或文件名。 */
-  subject: string | null
+  /** 任务名。 */
+  title: string
   version: number
 }>()
 
@@ -22,7 +23,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
     @click="emit('open', taskId)"
   >
     <v-icon size="16" class="delivery-card__icon" aria-hidden="true">mdi-source-branch</v-icon>
-    <span v-if="subject" class="delivery-card__subject">{{ subject }}</span>
+    <span class="delivery-card__title">{{ title }}</span>
     <span class="delivery-card__version">{{ t('work.room.delivery.version', { n: version }) }}</span>
     <v-icon size="16" class="delivery-card__go" aria-hidden="true">mdi-chevron-right</v-icon>
   </button>
@@ -55,7 +56,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   flex: none;
   color: var(--muted);
 }
-.delivery-card__subject {
+.delivery-card__title {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);

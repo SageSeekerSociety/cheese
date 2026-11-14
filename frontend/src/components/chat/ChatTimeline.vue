@@ -259,6 +259,8 @@ function createdTask(row: NoticeRow): TaskLine | null {
   return typeof id === 'string' ? props.taskOf?.(id) ?? null : null
 }
 const createdTasks = computed(() => props.rows.map(createdTask))
+// 交了一版去审阅的那一行（lib/deliveryLine）：画成一张交付卡。
+const deliveries = computed(() => props.rows.map((row) => (row.notice ? deliveryOf(row.block) : null)))
 // 同一个人接连新建的几件，归在同一个名字下面：断开的条件和消息一样。
 const createdCont = computed(() =>
   createdTasks.value.map((task, i) => {
@@ -500,6 +502,7 @@ const rowLabels = computed(() =>
       return rowLabel(creator, block.created_at, `${t('work.room.taskCard.created')} ${task.title}`)
     }
     if (!notice) return ''
+    if (deliveries.value[i]) return rowLabel(null, block.created_at, noticeLine(block, notice, null, props.refs))
     const agent = agentOf(block, notice)?.name ?? null
     return rowLabel(agent, block.created_at, noticeLine(block, notice, agent, props.refs))
   })
@@ -632,6 +635,25 @@ const rowLabels = computed(() =>
               :aria-label="rowLabels[i]"
               @open="emit('open-card', $event)"
             />
+            <!-- A task handed a version in for review: the platform's record of it, one card
+                 under nobody's name. -->
+            <div
+              v-else-if="deliveries[i]"
+              class="tl-delivery"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-label="rowLabels[i]"
+            >
+              <DeliveryCard
+                :task-id="deliveries[i]!.taskId"
+                :title="taskOf?.(deliveries[i]!.taskId)?.title || deliveries[i]!.title"
+                :version="deliveries[i]!.version"
+                @open="emit('open-card', $event)"
+              />
+            </div>
             <RoomNotice
               v-else-if="notice"
               :class="{ 'tl-arrive': arrived.has(m.id) }"
@@ -819,15 +841,6 @@ const rowLabels = computed(() =>
                 @open="emit('open-card', $event)"
               />
             </div>
-            <!-- A task handed a version in for review: the card it filed, under that line. -->
-            <div v-if="!notice && deliveryOf(m)" class="tl-thread msg-links" :data-feed-of="m.id">
-              <DeliveryCard
-                :task-id="deliveryOf(m)!.taskId"
-                :subject="deliveryOf(m)!.subject"
-                :version="deliveryOf(m)!.version"
-                @open="emit('open-card', $event)"
-              />
-            </div>
             <div v-if="!notice && links(m.id).length" class="tl-thread msg-links" :data-feed-of="m.id">
               <TaskLink
                 v-for="task in links(m.id)"
@@ -960,6 +973,10 @@ const rowLabels = computed(() =>
 .tl-thread {
   margin-left: 54px;
   width: calc(100% - 70px);
+}
+/* 交了一版去审阅的那张卡：平台记下的事，不挂头像和名字，和消息正文同一条竖线。 */
+.tl-delivery {
+  margin: 8px 16px 8px 54px;
 }
 /* 消息下面那一块：支线和任务长在一起，同一个底色。支线那几行在上，转成任务时顶上多
    一行任务名；拆出去的任务一件一行，排在下面。 */

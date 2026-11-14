@@ -19,6 +19,7 @@ from app.core.errors import (
 from app.core.sentences import exception_text, listing, say
 from app.domain.deliverables import artifacts
 from app.domain.library import service as library
+from app.domain.notice_meta import EVENT_TASK_FILED
 from app.domain.review import (
     archive,
     commit_message,
@@ -33,7 +34,8 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.schemas import AcceptCardOut
-from app.domain.review.task_landing import tell_origin
+from app.domain.review.services.notices import _announce_of
+from app.domain.review.task_landing import record_at_origin
 from app.domain.room_task import progress
 from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
@@ -308,20 +310,15 @@ async def create_card(
     # reported before it is over.
     progress.clear(task)
     await self._announce_filed(topic, card, task)
-    # Where the task came from hears that a version is in for review: one line
-    # and the card it filed, as filed. The card's state is told elsewhere.
-    await tell_origin(
+    # Where the task came from records that a version is in for review: the card
+    # it filed, as filed. The card's state is told elsewhere.
+    await record_at_origin(
         self._session,
         task,
+        EVENT_TASK_FILED,
         say("taskFiledForReview", title=said_title(task)),
-        task_teammate=self._task_teammate,
-        refers={
-            "delivery": {
-                "card_id": str(card.id),
-                "subject": card.change_subject or card.deliverable_name,
-                "version": len(existing) + 1,
-            }
-        },
+        announce=_announce_of(self),
+        refers={"delivery": {"card_id": str(card.id), "version": len(existing) + 1}},
     )
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
