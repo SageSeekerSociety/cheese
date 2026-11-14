@@ -104,7 +104,7 @@ constraint-dependencies = [
     "anyio==4.14.2",
     "cryptography==50.0.0",
     "multidict==6.9.1",
-    "soupsieve==2.9.0",
+    "soupsieve==4.1",
     "urllib3==2.8.0",
 ]
 
