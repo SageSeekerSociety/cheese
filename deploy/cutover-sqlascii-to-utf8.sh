@@ -1,38 +1,30 @@
 #!/bin/bash
-# cheese dev DB: SQL_ASCII -> UTF8 rebuild (issue #233) — PLAN A.
+# Rebuild the `cheese` database from SQL_ASCII as UTF8 (issue #233).
 #
-# RUN THIS ON THE DB HOST 192.168.16.7, AS THE postgres OS USER:
-#     sudo -u postgres bash cutover-on-db-host.sh
-#
-# Why this script exists: the earlier plan (cutover.sh, run over TCP from the
-# app box 192.168.16.5) CANNOT work. pg_hba.conf on 192.168.16.7 admits exactly
-# one pair from 192.168.16.5 — user `cheese`, database `cheese`. Everything
-# else is refused at the pg_hba stage, before authentication:
-#     cheese  @ postgres/template1/cheese_utf8  -> no pg_hba.conf entry
-#     postgres@ anything                        -> no pg_hba.conf entry
-# CREATE DATABASE, the restore, and the two renames all require a connection to
-# some database other than `cheese`. So no amount of role privilege (CREATEDB)
-# unblocks it from the app box; it needs either this script here, or a pg_hba
-# change (see PLAN B in cutover.sh).
+# It ran this way on dev (DB host 192.168.16.7) on 2026-08-16. On prod it runs
+# from the prod app box, inside deploy/cutover-ruc-016-to-main.sh, as a
+# superuser reached over TCP: libpq's PGHOST/PGPORT/PGUSER/PGPASSWORD say who.
+# The `cheese` role cannot do it at all: CREATE DATABASE, the restore and both
+# renames need a connection to a database other than `cheese`, and pg_hba
+# admits `cheese` from the app box to `cheese` only. So pg_hba on the DB host
+# must admit the superuser from the app box to `postgres`, `cheese` and
+# `cheese_utf8`.
 #
 # WHAT IT NEVER DOES: it never drops or truncates anything. The old database is
 # renamed aside, never removed. Every failure path leaves the old data intact.
 #
 # IF SOMETHING KILLS THIS SCRIPT OUTRIGHT (kill -9, the machine reboots, the
-# power goes) the recovery handler cannot run, and dev stays frozen — the
+# power goes) the recovery handler cannot run, and the app stays frozen — the
 # symptom is: FATAL: permission denied for database "cheese", User does not have
-# CONNECT privilege. One command fixes it, run as postgres on this host:
+# CONNECT privilege. One command fixes it, run as the superuser:
 #
 #     psql -d postgres -c 'GRANT CONNECT ON DATABASE cheese TO PUBLIC, cheese'
 #
-# Then restart the backend on 192.168.16.5. No data is at risk in that state;
-# the database is merely refusing new connections.
+# Then start the backend again. No data is at risk in that state; the database
+# is merely refusing new connections.
 #
-# BLAST RADIUS (measured on the cluster, 2026-08-16): this cluster holds exactly
-# one user database (`cheese`) and two login roles (`cheese`, `postgres`); there
-# are no replication slots, no standbys and archive_mode is off. Both the
-# CONNECT revoke and the terminate below are scoped to datname='cheese', so
-# nothing outside this one database is touched.
+# Both the CONNECT revoke and the terminate below are scoped to
+# datname='cheese', so nothing outside this one database is touched.
 #
 # OWNERSHIP — the reason this script does NOT pass --no-owner: every one of the
 # 102 tables and 65 sequences in public is owned by `cheese`. This script
@@ -43,41 +35,6 @@
 # ALTER ... OWNER TO / GRANT statements (a superuser can apply them), and step 8
 # verifies ownership and per-object privileges explicitly.
 #
-# ---------------------------------------------------------------------------
-# REUSING THIS ON PRODUCTION — what to change, and what NOT to.
-#
-# This file is archived verbatim as it ran on dev on 2026-08-16. Its value is
-# that it was executed end-to-end against real data and then survived five
-# injected failures (see deploy/README-utf8-cutover.md). Anything you edit is,
-# by definition, no longer covered by that evidence — so edit only what the list
-# below names, and re-read the "do not touch" section of the runbook first.
-#
-#   1. HOST / USER. Production's DB host is 192.168.16.10, reached from the prod
-#      app box 192.168.16.8 (NOT 192.168.16.5 — that is the dev app box, and it
-#      cannot reach the prod DB host at all). Run as the postgres OS user there.
-#      Occurrences to update: the RUN THIS ON THE DB HOST line above, the
-#      pg_hba paragraph, and the two "NEXT, on 192.168.16.5" lines near the end.
-#   2. RESTART COMMAND. The trailing hint says `docker restart cheese-backend-1`,
-#      which is the dev box's container. Production is bare-metal systemd —
-#      `sudo systemctl restart cheese-backend-py` — see docs/infrastructure.md.
-#   3. DATABASE NAMES. `cheese`, `cheese_utf8`, `cheese_sqlascii_old` are
-#      hardcoded on purpose (a parameterised version would not be the version
-#      that was tested). If prod's live database is not called `cheese`, change
-#      all three consistently and re-read every psql line before running.
-#   4. WORK DIR. `WORK` defaults to /var/lib/postgresql/cheese-utf8-rebuild.
-#      Override with the WORK env var if that filesystem is tight.
-#   5. DISK. Preflight demands > 2048 MB free on BOTH the work dir and PGDATA.
-#      As of 2026-08-16 the prod box had ~14 GB free — check again before you
-#      start; a full PGDATA filesystem PANICs the whole instance.
-#   6. BASELINE FACTS. The "102 tables / 65 sequences" and the `blocks`
-#      fingerprint are dev's numbers, quoted in comments only — the script reads
-#      the real values at run time. But the step-2 sanity floor (`-ge 50`
-#      tables) is a hardcoded guess at cluster shape; confirm prod actually has
-#      more than 50 tables in public, or that check will abort a good run.
-#   7. #232 STOPGAP. Confirm the release running on prod contains the
-#      `_json_dumps_utf8` fix (backend/app/core/db.py). Without it, prod keeps
-#      500'ing on non-ASCII jsonb right up until this cutover completes.
-# ---------------------------------------------------------------------------
 set -euo pipefail
 
 TS=$(date +%Y%m%d-%H%M%S)
@@ -89,7 +46,7 @@ LOG=cutover-$TS.log
 # the whole process group, so a plain `tee` dies with the script — and then the
 # recovery handler below writes into a broken pipe, takes SIGPIPE, and dies
 # before it can un-freeze the database. Measured 2026-08-16: without this, an
-# interrupted run left dev stuck on "permission denied for database cheese".
+# interrupted run left the app stuck on "permission denied for database cheese".
 exec > >(trap '' INT TERM HUP QUIT PIPE; exec tee -a "$LOG") 2>&1
 
 DUMP=cheese-final-$TS.sql
@@ -98,8 +55,8 @@ die() { say "ABORT: $*"; exit 1; }
 psq() { psql -v ON_ERROR_STOP=1 "$@"; }
 
 # --- safety net -------------------------------------------------------------
-# Once writes are frozen (step 2), any abort must hand the database back, or dev
-# stays hard-down with no obvious cause. The handler does not trust its own
+# Once writes are frozen (step 2), any abort must hand the database back, or the
+# app stays hard-down with no obvious cause. The handler does not trust its own
 # bookkeeping about how far we got — it asks the catalog what exists right now,
 # which also covers the nastiest case: the first rename succeeding and the
 # second failing, leaving no database called `cheese` at all.
@@ -129,21 +86,20 @@ on_exit() {
     say "   rolling back to the original database..."
     psql -d postgres -c "ALTER DATABASE cheese_sqlascii_old RENAME TO cheese"
     psql -d postgres -c "GRANT CONNECT ON DATABASE cheese TO PUBLIC, cheese"
-    say "   rolled back — dev is on the OLD SQL_ASCII database again."
+    say "   rolled back — the app is on the OLD SQL_ASCII database again."
   elif [ "$hc" = 1 ] && [ "$ho" = 1 ]; then
     say "   the swap already completed — the live DB is the NEW UTF8 one, a later step failed."
     say "   it is serving; roll back only if you have a reason:"
     say "     ALTER DATABASE cheese RENAME TO cheese_utf8;"
     say "     ALTER DATABASE cheese_sqlascii_old RENAME TO cheese;"
   elif [ "$FROZEN" = 1 ]; then
-    say "   old DB untouched; restoring CONNECT so dev comes back up"
+    say "   old DB untouched; restoring CONNECT so the app comes back up"
     psql -d postgres -c "GRANT CONNECT ON DATABASE cheese TO PUBLIC, cheese" \
-      || say "   !! could not restore CONNECT — run it by hand, dev is down until you do"
+      || say "   !! could not restore CONNECT — run it by hand, the app is down until you do"
     [ "$hu" = 1 ] && say "   leftover cheese_utf8 exists; drop it before rerunning: DROP DATABASE cheese_utf8;"
   else
     say "   nothing was changed."
   fi
-  say "   next, on 192.168.16.5:  docker restart cheese-backend-1"
   say "   log: $WORK/$LOG"
   exit "$rc"
 }
@@ -167,7 +123,7 @@ say "step 0: preflight (read-only — nothing is changed until this passes)"
 psq -d postgres -tAc "select 1" >/dev/null
 say "  connected as $(psq -d postgres -tAc 'select current_user')"
 psq -d postgres -tAc "select usesuper from pg_user where usename=current_user" | grep -qx t \
-  || die "not a superuser — run as the postgres OS user"
+  || die "not a superuser — PGUSER must name a superuser"
 CUR=$(psq -d postgres -tAc "select pg_encoding_to_char(encoding) from pg_database where datname='cheese'")
 say "  current encoding of cheese = $CUR"
 [ "$CUR" = "SQL_ASCII" ] || die "expected SQL_ASCII, got $CUR — already rebuilt?"
@@ -180,12 +136,17 @@ psq -d postgres -tAc "select count(*) from pg_database where datname='cheese_sql
 # filesystem fills up mid-restore, Postgres PANICs on the WAL write and the
 # whole instance goes down. Budget = 46 MB dump + ~65 MB new DB + WAL churn
 # (max_wal_size is 1 GB on this cluster), so demand 2 GB with room to spare, on
-# BOTH the work dir and PGDATA (they are usually the same filesystem, but check).
+# BOTH the work dir, here, and PGDATA, on the server — which is another host, so
+# the server runs its own df (COPY FROM PROGRAM, a superuser's).
 PGDATA_DIR=$(psq -d postgres -tAc "show data_directory")
-for d in "$WORK" "$PGDATA_DIR"; do
-  free_kb=$(df -Pk "$d" | awk 'NR==2{print $4}')
-  say "  free space on $d: $((free_kb/1024)) MB"
-  [ "$free_kb" -gt 2097152 ] || die "need > 2048 MB free on $d (dump + new DB + WAL); a full disk PANICs the server"
+free_kb=$(df -Pk "$WORK" | awk 'NR==2{print $4}')
+pgdata_free_kb=$(psq -q -d postgres -tA -c "create temp table _df (line text)" \
+  -c "copy _df from program 'df -Pk $PGDATA_DIR'" \
+  -c "select (regexp_split_to_array(line, '\s+'))[4] from _df offset 1")
+for pair in "$WORK:$free_kb" "$PGDATA_DIR (server):$pgdata_free_kb"; do
+  d=${pair%:*} kb=${pair##*:}
+  say "  free space on $d: $((kb/1024)) MB"
+  [ "$kb" -gt 2097152 ] || die "need > 2048 MB free on $d (dump + new DB + WAL); a full disk PANICs the server"
 done
 
 # Baseline facts about the old DB, captured before anything moves.
@@ -196,20 +157,20 @@ OWNERS_OLD=$(psq -d cheese -tAc "
 say "  objects in public NOT owned by cheese, in the old DB: $OWNERS_OLD"
 [ "$OWNERS_OLD" = 0 ] || die "old DB has mixed ownership — this script assumes all-cheese"
 
-HAS_BLOCKS=$(psq -d cheese -tAc "select count(*) from pg_tables where schemaname='public' and tablename='blocks'")
-[ "$HAS_BLOCKS" = 1 ] || say "  WARNING: table 'blocks' not found — the content fingerprint check will be skipped"
+HAS_BLOCKS=$(psq -d cheese -tAc "select count(*) from pg_tables where schemaname='public' and tablename='block'")
+[ "$HAS_BLOCKS" = 1 ] || say "  WARNING: table 'block' not found — the content fingerprint check will be skipped"
 say "  preflight passed"
 
 # ORDER MATTERS FROM HERE ON. Every baseline below (row counts, fingerprint) is
 # compared against the restored copy, so it must be taken from a database that
-# can no longer change. dev's backend writes constantly — taking the counts
+# can no longer change. A running backend writes constantly — taking the counts
 # before the freeze guarantees they drift from the dump and the script aborts on
 # a mismatch that was never a real problem, costing an outage for nothing.
 say "step 1: freeze writes (revoke CONNECT + terminate sessions on 'cheese' only)"
 psq -d postgres -c "REVOKE CONNECT ON DATABASE cheese FROM PUBLIC, cheese"
 FROZEN=1
 psq -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cheese' AND pid <> pg_backend_pid()" >/dev/null
-say "  writes frozen — the backend on 192.168.16.5 errors from now until it is restarted"
+say "  writes frozen — any backend still connected errors from now on"
 
 say "step 2: capture the baseline from the frozen DB"
 psq -d cheese -tAc "
@@ -230,14 +191,14 @@ say "  captured $(wc -l < counts-old-$TS.txt) table counts"
 if [ "$HAS_BLOCKS" = 1 ]; then
   # Content fingerprint: md5() hashes the on-disk BYTES of the text, so the same
   # bytes must produce the same digest under SQL_ASCII and under UTF8. If the
-  # restore mangled a single character anywhere in blocks, this changes.
-  FP_OLD=$(psq -d cheese -tAc "select md5(string_agg(md5(coalesce(content,'')), '' order by id)) from blocks")
+  # restore mangled a single character anywhere in block, this changes.
+  FP_OLD=$(psq -d cheese -tAc "select md5(string_agg(md5(coalesce(content,'')), '' order by id)) from block")
   # '[\x80-\xFF]' is a byte-range test that only parses under SQL_ASCII; the new
   # DB gets the encoding-aware equivalent (octet_length <> length) in step 9.
-  MB_OLD=$(psq -d cheese -tAc "select count(*) from blocks where content ~ '[\x80-\xFF]'")
-  say "  blocks content fingerprint: $FP_OLD"
-  say "  blocks rows containing non-ASCII bytes: $MB_OLD"
-  [ "$MB_OLD" -gt 0 ] || die "no non-ASCII rows found in blocks — that contradicts every earlier measurement, stop and look"
+  MB_OLD=$(psq -d cheese -tAc "select count(*) from block where content ~ '[\x80-\xFF]'")
+  say "  block content fingerprint: $FP_OLD"
+  say "  block rows containing non-ASCII bytes: $MB_OLD"
+  [ "$MB_OLD" -gt 0 ] || die "no non-ASCII rows found in block — that contradicts every earlier measurement, stop and look"
 else
   FP_OLD=""; MB_OLD=""
 fi
@@ -338,14 +299,13 @@ say "  schema public: cheese has USAGE + CREATE"
 
 say "step 9: verify the text itself survived byte-for-byte"
 if [ -n "$FP_OLD" ]; then
-  FP_NEW=$(psq -d cheese_utf8 -tAc "select md5(string_agg(md5(coalesce(content,'')), '' order by id)) from blocks")
-  say "  blocks fingerprint old=$FP_OLD"
+  FP_NEW=$(psq -d cheese_utf8 -tAc "select md5(string_agg(md5(coalesce(content,'')), '' order by id)) from block")
+  say "  block fingerprint old=$FP_OLD"
   say "                     new=$FP_NEW"
-  [ "$FP_OLD" = "$FP_NEW" ] || die "blocks content changed during the rebuild — do NOT swap"
-  MB_NEW=$(psq -d cheese_utf8 -tAc "select count(*) from blocks where octet_length(content) <> length(content)")
+  [ "$FP_OLD" = "$FP_NEW" ] || die "block content changed during the rebuild — do NOT swap"
+  MB_NEW=$(psq -d cheese_utf8 -tAc "select count(*) from block where octet_length(content) <> length(content)")
   say "  rows with multibyte text: old(bytes)=$MB_OLD new(chars)=$MB_NEW (must match)"
   [ "$MB_OLD" = "$MB_NEW" ] || die "multibyte row count changed — the encoding conversion is wrong"
-  psq -d cheese_utf8 -tAc "select left(content,60) from blocks where octet_length(content) <> length(content) limit 3"
 fi
 # The write that started this whole issue: Chinese inside jsonb, as the app's role.
 psq -d cheese_utf8 -c "SET ROLE cheese" \
@@ -365,5 +325,4 @@ say "  old data kept intact as cheese_sqlascii_old — nothing was dropped."
 say "  drop it only after a few days of clean running:  DROP DATABASE cheese_sqlascii_old;"
 say "  note: the old DB still has CONNECT revoked for cheese — deliberate, so"
 say "        nothing silently reconnects to the stale copy."
-say "  NEXT, on 192.168.16.5:  docker restart cheese-backend-1"
 say "  log: $WORK/$LOG"

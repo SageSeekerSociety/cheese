@@ -26,23 +26,22 @@ Check which of these production is running before planning a cutover — as of
 2026-08-16 the newest release (`0.17.0`, 2026-07-15) predates the stopgap by a
 month, so prod has **neither** layer.
 
-## Where it runs, and why not from the app box
+## Where it runs, and who it runs as
 
-**On the DB host, as the `postgres` OS user** — not over TCP from the app box.
-`pg_hba.conf` on the DB host admits exactly one pair from the app box (user
-`cheese`, database `cheese`). `CREATE DATABASE`, the restore, and both renames
-all need a connection to some *other* database, and every such attempt is
-refused at the pg_hba stage, before authentication. No amount of role privilege
-(`CREATEDB` included) unblocks it. An earlier plan that assumed otherwise cost a
-round trip; don't re-derive it.
+**As a superuser** — the `cheese` role cannot do it. `pg_hba.conf` on the DB
+host admits the app box as user `cheese` to database `cheese` only.
+`CREATE DATABASE`, the restore, and both renames all need a connection to some
+*other* database, and every such attempt is refused at the pg_hba stage, before
+authentication. No amount of role privilege (`CREATEDB` included) unblocks it.
 
-```bash
-# on the DB host (dev: 192.168.16.7 · prod: 192.168.16.10)
-sudo -u postgres bash cutover-sqlascii-to-utf8.sh
-```
-
-Authentication is local peer — **the script contains no password and needs no
-credential file.** Keep it that way.
+On dev it ran on the DB host as the `postgres` OS user (local peer, no
+password). On prod the DB host has no SSH from the app box, so it runs on the
+app box inside the one-time cutover step of `deploy-prod.yml`
+(`deploy/cutover-ruc-016-to-main.sh`), connecting over TCP as a superuser named
+by libpq's `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`, which that script reads from
+`/home/nictheboy/ops/db-admin.env`. pg_hba on `192.168.16.10` must admit that
+user from `192.168.16.8` to `postgres`, `cheese` and `cheese_utf8`. The script
+itself contains no password.
 
 ## What it does, in order
 
@@ -87,12 +86,8 @@ The last lines are `DONE.` plus a reminder to restart the backend. The dev run
 | Chinese `jsonb` as role `cheese` | inserted, read back correct |
 | Dump size | 44–46 MB plain; database ~65 MB |
 
-Then, **on the app box**:
-
-```bash
-docker restart cheese-backend-1      # dev (Docker)
-sudo systemctl restart cheese-backend-py   # prod (bare-metal systemd)
-```
+Then, on dev, **on the app box**: `docker restart cheese-backend-1`. On prod the
+cutover script owns the backend (see "On production").
 
 The backend logs `permission denied for database "cheese"` throughout the freeze
 window — that is expected and stops at the restart. Confirm the last such line
@@ -136,7 +131,7 @@ FATAL: permission denied for database "cheese"
 DETAIL: User does not have CONNECT privilege.
 ```
 
-One command, on the DB host as `postgres`:
+One command, as the superuser:
 
 ```sql
 GRANT CONNECT ON DATABASE cheese TO PUBLIC, cheese;
@@ -189,34 +184,25 @@ make the comparison loop run zero times and report "all tables match" (hence the
 `≥ 50 tables` floor), and a failed count query would write an empty field (hence
 the `awk` assertion that every count is numeric).
 
-## Reusing this on production
+## On production
 
-The script is archived **verbatim as it ran**. Its value is that it was executed
-end-to-end against real data and survived five injected failures (abort
-mid-run → auto-unfreeze; half-completed rename → auto-rollback; dropped ssh
-session → auto-unfreeze; Ctrl-C → auto-unfreeze; two concurrent runs → blocked by
-`flock` without a spurious unfreeze). **Any edit is outside that evidence**, which
-is also why it is not parameterised — a `${DB:-cheese}` version would not be the
-version that was tested.
+The dev run above is the evidence: executed end-to-end against real data, then
+five injected failures (abort mid-run → auto-unfreeze; half-completed rename →
+auto-rollback; dropped ssh session → auto-unfreeze; Ctrl-C → auto-unfreeze; two
+concurrent runs → blocked by `flock` without a spurious unfreeze). For prod it
+changed only where prod differs:
 
-The header comment carries the change list. In short:
+- **Connection**: the superuser over TCP from the app box (above), not local
+  peer on the DB host.
+- **PGDATA disk check**: PGDATA is on the server, so the server runs `df`
+  itself (`COPY ... FROM PROGRAM`); the work dir is checked locally as before.
+- **Fingerprint table**: prod's 0.16.x schema names it `block`, not `blocks`.
+- **Output**: it no longer prints sample rows of user text, since its output is
+  the Actions log.
+- **Backend**: the cutover script stops the 0.16.x backend before this runs and
+  the deploy brings up the new release, so the restart hints are gone.
 
-- **Host**: `192.168.16.10`, reached from the prod app box `192.168.16.8`. The
-  dev app box `192.168.16.5` cannot reach it at all.
-- **Restart command**: prod is bare-metal systemd (`cheese-backend-py.service`),
-  not Docker.
-- **Disk**: preflight demands > 2048 MB free on both the work dir and PGDATA. The
-  prod box had ~14 GB free as of 2026-08-16 — check again before starting. A full
-  PGDATA filesystem **PANICs the whole instance**; this is the only step that can
-  take the server down rather than merely abort.
-- **Table-count floor**: the `≥ 50` sanity check is a guess at cluster shape.
-  Confirm prod's `public` has more than 50 tables or a good run will abort.
-- **Release**: make sure the deployed release contains the #232 stopgap first.
-  Until the cutover completes, prod keeps 500'ing on any non-ASCII `jsonb` write.
-
-Take a normal backup before starting anyway (`deploy/db-backup.sh`, see
-[`README-backup.md`](README-backup.md)) — the script keeps the old database, but
-a dump on the app box costs nothing.
+The cutover script takes `deploy/db-backup.sh`'s verified backup first.
 
 ## Preventing a repeat
 
