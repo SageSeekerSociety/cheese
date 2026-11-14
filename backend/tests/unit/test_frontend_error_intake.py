@@ -10,6 +10,7 @@ from app.domain.frontend_log import (
     event_content,
     event_meta,
     fingerprint,
+    worth_alerting,
 )
 
 
@@ -57,3 +58,25 @@ def test_alerts_stop_across_projects_while_reports_are_still_admitted() -> None:
     assert intake.admit("project-new", "fp", now=now)
     assert not intake.may_alert(now=now)
     assert intake.may_alert(now=now + DEDUP_WINDOW_S + 1)
+
+
+def test_an_error_a_browser_extension_threw_is_not_alerted() -> None:
+    """An extension's script runs inside the page and its rejections reach the
+    page's handler; the stack's first frame says whose code it was."""
+    extension = FrontendErrorIn(
+        message="Unhandled rejection: func sseError not found",
+        stack="Error: func sseError not found\n"
+        "    at Object.<anonymous> (chrome-extension://abc/inpage.js:253:4574)\n"
+        "    at O (chrome-extension://abc/inpage.js:252:16359)",
+    )
+    firefox = FrontendErrorIn(message="x", stack="f@moz-extension://abc/content.js:1:2")
+    ours_through_one = FrontendErrorIn(
+        message="TypeError: x is undefined",
+        stack="TypeError: x is undefined\n"
+        "    at pc (https://okcheese.com/assets/vue-C-oHDLPt.js:3:51001)\n"
+        "    at chrome-extension://abc/inpage.js:1:1",
+    )
+    assert not worth_alerting(extension, "https://okcheese.com")
+    assert not worth_alerting(firefox, "https://okcheese.com")
+    assert worth_alerting(ours_through_one, "https://okcheese.com")
+    assert worth_alerting(FrontendErrorIn(message="boom"), "https://okcheese.com")

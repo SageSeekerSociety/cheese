@@ -141,9 +141,12 @@ async def tunnel(
                 "retries",
                 IDLE_TIMEOUT_S,
             )
+            # A pipe silent this long usually has a caller that is already
+            # gone, and closing a socket whose peer vanished raises
+            # WebSocketDisconnect (1006): it is closed either way.
             try:
                 await websocket.close(code=1011, reason="the tunnel went silent")
-            except RuntimeError:
+            except (RuntimeError, WebSocketDisconnect):
                 pass
         writer.close()
         try:
