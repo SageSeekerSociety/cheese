@@ -299,8 +299,7 @@ async def give_up_stale(
                 # how it ended.
                 if closed is not None:
                     if announce is None:  # pragma: no cover - 接线漏了才会走到
-                        # i18n-exempt: developer miswiring, not a refusal a
-                        # reader can act on
+                        # i18n-exempt: developer miswiring
                         raise RuntimeError("announce was not handed in")
                     await tell_origin_ended(
                         session,
