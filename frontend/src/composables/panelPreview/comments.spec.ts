@@ -43,7 +43,7 @@ beforeEach(() => {
 afterEach(() => apps.splice(0).forEach((app) => app.unmount()))
 
 /** 一份摆进预览格里的文件，和它那个评论包。 */
-function setup(path: string, docPage = () => false) {
+function setup(path: string, docPage = () => false, extra: Record<string, unknown> = {}) {
   const state = createPreviewState()
   state.previewFile.value = {
     path,
@@ -58,7 +58,7 @@ function setup(path: string, docPage = () => false) {
     defineComponent({
       setup() {
         bundle = usePanelPreviewComments({
-          props: { topicId: 'room', projectId: 'project', members: [] } as never,
+          props: { topicId: 'room', projectId: 'project', members: [], ...extra } as never,
           state,
           people: { names: ref({}), avatars: ref({}) } as never,
           docPage,
@@ -143,4 +143,26 @@ it('表格读成了网页：格子上画不出来（那一支挂的是网页）�
   const sheet = setup('output/预算.xlsx', () => false)
   await vi.waitFor(() => expect(sheet.threads.state.threads).toHaveLength(1))
   expect(bundle.open.value).toBe(false)
+})
+
+it('不能写评论（频道归档、没有「评论」权限）：已有的评论照读，写的那条路不发请求', async () => {
+  // 服务端对这几种情况一律 403/422；入口摆出来只会让人写完才知道发不出去。
+  const bundle = setup('output/汇报.pptx', () => false, { canComment: false })
+  expect(bundle.target.value).not.toBeNull()
+  expect(bundle.writable.value).toBe(false)
+
+  bundle.toggle()
+  await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
+
+  await bundle.post({ content: '再补一句', quote: null, anchor: null })
+  expect(api.postFileThread).not.toHaveBeenCalled()
+})
+
+it('能写评论（没说不能就是能）：发出去', async () => {
+  api.postFileThread.mockResolvedValue({ data: THREAD })
+  const bundle = setup('output/汇报.pptx')
+  expect(bundle.writable.value).toBe(true)
+
+  await bundle.post({ content: '再补一句', quote: null, anchor: null })
+  expect(api.postFileThread).toHaveBeenCalledWith('room', expect.objectContaining({ path: 'output/汇报.pptx' }))
 })

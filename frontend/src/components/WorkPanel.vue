@@ -86,6 +86,9 @@ const props = withDefaults(
     taskId?: string | null
     // 任务页上，改动只读（不是负责人，或任务已关）。
     taskReadOnly?: boolean
+    // 我能不能在预览里的文件上写评论（频道、项目没归档，角色有「评论」）。页面按项目权限
+    // 算好递下来；这一栏自己还会把归档的频道算进去，漏传也不会在归档频道里放开。
+    canComment?: boolean
     // 这件任务有没有自己的分支。没有的（还没有电脑打开过它）没有工作区，「改动」那一格
     // 打不开它，文件就是项目现在的样子。
     taskHasBranch?: boolean
@@ -154,6 +157,7 @@ const props = withDefaults(
   {
     taskId: null,
     taskReadOnly: false,
+    canComment: true,
     taskHasBranch: true,
     submitQuestion: undefined,
     askPersonal: undefined,
@@ -228,6 +232,11 @@ const emit = defineEmits<{
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
 // 的），桌面上对话就在旁边那一栏，所以是总览。
 const defaultTab = computed<TabKey>(() => (props.review ? 'changes' : props.withChat ? 'chat' : 'overview'))
+
+// 预览里的文件评论能不能写：归档的频道不收评论（和改动那一格的只读同一个判据），其余
+// 听页面按项目权限算的那一句。
+const previewCanComment = computed(() => props.topic?.status !== 'archived' && props.canComment)
+
 // 旧地址还带着 ?tab=doc / ?tab=tasks —— 两个 tab 都并进概览了，所以它们指的就是
 // 概览。链接不该因为我们合并了界面而失效。
 const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
@@ -1038,6 +1047,7 @@ defineExpose({
             :agent-name="agentName"
             :members="members"
             :agent-handle="agentHandle"
+            :can-comment="previewCanComment"
             @loaded="markPreviewSeen"
             @locate="emit('locate', $event)"
             @open-file="openFileTab"
@@ -1120,6 +1130,7 @@ defineExpose({
               :agent-name="agentName"
               :members="members"
               :agent-handle="agentHandle"
+              :can-comment="previewCanComment"
               @locate="emit('locate', $event)"
               @mention-click="emit('mention-click', $event)"
             />

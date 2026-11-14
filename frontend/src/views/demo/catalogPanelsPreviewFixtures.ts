@@ -358,6 +358,7 @@ export function previewCommentsBundle(over: { open?: boolean } = {}): PreviewCom
   const open = ref(over.open ?? false)
   return {
     target: computed(() => ({ topicId: DEMO_TOPIC, path: PREVIEW_COMMENT_PATH, version: PREVIEW_COMMENT_VERSION })),
+    writable: computed(() => true),
     open,
     toggle: () => {
       open.value = !open.value

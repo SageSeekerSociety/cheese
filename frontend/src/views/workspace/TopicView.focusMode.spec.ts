@@ -50,6 +50,7 @@ vi.mock('@/stores/workspace', async () => {
   const store = reactive({
     topics: [TOPIC],
     members: [],
+    projects: [],
     unreadMap: {},
     chatPct: 50,
     agentName: '芝士',

@@ -37,6 +37,8 @@ const props = withDefaults(
     members?: ProjectMemberRow[]
     /** 这间房队友的 handle：评论里那个队友席位画的是谁。 */
     agentHandle?: string | null
+    /** 我能不能在这里写评论，见 `PanelPreviewProps.canComment`。 */
+    canComment?: boolean
   }>(),
   {
     active: false,
@@ -47,6 +49,7 @@ const props = withDefaults(
     agentName: undefined,
     members: () => [],
     agentHandle: null,
+    canComment: true,
   }
 )
 const emit = defineEmits<{

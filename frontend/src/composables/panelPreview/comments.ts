@@ -40,6 +40,9 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     if (path.startsWith('library/') || path.startsWith('uploads/')) return null
     return { topicId: props.topicId, path, version: file.version }
   })
+  // 能不能往这一份上写（新评论、回复、解决）：先得能挂评论，再看这里允不允许写。
+  // 不能写时已有的评论照样读得到，和文档那一栏只读时一样。
+  const writable = computed(() => commentable.value !== null && props.canComment !== false)
   // 这一栏开着没有。关着的时候不问接口——预览每一格打开都多打一次，不值。
   // 例外是画标记的那一档，见下面 `drawsMarks`：那一档的数据栏关着也得有。
   const open = ref(false)
@@ -87,7 +90,7 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   /** 写一条新的：说的是什么、指着哪一处。 */
   async function post(payload: { content: string; quote: string | null; anchor: QuotedContext | null }) {
     const target = commentable.value
-    if (!target) return
+    if (!target || !writable.value) return
     await postFileThread(target.topicId, {
       path: target.path,
       content: payload.content,
@@ -100,6 +103,8 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   return {
     /** 这一份能不能挂评论：能就是它的地址与版本，不能是 null。 */
     target: commentable,
+    /** 能不能写：归档或没有「评论」权限时只读，入口都收起来。 */
+    writable,
     /** 这一栏开着没有；关着时不读接口。 */
     open,
     toggle,
