@@ -4,13 +4,17 @@ ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
 RUN corepack enable
+# pnpm-workspace.yaml links dependencies out of the store's shared directory,
+# and the store here is a cache mount that later layers do not see: each
+# image keeps a node_modules of its own instead.
+ENV pnpm_config_virtual_store_type=project
 
 # The manifests alone, so editing a component does not reinstall the world: this
 # layer is reused until the lockfile itself changes. The pnpm store lives on a
 # cache mount, so even a lockfile edit fetches only what it added. The install
-# applies the dependency patches in patches/ (package.json's patchedDependencies).
+# applies the dependency patches in patches/ (pnpm-workspace.yaml's patchedDependencies).
 FROM base as deps
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 

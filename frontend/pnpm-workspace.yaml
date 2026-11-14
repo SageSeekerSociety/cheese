@@ -1,0 +1,77 @@
+# pnpm's own settings for the frontend. pnpm 11 and later read them only from
+# this file: the `pnpm` field in package.json and non-auth lines in .npmrc are
+# ignored, so an override left there would silently stop applying.
+
+overrides:
+  '@parcel/watcher': 2.5.4
+  '@tiptap/extension-bubble-menu': 3.30.5
+  '@tiptap/extension-floating-menu': 3.30.5
+  body-parser: 2.3.0
+  'brace-expansion@1': 1.1.21
+  'brace-expansion@2': 2.1.7
+  dompurify: 3.4.17
+  fast-uri: 3.1.7
+  flatted: 3.4.2
+  follow-redirects: 1.16.2
+  immutable: 5.1.8
+  'js-yaml@4': 4.3.2
+  'minimatch@3': 3.1.4
+  'nanoid@3.3.11': 3.3.18
+  'picomatch@2': 2.3.2
+  'postcss@8.5.6': 8.5.18
+  prosemirror-model: 1.25.11
+  prosemirror-state: 1.4.4
+  prosemirror-transform: 1.12.0
+  prosemirror-view: 1.42.3
+  qs: 6.16.0
+  source-map-js: 1.2.2
+
+patchedDependencies:
+  '@tiptap/y-tiptap@3.0.7': patches/@tiptap__y-tiptap@3.0.7.patch
+  '@handlewithcare/prosemirror-suggest-changes@0.1.8': patches/@handlewithcare__prosemirror-suggest-changes@0.1.8.patch
+  'exceljs@4.4.0': patches/exceljs@4.4.0.patch
+
+# pnpm 10 and later run no dependency's install script unless it is named here,
+# and with pnpm 11's strictDepBuilds an unnamed one fails the install. These are
+# the four the lockfile has. msw's only copies its service worker into the
+# directory package.json's `msw.workerDirectory` names, and this package names
+# none, so it stays off.
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  msw: false
+  vue-demi: true
+
+# Every task checkout on a machine links its dependencies out of one shared
+# directory in the store (`<store>/links`) instead of laying down ~60k files of
+# its own: on a work-machine sandbox with a warm store a fresh checkout's install
+# measured 0.5 s, against 7.2 s for pnpm 12 without it and 14.9 s for pnpm 9.
+virtualStoreType: global
+
+# A package in the shared directory sees only what its own package.json names;
+# what it imports without naming is found through the NODE_PATH that `pnpm run`
+# and `pnpm exec` set, and NOT by a bare `node_modules/.bin/vitest` or `npx`.
+# These are the imports of that kind the app and its tests reach (each read in
+# the package's own build), declared so either way of starting a tool works.
+packageExtensions:
+  '@tiptap/y-tiptap':
+    peerDependencies:
+      prosemirror-transform: '*'
+  '@vue/test-utils':
+    peerDependencies:
+      vue: '*'
+  vite-plugin-pwa:
+    peerDependencies:
+      vue: '*'
+    peerDependenciesMeta:
+      vue:
+        optional: true
+  vue-sonner:
+    peerDependencies:
+      vue: '*'
+  vuetify:
+    peerDependencies:
+      vue-router: '*'
+    peerDependenciesMeta:
+      vue-router:
+        optional: true
