@@ -2,15 +2,16 @@
 // （MCP 只读，没有 +）。落盘与取数不在这里 —— 那些是 `useAgentSkills` 的事。
 //
 // 机器那一段（扫描 / 采纳 / 退订）不在板上摆：装进来或勾上就跟着这位队友走。
+// 板上只画队友身上真有的：机器上可加、还没带的那几条不算。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen } from '@testing-library/vue'
+import { fireEvent, render, screen, within } from '@testing-library/vue'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import AgentSkillsDialog from './AgentSkillsDialog.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 const MARKET = {
   skills: [
@@ -77,8 +78,14 @@ function mount(extra: Record<string, unknown> = {}) {
   })
 }
 
+/** 这几个技能名里，哪些列在「米洛 的技能」那份名单上。 */
+async function listed(...names: string[]) {
+  const board = await screen.findByRole('list', { name: t('work.room.skills.carriedTitle', { name: '米洛' }) })
+  return names.filter((name) => within(board).queryByText(name, { exact: true }))
+}
+
 describe('技能弹窗', () => {
-  it('把已装备和可用技能合并显示在灯板，移除下方技能列表', async () => {
+  it('灯板画队友身上的技能：带上的，加上平台与项目给每位队友都发的；机器上没带的不画', async () => {
     mount({
       available: [
         { name: 'cheese', description: '芝士自己的用法', source: 'project' as const },
@@ -86,14 +93,32 @@ describe('技能弹窗', () => {
       ],
     })
 
-    expect(await screen.findByText('wolfram')).toBeTruthy()
-    expect(screen.getByText('cheese')).toBeTruthy()
-    expect(screen.getByText('ponytail')).toBeTruthy()
-    expect(document.querySelectorAll('.skills__grid .socket')).toHaveLength(3)
-    expect(document.querySelector('.pool')).toBeNull()
-    expect(document.querySelector('.machine')).toBeNull()
-    expect(screen.queryByText(/工作电脑/)).toBeNull()
-    expect(screen.queryByText('添加')).toBeNull()
+    expect(await listed('wolfram', 'cheese', 'ponytail')).toEqual(['wolfram', 'cheese'])
+  })
+
+  it('什么都没带、只有机器上的 pdf 可加：pdf 不进名单，说「还什么都没带」', async () => {
+    mount({
+      carried: [],
+      available: [{ name: 'pdf', description: '读 PDF', source: 'machine' as const }],
+      market: null,
+    })
+
+    expect(await screen.findByText(t('work.room.skills.emptyCarried'))).toBeTruthy()
+    expect(await listed('pdf')).toEqual([])
+  })
+
+  it('机器上的技能带上了就画，灯照旧只说能不能用', async () => {
+    mount({
+      carried: [{ name: 'pdf', description: '读 PDF', source: 'machine' as const }],
+      available: [{ name: 'wolfram', description: '算', source: 'platform' as const }],
+      health: { wolfram: { status: 'unavailable', detail: '没配钥匙' } },
+      market: null,
+    })
+
+    expect(await listed('pdf', 'wolfram')).toEqual(['pdf', 'wolfram'])
+    expect(screen.getByRole('listitem', { name: t('work.room.skills.socketLit', { name: 'pdf' }) })).toBeTruthy()
+    expect(screen.getByRole('listitem', { name: t('work.room.skills.socketUnlit', { name: 'wolfram' }) })).toBeTruthy()
+    expect(screen.queryByText(t('work.room.skills.emptyCarried'))).toBeNull()
   })
 
   it('市场三页签各画各的，MCP 那张没有 +', async () => {

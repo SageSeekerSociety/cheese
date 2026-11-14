@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 技能面板：带什么、还能从哪儿加。黄底一块灯板，一颗一颗「洞」按下去就亮。
 //
-// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。
+// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。灯只说能不能用，
+// 不说带没带：带没带由哪些格子在板上决定。
 //
 // 只管画、只往上发：池子、机器索引、落库都在 `useAgentSkills` 里。桌面上是居中
 // 弹窗，手机上是一整页 —— 外壳由 AdaptiveDialog 决定，这一块在两边都是同一张灯板。
@@ -52,6 +53,12 @@ const props = withDefaults(
     deviceId: string | null
     market?: MarketItem | null
     marketLoading?: boolean
+    /** 市场目录读失败了；没读过、正在读都不算。 */
+    marketFailed?: boolean
+    /** 目录读失败时服务端给的那句原因。 */
+    marketFailureReason?: string | null
+    /** 目录读失败是 401/403：说没权限、不给重试。 */
+    marketForbidden?: boolean
     /** 别人正占着这个队友的「编辑中」租约：这一轮面板只读。 */
     editingBlocked?: boolean
     /** 占着租约的那个人的 handle，画在人看的那一句里。 */
@@ -64,6 +71,9 @@ const props = withDefaults(
   {
     market: null,
     marketLoading: false,
+    marketFailed: false,
+    marketFailureReason: null,
+    marketForbidden: false,
     editingBlocked: false,
     editingBy: null,
     loading: false,
@@ -75,14 +85,22 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
+  /** 市场目录读失败后点了「重试」。 */
+  (e: 'retryMarket'): void
 }>()
 
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
 const availableNow = (skill: SkillItem) => (skill.source === 'platform' ? status(skill.name) === 'ok' : true)
 
+// 灯板画的是这位队友身上真有的：带上的，加上平台与项目发给每位队友的那几条（它们本来
+// 就到了每个执行器，见后端 `project_skills.py` 技能目录那段）。机器上的技能要带上才跟着
+// 走，`available` 里机器那几条只是「还能加」，不进这份名单 —— 不然一个什么都没带的队友
+// 会被画成带着 pdf。
+const shippedToEveryone = (skill: SkillItem) => skill.source !== 'machine'
+
 const boardSkills = computed(() => {
   const seen = new Set<string>()
-  return [...props.carried, ...props.available].filter((skill) => {
+  return [...props.carried, ...props.available.filter(shippedToEveryone)].filter((skill) => {
     if (seen.has(skill.name)) return false
     seen.add(skill.name)
     return true
@@ -120,12 +138,17 @@ const locked = () => !props.canManage || props.editingBlocked
             }}
           </p>
           <p v-else-if="locked()" class="skills__note t-meta-read">{{ t('work.room.skills.managerOnly') }}</p>
-          <div class="skills__grid">
+          <!-- The board is a list named after the teammate; each socket says whether it is lit, so the light is not colour alone. -->
+          <div class="skills__grid" role="list" :aria-label="t('work.room.skills.carriedTitle', { name: agentName })">
             <div
               v-for="s in boardSkills"
               :key="s.name"
               class="socket"
               :class="{ 'socket--on': availableNow(s) }"
+              role="listitem"
+              :aria-label="
+                t(availableNow(s) ? 'work.room.skills.socketLit' : 'work.room.skills.socketUnlit', { name: s.name })
+              "
               :title="s.description || s.name"
             >
               <span class="socket__hole"
@@ -149,7 +172,11 @@ const locked = () => !props.canManage || props.editingBlocked
       :device-id="deviceId"
       :scanning="scanning"
       :saving="saving"
+      :failed="marketFailed"
+      :failure-reason="marketFailureReason"
+      :forbidden="marketForbidden"
       @install="emit('install', $event)"
+      @retry="emit('retryMarket')"
     />
   </AdaptiveDialog>
 </template>
