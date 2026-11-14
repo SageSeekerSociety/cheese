@@ -71,7 +71,7 @@
   right: auto;
   top: auto;
   transform: none;
-  width: 28px;
+  min-width: 28px;
   min-height: 28px;
   margin-inline-end: -4px;
   background: transparent;
@@ -96,7 +96,7 @@
     right: auto;
     top: auto;
     transform: none;
-    width: 28px;
+    min-width: 28px;
     min-height: 28px;
     margin-inline-end: -4px;
     background: transparent;

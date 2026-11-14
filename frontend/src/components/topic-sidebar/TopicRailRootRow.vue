@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 频道分组里的第一行：项目自带的频道「综合」。它和别的频道同一个分组、同一种行，
 // 只是固定排在第一位、不能归档；挂在它下面的任务由父级填进 slot。项目里只有这一个频道时
-// 没有频道这一组，这一行写「对话」，新建频道的 ＋ 和 ⋯ 一起浮在这一行上。
+// 没有频道这一组，这一行写「对话」，新建频道的 ＋ 和 ⋯ 在同一处：悬停或键盘聚焦时浮出，触屏上常驻。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Topic } from '@/cx_types'
 import type { RowLight } from '@/lib/roomLight'

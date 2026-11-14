@@ -126,9 +126,18 @@ describe('只有一个频道的项目', () => {
     expect(queryByText('全部频道')).toBeNull()
   })
 
-  it('手机上的整页列表照常分组', () => {
-    const { getByText, queryByText } = mount({ topics: onlyRoot, page: true })
-    expect(getByText('综合')).toBeTruthy()
+  it('手机上的整页列表同样只写「对话」，新建频道的 ＋ 在那一行上', async () => {
+    const { container, getByText, queryByText, onNewChannel } = mount({ topics: onlyRoot, page: true })
+    expect(getByText('对话')).toBeTruthy()
+    expect(queryByText('综合')).toBeNull()
+    expect(queryByText('频道')).toBeNull()
+    expect(queryByText('全部频道')).toBeNull()
+    await fireEvent.click(container.querySelector('[data-testid="new-channel-entry"]')!)
+    expect(onNewChannel).toHaveBeenCalled()
+  })
+
+  it('手机上有第二个频道时照常分组', () => {
+    const { getByText, queryByText } = mount({ topics: [topic('root', null), topic('other', 'root')], page: true })
     expect(getByText('频道')).toBeTruthy()
     expect(queryByText('对话')).toBeNull()
   })
