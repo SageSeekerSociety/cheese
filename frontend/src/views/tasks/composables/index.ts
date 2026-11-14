@@ -1,3 +1,4 @@
+export { useSubmittedText } from './useSubmittedText'
 export { useTaskAttachments } from './useTaskAttachments'
 export { useTaskData } from './useTaskData'
 export { useTaskManagement } from './useTaskManagement'
