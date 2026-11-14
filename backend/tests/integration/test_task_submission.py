@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from tests.integration.conftest import (
     UserCreator,
     ask_to_join,
@@ -1646,6 +1647,197 @@ class TestTaskSubmissionIntegration:
         opened = api_client.get(handed_in["url"])
         assert opened.status_code == 200, opened.text
         assert opened.content == body
+
+    def _upload(
+        self, api_client: TestClient, token: str, name: str, body: bytes, mime: str
+    ) -> int:
+        upload = api_client.post(
+            "/attachments",
+            data={"type": "file"},
+            files={"file": (name, body, mime)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert upload.status_code == 201, upload.text
+        return upload.json()["data"]["id"]
+
+    def test_a_file_item_hands_in_a_report_with_its_images(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
+        """One file item takes a Markdown report and the screenshots it refers
+        to; the teacher sees every one of them, in the order handed in, and
+        each link opens its own bytes."""
+        data = setup_task_for_submission
+        creator = data["creator"]
+        participant = data["participant"]
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+        membership_id = self._add_participant(
+            api_client, task_id, participant.token, participant.user_id, creator.token
+        )
+        files = [
+            ("report.md", b"# Lab 1\n![](autograder.png)\n", "text/markdown"),
+            ("autograder.png", b"\x89PNG first screenshot", "image/png"),
+            ("tests.png", b"\x89PNG second screenshot", "image/png"),
+        ]
+        ids = [
+            self._upload(api_client, participant.token, name, body, mime)
+            for name, body, mime in files
+        ]
+
+        submit = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentIds": ids}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert submit.status_code == 200, submit.text
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        [entry] = resp.json()["data"]["submissions"][0]["content"]
+        assert entry["type"] == "FILE"
+        handed_in = entry["contentAttachments"]
+        assert [f["meta"]["name"] for f in handed_in] == [f[0] for f in files]
+        for f, (_, body, _) in zip(handed_in, files, strict=True):
+            opened = api_client.get(f["url"])
+            assert opened.status_code == 200, opened.text
+            assert opened.content == body
+        # A reader of the single file still finds the first of them.
+        assert entry["contentAttachment"]["id"] == ids[0]
+
+    def test_a_file_item_holds_at_most_twenty_files(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
+        """Past twenty files in one item the hand-in is refused whole: no
+        version is recorded."""
+        data = setup_task_for_submission
+        creator = data["creator"]
+        participant = data["participant"]
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+        membership_id = self._add_participant(
+            api_client, task_id, participant.token, participant.user_id, creator.token
+        )
+        ids = [
+            self._upload(api_client, participant.token, f"{i}.png", b"png", "image/png")
+            for i in range(21)
+        ]
+
+        submit = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentIds": ids}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert submit.status_code == 400, submit.text
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.json()["data"]["submissions"] == []
+
+        twenty = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentIds": ids[:20]}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert twenty.status_code == 200, twenty.text
+
+    def test_a_file_items_files_together_stay_within_the_upload_limit(
+        self,
+        setup_task_for_submission: dict,
+        api_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """An item holds no more bytes in all than one upload may have, which
+        is what the item held when it took a single file."""
+        data = setup_task_for_submission
+        creator = data["creator"]
+        participant = data["participant"]
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+        membership_id = self._add_participant(
+            api_client, task_id, participant.token, participant.user_id, creator.token
+        )
+        monkeypatch.setattr(settings, "attachment_max_bytes", 100)
+        ids = [
+            self._upload(api_client, participant.token, n, b"x" * 60, "image/png")
+            for n in ("a.png", "b.png")
+        ]
+
+        submit = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentIds": ids}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert submit.status_code == 400, submit.text
+
+        one = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentIds": ids[:1]}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert one.status_code == 200, one.text
+
+    def test_editing_a_version_replaces_its_files(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
+        """Editing a version hands in the files given now, and only those."""
+        data = setup_task_for_submission
+        creator = data["creator"]
+        participant = data["participant"]
+        task_id = self._create_task(
+            api_client,
+            creator.token,
+            data["space_id"],
+            data["category_id"],
+            data["suffix"],
+        )
+        membership_id = self._add_participant(
+            api_client, task_id, participant.token, participant.user_id, creator.token
+        )
+        first, second, third = (
+            self._upload(api_client, participant.token, n, b"bytes", "image/png")
+            for n in ("a.png", "b.png", "c.png")
+        )
+        submit = api_client.post(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            json=[{"attachmentIds": [first, second]}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert submit.status_code == 200, submit.text
+        version = submit.json()["data"]["submission"]["version"]
+
+        edit = api_client.patch(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions/{version}",
+            json=[{"attachmentIds": [third, first]}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert edit.status_code == 200, edit.text
+
+        resp = api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        [entry] = resp.json()["data"]["submissions"][0]["content"]
+        assert [f["id"] for f in entry["contentAttachments"]] == [third, first]
 
     def test_a_participant_cannot_hand_in_someone_elses_upload(
         self, setup_task_for_submission: dict, api_client: TestClient

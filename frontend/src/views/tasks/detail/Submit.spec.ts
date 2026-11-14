@@ -10,9 +10,10 @@ const mocks = vi.hoisted(() => ({
   listSubmissions: vi.fn().mockResolvedValue({ submissions: [] }),
   push: vi.fn(),
   limits: vi.fn(),
+  upload: vi.fn(),
 }))
 vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: mocks }))
-vi.mock('@/api/attachments', () => ({ AttachmentsApi: { upload: vi.fn(), limits: mocks.limits } }))
+vi.mock('@/api/attachments', () => ({ AttachmentsApi: { upload: mocks.upload, limits: mocks.limits } }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -51,7 +52,7 @@ describe('提交须知 on file size', () => {
     const view = mountForm()
 
     await waitFor(() => expect(view.container.textContent).toContain('200'))
-    expect(view.container.textContent).toContain('单个文件不超过 200')
+    expect(view.container.textContent).toContain('合计不超过 200')
     expect(view.container.textContent).not.toContain('50MB')
     view.unmount()
   })
@@ -63,7 +64,7 @@ describe('提交须知 on file size', () => {
     await waitFor(() => expect(mocks.limits).toHaveBeenCalled())
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(view.container.textContent).toContain('提交须知')
-    expect(view.container.textContent).not.toContain('单个文件不超过')
+    expect(view.container.textContent).not.toContain('合计不超过')
     expect(view.container.textContent).not.toMatch(/\d+\s*MB/)
     view.unmount()
   })
@@ -199,6 +200,68 @@ describe('a task split into stages', () => {
     await fireEvent.click(view.getByRole('button', { name: /实现/ }))
     expect(view.container.textContent).toContain('阶段「实现」已过截止时间，不能再提交')
     expect(view.queryByRole('textbox', { name: '代码说明' })).toBeNull()
+    view.unmount()
+  })
+})
+
+describe('a file item takes several files', () => {
+  function pick(view: ReturnType<typeof mountForm>, files: File[]) {
+    const input = view.container.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(input, 'files', { value: files, configurable: true })
+    return fireEvent.change(input)
+  }
+
+  beforeEach(() => {
+    mocks.createSubmission.mockClear()
+    mocks.upload.mockReset()
+    let next = 100
+    mocks.upload.mockImplementation(async () => ({ id: ++next }))
+  })
+
+  it('hands in a report with its screenshots, picked at once or added later, in the order picked', async () => {
+    const view = mountForm()
+    await pick(view, [new File(['# 实验报告'], 'report.md'), new File(['png'], 'autograder.png')])
+    await pick(view, [new File(['png'], 'tests.png')])
+
+    await fireEvent.submit(view.container.querySelector('form')!)
+
+    await waitFor(() =>
+      expect(mocks.createSubmission).toHaveBeenCalledWith(14, 6, [{ attachmentIds: [101, 102, 103] }], null)
+    )
+    expect(mocks.upload.mock.calls.map(([body]) => (body.file as File).name)).toEqual([
+      'report.md',
+      'autograder.png',
+      'tests.png',
+    ])
+    view.unmount()
+  })
+
+  it('takes the newer file when one of the same name is picked again', async () => {
+    const view = mountForm()
+    await pick(view, [new File(['old'], 'autograder.png'), new File(['# r'], 'report.md')])
+    await pick(view, [new File(['new one'], 'autograder.png')])
+
+    await fireEvent.submit(view.container.querySelector('form')!)
+
+    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalled())
+    const sent = mocks.upload.mock.calls.map(([body]) => body.file as File)
+    expect(sent.map((file) => file.name)).toEqual(['autograder.png', 'report.md'])
+    expect(sent[0].size).toBe('new one'.length)
+    view.unmount()
+  })
+
+  it('uploads nothing when an item has more files than it takes', async () => {
+    const view = mountForm()
+    await pick(
+      view,
+      Array.from({ length: 21 }, (_, i) => new File(['png'], `${i}.png`))
+    )
+
+    await fireEvent.submit(view.container.querySelector('form')!)
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(mocks.upload).not.toHaveBeenCalled()
+    expect(mocks.createSubmission).not.toHaveBeenCalled()
     view.unmount()
   })
 })

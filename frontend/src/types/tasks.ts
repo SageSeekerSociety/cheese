@@ -204,7 +204,8 @@ export interface TaskSubmissionContent {
   title: string
   type: TaskSubmissionEntryType
   contentText?: string
-  contentAttachment?: Material
+  /** 文件项交的每一份，按交的顺序：一份报告和它引用的图片可以一起交。文本项是空的。 */
+  contentAttachments: Material[]
 }
 
 export interface TaskParticipantSummary {
