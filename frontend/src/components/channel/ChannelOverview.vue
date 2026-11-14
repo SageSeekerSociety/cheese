@@ -59,9 +59,7 @@ const LIVELY_MAX = 6
 const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 const nameOf = (handle: string) => props.memberNames[handle] || handle
 
-const running = computed(() =>
-  props.tasks.filter((task) => task.status === 'open' && task.presentation.column !== 'done')
-)
+const open = computed(() => props.tasks.filter((task) => task.status === 'open' && task.presentation.column !== 'done'))
 const movedAt = (task: RoomTask) => task.last_message?.created_at ?? task.created_at
 // 等你处理：这个频道里下一步在我手上的任务，等我审阅的交付和等我回答的提问，等得最久的在前。
 // 审阅按卡上的审阅人认：一张卡可以请几个人审，`needs_my_action` 只认得其中第一位。
@@ -77,6 +75,11 @@ const waitingOnMe = computed(() =>
     .filter((task) => task.status === 'open' && (reviewsMine(task) || asksMe(task)))
     .sort((a, b) => (a.card?.since ?? a.updated_at).localeCompare(b.card?.since ?? b.updated_at))
 )
+// 进行中：已经列在「等你处理」里的不再列一遍。
+const running = computed(() => {
+  const waiting = new Set(waitingOnMe.value.map((task) => task.id))
+  return open.value.filter((task) => !waiting.has(task.id))
+})
 function openWaiting(task: RoomTask) {
   if (awaitingReview(task)) emit('open-delivery', task.id)
   else emit('open-task', task.id)
@@ -272,7 +275,7 @@ async function save() {
       @jump="emit('jump', $event)"
     />
 
-    <section class="co-section">
+    <section v-if="running.length || !waitingOnMe.length" class="co-section" data-testid="channel-running">
       <h3 class="co-title">{{ t('work.channel.overview.running', { count: running.length }) }}</h3>
       <p v-if="!running.length" class="t-meta c-faint">{{ t('work.channel.overview.noRunning') }}</p>
       <button

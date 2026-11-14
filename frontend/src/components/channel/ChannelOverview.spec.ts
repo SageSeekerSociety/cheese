@@ -145,6 +145,22 @@ describe('等你处理', () => {
     expect(ui.emitted()['open-task']).toEqual([['a1']])
   })
 
+  it('列在等你处理里的任务，不在进行中再列一遍，数字跟着少', () => {
+    const ui = mount({
+      tasks: [review('r1', '报名表改短', 'me'), review('r2', '等别人审阅的', 'bob'), task('t1', '登录页改版', 1)],
+    })
+    const running = ui.getByTestId('channel-running').textContent ?? ''
+    expect(running).not.toContain('报名表改短')
+    expect(running).toContain('登录页改版')
+    expect(running).toContain(t('work.channel.overview.running', { count: 2 }))
+  })
+
+  it('进行中的全都在等你处理里时，进行中这一段不在', () => {
+    const ui = mount({ tasks: [review('r1', '报名表改短', 'me'), asking('a1', '用哪本教材', true)] })
+    expect(ui.getAllByTestId('channel-waiting-task')).toHaveLength(2)
+    expect(ui.queryByTestId('channel-running')).toBeNull()
+  })
+
   it('没有等我的，这一段整个不在', () => {
     const ui = mount({ tasks: [review('r2', '等别人审阅的', 'bob'), task('t1', '登录页改版', 1)] })
     expect(ui.queryByText(t('work.channel.overview.waiting'))).toBeNull()
