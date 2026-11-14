@@ -418,6 +418,10 @@ class TaskSubmissionEntry(Base):
     content_text: Mapped[str | None] = mapped_column(
         "content_text", Text, nullable=True
     )
+    # The one file of an entry written before an entry could hold several.
+    # Entries written since keep their files in ``task_submission_entry_file``
+    # and leave this NULL; reading falls back to it only for an entry with no
+    # rows there (``TaskSubmissionService._files_of``).
     content_attachment_id: Mapped[int | None] = mapped_column(
         "content_attachment_id",
         Integer,
@@ -439,6 +443,28 @@ class TaskSubmissionEntry(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class TaskSubmissionEntryFile(Base):
+    """One file handed in under a file item of a submission, in the order the
+    submitter gave them: a report and the images it refers to are one answer
+    to one item. Written once with its entry and never changed: editing a
+    version writes new entries (``modify_submission``)."""
+
+    __tablename__ = "task_submission_entry_file"
+
+    entry_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task_submission_entry.id",
+            name="fk_task_submission_entry_file_entry_id_task_submission_entry",
+        ),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: References attachment.id, which a file entry has always named without
+    #: a foreign key (``TaskSubmissionEntry.content_attachment_id``).
+    attachment_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class TaskSubmissionReview(Base):

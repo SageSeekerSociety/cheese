@@ -16,7 +16,7 @@ from app.core.domain_errors import (
     TeamSizeTooLargeError,
 )
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
 from app.domain.project.services import ClaimInProgressError
@@ -685,6 +685,34 @@ class TaskMembershipService:
         }
 
 
+#: The most files one file item of a submission holds: a report and the images
+#: it refers to. The page that hands work in says the same number
+#: (``frontend/src/lib/submissionFiles.ts``).
+MAX_FILES_PER_ITEM = 20
+
+
+def _attachment_ids(item: dict) -> list[int]:
+    """The files one entry of a submission request names, in order, each once.
+
+    ``attachmentIds`` is the list; a lone ``attachmentId`` is a list of one.
+    A value that is not an id is ignored, as a lone one always was."""
+    raw: object = item.get("attachmentIds")
+    if raw is None:
+        raw = item.get("attachmentId")
+    values: list[object] = raw if isinstance(raw, list) else [raw]
+    ids: list[int] = []
+    for value in values:
+        if not isinstance(value, int | str) or isinstance(value, bool):
+            continue
+        try:
+            attachment_id = int(value)
+        except ValueError:
+            continue
+        if attachment_id not in ids:
+            ids.append(attachment_id)
+    return ids
+
+
 def _submitted_file_to_api(attachment: Attachment) -> dict:
     """A handed-in file as the submission view reads it: the ``Attachment``
     contract, ``meta`` in its ``FileMeta`` shape (``name / size / mime``).
@@ -810,30 +838,32 @@ class TaskSubmissionService:
         member_summary = await self._build_member_summary(membership)
         submitter_summary = await self._build_submitter_summary(submission.submitter_id)
 
-        attachment_ids = [
-            e.content_attachment_id for e in entries if e.content_attachment_id
-        ]
+        files_of = await self._files_of(entries)
         attachments = {
-            a.id: a for a in await self._attachments.get_many(attachment_ids)
+            a.id: a
+            for a in await self._attachments.get_many(
+                sorted({a for ids in files_of.values() for a in ids})
+            )
         }
 
         def _entry_to_dto(idx: int, entry: TaskSubmissionEntry) -> dict:
-            if entry.content_attachment_id is not None:
-                entry_type = "FILE"
-            else:
-                entry_type = "TEXT"
-            content_attachment = None
-            attachment = attachments.get(entry.content_attachment_id or 0)
-            if attachment is not None:
-                content_attachment = _submitted_file_to_api(attachment)
+            ids = files_of.get(entry.id, [])
+            files = [
+                _submitted_file_to_api(attachments[a]) for a in ids if a in attachments
+            ]
             return {
                 # Titled by the name the entry was answered under, not by the
                 # form as it reads now. An entry answered under a blank name,
                 # or past the end of the form, is numbered instead.
                 "title": entry.prompt or f"Entry {idx + 1}",
-                "type": entry_type,
+                "type": "FILE" if ids else "TEXT",
                 "contentText": entry.content_text,
-                "contentAttachment": content_attachment,
+                # Every file of the item, in the order they were handed in.
+                "contentAttachments": files,
+                # The first of them: what a reader that predates several files
+                # per item still reads (kept for API callers; see the PR that
+                # added ``contentAttachments``).
+                "contentAttachment": files[0] if files else None,
             }
 
         content_dtos = [
@@ -861,19 +891,41 @@ class TaskSubmissionService:
             "review": review_dto if review_dto is not None else None,
         }
 
+    async def _files_of(
+        self, entries: Sequence[TaskSubmissionEntry]
+    ) -> dict[int, list[int]]:
+        """The attachment ids each entry holds, by entry id, in order.
+
+        An entry written before an item could hold several files has no rows
+        in ``task_submission_entry_file`` and keeps its one file in
+        ``content_attachment_id``; that column is read for exactly those."""
+        listed = await self._entry_repo.files_by_entry_ids([e.id for e in entries])
+        return {
+            e.id: listed.get(e.id)
+            or ([e.content_attachment_id] if e.content_attachment_id else [])
+            for e in entries
+        }
+
     async def _entries_from(
         self, contents: list[dict], *, task_id: int, stage: int, submitter_id: int
-    ) -> list[tuple[int, str | None, int | None, str | None]]:
-        """Turn the request's entries into ``(index, text, attachment_id, prompt)``.
+    ) -> list[tuple[int, str | None, list[int], str | None]]:
+        """Turn the request's entries into ``(index, text, attachment_ids, prompt)``.
+
+        A file entry names its files as ``attachmentIds``, in order; a lone
+        ``attachmentId`` is the same as a list of one (what callers written
+        before an item could hold several files send).
 
         ``prompt`` is the name of the form item at the entry's position among
         the items of the entry's stage, read now, so the entry keeps it however
         the form changes afterwards.
 
-        A file entry may only name a file the submitter uploaded. The submission
+        A file entry may only name files the submitter uploaded. The submission
         view hands out the file's storage link and name, so accepting any id here
         would let a participant read someone else's upload by guessing its id.
-        Checked before anything is written, so a refused request changes nothing.
+        One item holds at most ``MAX_FILES_PER_ITEM`` files and, together, no
+        more bytes than the one file it used to hold could have
+        (``settings.attachment_max_bytes``). Checked before anything is
+        written, so a refused request changes nothing.
         """
         prompts = dict(
             enumerate(
@@ -882,20 +934,13 @@ class TaskSubmissionService:
                 if item.stage == stage
             )
         )
-        rows: list[tuple[int, str | None, int | None, str | None]] = []
+        rows: list[tuple[int, str | None, list[int], str | None]] = []
         for idx, item in enumerate(contents):
-            attachment_id_raw = item.get("attachmentId")
-            attachment_id: int | None = None
-            if attachment_id_raw is not None:
-                try:
-                    attachment_id = int(attachment_id_raw)
-                except (TypeError, ValueError):
-                    attachment_id = None
             rows.append(
-                (idx, item.get("text"), attachment_id, prompts.get(idx) or None)
+                (idx, item.get("text"), _attachment_ids(item), prompts.get(idx) or None)
             )
 
-        wanted = {a for _, _, a, _ in rows if a is not None}
+        wanted = {a for _, _, ids, _ in rows for a in ids}
         found = {a.id: a for a in await self._attachments.get_many(list(wanted))}
         for attachment_id in sorted(wanted):
             attachment = found.get(attachment_id)
@@ -904,6 +949,24 @@ class TaskSubmissionService:
             if not self._attachments.is_uploader(attachment, submitter_id):
                 raise ForbiddenError(
                     "A submission can only include files its submitter uploaded"
+                )
+        for _, _, ids, prompt in rows:
+            if len(ids) > MAX_FILES_PER_ITEM:
+                raise BadRequestError(
+                    say(
+                        "submissionTooManyFiles",
+                        item=prompt or "",
+                        n=MAX_FILES_PER_ITEM,
+                    )
+                )
+            total = sum(int(found[a].meta.get("size", 0) or 0) for a in ids)
+            if total > settings.attachment_max_bytes:
+                raise BadRequestError(
+                    say(
+                        "submissionFilesTooLarge",
+                        item=prompt or "",
+                        size=size_text(settings.attachment_max_bytes),
+                    )
                 )
         return rows
 

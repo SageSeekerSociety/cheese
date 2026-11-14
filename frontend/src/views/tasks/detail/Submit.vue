@@ -108,23 +108,39 @@
                     </template>
 
                     <template v-else-if="entry.type === 'FILE'">
+                      <!-- 一项可以交几份（一份 Markdown 报告和它引用的截图）：一次多选，或再点一次
+                           接着加，同名的换成新选的那份；卡片上的 × 移出一份。 -->
                       <v-file-input
-                        v-model="submissionContent[index].contentAttachment"
+                        :model-value="submissionContent[index].files"
+                        multiple
+                        counter
+                        show-size
                         :label="entry.prompt"
                         :placeholder="t('tasks.submit.uploadPlaceholder', { prompt: entry.prompt })"
                         variant="outlined"
-                        :rules="[(v) => !!v || t('tasks.submit.required')]"
+                        :rules="fileRules(entry.prompt)"
                         hide-details="auto"
                         prepend-icon=""
                         class="submission-input"
+                        @update:model-value="(picked) => addFiles(index, picked)"
                       >
                         <template #prepend>
                           <v-icon color="primary" class="mr-2">mdi-paperclip</v-icon>
                         </template>
-                        <template #selection="{ fileNames }">
-                          <v-chip color="primary" variant="outlined" label class="mt-1">
+                        <template #selection>
+                          <v-chip
+                            v-for="(file, at) in submissionContent[index].files"
+                            :key="file.name"
+                            color="primary"
+                            variant="outlined"
+                            label
+                            closable
+                            :close-label="t('tasks.submit.removeFile', { name: file.name })"
+                            class="mt-1 me-1"
+                            @click:close.stop="removeFile(index, at)"
+                          >
                             <v-icon start>mdi-file</v-icon>
-                            {{ fileNames[0] }}
+                            {{ file.name }}
                           </v-chip>
                         </template>
                       </v-file-input>
@@ -169,7 +185,7 @@
           <!-- 上限是上传那一步真拦的那个数（`GET /attachments/limits`）；问不到就不写这一行，不猜一个数。 -->
           <v-list-item v-if="maxFileBytes" prepend-icon="mdi-file-upload-outline" class="ps-2">
             <v-list-item-title>{{
-              t('tasks.submit.guideFileSize', { size: fmtFileSize(maxFileBytes) })
+              t('tasks.submit.guideFileSize', { size: fmtFileSize(maxFileBytes), n: MAX_FILES_PER_ITEM })
             }}</v-list-item-title>
           </v-list-item>
           <v-list-item v-if="taskData?.resubmittable" prepend-icon="mdi-refresh" class="ps-2">
@@ -233,7 +249,7 @@
 
 <script setup lang="ts">
 import type { Task, TaskProgress } from '@/types'
-import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/types/taskBoard'
+import type { PostTaskSubmissionRequestData, TaskParticipationIdentity, TaskParticipationInfo } from '@/types/taskBoard'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -246,6 +262,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { MAX_FILES_PER_ITEM, mergeFiles } from '@/lib/submissionFiles'
 import { settledStage } from '@/lib/taskStages'
 import { toast } from '@/lib/toast'
 import { fmtFileSize } from '@/lib/usageFormat'
@@ -325,14 +342,41 @@ const submissionSchema = computed(() =>
     (entry) => settledStage(stages.value, entry.stage) === (stages.value[stage.value]?.id ?? null)
   )
 )
-const submissionContent = ref<{ contentText?: string; contentAttachment?: File }[]>([])
+const submissionContent = ref<{ contentText?: string; files: File[] }[]>([])
 watch(
   submissionSchema,
   (schema) => {
-    submissionContent.value = schema.map(() => ({ contentText: '', contentAttachment: undefined }))
+    submissionContent.value = schema.map(() => ({ contentText: '', files: [] }))
   },
   { immediate: true }
 )
+
+/** 选文件框交回来的那一批：空的是点了清空，否则加进这一项已选的那几份（`mergeFiles`）。 */
+function addFiles(index: number, picked: File | File[] | null | undefined) {
+  const added = picked ? (Array.isArray(picked) ? picked : [picked]) : []
+  const item = submissionContent.value[index]
+  item.files = added.length ? mergeFiles(item.files, added) : []
+}
+
+function removeFile(index: number, at: number) {
+  submissionContent.value[index].files.splice(at, 1)
+}
+
+/** 一项交几份、合计多大，和服务端拦的是同一组数：份数 `MAX_FILES_PER_ITEM`，合计不超过单个
+ *  文件的上限（`GET /attachments/limits`，问不到就只查份数）。 */
+function filesProblem(prompt: string, files: readonly File[]): string | null {
+  if (!files.length) return t('tasks.submit.required')
+  if (files.length > MAX_FILES_PER_ITEM) return t('tasks.submit.tooManyFiles', { prompt, n: MAX_FILES_PER_ITEM })
+  const total = files.reduce((sum, file) => sum + file.size, 0)
+  if (maxFileBytes.value && total > maxFileBytes.value) {
+    return t('tasks.submit.filesTooLarge', { prompt, size: fmtFileSize(maxFileBytes.value) })
+  }
+  return null
+}
+
+function fileRules(prompt: string) {
+  return [(files: File[] | null | undefined) => filesProblem(prompt, files ?? []) ?? true]
+}
 
 // 用户截止时间
 const userDeadline = computed(() => currentIdentity.value?.deadline ?? null)
@@ -470,7 +514,7 @@ const submitTask = async () => {
     if (schema.type === 'TEXT') {
       return !!item.contentText
     } else if (schema.type === 'FILE') {
-      return !!item.contentAttachment
+      return item.files.length > 0
     }
     return true
   })
@@ -479,29 +523,29 @@ const submitTask = async () => {
     toast.error(t('tasks.submit.fillRequired'))
     return
   }
+  for (const [index, item] of submissionContent.value.entries()) {
+    const schema = submissionSchema.value[index]
+    const problem = schema.type === 'FILE' ? filesProblem(schema.prompt, item.files) : null
+    if (problem) {
+      toast.error(problem)
+      return
+    }
+  }
 
   submitting.value = true
   progressDialog.value = true
   uploadProgress.value = 0
 
   try {
-    // 处理文件上传
-    let uploadedFiles = 0
+    const finalSubmissionContent: PostTaskSubmissionRequestData[] = submissionContent.value.map((item, index) =>
+      submissionSchema.value[index]?.type === 'FILE' ? { attachmentIds: [] } : { text: item.contentText }
+    )
 
-    const finalSubmissionContent = submissionContent.value.map((item) => {
-      if (item.contentAttachment) {
-        return {} as { text?: string; attachmentId?: number }
-      }
-      return {
-        text: item.contentText,
-      } as { text?: string; attachmentId?: number }
-    })
-
-    // 上传文件
+    // 上传文件：一份一份传，进度框里写着正在传的是哪一份
     for (const [index, entry] of submissionContent.value.entries()) {
-      if (entry.contentAttachment) {
+      for (const file of submissionSchema.value[index]?.type === 'FILE' ? entry.files : []) {
         try {
-          currentFileName.value = entry.contentAttachment.name
+          currentFileName.value = file.name
           uploadProgress.value = 0
           uploadSpeed.value = '0 KB/s'
           timeRemaining.value = t('tasks.submit.calculating')
@@ -509,13 +553,12 @@ const submitTask = async () => {
           const data = await AttachmentsApi.upload(
             {
               type: 'file',
-              file: entry.contentAttachment,
+              file,
             },
             updateProgress
           )
 
-          finalSubmissionContent[index].attachmentId = data.id
-          uploadedFiles++
+          finalSubmissionContent[index].attachmentIds!.push(data.id)
         } catch (error) {
           toast.error(
             t('tasks.submit.uploadFailed', {

@@ -20,5 +20,6 @@
   "scoreRequired": "A pass needs a score: a whole number from 0 to 100",
   "submit": "Submit",
   "submittedAt": "Submitted {time}",
-  "submittedBy": "{name} submitted {time}"
+  "submittedBy": "{name} submitted {time}",
+  "previewFailed": "Couldn't read this file"
 }
