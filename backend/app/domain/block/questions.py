@@ -189,8 +189,8 @@ def skip_question(question: Block, *, by: str) -> bool:
 
     跳过是对这道题的一个回应，所以和回答记在同一份 ``answer_log`` 上，一条
     ``kind=skipped``、不带选项也不带话、记着是谁的条目。它只把题从他手上拿走：题问
-    了几个人，别人照旧等着回答。撤销跳过就是撤回这一条（`withdraw_answer`），和撤回
-    答案是同一个动作。
+    了几个人，别人照旧等着回答。撤销跳过就是拿回这一条（`unskip_question`）—— 回答
+    记下的那一条拿不回来。
 
     只有能回答这道题的人跳得过（`block.asked.may_answer`，点选项、打字回答也是这
     一条）；已经有人回答的题不再收，同一个人也不跳
@@ -224,31 +224,30 @@ def skip_question(question: Block, *, by: str) -> bool:
     return skipped_by_all(question.meta)
 
 
-def answered_by(question: Block, handle: str) -> bool:
-    """``handle`` 在这道题上答过话没有。"""
-    return any(
-        (entry or {}).get("by") == handle
-        for entry in ((question.meta or {}).get("answer_log") or [])
-    )
+async def unskip_question(session, *, question: Block, by: str) -> Block:
+    """``by`` 撤销自己在这道题上的跳过：题重新在他的清单里等他回答。
 
+    **只撤得掉跳过**（``answer_log`` 里 ``kind=skipped`` 的那一种）。回答撤不掉：
+    答了就是答了 —— 那是他给提问那位的答复，题上算数、房间里那条消息也还在。撤掉它
+    等于让这道题回到「还没人答」，别人会看到同一个问题再问一遍。所以答过的人来撤，
+    拒掉（`askAnswerIsFinal`），不是他的题、没跳过的，也拒掉。
 
-async def withdraw_answer(session, *, question: Block, by: str) -> Block:
-    """把 ``by`` 自己那条答复从题上撤掉，让这道题回到「还没人答」。撤销一次跳过也是
-    这一步：跳过记在同一份 ``answer_log`` 上（`skip_question`）。
-
-    「只有回答的人可以撤回」落在这一行：撤掉的是 ``answer_log`` 里 ``by`` 等于他的
-    条目，别人的一条不动。没答过的人来撤什么也撤不掉，直接拒掉 —— 否则这里就是任何
-    人抹掉别人答案的入口。
-
-    撤的是这道题上的记录，不是他说的那句话：那条消息还在房间里，内容不改。撤到没有
-    人答过之后，选项重新出现，题也重新算作在等回答（`_awaiting_an_answer` 的判据同
-    此，读的是同一个 ``answer_log``）。叫醒谁、房间看到什么，由调用方负责。
+    撤的是这道题上的记录，不是他说过的话：跳过后他说的话照旧在房间里，内容不改。
+    `block.asked.skipped_by` 读的就是这份 ``answer_log``，所以撤掉之后题重新算作
+    在等他（`skipped_by_all` 也随之重算）。叫醒谁、房间看到什么，由调用方负责。
 
     flush，不 commit。
     """
-    if not answered_by(question, by):
-        raise ForbiddenError(say("askNothingToWithdraw"))
     meta = dict(question.meta or {})
+    mine = [
+        entry
+        for entry in (meta.get("answer_log") or [])
+        if (entry or {}).get("by") == by
+    ]
+    if any((entry or {}).get("kind") != SKIPPED for entry in mine):
+        raise ConflictError(say("askAnswerIsFinal"))
+    if not mine:
+        raise ForbiddenError(say("askNothingToUndo"))
     question.meta = {
         **meta,
         "answer_log": [
@@ -276,9 +275,8 @@ def _closed_entry(kind: str, *, by: str, at: datetime | None = None) -> dict:
 async def withdraw_question(session, *, question: Block, by: str) -> Block:
     """``by`` 撤回自己问出去的这道题（他是题块作者）。
 
-    只有作者撤得动，而且只撤没人答过的：有人答了就被拒 —— 那条答案是答的人
-    的，他要撤走的是他自己答的那条（`withdraw_answer`）。撤了跳过的人不算答过，题照
-    样收得回来。
+    只有作者撤得动，而且只撤没人答过的：有人答了就被拒 —— 答案一旦给出就算数，
+    没有撤回去的路。撤了跳过的人不算答过，题照样收得回来。
 
     记一条 ``kind=withdrawn`` 在 ``answer_log`` 上（和跳过、回答同一份），题因此
     `block.asked.settled`，离开「待你回答」与频道黄灯。**不是回答**：

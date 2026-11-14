@@ -1,5 +1,5 @@
 """Block routes — editing a message, emoji reactions (Slack semantics), and
-skipping a question asked with quick replies or taking back an answer to one."""
+skipping a question asked with quick replies (or taking that skip back)."""
 
 import uuid
 from datetime import UTC, datetime
@@ -25,7 +25,7 @@ from app.domain.agent.announce import finish_answering
 from app.domain.agent.ask import (
     publish_answered,
     skip,
-    withdraw,
+    unskip,
     withdraw_question_by_asker,
 )
 from app.domain.agent.chat import ChatService
@@ -69,8 +69,8 @@ class AnswerGroupResult(BaseModel):
     questions: list[dict] = []
 
 
-class WithdrawnAnswer(BaseModel):
-    """跳过一道题、或撤回对它的回答（跳过），回的是这道题改完之后的样子。
+class AskedQuestion(BaseModel):
+    """跳过一道题、或撤销那次跳过，回的是这道题改完之后的样子。
 
     和 `block_updated` 那条实时帧带的是同一份东西，发起的页面拿它直接替换这道题，
     不必再取一次。"""
@@ -180,7 +180,7 @@ async def toggle_reaction(
 @router.post(
     "/{block_id}/skip",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(WithdrawnAnswer),
+    **typed_response(AskedQuestion),
 )
 async def skip_question(
     block_id: uuid.UUID,
@@ -198,16 +198,16 @@ async def skip_question(
     The question stops waiting, as an answer would make it: it leaves that
     person's 待你回答 list, and its notice is settled. The agent that asked
     runs another turn told that the question was skipped, so it stops waiting
-    for an answer that is not coming. ``DELETE /blocks/{block_id}/answer`` undoes it."""
+    for an answer that is not coming. ``DELETE /blocks/{block_id}/skip`` undoes it."""
     return await _respond(block_id, db, resolver, broker, chat, runner, act=skip)
 
 
 @router.delete(
-    "/{block_id}/answer",
+    "/{block_id}/skip",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(WithdrawnAnswer),
+    **typed_response(AskedQuestion),
 )
-async def withdraw_answer(
+async def undo_skip(
     block_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
@@ -215,26 +215,26 @@ async def withdraw_answer(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """Take back your own answer to a question asked with quick replies, or
-    your skip of it, so the question is unanswered again and its options come
-    back for everyone.
+    """Take back your own skip of a question asked with quick replies, so the
+    question waits on you again.
 
-    ``block_id`` is the question, not the answer: an answer is an ordinary
-    message, and what is withdrawn is the line it left on the question
-    (`domain/block/questions`). Only whoever answered it can — anyone else gets
-    a refusal, not a way to erase somebody's answer. The message the answerer
-    sent stays in the room; its words are not what this changes.
+    Only a skip comes off. An answer does not: it is what you told the agent
+    that asked, the question records it for everyone, and the message you sent
+    it in is in the room — so an answer stands, and this is refused on one
+    (`askAnswerIsFinal`). Only your own skip, on a question you skipped: anyone
+    else gets a refusal, not a way to answer in somebody's place.
 
-    Whoever was watching gets the question as a `block_updated` frame, and the
-    agent that asked it runs another turn, because the turn it had been going
-    on was decided on an answer that no longer counts."""
-    return await _respond(block_id, db, resolver, broker, chat, runner, act=withdraw)
+    Whoever was watching gets the question as a `block_updated` frame. The agent
+    that asked runs another turn only if that skip settled the question
+    (`block.asked.skipped_by_all`): that is when it was told no answer was
+    coming, and this tells it one is again."""
+    return await _respond(block_id, db, resolver, broker, chat, runner, act=unskip)
 
 
 @router.delete(
     "/{block_id}/question",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(WithdrawnAnswer),
+    **typed_response(AskedQuestion),
 )
 async def withdraw_own_question(
     block_id: uuid.UUID,
@@ -245,11 +245,10 @@ async def withdraw_own_question(
     """Take back your own question, before anyone answers it.
 
     Only the asking agent may (`block.questions.withdraw_question` checks the
-    block's author) and only while nobody has answered: an answer belongs to
-    whoever gave it, and taking that back is their own route
-    (``DELETE /blocks/{block_id}/answer``). Nothing is said in the room — the
-    question's own message stays where it was — and no turn is run: the agent
-    is the one acting, so there is nobody to tell.
+    block's author) and only while nobody has answered: an answer stands once it
+    is given, and there is no route that takes one back. Nothing is said in the
+    room — the question's own message stays where it was — and no turn is run:
+    the agent is the one acting, so there is nobody to tell.
 
     The question stops waiting: it leaves the 待你回答 lists, its notice is
     settled, and the channel's yellow light goes out. Where it is drawn its
@@ -378,7 +377,7 @@ async def _answer_group(block_id, body, db, resolver, broker, chat, runner) -> d
 
 
 async def _respond(block_id, db, resolver, broker, chat, runner, *, act) -> dict:
-    """Run ``act`` (`agent.ask.skip` / `withdraw`) as the caller on the question
+    """Run ``act`` (`agent.ask.skip` / `unskip`) as the caller on the question
     ``block_id``, then show the room the question and run the asking agent."""
     repo = BlockRepository(db)
     question = await repo.get(block_id)

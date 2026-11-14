@@ -35,7 +35,7 @@ from app.domain.block.questions import (
     parse_questions,
     post_questions,
     skip_question,
-    withdraw_answer,
+    unskip_question,
     withdraw_question,
 )
 from app.domain.block.schemas import BlockOut
@@ -193,22 +193,10 @@ async def _addressees(session, room, to) -> tuple[tuple[str, ...], bool]:
     return handles, False
 
 
-#: 撤回一次答复叫醒提问那位时，投递 `payload.eventType` 上的名字。它不叫
-#: `agent_mention`，所以不数进那条「两位队友互相 @」的熔断：撤回是人点的，和 agent
+#: 跳过一道题、撤销一次跳过叫醒提问那位时，投递 `payload.eventType` 上的名字。它不叫
+#: `agent_mention`，所以不数进那条「两位队友互相 @」的熔断：这两下是人点的，和 agent
 #: 之间互相叫醒不是一回事。
-ANSWER_WITHDRAWN = "answer_withdrawn"
-#: 跳过一道题叫醒提问那位时的名字，同上理由不叫 `agent_mention`。
 QUESTION_SKIPPED = "question_skipped"
-
-
-def withdrawal_prompt(*, handle, question, block_id) -> str:
-    """撤回之后，提问的那位这一轮读到的话。"""
-    return (
-        f"{handle} 撤回了对一道题的答复（消息 id `{block_id}`）：\n\n"
-        f"---\n{question}\n---\n\n"
-        "选项已经重新出现在他那边，他可以从头再选一次。这道题不用你重问一遍，等他"
-        "的新答复就好；有别的要说就回一句。"
-    )
 
 
 def skip_prompt(*, handle, question, block_id) -> str:
@@ -328,32 +316,28 @@ async def _publish_question(question: Block) -> None:
     )
 
 
-async def withdraw(session, *, block, project_id, room_id, handle) -> Block:
-    """``handle`` 撤回自己在一道题上的答复或跳过；提问的那位读过的结论因此不算数
-    时，让它重跑一轮。
+async def unskip(session, *, block, project_id, room_id, handle) -> Block:
+    """``handle`` 撤销自己在一道题上的跳过：题重新等他的回答。
 
-    题上的记录由 `block.questions.withdraw_answer` 改 —— 只有答过的人撤得动。这里
-    补的是它做不到的那半：叫醒提问的那位。他原来那一轮是看着一个已经不算数的答案往
-    下走的，不告诉他，他就带着旧答案继续做。撤销一次跳过时，只有那次跳过让题了结了
-    （它点名的人都跳过了），提问的那位才被告知过，也才需要再告知一次：题又在等回答
-    了。别的跳过它从来不知道，撤销了也不打扰它。
+    题上的记录由 `block.questions.unskip_question` 改 —— 只有跳过的人撤得动，答过的人撤
+    不掉（答了就算数）。这里补的是它做不到的那半：叫醒提问的那位。只有那次跳过让题
+    了结了（它点名的人都跳过了），提问的那位才被告知过，也才需要再告知一次：题又在
+    等回答了。别的跳过它从来不知道，撤销了也不打扰它。
     """
-    meta = block.meta or {}
-    mine = [e for e in meta.get("answer_log") or [] if (e or {}).get("by") == handle]
-    was_skip = bool(mine) and all(e.get("kind") == SKIPPED for e in mine)
-    told_skipped = skipped_by_all(meta)
-    question = await withdraw_answer(session, question=block, by=handle)
-    if was_skip and not told_skipped:
+    told_skipped = skipped_by_all(block.meta or {})
+    question = await unskip_question(session, question=block, by=handle)
+    if not told_skipped:
         return question
-    prompt = unskip_prompt if was_skip else withdrawal_prompt
     await _wake_asker(
         session,
         question=question,
         project_id=project_id,
         room_id=room_id,
         handle=handle,
-        event_type=ANSWER_WITHDRAWN,
-        content=prompt(handle=handle, question=question.content, block_id=question.id),
+        event_type=QUESTION_SKIPPED,
+        content=unskip_prompt(
+            handle=handle, question=question.content, block_id=question.id
+        ),
     )
     return question
 
