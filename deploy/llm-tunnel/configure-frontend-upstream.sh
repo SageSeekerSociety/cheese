@@ -19,6 +19,9 @@ done
 if [ -n "$PORT" ]; then
   [[ "$DIRECT" =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:]+\]):[0-9]+$ ]] \
     || { echo "Invalid listen address: $DIRECT" >&2; exit 1; }
+  DIRECT_PORT="${DIRECT##*:}"
+  ((10#$DIRECT_PORT > 0 && 10#$DIRECT_PORT < 65536)) \
+    || { echo "Invalid listen address: $DIRECT" >&2; exit 1; }
 fi
 CONFIG_TMP="$(mktemp "$ACTIVE_DIR/.frontend.conf.XXXXXX")"
 trap 'rm -f "$CONFIG_TMP"' EXIT
