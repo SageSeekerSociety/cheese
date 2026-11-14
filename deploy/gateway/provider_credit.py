@@ -21,6 +21,10 @@ What this module does, once per request, when the router has finished with it
   be read back. The router skips a cooling row and walks on to the next
   `order` as for any other cooldown; once the cooldown ends, the next request
   tries the account again, so a top-up is picked up by itself.
+- A free tier whose usage window is spent (`free_usage_spent`) is cooled for
+  as long, under a rate limit's status: it comes back by itself, so it is not
+  named below, and a model with nothing else left answers with a 429 rather
+  than the 402 that says the platform has to pay.
 - The rows are named in the `HEADER` response header. The metering proxy
   reports them to the backend's error intake, which tells the administrators
   once per row (`billing_addon._report_out_of_credit_rows`, `backend_log`). A
@@ -84,7 +88,6 @@ _ROWS_KEY = "cheese_out_of_credit_rows"
 #   Zhipu      429 [1113][余额不足或无可用资源包,请充值。]
 #   Volcengine 429 {"error":{"code":"SetLimitExceeded","message":"Your account
 #              […] has reached the set usage limit … model service has been paused"}}
-#   OpenCode   429 FreeUsageLimitError "Free usage limit reached. Subscribe …"
 #   OpenAI     429 insufficient_quota; Anthropic 400 "credit balance is too low"
 # and "quota exhausted" for the ones whose wording was never captured (MiMo).
 # Not "quota exceeded": Gemini says that for its per-minute rate limit.
@@ -93,7 +96,6 @@ _OUT_OF_CREDIT = re.compile(
     r"|余额不足|请充值|\[1113\]|\brecharge\b"
     r"|exceeded_current_quota"
     r"|SetLimitExceeded"
-    r"|FreeUsageLimitError"
     r"|credit balance is too low"
     r"|quota[ _]exhausted"
     r"|\bsuspended\b",
@@ -101,9 +103,27 @@ _OUT_OF_CREDIT = re.compile(
 )
 
 
+# What a free tier says when its usage window is spent, verbatim from OpenCode's
+# free endpoint on the dev gateway:
+#   OpenCode   429 FreeUsageLimitError "Free usage limit reached. Subscribe …"
+# There is no account behind a free row for anyone to top up: the window comes
+# back by itself. The row is taken out of rotation for as long as one with no
+# credit, but under a rate limit's status, so it is not named to the
+# administrators and a model left with nothing else answers "come back later"
+# rather than "the platform must pay".
+_FREE_USAGE_SPENT = re.compile(r"FreeUsageLimitError|free usage limit reached", re.I)
+#: The status a spent free window's cooldown is recorded under.
+FREE_USAGE_STATUS = 429
+
+
 def out_of_credit(said: object) -> bool:
     """Whether an upstream's refusal says the account behind it has no money."""
     return isinstance(said, str) and bool(_OUT_OF_CREDIT.search(said))
+
+
+def free_usage_spent(said: object) -> bool:
+    """Whether an upstream's refusal says a free tier's usage window is spent."""
+    return isinstance(said, str) and bool(_FREE_USAGE_SPENT.search(said))
 
 
 def _bucket(kwargs: dict) -> dict | None:
@@ -113,9 +133,10 @@ def _bucket(kwargs: dict) -> dict | None:
     return bucket if isinstance(bucket, dict) else None
 
 
-def refused_rows(kwargs: dict, error: BaseException | None) -> list[str]:
-    """The deployments that refused this request because their account is out
-    of credit: the attempts the router walked past, and the one it gave up on."""
+def refused_rows(kwargs: dict, error: BaseException | None, refusal=out_of_credit) -> list[str]:
+    """The deployments that refused this request for ``refusal`` (by default,
+    their account is out of credit): the attempts the router walked past, and
+    the one it gave up on."""
     attempts = [
         (crumb.get("deployment_id"), crumb.get("exception_string"))
         for crumb in ((_bucket(kwargs) or {}).get("previous_models") or [])
@@ -125,7 +146,7 @@ def refused_rows(kwargs: dict, error: BaseException | None) -> list[str]:
         attempts.append((getattr(error, "failed_deployment_id", None), str(error)))
     rows: list[str] = []
     for deployment, said in attempts:
-        if isinstance(deployment, str) and out_of_credit(said) and deployment not in rows:
+        if isinstance(deployment, str) and refusal(said) and deployment not in rows:
             rows.append(deployment)
     return rows
 
@@ -168,7 +189,8 @@ async def answer(router, group: object, error: BaseException, rows: list[str]) -
     from litellm.types.router import RouterRateLimitError
 
     said = str(error)
-    if not isinstance(group, str) or not (out_of_credit(said) or isinstance(error, RouterRateLimitError)):
+    spent = out_of_credit(said) or free_usage_spent(said)
+    if not isinstance(group, str) or not (spent or isinstance(error, RouterRateLimitError)):
         return None
     all_out, soonest = await _rows_left(router, group)
     named = {HEADER: "; ".join(label(router, row) for row in rows)} if rows else {}
@@ -184,12 +206,14 @@ async def answer(router, group: object, error: BaseException, rows: list[str]) -
             code=STATUS,
             headers=named,
         )
-    if out_of_credit(said) and soonest is not None:
+    if spent and soonest is not None:
         wait = max(1, math.ceil(soonest))
         return ProxyException(
             message=(
                 f"The provider this request overflowed to is out of credit; another one serving "
                 f"{group} takes requests again in {wait} s."
+                if out_of_credit(said)
+                else f"The free usage of {group} is used up for now; it takes requests again in {wait} s."
             ),
             type="rate_limit_error",
             param=None,
@@ -213,7 +237,11 @@ def _cool(router, kwargs: dict, error: BaseException | None) -> list[str]:
     from litellm.router_utils.cooldown_cache import CooldownCache
 
     rows = refused_rows(kwargs, error)
-    for deployment in rows:
+    spent = [row for row in refused_rows(kwargs, error, free_usage_spent) if row not in rows]
+    for deployment, status, why in [
+        *((row, STATUS, "out of credit") for row in rows),
+        *((row, FREE_USAGE_STATUS, "free usage spent") for row in spent),
+    ]:
         # The router has already cooled a 429 for its 5 s, and the in-memory
         # cache keeps a live entry's expiry when it is written again: the
         # 5 s entry has to go before the long one can take its place. Only the
@@ -222,13 +250,11 @@ def _cool(router, kwargs: dict, error: BaseException | None) -> list[str]:
         router.cooldown_cache.in_memory_cache.delete_cache(CooldownCache.get_cooldown_cache_key(deployment))
         router.cooldown_cache.add_deployment_to_cooldown(
             model_id=deployment,
-            original_exception=error or RuntimeError("out of credit"),
-            exception_status=STATUS,
+            original_exception=error or RuntimeError(why),
+            exception_status=status,
             cooldown_time=COOLDOWN_S,
         )
-        logger.warning(
-            "provider_credit out of credit, cooled for %ss: %s", int(COOLDOWN_S), label(router, deployment)
-        )
+        logger.warning("provider_credit %s, cooled for %ss: %s", why, int(COOLDOWN_S), label(router, deployment))
     bucket = _bucket(kwargs)
     if rows and bucket is not None:
         bucket[_ROWS_KEY] = [label(router, row) for row in rows]

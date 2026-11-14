@@ -36,13 +36,14 @@ OUT_OF_CREDIT = {
                             "limit for this model, and the model service has been paused."}}),
     "moonshot": (429, {"error": {"message": "Your account org-1 <ak-1> is suspended due to insufficient balance, "
                                  "please recharge your account", "type": "exceeded_current_quota_error"}}),
-    "opencode": (429, {"type": "error", "error": {"type": "FreeUsageLimitError", "message":
-                                                  "Free usage limit reached. Subscribe to OpenCode Go to keep going"}}),
     "openai": (429, {"error": {"message": "You exceeded your current quota, please check your plan and billing "
                                "details.", "type": "insufficient_quota", "code": "insufficient_quota"}}),
     "anthropic": (400, {"type": "error", "error": {"type": "invalid_request_error", "message":
                                                    "Your credit balance is too low to access the Anthropic API."}}),
 }
+# A free tier's usage window spent: nothing to top up, it comes back by itself.
+FREE_USAGE_SPENT = (429, {"type": "error", "error": {"type": "FreeUsageLimitError", "message":
+                                                     "Free usage limit reached. Subscribe to OpenCode Go to keep going"}})
 # Refusals that say nothing about the account: the row stays in rotation.
 ORDINARY = {
     "busy": (429, {"type": "error", "error": {"type": "rate_limit_error", "message": "Limit type: "
@@ -121,9 +122,11 @@ async def main():
         + rows(port, "kimi", [("moonshot2", 1)])
         + rows(port, "glm", [("zhipu2", 1), ("glm-api", 3)])
         + rows(port, "doubao2", [("switched-off", 1), ("ark3", 3)])
+        + rows(port, "free-first", [("free", 1), ("paid", 3)])
+        + rows(port, "free-only", [("free2", 1)])
     )
     # A line switched off on the admin page takes no requests.
-    model_list[-2]["model_info"]["blocked"] = True
+    model_list[-5]["model_info"]["blocked"] = True
     for name in [*OUT_OF_CREDIT, *ORDINARY]:
         model_list += rows(port, f"solo-{name}", [(name, 1)])
     # The router's own cooldown is 5 s; shorter here so the test can outwait it.
@@ -208,6 +211,30 @@ async def main():
                 response = await ask(client, "doubao2", stream=stream)
                 assert response.status_code == 402 and CODE in response.text, (response.status_code, response.text)
             print("PASS: a switched-off line does not count as one with credit")
+
+            # A free row whose usage window is spent, walked past on the way
+            # to a paid one: the caller gets the answer, nobody is asked to top
+            # anything up, and the free row is left alone on the next request.
+            ANSWERS.update(free=FREE_USAGE_SPENT, paid=OK)
+            response = await ask(client, "free-first")
+            assert response.status_code == 200 and NAMED not in response.headers, (
+                response.status_code, response.headers)
+            await asyncio.sleep(1.0)
+            response = await ask(client, "free-first")
+            assert response.status_code == 200 and CALLS == {"paid": 1}, CALLS
+            print("PASS: a spent free row is skipped for the long cooldown and not named as out of credit")
+
+            # A model served only by a spent free row: a 429 to come back
+            # later, not the 402 that says the platform has to pay, and the
+            # row is not asked again meanwhile.
+            ANSWERS["free2"] = FREE_USAGE_SPENT
+            response = await ask(client, "free-only")
+            assert response.status_code == 429 and CODE not in response.text, (response.status_code, response.text)
+            assert int(response.headers["retry-after"]) >= 1 and NAMED not in response.headers, response.headers
+            await asyncio.sleep(1.0)
+            response = await ask(client, "free-only", stream=True)
+            assert response.status_code == 429 and CALLS == {}, (response.status_code, CALLS)
+            print("PASS: a model with only a spent free row says come back later, not that the platform must pay")
 
             # After the long cooldown the account is asked again, so a top-up
             # is picked up without anyone touching the gateway.
