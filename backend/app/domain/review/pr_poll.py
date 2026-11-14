@@ -50,6 +50,7 @@ from app.domain.review.ports import (
     Chat,
     DispatchPending,
     RecordInstruction,
+    RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
 )
@@ -669,6 +670,8 @@ async def sweep_closings(
     announce: Announce,
     *,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
 ) -> dict:
@@ -676,7 +679,9 @@ async def sweep_closings(
     goes on to its next step (`task_landing.go_on_while_working`), and one
     past its write-up deadline is closed and its room told what was left
     undone (`room_task.closing.close_overdue`). ``machines`` removes a closed
-    task's checkouts on the machines holding it."""
+    task's checkouts on the machines holding it. What a close tells the AI
+    teammate that opened the task (`task_landing.tell_origin_ended`) is sent
+    once the closes are committed."""
     sessions = chat.session_factory
     gone_on = await go_on_while_working(
         sessions,
@@ -687,8 +692,12 @@ async def sweep_closings(
         closed = await close_overdue(session, chat, machines=machines)
         for overdue in closed:
             await tell_room_undelivered(session, overdue, announce=announce)
-            await tell_origin_ended(session, overdue.task, task_teammate=task_teammate)
+            await tell_origin_ended(
+                session, overdue.task, announce=announce, record_seat=record_seat
+            )
         await session.commit()
+    if closed:
+        await dispatch_pending()
     return {"gone_on": len(gone_on), "closed": len(closed)}
 
 

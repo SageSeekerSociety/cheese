@@ -198,6 +198,31 @@ async def record_agent(
     )
 
 
+async def record_seat_instruction(
+    session,
+    event: DeliveryEvent,
+    *,
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    seat: str,
+    content: str,
+) -> None:
+    """Keep an instruction for the AI teammate seated as ``seat`` in the
+    conversation ``conversation_id``, like `record_agent`, naming it by its
+    seat. A seat this project has no active teammate for gets nothing: there
+    is nobody to tell, and no other seat is guessed in its place."""
+    agent = await instance_for_seat(session, project_id, seat)
+    if agent is None or not agent.is_active:
+        return
+    await record_agent(
+        session,
+        event,
+        conversation_id=conversation_id,
+        instance_id=agent.id,
+        content=content,
+    )
+
+
 async def record_task_instruction(
     session, event: DeliveryEvent, *, task_id: uuid.UUID, content: str
 ):
