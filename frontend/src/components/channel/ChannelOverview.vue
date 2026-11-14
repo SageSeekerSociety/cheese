@@ -276,7 +276,7 @@ async function save() {
     />
 
     <section v-if="running.length || !waitingOnMe.length" class="co-section" data-testid="channel-running">
-      <h3 class="co-title">{{ t('work.channel.overview.running', { count: running.length }) }}</h3>
+      <h3 class="co-title">{{ t('work.channel.overview.running', { count: lively.length }) }}</h3>
       <p v-if="!running.length" class="t-meta c-faint">{{ t('work.channel.overview.noRunning') }}</p>
       <button
         v-for="task in lively"

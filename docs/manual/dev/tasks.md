@@ -77,7 +77,7 @@ covers:
 
 一条消息可以另开好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面。AI 队友在主线上用 `cheese_task(action=open)` 开的任务，记在要做这件事的那条主线消息上，`source_block_id` 也是它；主线把它画成队友那一轮回答的最后一条消息下面的一行（那一轮以那条消息命名，`turn_id`），只有任务名和负责人，不画状态（前端 `lib/channelTasks.teammateTaskLines`）。主线上没有原地转（`here`）。单独新建的任务才在主线上落一行 `task_created`。
 
-任务交付被采纳、或做完关闭时，结果说回开出它的那段对话（`review/task_landing.tell_origin`）：出自主线的（`source_block_id` 在频道主线上）说在主线，出自支线的说在那条支线，支线原地转成的不说。
+任务交付被采纳、或做完关闭时，结果说回开出它的那段对话（`review/task_landing.tell_origin`）：出自主线的（`source_block_id` 在频道主线上）说在主线，出自支线的说在那条支线，支线原地转成的不说。交了一版去审阅、一版被退回，在同一处由平台记成事件行（`record_at_origin`，`event_type` 为 `task_filed` / `task_returned`），不署 AI 队友的名。
 
 任务另记它是从哪句话来的（`source_block_id`），可以是支线里的一条回复，也可以是另一个任务里的一条：转为任务的是被转的那一条；`cheese_task(action=open)` 建的是这个 AI 队友在那段对话里最近收到的一句人话，频道主线上只认点了它名字的那句。任务页顶上引这句话，点它回到那段对话并停在这一条上（`?block=`）。这一列加上之前建的任务没有它，退回 `upgraded_from_block_id`；两样都没有的（单独新建的任务）照实说是谁新建的。
 

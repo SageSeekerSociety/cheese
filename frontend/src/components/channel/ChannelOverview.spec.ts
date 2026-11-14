@@ -73,9 +73,10 @@ describe('进行中的任务', () => {
     expect(ui.emitted()['open-all']).toHaveLength(1)
   })
 
-  it('全都很久没动时一件也不列，仍然够得着全部', () => {
+  it('全都很久没动时一件也不列，数字跟着是 0，仍然够得着全部', () => {
     const ui = mount({ tasks: [task('t2', '八月的探针', 40)] })
     expect(ui.queryAllByTestId('channel-task')).toHaveLength(0)
+    expect(ui.getByText(t('work.channel.overview.running', { count: 0 }))).toBeTruthy()
     expect(ui.getByTestId('channel-running-more')).toBeTruthy()
   })
 })
