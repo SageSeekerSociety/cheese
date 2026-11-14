@@ -214,7 +214,7 @@ function fitOther() {
   el.style.height = `${el.scrollHeight}px`
 }
 // 浏览器给一行高的 textarea 留的高度比一行字多：框一画出来就量一次，空着时才和选项
-// 那几行一样高。撤回之后选项重新长出来，也是一个新框。
+// 那几行一样高。撤销跳过之后选项重新长出来，也是一个新框。
 watch(otherField, fitOther, { flush: 'post' })
 
 function sendOther() {
@@ -350,7 +350,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 <style scoped>
 /* 一张卡：和输入框同一种边（--line、--radius-lg），占满消息正文那一栏的宽。里面一行
    一行用发丝线隔开，不再是几张各自描边的小卡。字号只有三档：题目 15（和消息正文
-   同档），选项和输入 14，其余（谁问的、编号、说明、推荐、撤回）13。 */
+   同档），选项和输入 14，其余（谁问的、编号、说明、推荐、跳过）13。 */
 .ask-replies {
   --ask-pad: 16px;
   margin-top: 4px;

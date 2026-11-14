@@ -802,7 +802,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题，画成一张卡：页头一句谁问谁（平文，不是 @ 的 chip），题目是卡的标题；选项是卡里带编号的几行，点一个（或卡有焦点时按它的数字键）就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。卡里最后一行一直是个输入框（「其他回答」）：不用先点开，打字回车就是他对这道题的答案，发的是他自己打的字。',
+      '芝士问的一道题，画成一张卡：页头一句谁问谁（平文，不是 @ 的 chip），题目是卡的标题；选项是卡里带编号的几行，点一个（或卡有焦点时按它的数字键）就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」——答案不带撤回，答了就是答了。输入框始终在，不被它占用。卡里最后一行一直是个输入框（「其他回答」）：不用先点开，打字回车就是他对这道题的答案，发的是他自己打的字。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
@@ -839,7 +839,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '有人答过了',
-        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。答的人不是看着这一页的人，所以没有撤回的入口。',
+        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。答案就是答案，谁答的旁边都没有撤回的入口。',
         props: {
           asker: AGENT_NAME,
           block: askBlock([
@@ -851,15 +851,15 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         },
       },
       {
-        name: '自己答的，可以撤回',
-        note: '答过的那一条旁边多一个「撤回」；点它先弹确认框，题回到重新等回答。',
+        name: '自己跳过了，能收回来',
+        note: '跳过的题不再摆选项，题上写着「你：已跳过」，旁边有一颗「撤销」：点它题重新等你回答，旁边没有确认框。答过的题没有这一颗——回答撤不回来。',
         props: {
           asker: AGENT_NAME,
-          block: askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }]),
+          block: askBlock([{ kind: 'skipped', option: null, note: null, by: 'alice', at: null }]),
           names: { alice: 'Alice' },
           viewer: 'alice',
         },
-        expect: '撤回',
+        expect: '撤销',
       },
     ],
   },

@@ -42,7 +42,7 @@ function topicOf(id: string): Topic {
   } as Topic
 }
 
-/** 一道题。`by` 是谁答的，null 是还没人答 —— 撤回的入口只长在答过的那一位旁边。
+/** 一道题。`by` 是谁答的，null 是还没人答。
  *  `asked` 是它问了谁，`skipped` 是谁跳过了它，`all` 是问了频道里所有人。 */
 function question(
   topic: string,
