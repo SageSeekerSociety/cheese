@@ -10,6 +10,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import (
     ConflictError,
     NotFoundError,
@@ -53,6 +56,7 @@ from app.domain.review.services._shared import (
     _ALEMBIC_VERSIONS_DIR,
     _BLOCKED_BY_CARD_MESSAGES,
     _CARD_BLOCKS_NEW_CARD,
+    _FILING_IN_PROGRESS,
     _MISSING_SUBJECT,
     EVENT_CARD_REDESCRIBED,
     EVENT_MIGRATION_COLLISION,
@@ -121,6 +125,19 @@ async def _card_or_404(self: pkg.AcceptService, card_id: uuid.UUID) -> AcceptCar
     if card is None:
         raise NotFoundError("Accept card not found")
     return card
+
+
+async def _claim_filing(session: AsyncSession, task_id: uuid.UUID) -> bool:
+    """占下这条任务的递卡，到本事务结束为止；别的请求正占着就返回 False。
+
+    和 `_hold_deliverable` 一样用事务级 advisory 锁而不是任务行的 FOR UPDATE：
+    递卡这一路要读 forge，持着任务行的锁会把同一时刻改这条任务的别的写（进度、
+    心跳、改名）一起挡住。"""
+    claimed = await session.scalar(
+        text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"accept-card-filing:{task_id}"},
+    )
+    return bool(claimed)
 
 
 #: 审阅重点的上限：审阅的人要在卡上一眼读完。条数按非空行数，字数按全部条目合计。
@@ -194,6 +211,14 @@ async def create_card(
     else:
         _one_artifact_action(artifact, new_artifact)
     about = artifacts.clean_about(about, subject=subject)
+    # 「有没有未决的卡」和落卡之间隔着一次 forge 读（下面的 comparison），能有好
+    # 几秒。客户端在这几秒里读超时、重试，第二个请求查到的还是「没有」，两边各
+    # 落一张 (FB-108)。所以同一条任务同一时刻只处理一次递卡，到本事务提交为止；
+    # 撞上正在处理的那一次就当场拒绝，而不是排队等：请求的锁等待只有几秒
+    # （`db._set_request_lock_timeout`），forge 一慢，排队的那次只会拿到一句
+    # 「系统繁忙」，读不出该做什么。
+    if not await _claim_filing(self._session, task.id):
+        raise ConflictError(_FILING_IN_PROGRESS)
     existing = await self._repo.list_for_task(task.id)
     blocking = next((c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None)
     if blocking is not None:
