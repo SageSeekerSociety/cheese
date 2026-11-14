@@ -916,7 +916,9 @@ async def test_a_route_marked_without_mid_conversation_system_launches_without_i
     """A gateway model marked ``supports_mid_conversation_system: false`` loses
     the system messages Claude Code puts mid-conversation (the skill listing
     among them), so a launch on it asks for them in the first user message. A
-    model nobody marked keeps Claude Code's default."""
+    model nobody marked keeps Claude Code's default. The marked model is also a
+    subagent the session on the unmarked one can start, so that launch carries
+    its mark too (FB-105)."""
     from app.domain.agent import gateway_catalog
     from app.domain.agent.gateway import GatewayModel
 
@@ -948,14 +950,67 @@ async def test_a_route_marked_without_mid_conversation_system_launches_without_i
     finally:
         gateway_catalog.reset()
 
-    assert "CLAUDE_CODE_MODEL_CAPABILITIES" not in unmarked["env"]
+    for launch in (unmarked, marked):
+        assert (
+            launch["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"]
+            == "loses-it=-mid_conv_system"
+        )
+    assert unmarked["env"]["ANTHROPIC_MODEL"] == "keeps-it"
+    assert marked["env"]["ANTHROPIC_MODEL"] == "loses-it"
+
+
+@pytest.mark.anyio
+async def test_a_subagent_on_a_marked_catalogue_model_launches_without_it(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """A session can start a subagent on any gateway model the project lists
+    (FB-105). When that model is marked as losing mid-conversation system
+    messages, the session is launched with the mark for it, even though neither
+    the main model nor the default subagent model carries it; the main and
+    default subagent models are launched unchanged."""
+    from app.domain.agent import gateway_catalog
+    from app.domain.agent.gateway import GatewayModel
+
+    monkeypatch.setattr(settings, "agent_model", "keeps-it")
+
+    def catalogue(third_marked: bool):
+        class Catalog:
+            async def models(self):
+                return [
+                    GatewayModel("keeps-it", "Keeps it", True, True),
+                    GatewayModel(
+                        "third-model",
+                        "Third",
+                        True,
+                        True,
+                        mid_conversation_system=not third_marked,
+                    ),
+                ]
+
+        return Catalog()
+
+    gateway_catalog.reset()
+    try:
+        await gateway_catalog.refresh(catalogue(third_marked=False))
+        svc, _factory, pid, _tid = await _mk_service(
+            business_db_factory, tmp_path, FakeGateway()
+        )
+        before, _ = await svc._model_kwargs(pid, _in_this_process())
+        await gateway_catalog.refresh(catalogue(third_marked=True))
+        after, _ = await svc._model_kwargs(pid, _in_this_process())
+    finally:
+        gateway_catalog.reset()
+
+    assert "model-third-model.md" in json.loads(after["env"]["CHEESE_MODEL_AGENTS"])
+    assert "CLAUDE_CODE_MODEL_CAPABILITIES" not in before["env"]
     assert (
-        marked["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"] == "loses-it=-mid_conv_system"
+        after["env"]["CLAUDE_CODE_MODEL_CAPABILITIES"] == "third-model=-mid_conv_system"
     )
+    for key in ("ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"):
+        assert after["env"][key] == before["env"][key] == "keeps-it"
+    assert after["model"] == before["model"] == "keeps-it"
     # A screen launched before the mark is reopened with it.
-    assert (
-        marked["env"]["CHEESE_AGENT_CONFIG"] != unmarked["env"]["CHEESE_AGENT_CONFIG"]
-    )
+    assert after["env"]["CHEESE_AGENT_CONFIG"] != before["env"]["CHEESE_AGENT_CONFIG"]
 
 
 @pytest.mark.anyio
