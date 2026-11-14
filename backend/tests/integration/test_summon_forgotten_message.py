@@ -19,6 +19,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.hang import HANG_S
 
 
 def _project_and_topic(client, owner: str = "user-1") -> str:
@@ -40,7 +41,8 @@ def _say_without_summoning(client, topic_id: str, text: str) -> None:
 
 
 def _wait_for_prompt(stub_hooks, needle: str) -> str:
-    for _ in range(500):
+    deadline = time.monotonic() + HANG_S
+    while time.monotonic() < deadline:
         if needle in (stub_hooks.last_prompt or ""):
             return stub_hooks.last_prompt or ""
         time.sleep(0.01)
@@ -83,7 +85,8 @@ def test_summon_does_not_repost_the_message(client, stub_hooks):
 
 def _wait_until_read(client, topic_id: str) -> None:
     """等到那条消息真的被某一轮读进去了（它自己身上记着是哪一轮）。"""
-    for _ in range(500):
+    deadline = time.monotonic() + HANG_S
+    while time.monotonic() < deadline:
         blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
         if any(
             b["author"] == "user-1"
@@ -189,7 +192,8 @@ def _handed_over(client, topic_id: str) -> list[str]:
 
 def _wait_for_handover(client, topic_id: str) -> list[str]:
     """那一行是那一轮开跑时写下来的，所以要点几下才看得到。"""
-    for _ in range(500):
+    deadline = time.monotonic() + HANG_S
+    while time.monotonic() < deadline:
         lines = _handed_over(client, topic_id)
         if lines:
             return lines
