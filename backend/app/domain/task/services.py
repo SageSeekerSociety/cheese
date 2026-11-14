@@ -834,36 +834,28 @@ class TaskSubmissionService:
         entries: list[TaskSubmissionEntry],
         review: TaskSubmissionReview | None,
         keys: Sequence[str],
+        files: dict[int, list[dict]],
     ) -> dict:
+        """``files``: each entry's files as the view shows them, by entry id
+        (``_file_dtos``, read once for a whole page of submissions)."""
         member_summary = await self._build_member_summary(membership)
         submitter_summary = await self._build_submitter_summary(submission.submitter_id)
 
-        files_of = await self._files_of(entries)
-        attachments = {
-            a.id: a
-            for a in await self._attachments.get_many(
-                sorted({a for ids in files_of.values() for a in ids})
-            )
-        }
-
         def _entry_to_dto(idx: int, entry: TaskSubmissionEntry) -> dict:
-            ids = files_of.get(entry.id, [])
-            files = [
-                _submitted_file_to_api(attachments[a]) for a in ids if a in attachments
-            ]
+            entry_files = files.get(entry.id, [])
             return {
                 # Titled by the name the entry was answered under, not by the
                 # form as it reads now. An entry answered under a blank name,
                 # or past the end of the form, is numbered instead.
                 "title": entry.prompt or f"Entry {idx + 1}",
-                "type": "FILE" if ids else "TEXT",
+                "type": "FILE" if entry_files else "TEXT",
                 "contentText": entry.content_text,
                 # Every file of the item, in the order they were handed in.
-                "contentAttachments": files,
+                "contentAttachments": entry_files,
                 # The first of them: what a reader that predates several files
                 # per item still reads (kept for API callers; see the PR that
                 # added ``contentAttachments``).
-                "contentAttachment": files[0] if files else None,
+                "contentAttachment": entry_files[0] if entry_files else None,
             }
 
         content_dtos = [
@@ -904,6 +896,27 @@ class TaskSubmissionService:
             e.id: listed.get(e.id)
             or ([e.content_attachment_id] if e.content_attachment_id else [])
             for e in entries
+        }
+
+    async def _file_dtos(
+        self, entries: Sequence[TaskSubmissionEntry]
+    ) -> dict[int, list[dict]]:
+        """Each entry's files as the submission view shows them, by entry id,
+        in order: one read of the files and one of the attachments, however
+        many submissions the entries belong to. A file whose attachment row
+        is gone is left out."""
+        files_of = await self._files_of(entries)
+        attachments = {
+            a.id: a
+            for a in await self._attachments.get_many(
+                sorted({a for ids in files_of.values() for a in ids})
+            )
+        }
+        return {
+            entry_id: [
+                _submitted_file_to_api(attachments[a]) for a in ids if a in attachments
+            ]
+            for entry_id, ids in files_of.items()
         }
 
     async def _entries_from(
@@ -1036,6 +1049,7 @@ class TaskSubmissionService:
             entries=entries,
             review=review if review is not None else None,
             keys=await self._stage_keys(participant.task_id),
+            files=await self._file_dtos(entries),
         )
 
     async def stage_of_version(self, participant_id: int, version: int) -> int | None:
@@ -1111,6 +1125,7 @@ class TaskSubmissionService:
             entries=entries,
             review=review if review is not None else None,
             keys=await self._stage_keys(participant.task_id),
+            files=await self._file_dtos(entries),
         )
 
     async def list_submissions(
@@ -1167,6 +1182,9 @@ class TaskSubmissionService:
         )
 
         keys = await self._stage_keys(task_id)
+        files = await self._file_dtos(
+            [e for entries in entries_by_submission.values() for e in entries]
+        )
         items: list[dict] = []
         for submission in submissions:
             membership = membership_map.get(submission.membership_id)
@@ -1182,6 +1200,7 @@ class TaskSubmissionService:
                 entries=entries,
                 review=review,
                 keys=keys,
+                files=files,
             )
             items.append(dto)
 
@@ -1232,6 +1251,9 @@ class TaskSubmissionService:
             if self._session is not None
             else {}
         )
+        files = await self._file_dtos(
+            [e for entries in entries_by_submission.values() for e in entries]
+        )
         items: list[dict] = []
         for submission, membership, task in rows:
             entries = entries_by_submission.get(submission.id, [])
@@ -1242,6 +1264,7 @@ class TaskSubmissionService:
                 entries=entries,
                 review=review,
                 keys=[stage.key for stage in stages_by_task.get(task.id, [])],
+                files=files,
             )
             dto["taskId"] = task.id
             dto["taskTitle"] = task.name
