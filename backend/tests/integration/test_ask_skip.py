@@ -10,8 +10,8 @@ list and settles his own notice, without anything being said in the room. When
 every person it names has skipped, the agent that asked is told in its next
 turn — otherwise it waits for an answer that is not coming. A question asked of
 everyone is never settled by skips. Taking a skip back (`DELETE
-/blocks/{id}/answer`, the same undo an answer has) puts it back on that
-person's list.
+/blocks/{id}/skip`) puts it back on that person's list; an answer, on the other
+hand, stands — there is no route that takes one back.
 
 Answering by one of its options (or 「其他」, a reply to it in one's own words)
 is held to the same rule as typing an answer and skipping: only the people it
@@ -99,7 +99,7 @@ def _skip(client, question_id, *, by="alice"):
 
 def _undo(client, question_id, *, by="alice"):
     response = client.delete(
-        f"/blocks/{question_id}/answer", headers=session_auth_headers(by)
+        f"/blocks/{question_id}/skip", headers=session_auth_headers(by)
     )
     wait_work_idle()
     return response
@@ -399,10 +399,10 @@ def test_an_answer_given_while_someone_takes_back_a_skip_is_not_erased(
     _, undone, answered = while_held(
         monkeypatch,
         block_routes,
-        "withdraw",
+        "unskip",
         partial(
             client.delete,
-            f"/blocks/{question['id']}/answer",
+            f"/blocks/{question['id']}/skip",
             headers=session_auth_headers("alice"),
         ),
         partial(_bob_answers_by_reply, client, room, question["id"]),

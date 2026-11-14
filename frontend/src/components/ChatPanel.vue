@@ -401,9 +401,10 @@ const {
   AUTHOR,
 } = panel
 
-// 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
-// `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
-const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
+// 一道题上自己的回应：跳过，或者把跳过收回来（回答撤不回来）。它要的两样（时间线、
+// 错误横幅）都在 `panel` 上，但它自己不在 `useChatPanel` 里：那个文件贴着行数上限，
+// 一行都长不了。
+const { undoSkip, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
 // 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
 const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
@@ -614,7 +615,7 @@ useComposerShortcut({
               (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
             "
             @ask-reply="replyToQuestion"
-            @ask-withdraw="withdrawQuestionAnswer"
+            @ask-undo-skip="undoSkip"
             @ask-skip="skipQuestion"
             @ask-group-submit="submitAskGroup"
             @checklist="changeChecklist"
