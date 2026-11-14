@@ -108,7 +108,7 @@ def read_new_lines(
                 continue
             try:
                 parsed = json.loads(raw)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning("unparseable usage line at offset %d", consumed)
                 continue
             if isinstance(parsed, dict):
