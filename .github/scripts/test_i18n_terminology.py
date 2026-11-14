@@ -33,7 +33,6 @@ RETIRED = "房间"
 BASELINE: Counter[tuple[str, str]] = Counter(
     {
         ("apiError/account.json", "登录后才能进入这个房间"): 1,
-        ("ask.json", "撤回后这道题重新等回答，谁都能再选一次。你发的那句话还留在房间里。"): 1,
         (
             "catalog.json",
             "图片那一档：一张图铺在这一格里，图上能圈一块、写一句话、把合成好的那张图连同那句话交给房间。",
