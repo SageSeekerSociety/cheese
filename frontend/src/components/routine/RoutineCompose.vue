@@ -21,7 +21,7 @@ import { computed, reactive, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { routineFreqs, routineWeekdays } from '@/lib/routine'
+import { eventTriggers, routineFreqs, routineWeekdays } from '@/lib/routine'
 import { presetTemplates, routineWhenText } from '@/lib/routineTemplates'
 
 const props = withDefaults(
@@ -79,6 +79,8 @@ const form = reactive({
   day: 1,
   minute: 0,
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
+  /** 审阅有结果那一条只等哪一种；空着是两种都算。 */
+  outcome: '' as '' | 'accepted' | 'rejected',
 })
 
 const editing = ref<Routine | null>(null)
@@ -124,6 +126,7 @@ watch(
       day: (spec.day as number) ?? 1,
       minute: (spec.minute as number) ?? 0,
       timezone: r?.timezone ?? form.timezone,
+      outcome: (spec.outcome as '' | 'accepted' | 'rejected') ?? '',
     })
   },
   { immediate: true }
@@ -142,12 +145,8 @@ const onCondition = computed(() => form.trigger !== '' && form.trigger !== 'sche
 /** 这张表还有没有空格要芝士补：名称取目标的第一句，所以「名称」和「什么时候」
  *  才是那两格。全填上时那句「未填项由它生成」就不该再挂着。 */
 const hasBlank = computed(() => !form.title.trim() || !form.trigger)
-const conditionOptions = computed(() =>
-  (['library_file_added', 'task_closed', 'card_accepted'] as RoutineTrigger[]).map((value) => ({
-    value,
-    title: t(`routines.trigger.${value}`),
-  }))
-)
+/** 条件那几颗列在 `lib/routine.ts`，和别处读的同一份。 */
+const conditionOptions = computed(() => eventTriggers())
 
 /** 勾「时间」或勾「条件」：换到那一头去，另一颗跟着灭；再点已选中的那颗就取消。 */
 function toggleTime(on: unknown) {
@@ -158,8 +157,20 @@ function toggleCondition(on: unknown) {
   if (on) form.trigger = eventTrigger.value
   else if (form.trigger !== 'schedule') form.trigger = ''
 }
-/** 条件那三条是单选：点哪条就是哪条。开关在那颗勾选框上，行本身不再反向取消。 */
+/** 「审阅有结果」之后问的那一句：采纳、退回，或者两种都算（空串）。 */
+const outcomeOptions = computed(
+  () =>
+    [
+      { value: '', title: t('routines.form.outcomeEither') },
+      { value: 'accepted', title: t('routines.form.outcomeAccepted') },
+      { value: 'rejected', title: t('routines.form.outcomeRejected') },
+    ] as { value: '' | 'accepted' | 'rejected'; title: string }[]
+)
+
+/** 条件那几条是单选：点哪条就是哪条。换一条时把上一条的结果清掉，别让「只看采纳」
+ *  跟着跑到「任务提交审阅」身上去。 */
 function pickCondition(next: RoutineTrigger) {
+  if (next !== form.trigger) form.outcome = ''
   eventTrigger.value = next
   form.trigger = next
 }
@@ -167,7 +178,11 @@ function pickCondition(next: RoutineTrigger) {
 /** 表单里的几样人话 → 后端要的 `spec`。 */
 function specFromForm(): Record<string, unknown> {
   if (!form.trigger) return {}
-  if (form.trigger !== 'schedule') return { scope: scopeOfRoutine() }
+  if (form.trigger !== 'schedule') {
+    const spec: Record<string, unknown> = { scope: scopeOfRoutine() }
+    if (form.trigger === 'task_decided' && form.outcome) spec.outcome = form.outcome
+    return spec
+  }
   return { ...whenFromForm(), ...keptFromRoutine() }
 }
 
@@ -491,6 +506,21 @@ function submit() {
           {{ opt.title }}
         </button>
       </div>
+      <!-- 「任务的审阅有结果」之后问的那一句：采纳、退回，或者两种都算。
+           另起一行、缩进一层，才看得出它是上一条的细分而不是第四条条件。 -->
+      <div v-if="form.trigger === 'task_decided'" class="when-list when-list--narrow">
+        <button
+          v-for="opt in outcomeOptions"
+          :key="opt.value"
+          type="button"
+          class="when"
+          :class="{ 'when--on': form.outcome === opt.value }"
+          :aria-pressed="form.outcome === opt.value"
+          @click="form.outcome = opt.value"
+        >
+          {{ opt.title }}
+        </button>
+      </div>
     </div>
     <!-- 「存成模板」和「保存」只属于「新建」那一页：模板页是挑一条，没有要存的表。
          「取消」两边都留着 —— 它是退出这个建规则的界面，模板页上不挑也能退。 -->
@@ -588,6 +618,12 @@ function submit() {
   color: var(--muted);
   font-size: 13px;
 }
+/* 「审阅有结果」的细分：挂在上面那一条下面，缩进一层。 */
+.when-list--narrow {
+  padding-left: 16px;
+  margin-top: -2px;
+}
+
 .compose__section-note {
   color: var(--muted);
 }
