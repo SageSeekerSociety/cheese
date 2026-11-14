@@ -3,8 +3,8 @@
 // 点一个快捷回复，就是把那几个字作为对这道题的回复发出去 —— 和在输入框里打字是
 // 同一条消息；输入框始终在，从不被题占用。
 //
-// 答过之后还能收回来：一道题只收一个回答，点错一下就没有别的路可走。撤回的是这道
-// 题上的那条答复，不是他说过的那句话 —— 消息留着，题回到没人答。
+// 回答交上去就定了：那是他给提问那位的答复，题上记着、房间里那条消息也还在，所以
+// 答案旁边没有「撤回」。答错了就在房间里说一句，由芝士决定怎么办。
 //
 // 被问的人也可以不答：✕ 跳过这道题，房间里不出现任何消息，题上写着他跳过了；撤销
 // 之后题重新等他回答。
@@ -98,8 +98,8 @@ function closedByAsker(topic: string, kind: 'withdrawn' | 'expired'): Block {
 let vuetify: ReturnType<typeof createVuetify>
 let history: Block[] = []
 let sent: Array<{ url: string; body: Record<string, unknown> }> = []
-/** 撤回那一次请求（`DELETE …/answer`）：落在这儿的就只有它。 */
-let takenBack: string[] = []
+/** 撤销跳过那一次请求（`DELETE …/skip`）：落在这儿的就只有它。 */
+let unskippedIds: string[] = []
 /** 跳过那一次请求（`POST …/skip`）。 */
 let skippedIds: string[] = []
 /** 拖住发消息那一次请求（不给就是不拖）：卡收起之前那一段只有靠它才看得见。 */
@@ -113,7 +113,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   history = []
   sent = []
-  takenBack = []
+  unskippedIds = []
   skippedIds = []
   holdMessages = null
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
@@ -127,11 +127,11 @@ beforeEach(() => {
     }
   )
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-    // 撤回：题目上那条答复没了，题回到还没人答 —— 服务端回来的就是这一块。
-    if (String(url).endsWith('/answer') && init?.method === 'DELETE') {
-      const id = String(url).split('/blocks/')[1].replace('/answer', '')
-      takenBack.push(id)
-      const open = question('withdrawn')
+    // 撤销跳过：题上那条 skip 没了，题回到等他回答 —— 服务端回来的就是这一块。
+    if (String(url).endsWith('/skip') && init?.method === 'DELETE') {
+      const id = String(url).split('/blocks/')[1].replace('/skip', '')
+      unskippedIds.push(id)
+      const open = question('unskipped')
       return {
         ok: true,
         status: 200,
@@ -254,16 +254,23 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(container.querySelector('.ask-replies')?.textContent).toContain('已结束，不再等回答')
   })
 
-  it('芝士把题收回去了：这一行整行不画', async () => {
-    // 撤回了的题不等人答、也没人答得上，留在频道里只是占地方。它那条消息本身还在
-    // （历史里查得到），频道这一栏不给它一行。
+  it('芝士把题收回去了：留一行「芝士撤回了」，点开还看得到题目', async () => {
+    // 收回去的题不等人答、也没人答得上，但它问过这一句是房间里的事实：那一行收着，
+    // 题目照写，点开看得到原样，不占满一栏。
     const before = { ...question('t-taken-back'), id: 'm-before', content: '我先问一句。', meta: {} } as Block
     history = [before, closedByAsker('t-taken-back', 'withdrawn')]
-    const { container, queryByRole } = await open('t-taken-back')
-    await until(() => container.querySelectorAll('[data-mid]').length === 1)
-    expect(container.querySelectorAll('[data-mid]')).toHaveLength(1)
-    expect(container.textContent).not.toContain('预算按哪个口径统计？')
+    const { container, getByRole, queryByRole } = await open('t-taken-back')
+    await until(() => container.querySelectorAll('[data-mid]').length === 2)
+    expect(container.querySelectorAll('[data-mid]')).toHaveLength(2)
+    const line = container.querySelector('.ask-fold')!
+    expect(line.textContent).toContain('芝士撤回了')
+    expect(line.textContent).toContain('预算按哪个口径统计？')
     expect(container.querySelector('.ask-replies')).toBeNull()
+    expect(queryByRole('button', { name: /按部门/ })).toBeNull()
+    // 点开：题目还是那张卡，选项不再摆出来（不再等人答）。
+    await fireEvent.click(getByRole('button', { name: /芝士撤回了/ }))
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？')
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('芝士收回了这道题')
     expect(queryByRole('button', { name: /按部门/ })).toBeNull()
   })
 
@@ -432,46 +439,21 @@ describe('问别人的题在频道里收成一行', () => {
   })
 })
 
-describe('自己答过的题可以撤回', () => {
-  it('答的那一条旁边有撤回', async () => {
+describe('回答交上去就定了，没有撤回来的路', () => {
+  it('答过的那一条只说谁答了什么，旁边没有撤回', async () => {
     history = [question('t-own', 'me')]
-    const { container } = await open('t-own')
+    const { container, queryByRole } = await open('t-own')
     const line = container.querySelector('.ask-replies__answers li')!
     expect(line.textContent).toContain('按部门')
-    expect(within(line as HTMLElement).getByRole('button')).toBeTruthy()
+    expect(within(line as HTMLElement).queryByRole('button')).toBeNull()
+    expect(queryByRole('button', { name: /撤回/ })).toBeNull()
   })
 
-  it('别人的答案没有撤回入口', async () => {
+  it('别人的答案也一样：没有撤回入口', async () => {
     history = [question('t-theirs', 'alice')]
     const { container, queryByRole } = await open('t-theirs')
     expect(container.querySelector('.ask-replies__answers')?.textContent).toContain('按部门')
     expect(queryByRole('button', { name: /撤回/ })).toBeNull()
-  })
-
-  it('点了先弹确认：题会重新等回答，人点掉才发出去', async () => {
-    history = [question('t-confirm', 'me')]
-    const { getByRole } = await open('t-confirm')
-    await fireEvent.click(getByRole('button', { name: /撤回/ }))
-    const dialog = await screen.findByRole('alertdialog')
-    expect(dialog.textContent).toContain('撤回这条回答？')
-    expect(dialog.textContent).toContain('谁都能再选一次')
-    expect(takenBack).toEqual([])
-    await fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
-    expect(takenBack).toEqual([])
-  })
-
-  it('确认之后才请服务端撤回，那一块原地换掉：题回到没人答', async () => {
-    history = [question('t-yes', 'me')]
-    const { container, getByRole, queryByRole } = await open('t-yes')
-    await fireEvent.click(getByRole('button', { name: /撤回/ }))
-    const dialog = await screen.findByRole('alertdialog')
-    await fireEvent.click(within(dialog).getByRole('button', { name: '撤回' }))
-    await until(() => takenBack.length > 0)
-    expect(takenBack).toEqual(['q-t-yes'])
-    // 题回到还没人答：选项重新长出来，撤回的入口也跟着没了。
-    await until(() => !!container.querySelector('.ask-replies__options'))
-    expect(queryByRole('button', { name: /按项目/ })).toBeTruthy()
-    expect(container.querySelector('.ask-replies__answers')).toBeNull()
   })
 })
 
@@ -493,8 +475,8 @@ describe('被问的人可以跳过这道题', () => {
     history = [question('t-unskip', null, ['me'], ['me'])]
     const { container, getByRole, queryByRole } = await open('t-unskip')
     await fireEvent.click(getByRole('button', { name: /撤销/ }))
-    await until(() => takenBack.length > 0)
-    expect(takenBack).toEqual(['q-t-unskip'])
+    await until(() => unskippedIds.length > 0)
+    expect(unskippedIds).toEqual(['q-t-unskip'])
     expect(screen.queryByRole('alertdialog')).toBeNull()
     await until(() => !!container.querySelector('.ask-replies__options'))
     expect(queryByRole('button', { name: /按项目/ })).toBeTruthy()

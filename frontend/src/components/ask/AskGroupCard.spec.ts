@@ -135,3 +135,69 @@ describe('AskGroupCard answers arriving from elsewhere', () => {
     expect((getByRole('radio', { name: 'B' }) as HTMLInputElement).checked).toBe(true)
   })
 })
+
+describe('AskGroupCard 每题一个叉', () => {
+  it('问到我的题，题签那一屏上有 ✕：点它只发这一道', async () => {
+    const { getAllByRole, getByRole, emitted } = renderCard([question('a'), question('b')])
+
+    // 卡自己不改状态：请求由面板发（`useAskResponse.skipQuestion`），题块带着
+    // 服务端的 `skipped` 回来才换屏。
+    await fireEvent.click(getByRole('button', { name: '跳过这道题' }))
+
+    expect((emitted().skip as unknown[][])[0]![0]).toMatchObject({ id: 'a' })
+    expect(getAllByRole('radio')).toHaveLength(2)
+  })
+
+  it('跳过的题：题签打一横，那一屏上说明「已跳过」，选项收掉', async () => {
+    const skipped = question('a', {
+      answer_log: [{ kind: 'skipped', option: null, note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: null }],
+    })
+    const { getAllByRole, container, queryByRole } = renderCard([skipped, question('b')])
+
+    expect(tabTexts(getAllByRole('tab'))).toEqual(['–1', '2'])
+    expect(container.querySelector('.ask-group__hint')?.textContent).toContain('你跳过了这道题')
+    expect(queryByRole('radio')).toBeNull()
+    // 同组别的题照旧等他答：切过去选项还在。
+    await fireEvent.click(getAllByRole('tab')[1]!)
+    expect(getAllByRole('radio')).toHaveLength(2)
+  })
+
+  it('一道题被答掉或被跳过，不把同组别的题一起变灰', async () => {
+    // 别的题被人答了、或者我自己跳过了，都只是那一道的事：同组别的题还各自等各自的
+    // 回答，切过去照旧点得动（整组一个叉／一个灰会把它们一起废掉）。
+    const theirs = question('a', { answer_log: [{ ...answer, by: 'carol' }] })
+    const mine = question('b', {
+      answer_log: [{ kind: 'skipped', option: null, note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: null }],
+    })
+    const { getAllByRole, getByRole } = renderCard([theirs, mine, question('c')])
+
+    await fireEvent.click(getByRole('tab', { name: '3' }))
+    const radios = getAllByRole('radio') as HTMLInputElement[]
+    expect(radios).toHaveLength(2)
+    expect(radios.every((r) => !r.disabled)).toBe(true)
+  })
+
+  it('提问方撤回的那一道：说明一句，不摆选项；同组别的题照旧', async () => {
+    const withdrawn = question('a', {
+      answer_log: [
+        { kind: 'withdrawn', option: null, note: null, by: 'agent', at: '2026-08-01T00:01:00Z', reply_id: null },
+      ],
+    })
+    const { getAllByRole, container, queryByRole } = renderCard([withdrawn, question('b')])
+
+    expect(container.querySelector('.ask-group__hint')?.textContent).toContain('芝士收回了这道题')
+    expect(queryByRole('radio')).toBeNull()
+    expect(queryByRole('button', { name: '跳过这道题' })).toBeNull()
+
+    await fireEvent.click(getAllByRole('tab')[1]!)
+    expect(getAllByRole('radio')).toHaveLength(2)
+  })
+
+  it('没问到我的题：没有 ✕，选项也点不动', () => {
+    const theirs = question('a', { asked: ['someone-else'], asked_all: false })
+    const { container, queryByRole } = renderCard([theirs, question('b')])
+
+    expect(queryByRole('button', { name: '跳过这道题' })).toBeNull()
+    expect((container.querySelector('input[type=radio]') as HTMLInputElement).disabled).toBe(true)
+  })
+})

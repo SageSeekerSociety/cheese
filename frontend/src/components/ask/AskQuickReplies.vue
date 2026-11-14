@@ -45,11 +45,11 @@
  * is undone at once, without a confirmation: it is his own, and undoing it only
  * puts the options back in front of him.
  *
- * The one who answered can take it back: a question takes one answer, so a
- * misclick otherwise has no way out. That is the answerer's own line — nobody
- * else's — and it comes off the question, not out of the room: the message they
- * sent stays, and what they typed there stays with it. Confirmed first, because
- * the question goes back to waiting and everyone sees the options again.
+ * An answer, once given, is final. It is what that person told the agent that
+ * asked; the question records it for everyone, and the message it was said in
+ * is in the room — so no button here takes one back, and the server refuses
+ * (`askAnswerIsFinal`) if one is sent anyway. Someone who answered by mistake
+ * says so in the room, and the agent decides what to do about it.
  *
  * Answering is a message, and the card only grows into its answered shape when
  * that message lands and the question comes back with it. Until then it still
@@ -67,7 +67,6 @@ import { computed, ref, watch } from 'vue'
 import { t } from '../../i18n'
 import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
-import ConfirmDialog from '../base/ConfirmDialog.vue'
 
 const props = defineProps<{
   block: Block
@@ -84,13 +83,13 @@ const props = defineProps<{
    * 谁在算它见 `ChatTimeline.answeringQuestion`。
    */
   answering?: boolean
-  /** 看着这间房的人（自己的 handle）：哪一条答案旁边有「撤回」由它定。 */
+  /** 看着这间房的人（自己的 handle）：跳过那条记录里哪一行能撤销由它定。 */
   viewer?: string
 }>()
 const emit = defineEmits<{
   (e: 'reply', text: string): void
-  /** 撤回自己的答复，或撤销自己的跳过：服务端是同一个动作。 */
-  (e: 'withdraw'): void
+  /** 撤销自己的跳过：题重新回到自己清单里。回答撤不回来。 */
+  (e: 'undo-skip'): void
   (e: 'skip'): void
 }>()
 
@@ -113,16 +112,12 @@ const skippedByAll = computed(
 const mySkip = computed(() => props.viewer != null && skips.value.some((s) => s.by === props.viewer))
 /** 跳过的那几行：了结时列出每个人，没了结时只列看的人自己那一条。 */
 const skipLines = computed(() => (skippedByAll.value ? skips.value : skips.value.filter((s) => s.by === props.viewer)))
-// 只有自己答的那一条能撤回。题已经不再等回答（任务关了）也照给：撤回是回答的人
-// 一直有的权利，后端不看这两件事。
-const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer))
 // 点选项、在末行写自己的答案、跳过，都只给能回答这道题的人：点了名就是名单上的人，问所有人
 // 就是频道里谁都行（名单是问出口那一刻的人，后来进频道的也算），没点名也是谁都行。
 // 和服务端 `block.asked.may_answer` 同一条。
 const canAnswer = computed(
   () => !!props.viewer && (asked.value.length === 0 || askedAll.value || asked.value.includes(props.viewer))
 )
-const confirming = ref(false)
 
 // 页头那一句：谁问的、问谁。问到了看的人就说「你」；名字是平文，不是 @ 的 chip ——
 // 这一句说的是在等谁，不是在叫谁。
@@ -206,11 +201,6 @@ function onCardKey(e: KeyboardEvent) {
   pick(option.text)
 }
 
-function confirmWithdraw() {
-  confirming.value = false
-  emit('withdraw')
-}
-
 // 末行那个输入框就是「其他」：一直摆在选项下面，打字就能答，不用先点开（Claude
 // 自己的提问卡也是这样）。发出去的是他打的那句话，和下面那个输入框打出来的是同一条路。
 const otherText = ref('')
@@ -284,19 +274,12 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
       />
     </header>
     <ul v-if="answers.length" class="ask-replies__answers">
+      <!-- 答过就是答过：这一行只说谁答了什么，没有「撤回」。有答案的题不再等人答，
+           也没人答得上，所以跳过那几行不在这里。 -->
       <li v-for="(answer, index) in answers" :key="index" class="ask-replies__row">
         <span class="ask-replies__answer">{{
           t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text })
         }}</span>
-        <button
-          v-if="answer.by === viewer"
-          type="button"
-          class="ask-replies__withdraw"
-          :aria-label="t('ask.replies.withdrawAria', { text: answer.text })"
-          @click="confirming = true"
-        >
-          {{ t('ask.replies.withdraw') }}
-        </button>
       </li>
     </ul>
     <template v-else>
@@ -306,9 +289,9 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
           <button
             v-if="skip.by === viewer"
             type="button"
-            class="ask-replies__withdraw"
+            class="ask-replies__undo-skip"
             :aria-label="t('ask.replies.undoSkipAria')"
-            @click="emit('withdraw')"
+            @click="emit('undo-skip')"
           >
             {{ t('ask.replies.undoSkip') }}
           </button>
@@ -361,17 +344,6 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
         </div>
       </div>
     </template>
-    <!-- 先弹一下确认：撤错了，这道题就当着全房间的面重新长出选项，比多点一次麻烦。 -->
-    <ConfirmDialog
-      v-if="mine"
-      v-model="confirming"
-      :title="t('ask.replies.withdrawTitle')"
-      :confirm-label="t('ask.replies.withdraw')"
-      danger
-      @confirm="confirmWithdraw"
-    >
-      {{ t('ask.replies.withdrawBody') }}
-    </ConfirmDialog>
   </section>
 </template>
 
@@ -570,7 +542,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 .ask-replies__closed {
   color: var(--muted);
 }
-.ask-replies__withdraw {
+.ask-replies__undo-skip {
   margin-left: 8px;
   padding: 0;
   font-size: 13px;
@@ -580,7 +552,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
   border: 0;
   text-decoration: underline;
 }
-.ask-replies__withdraw:hover {
+.ask-replies__undo-skip:hover {
   color: var(--text);
 }
 /* 触屏上全站的输入框都是 16px（style.css，免得 iOS 聚焦时放大页面），末行的输入框也

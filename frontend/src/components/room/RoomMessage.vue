@@ -16,7 +16,7 @@ import { computed, ref } from 'vue'
 
 import { vGuideAnchor } from '../../composables/useGuideAnchors'
 import { useMessageFold } from '../../composables/useMessageFold'
-import { askAsksViewer } from '../../lib/askGroups'
+import { askAsksViewer, askWithdrawn } from '../../lib/askGroups'
 import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
@@ -161,8 +161,8 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'ask-reply', block: Block, text: string): void
-  /** 自己在那道题上的回答（或跳过）要撤回。 */
-  (e: 'ask-withdraw', block: Block): void
+  /** 撤销自己在那道题上的跳过：题重新等他的回答。回答撤不回来，没有那一路。 */
+  (e: 'ask-undo-skip', block: Block): void
   /** 这道题不回答，跳过。 */
   (e: 'ask-skip', block: Block): void
   (e: 'download', block: Block): void
@@ -243,7 +243,12 @@ const told = computed(() => toldByMessage(props.refs))
 
 // 这道题问的是别人、不是我：频道里收成一行，点开才是整张卡。问到我自己的照整张卡
 // 画——我正要作答。判据在 `lib/askGroups`，和谁答得上这道题是同一条。
-const askForOthers = computed(() => !!askOptions(props.block) && !askAsksViewer(props.block, props.viewer))
+//
+// 提问方收回来的题不论问过谁都收成一行：它已经不等人答了，占满一栏只是挡着别人；
+// 那一行写「芝士撤回了」，题目照旧写，点开看得到原样。
+const askFolds = computed(
+  () => !!askOptions(props.block) && (!askAsksViewer(props.block, props.viewer) || askWithdrawn(props.block))
+)
 const askOpen = ref(false)
 </script>
 
@@ -446,7 +451,7 @@ const askOpen = ref(false)
            问看的人的。点开才长出下面那句题目和整张卡；问到我自己的照整张卡画。 -->
       <template v-else-if="askOptions(block)">
         <AskFoldLine
-          v-if="askForOthers"
+          v-if="askFolds"
           :blocks="[block]"
           :asker="runStart ? undefined : authorName"
           :names="refs.mentionNames"
@@ -457,7 +462,7 @@ const askOpen = ref(false)
           @toggle="askOpen = !askOpen"
         />
         <AskQuickReplies
-          v-if="askOpen || !askForOthers"
+          v-if="askOpen || !askFolds"
           :block="block"
           :asker="runStart ? undefined : authorName"
           :names="refs.mentionNames"
@@ -465,7 +470,7 @@ const askOpen = ref(false)
           :answering="askAnswering"
           :viewer="viewer"
           @reply="emit('ask-reply', block, $event)"
-          @withdraw="emit('ask-withdraw', block)"
+          @undo-skip="emit('ask-undo-skip', block)"
           @skip="emit('ask-skip', block)"
         >
           <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
