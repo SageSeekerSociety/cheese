@@ -40,7 +40,6 @@ from app.api.room_task_rows import (
     room_task_items,
     task_out,
     task_page_row,
-    with_session_running,
 )
 from app.api.task_instructions import (
     dispatch,
@@ -163,7 +162,7 @@ async def list_room_tasks(
     block query entirely instead of filtering its result.
 
     Each row says whether its AI teammate's session is running right now
-    (`session_running`, `room_task_rows.with_session_running`).
+    (`session_running`, `room_task_rows.task_rows`).
 
     条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`
     也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回
@@ -185,7 +184,6 @@ async def list_room_tasks(
         branch=branch,
         latest=latest,
     )
-    items = await with_session_running(db, items)
     return await conditional_json(ok(page(items, len(items))), if_none_match)
 
 

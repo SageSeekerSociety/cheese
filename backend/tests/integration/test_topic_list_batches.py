@@ -1059,7 +1059,7 @@ def test_team_by_handle_and_my_teams_deduplicate_profiles_and_join_status(client
 
 def test_room_snapshot_batches_open_and_recent_closed_tasks_in_one_pass(client):
     """`room_snapshot` on a channel with both open and closed tasks hydrates
-    both lists in a single `task_rows` + `with_session_running` pass instead of
+    both lists in a single `task_rows` pass instead of
     querying `accept_cards` and `awaiting_an_answer` twice."""
     pid, room_ids = _seed_populated_project(client)
     headers = session_auth_headers("alice")

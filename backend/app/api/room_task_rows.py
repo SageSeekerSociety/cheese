@@ -182,6 +182,10 @@ async def task_rows(
     # 哪几条活自己那位队友的会话此刻在跑、在哪一次跑里：那样的活是「在做」，除非它
     # 在这一次里报过别的（`presentation`）。
     runs = await teammate_runs(db, [task for task, _ in threads])
+    # 这段对话里此刻有没有任何会话在跑（runner 报的）：前端「在做」那颗记号转不转只看
+    # 它（`taskState.sessionRunning`）。放在这里而不是各个入口后补：首屏消息页带出的
+    # 任务卡、`/tasks` 列表和订阅快照都从这一处出行，漏补一处同一件任务就有两个样子。
+    session_running = await running_conversations(db, thread_ids)
     # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
     landed: dict[uuid.UUID, list] = {}
     for accepted_card in await AcceptCardRepository(db).accepted_for_tasks(thread_ids):
@@ -228,6 +232,9 @@ async def task_rows(
                 ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": shown.as_dict(),
+                # 这段对话里有没有会话在跑。给要看队友是否在干活的读者：总调度巡检不在
+                # 长命令中途去推它；那一格的「在做」读的是更窄的 `teammate_runs`。
+                "session_running": task.id in session_running,
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
                 **_task_markers(
@@ -554,35 +561,17 @@ async def room_snapshot_tasks(
     db: AsyncSession, actor: Actor, topic, *, recent_done: int
 ) -> dict[str, list[dict]]:
     """The `tasks` of a channel's `room_snapshot` (`open` and `recent`),
-    hydrating both lists in one batched `task_rows` + `with_session_running`
-    pass instead of running the seven per-batch queries twice."""
+    hydrating both lists in one batched `task_rows` pass instead of running the seven per-batch queries twice."""
     service = TaskService(db)
     open_threads = await service.threads_for_room(topic.id, limit=0, status="open")
     recent_threads = await service.threads_for_room(
         topic.id, limit=0, status="closed", latest=recent_done
     )
-    combined = await with_session_running(
-        db,
-        await task_rows(db, actor, topic.project_id, [*open_threads, *recent_threads]),
+    combined = await task_rows(
+        db, actor, topic.project_id, [*open_threads, *recent_threads]
     )
     split = len(open_threads)
     return {"open": combined[:split], "recent": combined[split:]}
-
-
-async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict]:
-    """Say on each task row whether any agent's session is running in it right
-    now (`session_running`), as the session protocol declares it.
-
-    For readers that act on whether the teammate is at work — the orchestrator's
-    patrol, which must not nudge a session in the middle of a long command. The
-    board cell reads a narrower fact (`agent.teammate_runs`: the task's own
-    teammate's run, weighed against its report); this says whether any session
-    in the task runs.
-    """
-    running = await running_conversations(db, [uuid.UUID(item["id"]) for item in items])
-    return [
-        {**item, "session_running": uuid.UUID(item["id"]) in running} for item in items
-    ]
 
 
 async def task_page_row(db: AsyncSession, place, task, *, me: str) -> dict:
