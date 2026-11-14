@@ -74,6 +74,9 @@ EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
 EVENT_TASK_FILED: Final = "task_filed"
 #: 一件任务的一版被退回了，同样记在它出自的那段对话里。
 EVENT_TASK_RETURNED: Final = "task_returned"
+#: 一件任务关闭了，同样记在它出自的那段对话里：句子说它怎么结束的（写成的结论、
+#: 采纳了没写总结、或者直接关掉）。
+EVENT_TASK_ENDED: Final = "task_ended"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 
@@ -229,6 +232,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CARD_REDESCRIBED,
         EVENT_TASK_FILED,
         EVENT_TASK_RETURNED,
+        EVENT_TASK_ENDED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_BLOCK_UPGRADED,
         EVENT_ENVIRONMENT_FAILED,
@@ -384,9 +388,11 @@ _SHOWN_AS: Final[dict[str, str]] = {
     EVENT_DEPENDENCY_REJECTED: SHOWN_NOT,
     # 草稿的下落画在草稿卡片上。
     EVENT_MAIL_RESULT: SHOWN_NOT,
-    # 任务出自的那段对话里记下的交了一版、退回了一版：频道里发生的事，不是谁说的话。
+    # 任务出自的那段对话里记下的交了一版、退回了一版、关闭了：频道里发生的事，
+    # 不是谁说的话。
     EVENT_TASK_FILED: SHOWN_HAPPENING,
     EVENT_TASK_RETURNED: SHOWN_HAPPENING,
+    EVENT_TASK_ENDED: SHOWN_HAPPENING,
     # AI 队友交出来、等人读过再定的东西。
     EVENT_SKILL_PROPOSED: SHOWN_CARD,
     EVENT_ROUTINE_PROPOSED: SHOWN_CARD,

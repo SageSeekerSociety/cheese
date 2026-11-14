@@ -109,6 +109,31 @@ class RecordInstruction(Protocol):
     ) -> None: ...
 
 
+class RecordSeatInstruction(Protocol):
+    """给一位 AI 队友在一段对话里留一句平台指令，等它下一轮读到（或在它正在做的
+    那件事里读到）。
+
+    形状是 `app.domain.delivery.agent.record_seat_instruction` 的形状。本包用它在
+    任务提交审阅和结束时叫醒频道主线上开这个任务的那位队友
+    （`task_landing.wake_opener`）：它不在任务自己的会话里，所以不能走
+    `RecordInstruction` —— 那一个只送任务会话，任务一关就判失败。
+
+    ``seat`` 是那位队友的席位 handle；这个项目里找不到它、或者它已经不在了，就什么
+    也不记。同一个 ``event.id`` 对同一个席位只记一次，所以事件 id 要由那件事本身
+    算出来。"""
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        event: DeliveryEvent,
+        *,
+        project_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        seat: str,
+        content: str,
+    ) -> None: ...
+
+
 class TaskTeammate(Protocol):
     """这个任务现在的 AI 队友是哪一个席位：``(实例 id, 它的 handle)``。
 

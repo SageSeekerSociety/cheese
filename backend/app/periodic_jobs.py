@@ -29,6 +29,7 @@ from app.domain.delivery.agent import (
     dispatch_pending as dispatch_pending_work,
 )
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import deliver, settle_card
@@ -223,6 +224,7 @@ def periodic_jobs(
         gate_nudge_factory=gate_nudges,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
+        record_seat=record_seat_instruction,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
         machines=checkout_sweep.sweep,
@@ -251,6 +253,7 @@ def periodic_jobs(
         sessions=sessions,
         chat=chat,
         get_runner=get_runner,
+        announce=announce,
         machines=checkout_sweep.sweep,
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)

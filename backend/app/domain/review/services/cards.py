@@ -35,7 +35,7 @@ from app.domain.review.models import (
 )
 from app.domain.review.schemas import AcceptCardOut
 from app.domain.review.services.notices import _announce_of
-from app.domain.review.task_landing import record_at_origin
+from app.domain.review.task_landing import record_at_origin, tell_opener_filed
 from app.domain.room_task import progress
 from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
@@ -319,6 +319,16 @@ async def create_card(
         say("taskFiledForReview", title=said_title(task)),
         announce=_announce_of(self),
         refers={"delivery": {"card_id": str(card.id), "version": len(existing) + 1}},
+    )
+    # The AI teammate that opened the task from the channel's main line is
+    # told what was handed in, to say so there in its own words.
+    await tell_opener_filed(
+        self._session,
+        task,
+        card,
+        version=len(existing) + 1,
+        reviewers=reviewers,
+        record_seat=self._record_seat,
     )
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)

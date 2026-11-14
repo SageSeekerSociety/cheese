@@ -78,9 +78,9 @@ from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import (
     project_team,
     seat_project,
-    task_teammate,
 )
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.delivery.agent import record_seat_instruction
 from app.domain.delivery.ledger import settle_card
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -338,11 +338,14 @@ async def conclude_task(
             closed, heard.task_closed(by=actor.handle, conclusion=task.conclusion)
         ),
     )
-    # The conversation the task was made from hears how it ended, said by its
-    # AI teammate, so whose teammate it is comes in here too.
-    await tell_origin_ended(db, task, task_teammate=task_teammate)
+    # The conversation the task was made from records how it ended, and the AI
+    # teammate that opened it from the channel's main line is told to say so.
+    await tell_origin_ended(
+        db, task, announce=announce, record_seat=record_seat_instruction
+    )
     out = await task_out(db, task, latest_card, me=actor.handle or "")
     await db.commit()
+    await dispatch(chat)
     return ok(out)
 
 

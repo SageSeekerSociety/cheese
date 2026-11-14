@@ -13,6 +13,7 @@ from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
 from app.domain.block.queries import turn_starts
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
@@ -31,6 +32,7 @@ pytestmark = pytest.mark.anyio
 _EXPECTED_PORTS = {
     "settle_card": settle_card,
     "record_instruction": record_task_instruction,
+    "record_seat": record_seat_instruction,
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
     "machines": checkout_sweep.sweep,
@@ -50,7 +52,13 @@ _KEYWORD_PORTS = {
         "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
-    "task closing": ("record_instruction", "task_teammate", "machines"),
+    "task closing": (
+        "record_instruction",
+        "record_seat",
+        "dispatch_pending",
+        "task_teammate",
+        "machines",
+    ),
     "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
 }
 
@@ -272,7 +280,7 @@ async def test_reminder_clocks_ask_the_supplied_chats_sessions(name):
         (
             "timed deliveries",
             "delivery.timer.deliver_due",
-            {"machines": checkout_sweep.sweep},
+            {"announce": announce, "machines": checkout_sweep.sweep},
         ),
         ("routines", "routine.service.sweep", {}),
     ],
