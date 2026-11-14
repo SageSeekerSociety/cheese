@@ -24,6 +24,7 @@ import type { TaskState } from '@/lib/taskState'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import AskFoldLine from '../../components/ask/AskFoldLine.vue'
+import AskGroupCard from '../../components/ask/AskGroupCard.vue'
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
@@ -157,6 +158,24 @@ function askBlock(
     },
   }
 }
+
+/** 一次问的两道题（`AskGroupCard` 收成一张卡）：题签上写各自的标题，`answer_log` 由
+ *  各格给第一道的。同组的两道题各自等人答——一道被答掉、被跳过，另一道照旧等。 */
+function groupQuestions(firstLog: Record<string, unknown>[] = []) {
+  const scope = askBlock(firstLog)
+  const owner = {
+    ...askBlock([]),
+    id: 'demo-question-2',
+    content: '谁来维护这份表？',
+    meta: { ...askBlock([]).meta, options: [{ text: '我' }, { text: '芝士' }] },
+  }
+  return [
+    { ...scope, meta: { ...scope.meta, header: '口径' } },
+    { ...owner, meta: { ...owner.meta, header: '维护' } },
+  ]
+}
+
+const GROUP_QUESTIONS = groupQuestions()
 
 // ---- 任务卡（TaskCard / TaskCreatedPost）--------------------------------------
 
@@ -751,7 +770,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-fold-line',
     title: 'AskFoldLine',
     about:
-      '问别人的一道题在频道里收成的那一行：谁问、问谁、题目一句、等没等到答案（或已经答了什么）。点开才是整张提问卡，再点收起。问到你自己的题不走这一件——照整张卡画，因为你正要作答。',
+      '问别人的一道题在频道里收成的那一行：谁问、问谁、题目一句、等没等到答案（或已经答了什么）。点开才是整张提问卡，再点收起。问到你自己的题不走这一件——照整张卡画，因为你正要作答。提问方把题收回去了的也走这一件：那一行改成说「芝士撤回了」，题目照旧，点开看得到原样。',
     file: 'src/components/ask/AskFoldLine.vue',
     component: AskFoldLine,
     needs: UI_T,
@@ -794,6 +813,19 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
           viewer: 'bob',
         },
         expect: 'Alice：按部门',
+      },
+      {
+        name: '提问方把题收回去了',
+        note: '不再问谁、也不再说等没等到——它已经不等人答了。那一格写「芝士撤回了」，题目照旧在一行里，点开看得到原样。',
+        props: {
+          blocks: [askBlock([{ kind: 'withdrawn', option: null, note: null, by: 'agent', at: null }])],
+          asker: AGENT_NAME,
+          names: { alice: 'Alice' },
+          refs: { mentionNames: { alice: 'Alice' }, topicTitles: {} },
+          expanded: false,
+          viewer: 'bob',
+        },
+        expect: '撤回',
       },
     ],
   },
@@ -860,6 +892,40 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
           viewer: 'alice',
         },
         expect: '撤销',
+      },
+    ],
+  },
+
+  {
+    id: 'ask-group-card',
+    title: 'AskGroupCard',
+    about:
+      '一次问了 2–3 道题时的那张卡：顶上一栏题签，一题一屏，末屏确认，整组一次交。每题右上角有一个 ✕：那一道我不答（他自己那一条），同组别的题照旧等他答；跳过的题签上打一横、那一屏上说明一句。有人答过的题不再摆选项，答案旁边没有撤回——答了就是答了。',
+    file: 'src/components/ask/AskGroupCard.vue',
+    component: AskGroupCard,
+    needs: UI_T,
+    states: [
+      {
+        name: '刚问出来，第一道',
+        note: '题签上是题号（有标题的写标题），右上角一个 ✕ 拒答这一道，题目下面摆选项。点「2」切下一道；「提交」在题签栏右端，不跟着一起滚。',
+        props: {
+          blocks: GROUP_QUESTIONS,
+          names: {},
+          viewer: 'alice',
+        },
+        expectSelector: '.ask-group__skip',
+      },
+      {
+        name: '答过的题：答案就是答案',
+        note: '有人答过的题不再摆选项，那一屏上是「谁答了什么」，右上角也没有 ✕ —— 题已经了结了。同组还没答的题照旧各自等各自的回答。',
+        props: {
+          blocks: groupQuestions([
+            { kind: 'option', option: '按部门 (Recommended)', note: null, by: 'alice', at: null },
+          ]),
+          names: { alice: 'Alice' },
+          viewer: 'alice',
+        },
+        expect: '按部门',
       },
     ],
   },
