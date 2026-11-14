@@ -444,6 +444,8 @@ async def _tell_origin(
     task_teammate: TaskTeammate | None,
 ) -> None:
 
+    if task.upgraded_from_block_id is None:
+        return
     teammate = await handed_in(task_teammate)(
         session, task.project_id, task.room_id, task.agent_handle
     )
