@@ -328,11 +328,14 @@ def requestheaders(flow):
                             if time.monotonic() > deadline or proxy.poll() is not None:
                                 raise RuntimeError("proxy did not start")
                             time.sleep(0.05)
+                    forwarded = {
+                        "model": "same-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }
+                    # A fallback names a model the request may run on instead;
+                    # the proxy leaves it out, on the replay as on the first try.
                     request = json.dumps(
-                        {
-                            "model": "same-model",
-                            "messages": [{"role": "user", "content": "hello"}],
-                        }
+                        {**forwarded, "fallbacks": [{"model": "other-model"}]}
                     ).encode()
                     client = client_type("127.0.0.1", port, timeout=5)
                     client.request("POST", "/v1/messages", request)
@@ -347,8 +350,11 @@ def requestheaders(flow):
                     self.assertIn(b"message_stop", response.read())
                     client.close()
                     self.assertEqual(
-                        attempts, [("Bearer a", request), ("Bearer b", request)]
+                        [token for token, _ in attempts], ["Bearer a", "Bearer b"]
                     )
+                    # The replay sends exactly what the rejected attempt sent.
+                    self.assertEqual(attempts[1][1], attempts[0][1])
+                    self.assertEqual(json.loads(attempts[0][1]), forwarded)
                     client = client_type("127.0.0.1", port, timeout=5)
                     client.request("POST", "/v1/messages", request)
                     response = client.getresponse()

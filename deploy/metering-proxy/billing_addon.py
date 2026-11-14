@@ -83,7 +83,7 @@ from cheese_billing_core import (  # noqa: E402
     ChatGPTUsageLimits,
     CodexBody,
     Egress,
-    GatewayFallbacks,
+    FallbackModels,
     Meter,
     ModelRewrite,
     PlatformCredential,
@@ -359,6 +359,22 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     return True
 
 
+def _reframe_for_rewrite(flow: http.HTTPFlow) -> None:
+    """Frame a request whose streamed body a rewrite is about to change in length.
+
+    The Content-Length it declared can no longer be right, so it goes. Over
+    HTTP/1.1 a body of unknown length then needs chunked framing. HTTP/2 and
+    HTTP/3 frame every body themselves, and a peer refuses a request carrying
+    Transfer-Encoding (RFC 9113 §8.2.2). mitmproxy reaches a TLS upstream in
+    the client's protocol where the server offers it and passes an HTTP/2 or
+    HTTP/3 request's headers on as they are; it reaches a plain-HTTP upstream,
+    such as the gateway, over HTTP/1.1 whatever the client spoke.
+    """
+    flow.request.headers.pop("content-length", None)
+    if flow.request.http_version.startswith("HTTP/1") or flow.request.scheme == "http":
+        flow.request.headers["transfer-encoding"] = "chunked"
+
+
 def _write_bound_model(
     flow: http.HTTPFlow, model: str, *, keep_haiku: bool = False
 ) -> None:
@@ -374,17 +390,16 @@ def _write_bound_model(
     those never carried the binding, and a project bound to opus should not
     start writing its session titles with it.
 
-    Re-framed as chunked because the rewrite changes the body's length and the
-    headers have already been decided by the time the first chunk arrives —
-    there is no Content-Length that could still be right. The alternative is
-    buffering the whole body to recompute it, and a long turn re-POSTs its
-    entire grown conversation every time: that is the #654 OOM.
+    Re-framed (`_reframe_for_rewrite`) because the rewrite changes the body's
+    length and the headers have already been decided by the time the first
+    chunk arrives — there is no Content-Length that could still be right. The
+    alternative is buffering the whole body to recompute it, and a long turn
+    re-POSTs its entire grown conversation every time: that is the #654 OOM.
     """
     if not model:
         return
     rewrite = ModelRewrite(model, keep_haiku=keep_haiku)
-    flow.request.headers.pop("content-length", None)
-    flow.request.headers["transfer-encoding"] = "chunked"
+    _reframe_for_rewrite(flow)
 
     def write(chunk: bytes) -> bytes:
         out = rewrite.feed(chunk)
@@ -429,10 +444,12 @@ def _write_bound_model_buffered(flow: http.HTTPFlow, model: str) -> None:
     flow.request.content = out
 
 
-def _drop_gateway_fallbacks(flow: http.HTTPFlow) -> None:
-    """Take the members LiteLLM routes fallbacks by out of this gateway request
-    (`GatewayFallbacks`), after the bound model has been written in."""
-    members = GatewayFallbacks()
+def _drop_fallback_models(flow: http.HTTPFlow) -> None:
+    """Take every member that names a model to run on instead of ``model``
+    (`FallbackModels`) out of this ``/v1/messages`` body, after the bound
+    model has been written in, so the request runs on that model and no other,
+    whichever pool it goes to."""
+    members = FallbackModels()
     if flow.request.stream is False:
         flow.request.content = members.feed(flow.request.content or b"")
         return
@@ -440,8 +457,7 @@ def _drop_gateway_fallbacks(flow: http.HTTPFlow) -> None:
     if not callable(write):
         # Nothing rewrote the body on its way past; this does, and the length
         # it leaves is no longer the one the headers declared.
-        flow.request.headers.pop("content-length", None)
-        flow.request.headers["transfer-encoding"] = "chunked"
+        _reframe_for_rewrite(flow)
         flow.request.stream = members.feed
         return
     flow.request.stream = lambda chunk: members.feed(write(chunk))
@@ -1012,13 +1028,12 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
     if flow.request.method == "POST" and upstream_path.startswith(
         "/backend-api/codex/responses"
     ):
-        # The body changes length, so it is re-framed as chunked, as
-        # `_write_bound_model` does. A request that is not streamed still fails
-        # upstream ("Stream must be set to true"); turning its answer back into
-        # one JSON document would mean buffering it.
+        # The body changes length, so it is re-framed, as `_write_bound_model`
+        # does. A request that is not streamed still fails upstream ("Stream
+        # must be set to true"); turning its answer back into one JSON document
+        # would mean buffering it.
         body = CodexBody()
-        flow.request.headers.pop("content-length", None)
-        flow.request.headers["transfer-encoding"] = "chunked"
+        _reframe_for_rewrite(flow)
         flow.request.stream = body.feed
     else:
         flow.request.stream = True
@@ -1453,7 +1468,7 @@ def _route(
                     _write_bound_model_buffered(flow, verdict.model)
                 else:
                     _write_bound_model(flow, verdict.model)
-                _drop_gateway_fallbacks(flow)
+                _drop_fallback_models(flow)
                 return
 
     # Everything from here goes to Anthropic, on the platform's credential.
@@ -1513,6 +1528,11 @@ def _route(
                 _write_bound_model_buffered(flow, verdict.model)
             else:
                 _write_bound_model(flow, verdict.model, keep_haiku=keep_haiku)
+        # With no verdict, or one that bound no model (admission unconfigured,
+        # unreachable), nothing chose a model here and the body's own runs; a
+        # fallback would still pick a second one past it, so it goes too. The
+        # request then runs the same way whether or not admission answered.
+        _drop_fallback_models(flow)
 
     # A stale x-api-key would override the session's bearer upstream.
     flow.request.headers.pop("x-api-key", None)

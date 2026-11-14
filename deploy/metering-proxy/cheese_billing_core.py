@@ -848,19 +848,22 @@ class CodexBody(TopLevelMembers):
     _OPENING = b'{"store":false'
 
 
-class GatewayFallbacks(TopLevelMembers):
-    """Leave out of a gateway-bound ``/v1/messages`` body every member that
-    names a model to fall back to.
+class FallbackModels(TopLevelMembers):
+    """Leave out of a ``/v1/messages`` body every member that names a model to
+    run the request on instead of the one in ``model``.
 
     Admission is the one place a request's model is chosen (结论 46), and
-    ``ModelRewrite`` writes its answer into ``model``. LiteLLM also reads these
-    members as models the request may be routed to instead, and before routing
-    it checks every one of them: Claude Code 2.1.316 puts
+    ``ModelRewrite`` writes its answer into ``model``; these members would
+    choose a second one past it, on either pool. Claude Code 2.1.316 puts
     ``"fallbacks":[{"model":"claude-opus-5"}]`` (Anthropic's server-side
     fallback, beta ``server-side-fallback-2026-06-01``) on the request that
-    compacts a conversation, the gateway serves no claude-* model, and the
-    request is refused with "Model is blocked", read by the CLI as a 401. Left
-    in, they would also let a caller name a model admission never bound.
+    compacts a conversation. When the model declines a request, Anthropic runs
+    it again on the fallback model in the same call, one admission never
+    bound. LiteLLM reads the same member, and the other three here, as models
+    it may route to, and checks
+    every one of them before routing: the gateway serves no claude-* model, so
+    the request was refused with "Model is blocked", read by the CLI as a 401,
+    and every compaction of a long conversation failed.
     """
 
     DROPPED = frozenset(
