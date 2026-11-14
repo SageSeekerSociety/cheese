@@ -311,6 +311,29 @@ describe('技能面板的 409', () => {
     await fireEvent.click(button)
   }
 
+  // 面板里的市场和全局市场页画的是同一块（SkillMarket）：目录读失败时那颗「重试」
+  // 要真的重读目录，不能只是一颗按了没反应的按钮。
+  it('市场目录读失败后，面板里点重试就重读目录', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a1', configuration: { body: '', skills: [] }, version: 1 })],
+      total: 1,
+    })
+    listSkillCatalog.mockResolvedValue({ data: [], total: 0 })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    setAgentEditing.mockResolvedValue({ editing: null })
+    fetchSkillMarket.mockReset().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(MARKET)
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    const retry = await screen.findByRole('button', { name: t('global.loadError.retry') })
+    await fireEvent.click(retry)
+
+    expect(await screen.findByText('pdf')).toBeTruthy()
+    expect(screen.queryByText(t('work.room.skills.marketFailed'))).toBeNull()
+  })
+
   // 别人先写了 → 这次保存被 409 拦下 → 面板重读名册。重读必须顺手把面板目标换到
   // 新读回来的那一行：名册刷新是整份换新对象，不换的话下一次保存还带着旧 version，
   // 只会再撞 409 —— toast 说的「请再改一次」就成假话（验收时浏览器里 7 连 409 实证）。
@@ -503,5 +526,86 @@ describe('技能面板的 409', () => {
       expected_version: 5,
       configuration: expect.objectContaining({ skills: ['images'] }),
     })
+  })
+})
+
+// 面板上去掉一颗已带的技能，要真的写回这位队友身上；写不进去就保持原样，别让人以为已经去掉了。
+describe('去掉队友已带的技能', () => {
+  const DEVICE = { device_id: 'dev1', name: '我的电脑', online: true, project_ids: [], team_ids: [], screens: [] }
+  function world(editing: 'free' | 'held' = 'free') {
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a1', configuration: { body: '', skills: ['wolfram', 'pdf'] }, version: 1 })],
+      total: 1,
+    })
+    listSkillCatalog.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
+    listMachineSkills.mockResolvedValue({
+      skills: [{ name: 'pdf', description: '读 PDF', source_root: '/home/u/pdf', digest: 'd1', state: 'adopted' }],
+    })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    fetchSkillMarket.mockResolvedValue(null)
+    if (editing === 'free') setAgentEditing.mockReset().mockResolvedValue({ editing: null })
+    else setAgentEditing.mockReset().mockRejectedValue(new ApiError(409, 'alice 正在编辑'))
+    updateProjectAgent.mockReset()
+  }
+  const removePdf = () => screen.findByRole('button', { name: '从芝士身上去掉 pdf' })
+
+  it('点已带的 pdf：存回去的名单里没有它，版本照带', async () => {
+    world()
+    updateProjectAgent.mockResolvedValue({ version: 2 })
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await fireEvent.click(await removePdf())
+
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    expect(updateProjectAgent.mock.calls[0][1]).toBe('a1')
+    expect(updateProjectAgent.mock.calls[0][2]).toMatchObject({
+      expected_version: 1,
+      configuration: expect.objectContaining({ skills: ['wolfram'] }),
+    })
+    await waitFor(() => expect(screen.queryByText('pdf')).toBeNull())
+    expect(screen.getByText('wolfram')).toBeTruthy()
+  })
+
+  it('没存进去：pdf 还在名单上，还能再点', async () => {
+    world()
+    updateProjectAgent.mockRejectedValue(new Error('boom'))
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await fireEvent.click(await removePdf())
+
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await waitFor(async () => expect(((await removePdf()) as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  // 机器离线、扫描失败时 pdf 在池子里查不到：名字照样画在板上，也照样能去掉 —— 不然
+  // 一个关了机的笔记本上的技能就永远摘不下来。
+  it('机器读不到时，已带的 pdf 照样能去掉', async () => {
+    world()
+    listMachineSkills.mockRejectedValue(new Error('offline'))
+    updateProjectAgent.mockResolvedValue({ version: 2 })
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await fireEvent.click(await removePdf())
+
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    expect(updateProjectAgent.mock.calls[0][2]).toMatchObject({
+      configuration: expect.objectContaining({ skills: ['wolfram'] }),
+    })
+  })
+
+  it('别人正占着这位队友：按不动，也不发保存', async () => {
+    world('held')
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    const socket = (await removePdf()) as HTMLButtonElement
+    await waitFor(() => expect(socket.disabled).toBe(true))
+    await fireEvent.click(socket)
+    expect(updateProjectAgent).not.toHaveBeenCalled()
   })
 })

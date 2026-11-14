@@ -194,7 +194,7 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '绑了机器时',
-        note: '6 个内置技能和机器上的 ponytail 都显示在灯板；灯亮表示当前可用。',
+        note: '6 个内置技能和带上的机器技能 ponytail 都显示在灯板；灯亮表示当前可用。',
         props: {
           agentName: '米洛',
           carried: [SKILL_POOL[2]],
@@ -203,6 +203,18 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
           deviceId: 'dev1',
         },
         expect: 'ponytail',
+      },
+      {
+        name: '机器上有、还没带',
+        note: '什么都没带，机器上的 pdf 只是「还能加」：不进名单，板上说还什么都没带。',
+        props: {
+          agentName: '米洛',
+          carried: [],
+          available: [{ name: 'pdf', description: '把 PDF 里的文字和表格读出来。', source: 'machine' as const }],
+          health: {},
+          deviceId: 'dev1',
+        },
+        expect: '这个队友还什么都没带。',
       },
       {
         name: '还在读技能',
@@ -253,6 +265,12 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
         note: '摆第四个货架时停在「Agent 模板」：后台还没有这类东西，只照实说一句，不摆假卡片。',
         props: { showAgents: true, tab: 'agents' },
         expect: '还没有 Agent 模板。',
+      },
+      {
+        name: '目录读失败',
+        note: '目录没读出来：换成失败块和一颗「重试」，点了往上发 retry 让宿主重读；401/403 只说没权限。',
+        props: { market: null, failed: true, failureReason: 'Failed to fetch' },
+        expect: '市场读不出来',
       },
     ],
   },
