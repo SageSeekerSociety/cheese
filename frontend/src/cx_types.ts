@@ -256,6 +256,18 @@ export interface ApiEnvelope<T> {
 }
 
 // Paginated list payload: {data: T[], total: number}
+/** 项目当前版本上的一次改动。`task` 只在平台采纳合并了它、而你看得到那件任务所在的
+ *  频道时才有；直接推上来的提交没有任务，只说是谁、什么时候。 */
+export interface ProjectChange {
+  sha: string
+  subject: string
+  /** 提交上写的名字。 */
+  author: string
+  /** ISO 时间。 */
+  at: string
+  task: { id: string; title: string; room_id: string } | null
+}
+
 export interface ListPayload<T> {
   data: T[]
   total: number

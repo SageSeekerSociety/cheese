@@ -901,6 +901,69 @@ def test_a_gateway_turn_never_carries_the_sessions_credential(
     assert leaked == {}, f"the session's credential reached the gateway: {leaked}"
 
 
+# The request Claude Code 2.1.316 sends to compact a conversation, as recorded
+# from the real CLI: the session's model, plus Anthropic's server-side fallback
+# naming a Claude model. A string holds the member's name too, so only the
+# top-level member may go.
+_COMPACTION_MEMBERS = {
+    "model": "deepseek-flash",
+    "messages": [{"role": "user", "content": 'quote: "fallbacks":[{"model":"x"}]'}],
+    "system": [{"type": "text", "text": "summarise"}],
+    "max_tokens": 32000,
+    "context_management": {"edits": []},
+    "stream": True,
+}
+_FALLBACKS = [{"model": "claude-opus-5"}]
+
+
+@pytest.mark.parametrize(
+    "deferred", [False, True], ids=["header-time turn", "deferred subagent turn"]
+)
+@pytest.mark.parametrize("fallbacks_first", [False, True], ids=["after", "first"])
+def test_a_gateway_turn_names_no_model_but_the_bound_one(
+    monkeypatch, tmp_path, deferred, fallbacks_first
+):
+    """A gateway request runs on the model admission bound and on no other:
+    a `fallbacks` member naming one the gateway does not serve made LiteLLM
+    refuse the whole request ("Model is blocked"), which is how every
+    compaction of a long conversation failed."""
+    members = dict(_COMPACTION_MEMBERS)
+    if fallbacks_first:
+        members = {"fallbacks": _FALLBACKS, **members}
+    else:
+        members["fallbacks"] = _FALLBACKS
+    body = json.dumps(members).encode()
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    _recording_admission(
+        mod,
+        monkeypatch,
+        _verdict(pool="gateway", key="sk-virtual-project-key", model="deepseek-flash"),
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _session_flow(conn="c1")
+    flow.request.headers["x-claude-code-request-class"] = (
+        "subagent" if deferred else "compaction"
+    )
+    flow.request.headers["content-length"] = str(len(body))
+    asyncio.run(mod.requestheaders(flow))
+    if deferred:
+        flow.request.content = body
+        asyncio.run(mod.request(flow))
+        sent = flow.request.content
+    else:
+        chunks = [body[i : i + 7] for i in range(0, len(body), 7)] + [b""]
+        sent = b"".join(flow.request.stream(c) for c in chunks)
+
+    assert flow.response is None, "a routed turn must not be refused"
+    assert flow.request.host == "litellm.invalid"
+    expected = dict(_COMPACTION_MEMBERS)
+    assert json.loads(sent) == expected
+
+
 def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path):
     """The backend hands a gateway project's key only to the proxy asking as
     itself: a session holds its own credential and must not be able to fetch
@@ -2609,7 +2672,9 @@ def test_every_forwarded_message_turn_still_streams_its_body(monkeypatch, tmp_pa
         asyncio.run(mod.requestheaders(flow))
 
         assert flow.response is None, f"{what}: was refused, not forwarded"
-        assert flow.request.stream is True, f"{what}: forwards a buffered body"
+        # mitmproxy buffers a request body whose `stream` is False; True, or a
+        # function the chunks pass through, forwards each chunk as it arrives.
+        assert flow.request.stream is not False, f"{what}: forwards a buffered body"
 
 
 def test_a_turn_whose_body_never_names_a_model_is_refused_not_run_as_it_came(

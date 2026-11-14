@@ -6,8 +6,8 @@
 //
 // 对话就是频道和任务页用的那一栏（TopicChatColumn 的 `beside`），换了一段对话来读：
 // 消息、连接、已读都走支线，名册和附件还是频道的。谁说话叫醒 AI 队友、输入
-// 框写什么、等审阅时那一条，都由那一栏定，这里只管页头（ThreadHead）。桌面上它占频道页
-// 右边那一半，页头在这一栏顶上；手机上是一整页，页头是顶栏的内容。
+// 框写什么、等审阅时那一条，都由那一栏定，这里只管页头（ThreadHead）。桌面上它在频道右栏
+// 「支线」那一格里，页头左边返回列表；手机上是一整页，页头是顶栏的内容。
 //
 // AI 队友的一条回复上点「查看过程」，这一栏换成那一轮的现场，「返回支线」回来。支线的
 // 对话只是藏起来，连接和滚动位置都还在。
@@ -20,7 +20,6 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { useChannelSpeakers } from '@/composables/useChannelSpeakers'
-import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { ApiError } from '@/api'
@@ -44,7 +43,7 @@ const props = defineProps<{
   members: ProjectMemberRow[]
   topicList: Topic[]
   memberNames: Record<string, string>
-  /** 整页（手机）：没有关闭键，返回在顶栏。 */
+  /** 整页（手机）：返回在顶栏。 */
   page?: boolean
   /** 地址点名的支线里那一条（`?block=`）：打开时停在它上面。 */
   focusBlock?: string | null
@@ -144,7 +143,7 @@ const headBinding = computed(() => ({
   heading: heading.value,
   canToTask: !!root.value && props.room.status !== 'archived',
   busy: busy.value,
-  closable: !props.page,
+  back: !props.page,
   onToTask: convert,
   onClose: () => emit('close'),
 }))
@@ -156,12 +155,7 @@ useScreenHeader(() =>
 </script>
 
 <template>
-  <section
-    v-guide-anchor="'thread-pane'"
-    class="thread-pane"
-    :aria-label="t('work.room.thread.title')"
-    data-testid="thread-pane"
-  >
+  <section class="thread-pane" :aria-label="t('work.room.thread.title')" data-testid="thread-pane">
     <!-- Desktop: the head row tops this column. Phone: it is the top bar's content (useScreenHeader). -->
     <ThreadHead v-if="!page" v-bind="headBinding" />
 

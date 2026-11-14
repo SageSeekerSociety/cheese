@@ -1,7 +1,7 @@
 // 右侧工作面板的收 / 开（三档见 useTopicPanel）。
 //
-// 支线开着时右边那一半是它，关掉支线就回到频道；其余情况收起面板、焦点回到打开它的那
-// 颗开关（键盘和读屏用户必须回得去）。窄档里二级侧栏浮层也可能同时开着，两层共用一个
+// 收起面板，焦点回到打开它的那颗开关（键盘和读屏用户必须回得去）；地址指着一条支线或一件
+// 交付时，同时回到频道的地址。窄档里二级侧栏浮层也可能同时开着，两层共用一个
 // Esc 栈：一下 Esc 只关最上面那层（后打开的那层）。见 useEscapeStack。
 import type { Ref } from 'vue'
 
@@ -39,7 +39,8 @@ export function useTopicPanelState(opts: {
   const float = panel.float
 
   function close() {
-    if (opts.thread.value) return opts.backToRoom()
+    // 支线或交付开在右栏的某一格里：收起右栏也离开那一处，回到频道。
+    if (opts.thread.value) opts.backToRoom()
     panel.hide()
     // Esc 关掉浮层，焦点回到打开它那颗开关。
     void nextTick(() => document.querySelector<HTMLElement>('[data-panel-toggle]')?.focus())

@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.device_failures import DeviceCallError
-from app.domain.agent import execution
+from app.domain.agent import execution, sandbox_image
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -158,7 +158,11 @@ def test_a_prepare_refused_for_want_of_space_keeps_the_session_where_it_is(
 
     async def call(target, method, _params, **_kwargs):
         if method == "ping":
-            return {**running(), "sandbox": True}
+            return {
+                **running(),
+                "sandbox": True,
+                "sandbox_image": sandbox_image.default_image()["reference"],
+            }
         if target["device_id"] == "host-a":
             raise DeviceCallError(NO_ROOM)
         return {}

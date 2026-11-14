@@ -95,6 +95,8 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
+  // 页面开着时主线上实时来了一行交付（打开时已经在的不算）：页面决定要不要打开它。
+  (e: 'delivery-arrived', taskId: string): void
   // 消息的 ⋯ 里钉成章节/取消章节，或书签条里取消：这一页拿着这段对话的地址，由它去改。
   (e: 'chapter', block: Block): void
   (e: 'unchapter', target: Block | string): void
@@ -264,6 +266,7 @@ defineExpose({
       @activity="emit('activity', $event)"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
+      @delivery-arrived="emit('delivery-arrived', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path) => emit('open-file', path)"
       @open-resource="

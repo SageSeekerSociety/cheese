@@ -27,6 +27,7 @@ export function isUuid(value: string): boolean {
 const PARAM_KINDS: [param: string, kind: NumberedKind][] = [
   ['topicId', 'channels'],
   ['taskId', 'tasks'],
+  ['reviewTaskId', 'tasks'],
   ['docId', 'docs'],
 ]
 

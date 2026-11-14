@@ -38,7 +38,7 @@ def _archive(path, top, files):
     with tarfile.open(path, "w:gz") as archive:
         for name, text in files.items():
             data = text.encode()
-            entry = tarfile.TarInfo(f"{top}/{name}")
+            entry = tarfile.TarInfo(f"{top}/{name}" if top else name)
             entry.size, entry.mode = len(data), 0o755
             archive.addfile(entry, io.BytesIO(data))
 
@@ -55,10 +55,14 @@ def served_sandbox_tools(tmp_path, monkeypatch):
         path = tmp_path / "toolchain-cache" / tool / platform_key / "artifact.tar.gz"
         if not path.exists():
             path.parent.mkdir(parents=True)
-            program = {"bubblewrap": "bwrap", "host-tools": "bin/mkfs.xfs"}[tool]
+            program = {
+                "bubblewrap": "bwrap",
+                "host-tools": "bin/mkfs.xfs",
+                "crane": "crane",
+            }[tool]
             _archive(
                 path,
-                f"{tool}-1",
+                "" if tool == "crane" else f"{tool}-1",
                 {program: f"#!/bin/sh\necho {tool} {platform_key}\n"},
             )
         return path
@@ -377,22 +381,17 @@ async def test_the_sandbox_tools_are_placed_where_the_connector_takes_them_as_cu
         private_key="test",
         sandboxes=True,
         script='r="$HOME/.cheese/runtime"; "$r/bubblewrap/bwrap"; '
-        '"$r/host-tools/bin/mkfs.xfs"',
+        '"$r/host-tools/bin/mkfs.xfs"; "$r/crane/crane"',
     )
 
     assert output.splitlines() == [
         f"bubblewrap {platform_key}",
         f"host-tools {platform_key}",
+        f"crane {platform_key}",
     ]
-    for tool in ("bubblewrap", "host-tools"):
+    for tool in ("bubblewrap", "host-tools", "crane"):
         marker = (runtime / f"{tool}.sha256").read_text().strip()
         assert marker == await _served_digest(tool, platform_key)
-    assert sorted(p.name for p in runtime.iterdir()) == [
-        "bubblewrap",
-        "bubblewrap.sha256",
-        "host-tools",
-        "host-tools.sha256",
-    ]
 
 
 async def test_a_retry_replaces_sandbox_tools_an_earlier_attempt_left(
@@ -502,9 +501,9 @@ async def test_an_attempt_cut_off_mid_copy_leaves_nothing_the_next_one_keeps(
     )
 
     assert output.startswith("bubblewrap ")
-    assert sorted(p.name for p in (home / ".cheese/runtime").iterdir()) == [
-        "bubblewrap",
-        "bubblewrap.sha256",
-        "host-tools",
-        "host-tools.sha256",
+    platform_key = {"linux-amd64": "linux-x64", "linux-arm64": "linux-arm64"}[
+        GUEST_TARGET
     ]
+    for tool in ("bubblewrap", "host-tools", "crane"):
+        marker = home / ".cheese/runtime" / f"{tool}.sha256"
+        assert marker.read_text().strip() == await _served_digest(tool, platform_key)

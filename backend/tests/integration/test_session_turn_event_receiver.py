@@ -290,148 +290,140 @@ async def test_actual_hook_close_failure_preserves_context_and_runner_until_repl
     assert runner.recent_work()[0]["status"] == "running"
     assert _running(runner, topic)
 
+    identity = replace(
+        _identity(project, topic, receiver=state.acting_agent),
+        work_id=work,
+        harness=CLAUDE_CODE,
+        native_session_id="native-session",
+    )
+    ids = await _blocks(factory, project, topic)
+    input_query = select(NativeInput).where(
+        NativeInput.project_id == project,
+        NativeInput.conversation_id == topic,
+        NativeInput.recipient_handle == seat,
+        NativeInput.input_id == identity.input_id,
+        NativeInput.work_id == work,
+    )
+    blocks_query = select(Block).where(Block.id.in_(ids))
+    usage_query = select(ResourceUsage).where(ResourceUsage.turn_id == work)
+    intervals_query = select(AgentTurn).where(AgentTurn.conversation_id == topic)
+    async with factory() as session:
+        await register_input(session, identity, InputEffects(held_block_ids=ids))
+        await record_receipt(
+            session,
+            InputReceipt(identity, "native_echo", execution_work_id=work),
+        )
+        await session.commit()
+        assert list(await session.scalars(usage_query)) == []
+    # The runner reports, with the session going idle, the inputs it read
+    # in this work: the one echoed above.
+    result = replace(
+        own_turns._result(seat, own_turns._finished(seat, result="")),
+        inputs_read=True,
+    )
+    assert not result.is_error and result.inputs_read
+    assert result.session_id == identity.native_session_id
+    assert result.harness == identity.harness == CLAUDE_CODE
+    assert result.agent_handle == identity.recipient_handle == state.acting_agent
+    assert identity.work_id == state.work_id == work
+    frames.clear()
+    closing = asyncio.current_task()
+    reached = []
+
+    def fail_settlement_commit(session):
+        if asyncio.current_task() is not closing:
+            return
+        session.flush()
+        row = session.scalars(input_query).one()
+        usages = list(session.scalars(usage_query))
+        # Intake saves the pointer and Stop closes the interval first, in
+        # separate commits. Fail only after the real settlement writes.
+        if not usages:
+            return
+        assert row.echoed_at is not None
+        assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
+        assert {consumed_turn(block) for block in session.scalars(blocks_query)} == {
+            str(work)
+        }
+        (usage,) = usages
+        assert usage.output_tokens == own_turns.USAGE["output_tokens"]
+        assert usage.credits == 0
+        reached.append(True)
+        if cancelled:
+            raise asyncio.CancelledError("cancel inside native Stop commit event")
+        session.execute(text("SELECT 1 / 0"))
+
+    event.listen(Session, "before_commit", fail_settlement_commit)
     try:
-        identity = replace(
-            _identity(project, topic, receiver=state.acting_agent),
-            work_id=work,
-            harness=CLAUDE_CODE,
-            native_session_id="native-session",
-        )
-        ids = await _blocks(factory, project, topic)
-        input_query = select(NativeInput).where(
-            NativeInput.project_id == project,
-            NativeInput.conversation_id == topic,
-            NativeInput.recipient_handle == seat,
-            NativeInput.input_id == identity.input_id,
-            NativeInput.work_id == work,
-        )
-        blocks_query = select(Block).where(Block.id.in_(ids))
-        usage_query = select(ResourceUsage).where(ResourceUsage.turn_id == work)
-        intervals_query = select(AgentTurn).where(AgentTurn.conversation_id == topic)
-        async with factory() as session:
-            await register_input(session, identity, InputEffects(held_block_ids=ids))
-            await record_receipt(
-                session,
-                InputReceipt(identity, "native_echo", execution_work_id=work),
-            )
-            await session.commit()
-            assert list(await session.scalars(usage_query)) == []
-        # The runner reports, with the session going idle, the inputs it read
-        # in this work: the one echoed above.
-        result = replace(
-            own_turns._result(seat, own_turns._finished(seat, result="")),
-            inputs_read=True,
-        )
-        assert not result.is_error and result.inputs_read
-        assert result.session_id == identity.native_session_id
-        assert result.harness == identity.harness == CLAUDE_CODE
-        assert result.agent_handle == identity.recipient_handle == state.acting_agent
-        assert identity.work_id == state.work_id == work
-        frames.clear()
-        closing = asyncio.current_task()
-        reached = []
-
-        def fail_settlement_commit(session):
-            if asyncio.current_task() is not closing:
-                return
-            session.flush()
-            row = session.scalars(input_query).one()
-            usages = list(session.scalars(usage_query))
-            # Intake saves the pointer and Stop closes the interval first, in
-            # separate commits. Fail only after the real settlement writes.
-            if not usages:
-                return
-            assert row.echoed_at is not None
-            assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
-            assert {
-                consumed_turn(block) for block in session.scalars(blocks_query)
-            } == {str(work)}
-            (usage,) = usages
-            assert usage.output_tokens == own_turns.USAGE["output_tokens"]
-            assert usage.credits == 0
-            reached.append(True)
-            if cancelled:
-                raise asyncio.CancelledError("cancel inside native Stop commit event")
-            session.execute(text("SELECT 1 / 0"))
-
-        event.listen(Session, "before_commit", fail_settlement_commit)
-        try:
-            with pytest.raises(asyncio.CancelledError if cancelled else DBAPIError):
-                await _consume(chat, project, topic, work, result)
-        finally:
-            event.remove(Session, "before_commit", fail_settlement_commit)
-        assert reached == [True], "the failure must reach the real settlement commit"
-        assert chat.live.hook_work[key] is state
-        assert state.self_started
-        assert (
-            state.project_id,
-            state.topic_id,
-            state.work_id,
-            state.acting_agent,
-            state.agent_instance_handle,
-            state.continuation_id,
-        ) == context_identity
-        assert str(work) in runner._last_frame_at
-        assert runner._live_topics[str(work)] == topic
-        assert runner.recent_work()[0]["status"] == "running"
-        assert _running(runner, topic)
-        assert not any(frame["type"] == "done" for _, frame in frames)
-        async with factory() as independent:
-            row = (await independent.scalars(input_query)).one()
-            # Delivered at its echo, whatever became of the Stop after it.
-            assert row.echoed_at is not None
-            assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
-            assert (
-                await held_blocks(
-                    independent,
-                    project_id=project,
-                    topic_id=topic,
-                    recipient_handle=seat,
-                )
-                == set()
-            )
-            assert list(await independent.scalars(usage_query)) == []
-            (interval,) = list(await independent.scalars(intervals_query))
-            assert interval.id == work and interval.stopped_at is not None
-            assert interval.session_id == identity.native_session_id
-
-        # Replay the same result through actual intake and Stop execution, not a
-        # direct completion.close helper. The existing interval must not reopen.
-        await _consume(chat, project, topic, work, result)
-        assert key not in chat.live.hook_work
-        assert str(work) not in runner._last_frame_at
-        assert str(work) not in runner._live_topics
-        assert runner.recent_work()[0]["status"] == "done"
-        assert not _running(runner, topic)
-        assert [channel for channel, frame in frames if frame["type"] == "done"] == [
-            str(topic)
-        ]
-        async with factory() as independent:
-            row = (await independent.scalars(input_query)).one()
-            assert row.echoed_at is not None
-            assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
-            assert {
-                consumed_turn(block)
-                for block in await independent.scalars(blocks_query)
-            } == {str(work)}
-            assert (
-                await held_blocks(
-                    independent,
-                    project_id=project,
-                    topic_id=topic,
-                    recipient_handle=seat,
-                )
-                == set()
-            )
-            (usage,) = list(await independent.scalars(usage_query))
-            assert usage.credits == 0
-            assert usage.output_tokens == own_turns.USAGE["output_tokens"]
-            (interval,) = list(await independent.scalars(intervals_query))
-            assert interval.id == work and interval.stopped_at is not None
-            assert interval.session_id == identity.native_session_id
+        with pytest.raises(asyncio.CancelledError if cancelled else DBAPIError):
+            await _consume(chat, project, topic, work, result)
     finally:
-        # Only this test's native context created this baseline future.
-        if state.known_commits is not None:
-            if not state.known_commits.done():
-                state.known_commits.cancel()
-            await asyncio.gather(state.known_commits, return_exceptions=True)
+        event.remove(Session, "before_commit", fail_settlement_commit)
+    assert reached == [True], "the failure must reach the real settlement commit"
+    assert chat.live.hook_work[key] is state
+    assert state.self_started
+    assert (
+        state.project_id,
+        state.topic_id,
+        state.work_id,
+        state.acting_agent,
+        state.agent_instance_handle,
+        state.continuation_id,
+    ) == context_identity
+    assert str(work) in runner._last_frame_at
+    assert runner._live_topics[str(work)] == topic
+    assert runner.recent_work()[0]["status"] == "running"
+    assert _running(runner, topic)
+    assert not any(frame["type"] == "done" for _, frame in frames)
+    async with factory() as independent:
+        row = (await independent.scalars(input_query)).one()
+        # Delivered at its echo, whatever became of the Stop after it.
+        assert row.echoed_at is not None
+        assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
+        assert (
+            await held_blocks(
+                independent,
+                project_id=project,
+                topic_id=topic,
+                recipient_handle=seat,
+            )
+            == set()
+        )
+        assert list(await independent.scalars(usage_query)) == []
+        (interval,) = list(await independent.scalars(intervals_query))
+        assert interval.id == work and interval.stopped_at is not None
+        assert interval.session_id == identity.native_session_id
+
+    # Replay the same result through actual intake and Stop execution, not a
+    # direct completion.close helper. The existing interval must not reopen.
+    await _consume(chat, project, topic, work, result)
+    assert key not in chat.live.hook_work
+    assert str(work) not in runner._last_frame_at
+    assert str(work) not in runner._live_topics
+    assert runner.recent_work()[0]["status"] == "done"
+    assert not _running(runner, topic)
+    assert [channel for channel, frame in frames if frame["type"] == "done"] == [
+        str(topic)
+    ]
+    async with factory() as independent:
+        row = (await independent.scalars(input_query)).one()
+        assert row.echoed_at is not None
+        assert set(row.released_block_ids) == {str(block_id) for block_id in ids}
+        assert {
+            consumed_turn(block) for block in await independent.scalars(blocks_query)
+        } == {str(work)}
+        assert (
+            await held_blocks(
+                independent,
+                project_id=project,
+                topic_id=topic,
+                recipient_handle=seat,
+            )
+            == set()
+        )
+        (usage,) = list(await independent.scalars(usage_query))
+        assert usage.credits == 0
+        assert usage.output_tokens == own_turns.USAGE["output_tokens"]
+        (interval,) = list(await independent.scalars(intervals_query))
+        assert interval.id == work and interval.stopped_at is not None
+        assert interval.session_id == identity.native_session_id

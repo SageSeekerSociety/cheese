@@ -318,9 +318,19 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
     def online(device_id: str | None) -> bool:
         return device_id is not None and hub.is_online(device_id)
 
+    def taking(host_id) -> list[SandboxHome]:
+        """A host's sandboxes that hold one of its slots: a parked one keeps
+        only its directory on the disk (`HostPool.occupancy`)."""
+        return [h for h in by_host.get(host_id, []) if h.parked_at is None]
+
+    def parked(host_id) -> list[SandboxHome]:
+        return [h for h in by_host.get(host_id, []) if h.parked_at is not None]
+
     host_rows = []
     for host in hosts:
         on = by_host.get(host.id, [])
+        held = taking(host.id)
+        kept = parked(host.id)
         host_rows.append(
             {
                 "id": str(host.id),
@@ -328,7 +338,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 "machine_id": host.machine_id,
                 "whole_machine": host.whole_machine,
                 "project": projects.get(host.project_id) if host.project_id else None,
-                "phase": host_phase(host, homes=len(on), online=online(host.device_id)),
+                "phase": host_phase(
+                    host, homes=len(held), online=online(host.device_id)
+                ),
                 "status": str(host.status),
                 "online": online(host.device_id),
                 "ip": host.ip,
@@ -336,7 +348,13 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 "memory_mb": host.memory_mb,
                 "disk_gb": host.disk_gb,
                 "slots": capacity(host),
-                "used": len(on),
+                "used": len(held),
+                # Parked sandboxes, and the disk their homes hold by their
+                # last reading (`cloud_host_parked_budget_gb` caps it).
+                "parked": len(kept),
+                "parked_bytes": sum(
+                    (sandbox_usage.get(h.id) or {}).get("disk_bytes") or 0 for h in kept
+                ),
                 "created_at": _iso(host.created_at),
                 "enrolled_at": _iso(host.enrolled_at),
                 "last_seen_at": _iso(host.last_seen_at),
@@ -354,6 +372,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 ),
                 "draining": host.draining_since is not None,
                 "draining_since": _iso(host.draining_since),
+                "refresh_in_place": host.refresh_in_place,
                 "enroll_attempts": host.enroll_attempts,
                 "enroll_error": host.enroll_error or None,
                 "usage": usage.get(host.id),
@@ -402,7 +421,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
         (h.waiting_since for h in waiting if h.waiting_since is not None),
         default=None,
     )
-    used = sum(len(by_host.get(h.id, [])) for h in pool)
+    used = sum(len(taking(h.id)) for h in pool)
     slots = sum(capacity(h) for h in pool)
     return {
         "configured": bool(
@@ -417,6 +436,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             "slots": slots,
             "used": used,
             "free": max(0, slots - used),
+            "parked": sum(len(parked(h.id)) for h in pool),
             "min_free": settings.cloud_pool_min_free_slots,
             "waiting": len(waiting),
             "oldest_wait_since": _iso(oldest_wait),

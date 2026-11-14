@@ -35,6 +35,10 @@ class Green:
     #: What the service was asked to read, text by text.
     read: list[str] = field(default_factory=list)
     pictures: list[bytes] = field(default_factory=list)
+    #: Where the upload token says to store a picture. The service names it
+    #: with its scheme: the uploads that put a second `https://` in front of it
+    #: reached the host `oss-cip-shanghai.https`.
+    oss_endpoint: str = "https://oss-cn-shanghai.aliyuncs.com"
 
     def _answer_or_raise(self) -> None:
         if self.down:
@@ -79,7 +83,7 @@ class Green:
                     security_token="sts-token",
                     bucket_name="green-upload",
                     file_name_prefix="upload/",
-                    oss_internet_end_point="oss-cn-shanghai.aliyuncs.com",
+                    oss_internet_end_point=self.oss_endpoint,
                 ),
             ),
         )

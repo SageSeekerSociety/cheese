@@ -38,6 +38,7 @@ import ComposerSummon from '@/components/room/ComposerSummon.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import TaskLink from '@/components/room/TaskLink.vue'
 import ThreadHead from '@/components/room/ThreadHead.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
@@ -463,6 +464,32 @@ const TASK_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'room-task-link',
+    title: 'TaskLink',
+    about: '芝士在频道主线上建的一件任务：它回复下面的一行，任务名、谁负责、箭头，点一下打开这件任务。不写状态。',
+    file: 'src/components/room/TaskLink.vue',
+    component: TaskLink,
+    needs: UI_T,
+    states: [
+      {
+        name: '有负责人',
+        note: '只记下建了这件任务；此刻到哪一步看侧栏和任务页。',
+        props: { taskId: 't-demo', title: '整理第一周的课件', ownerName: '王一鸣' },
+        expect: '王一鸣 负责',
+      },
+      {
+        name: '标题很长',
+        note: '标题一行放不下时截断，负责人和箭头留在右边。',
+        props: {
+          taskId: 't-demo-long',
+          title: '把第一周到第八周的课件按新的模板重新整理一遍，并补上每一讲的习题和答案',
+          ownerName: '王一鸣',
+        },
+        expect: '王一鸣 负责',
+      },
+    ],
+  },
+  {
     id: 'room-thread-root',
     title: 'ThreadRoot',
     about: '一条支线挂着的那条主线消息，画在这段对话最上面：支线的右半边和支线转成的任务页开头都是它。',
@@ -502,13 +529,13 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '桌面那一栏',
-        note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
-        props: { heading: '登录要不要加手机验证码？', closable: true },
+        note: '左边返回支线列表，写挂着的那条消息说的事，右边「转为任务」。',
+        props: { heading: '登录要不要加手机验证码？', back: true },
         expect: '登录要不要加手机验证码',
       },
       {
         name: '在手机顶栏里',
-        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
+        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边。',
         props: { heading: '登录要不要加手机验证码？', bar: true },
         expect: '登录要不要加手机验证码',
       },

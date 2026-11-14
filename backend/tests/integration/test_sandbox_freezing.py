@@ -53,6 +53,7 @@ from tests.integration.test_sandbox_idle_stop import (
     tool_call,
     working_on,
 )
+from tests.support.files_bucket import files_bucket
 
 
 @pytest.fixture
@@ -61,7 +62,16 @@ def icy(cloud, monkeypatch):
     destroy (`test_sandbox_idle_stop`), since that is what its own tests
     measure."""
     monkeypatch.setattr(settings, "cloud_sandbox_freeze", True)
-    return cloud
+    with files_bucket() as config:
+        for name, value in (
+            ("s3_endpoint_url", config["files_bucket_endpoint_url"]),
+            ("s3_access_key", config["files_bucket_access_key"]),
+            ("s3_secret_key", config["files_bucket_secret_key"]),
+            ("s3_region", config["files_bucket_region"]),
+            ("transcript_s3_bucket", config["files_bucket"]),
+        ):
+            monkeypatch.setattr(settings, name, value)
+        yield cloud
 
 
 def freeze_sweep(case) -> dict:
@@ -678,3 +688,30 @@ def test_parked_homes_past_their_hosts_budget_go_oldest_first(icy, monkeypatch):
 
     assert freeze_sweep(icy)["destroyed"] == 1
     assert home_row(icy, seat) is None
+
+
+def test_a_host_updated_in_place_parks_its_frozen_sandboxes_instead_of_deleting(
+    icy,
+):
+    """A host being brought up to date where it is (`host_refresh`) keeps its
+    sandboxes' homes: a frozen one is parked, not destroyed, while a host
+    being rebuilt destroys it at once."""
+    seat, home, device = a_seat_working(icy)
+
+    async def drain():
+        async with icy.client.test_request_factory() as db:
+            await db.execute(
+                update(CloudHost)
+                .where(CloudHost.device_id == device)
+                .values(draining_since=datetime.now(UTC), refresh_in_place=True)
+            )
+            await db.commit()
+
+    run(icy, drain)
+    freeze_sweep(icy)
+
+    row = home_row(icy, seat)
+    assert row is not None and row.parked_at is not None
+    asked = [action for (_, action) in actions(icy)]
+    assert "park" in asked and "destroy" not in asked
+    assert (home / "room" / "notes.md").read_text() == "not committed anywhere\n"

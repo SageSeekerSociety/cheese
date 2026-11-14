@@ -106,6 +106,7 @@
       "vms": "{n} of them are whole VMs.",
       "slots": "Sandbox slots",
       "slotsNote": "{free} free; the pool keeps at least {min} and adds a host below that",
+      "slotsNoteParked": "{free} free; the pool keeps at least {min} and adds a host below that; {parked} parked take no slot",
       "waiting": "Waiting for a sandbox",
       "waitingNote": "The longest has waited {for}",
       "failures": "Provider failures",
@@ -157,7 +158,9 @@
       "offline": "Connector away for {for}",
       "idle": "Idle for {for}",
       "vm": "Whole VM for {project}",
-      "draining": "Rolling rebuild started {for} ago; released and replaced once empty"
+      "draining": "Rolling rebuild started {for} ago; released and replaced once empty",
+      "refreshing": "Updating in place for {for}; its enrollment runs again on the same machine once only parked sandboxes are left, and its disk keeps everything",
+      "parked": "{n} parked, {size} GB"
     },
     "when": {
       "waiting": "Waiting for {for}",
@@ -202,6 +205,11 @@
         "claude": "Claude Code lookup",
         "sandbox": "sandbox start",
         "ready": "executor answer",
+        "lock": "repository lock",
+        "seed": "copy from host repository",
+        "fetch": "fetch and check out",
+        "give": "give back to host",
+        "deps": "dependencies",
         "checkpoint": "checkpoint",
         "freeze": "host freeze",
         "checkout": "checkout",

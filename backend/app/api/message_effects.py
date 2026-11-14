@@ -15,7 +15,6 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.thread.services import answered_in
 
 
 async def announce_edited_message(
@@ -65,14 +64,11 @@ async def announce_edited_message(
     )
     summoned = Summoned()
     if named:
-        # Where it is answered is resolved only now: a message in a channel's
-        # main line gets its 支线 the moment it names somebody, and an edit that
-        # names nobody must not open one.
         summoned = await record_mentions(
             session,
             project_id=block.project_id,
             room_id=sent.room.id,
-            conversation_id=await answered_in(session, block),
+            conversation_id=block.conversation_id,
             block_id=block.id,
             author=author,
             content=sent.text,

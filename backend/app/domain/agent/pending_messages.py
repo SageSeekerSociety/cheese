@@ -17,7 +17,6 @@ from app.domain.delivery.input_holds import seats_with_unfinished_input
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
 from app.domain.run_record.models import RunRecord
-from app.domain.thread.services import answered_in_many
 
 _runner = None
 logger = logging.getLogger(__name__)
@@ -162,9 +161,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 )
             )
         )
-        # Only messages this scan may start a turn for are asked where they are
-        # answered: that read opens the 支线 of a main-line message, so it may
-        # not run for one already begun or answered.
         waiting = [
             block
             for block in mentioned
@@ -172,11 +168,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             and block.id not in answered
             and not runner.turn_pending(block.id)
         ]
-        # A channel's main line is answered in the message's 支线. The messages
-        # of one scan come from a handful of conversations, so the question is
-        # put once for the batch instead of twice per message
-        # (`thread.services.answered_in_many`).
-        answered_in_by_block = await answered_in_many(session, waiting)
         # The hold each message runs into is keyed by (conversation, seat), and
         # the seat is the one the message named: the loop checks `acting`
         # against exactly that before asking. One read answers every pair.
@@ -184,7 +175,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             session,
             [
                 (
-                    answered_in_by_block[block.id],
+                    block.conversation_id,
                     recipient_seat((block.meta or {}).get("agent_recipient") or {}),
                 )
                 for block in waiting
@@ -198,19 +189,17 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             session,
             [
                 (
-                    answered_in_by_block[block.id],
+                    block.conversation_id,
                     ((block.meta or {}).get("agent_recipient") or {}).get("handle"),
                 )
                 for block in waiting
             ],
         )
         seats = {}
-        for block in mentioned:
-            if block.id not in answered_in_by_block:
-                continue
+        for block in waiting:
             recipient = (block.meta or {}).get("agent_recipient") or {}
             handle = recipient.get("handle")
-            conversation = answered_in_by_block[block.id]
+            conversation = block.conversation_id
             key = (conversation, handle)
             if key in seats:
                 continue

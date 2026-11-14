@@ -52,6 +52,20 @@ PULL_REFUSED_BY=GitHub
 . "$(cd "$(dirname "$0")" && pwd)/registry-retry.sh"
 
 url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+# A workspace that an actions/checkout with `sparse-checkout` once used is a
+# blob:none partial clone, and stays one: every later fetch is filtered the
+# same way, and `git checkout` then downloads the files it needs by itself, a
+# second trip to github.com outside the retried fetch below, over the same
+# link (dev deploy runs 42616088289 and 43286277376 failed there: `could not
+# fetch <blob> from promisor remote`). Its repository is started over: a new
+# one fetches every file of the commit it asks for, so the checkout needs
+# nothing more, and a fetch that fails leaves nothing a later run would take
+# for objects it has.
+if [ -d .git ] && { git config --local --get remote.origin.promisor >/dev/null \
+    || git config --local --get remote.origin.partialclonefilter >/dev/null; }; then
+  log "the workspace is a partial clone; starting its repository over"
+  rm -rf .git
+fi
 [ -d .git ] || git init -q .
 if git remote get-url origin >/dev/null 2>&1; then
   git remote set-url origin "$url"

@@ -1392,7 +1392,9 @@ def stub_project_forge(monkeypatch, tmp_path):
             revision = route.removeprefix("/git/commits/").removesuffix(".diff")
             return git_store.git(repo, "show", "--format=", revision)
 
-        def commits(revision):
+        def commits(revision, *, limit=50, only=None):
+            # As GitHub: `path` keeps the commits that changed that file.
+            scope = ["--", only] if only else []
             return [
                 {
                     "sha": sha,
@@ -1402,18 +1404,28 @@ def stub_project_forge(monkeypatch, tmp_path):
                                 repo, "show", "-s", "--format=%an", sha
                             ).strip()
                         },
+                        "committer": {
+                            "date": git_store.git(
+                                repo, "show", "-s", "--format=%cI", sha
+                            ).strip()
+                        },
                         "message": git_store.git(
                             repo, "show", "-s", "--format=%B", sha
                         ).strip(),
                     },
                 }
                 for sha in git_store.git(
-                    repo, "rev-list", "--max-count=50", revision
+                    repo, "rev-list", f"--max-count={limit}", revision, *scope
                 ).splitlines()
             ]
 
         if route == "/commits":
-            return commits(parse_qs(urlsplit(path).query)["sha"][0])
+            query = parse_qs(urlsplit(path).query)
+            return commits(
+                query["sha"][0],
+                limit=int(query.get("per_page", ["50"])[0]),
+                only=query.get("path", [None])[0],
+            )
         if route.startswith("/pulls/") and route.endswith(".diff"):
             from sqlalchemy import select
 

@@ -64,7 +64,6 @@ export type { ChatPanelEmit, ChatPanelOptions } from './chatPanelContract'
 
 export function useChatPanel(opts: ChatPanelOptions) {
   const { topic, alwaysSummon, showComposer, members, topicList, unreadOnOpen, focusBlock, emit } = opts
-  const answersInThread = () => opts.answersInThread?.() ?? false
   // 这一栏读的那段对话：房间自己，或房间里的一个任务（`conversationId`）。消息、连接、
   // 发送、草稿走它；名册、附件、标题还是房间的（`topic()`）。
   function place(): Topic | null {
@@ -203,7 +202,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom: scroll.scrollToBottom,
     errorMsg,
     awaitingReply: turns.awaitingReply,
-    answersInThread,
     onPosted: opts.onPosted,
     timeline,
     sentNow: () => timelineMotion.sentNow,

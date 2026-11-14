@@ -38,6 +38,7 @@ import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue
 import { useElementSize } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
+import { provideAcceptCard } from '../composables/useAcceptCard'
 import { usePanelSplit } from '../composables/usePanelSplit'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTopicMemory } from '../composables/useTopicMemory'
@@ -57,10 +58,12 @@ import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import { usePreviewPointer } from './panels/preview/usePreviewPointer'
 import RoomFilesPanelHost from './room/RoomFilesPanelHost.vue'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
+import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
+import TopicAcceptCard from './TopicAcceptCard.vue'
 
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -134,6 +137,19 @@ const props = withDefaults(
     activity?: MemberActivityLine[]
     // 「支线」那一格里有我没读过的回复：页签上挂一个点。
     threadsNew?: boolean
+    // 在频道里审阅一件任务交上来的那一版（`taskId` 是它）：只有「改动」「预览」两格，开在
+    // 「改动」上。采纳卡是这一栏自己的一份（页面上那一份是频道的），页头、「改动」页顶部和
+    // 底部那一条读的都是它；这一版决定过了，「改动」只读。页签不进地址，也不进命令面板：
+    // 频道页上那一栏工作面板还在，地址和命令是它的。
+    review?: boolean
+    // 审阅时页头那一行（桌面）：任务名、第几版、退回 / 采纳、打开任务，决定在页头上做，
+    // 底部那一条只在写退回理由时出现。不给（手机，页头在顶栏里）时决定在底部那一条上。
+    reviewHead?: { heading: string; version: number | null } | null
+    // 审阅的那件任务又交了一版（页面在频道里看到了那一行）：变一下，这一栏的卡重读。
+    reviewReload?: number
+    // 频道里正在审阅的那一件交付：固定区右边多一格能关的页签，写着任务名，内容由页面从
+    // `#delivery` 插槽递进来。同一时间只有一格（`id` 认它是哪一件）；`dot` 是它到了、还没人点开过。
+    delivery?: { id: string; title: string; dot?: boolean } | null
   }>(),
   {
     taskId: null,
@@ -155,7 +171,40 @@ const props = withDefaults(
     agentHandle: null,
     members: () => [],
     activity: () => [],
+    review: false,
+    reviewHead: null,
+    reviewReload: 0,
+    delivery: null,
   }
+)
+// 审阅时这一栏的采纳卡（见 `review`）。一栏一份，换一件任务就换一栏（页面按任务给 key）。
+const reviewCard = props.review
+  ? provideAcceptCard({
+      get topicId() {
+        return props.topic?.id ?? ''
+      },
+      get topicStatus() {
+        return props.topic?.status ?? ''
+      },
+      get taskId() {
+        return props.taskId
+      },
+    })
+  : null
+watch(
+  () => props.reviewReload,
+  () => void reviewCard?.reload()
+)
+// 「改动」只读：任务页上由页面说（不是负责人、任务关了）；审阅时这一版决定过了也只读。
+const changesReadOnly = computed(
+  () =>
+    props.topic?.status === 'archived' ||
+    props.taskReadOnly ||
+    (!!reviewCard && reviewCard.loaded.value && !reviewCard.pendingCard.value)
+)
+// 审阅时底部那一条：没有页头（手机）时一直在；有页头时只在写退回理由的那一会儿在。
+const reviewDock = computed(
+  () => !!reviewCard && (!props.reviewHead || (!!reviewCard.pendingCard.value && reviewCard.showRejectInput.value))
 )
 
 const emit = defineEmits<{
@@ -170,13 +219,15 @@ const emit = defineEmits<{
   (e: 'locate', payload: PreviewLocate): void
   // 自由区里的文档被挪到别处：去它的新地址（地址是页面的事，见 `tab`）。
   (e: 'navigate', to: NavTarget): void
+  // 交付那一格的 ×：页面把它拿掉。正看着它时，这一栏自己回到打开它之前那一格。
+  (e: 'close-delivery'): void
 }>()
 
 // 有哪几格、各叫什么、挂哪个图标在 `panels/panelTabList.ts`：文档里的演示照着
 // 同一份表画这条栏，一个名字只有一个出处。
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
 // 的），桌面上对话就在旁边那一栏，所以是总览。
-const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview'))
+const defaultTab = computed<TabKey>(() => (props.review ? 'changes' : props.withChat ? 'chat' : 'overview'))
 // 旧地址还带着 ?tab=doc / ?tab=tasks —— 两个 tab 都并进概览了，所以它们指的就是
 // 概览。链接不该因为我们合并了界面而失效。
 const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
@@ -203,11 +254,18 @@ function noteFileOrigin() {
   if (!active.value.startsWith(FILE_TAB)) fileOrigin.value = active.value
 }
 
+// ---- 交付那一格 ----
+// 固定区右边那一格能关的页签（见 `delivery`）。关掉时回到打开它之前那一格，和自由区关掉
+// 最后一份回到来处是同一个道理；直接从链接打开、没有来处时回到兜底那一格。
+const DELIVERY_TAB = 'delivery'
+const deliveryOrigin = ref<string | null>(null)
+
 const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
 function tabFromUrl(): string | null {
   const asked = props.tab
   if (!asked) return null
+  if (asked === DELIVERY_TAB) return props.delivery ? asked : null
   if (asked.startsWith(FILE_TAB) && asked.length > FILE_TAB.length) return asked
   if (tabs.value.some((t) => t.key === asked)) return asked as TabKey
   return TAB_ALIASES[asked] ?? null
@@ -314,6 +372,9 @@ function show(k: string) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 }
 watch(active, show)
+watch(active, (now, before) => {
+  if (now === DELIVERY_TAB && before !== DELIVERY_TAB) deliveryOrigin.value = before
+})
 
 // ---- 手机上换页签时内容从哪边进来 ----
 // 一屏只有一格，换页签时新的那一格从它页签所在的方向挪进来（右边的页签从右边来），
@@ -321,6 +382,7 @@ watch(active, show)
 // 位置、键盘弹起时的贴底都在里面），不为了演一下重建。桌面上两栏并排，不演。
 const tabOrder = computed(() => [
   ...tabs.value.map((tab) => tab.key as string),
+  ...(props.delivery ? [DELIVERY_TAB] : []),
   ...openFiles.value.map((f) => fileKey(f.path)),
 ])
 const entering = ref<{ key: string; from: 'left' | 'right' } | null>(null)
@@ -451,14 +513,15 @@ function hasContent(key: TabKey): boolean {
 // 支线、文件和例行事务，其余几格都有。
 const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
 const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
+const REVIEW_TABS: ReadonlySet<string> = new Set(['changes', 'preview'])
 const tabs = computed(() =>
   workPanelTabs(props.withChat).filter((tab) =>
-    props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
+    props.review ? REVIEW_TABS.has(tab.key) : props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
   )
 )
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
-  tabs.value.map((tab) => ({
+  (props.review ? [] : tabs.value).map((tab) => ({
     id: `room.tab.${tab.key}`,
     title: t('navigation.palette.showTab', { tab: tab.label }),
     icon: tab.icon,
@@ -501,7 +564,9 @@ const tabPanelId = `wp-panel-${useId()}`
 const tabBodyRef = ref<HTMLElement | null>(null)
 const { width: bodyWidth } = useElementSize(tabBodyRef)
 const keyExists = (key: string) =>
-  tabs.value.some((tab) => tab.key === key) || openFiles.value.some((f) => fileKey(f.path) === key)
+  tabs.value.some((tab) => tab.key === key) ||
+  (key === DELIVERY_TAB && !!props.delivery) ||
+  openFiles.value.some((f) => fileKey(f.path) === key)
 const {
   split,
   canSplit,
@@ -510,10 +575,53 @@ const {
   sideClass,
   drop: dropSplit,
 } = usePanelSplit(active, { width: bodyWidth, phone: computed(() => props.withChat), exists: keyExists })
-const activeTabLabel = computed(() =>
-  active.value.startsWith('file:')
+const activeTabLabel = computed(() => {
+  if (active.value === DELIVERY_TAB) return props.delivery?.title
+  return active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
     : panelTabs.value.find((tab) => tab.key === active.value)?.label
+})
+
+/** 交给 `PanelTabs` 的那一格能关的页签。 */
+const deliveryTab = computed<PanelTab | null>(() =>
+  props.delivery
+    ? {
+        key: DELIVERY_TAB,
+        label: props.delivery.title || t('work.room.delivery.title'),
+        icon: 'mdi-file-eye-outline',
+        signal: props.delivery.dot ? { kind: 'dot' } : undefined,
+      }
+    : null
+)
+
+// 交付那一格的 ×：页面拿掉它；正看着它就回到来处（来处已经不在、或者没有来处时回到兜底那一格）。
+async function closeDelivery() {
+  dropSplit(DELIVERY_TAB)
+  const wasActive = active.value === DELIVERY_TAB
+  if (wasActive && !(await confirmAnnotationDiscard())) return
+  emit('close-delivery')
+  if (!wasActive) return
+  const origin = deliveryOrigin.value
+  await setTab(origin && origin !== DELIVERY_TAB && keyExists(origin) ? origin : defaultTab.value, { guard: false })
+}
+// 这一格和别的页签一样，第一次选中时才挂上（没被选中的那一格不在后台读改动）。页面拿掉
+// 它、或者换成了另一件交付而它没开着时，卸掉；拿掉时它正开着，回到来处。
+function unmountDelivery() {
+  if (!mounted.value.has(DELIVERY_TAB)) return
+  const next = new Set(mounted.value)
+  next.delete(DELIVERY_TAB)
+  mounted.value = next
+}
+watch(
+  () => props.delivery?.id ?? null,
+  (id, before) => {
+    if (id === before) return
+    if (!id && active.value === DELIVERY_TAB) {
+      const origin = deliveryOrigin.value
+      active.value = origin && origin !== DELIVERY_TAB && keyExists(origin) ? origin : defaultTab.value
+    }
+    if (active.value !== DELIVERY_TAB) unmountDelivery()
+  }
 )
 
 const panelTabs = computed<PanelTab[]>(() =>
@@ -815,6 +923,12 @@ defineExpose({
       <!-- 这条栏是 `PanelTabs` 画的：产品页和文档里的动态演示共用同一个组件，演示
            的四格于是永远和这里长得一样。信号（谁在干活、有几个文件改了）和「哪一
            格此刻没东西」都由这里算好交给它。 -->
+      <DeliveryReviewHead
+        v-if="review && reviewHead"
+        :heading="reviewHead.heading"
+        :version="reviewHead.version"
+        @open-task="taskId && emit('open-card', taskId)"
+      />
       <PanelTabs
         :tabs="panelTabs"
         :active="active"
@@ -822,7 +936,9 @@ defineExpose({
         :phone="withChat"
         :panel-id="tabBodyRef ? tabPanelId : undefined"
         :side="split"
+        :closable="deliveryTab"
         @select="selectTab"
+        @close-tab="closeDelivery"
         @close-file="closeFile"
         @pin-file="pinFile"
       >
@@ -848,7 +964,7 @@ defineExpose({
           :id="tabPanelId"
           ref="tabBodyRef"
           class="tabbody"
-          :class="{ 'tabbody--phone': withChat }"
+          :class="{ 'tabbody--phone': withChat, 'tabbody--review': review }"
           role="tabpanel"
           :aria-label="activeTabLabel"
         >
@@ -867,6 +983,14 @@ defineExpose({
             :class="[enterClass('threads'), sideClass('threads')]"
           >
             <slot name="threads" />
+          </div>
+          <div
+            v-if="delivery && mounted.has(DELIVERY_TAB)"
+            v-show="shown(DELIVERY_TAB)"
+            class="tabpane-slot"
+            :class="[enterClass(DELIVERY_TAB), sideClass(DELIVERY_TAB)]"
+          >
+            <slot name="delivery" />
           </div>
           <PanelSiteHost
             v-if="mounted.has('site')"
@@ -894,7 +1018,7 @@ defineExpose({
             :class="[enterClass('changes'), sideClass('changes')]"
             :topic-id="topicId"
             :task-id="taskId"
-            :read-only="topic?.status === 'archived' || taskReadOnly"
+            :read-only="changesReadOnly"
             :project-id="projectId"
             :active="shown('changes')"
             :refresh-tick="refreshTick"
@@ -972,6 +1096,7 @@ defineExpose({
               :path="f.path"
               :lines="f.project.lines"
               @open-task="emit('open-card', $event)"
+              @navigate="emit('navigate', $event)"
             />
             <div
               v-else-if="f.skill && mounted.has(fileKey(f.path))"
@@ -1001,6 +1126,12 @@ defineExpose({
           </template>
         </div>
       </ErrorBoundary>
+      <TopicAcceptCard
+        v-if="reviewDock"
+        :topic-id="topic.id"
+        :task-id="taskId ?? undefined"
+        :topic-status="topic.status"
+      />
       <DocumentActions
         ref="docActions"
         :project-id="projectId ?? topic?.project_id ?? ''"
@@ -1065,6 +1196,11 @@ defineExpose({
   min-height: 0;
   /* Panel tab switches cross-fade this block only (lib/viewTransition.ts). */
   view-transition-name: wp-tabbody;
+}
+/* 频道里审阅时这一栏套在频道那一栏的交付页签里：两块同名的内容区同时在屏幕上，浏览器会跳过
+   整次过渡。外面那一栏照旧演，里面这一栏不演。 */
+.tabbody--review {
+  view-transition-name: none;
 }
 /* 每一格都占满这条 flex 行：按内容收缩的一格会让 Monaco 量到窄宽度后定死，面板右边空一条。 */
 .tabbody > * {

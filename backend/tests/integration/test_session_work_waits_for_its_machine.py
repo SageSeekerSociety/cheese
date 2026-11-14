@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, sandbox_image
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
@@ -188,6 +188,7 @@ def _machine_is_up(case, session_id, device_id):
             )
             host.status = MachineStatus.running
             host.ai_status = AiStatus.disabled
+            host.sandbox_image = sandbox_image.default_image()["reference"]
             host.last_seen_at = datetime.now(UTC)
             await repo.mark_enrolled(
                 host,

@@ -83,6 +83,7 @@ from cheese_billing_core import (  # noqa: E402
     ChatGPTUsageLimits,
     CodexBody,
     Egress,
+    GatewayFallbacks,
     Meter,
     ModelRewrite,
     PlatformCredential,
@@ -426,6 +427,24 @@ def _write_bound_model_buffered(flow: http.HTTPFlow, model: str) -> None:
             model,
         )
     flow.request.content = out
+
+
+def _drop_gateway_fallbacks(flow: http.HTTPFlow) -> None:
+    """Take the members LiteLLM routes fallbacks by out of this gateway request
+    (`GatewayFallbacks`), after the bound model has been written in."""
+    members = GatewayFallbacks()
+    if flow.request.stream is False:
+        flow.request.content = members.feed(flow.request.content or b"")
+        return
+    write = flow.request.stream
+    if not callable(write):
+        # Nothing rewrote the body on its way past; this does, and the length
+        # it leaves is no longer the one the headers declared.
+        flow.request.headers.pop("content-length", None)
+        flow.request.headers["transfer-encoding"] = "chunked"
+        flow.request.stream = members.feed
+        return
+    flow.request.stream = lambda chunk: members.feed(write(chunk))
 
 
 def _refuse(
@@ -1434,6 +1453,7 @@ def _route(
                     _write_bound_model_buffered(flow, verdict.model)
                 else:
                     _write_bound_model(flow, verdict.model)
+                _drop_gateway_fallbacks(flow)
                 return
 
     # Everything from here goes to Anthropic, on the platform's credential.

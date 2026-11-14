@@ -49,7 +49,7 @@ ncurses_version=6.5_p20250503
 ncurses_copying_sha256=708999f95527e1ffa670c6fce288c6c600cb477dd04afcc1171422b3dd4ee226
 openssl_version=3.5.9
 openssl_license_sha256=7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a
-zlib_version=1.3.2
+zlib_version=1.4
 zlib_license_sha256=e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2
 out=$(mkdir -p "${1:?output directory}" && cd "$1" && pwd)
 

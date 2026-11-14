@@ -2,7 +2,7 @@
 
 Cheese's **Cloud** compute (see `where-a-turn-runs.md`) is a sandbox per agent session,
 on a pool of hosts the platform opens on [MicroCloud](https://github.com/micro-teams/micro-cloud).
-MicroCloud is Lg's team's project; cheese is one tenant of it. This file is the
+MicroCloud is maintained by the cheese team itself; cheese is one tenant of it. This file is the
 cheese-side view: what we ask it for, what its answers mean, how the pool is kept, and the
 procedure for getting a change into MicroCloud when cheese needs one. MicroCloud's own
 architecture (Proxmox, LXC vs VM, its built-in AI channels) is in its README and is not
@@ -68,6 +68,30 @@ drains at a time, and no host is drained while the others' free slots cannot hol
 carries — a rebuild never interrupts a running sandbox, it only waits it out. Demand mode
 does not rebuild (a host that empties is released and replaced by demand anyway).
 
+The version has two halves, the machine (offering, template, size, login user,
+`CLOUD_HOST_TEMPLATE_EPOCH`) and the enrollment script, 16 characters each. A host whose
+machine half still matches, and that is not past the fallback age, is not rebuilt but brought
+up to date where it is (`host_refresh`, `cloud_hosts.refresh_in_place`; off with
+`CLOUD_HOST_REFRESH_IN_PLACE=false`). It drains the same way, except that its frozen sandboxes
+are parked rather than destroyed; once nothing but parked sandboxes is on it, the sweep sends
+the enrollment script to it through its connector, with the machine's own config kept, and
+runs it as a transient `systemd-run --user` unit so the connector's restart does not end it
+(`~/.cheese/refresh/`). When the run exits 0 the host records today's version and takes
+sandboxes again, its homes, package stores, repository copies and parked sandboxes intact; a
+run that fails, does not start or outlasts 40 minutes turns the host over to the rebuild. A
+host recorded before the two halves whose one-digest version equals today's for the same
+settings (`enrollment.legacy_image_version`) is given today's version as it is.
+
+### 云端 sandbox 的系统环境
+
+标准 sandbox 的系统包由 cheese 仓库的 `backend/sandbox/image/Dockerfile` 定义，CI 构建 OCI 镜像，`default.json` 固定 digest。MicroCloud VM 模板提供主机内核及主机运行环境；给标准 sandbox 增加系统软件包只修改 cheese 镜像配方。整台 VM 规格继续使用 VM 模板自己的系统。
+
+主机接入及 warm-host 准备在数据盘就绪后先拉取、解包默认镜像，完成后才可接单。发布新默认 digest 时，已有镜像的主机继续用其当前 digest 接单，后台准备完成后再更新主机引用；已有 sandbox 及停放恢复的 sandbox 保持其生命周期镜像。主机和 warm host 的引用记录在 `cloud_hosts.sandbox_image`、`warm_machines.sandbox_image`，会话引用记录在 `sandbox_homes.sandbox_image`；镜像变化不触发 VM 模板滚动重建。
+
+共享 rootfs 缓存在数据盘。容量按实测 rootfs、tar 大小和 `keep_old` 计算缓存准备峰值，加 10% 余量并向上取整；当前为 8 GB。每个 sandbox 槽位还预留一份镜像大小的空间，当前为 2 GB，以覆盖生命周期内仍被引用的旧镜像。overlay upper/work 位于自己的 home，与 home 共用原有 XFS project quota。缓存生命周期、预算算式、固定工具分发和用户设备范围见 [云端 sandbox 镜像](remote-execution.md#云端-sandbox-镜像)。
+
+云主机在预热前安装 root helper，为 connector 预留 `/etc/subuid`、`/etc/subgid` 的同一个 65536-ID 区段。内部 root 映射到 connector，内部 `1..65535` 的 UID/GID 映射到这个主机共用区段。解包时按映射保留镜像归属，同一 digest 的所有 sandbox 共用 lower；删除 home 和带有服务用户归属的 upper 由 root helper 完成。主机管理不得把预留区段分配给普通账户，也不得在保留缓存或 home 时更换它。用户自行接入的设备不预留该范围。
+
 ### Each sandbox's disk has a limit of its own
 
 A host enrolls only with its data disk (`enrollment.DATA_DISK`): the VM's `scsi1`, formatted
@@ -79,7 +103,11 @@ deletes goes back to the thin pool under the VM), and bound over `~/.cheese/home
 pool, and a `dd`'d file would claim every block it wrote before anything trimmed it back —
 `chmod 600`, `mkswap`, `swapon`, its fstab line (`swap,nofail`) and `vm.swappiness` in
 `/etc/sysctl.d/90-cheese-swap.conf` (`CLOUD_HOST_SWAPPINESS`, 10). A host whose disk cannot
-hold it does not enroll. The step is idempotent because enrollment is retried as a whole: a
+hold it does not enroll. Where the kernel has zswap (Debian's generic kernel; its cloud kernel
+does not), the step also turns it on with the first of zstd, lz4, lzo the kernel has and a pool
+of `CLOUD_HOST_ZSWAP_MAX_POOL_PERCENT` (20) percent of memory, written to
+`/etc/tmpfiles.d/90-cheese-zswap.conf` so every boot applies it again; nothing is installed.
+The step is idempotent because enrollment is retried as a whole: a
 file already swapped on is left alone (swapping it off to resize would push a host that is
 short of memory into the case the file exists for), and one that is not swapped on but of
 another size is made again. It buys the
@@ -156,19 +184,24 @@ four hours, a day) repeats it while it lasts. A person's computer's reading is n
   itself, such as a dev server started with `nohup … &`, keeps nothing up.
 - **Destroyed**: the executor is stopped, whatever still holds the home (a dev server) is
   ended, and the home is deleted from the host; then its row goes and its slot is free. The
-  room's 现场 records 「环境 N 分钟没有活动，已释放……」. Nothing of the sandbox is kept:
-  what lasts is the conversation and the commits the session pushed. The next tool call
+  room's 现场 records 「环境 N 分钟没有活动，已释放……」. An image-backed standard
+  sandbox saves its root diff to the existing private backup bucket before deletion.
+  The conversation and pushed commits survive; a successfully saved root backup can be
+  restored when the image digest matches. The next tool call
   places the session in a new sandbox on any host with a free slot, which starts from the
-  task branch like any new sandbox, and that call's result tells the agent once that it is in a new one. A tool call that arrives
+  task branch like any new sandbox, restores the root diff when the image digest matches,
+  and tells the agent the outcome in that call's result. Limits, quota handling and image
+  changes are described in [根目录快照](remote-execution.md#根目录快照). A tool call that arrives
   while the home is being deleted waits for it to go. A deletion that does not finish is
-  done again by a later sweep three minutes on.
+  retried after three minutes, or 28 minutes for an image-backed home to allow its root backup.
 - A project whose credits ran out has its sandboxes destroyed as soon as its rooms run no
   turn, and the conversation is told so.
 
 A host is released once it has had no sandbox on it for `CLOUD_HOST_IDLE_HOLD_S` — in fixed
 mode only while the pool is over its size, since the size is what keeps a host up. A session
 that switches away leaves its sandbox after one best-effort checkpoint (`cheese sync --all`),
-whether or not the checkpoint went through; the sandbox it left is destroyed by the idle sweep
+whether or not the checkpoint went through. An image-backed home must also save its root diff;
+if that transfer fails, the switch fails and keeps the home. The sandbox it left is destroyed by the idle sweep
 like any other, and holds its slot until then. A host the provider fails before it is enrolled
 holds nothing of anyone's: the pool gives it up, deletes it, and places its sessions again;
 after three such failures within an hour it stops creating hosts for the rest of the hour.

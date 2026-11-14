@@ -53,7 +53,7 @@ export interface HostUsage {
   memory_pressure_some_avg60: number | null
   memory_pressure_full_avg10: number | null
   memory_pressure_full_avg60: number | null
-  /** 是否加载了 zswap。 */
+  /** zswap 是否打开（内核带了它也要打开才算）。 */
   zswap: boolean | null
   /** 两次读数之间占满了几成核（0–1）；只读到一次时为 null。 */
   cpu_busy: number | null
@@ -95,7 +95,11 @@ export interface MachineHost {
   memory_mb: number
   disk_gb: number
   slots: number
+  /** 占着位置的沙箱：停机留盘的不算。 */
   used: number
+  /** 停机留盘的沙箱个数，和它们的目录最近一次读到占了多少盘。 */
+  parked: number
+  parked_bytes: number
   created_at: string | null
   enrolled_at: string | null
   last_seen_at: string | null
@@ -110,6 +114,8 @@ export interface MachineHost {
   /** 正在滚动重建：不再接新沙箱，等它空了就释放、换一台新的。 */
   draining: boolean
   draining_since: string | null
+  /** 只改了接入脚本：在原机上重跑接入，不换机器，盘上的东西都留着。 */
+  refresh_in_place: boolean
   enroll_attempts: number
   enroll_error: string | null
   /** 还没读到过（没注册、不在线、刚起来）时为 null。 */
@@ -144,6 +150,7 @@ export interface MachinesOverview {
     slots: number
     used: number
     free: number
+    parked: number
     min_free: number
     waiting: number
     oldest_wait_since: string | null

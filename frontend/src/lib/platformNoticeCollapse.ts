@@ -6,6 +6,7 @@
 import type { Block } from '../cx_types'
 import type { NoticeRow } from './platformNotice'
 
+import { deliveryOf } from './deliveryLine'
 import { foldRepeats } from './noticeRepeats'
 import { changeSummary, mailOutcomes, platformNotice } from './platformNoticeCards'
 
@@ -55,6 +56,12 @@ function foldKey(block: Block): string | null {
 function startsTask(block: Block): boolean {
   const action = meta(block)?.action
   return action === 'task_created' || action === 'split'
+}
+
+/** 一行画成一张卡、各自要点开的：新建的任务（上面），和交了一版去审阅（`lib/deliveryLine`，
+ *  同一件任务连着交的两版正文一字不差）。 */
+function drawnAlone(block: Block): boolean {
+  return startsTask(block) || deliveryOf(block) !== null
 }
 
 /** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
@@ -178,7 +185,7 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain =
-        !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail) && !startsTask(block) && !startsTask(prevBlock)
+        !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail) && !drawnAlone(block) && !drawnAlone(prevBlock)
       // 平台替一轮写的通知署名都是 system：是哪位队友的那一轮在 `seat` 上，两位的
       // 并成一行，后一位的就署成了前一位。
       const sameAuthor =
