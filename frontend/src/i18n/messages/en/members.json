@@ -40,6 +40,8 @@
     "title": "Add admin",
     "searchLabel": "Search accounts",
     "searchPlaceholder": "Type a handle or nickname",
+    "searching": "Searching…",
+    "noMatch": "No one found",
     "alreadyAdmin": "Already an admin",
     "hint": "People added here can immediately read private feedback and security issues, and can add others themselves.",
     "submit": "Add"
