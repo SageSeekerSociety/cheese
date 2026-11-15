@@ -11,12 +11,13 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolverDep
 from app.api.github_migration import move_to_github, refuse_unless_movable
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -231,7 +232,21 @@ async def connect_github_repo(
     )
 
 
-@router.post("/projects/{project_id}/github/migrate")
+class GithubMigrationOut(BaseModel):
+    """The answer to a move: done and bound (``connected``), or the GitHub
+    page to install the App on the repository first (``install_url``)."""
+
+    connected: bool
+    repo: str | None = None
+    account: str | None = None
+    moved: bool | None = None
+    reopened_prs: int | None = None
+    install_url: str | None = None
+
+
+@router.post(
+    "/projects/{project_id}/github/migrate", **typed_response(GithubMigrationOut)
+)
 async def migrate_to_github(
     at: Annotated[InProject, Can(Permission.edit_settings)],
     body: dict,
