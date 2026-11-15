@@ -93,6 +93,7 @@ export const SCENES_MISC2_ENTRIES: CatalogEntry[] = [
       error: null,
       candidates: [],
       searching: false,
+      searchError: null,
       adding: false,
       removing: null,
       dialogOpen: false,

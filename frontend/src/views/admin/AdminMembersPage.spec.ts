@@ -47,7 +47,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, within } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -418,6 +418,23 @@ describe('成员管理', () => {
     // 这里**少了**这一条，是为什么 `:no-filter="true"` 曾经漏掉：服务端按昵称查、
     // 组件再拿同一个串去比 `item-title`（= handle），查到的那一行被组件自己筛掉，
     // 而接口、fixture、上面这几条断言三处各自看都对。
+  })
+
+  it('打了字、防抖还没到就删光：「正在搜」跟着收掉，不一直转', async () => {
+    const { findByText, findByPlaceholderText } = mountPage()
+
+    await fireEvent.click(await findByText('添加管理员'))
+    const input = await findByPlaceholderText('输入 handle 或昵称')
+    await fireEvent.update(input, 'zhan')
+    await fireEvent.update(input, '')
+    // 等过防抖：计时器已经掐掉，不会再有请求来把「正在搜」关上。
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await nextTick()
+
+    expect(searchAdminCandidates).not.toHaveBeenCalled()
+    // 输入框底下那条进度条：不在搜的时候它对读屏是藏起来的（`aria-hidden`），所以
+    // 按角色找不到它就是「没在转」。
+    expect(within(document.body).queryAllByRole('progressbar')).toHaveLength(0)
   })
 
   it('移出要先确认，确认之后才发请求', async () => {

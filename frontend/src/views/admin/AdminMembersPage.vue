@@ -47,6 +47,8 @@ const dialogOpen = ref(false)
 const search = ref('')
 const candidates = ref<AdminCandidate[]>([])
 const searching = ref(false)
+/** 这一串字没搜成的原因。和 `error` 分开：它只属于对话框里那个下拉，换一串字就作废。 */
+const searchError = ref<string | null>(null)
 const selected = ref<AdminCandidate[]>([])
 const adding = ref(false)
 /** 正在删的那一行（`handle`）：删除要等确认，也要防连点。 */
@@ -77,22 +79,29 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 watch(search, (q) => {
   if (searchTimer) clearTimeout(searchTimer)
   const wanted = q.trim()
+  searchError.value = null
   if (!wanted) {
     // 空串**不发请求**：接口会拿它回「平台的前 20 个账号」，那不是一个搜索结果。
+    // 「正在搜」也一起收掉：上一串字的计时器刚被掐掉，没有哪个请求会再来把它关上。
     candidates.value = []
+    searching.value = false
     return
   }
   searching.value = true
   searchTimer = setTimeout(async () => {
+    // 慢的那个请求后到，会把新的搜索结果盖掉、也会把新那次的「正在搜」提前关掉。
+    // 只认当前这串字的答案。
+    const current = () => search.value.trim() === wanted
     try {
       const page = await searchAdminCandidates(wanted)
-      // 慢的那个请求后到，会把新的搜索结果盖掉。只认当前这串字的答案。
-      if (search.value.trim() === wanted) candidates.value = page.items
+      if (current()) candidates.value = page.items
     } catch (e) {
+      if (!current()) return
       candidates.value = []
-      error.value = message(e, t('members.error.searchFailed'))
+      // 画在下拉里、输入框底下：对话框开着时页面上那条横条在遮罩后面，看不见。
+      searchError.value = message(e, t('members.error.searchFailed'))
     } finally {
-      searching.value = false
+      if (current()) searching.value = false
     }
   }, 250)
 })
@@ -101,11 +110,15 @@ function openDialog() {
   selected.value = []
   search.value = ''
   candidates.value = []
+  searchError.value = null
   notice.value = null
+  error.value = null
   dialogOpen.value = true
 }
 
 async function addSelected() {
+  // 连点两下「添加」：第二下进来时第一轮还在一个一个地发，再走一遍就是同一批人发两次。
+  if (adding.value) return
   adding.value = true
   error.value = null
   const done: string[] = []
@@ -124,6 +137,9 @@ async function addSelected() {
     }
   }
   adding.value = false
+  // 加成了的人从选择里拿掉：框留着是为了让人改被拒的那几个再试，再点一次「添加」
+  // 不该把刚加成的人又发一遍。
+  selected.value = selected.value.filter((person) => !done.includes(person.handle))
   // 连接符也走词条（`、` vs `, `、`；` vs `; `），不在代码里写死某一种语言的标点。
   if (done.length) notice.value = t('members.notice.added', { handles: done.join(t('members.notice.listJoin')) })
   if (refused.length) error.value = refused.join(t('members.notice.refusedJoin'))
@@ -186,6 +202,7 @@ onMounted(load)
     :error="error"
     :candidates="candidates"
     :searching="searching"
+    :search-error="searchError"
     :adding="adding"
     :removing="removing"
     @load="load"

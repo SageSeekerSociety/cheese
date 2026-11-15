@@ -42,6 +42,8 @@ const props = defineProps<{
   error: string | null
   candidates: AdminCandidate[]
   searching: boolean
+  /** 这一串字没搜成的原因（服务端原话），画在下拉里；null = 没出错。 */
+  searchError: string | null
   adding: boolean
   /** 正在删的那一行（`handle`）：删除要等确认，也要防连点。 */
   removing: string | null
@@ -137,11 +139,26 @@ const addedRows = computed<AddedRowView[]>(() =>
 
 /** 六条列。**只有「添加信息」那一列是 `null`**（自适应）—— `table-layout: fixed`
  *  下没有宽度的列会平分剩余空间，多给一列就散架。第一列要装下头像 + 昵称 + handle
- *  （+ 可能的 agent 徽章），300px 够（超长的由 ellipsis 收，`title` 里拿全文）。
- *  定宽合计 770px，表格下限收到 1000（见样式里那条 `--agrid-min`）时自适应列
- *  还拿得到 230px。 */
-const COLS: (string | null)[] = ['300px', '140px', '100px', '110px', null, '120px']
+ *  （+ 可能的 agent 徽章），240px 够常见的昵称加 handle（超长的由 ellipsis 收，
+ *  `title` 里拿全文）。定宽合计 710px，表格下限收到 880（见样式里那条
+ *  `--agrid-min`）时自适应列还拿得到 170px。 */
+const COLS: (string | null)[] = ['240px', '140px', '100px', '110px', null, '120px']
 const BONE_WIDTHS = ['58%', '44%', '52%', '40%', '64%', '42%']
+
+/** 下拉里那一行提示：正在搜 / 搜不成 / 搜完了没人 / 还没打字，同一时刻只有一句。
+ *  候选为空时 `v-autocomplete` 只在有 `no-data` 插槽时才打开菜单；没有这句话，
+ *  「没有这个账号」和「还在搜」在画面上是同一个样子 —— 什么都没有。 */
+const searchHint = computed(() => {
+  if (props.searching) return t('members.addDialog.searching')
+  if (props.searchError) return props.searchError
+  return search.value.trim() ? t('members.addDialog.noMatch') : t('members.addDialog.searchPlaceholder')
+})
+
+/** 候选那一行的副标题：handle 和昵称是同一个串（没设昵称时服务端回的就是 handle）
+ *  就不画第二遍，判据同名单那一行（`toRowView`）。 */
+function candidateSub(candidate: AdminCandidate): string | null {
+  return candidate.nickname && candidate.nickname !== candidate.handle ? candidate.handle : null
+}
 
 const countLine = computed(() =>
   props.roster ? t('members.toolbar.count', { count: root.value.length + added.value.length }) : ''
@@ -404,9 +421,14 @@ const countLine = computed(() =>
       :primary-label="t('members.addDialog.submit')"
       :primary-loading="adding"
       :primary-disabled="!selected.length"
+      :close-disabled="adding"
       persistent
       @primary="emit('addSelected')"
     >
+      <!-- 加人被拒的原话画在**框里**：框为了让人改选择再试而留着，页面上那条横条
+           这时在遮罩后面。加成了的那几个也在这里说一声，被拒的不会把它盖掉。 -->
+      <AdminFlash v-if="notice" class="mb-3" tone="ok" :text="notice" />
+      <AdminFlash v-if="error" class="mb-3" tone="error" :text="error" />
       <v-autocomplete
         v-model="selected"
         v-model:search="search"
@@ -424,22 +446,30 @@ const countLine = computed(() =>
         multiple
         chips
         closable-chips
-        hide-no-data
       >
         <!-- `props` 在这儿是 Vuetify 塞给 slot 的那一份透传属性；这一半顶上有个
              `const props = defineProps(...)`，同名会让 eslint 报「遮蔽了外层的 props」，
              所以在这里换个名字。 -->
+        <!-- 标题与副标题走 `title`/`subtitle` 两个 prop，**盖掉**透传属性里那份
+             `title`（= `item-title`，也就是 handle）：只在插槽里另写两行的话，
+             `v-list-item` 照样先画透传来的 handle，一行候选就成了 handle、昵称、handle。 -->
         <template #item="{ item, props: itemAttrs }">
-          <v-list-item v-bind="itemAttrs" :disabled="item.raw.already_admin">
+          <v-list-item
+            v-bind="itemAttrs"
+            :title="item.raw.nickname"
+            :subtitle="candidateSub(item.raw) ?? undefined"
+            :disabled="item.raw.already_admin"
+          >
             <template #prepend>
               <UserAvatar :name="item.raw.handle" :avatar="avatarUrl(item.raw.avatar_id)" :size="30" />
             </template>
-            <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
-            <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
             <template #append>
               <span v-if="item.raw.already_admin" class="chip-neutral">{{ t('members.addDialog.alreadyAdmin') }}</span>
             </template>
           </v-list-item>
+        </template>
+        <template #no-data>
+          <div class="am__hint" :class="{ 'am__hint--error': !!searchError && !searching }">{{ searchHint }}</div>
         </template>
       </v-autocomplete>
       <div class="t-meta mt-2">{{ t('members.addDialog.hint') }}</div>
@@ -494,11 +524,11 @@ const countLine = computed(() =>
   min-height: 0;
 }
 
-/* 1440 下这一页的容器只有约 1051px，而 `BaseTable` 默认的 1080 表格下限比它宽
-   29px —— 最后一列「操作」被裁掉一截，「不可移出」显示成「不可移」。成员表六列
-   的定宽合计只有 770，1000 就排得下，剩下的 230 给自适应的「添加信息」那一列。 */
+/* 表格下限要比这一页的容器窄，否则最后一列「操作」—— 也就是「移出」—— 落在横向
+   滚动的那一截里，看不见。1280 宽的窗口里容器只有约 900px；成员表六列的定宽合计
+   710，880 就排得下，剩下的 170 给自适应的「添加信息」那一列。 */
 .am :deep(.agrid__table) {
-  --agrid-min: 1000px;
+  --agrid-min: 880px;
 }
 
 .am__group {
@@ -586,6 +616,18 @@ const countLine = computed(() =>
 
 .am__dim {
   color: var(--muted);
+}
+
+/* 下拉里那一行提示，左右留白对齐 `v-list-item`（同 `AdminAssigneeSelect`）。 */
+.am__hint {
+  padding: 8px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+
+.am__hint--error {
+  color: var(--danger-ink);
 }
 
 /* 状态列「异常才说话」的那一句。`--warn-ink` 是状态三件套里的**文字件**（§1.5），
