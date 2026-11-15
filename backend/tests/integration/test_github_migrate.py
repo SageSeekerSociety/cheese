@@ -11,12 +11,14 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import update
 
 from app.domain.project import forge
 from app.domain.project.models import Project, ProjectForge
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.project.starter import Remote
-from tests.integration.conftest import post_project, session_auth_headers
+from app.domain.room_task.models import Task
+from tests.integration.conftest import open_task, post_project, session_auth_headers
 
 pytestmark = pytest.mark.usefixtures("github_binding_user")
 
@@ -28,12 +30,13 @@ _REPO = {
 }
 
 
-def _hosted_project(client, monkeypatch) -> uuid.UUID:
+def _hosted_project(client, monkeypatch) -> tuple[uuid.UUID, str]:
     """A project on the platform's Forgejo, as every 题目 claim makes one."""
     monkeypatch.setattr(forge, "provision_repository", AsyncMock())
     response = post_project(client, json={"name": "Claimed task"}, owner="alice")
     assert response.status_code == 200, response.text
     project_id = uuid.UUID(response.json()["data"]["id"])
+    root = response.json()["data"]["root_topic_id"]
 
     async def bind():
         async with client.test_factory() as session:
@@ -51,7 +54,7 @@ def _hosted_project(client, monkeypatch) -> uuid.UUID:
             await session.commit()
 
     client.portal.call(bind)
-    return project_id
+    return project_id, root
 
 
 class _Minter:
@@ -99,15 +102,33 @@ def _migrate(client, project_id, url="https://github.com/alice/homework"):
     )
 
 
+def _task_with_a_forgejo_pr(client, room) -> uuid.UUID:
+    task_id = uuid.UUID(open_task(client, room, "写作业", owner="alice")["id"])
+
+    async def record_pr():
+        async with client.test_request_factory() as session:
+            await session.execute(
+                update(Task)
+                .where(Task.id == task_id)
+                .values(pr_number=3, pr_url="http://forgejo.invalid/x/project/pulls/3")
+            )
+            await session.commit()
+
+    client.portal.call(record_pr)
+    return task_id
+
+
 def test_a_hosted_project_moves_and_is_bound_to_github(client, monkeypatch):
     copied = _github_world(monkeypatch, repos=[_REPO])
-    project_id = _hosted_project(client, monkeypatch)
+    project_id, room = _hosted_project(client, monkeypatch)
+    task_id = _task_with_a_forgejo_pr(client, room)
 
     response = _migrate(client, project_id)
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["connected"] is True and data["repo"] == "alice/homework"
+    assert data["reopened_prs"] == 1
     assert copied == [("https://github.com/alice/homework.git", "installation-token")]
 
     async def bound():
@@ -122,6 +143,9 @@ def test_a_hosted_project_moves_and_is_bound_to_github(client, monkeypatch):
                 session
             ).get_by_project(project_id)
             assert installation.installation_id == 77
+            # The draft sweep opens the task's PR again, on GitHub.
+            task = await session.get(Task, task_id)
+            assert (task.pr_number, task.pr_url) == (None, None)
 
     client.portal.call(bound)
 
@@ -132,7 +156,7 @@ def test_a_card_waiting_for_review_refuses_before_anything_is_pushed(
     from app.domain.review.services import AcceptService
 
     copied = _github_world(monkeypatch, repos=[_REPO])
-    project_id = _hosted_project(client, monkeypatch)
+    project_id, _ = _hosted_project(client, monkeypatch)
     monkeypatch.setattr(
         AcceptService, "open_pr_card_ids", AsyncMock(return_value=[uuid.uuid4()])
     )
@@ -160,7 +184,7 @@ def test_a_repository_the_app_cannot_reach_yet_asks_for_the_installation(
     monkeypatch.setattr(
         github_install, "_install_url", AsyncMock(return_value="https://install")
     )
-    project_id = _hosted_project(client, monkeypatch)
+    project_id, _ = _hosted_project(client, monkeypatch)
 
     response = _migrate(client, project_id)
 
@@ -199,7 +223,7 @@ def test_a_github_project_has_nothing_to_move(client, monkeypatch):
 def test_a_read_only_repository_is_refused(client, monkeypatch):
     read_only = {**_REPO, "permissions": {"push": False}}
     copied = _github_world(monkeypatch, repos=[read_only])
-    project_id = _hosted_project(client, monkeypatch)
+    project_id, _ = _hosted_project(client, monkeypatch)
 
     response = _migrate(client, project_id)
 

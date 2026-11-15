@@ -6,6 +6,7 @@ who started the flow; GitHub's user-token API proves which repos they can connec
 
 import logging
 import uuid
+from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -16,7 +17,7 @@ from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolverDep
 from app.api.github_migration import move_to_github, refuse_unless_movable
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
@@ -230,12 +231,11 @@ async def connect_github_repo(
     )
 
 
-@router.post("/projects/{project_id}/github/migrate", dependencies=[ROUTE_DECIDES])
+@router.post("/projects/{project_id}/github/migrate")
 async def migrate_to_github(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.edit_settings)],
     body: dict,
     request: Request,
-    resolver: ActorResolverDep,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Move a platform-hosted project to the GitHub repository at ``url``.
@@ -244,7 +244,7 @@ async def migrate_to_github(
     App the caller can write with; until it is, this answers with the
     installation page, whose callback lands back on the settings page to ask
     again (``github_install=migrate``). See ``app/api/github_migration.py``."""
-    actor = await _manager(project_id, resolver, db)
+    project_id, actor = at.project.id, at.actor
     raw = str(body.get("url") or "").strip()
     parsed = parse_github_repo(raw) if raw else None
     if parsed is None:
@@ -252,7 +252,7 @@ async def migrate_to_github(
     await refuse_unless_movable(db, project_id)
     target = f"{parsed[0]}/{parsed[1]}"
     service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    project = at.project
     # The callback finds the repository here, as it does for a GitHub project.
     await service.merge_settings(
         project, {"github_repository_url": f"https://github.com/{target}"}

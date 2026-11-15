@@ -30,7 +30,10 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task import progress
-from app.domain.room_task.lock_order import lock_task_for_change
+from app.domain.room_task.lock_order import (
+    lock_task_for_change,
+    lock_tasks_for_change,
+)
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -242,21 +245,21 @@ class TaskService:
         (`open_without_pr`) opens the task's PR again where the branch now is.
         A closed task keeps its PR link as the record of where it landed.
         Returns how many tasks were reset."""
-        result = await self._session.execute(
-            update(Task)
-            .where(
+        ids = await self._session.scalars(
+            select(Task.id).where(
                 Task.status == TaskStatus.open,
                 Task.pr_number.is_not(None),
                 Task.room_id.in_(
                     select(Topic.id).where(Topic.project_id == project_id)
                 ),
             )
-            .values(
-                pr_number=None, pr_url=None, pr_checks_head=None, pr_checks_state=None
-            )
-            .execution_options(synchronize_session=False)
         )
-        return result.rowcount or 0
+        tasks = await lock_tasks_for_change(self._session, list(ids))
+        for task in tasks:
+            task.pr_number = task.pr_url = None
+            task.pr_checks_head = task.pr_checks_state = None
+        await self._session.flush()
+        return len(tasks)
 
     async def record_check(self, task: Task, *, ok: bool, detail: str) -> Task:
         task.last_check_at = datetime.now(UTC)
