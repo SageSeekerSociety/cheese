@@ -438,6 +438,97 @@ async def test_giving_up_on_a_conversation_that_was_never_there_changes_nothing(
     assert given_up is None
 
 
+async def _a_failure_that_names_no_seat_leaves_the_room_alone(
+    factory, tmp_path
+) -> tuple:
+    """A compaction refusal arrives through intake naming no agent at all —
+    `AgentResult.agent_handle` defaults to None and no turn state of this
+    backend's says otherwise. The room's own conversation has a pointer here.
+    What it resumes by afterwards, and how many 现场 switches were narrated."""
+    from app.domain.agent.queries import agent_for_seat
+    from app.domain.agent.run_records import for_site
+    from app.domain.agent.service import AgentResult
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.room_task.place import PlaceResolver
+    from tests.unit.test_cli_notices import REFUSED_BY_A_FULL_CONVERSATION
+
+    svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
+        session_factory=factory,
+        compute=ComputePool([StubChannel().runtime]),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+        project_id, topic_id = project.id, topic.id
+        # The handle the pointer is actually keyed by: the agent a seat's
+        # session authors under (`agent_for_seat`), which for a room's
+        # room-derived seat is the room's agent — NOT the roster handle
+        # `agent_handles()` lists. Seeding the roster one leaves the row the
+        # gate would clear untouched.
+        place = await PlaceResolver(session).conversation(topic_id)
+        room_agent = (await agent_for_seat(session, place, None)).handle
+    async with factory() as session:
+        service = AgentSessionService(session)
+        await service.ensure(topic_id, room_agent, harness="claude-code")
+        await service.remember(
+            conversation_id=topic_id,
+            agent_handle=room_agent,
+            resume_token="native-room",
+            harness="claude-code",
+        )
+        await session.commit()
+
+    # No seat named: what a harness that does not stamp one reports, and what a
+    # backend that no longer holds the turn sees (`state is None`).
+    await svc.hook_events.accept(
+        project_id,
+        topic_id,
+        uuid.uuid4(),
+        AgentResult(
+            text=REFUSED_BY_A_FULL_CONVERSATION,
+            session_id=None,
+            is_error=True,
+        ),
+        None,
+        False,
+        True,
+    )
+
+    async with factory() as session:
+        token = await AgentSessionService(session).resume_token(
+            topic_id, room_agent, harness="claude-code"
+        )
+        rows = await for_site(session, topic_id, since=None, until=None)
+    narrated = [
+        r for r in rows if r["meta"].get("event_type") == "conversation_abandoned"
+    ]
+    return token, narrated
+
+
+async def test_a_failure_that_names_no_seat_gives_up_nothing_new(client, tmp_path):
+    """The gate on the seat, seen from the room's side: a failure that names
+    nobody must not give up ANY conversation. Without it the lookup falls back
+    to the room's agent (`agent_for_seat` → `_agent_at`), which is a guess — and
+    acting on a guess would abandon a conversation the failure had nothing to do
+    with, silently, on the strength of a message that may not even have been
+    about this place."""
+    token, narrated = client.portal.call(
+        lambda: _a_failure_that_names_no_seat_leaves_the_room_alone(
+            client.test_request_factory, tmp_path
+        )
+    )
+
+    assert token == "native-room", "the room's conversation was given up on a guess"
+    assert narrated == [], "a switch the platform did not make must not be narrated"
+
+
 async def _abandon_a_conversation_the_event_named_no_harness_for(factory) -> tuple:
     """The failure report names no harness — `AgentResult.harness` defaults to
     None — while the pointer it has to clear carries the project's own. What
