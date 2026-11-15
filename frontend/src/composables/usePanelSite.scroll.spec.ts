@@ -613,45 +613,97 @@ describe('a read that is slow or fails', () => {
     scope.stop()
   })
 
-  it('does not let a successful page-up dismiss a newest-page failure', async () => {
+  it('does not let a page-up that lands after a refusal dismiss it or bring the rows back', async () => {
     // `clearError()` 抹的是「此刻画着的那条错误」。往回读读成了，只该收「往上翻
-    // 失败」那一条；此刻画着的如果是最新一页的失败（或一个 403），不能替它做主——
-    // 那会把读者刚看到的那句原因和它那颗重试一起抹掉，而最新一页其实还没读到。
+    // 失败」那一条；此刻画着的如果是最新一页的 403，不能替它做主——那会把读者刚看到
+    // 的那句原因抹掉，而且那一页的行是这段现场被拒之前要的，不能再拼回屏上。
     //
-    // 造法：打开「全部」，再切到某个队友——那是个有缓存的视角（`lib/siteWindow`），
-    // 屏上先有那一窗（于是 `hasNewer` 不立、往上翻仍可行），而最新一页的读失败，
-    // 错误就画在那一格上。
+    // 造法：读者往上翻、那一页挂在路上；3 秒一次的刷新读到 403，那一窗撤下；然后
+    // 往上翻那一页才回来。
     api.getTranscript.mockResolvedValueOnce(
       page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'a', newest_id: 'b' })
     )
-    rememberWindow(
-      'room',
-      'cheese-a',
-      {
-        blocks: [block('x', 5), block('y', 6)],
-        hasMore: true,
-        oldestCursor: 'x',
-        newestCursor: 'y',
-      },
-      120
-    )
+    // 打开后的后台预取：这一次先不给，免得它把往上翻那一路占掉。
+    api.getTranscript.mockRejectedValueOnce(new Error('预取这次没读成'))
     const { box, el, site, scope } = await openAtBottom()
     await settle()
 
-    // 切到那个队友：缓存画上去，最新一页的读失败。
-    api.getTranscript.mockRejectedValueOnce(new Error('没有权限'))
-    site.selectAgent('cheese-a')
-    await settle()
-    expect(site.errorMsg.value, '这一格报的是最新一页的失败').toBe('没有权限')
-
-    // 读者往上翻：这一页读成了。
-    api.getTranscript.mockImplementationOnce(async () => page([block('w', 4)], { has_more: false, oldest_id: 'w' }))
+    let release!: () => void
+    api.getTranscript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(page([block('w', 0)], { has_more: false, oldest_id: 'w' }))
+        })
+    )
     box.scrollTop = 0
     el.dispatchEvent(new Event('scroll'))
     site.onSiteScroll()
     await settle()
+    expect(site.loadingOlder.value, '往上翻那一页在路上').toBe(true)
+
+    api.getTranscript.mockRejectedValueOnce(Object.assign(new Error('没有权限'), { status: 403 }))
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(site.errorMsg.value, '这一格报的是最新一页的 403').toBe('没有权限')
+    expect(site.transcript.value).toEqual([])
+
+    release()
+    await settle()
 
     expect(site.errorMsg.value, '往回读读成了，不该替最新一页那条错误做主').toBe('没有权限')
+    expect(site.transcript.value, '被拒之后回来的那一页不能再拼回屏上').toEqual([])
+    scope.stop()
+  })
+})
+
+describe('a 现场 that was refused while open', () => {
+  it('pages up again once access comes back and the next read lands', async () => {
+    api.getTranscript.mockResolvedValueOnce(
+      page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'a', newest_id: 'b' })
+    )
+    api.getTranscript.mockRejectedValueOnce(new Error('预取这次没读成'))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    api.getTranscript.mockRejectedValueOnce(Object.assign(new Error('没有权限'), { status: 403 }))
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(site.transcript.value).toEqual([])
+    expect(site.hasOlder.value).toBe(false)
+
+    // 权限回来了：下一次读整页收下，上面还有更早的就照实能往上翻。后台预取那一页
+    // 这次不给（安静地失败，不动 hasOlder），看的只是整页读回来的那一份。
+    api.getTranscript.mockImplementation(async (_topic: string, args: { before?: string } = {}) => {
+      if (args.before) throw new Error('预取这次没读成')
+      return page([block('c', 3), block('d', 4)], { has_more: true, oldest_id: 'c', newest_id: 'd' })
+    })
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    expect(site.errorMsg.value).toBeNull()
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['c', 'd'])
+    expect(site.hasOlder.value, '服务端说上面还有，读者就能往上翻').toBe(true)
+    scope.stop()
+  })
+
+  it('keeps socket rows off the refused pane and out of the cache', async () => {
+    api.getTranscript.mockResolvedValueOnce(page([row('a', 1)], { newest_id: 'a' }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    api.getTranscript.mockRejectedValue(Object.assign(new Error('没有权限'), { status: 403 }))
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(site.errorMsg.value).toBe('没有权限')
+
+    site.receive(row('b', 2))
+    await settle()
+    expect(site.transcript.value, '推上来的行不进被拒的那一格').toEqual([])
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    expect(site.transcript.value).toEqual([])
+    expect(cachedWindow('room', null, 120)).toBeNull()
     scope.stop()
   })
 })

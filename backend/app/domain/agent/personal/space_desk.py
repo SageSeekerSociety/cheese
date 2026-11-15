@@ -7,8 +7,9 @@ review — each with the id that acts on it. The names here also go into what
 the gate reads (`api.assistant_acts`), so an action names the thing it
 changes the way the person would.
 
-Only someone who manages the space reads this; anyone else is told it is not
-there.
+Only someone who manages the space — its owner and admins, and the platform's
+admins (``SpacePermission.edit_settings``) — reads this; anyone else is told it
+is not there.
 """
 
 from __future__ import annotations
@@ -36,7 +37,9 @@ LISTED = 50
 async def managed(session: AsyncSession, user_id: int, space_id: int) -> Space:
     """The space, when the person manages it; not found otherwise."""
     space = await session.get(Space, space_id)
-    if space is None or not await space_seats.runs(session, space_id, user_id):
+    if space is None or not await space_seats.SPACE.may(
+        session, space, user_id, space_seats.Permission.edit_settings
+    ):
         raise NotFoundError.for_resource("space", str(space_id))
     return space
 

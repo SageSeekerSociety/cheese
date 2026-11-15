@@ -9,7 +9,6 @@ from app.domain.usage.subscription_ingest import ingest_once
 from tests.integration.conftest import (
     post_message,
     post_project,
-    session_auth_headers,
 )
 
 
@@ -23,17 +22,14 @@ def _topic(client) -> tuple[str, str]:
 
 
 def _chat(client, room: str) -> str:
-    """Call 芝士 in the channel's main line; it answers in the message's 支线,
-    whose id this returns once the turn has left its steps there."""
-    asked = post_message(client, room, "user-1", {"content": "@芝士 hi"})
-    thread = client.post(
-        f"/blocks/{asked['id']}/thread", headers=session_auth_headers("user-1")
-    ).json()["data"]["id"]
+    """Call 芝士 in the channel's main line, where it answers; returns the
+    channel once the turn has left its steps there."""
+    post_message(client, room, "user-1", {"content": "@芝士 hi"})
     deadline = time.monotonic() + 30
-    while not client.get(f"/topics/{thread}/transcript").json()["data"]["data"]:
-        assert time.monotonic() < deadline, "the turn left nothing in its 支线"
+    while not client.get(f"/topics/{room}/transcript").json()["data"]["data"]:
+        assert time.monotonic() < deadline, "the turn left nothing in the channel"
         time.sleep(0.2)
-    return thread
+    return room
 
 
 def _metered(client, pid: str, tid: str, log) -> None:

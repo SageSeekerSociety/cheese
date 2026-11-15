@@ -15,7 +15,9 @@
     "schedule": "On a schedule",
     "library_file_added": "When a file is added to the library",
     "task_closed": "When a task is closed",
-    "card_accepted": "When a result is accepted"
+    "card_accepted": "When a result is accepted",
+    "task_filed": "A task goes to review",
+    "task_decided": "A task's review is decided"
   },
   "freq": {
     "daily": "Daily",
@@ -28,7 +30,8 @@
     "paused": "Paused",
     "queued": "Queued, starting now",
     "missed": "Last run didn't go",
-    "filling": "Cheese is filling it in"
+    "filling": "Cheese is filling it in",
+    "done": "Finished"
   },
   "line": {
     "chip": "Routine · {title}",
@@ -153,7 +156,10 @@
     "time": "Time",
     "minute": "Minute",
     "day": "Day of month",
-    "timezone": "Time zone"
+    "timezone": "Time zone",
+    "outcomeEither": "Either outcome",
+    "outcomeAccepted": "Accepted only",
+    "outcomeRejected": "Returned only"
   },
   "deleteTitle": "Delete “{title}”",
   "deleteBody": "It stops running and its run history is deleted too; result files already in the channel are kept",

@@ -68,6 +68,7 @@ beforeEach(() => {
     agents: [],
     my_connections: [],
     devices: [],
+    standard_sandbox_available: false,
   })
   asRole('member', [])
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })

@@ -50,6 +50,7 @@ const props = defineProps<{
   lookupError: string | null
   /** 查到的那一位已经在团队里：邀请框说一声，那颗「邀请」也按不动。 */
   alreadyIn: boolean
+  inviting: boolean
 }>()
 
 const emit = defineEmits<{
@@ -240,9 +241,13 @@ const getStatusText = (status: string) => {
             <v-card-actions>
               <v-spacer></v-spacer>
               <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
-              <BaseButton type="submit" kind="primary" :disabled="!found || alreadyIn">{{
-                t('teams.members.inviteSubmit')
-              }}</BaseButton>
+              <BaseButton
+                type="submit"
+                kind="primary"
+                :loading="inviting"
+                :disabled="!found || alreadyIn || inviting"
+                >{{ t('teams.members.inviteSubmit') }}</BaseButton
+              >
             </v-card-actions>
           </v-card>
         </v-form>

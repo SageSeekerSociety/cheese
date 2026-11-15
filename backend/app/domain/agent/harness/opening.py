@@ -374,6 +374,7 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
 def build_session_opening(
     *,
     thread: str | None = None,
+    channel: str | None = None,
     tasks: str | None = None,
     doc: str | None = None,
     memory: MemoryIndex | None = None,
@@ -394,11 +395,15 @@ def build_session_opening(
     ``task``：任务会话那一段（:func:`task_section`）；别处是 None。
     ``package``：从题目来的项目里「题目」那一段（``task.package.section_for_project``）：
     第几版、材料在资料库的 `题目/`、这一版改了什么；别的项目是 None。
-    ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
-    变，所以和支线那一段分开、跟踪着再说一次。"""
+    ``thread``：支线里的会话那一段（``thread_context``）；``channel``：频道主线上
+    的会话那一段（``channel_context``）；别处都是 None。
+    ``tasks``：频道主线或支线所在频道还在进行的任务（``channel_tasks``）；别处是
+    None。它会变，所以和上面那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
     if thread:
         sections["thread"] = "## 这条支线\n" + thread
+    if channel:
+        sections["channel"] = "## 这个频道\n" + channel
     if tasks:
         sections["tasks"] = tasks
     if task:

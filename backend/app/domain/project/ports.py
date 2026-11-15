@@ -119,6 +119,15 @@ class ComputeCredits(Protocol):
         """给这个项目发一份只能在这里花的算力。"""
         ...
 
+    async def team_has_earmark(
+        self, team_id: int, source_task_ids: Sequence[int]
+    ) -> bool:
+        """这个团队名下有没有哪个项目领过这几道赛题里任何一道的资源包。
+
+        「每人只发一次」的题（新手题）用它：一个人的项目都在他的个人团队里，
+        所以按团队问就是按人问。"""
+        ...
+
 
 class FileStore(Protocol):
     """本包读写的那几份字节在盘上哪儿。
@@ -293,6 +302,13 @@ class AcceptedTerms:
     #: contract migration after b7d4e1a9c2f3 moves it into the guidance (that
     #: migration's PR removes it).
     pack_prompt: str | None = None
+    #: The model the project runs on unless it already chose one (``None``:
+    #: the deployment's default).
+    model: str | None = None
+    #: When the pack goes out once per person: the 题目 whose packs count as
+    #: this one's (this one included). A team that holds a pack from any of
+    #: them gets none. Empty: once per project, the default.
+    shared_with: tuple[int, ...] = ()
 
 
 class TaskTerms(Protocol):

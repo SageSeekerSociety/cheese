@@ -54,7 +54,11 @@ from app.domain.review.ports import (
     TaskTeammate,
 )
 from app.domain.review.room_notices import tell_room_undelivered
-from app.domain.review.task_landing import delivery_landed, go_on_while_working
+from app.domain.review.task_landing import (
+    delivery_landed,
+    go_on_while_working,
+    tell_origin_ended,
+)
 from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
@@ -683,6 +687,7 @@ async def sweep_closings(
         closed = await close_overdue(session, chat, machines=machines)
         for overdue in closed:
             await tell_room_undelivered(session, overdue, announce=announce)
+            await tell_origin_ended(session, overdue.task, task_teammate=task_teammate)
         await session.commit()
     return {"gone_on": len(gone_on), "closed": len(closed)}
 

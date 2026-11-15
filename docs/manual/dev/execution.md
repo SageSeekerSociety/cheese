@@ -79,7 +79,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 要手的动作是 `lease_path` 上一个 `POST`：平台先等有界的一段时间让机器准备，客户端再问到期限为止。拿到之后把机器名、代际写进配置，把凭据写进 `token_file`、目标写进 `target_file`（原子替换），并关掉旧连接。返回的是「这次的手跟之前是不是同一个租约」（`changed_lease`）——换了租约、且配了 `target_file` 时，会先把上下文树与仓库指令读回来，然后**主动抛一个错**，让调用方先读新可用仓库的说明再发下一个工具。
 - 换成新机器时工作区路径会重写：`file_path` / `path` / `notebook_path` / `command` / `body` / `cwd` 里原来的工作区前缀换成新的。**丢应答的调用不重放**（注释写得很直白：重连只给下一次调用用，这一次绝不重放）。
 - 项目 MCP 不走房间的机器：平台持有它的凭据、由平台发 `POST /topics/{id}/mcp/{name}`，所以不为它占一台机器。
-- 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、频道或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后就销毁，什么都不留（`machine/lifecycle.py`），之后回合结束的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时放进一个新沙箱，像任何新沙箱一样从任务分支开始，那次工具调用的结果告诉 agent 沙箱换了新的。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推没推上去、那台够不够得着都照常换；它的机器还在分配中时不换，答「分配仍在进行」。
+- 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、频道或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后删除 home（`machine/lifecycle.py`）；使用 OCI 镜像的标准云端 sandbox 会先保存根目录 upper，保存失败时保留 home 重试。删除后的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时从任务分支开始，并在 image digest 相同时恢复已保存的 upper，那次工具调用的结果说明沙箱及恢复状态。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推送失败本身不阻止切换；OCI 根快照保存失败时保留源 home 并报错。它的机器还在分配中时不换，答「分配仍在进行」。根快照的上限、超限及 digest 变化规则见[根目录快照](../../remote-execution.md#根目录快照)。
 - 会话主机不能干项目的活：租约所在的机器就是会话进程所在的那台时，`_attempt` 抛 `ForbiddenError("Project tools cannot execute on the session host")`——两处（`_attempt` 里 lease 那一处、以及 777 行附近那一处）。房间正在跑任务且 `if_idle` 时整个不换（`SessionWorking`，「正在运行任务，稍后再换」）。
 
 ## 沙箱归谁 {#holder}
@@ -106,7 +106,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 执行凭据是单独一种（`personal-execution+jwt`），只签给主人和这段对话；执行路由按主人核对，只放行平台自己的主机，不写派发记录。执行路由由设备连接的属主进程提供，**属主进程要随这次改动一起发布**，否则个人对话拿到沙箱后调用不通。
 - 沙箱里不放平台的任何凭据：`CHEESE_PROJECT` 为空，`cheese` 命令在里面什么都做不了。
 - 进度不发到任何频道，只记成运行记录。
-- 闲置回收和频道的沙箱一样；回收后下一次要手告诉芝士「沙箱环境已换成新的」，并说明之前的文件都不在了（个人沙箱没有检查点）。
+- 闲置回收和频道的沙箱一样；回收后下一次要手说明沙箱已换新、home 内文件已删除（个人沙箱没有代码检查点）。成功保存的 OCI 根目录 upper 在 image digest 相同时恢复；大小上限和超限处理遵循相同规则。
 - 主人的个人额度用完时，沙箱随下一次清扫销毁，新的不开。
 - 文件进出沙箱不经过会话机，也不给沙箱凭据。芝士的 `cheese_library(action=give)` 和 `cheese_library(action=take)`（`backend/sandbox/cheese`）先在会话机上问平台要只管一份文件、几分钟内有效的地址（传：`/assistant/agent/files/slot` 领一次上传，在沙箱里算好整份的 SHA-256 和每段的 MD5，再按段 `/files/part` 领地址；取：`/files/link`），再在沙箱里用 `curl` 往这些地址传或取。对象存储给的是预签名地址；存在本机磁盘时是 `/files/incoming/{令牌}`（一段一个）、`/files/outgoing/{令牌}`，前面补上 `frontend_url` 和 `/api`。所以沙箱要能经出口代理连到对象存储或平台的公网地址。会话机这一侧在 `pi/runner.py` 的 `_platform_tool` 里把在机器上跑命令的能力交给平台工具，只给能用这台机器干活的会话（`tools.works`）；只读房间机器的文档芝士拿不到。
 
@@ -144,5 +144,5 @@ The backend probe resolves `CHEESE_PROFILE_ROOT` on the device, and session laun
 
 - 判「够不着」只看状态码是不够的，还要看 409 的形状；反过来说，把它放宽成「一切非 200」会让 agent 在机器好好的时候放弃整轮的文件与命令操作，并向人报告机器掉线——那是假话。
 - 租约不是会话的属性而是「这次调用」的属性：没要手之前什么都别假设，`deferred` 形态下 `ping` 与 `context_fs tree` 之外的一切都会抛。
-- 换执行环境、房间清理、虚拟机沙箱的闲置释放都只做**一次**尽力而为的 checkpoint，之后照常进行，不拒绝、不重试、不为它留着机器：推不上去的提交和没提交的改动跟着那台机器一起没了，平台不留底。
+- 换执行环境、房间清理、虚拟机沙箱的闲置释放都只做**一次**尽力而为的代码 checkpoint，推送失败本身不拒绝、不重试、不为它留着机器：未推送的提交和未提交的改动随源目录删除而丢失，平台不另存工作树。标准云端 sandbox 的 OCI 根快照在空闲删除或换环境前单独保存；保存失败会保留源 home，超限则记录状态并继续。
 - 会话主机与工作机器重合是明确禁止的，不是「性能差不多的选择」。

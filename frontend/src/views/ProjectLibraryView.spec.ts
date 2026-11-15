@@ -25,6 +25,7 @@ vi.mock('../api', () => ({
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
   getProject: vi.fn(),
+  listProjectChanges: vi.fn(),
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
 }))
 
@@ -47,7 +48,7 @@ vi.mock('../lib/libraryApi', () => ({
   listLibraryFolders: vi.fn(async () => []),
 }))
 
-const { deleteLibraryFile, downloadFile, getProject } = await import('../api')
+const { deleteLibraryFile, downloadFile, getProject, listProjectChanges } = await import('../api')
 const { queryClient } = await import('../query/client')
 const { libraryFileBytes, listProjectLibrary, moveLibraryFile, replaceLibraryFile, uploadLibraryFile } = await import(
   '../lib/libraryApi'
@@ -98,6 +99,8 @@ beforeEach(() => {
   // 项目那一行（`GET /projects/{id}`）：不是从题目来的项目。缓存是全局一份，每条测试从空的开始。
   queryClient.clear()
   vi.mocked(getProject).mockResolvedValue({ id: 'p1', name: '项目', task: null } as never)
+  // 项目文件那一行先问最近一次改动：默认这个项目还没有提交（托管服务答 404）。
+  vi.mocked(listProjectChanges).mockRejectedValue(new Error('404'))
 })
 
 const Blank = defineComponent({ render: () => h('div') })
@@ -107,6 +110,7 @@ async function renderRaw(url = '/projects/p1/library') {
     history: createMemoryHistory(),
     routes: [
       { path: '/projects/:projectId/library', name: 'project-library', component: ProjectLibraryView, props: true },
+      { path: '/projects/:projectId/library/files', name: 'project-library-files', component: Blank },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: Blank },
       { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: Blank },
     ],
@@ -486,5 +490,25 @@ describe('资料库的文件夹', () => {
     await open('/projects/p1/library?sort=desc')
     expect(screen.getByTestId('library-sort').getAttribute('data-sort')).toBe('desc')
     await waitFor(() => expect(vi.mocked(listProjectLibrary).mock.calls.at(-1)![1]).toMatchObject({ sort: 'desc' }))
+  })
+})
+
+describe('资料库最上层的「项目文件」', () => {
+  it('项目里有提交时排在第一行，点它进项目文件', async () => {
+    vi.mocked(listProjectChanges).mockResolvedValue([
+      { sha: 'a1', subject: 'feat: 报告', author: '王珊', at: '2026-11-10T06:00:00Z', task: null },
+    ])
+    const { router } = await mount()
+
+    await fireEvent.click(await screen.findByText(t('work.library.projectFiles.name')))
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('project-library-files'))
+    expect(router.currentRoute.value.params.projectId).toBe('p1')
+  })
+
+  it('还没有提交、或问不到时没有这一行，资料库照常', async () => {
+    await mount()
+
+    expect(screen.queryByText(t('work.library.projectFiles.name'))).toBeNull()
   })
 })

@@ -18,6 +18,7 @@ and the session process on another, and `Path.home()` is different on each.
 
 from __future__ import annotations
 
+import json
 import ntpath
 import posixpath
 import shlex
@@ -36,14 +37,44 @@ CHECKOUT_TIMEOUT_MS = 600_000
 #: its own file: the CLI's warnings are not the answer, and were the streams
 #: merged, a warning written after the path would be answered as the checkout
 #: (that is exactly what a set-aside snapshot says). The exit status is the
-#: CLI's, and a failure's stderr goes back with it for its message.
+#: CLI's, and a failure's stderr goes back with it for its message. Before the
+#: path, the line the CLI writes with its steps' times (`STEPS_PREFIX`), which
+#: the platform keeps of a slow open (`routes.execution._time_checkout`).
 _CHECKOUT = (
     "out=$(mktemp); err=$(mktemp); "
-    'cheese worktree {topic} >"$out" 2>"$err"; code=$?; '
+    'CHEESE_CHECKOUT_TIMINGS=1 cheese worktree {topic} >"$out" 2>"$err"; code=$?; '
+    'grep -h "^cheese-timings " "$err" | tail -n 1; '
     'tail -n 1 "$out"; '
     'if [ "$code" -ne 0 ]; then cat "$err" >&2; fi; '
     'rm -f "$out" "$err"; exit "$code"'
 )
+
+
+#: How the CLI's line of step times starts (`cheese worktree`).
+STEPS_PREFIX = "cheese-timings "
+
+#: The steps of an open the CLI times, in seconds.
+CHECKOUT_STEPS = ("lock", "seed", "fetch", "give", "deps")
+
+
+def checkout_steps(stdout: str) -> dict[str, float]:
+    """The step times an open's answer carries, or none: an older CLI, or
+    an answer that is not one, says nothing of them."""
+    for line in stdout.splitlines():
+        if not line.startswith(STEPS_PREFIX):
+            continue
+        try:
+            said = json.loads(line[len(STEPS_PREFIX) :])
+        except ValueError:
+            return {}
+        if not isinstance(said, dict):
+            return {}
+        return {
+            step: float(said[step])
+            for step in CHECKOUT_STEPS
+            if isinstance(said.get(step), int | float)
+        }
+    return {}
 
 
 def names_a_directory(value):

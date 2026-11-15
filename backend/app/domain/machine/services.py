@@ -1083,6 +1083,8 @@ class HostPool(PoolSweep):
             device.device_id,
             enrollment.redact(output, token)[-200:],
         )
+        if not host.whole_machine:
+            host.sandbox_image = enrollment.sandbox_image.default_image()["reference"]
         return await self._repo.mark_enrolled(
             host,
             device_id=device.device_id,

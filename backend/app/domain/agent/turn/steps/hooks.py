@@ -104,8 +104,6 @@ async def execute_event(
     # context. The coroutine that fed it may later close the same durable row.
     await close_interval(topic_id, turn_id)
     if state is not None:
-        if event.taken_into is not None:
-            state.known_commits = None
         try:
             for close_frame in await finish_work(state, event):
                 await broker.publish(str(topic_id), close_frame)

@@ -81,8 +81,9 @@ def test_a_hosts_swap_file_is_not_room_for_sandboxes(monkeypatch) -> None:
     without = capacity(host)
     monkeypatch.setattr(settings, "cloud_host_swap_mb", 8192)
 
-    # 8 GiB of the disk, at the 4 GB one sandbox is expected to take.
-    assert capacity(host) == without - 2
+    # Each slot reserves 4 GB of quota and 2 GB for its pinned image.
+    assert without == 7
+    assert capacity(host) == 6
 
 
 def test_a_pressed_pool_keeps_an_idle_sandbox_three_minutes() -> None:

@@ -18,5 +18,6 @@
   "recentDone": "Recently closed",
   "running": "Tasks in progress · {count}",
   "save": "Save",
+  "waiting": "Waiting on you",
   "writeProject": "Write project goals"
 }

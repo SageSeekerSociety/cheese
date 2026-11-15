@@ -128,6 +128,7 @@ async def converse(
     )
     opening = build_session_opening(
         thread=prepared.thread_context,
+        channel=prepared.channel_context,
         tasks=prepared.thread_tasks,
         task=prepared.task_rules,
         doc=doc_text,

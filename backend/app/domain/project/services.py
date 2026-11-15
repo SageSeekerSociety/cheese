@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -23,6 +23,7 @@ from app.domain.project.models import (
     ProjectStarterPush,
 )
 from app.domain.project.ports import (
+    AcceptedTerms,
     Claim,
     ComputeCredits,
     DefaultTeammate,
@@ -748,10 +749,56 @@ class ProjectService:
         await self._seed_default_teammate(
             project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
         )
-        if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
+        if terms.model:
+            await self._seed_default_model(project, terms.model)
+        if terms.compute_credits > 0 and await self._earmark_due(
+            project, task_id, terms
+        ):
             await self._grant_earmark(
                 project, task_id, credits_total=terms.compute_credits
             )
+
+    async def _seed_default_model(self, project: Project, model: str) -> None:
+        """The model the 题目's pack names (the new-user starters run on
+        DeepSeek V4.1 Flash), as the project's starting ``default_model``.
+
+        ``default_model`` is a member setting, and a member's change of it goes
+        through `change_member_settings`, which says it in the 综合. This is
+        not a change anyone made: it fills the key only while it is unset, as
+        part of the configuration the project takes from its 题目, the way the
+        default teammate's persona is. A project that picked its own keeps it.
+        Read under the settings lock so the check and the write see one blob."""
+        await self._repo.lock_settings(project)
+        if not (project.settings or {}).get("default_model"):
+            await self._repo.merge_settings(
+                project, {"default_model": model}, locked=True
+            )
+
+    async def _earmark_due(
+        self, project: Project, task_id: int, terms: AcceptedTerms
+    ) -> bool:
+        """Whether this project should get the 题目's pack now: never twice for
+        one project, and for a once-per-person pack never when the person's
+        team already holds one from any 题目 that shares it. A personal claim's
+        projects all sit on the claimant's personal team, so asking the team is
+        asking the person, and a deleted project's pack still counts."""
+        if await self._has_earmark(project, task_id):
+            return False
+        if not terms.shared_with:
+            return True
+        if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("compute_credits was not handed in")
+        # The claim lock is per (题目, team), so one person starting two
+        # starters at once holds two different locks; this one, per team and
+        # to the end of the transaction, makes the check and the grant one step.
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"once-per-person-pack:{project.team_id}"},
+        )
+        return not await self._compute_credits.team_has_earmark(
+            project.team_id, terms.shared_with
+        )
 
     async def activate_participation(self, *, task: TaskBrief, claim: Claim) -> None:
         """Release the task's resources to its workspace after approval."""

@@ -1012,10 +1012,11 @@ PLATFORM_TOOLS = ToolTable(
             "这件任务本身",
             {
                 "open": _verb(
-                    "有人要把支线里说的事做出来时建任务，两种做法：这条支线讨论的就是这一件事，"
-                    "here 填 true，支线原地转为任务，还是这段对话、还是你接着做，从下一次起你可以"
-                    "改项目；讨论拆出了几件各自要做的事，here 不填，每件另开一个任务，挂在支线"
-                    "所在的那条消息下面，由那边的 AI 队友去做，brief 必填。只在有人说要做时"
+                    "有人要把频道里说的事做出来时建任务。在主线上，每件另开一个任务，挂在"
+                    "要做这件事的那条消息下面，由那边的 AI 队友去做，brief 必填。在支线里有两种"
+                    "做法：这条支线讨论的就是这一件事，here 填 true，支线原地转为任务，还是这段"
+                    "对话、还是你接着做，从下一次起你可以改项目；讨论拆出了几件各自要做的事，"
+                    "here 不填，每件另开一个任务，挂在支线所在的那条消息下面。只在有人说要做时"
                     "调：是你自己看出来该做的，先用 cheese_ask 问一句要不要转为任务（选项"
                     "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。"
                     "已经在任务里时：这条任务里的活由你自己接着做，不要再开一条做同一件事；"
@@ -1026,7 +1027,7 @@ PLATFORM_TOOLS = ToolTable(
                         ),
                         "brief": _text(
                             "另开任务时必填：要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
-                            "那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
+                            "那边的 AI 队友只能从这里和那条消息前后的讨论知道来龙去脉"
                         ),
                         "owner": _text(
                             "负责人 handle，就是说要做这件事的人；省略是你这次回应的那个人"
@@ -1262,7 +1263,10 @@ PLATFORM_TOOLS = ToolTable(
                 "environment": _verb(
                     "查看或更换你自己的执行环境：后续文件和命令操作跑在什么样的沙箱里。"
                     "只换你自己，这里的其他队友不受影响；只能选项目能用的规格。更换前平台"
-                    "在原来那里尽力把改动推送到分支一次，推没推上去都会换；新环境从分支拉代码。",
+                    "在原来那里尽力把改动推送到分支一次，推送失败本身不阻止切换。"
+                    "使用 OCI 镜像的标准云端沙箱还会保存根目录改动，保存失败会报错并保留原环境；"
+                    "超限则继续切换，在后续首次执行工具的结果中提示未保存。新环境从分支拉代码，"
+                    "镜像 digest 相同时恢复成功保存的根目录改动。",
                     {
                         "spec": {
                             "type": "string",
@@ -5453,10 +5457,10 @@ def _say_environment(args, data, env) -> str:
     )
     if not data.get("keeps_nothing"):
         return said
-    # 支线和还没开始的任务里的会话改动留不下，换到哪里都一样：只听到「换好了」，
+    # 频道（主线、支线）和还没开始的任务里的会话改动留不下，换到哪里都一样：只听到「换好了」，
     # 它会在推送被拒以后再换，去找一个推得上去的环境，而没有这样的环境。
     return (
-        f"{said}这个会话在支线或还没开始的任务里，改动留不下，换环境不会改变这一点："
+        f"{said}这个会话在频道里或还没开始的任务里，改动留不下，换环境不会改变这一点："
         "能跑命令、改文件，但推送不进项目；要改项目，创建一个任务。"
     )
 
@@ -6403,9 +6407,16 @@ def _seed_from_host(repo: Path) -> None:
 
 def _give_to_host(repo: Path, base: str) -> None:
     """Give the host's copy what this sandbox fetched that it does not have:
-    the packs it lacks, then the base branch's tip. Only when the tip moved,
-    so a host is given once per change of the base, not once per sandbox; and
-    never failing the checkout that asked."""
+    the packs it lacks, then the base branch's tip. Only when the tip moved or
+    the host still lacks some of the tip's files, so a host is given about
+    once per change of the base, not once per sandbox; and never failing the
+    checkout that asked.
+
+    A file at the host's tip it does not hold is one every later checkout
+    fetches on its own, one more round trip to the forge each (5–10 s from a
+    sandbox, dev 2026-11-13): the sandbox that moved the tip checked out its
+    task's branch, not the base, and the base's versions of what that task
+    changed never came. A later sandbox that fetched them hands them on."""
     host = _host_repository()
     if host is None:
         return
@@ -6428,7 +6439,7 @@ def _give_to_host(repo: Path, base: str) -> None:
                 known = _git_task(host, "rev-parse", "--verify", f"refs/heads/{base}")
             except RuntimeError:
                 known = None
-            if known == tip:
+            if known == tip and not _lacks_files(host, tip):
                 return
             target = host / "objects" / "pack"
             for pack in sorted((repo / "objects" / "pack").glob("*.pack")):
@@ -6439,6 +6450,27 @@ def _give_to_host(repo: Path, base: str) -> None:
                 _git_task(host, "repack", "-a", "-d", "-q")
     except (OSError, RuntimeError, ValueError):
         return
+
+
+def _lacks_files(repo: Path, commit: str) -> bool:
+    """Whether ``repo`` is missing any file of ``commit``'s tree, asked of
+    what it holds and never of a remote."""
+    listing = _git_task(repo, "ls-tree", "-r", commit)
+    blobs = [
+        line.split()[2]
+        for line in listing.splitlines()
+        if len(line.split()) >= 3 and line.split()[1] == "blob"
+    ]
+    if not blobs:
+        return False
+    answer = _git_task(
+        repo,
+        "cat-file",
+        "--batch-check",
+        input_text="\n".join(blobs) + "\n",
+        extra_env={"GIT_NO_LAZY_FETCH": "1"},
+    )
+    return "missing" in answer
 
 
 def _prepare_repository(repo: Path, data: dict) -> None:
@@ -6506,6 +6538,23 @@ def _checkout() -> Path:
     return target
 
 
+#: How long each step of the last `_task_worktree` took, in seconds: waiting
+#: for the repository lock, starting from the host's copy, fetching from the
+#: forge and checking out, giving the host what was fetched, and preparing the
+#: dependencies. A step that did not run is absent. `cheese worktree` reports
+#: them when the platform asks (`CHEESE_CHECKOUT_TIMINGS`, `task_checkout`).
+_CHECKOUT_STEPS: dict[str, float] = {}
+
+
+@contextlib.contextmanager
+def _checkout_step(name: str):
+    began = monotonic()
+    try:
+        yield
+    finally:
+        _CHECKOUT_STEPS[name] = round(monotonic() - began, 3)
+
+
 def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
@@ -6520,7 +6569,8 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     # Native subagents can request worktrees concurrently. Serialize creation
     # so an interrupted clone cannot be mistaken for a complete repository.
     with (cache / f"{project}.lock").open("a") as lock:
-        _lock(lock)
+        with _checkout_step("lock"):
+            _lock(lock)
         # A checkout already on the task's branch and wired to its forge is
         # used as it is: the forge round trips below were most of what opening
         # it again cost (dev, 2026-10-12..17: a reopen within ten minutes took
@@ -6529,9 +6579,12 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         # fetch` brings them up to date.
         if not _opened_as_left(task_dir, data):
             if not repo.exists():
-                _seed_from_host(repo)
-            _open_from_forge(repo, task_dir, data)
-            _give_to_host(repo, data["base"])
+                with _checkout_step("seed"):
+                    _seed_from_host(repo)
+            with _checkout_step("fetch"):
+                _open_from_forge(repo, task_dir, data)
+            with _checkout_step("give"):
+                _give_to_host(repo, data["base"])
         marker = Path(
             _git_task(task_dir, "rev-parse", "--git-path", "cheese-task.json")
         )
@@ -6595,9 +6648,10 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         wanted = _prepared_from(task_dir, config)
         if reinstall or not _still_prepared(task_dir, stamp, wanted):
             stamp.unlink(missing_ok=True)
-            result = subprocess.run(
-                [sys.executable, str(runner), "task", str(task_dir)]
-            )
+            with _checkout_step("deps"):
+                result = subprocess.run(
+                    [sys.executable, str(runner), "task", str(task_dir)]
+                )
             if result.returncode:
                 # Again: another open's run may have finished in between.
                 stamp.unlink(missing_ok=True)
@@ -6774,18 +6828,29 @@ def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
     # (2026-09-20). The whole history is still here, so `git log` and a
     # diff against the base still work; a file's older contents are fetched
     # if something actually reads them.
-    exists_on_forge = bool(
-        _git_task(repo, "ls-remote", "--heads", "origin", data["branch"])
+    #
+    # One fetch for both, not a lookup and a fetch each: every command is a
+    # round trip to the forge through the platform, 5–10 s apiece from a
+    # sandbox (dev, 2026-11-13), and the three of them were half of opening a
+    # new checkout. The task's branch may not be on the forge yet: a pattern
+    # refspec matches nothing without failing, and `--prune` drops a copy of
+    # one the forge no longer has, so whether it is there is read off the
+    # tracking ref afterwards.
+    base, branch = data["base"], data["branch"]
+    _git_task(
+        repo,
+        "fetch",
+        "--filter=blob:none",
+        "--prune",
+        "origin",
+        f"+refs/heads/{base}:refs/remotes/origin/{base}",
+        f"+refs/heads/{branch}*:refs/remotes/origin/{branch}*",
     )
-    refs = [data["base"]] + ([data["branch"]] if exists_on_forge else [])
-    for ref in refs:
-        _git_task(
-            repo,
-            "fetch",
-            "--filter=blob:none",
-            "origin",
-            f"refs/heads/{ref}:refs/remotes/origin/{ref}",
-        )
+    try:
+        _git_task(repo, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}")
+        exists_on_forge = True
+    except RuntimeError:
+        exists_on_forge = False
     if (task_dir / ".git").exists():
         return
     existing = _git_task(repo, "branch", "--list", data["branch"])
@@ -7819,8 +7884,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="准备项目默认分支的代码并输出路径",
         description=(
             "在 ~/.cheese/checkout 准备项目默认分支的代码（已有且没改过就更新到最新），"
-            "输出路径；不会改变当前 shell 的目录。支线里看代码、跑命令用它：这里的"
-            "改动留不下，要改项目就转为任务（cheese_task 的 open）。"
+            "输出路径；不会改变当前 shell 的目录。频道里看代码、跑命令用它：这里的"
+            "改动留不下，要改项目就建任务（cheese_task 的 open）。"
         ),
     )
     psync = sub.add_parser(
@@ -8120,7 +8185,10 @@ def main() -> None:
     a = parser.parse_args()
 
     if a.cmd == "worktree":
-        print(_task_worktree(a.task_id, reinstall=a.prepare))
+        opened = _task_worktree(a.task_id, reinstall=a.prepare)
+        if os.environ.get("CHEESE_CHECKOUT_TIMINGS"):
+            print("cheese-timings " + json.dumps(_CHECKOUT_STEPS), file=sys.stderr)
+        print(opened)
     elif a.cmd == "checkout":
         print(_checkout())
     elif a.cmd == "sync":

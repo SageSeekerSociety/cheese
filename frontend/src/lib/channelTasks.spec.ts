@@ -1,9 +1,10 @@
 /** 频道里的任务卡：等的是看的人自己时对他说，等别人时说出是谁；还开着的任务说出采纳过几步。 */
+import type { Block } from '../cx_types'
 import type { ChannelTask } from './channelTasks'
 
 import { describe, expect, it } from 'vitest'
 
-import { taskLine, tasksByOrigin } from './channelTasks'
+import { taskLine, tasksByOrigin, teammateTaskLines } from './channelTasks'
 
 import { setLocale } from '@/i18n'
 
@@ -117,5 +118,33 @@ describe('任务卡', () => {
     ])
     expect(under.get('m1')?.map((t) => t.id)).toEqual(['a', 'b'])
     expect([...under.keys()]).toEqual(['m1'])
+  })
+
+  describe('芝士在主线上开的任务', () => {
+    const asked = 'm1'
+    const opened = task({ id: 't9', created_by: 'cheese', upgraded_from_block_id: asked, source_block_id: asked })
+    const said = (id: string, author: string, turn: string | null): Block =>
+      ({ id, kind: 'message', author, turn_id: turn, content: '' }) as unknown as Block
+
+    it('画在芝士那一轮回答的最后一条消息下面，不画在问的那条下面', () => {
+      const blocks = [said(asked, 'chenmo', null), said('a1', 'cheese', asked), said('a2', 'cheese', asked)]
+      expect([...teammateTaskLines([opened], blocks).entries()]).toEqual([['a2', [opened]]])
+      expect(tasksByOrigin([opened]).size).toBe(0)
+    })
+
+    it('芝士还没说话时先画在问的那条下面', () => {
+      expect([...teammateTaskLines([opened], [said(asked, 'chenmo', null)]).keys()]).toEqual([asked])
+    })
+
+    it('人自己转的、从支线里另开的照旧挂在那条消息下面', () => {
+      const byPerson = task({ id: 't1', created_by: 'chenmo', upgraded_from_block_id: asked, source_block_id: asked })
+      const fromThread = task({ id: 't2', created_by: 'cheese', upgraded_from_block_id: asked, source_block_id: 'r1' })
+      expect(teammateTaskLines([byPerson, fromThread], [said(asked, 'chenmo', null)]).size).toBe(0)
+      expect(
+        tasksByOrigin([byPerson, fromThread])
+          .get(asked)
+          ?.map((t) => t.id)
+      ).toEqual(['t1', 't2'])
+    })
   })
 })

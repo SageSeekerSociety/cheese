@@ -305,10 +305,9 @@ def _topic_out(
         if entry["kind"] == WORKING
     ]
     # A member working here right now is not one the room is waiting on: it is
-    # the one handling it. 在支线里跑的轮次同样算「在管这间房」：芝士在这条频道
-    # 没有自己那条线，它答一条主线上的消息就是在那条消息的支线里说
-    # （`topics_signals.answering`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
-    # 显示成「没人管」（`useTopicRail` 的 REPLY_STALL_MS）。`activity` 本身照旧只放
+    # the one handling it. 在支线里跑的轮次同样算「在管这间房」
+    # （`topics_signals.answering`）：只认主线的话，一条跑了五分钟的支线轮次会让它上面
+    # 这间房显示成「没人管」（`useTopicRail` 的 REPLY_STALL_MS）。`activity` 本身照旧只放
     # 主线 —— 侧栏那一格画的是这间房自己那条线。
     working = {a.member for a in out.activity if a.kind == WORKING}
     working.update(working_in_threads or ())

@@ -455,8 +455,10 @@ async def get_tasks(
         sort_by = "createdAt"
         sort_order = "asc"
 
-    # 权限检查：查询未审批任务需要是空间管理员
-    is_space_admin = await space_seats.runs(db, space, auth_user.user_id)
+    # 权限检查：查询未审批任务需要教这块板（所有者、管理员与平台管理员）
+    is_space_admin = await space_seats.SPACE.allows(
+        db, space, auth_user.user_id, space_seats.Permission.teach
+    )
     if approved_value == 2 and not is_space_admin:  # NONE = 未审批
         raise ForbiddenError("Only space admins can view unapproved tasks")
     viewer_email_domain = await resolve_user_email_domain(db, auth_user.user_id)

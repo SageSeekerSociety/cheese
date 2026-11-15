@@ -19,6 +19,7 @@ from app.core.errors import (
 from app.core.sentences import exception_text, listing, say
 from app.domain.deliverables import artifacts
 from app.domain.library import service as library
+from app.domain.notice_meta import EVENT_TASK_FILED
 from app.domain.review import (
     archive,
     commit_message,
@@ -33,10 +34,13 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.review.services.notices import _announce_of
+from app.domain.review.task_landing import record_at_origin
 from app.domain.room_task import progress
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -257,6 +261,13 @@ async def create_card(
             hidden=await artifacts.hidden_from_room(self._session, topic.id),
         )
         await artifacts.describe(self._session, declared, about=about)
+    # Filing writes in the task and at the conversation it came from: both
+    # named first, in the task lock order (`room_task.lock_order`). Taken here,
+    # after the forge and machine reads above, so those seconds hold up no one
+    # writing in the task; read again under it, the task may have ended since.
+    await lock_task_for_change(self._session, task.id)
+    if task.status != TaskStatus.open or task.closing_since is not None:
+        raise ValidationError(say("taskEndedOrNoBranch"))
     card = await self._repo.add(
         topic_id=topic_id,
         task_id=task.id,
@@ -299,6 +310,16 @@ async def create_card(
     # reported before it is over.
     progress.clear(task)
     await self._announce_filed(topic, card, task)
+    # Where the task came from records that a version is in for review: the card
+    # it filed, as filed. The card's state is told elsewhere.
+    await record_at_origin(
+        self._session,
+        task,
+        EVENT_TASK_FILED,
+        say("taskFiledForReview", title=said_title(task)),
+        announce=_announce_of(self),
+        refers={"delivery": {"card_id": str(card.id), "version": len(existing) + 1}},
+    )
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)

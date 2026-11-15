@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -203,5 +204,160 @@ func TestFetchGivesUpOnAStalledDownloadButNotASlowOne(t *testing.T) {
 	}
 	if found := leftovers(); len(found) != 0 {
 		t.Errorf("Fetch left downloads behind: %v", found)
+	}
+}
+
+// installDir is a directory holding a stand-in for the running executable and
+// a finished download of a build, as Fetch leaves it for Replace.
+func installDir(t *testing.T, build []byte) (self, tmp string) {
+	t.Helper()
+	dir := t.TempDir()
+	self = filepath.Join(dir, "cheesehost.exe")
+	if err := os.WriteFile(self, []byte("the running build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmp = filepath.Join(dir, ".cheese-update-1.exe")
+	if err := os.WriteFile(tmp, build, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return self, tmp
+}
+
+// windowsReplaceBlocked runs Windows' replace for the rest of the test, with
+// the binary an earlier update moved aside still held by a running process.
+// What Windows refuses there — deleting that file, or renaming onto it — is
+// what any OS refuses for a non-empty directory, so one stands in for it.
+func windowsReplaceBlocked(t *testing.T, self string) {
+	t.Helper()
+	saved := replace
+	replace = replaceAside
+	t.Cleanup(func() { replace = saved })
+	if err := os.MkdirAll(filepath.Join(self+".old", "held"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func forgetFailedBuild(t *testing.T) {
+	t.Helper()
+	failed.hold("")
+	t.Cleanup(func() { failed.hold("") })
+}
+
+func downloadsBeside(self string) []string {
+	found, _ := filepath.Glob(filepath.Join(filepath.Dir(self), ".cheese-update-*"))
+	return found
+}
+
+// A replace that fails keeps the running build and takes nothing more from the
+// disk: on Windows the download was left behind on every failed attempt.
+func TestFailedWindowsReplaceRemovesTheDownload(t *testing.T) {
+	forgetFailedBuild(t)
+	self, tmp := installDir(t, []byte("the new build"))
+	windowsReplaceBlocked(t, self)
+
+	if err := Replace(tmp, self); err == nil {
+		t.Fatal("Replace with the moved-aside binary still held = nil, want an error")
+	}
+	if found := downloadsBeside(self); len(found) != 0 {
+		t.Errorf("a failed replace left the download behind: %v", found)
+	}
+	if got, _ := os.ReadFile(self); string(got) != "the running build" {
+		t.Errorf("a failed replace changed the executable to %q", got)
+	}
+}
+
+// After a build fails to install, being told to update again — which the
+// server does on every reconnect — does not download that build again, while a
+// newer build is still fetched, and the failed one is tried again once the hold
+// has passed.
+func TestBuildThatFailedToInstallIsNotDownloadedAgain(t *testing.T) {
+	forgetFailedBuild(t)
+	build := []byte("a build that cannot be swapped in")
+	self, tmp := installDir(t, build)
+	windowsReplaceBlocked(t, self)
+	if err := Replace(tmp, self); err == nil {
+		t.Fatal("Replace with the moved-aside binary still held = nil, want an error")
+	}
+
+	var mu sync.Mutex
+	served := build
+	serve := func(b []byte) { mu.Lock(); served = b; mu.Unlock() }
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		body := served
+		mu.Unlock()
+		// The origin names the build it serves, as installer.py does.
+		w.Header().Set("X-Checksum-SHA256", fmt.Sprintf("%x", sha256.Sum256(body)))
+		_, _ = w.Write(body)
+	}))
+	defer origin.Close()
+	running, _ := SelfPath()
+
+	tmp, err := Fetch(context.Background(), origin.URL)
+	if !errors.Is(err, ErrHeld) {
+		t.Fatalf("Fetch of the build that just failed = (%q, %v), want ErrHeld", tmp, err)
+	}
+	if found := downloadsBeside(running); len(found) != 0 {
+		t.Errorf("a held build left a download behind: %v", found)
+	}
+
+	// A different build is a new chance: downloaded (and here refused as not
+	// runnable, which is as far as these bytes can go).
+	serve([]byte("a newer build"))
+	if _, err := Fetch(context.Background(), origin.URL); err == nil || errors.Is(err, ErrHeld) {
+		t.Fatalf("Fetch of a newer build = %v, want it downloaded and refused as not runnable", err)
+	}
+
+	saved := failedHold
+	failedHold = 0
+	defer func() { failedHold = saved }()
+	serve(build)
+	if _, err := Fetch(context.Background(), origin.URL); err == nil || errors.Is(err, ErrHeld) {
+		t.Fatalf("Fetch after the hold = %v, want the build downloaded again", err)
+	}
+	if found := downloadsBeside(running); len(found) != 0 {
+		t.Errorf("Fetch left downloads behind: %v", found)
+	}
+}
+
+// What earlier runs left beside the executable is cleared at start, and only
+// that: a download younger than an hour may be one another process is still
+// writing or about to swap in.
+func TestCleanupRemovesAbandonedDownloadsOnly(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "cheesehost.exe")
+	write := func(name string, size int, age time.Duration) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, make([]byte, size), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-age)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	write("cheesehost.exe", 10, 0)
+	abandoned := []string{
+		write(".cheese-update-111.exe", 1000, 72*time.Hour),
+		write(".cheese-update-222.exe", 2000, 2*time.Hour),
+	}
+	recent := write(".cheese-update-333.exe", 3000, time.Minute)
+	other := write("notes.txt", 10, 72*time.Hour)
+
+	removed, size := Cleanup(self)
+
+	if removed != 2 || size != 3000 {
+		t.Errorf("Cleanup = (%d, %d), want (2, 3000)", removed, size)
+	}
+	for _, path := range abandoned {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("abandoned download %s is still there", filepath.Base(path))
+		}
+	}
+	for _, path := range []string{self, recent, other} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("Cleanup removed %s, which it must keep: %v", filepath.Base(path), err)
+		}
 	}
 }

@@ -126,7 +126,9 @@ async def list_announcements(
     the caller would notify — given to managers only, null for everyone else."""
     service = _service(db)
     listed = await service.list_for_space(space_id)
-    manager = await space_seats.runs(db, space_id, auth_user.user_id)
+    manager = await space_seats.SPACE.allows(
+        db, space_id, auth_user.user_id, SpacePermission.announce
+    )
     notify_count = (
         await service.audience_size(space_id, author_id=auth_user.user_id)
         if manager

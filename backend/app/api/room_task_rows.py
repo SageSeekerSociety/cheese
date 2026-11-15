@@ -107,12 +107,13 @@ async def task_out(db, task, card: Any = _CARD_UNSET, *, me: str) -> dict:
     return out
 
 
-def card_row(card, version: int | None) -> dict | None:
+def card_row(card, version: int | None, reviewers: Sequence[str]) -> dict | None:
     """The card a task row carries: where it rides (PR) and, for a card in
-    review, what the row's second line says — whom it waits on (the card's own
-    reviewer), 「第 N 版」 (``version``, how many cards the task has filed),
-    what was handed in, and since when. ``card`` is
-    the `AcceptCard` row or the `RailCard` value; both carry these fields."""
+    review, what the row's second line says — whom it waits on (``reviewers``,
+    the card's own set from `accept_card_reviewer`), 「第 N 版」 (``version``,
+    how many cards the task has filed), what was handed in, and since when.
+    ``card`` is the `AcceptCard` row or the `RailCard` value; both carry these
+    fields."""
     if card is None:
         return None
     return {
@@ -122,25 +123,19 @@ def card_row(card, version: int | None) -> dict | None:
         "pr_url": card.pr_url,
         "version": version,
         # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
-        "reviewer": "、".join(_card_reviewers(card)) or None,
+        "reviewer": "、".join(reviewers) or None,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
     }
 
 
-def _card_reviewers(card) -> tuple[str, ...]:
-    """一张卡的审阅人集合：ORM 行还留着 `reviewer_handle` 那一列，`RailCard` 只有集合。"""
-    handles = getattr(card, "reviewer_handles", None)
-    if handles:
-        return tuple(handles)
-    single = getattr(card, "reviewer_handle", None)
-    return (single,) if single else ()
-
-
-def _task_markers(task, card, shown, asking, me: str, reviewers=()) -> dict[str, bool]:
-    """Attention includes the reporter; personal wording names the next actor."""
+def _task_markers(
+    task, card, shown, asking, me: str, reviewers: Sequence[str]
+) -> dict[str, bool]:
+    """Attention includes the reporter; personal wording names the next actor.
+    ``reviewers`` is the card's reviewer set (`accept_card_reviewer`)."""
     asked = () if asking is None else asking.waiting(task.people)
-    handles = tuple(reviewers) or (_card_reviewers(card) if card is not None else ())
+    handles = tuple(reviewers)
     reviewer = handles[0] if handles else None
     owner = task.owner_handle if presentation.owner_acts_on(shown) else None
     attention = address(
@@ -218,7 +213,6 @@ async def task_rows(
             ),
             now=now,
         )
-        reviewers = card_reviewers.get(card.id, []) if card is not None else []
         waiting = presentation.waiting_on(
             shown,
             reviewer=reviewers[0] if reviewers else None,
@@ -250,7 +244,7 @@ async def task_rows(
                 )
                 if task.id in said
                 else None,
-                "card": card_row(card, versions.get(task.id)),
+                "card": card_row(card, versions.get(task.id), reviewers),
             }
         )
     return items
@@ -405,7 +399,14 @@ async def project_task_rows(
             {
                 **task_row_json(task),
                 "presentation": shown.as_dict(),
-                **_task_markers(task, card, shown, asked.get(task.id), me),
+                **_task_markers(
+                    task,
+                    card,
+                    shown,
+                    asked.get(task.id),
+                    me,
+                    card.reviewer_handles if card is not None else (),
+                ),
                 # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
                 # 未恢复的失败，或调用方没算）。判据在
                 # `block/waits.MemberWaits.unresolved_failures`：一条活停下来报错、
@@ -427,7 +428,11 @@ async def project_task_rows(
                     shown, last_activity=last_activity, now=now
                 ),
                 "last_activity_at": last_activity.isoformat(),
-                "card": card_row(card, versions.get(task.id)),
+                "card": card_row(
+                    card,
+                    versions.get(task.id),
+                    card.reviewer_handles if card is not None else (),
+                ),
             }
         )
     return items
@@ -596,7 +601,16 @@ async def task_page_row(db: AsyncSession, place, task, *, me: str) -> dict:
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
         choices=catalog(project.settings if project else None),
     )
-    out["card"] = card_row(cards.get(task.id), versions.get(task.id))
+    card = cards.get(task.id)
+    out["card"] = card_row(
+        card,
+        versions.get(task.id),
+        (await AcceptCardRepository(db).reviewer_handles_for_cards([card.id])).get(
+            card.id, []
+        )
+        if card is not None
+        else [],
+    )
     # 它的会话此刻在不在跑（runner 报的，不是队友自己说的「在做」）：页头那颗
     # 「在做」只在这时候动，会话闲着就静止。
     out["session_running"] = task.id in await running_conversations(db, [task.id])

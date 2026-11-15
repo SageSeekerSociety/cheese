@@ -5,6 +5,7 @@ Taking a warm machine into the host pool is covered with placement
 (``test_cloud_host_pool.py``).
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -17,7 +18,7 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
-from app.domain.machine import warm
+from app.domain.machine import sandbox_images, warm
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import WarmMachine
 from app.domain.machine.warm import WarmPoolService
@@ -121,6 +122,9 @@ def warm_case(client, monkeypatch):
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.1",
                     sandbox_disk_gb=64,
+                    sandbox_image=warm.enrollment.sandbox_image.default_image()[
+                        "reference"
+                    ],
                     create_request={
                         "hostname": "warm-test",
                         "offeringId": 1,
@@ -136,6 +140,38 @@ def warm_case(client, monkeypatch):
 
     client.portal.call(lambda: seed())
     return client, FakeMicroCloud()
+
+
+@pytest.mark.parametrize("matches", [False, True])
+def test_a_warm_machine_records_only_the_image_it_finished_preparing(
+    warm_case, monkeypatch, matches
+):
+    client, _ = warm_case
+    reference = warm.enrollment.sandbox_image.default_image()["reference"]
+
+    async def prepared(*args, **kwargs):
+        return {
+            "exit": 0,
+            "stdout": json.dumps({"reference": reference if matches else "wrong"}),
+        }
+
+    monkeypatch.setattr(sandbox_images.device_hub, "exec", prepared)
+
+    async def run():
+        async with client.test_request_factory() as db:
+            row = await db.scalar(
+                select(WarmMachine).where(WarmMachine.state == "ready")
+            )
+            row.sandbox_image = None
+            key = row.id
+            await db.commit()
+        await sandbox_images.sweep(client.test_request_factory)
+        async with client.test_request_factory() as db:
+            assert (await db.get(WarmMachine, key)).sandbox_image == (
+                reference if matches else None
+            )
+
+    client.portal.call(run)
 
 
 async def _taken_by_the_pool(session) -> None:

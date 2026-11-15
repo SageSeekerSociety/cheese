@@ -67,15 +67,18 @@ def still_preparing(lease: dict | None) -> bool:
 
 
 @asynccontextmanager
-async def kept(bind, session_id, claim: str, *, since: datetime):
+async def kept(
+    bind, session_id, claim: str, *, since: datetime, most_s: float = CLAIM_MOST_S
+):
     """Keep ``claim`` on the session's lease standing while the work inside
     runs, and stop renewing it the moment that work ends, however it ends.
 
+    ``most_s`` includes the longer install budget when restoring a root backup.
     The renewal is the only thing that says the installation is alive: when
     this process exits it goes with it, and the claim lapses unrenewed within
     ``CLAIM_TTL_S``. The writes that end the claim come after this exits, so a
     renewal can never land after them and stand the claim up again."""
-    renewing = asyncio.ensure_future(_renew(bind, session_id, claim, since))
+    renewing = asyncio.ensure_future(_renew(bind, session_id, claim, since, most_s))
     try:
         yield
     finally:
@@ -84,8 +87,8 @@ async def kept(bind, session_id, claim: str, *, since: datetime):
             await renewing
 
 
-async def _renew(bind, session_id, claim: str, since: datetime) -> None:
-    most = since + timedelta(seconds=CLAIM_MOST_S)
+async def _renew(bind, session_id, claim: str, since: datetime, most_s: float) -> None:
+    most = since + timedelta(seconds=most_s)
     while True:
         await asyncio.sleep(CLAIM_RENEW_S)
         until = min(datetime.now(UTC) + timedelta(seconds=CLAIM_TTL_S), most)

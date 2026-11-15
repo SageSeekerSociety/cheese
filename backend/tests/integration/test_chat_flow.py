@@ -267,8 +267,10 @@ def test_empty_content_rejected(client):
 
 
 def test_message_without_summon_does_not_invoke_cheese(client):
-    """Default human-to-human: posting without @芝士 stays quiet (spec C3)."""
-    _, topic_id = _create_project_and_topic(client)
+    """Default human-to-human: with someone else in the project, posting
+    without @芝士 stays quiet (spec C3)."""
+    project_id, topic_id = _create_project_and_topic(client)
+    join_project_team(client, project_id, "bob")
     with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "队友我们今晚开会"})
         frames = _drain_until_done(ws)

@@ -256,6 +256,18 @@ export interface ApiEnvelope<T> {
 }
 
 // Paginated list payload: {data: T[], total: number}
+/** 项目当前版本上的一次改动。`task` 只在平台采纳合并了它、而你看得到那件任务所在的
+ *  频道时才有；直接推上来的提交没有任务，只说是谁、什么时候。 */
+export interface ProjectChange {
+  sha: string
+  subject: string
+  /** 提交上写的名字。 */
+  author: string
+  /** ISO 时间。 */
+  at: string
+  task: { id: string; title: string; room_id: string } | null
+}
+
 export interface ListPayload<T> {
   data: T[]
   total: number
@@ -330,7 +342,7 @@ export interface RoomTask {
   upgraded_from_block_id?: string | null
   /** 它出自的那句话：主线消息本身，或支线里的一条回复。 */
   source_block_id?: string | null
-  /** 支线原地转成的任务：对话挂在主线那条消息下面，在频道页右半边打开，和支线一样。 */
+  /** 支线原地转成的任务：对话挂在主线那条消息下面，任务页上的对话从那条消息开头。 */
   from_thread?: boolean
   created_at: string
   updated_at: string

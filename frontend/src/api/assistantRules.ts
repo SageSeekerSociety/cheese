@@ -91,7 +91,10 @@ export function getAssistantRoutines(): Promise<AssistantRoutines> {
   return request<AssistantRoutines>('/assistant/routines')
 }
 
-export function setAssistantRoutine(id: string, action: 'pause' | 'resume' | 'delete'): Promise<AssistantRoutines> {
+export function setAssistantRoutine(
+  id: string,
+  action: 'pause' | 'resume' | 'delete' | 'run-now'
+): Promise<AssistantRoutines> {
   return action === 'delete'
     ? request<AssistantRoutines>(`/assistant/routines/${id}`, { method: 'DELETE' })
     : request<AssistantRoutines>(`/assistant/routines/${id}/${action}`, { method: 'POST' })

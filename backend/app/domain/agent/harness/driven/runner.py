@@ -143,7 +143,8 @@ def socket_path(state: Path) -> str:
         # which is where the connector looks on Windows (executor_windows.go).
         return str(state / "executor.endpoint")
     digest = hashlib.sha256(str(state.resolve()).encode()).hexdigest()[:24]
-    return f"/tmp/cheese-execution-{os.getuid()}-{digest}.sock"
+    uid = os.environ.get("CHEESE_CONNECTOR_UID", str(os.getuid()))
+    return f"/tmp/cheese-execution-{uid}-{digest}.sock"
 
 
 # --- a person waiting for an answer -------------------------------------------

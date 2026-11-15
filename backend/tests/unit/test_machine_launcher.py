@@ -97,6 +97,7 @@ def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path
         "UV_CACHE_DIR": str(store / "uv-cache"),
         "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),
         "npm_config_store_dir": str(store / "pnpm-store"),
+        "pnpm_config_store_dir": str(store / "pnpm-store"),
         "npm_config_cache": str(store / "npm-cache"),
         "PIP_CACHE_DIR": str(store / "pip-cache"),
     }
@@ -683,6 +684,7 @@ _STORE_VARS = (
     "UV_CACHE_DIR",
     "UV_PYTHON_INSTALL_DIR",
     "npm_config_store_dir",
+    "pnpm_config_store_dir",
     "npm_config_cache",
     "PIP_CACHE_DIR",
 )

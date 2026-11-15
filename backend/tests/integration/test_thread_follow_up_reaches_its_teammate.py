@@ -11,6 +11,7 @@ teammate still answers only when someone @-s it.
 import asyncio
 import time
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,6 +20,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.services import TopicService
 from tests.conftest import (
     StubChannel,
@@ -36,6 +38,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     room_socket,
     session_auth_headers,
+    shared_team_of,
 )
 from tests.support.threads import thread_in
 
@@ -89,7 +92,8 @@ async def _until(cond, timeout: float = 5.0) -> None:
 
 class _Channel:
     """A channel with one AI teammate, a 支线 under one of its messages, and
-    ``u`` who talks there."""
+    ``u`` who talks there. ``bob`` is in the project too: with a second person
+    in it, the main line is people talking to each other."""
 
     def __init__(self, factory, tmp_path) -> None:
         self.factory = factory
@@ -108,8 +112,19 @@ class _Channel:
     async def open(self) -> "_Channel":
         async with self.factory() as session:
             await registered(session, "u")
-            await registered(session, "bob")
+            bob = await registered(session, "bob")
             project = await project_service(session).create(name="P", owner_handle="u")
+            team = await shared_team_of(session, project.id, joiner_user_id=bob)
+            now = datetime.now(UTC)
+            session.add(
+                TeamUserRelation(
+                    team_id=team,
+                    user_id=bob,
+                    role=TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
             room = await TopicService(session).create(
                 project_id=project.id, title="讨论", created_by="u"
             )

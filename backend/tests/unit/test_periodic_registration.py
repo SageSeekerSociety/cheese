@@ -482,6 +482,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("cloud sandbox lifecycle", 107),
         ("cloud compute metering", 107),
         ("cloud warm pool", 107),
+        ("cloud sandbox images", 60),
+        ("sandbox root backup cleanup", 3600),
         ("sandbox disk guard", 118),
         ("subscription usage ingest", 108),
         ("backend error flush", 109),

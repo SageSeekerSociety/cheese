@@ -73,6 +73,8 @@ PERIODIC_JOB_NAMES = (
     "cloud sandbox lifecycle",
     "cloud compute metering",
     "cloud warm pool",
+    "cloud sandbox images",
+    "sandbox root backup cleanup",
     "sandbox disk guard",
     "subscription usage ingest",
     "backend error flush",

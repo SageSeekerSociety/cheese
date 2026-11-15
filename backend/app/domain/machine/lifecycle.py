@@ -85,9 +85,16 @@ from sqlalchemy import ColumnElement, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.agent import execution, resource_cleanup, turn_inputs
+from app.domain.agent import (
+    execution,
+    resource_cleanup,
+    rootfs_snapshot,
+    sandbox_image,
+    turn_inputs,
+)
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
+from app.domain.agent.harness.claude_code import executor_launch
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import (
     LOST_KEY,
@@ -98,7 +105,7 @@ from app.domain.agent_session.models import (
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.machine import holder as holders
-from app.domain.machine import metering, sandbox_home
+from app.domain.machine import metering, root_snapshots, sandbox_home
 from app.domain.machine.infra_records import keep_frozen, keep_parked
 from app.domain.machine.models import CloudHost, SandboxHome, SandboxUsage
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
@@ -145,10 +152,24 @@ def program(action: str, **request) -> str:
     helpers, then ``sandbox_home``, then the call."""
     cleanup = Path(resource_cleanup.__file__).read_text()
     call = json.dumps({"action": action, **request})
+    snapshots = ""
+    if action == "snapshot_root":
+        snapshots = (
+            "rootfs = {}\n"
+            + f"exec({Path(rootfs_snapshot.__file__).read_text()!r}, rootfs)\n"
+            + "confinement = {}\n"
+            + f"exec({executor_launch.file_sources()['remote-execution/confinement.py']!r}, confinement)\n"
+            + "cleanup['rootfs'] = rootfs\n"
+            + "images = {}\n"
+            + f"exec({Path(sandbox_image.__file__).read_text()!r}, images)\n"
+            + "cleanup['root_images'] = images\n"
+            + "cleanup['root_namespace'] = confinement['image_user_namespace']\n"
+        )
     return (
         "import json\n"
         "cleanup = {'__name__': 'cheese_resource_cleanup'}\n"
         f"exec({cleanup!r}, cleanup)\n"
+        + snapshots
         + Path(sandbox_home.__file__).read_text()
         + f"\nmain(cleanup, json.loads({call!r}))\n"
     )
@@ -453,7 +474,11 @@ class SandboxLifecycle:
         now = datetime.now(UTC)
         for host in hosts:
             assert host.device_id is not None
-            if settings.cloud_sandbox_freeze:
+            if host.refresh_in_place and settings.cloud_sandbox_park:
+                # Brought up to date where it is (`host_refresh`): its frozen
+                # sandboxes are parked rather than destroyed, and stay.
+                await self._park_frozen_on(host.id, host.device_id)
+            elif settings.cloud_sandbox_freeze:
                 gone += await self.destroy_frozen_on(host.device_id, host_id=host.id)
             assert host.draining_since is not None
             if now - host.draining_since < timedelta(
@@ -485,6 +510,27 @@ class SandboxLifecycle:
                 ):
                     gone += 1
         return gone
+
+    async def _park_frozen_on(self, host_id: uuid.UUID, device_id: str) -> None:
+        """Park the frozen sandboxes of a host being brought up to date in
+        place: its run waits for nothing but parked ones to be on it."""
+        rows = list(
+            await self._session.scalars(
+                select(SandboxHome).where(
+                    SandboxHome.host_id == host_id,
+                    SandboxHome.frozen_at.is_not(None),
+                    SandboxHome.parked_at.is_(None),
+                    SandboxHome.stopped_at.is_(None),
+                )
+            )
+        )
+        await self._session.commit()
+        for home in rows:
+            await self._park(
+                home.id,
+                home.topic_id if home.session_id is not None else None,
+                device_id,
+            )
 
     async def destroy_idle(self) -> int:
         """Destroy every idle sandbox, and finish every removal left
@@ -1398,8 +1444,13 @@ class SandboxLifecycle:
             if open_turns or (last_end is not None and now - last_end < held):
                 await self._session.commit()
                 return False
-        if home.stopped_at is not None and now - home.stopped_at < STOP_HOLD:
-            # Another sweep is removing it.
+        removal_hold = STOP_HOLD + (
+            timedelta(seconds=root_snapshots.SAVE_TIMEOUT_S)
+            if home.sandbox_image
+            else timedelta(0)
+        )
+        if home.stopped_at is not None and now - home.stopped_at < removal_hold:
+            # A root upload may still be running after the ordinary destroy deadline.
             await self._session.commit()
             return False
         if (
@@ -1414,6 +1465,11 @@ class SandboxLifecycle:
         project, resource = str(holders.namespace_of(home)), home.resource_id
         await self._session.commit()
         try:
+            saved = await root_snapshots.save(
+                self._session, home, device_id, hub=self._hub, run_on_host=run_on_host
+            )
+            if saved is not None and saved["status"] == "superseded":
+                return False
             answered = await run_on_host(
                 self._hub,
                 device_id,
@@ -1422,6 +1478,8 @@ class SandboxLifecycle:
                 project=project,
                 resource=resource,
             )
+            if saved is not None:
+                answered["processes"] = saved.get("processes", [])
         except (RuntimeError, TimeoutError):
             # Marked, it takes no tool call; a later sweep tries again.
             logger.warning("destroying sandbox %s failed", home_id, exc_info=True)

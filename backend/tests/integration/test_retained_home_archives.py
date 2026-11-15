@@ -76,7 +76,7 @@ def test_a_kept_archive_is_announced_once_fetched_until_its_date_then_deleted(
     monkeypatch.setattr(
         retained_files, "async_session_factory", client.test_request_factory
     )
-    until = datetime(2026, 11, 7, 3, tzinfo=UTC)
+    until = datetime(2099, 11, 7, 3, tzinfo=UTC)
 
     async def seed():
         async with client.test_request_factory() as db:
@@ -99,7 +99,7 @@ def test_a_kept_archive_is_announced_once_fetched_until_its_date_then_deleted(
     # Each conversation hears it where its session worked: the room, and the
     # task in it.
     [line] = _said(client, room)
-    assert "2026-11-07" in line
+    assert "2099-11-07" in line
     assert "机器" not in line
     assert len(_said(client, task)) == 1
     # Told once, however many archives and sweeps.
@@ -110,7 +110,7 @@ def test_a_kept_archive_is_announced_once_fetched_until_its_date_then_deleted(
     # An operator lists the room's archives and fetches one by its key.
     assert client.portal.call(retained_files.list_homes, room, None) == 0
     listed = capsys.readouterr().out
-    assert all(key in listed for key in keys[:2]) and "2026-11-07" in listed
+    assert all(key in listed for key in keys[:2]) and "2099-11-07" in listed
     out = tmp_path / "home.tar.gz"
     assert client.portal.call(retained_files.download_home, keys[0], out) == 0
     assert out.read_bytes() == bucket.objects[keys[0]]

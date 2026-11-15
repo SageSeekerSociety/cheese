@@ -192,8 +192,11 @@ class TurnContext:
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
     # For a 支线: the message it hangs under and what the main line said just
-    # before it; and the channel's tasks still open. None elsewhere.
+    # before it. For a channel's main line: the channel and what it said before
+    # the messages this turn is handed. And, for either, the channel's tasks
+    # still open. None elsewhere.
     thread_context: str | None
+    channel_context: str | None
     thread_tasks: str | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
@@ -210,9 +213,9 @@ class TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
-    # A 支线's work is not kept: it may read, run and try things on its own
-    # machine, and nothing it does there reaches the project. What changes the
-    # project is done in a task.
+    # A channel's main line and its 支线 keep no work: the session may read,
+    # run and try things on its own machine, and nothing it does there reaches
+    # the project. What changes the project is done in a task.
     keeps_nothing: bool
     # Whose word a task's session acts on and where it changes the project
     # (`task_section`); None outside a task. It changes when a 支线 becomes

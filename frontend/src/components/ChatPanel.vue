@@ -26,7 +26,7 @@ import { useStartSteps } from '../composables/useStartSteps'
 import { useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
-import { taskLine, tasksByOrigin } from '../lib/channelTasks'
+import { taskLine, tasksByOrigin, teammateTaskLines } from '../lib/channelTasks'
 import { CHAT_IMAGE_ACTIONS, handOffImageTool, imagePaths } from '../lib/chatImages'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
@@ -198,7 +198,6 @@ const panel = useChatPanel({
   column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
-  answersInThread: () => threadable.value,
   showComposer: () => props.showComposer,
   members: () => props.members,
   topicList: () => props.topicList,
@@ -279,6 +278,19 @@ function taskOf(taskId: string): TaskLine | null {
 }
 function tasksUnder(blockId: string): TaskLine[] {
   return tasksByBlock.value.get(blockId) ?? NO_TASKS
+}
+// AI 队友在主线上开的任务：画在它那条回复下面的一行，只有任务名和负责人。
+const linesByBlock = computed(() => {
+  const map = new Map<string, TaskLine[]>()
+  if (!mainLine.value) return map
+  for (const [blockId, tasks] of teammateTaskLines(knownTasks.value, panel.timeline.messages.value)) {
+    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    if (lines.length) map.set(blockId, lines)
+  }
+  return map
+})
+function taskLinksUnder(blockId: string): TaskLine[] {
+  return linesByBlock.value.get(blockId) ?? NO_TASKS
 }
 
 const {
@@ -530,6 +542,7 @@ useComposerShortcut({
             :chapters="chapters"
             :task-of="taskOf"
             :tasks-under="tasksUnder"
+            :task-links-under="taskLinksUnder"
             :name-of="nameOf"
             :rows="rows"
             :ask-groups="askGroups"
@@ -687,7 +700,12 @@ useComposerShortcut({
       <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->
       <div class="composer-zone">
-        <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" />
+        <MemberActivity
+          v-if="showComposer"
+          v-guide-anchor="onProjectLine && activityLines.some((l) => l.kind !== 'typing') ? 'reply-coming' : ''"
+          class="composer-activity"
+          :lines="activityLines"
+        />
         <div v-if="showComposer && composerClosed" class="composer-closed">
           <div class="composer-closed__box t-body">
             <span class="composer-closed__text">{{ composerClosed }}</span>
@@ -700,7 +718,6 @@ useComposerShortcut({
           v-else-if="showComposer"
           ref="composerRef"
           v-model="draft"
-          v-guide-anchor="inThread ? 'thread-composer' : ''"
           :guided="onProjectLine"
           :topic="topic"
           :mention-pool="mentionPool"

@@ -33,7 +33,7 @@ export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
   }
 
   /** Instantiate a team connection in the project. */
-  function add(connectionId: string, model: string, deviceId: string) {
+  function add(connectionId: string, model: string, deviceId: string | null) {
     return save(() => addOwnAgent(toValue(projectId), connectionId, model, deviceId))
   }
 

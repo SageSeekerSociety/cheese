@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import environment_runner
+from app.domain.agent import environment_runner, sandbox_image
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
@@ -29,6 +29,11 @@ BACKEND = Path(__file__).resolve().parents[2]
 
 # The modules `runtime.py` imports from beside itself, by their bare names.
 PARTS = ("runtime_core", "runtime_commands", "runtime_context", "runtime_calls")
+
+
+@pytest.fixture(autouse=True)
+def image_lower(monkeypatch, tmp_path):
+    bubblewrap.image(monkeypatch, tmp_path)
 
 
 def _stage_a_release(store: Path) -> Path:
@@ -490,6 +495,7 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
             "CHEESE_API": "http://127.0.0.1:1",
             "CHEESE_TOKEN": "test",
             "CHEESE_ENVIRONMENT": json.dumps(environment),
+            "CHEESE_SANDBOX_IMAGE": sandbox_image.default_image()["reference"],
         },
         sandbox=True,
         platform_machine=True,
@@ -565,7 +571,11 @@ def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
     payload = payload_for(
         project,
         resource,
-        {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
+        {
+            "CHEESE_API": "http://127.0.0.1:1",
+            "CHEESE_TOKEN": "test",
+            "CHEESE_SANDBOX_IMAGE": sandbox_image.default_image()["reference"],
+        },
         sandbox=True,
         platform_machine=True,
     )

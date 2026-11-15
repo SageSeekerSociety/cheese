@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
 from app.core.sentences import say
+from app.domain.agent_instance.adapters import task_teammate
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import (
     GAVE_UP,
@@ -40,6 +41,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
+from app.domain.review.task_landing import tell_origin_ended
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
 from app.domain.room_task.lock_order import lock_tasks_for_change
 from app.domain.run_record.service import keep as keep_record
@@ -271,9 +273,15 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
             # A finished task waiting on this instruction to be written up
             # closes without it.
             if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
-                await close_after_summary(
+                closed = await close_after_summary(
                     session, row.conversation_id, chat, machines=machines
                 )
+                # Closed without its write-up: where it came from still hears
+                # how it ended.
+                if closed is not None:
+                    await tell_origin_ended(
+                        session, closed, task_teammate=task_teammate
+                    )
             # Only a person's message is told: 「重试」 starts a turn from the
             # messages still waiting, and a platform instruction is not one. A
             # task's opening says it failed on the task page; a routine's run
