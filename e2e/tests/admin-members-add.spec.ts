@@ -117,7 +117,7 @@ test('上一次移出失败的红条，在这次加人成功之后让位给「�
 
   try {
     await page.goto('/admin/members');
-    await page.getByRole('button', { name: '移出', exact: true }).first().click();
+    await page.getByRole('row').filter({ hasText: 'bobby' }).getByRole('button', { name: '移出', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: '移出', exact: true }).click();
     await expect(page.getByText(/e2e 造的移出失败/)).toBeVisible();
 
