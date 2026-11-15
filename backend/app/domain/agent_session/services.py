@@ -120,10 +120,11 @@ class AgentSessionService:
 
     async def forget_conversation(
         self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
-    ) -> None:
+    ) -> bool:
         """This agent's conversation cannot go on (a compaction that could not
-        be made): the next turn opens a new one, and tells it the whole state."""
-        await self._repo.forget_conversation(
+        be made): the next turn opens a new one, and tells it the whole state.
+        False when there was nothing of its own to give up here."""
+        return await self._repo.forget_conversation(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,

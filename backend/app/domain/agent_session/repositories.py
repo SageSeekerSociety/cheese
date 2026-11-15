@@ -190,8 +190,9 @@ class AgentSessionRepository:
 
     async def forget_conversation(
         self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
-    ) -> None:
+    ) -> bool:
         """Give up on the conversation's native session, and on what it was told.
+        True when it had one here.
 
         The next turn opens a new one (`abandoned_at` set, which `resume_token`
         answers as no session) and, with ``told`` cleared, tells it the whole of
@@ -202,8 +203,12 @@ class AgentSessionRepository:
         ``resume_token`` is left where it is. Clearing it would say "this place
         has never run" (`has_any`), and a room that has been worked in for
         hours has not stopped having run because its conversation was given up
-        on."""
-        await self._session.execute(
+        on.
+
+        The answer is what the give-up is worth saying out loud: no row is
+        nothing resumed and nothing given up, and a line claiming otherwise
+        would be the platform narrating a switch it did not make."""
+        result = await self._session.execute(
             update(AgentSession)
             .where(
                 AgentSession.conversation_id == conversation_id,
@@ -214,6 +219,8 @@ class AgentSessionRepository:
                 abandoned_at=datetime.now(UTC), told=None, updated_at=datetime.now(UTC)
             )
         )
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return bool(result.rowcount)  # type: ignore[attr-defined]
 
     async def save_place(
         self,

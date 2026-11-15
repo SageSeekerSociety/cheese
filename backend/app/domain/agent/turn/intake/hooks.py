@@ -50,6 +50,7 @@ from app.domain.agent.turn.intake.native_entries import _bind_user_entry
 from app.domain.agent.turn.intake.notes import (
     _keep_note,
     _note_compaction,
+    _note_given_up,
     _note_retry,
     _running_compactions,
 )
@@ -527,7 +528,6 @@ class HookEvents:
                     and not recovering
                     and meta.get("code") == CONTEXT_FULL_CODE
                     and seat
-                    and event.harness
                 ):
                     # The conversation is past its window and the summary that
                     # would shrink it could not be made. The next turn would
@@ -535,14 +535,22 @@ class HookEvents:
                     # one is over: a new session, told the whole project state,
                     # picks up from here.
                     #
+                    # No harness in the condition: the failure report may name
+                    # none (`AgentResult.harness` defaults to None) while the
+                    # pointer it clears carries the project's own, and requiring
+                    # one here leaves that pointer in place — the same refusal
+                    # on every later turn, which is the state this ends.
+                    # `abandon_opening` resolves it the way the writer does.
+                    #
                     # Inside this branch on purpose — a report delivered again
                     # finds its line already there and must not clear a pointer
                     # a newer turn has since written. Best-effort for the same
                     # reason the pointer's own write is: this sits on a failure
                     # path, and a raise here would leave the turn open with no
                     # line at all.
+                    given_up = None
                     try:
-                        await abandon_opening(
+                        given_up = await abandon_opening(
                             sessions,
                             conversation_id=conversation_id,
                             seat=seat,
@@ -552,6 +560,18 @@ class HookEvents:
                         logger.exception(
                             "could not abandon the un-compactable conversation of %s",
                             conversation_id,
+                        )
+                    if given_up is not None:
+                        # The row it named, not the seat the event named: the
+                        # record is filed under the agent whose conversation it
+                        # was.
+                        await _note_given_up(
+                            sessions,
+                            conversation_id,
+                            turn_id,
+                            given_up,
+                            inner_id,
+                            channel,
                         )
                 if not noticed:
                     room_meta = dict(meta)

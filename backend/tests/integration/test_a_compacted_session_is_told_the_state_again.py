@@ -294,7 +294,115 @@ async def test_giving_up_on_one_conversation_leaves_every_other_seat_alone(clien
     assert seats["other"]["told"] == {"roster": "a"}
 
 
-async def _abandon_a_seat_that_has_no_row(client) -> None:
+async def _a_turn_that_fails_with(factory, tmp_path, failure: str):
+    """A real turn — a person asks, a seat takes it, the model call ends in
+    ``failure`` — and the 现场 records the room holds afterwards.
+
+    The whole path, not the writer: what the give-up is worth saying depends on
+    the guard around it (`intake.hooks`), which asks what the failure was
+    classified as and whether anything was actually given up. Calling the writer
+    directly would test neither."""
+    from app.domain.agent.run_records import for_site
+    from tests.integration.test_a_failed_turn_resumes_by_itself import (
+        _first_turn_fails,
+    )
+
+    conversation, seat, _screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, failure
+    )
+    try:
+        async with factory() as session:
+            rows = await for_site(session, conversation, since=None, until=None)
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+    return rows, seat, conversation
+
+
+def _of_kind(rows: list[dict], event_type: str) -> list[dict]:
+    return [r for r in rows if r["meta"].get("event_type") == event_type]
+
+
+async def test_a_give_up_leaves_one_quiet_line_in_the_site(business_db_factory, tmp_path):
+    """A conversation too big to compact is given up on, and 现场 says so once.
+
+    Not in the room: the room already hears the failure that caused it
+    (`turnFailedContextFull`), and said twice the second reads as a second
+    failure. What only 现场 can answer is why the conversation a reader has been
+    following stops being resumed, and what did not carry over. Not a
+    `SEVERITY_ERROR` — nothing here needs anyone to act, and not a message in
+    the room is lost."""
+    from sqlalchemy import select
+
+    from app.domain.agent_session.models import AgentSession
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.block.models import Block
+    from tests.integration.test_a_failed_turn_resumes_by_itself import _failure_cards
+    from tests.unit.test_cli_notices import REFUSED_BY_A_FULL_CONVERSATION
+
+    factory = business_db_factory
+    rows, _seat, conversation = await _a_turn_that_fails_with(
+        factory, tmp_path, REFUSED_BY_A_FULL_CONVERSATION
+    )
+
+    # The give-up happened — the line below is about a switch that was made.
+    async with factory() as session:
+        handles = list(
+            await session.scalars(
+                select(AgentSession.agent_handle).where(
+                    AgentSession.conversation_id == conversation
+                )
+            )
+        )
+        assert handles, "this conversation had a session row to give up"
+        [given_up] = handles
+        assert (
+            await AgentSessionService(session).resume_token(
+                conversation, given_up, harness="claude-code"
+            )
+            is None
+        )
+
+    [line] = _of_kind(rows, "conversation_abandoned")
+    assert line["meta"]["severity"] == "info"
+    assert line["meta"]["who"] == "platform"
+    # Filed under the agent whose conversation it was — the row that was given
+    # up — so 现场 keeps it with that teammate's own lines.
+    assert line["author"] == given_up
+    assert line["content"], "the line itself is what 现场 renders — not its detail"
+
+    # And nothing of the room went with it: the person's own message and the
+    # line about the turn that failed are both still there. What is given up is
+    # the native session the seat resumes — never the conversation.
+    async with factory() as session:
+        said = list(
+            await session.scalars(
+                select(Block.content).where(Block.conversation_id == conversation)
+            )
+        )
+    assert any("rename the module" in (c or "") for c in said), "the ask is still here"
+    assert await _failure_cards(factory, conversation) == 1
+
+
+async def test_an_ordinary_failure_narrates_no_switch(business_db_factory, tmp_path):
+    """The gate around it: a turn that ends any other way leaves no such line.
+    The record is the platform saying it switched conversations, and a switch it
+    did not make is not narrated."""
+    from tests.integration.test_a_failed_turn_resumes_by_itself import (
+        REFUSED,
+        _failure_cards,
+    )
+
+    rows, _seat, conversation = await _a_turn_that_fails_with(
+        business_db_factory, tmp_path, REFUSED
+    )
+
+    assert _of_kind(rows, "conversation_abandoned") == []
+    # ...and the room did hear that its own turn failed.
+    assert await _failure_cards(business_db_factory, conversation) == 1
+
+
+async def _abandon_a_seat_that_has_no_row(client) -> str | None:
     from app.domain.agent.turn.store.session_inputs import abandon_opening
 
     factory = client.test_request_factory
@@ -306,7 +414,7 @@ async def _abandon_a_seat_that_has_no_row(client) -> None:
         )
         await session.commit()
         topic_id = topic.id
-    await abandon_opening(
+    return await abandon_opening(
         factory,
         conversation_id=topic_id,
         seat="nobody-here",
@@ -320,7 +428,63 @@ async def test_giving_up_on_a_conversation_that_was_never_there_changes_nothing(
     """A seat with no row of its own, or a conversation with no session yet: the
     update matches nothing and nothing is raised. The failure path this runs on
     must never be the reason a turn has no line."""
-    client.portal.call(lambda: _abandon_a_seat_that_has_no_row(client))
+    given_up = client.portal.call(lambda: _abandon_a_seat_that_has_no_row(client))
+
+    # And it answers "nothing was given up": the 现场 line is written from this
+    # answer (`intake.hooks`), and a switch the platform did not make must not
+    # be narrated.
+    assert given_up is None
+
+
+async def _abandon_a_conversation_the_event_named_no_harness_for(factory) -> tuple:
+    """The failure report names no harness — `AgentResult.harness` defaults to
+    None — while the pointer it has to clear carries the project's own. What
+    the seat resumes by afterwards."""
+    from app.domain.agent.turn.store.session_inputs import abandon_opening
+    from app.domain.agent_session.services import AgentSessionService
+
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+        topic_id = topic.id
+    async with factory() as session:
+        service = AgentSessionService(session)
+        await service.ensure(topic_id, "cheese", harness="claude-code")
+        await service.remember(
+            conversation_id=topic_id,
+            agent_handle="cheese",
+            resume_token="native-1",
+            harness="claude-code",
+        )
+        await session.commit()
+    given_up = await abandon_opening(
+        factory, conversation_id=topic_id, seat="cheese", harness=None
+    )
+    async with factory() as session:
+        token = await AgentSessionService(session).resume_token(
+            topic_id, "cheese", harness="claude-code"
+        )
+    return given_up, token
+
+
+async def test_a_report_that_names_no_harness_still_gives_the_conversation_up(client):
+    """The gate is on the seat, not on the harness: an event that names none
+    would otherwise leave the pointer in place, and every later turn would
+    resume the conversation that cannot fit and be refused the same way — the
+    exact loop the give-up exists to end. `abandon_opening` resolves the
+    missing harness the way the pointer's own writer does."""
+    given_up, token = client.portal.call(
+        lambda: _abandon_a_conversation_the_event_named_no_harness_for(
+            client.test_request_factory
+        )
+    )
+
+    assert given_up == "cheese"
+    assert token is None, "the pointer still carried the project's harness; it must be cleared"
 
 
 async def _a_resumed_start_does_not_revive_the_given_up_conversation(factory) -> tuple:
