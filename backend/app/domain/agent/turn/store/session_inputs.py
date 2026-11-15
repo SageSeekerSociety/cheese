@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.agent.harness import harness_for
 from app.domain.agent.queries import agent_for_seat
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 from app.domain.room_task.place import PlaceResolver
 
 
@@ -93,7 +93,7 @@ async def abandon_opening(
         if place is None:
             return None
         agent = await agent_for_seat(session, place, seat)
-        owner = await ProjectRepository(session).get(place.project_id)
+        owner = await ProjectService(session).get(place.project_id)
         given_up = await AgentSessionService(session).forget_conversation(
             conversation_id=conversation_id,
             agent_handle=agent.handle,

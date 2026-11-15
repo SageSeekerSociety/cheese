@@ -189,5 +189,5 @@
   "ownAgentRoomConsent": "I was added to {room} (room ID: {room_id}). May I participate? I will wait for your approval before acting there.",
   "ownAgentRoomYes": "Yes",
   "ownAgentRoomNo": "No",
-  "conversationAbandoned": "This conversation could not be compacted, so the platform opened a new one to carry on; not a message in the room is missing, and the context that never reached a file, a task or a conclusion does not carry over"
+  "conversationAbandoned": "This conversation could not be compacted, so the platform carried on in a new one. Not a message in the channel is missing; details that were only ever said in the conversation, and reached neither a file nor a task, do not carry over"
 }

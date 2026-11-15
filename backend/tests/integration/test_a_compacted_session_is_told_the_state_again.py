@@ -323,7 +323,9 @@ def _of_kind(rows: list[dict], event_type: str) -> list[dict]:
     return [r for r in rows if r["meta"].get("event_type") == event_type]
 
 
-async def test_a_give_up_leaves_one_quiet_line_in_the_site(business_db_factory, tmp_path):
+async def test_a_give_up_leaves_one_quiet_line_in_the_site(
+    business_db_factory, tmp_path
+):
     """A conversation too big to compact is given up on, and 现场 says so once.
 
     Not in the room: the room already hears the failure that caused it
@@ -484,7 +486,9 @@ async def test_a_report_that_names_no_harness_still_gives_the_conversation_up(cl
     )
 
     assert given_up == "cheese"
-    assert token is None, "the pointer still carried the project's harness; it must be cleared"
+    assert token is None, (
+        "the pointer still carried the project's harness; it must be cleared"
+    )
 
 
 async def _a_resumed_start_does_not_revive_the_given_up_conversation(factory) -> tuple:
