@@ -3,12 +3,21 @@ import re
 from collections.abc import Sequence
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr, parseaddr
 
 import aiosmtplib
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+#: What every letter this platform sends shows as its sender. The address is
+#: whatever the deployment configured, and that address is a mailbox the
+#: platform happens to send through — often not one of ours. Without a name the
+#: reader sees the mailbox's own name, so a letter from the platform arrives
+#: signed by whoever owns that account. The name is here rather than in settings
+#: because it is not a deployment's choice: every deployment is 知是.
+FROM_DISPLAY_NAME = "知是"
 
 # The shape of an address the platform accepts, wherever it judges one. One
 # compiled object, imported: a copy that drifts lets one entrance accept an
@@ -27,6 +36,19 @@ def is_placeholder_email(email: str | None) -> bool:
     if not email or "@" not in email:
         return True
     return email.rsplit("@", 1)[1].strip().lower() in PLACEHOLDER_EMAIL_DOMAINS
+
+
+def from_header(address: str) -> str:
+    """The ``From`` header for a configured address: our name over that address.
+
+    The address is parsed out first, so a deployment that already put a name in
+    the setting does not end up with two of them or with the whole string read
+    as the address. The envelope sender is taken from this header by the SMTP
+    library, which reads the addr-spec, so the mail is still sent *from* the
+    configured address — only what the reader sees as the name changes.
+    """
+    parsed = parseaddr(address)[1] or address
+    return formataddr((FROM_DISPLAY_NAME, parsed))
 
 
 class EmailSender:
@@ -77,7 +99,7 @@ class EmailSender:
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = self._from_address
+        msg["From"] = from_header(self._from_address)
         msg["To"] = ", ".join(recipients)
 
         if body_text:
