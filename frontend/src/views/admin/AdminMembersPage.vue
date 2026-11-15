@@ -49,6 +49,10 @@ const candidates = ref<AdminCandidate[]>([])
 const searching = ref(false)
 /** 这一串字没搜成的原因。和 `error` 分开：它只属于对话框里那个下拉，换一串字就作废。 */
 const searchError = ref<string | null>(null)
+/** 加人那一轮被拒的原话，画在框里。和 `error`（读名单、移出失败，画在页面上）分开：
+ *  框开着时页面那条在遮罩后面看不见；而打开框时也不能为了清它去动 `error` —— 名单
+ *  没读出来的那条一旦被清掉，表格就会把「读失败」画成「两组都是空的」。 */
+const addError = ref<string | null>(null)
 const selected = ref<AdminCandidate[]>([])
 const adding = ref(false)
 /** 正在删的那一行（`handle`）：删除要等确认，也要防连点。 */
@@ -111,8 +115,8 @@ function openDialog() {
   search.value = ''
   candidates.value = []
   searchError.value = null
+  addError.value = null
   notice.value = null
-  error.value = null
   dialogOpen.value = true
 }
 
@@ -120,7 +124,7 @@ async function addSelected() {
   // 连点两下「添加」：第二下进来时第一轮还在一个一个地发，再走一遍就是同一批人发两次。
   if (adding.value) return
   adding.value = true
-  error.value = null
+  addError.value = null
   const done: string[] = []
   const refused: string[] = []
   // 一次一个地发：接口一次加一个人，而且**每个人各有一套拒绝理由**（不存在、是
@@ -142,7 +146,7 @@ async function addSelected() {
   selected.value = selected.value.filter((person) => !done.includes(person.handle))
   // 连接符也走词条（`、` vs `, `、`；` vs `; `），不在代码里写死某一种语言的标点。
   if (done.length) notice.value = t('members.notice.added', { handles: done.join(t('members.notice.listJoin')) })
-  if (refused.length) error.value = refused.join(t('members.notice.refusedJoin'))
+  if (refused.length) addError.value = refused.join(t('members.notice.refusedJoin'))
   // 全部加成功才关：有被拒的还留在框里，人能直接改选择再试一次，不用重开对话框。
   if (!refused.length) dialogOpen.value = false
 }
@@ -203,6 +207,7 @@ onMounted(load)
     :candidates="candidates"
     :searching="searching"
     :search-error="searchError"
+    :add-error="addError"
     :adding="adding"
     :removing="removing"
     @load="load"

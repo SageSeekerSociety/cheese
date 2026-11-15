@@ -38,12 +38,15 @@ defineOptions({ name: 'AdminMembersPageView' })
 const props = defineProps<{
   loading: boolean
   roster: PlatformAdminsPayload | null
-  /** 上一次失败**原话**（加/删失败的也走这一格）。读失败时只画在表格自己那一格。 */
+  /** 上一次失败**原话**（读名单、移出）。读失败时只画在表格自己那一格；加人被拒的
+   *  在 `addError`，画在框里。 */
   error: string | null
   candidates: AdminCandidate[]
   searching: boolean
   /** 这一串字没搜成的原因（服务端原话），画在下拉里；null = 没出错。 */
   searchError: string | null
+  /** 加人那一轮被拒的原话（一人一句），画在框里；null = 没人被拒。 */
+  addError: string | null
   adding: boolean
   /** 正在删的那一行（`handle`）：删除要等确认，也要防连点。 */
   removing: string | null
@@ -428,7 +431,7 @@ const countLine = computed(() =>
       <!-- 加人被拒的原话画在**框里**：框为了让人改选择再试而留着，页面上那条横条
            这时在遮罩后面。加成了的那几个也在这里说一声，被拒的不会把它盖掉。 -->
       <AdminFlash v-if="notice" class="mb-3" tone="ok" :text="notice" />
-      <AdminFlash v-if="error" class="mb-3" tone="error" :text="error" />
+      <AdminFlash v-if="addError" class="mb-3" tone="error" :text="addError" />
       <v-autocomplete
         v-model="selected"
         v-model:search="search"

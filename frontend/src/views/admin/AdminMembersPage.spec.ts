@@ -437,6 +437,19 @@ describe('成员管理', () => {
     expect(within(document.body).queryAllByRole('progressbar')).toHaveLength(0)
   })
 
+  it('名单没读出来时打开加人的框，表格那一格的「加载失败」和重试还在', async () => {
+    listPlatformAdmins.mockReset().mockRejectedValue(new Error('后端挂了'))
+    const { findByText, queryByText } = mountPage()
+
+    expect(await findByText('成员加载失败')).toBeTruthy()
+    await fireEvent.click(await findByText('添加管理员'))
+    await nextTick()
+
+    // 读失败不是「名单是空的」：两组的空态句子不该冒出来顶替它。
+    expect(queryByText('成员加载失败')).not.toBeNull()
+    expect(queryByText(/配置里没写人/)).toBeNull()
+  })
+
   it('移出要先确认，确认之后才发请求', async () => {
     removePlatformAdmin.mockResolvedValue({ root: ROSTER.root, added: [], removed: true })
 

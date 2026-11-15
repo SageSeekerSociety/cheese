@@ -35,6 +35,7 @@ const base: AdminMembersPageViewProps = {
   candidates: [],
   searching: false,
   searchError: null,
+  addError: null,
   adding: false,
   removing: null,
   dialogOpen: false,
@@ -175,7 +176,7 @@ describe('成员管理', () => {
       dialogOpen: true,
       candidates: MEMBERS_CANDIDATES,
       selected: [MEMBERS_CANDIDATES[0]!],
-      error: 'david：平台里没有 handle 是 david 的账号',
+      addError: 'david：平台里没有 handle 是 david 的账号',
       notice: '已添加：carol',
     })
     const dialog = view.getByRole('dialog')
