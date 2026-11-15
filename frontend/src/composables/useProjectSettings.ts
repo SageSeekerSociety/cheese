@@ -18,11 +18,11 @@ import { useRoute, useRouter } from 'vue-router'
 
 import {
   connectGithubRepo as apiConnectGithubRepo,
-  migrateToGithub as apiMigrateToGithub,
   getCommitCredit,
   getForgeConnection,
   getUpstream,
   listOAuthConnections,
+  migrateToGithub as apiMigrateToGithub,
   setCommitCredit,
   setUpstream,
 } from '@/api'
