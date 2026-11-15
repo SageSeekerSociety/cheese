@@ -32,8 +32,11 @@ const props = withDefaults(
     names?: RefNames
     /** 代码块右上角放一颗「复制」。 */
     copyCode?: boolean
+    /** 图片的地址指向哪里（`ReadOptions.resolveImage`）：一份交上来的报告里，相对引用指的是
+     *  同一项交的另一份文件。不给就照原文画。 */
+    resolveImage?: (src: string) => string | null
   }>(),
-  { as: 'doc', names: undefined, copyCode: false }
+  { as: 'doc', names: undefined, copyCode: false, resolveImage: undefined }
 )
 
 const host = ref<HTMLElement | null>(null)
@@ -53,12 +56,17 @@ function draw() {
   }
   stop?.()
   stop = host.value
-    ? reader.mountMarkdown(host.value, props.source, { as: props.as, names: props.names, copyCode: props.copyCode })
+    ? reader.mountMarkdown(host.value, props.source, {
+        as: props.as,
+        names: props.names,
+        copyCode: props.copyCode,
+        resolveImage: props.resolveImage,
+      })
     : null
 }
 
 onMounted(draw)
-watch([() => props.source, () => props.as, () => props.copyCode], draw)
+watch([() => props.source, () => props.as, () => props.copyCode, () => props.resolveImage], draw)
 watch(
   () => (/<[@#&]/.test(props.source) ? props.names : undefined),
   (names) => names && draw(),

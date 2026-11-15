@@ -118,7 +118,8 @@ export type PatchTaskParticipantRequestData = {
 
 export type PostTaskSubmissionRequestData = {
   text?: string
-  attachmentId?: number
+  /** 文件项交的几份（先经 `POST /attachments` 传上去拿到的 id），按这个顺序给老师看。 */
+  attachmentIds?: number[]
 }
 
 export type PostTaskSubmissionReviewRequestData = {

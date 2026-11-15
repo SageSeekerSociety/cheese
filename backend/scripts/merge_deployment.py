@@ -243,6 +243,11 @@ KINDS: list[Kind] = [
         },
     ),
     Kind(
+        "task_submission_entry_file",
+        refs={"entry_id": "task_submission_entry", "attachment_id": "attachment"},
+        identity=(),
+    ),
+    Kind(
         "task_submission_review",
         refs={"submission_id": "task_submission", "reviewer_id": USER},
         natural=("submission_id", "reviewer_id"),

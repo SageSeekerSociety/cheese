@@ -431,6 +431,8 @@ class TestTaskSubmissionService:
     ):
         submission_repo = submission_repo or AsyncMock()
         entry_repo = entry_repo or AsyncMock()
+        # No entry here holds rows in task_submission_entry_file.
+        entry_repo.files_by_entry_ids.return_value = {}
         review_repo = review_repo or AsyncMock()
         membership_repo = membership_repo or AsyncMock()
         if attachments is None:
@@ -1537,6 +1539,8 @@ class TestTaskSubmissionServiceAdditional:
     ):
         submission_repo = submission_repo or AsyncMock()
         entry_repo = entry_repo or AsyncMock()
+        # No entry here holds rows in task_submission_entry_file.
+        entry_repo.files_by_entry_ids.return_value = {}
         review_repo = review_repo or AsyncMock()
         membership_repo = membership_repo or AsyncMock()
         if attachments is None:
@@ -1605,11 +1609,11 @@ class TestTaskSubmissionServiceAdditional:
             contents=[{"text": "answer", "attachmentId": "not-a-number"}],
         )
 
-        # Should succeed, attachment_id falls back to None
+        # Should succeed, with no file on the entry
         assert result["id"] == 200
         call_args = entry_repo.create_entries.call_args
         entries_arg = call_args.kwargs["entries"]
-        assert entries_arg[0][2] is None  # attachment_id should be None
+        assert entries_arg[0][2] == []  # the entry holds no file
 
     @pytest.mark.anyio
     async def test_modify_submission_participant_not_found(self):
@@ -1666,7 +1670,7 @@ class TestTaskSubmissionServiceAdditional:
         assert result["id"] == 200
         call_args = entry_repo.create_entries.call_args
         entries_arg = call_args.kwargs["entries"]
-        assert entries_arg[0][2] is None
+        assert entries_arg[0][2] == []
 
     @pytest.mark.anyio
     async def test_list_submissions_skips_missing_membership(self):

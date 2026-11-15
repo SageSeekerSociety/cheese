@@ -12,7 +12,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy import select
 
-from app.domain.task.models import Task
+from app.domain.task.models import (
+    Task,
+    TaskSubmissionEntry,
+    TaskSubmissionEntryFile,
+)
 from app.domain.task.repositories import (
     TaskMembershipRepository,
     TaskRepository,
@@ -726,15 +730,40 @@ class TestTaskSubmissionEntryRepository:
 
     @pytest.mark.anyio
     async def test_create_entries(self):
+        """Each answer is written as one entry, and a file item's files are
+        written beside it in the order given."""
         session = _mock_session()
+        added: list = []
+
+        def add(row):
+            added.append(row)
+
+        session.add.side_effect = add
+
+        async def flush():
+            # The database gives each new entry its id on flush.
+            for n, row in enumerate(added, start=1):
+                if isinstance(row, TaskSubmissionEntry) and row.id is None:
+                    row.id = 900 + n
+
+        session.flush.side_effect = flush
         repo = TaskSubmissionEntryRepository(session)
 
         await repo.create_entries(
             submission_id=1,
-            entries=[(0, "text content", None, "Essay"), (1, None, 100, None)],
+            entries=[(0, "text content", [], "Essay"), (1, None, [100, 101], None)],
         )
-        assert session.add.call_count == 2
-        session.flush.assert_awaited_once()
+
+        entries = [r for r in added if isinstance(r, TaskSubmissionEntry)]
+        files = [r for r in added if isinstance(r, TaskSubmissionEntryFile)]
+        assert [(e.index, e.content_text, e.prompt) for e in entries] == [
+            (0, "text content", "Essay"),
+            (1, None, None),
+        ]
+        assert [(f.entry_id, f.position, f.attachment_id) for f in files] == [
+            (entries[1].id, 0, 100),
+            (entries[1].id, 1, 101),
+        ]
 
     @pytest.mark.anyio
     async def test_soft_delete_by_membership_and_version(self):

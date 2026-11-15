@@ -4,7 +4,7 @@
   "enterPlaceholder": "请输入{prompt}",
   "fillRequired": "请填写完整所有必填项",
   "formTitle": "提交表单",
-  "guideFileSize": "单个文件不超过 {size}，支持常见文档和压缩包格式",
+  "guideFileSize": "每项最多 {n} 个文件、合计不超过 {size}；Markdown 报告和它引用的图片放在同一项一起上传",
   "guideMultiple": "该题目允许多次提交，你可以在截止日期前多次更新你的作品",
   "guideOnce": "该题目仅允许提交一次，提交后将无法修改，请谨慎操作",
   "guideRequirements": "确保你的提交内容符合题目要求，并且所有必填项均已填写完整",
@@ -32,5 +32,8 @@
   "uploadPlaceholder": "请上传{prompt}",
   "uploadingTitle": "正在上传提交内容",
   "viewMine": "查看我的提交记录",
-  "stagePastDue": "阶段「{name}」已过截止时间，不能再提交"
+  "stagePastDue": "阶段「{name}」已过截止时间，不能再提交",
+  "tooManyFiles": "「{prompt}」最多 {n} 个文件",
+  "filesTooLarge": "「{prompt}」的文件合计超过 {size}",
+  "removeFile": "移出 {name}"
 }

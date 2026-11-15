@@ -17,6 +17,7 @@ from app.domain.task.models import (
     TaskMembership,
     TaskSubmission,
     TaskSubmissionEntry,
+    TaskSubmissionEntryFile,
     TaskSubmissionReview,
 )
 
@@ -392,22 +393,55 @@ class TaskSubmissionEntryRepository:
         self,
         *,
         submission_id: int,
-        entries: list[tuple[int, str | None, int | None, str | None]],
+        entries: list[tuple[int, str | None, list[int], str | None]],
     ) -> None:
+        """Write one entry per ``(index, text, attachment_ids, prompt)``, and
+        the files of each in the order given."""
         now = datetime.now(UTC)
-        for idx, text, attachment_id, prompt in entries:
+        written: list[tuple[TaskSubmissionEntry, list[int]]] = []
+        for idx, text, attachment_ids, prompt in entries:
             row = TaskSubmissionEntry(
                 task_submission_id=submission_id,
                 index=idx,
                 content_text=text,
-                content_attachment_id=attachment_id,
                 prompt=prompt,
                 created_at=now,
                 updated_at=now,
                 deleted_at=None,
             )
             self._session.add(row)
+            written.append((row, attachment_ids))
         await self._session.flush()
+        for row, attachment_ids in written:
+            for position, attachment_id in enumerate(attachment_ids):
+                self._session.add(
+                    TaskSubmissionEntryFile(
+                        entry_id=row.id,
+                        position=position,
+                        attachment_id=attachment_id,
+                    )
+                )
+        await self._session.flush()
+
+    async def files_by_entry_ids(
+        self, entry_ids: Sequence[int]
+    ) -> dict[int, list[int]]:
+        """The attachment ids each entry holds, in order. An entry with no rows
+        in ``task_submission_entry_file`` is not in the result."""
+        if not entry_ids:
+            return {}
+        stmt = (
+            select(TaskSubmissionEntryFile)
+            .where(TaskSubmissionEntryFile.entry_id.in_(entry_ids))
+            .order_by(
+                TaskSubmissionEntryFile.entry_id.asc(),
+                TaskSubmissionEntryFile.position.asc(),
+            )
+        )
+        grouped: dict[int, list[int]] = {}
+        for row in (await self._session.execute(stmt)).scalars().all():
+            grouped.setdefault(row.entry_id, []).append(row.attachment_id)
+        return grouped
 
     async def soft_delete_by_membership_and_version(
         self,

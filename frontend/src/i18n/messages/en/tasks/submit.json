@@ -4,7 +4,7 @@
   "enterPlaceholder": "Enter {prompt}",
   "fillRequired": "Fill in every required field",
   "formTitle": "Submission",
-  "guideFileSize": "Up to {size} per file; common document and archive formats are supported",
+  "guideFileSize": "Up to {n} files and {size} in all per item; upload a Markdown report in the same item as the images it uses",
   "guideMultiple": "This challenge allows multiple submissions; you can update your work any time before the deadline",
   "guideOnce": "This challenge allows one submission only and it can't be changed afterwards, so check before you submit",
   "guideRequirements": "Make sure your submission meets the challenge requirements and every required field is filled in",
@@ -32,5 +32,8 @@
   "uploadPlaceholder": "Upload {prompt}",
   "uploadingTitle": "Uploading your submission",
   "viewMine": "View my submissions",
-  "stagePastDue": "Stage “{name}” is past its due date and takes no more submissions"
+  "stagePastDue": "Stage “{name}” is past its due date and takes no more submissions",
+  "tooManyFiles": "“{prompt}” takes at most {n} files",
+  "filesTooLarge": "The files for “{prompt}” add up to more than {size}",
+  "removeFile": "Remove {name}"
 }

@@ -8,7 +8,7 @@
 // link's address passes the editor's own check.
 //
 // How the text is read (and the chat's one difference) is lib/docRead.ts.
-import type { Node as PMNode } from '@tiptap/pm/model'
+import type { DOMOutputSpec, Node as PMNode } from '@tiptap/pm/model'
 import type { ReadAs } from '../../../../lib/docRead'
 import type { RefNames } from '../../../../lib/refChip'
 
@@ -138,6 +138,15 @@ function serializer(doc: PMNode, later: Later, opts: ReadOptions): DOMSerializer
   const base = DOMSerializer.fromSchema(schema)
   const nodes: DOMSerializer['nodes'] = {
     ...base.nodes,
+    image(node) {
+      const spec = base.nodes.image(node)
+      if (!opts.resolveImage || !Array.isArray(spec)) return spec
+      // The address is settled before the element exists: an <img> starts
+      // fetching the moment it has a src, and a relative one fetches this
+      // page's own route.
+      const [tag, attrs, ...rest] = spec as [string, Record<string, unknown>, ...unknown[]]
+      return [tag, { ...attrs, src: opts.resolveImage(String(node.attrs.src ?? '')) }, ...rest] as DOMOutputSpec
+    },
     callout(node) {
       const label = document.createElement('span')
       const { dom, content } = calloutShape(node.attrs.kind as string, label)
@@ -372,6 +381,9 @@ export interface ReadOptions {
   /** What a printed page cannot have: a mini-app is named rather than run,
    *  and a video stays its address. */
   print?: boolean
+  /** Where an image's src points: the address to draw it from, or null to
+   *  draw no image (its alt text stands). Without it a src is drawn as written. */
+  resolveImage?: (src: string) => string | null
 }
 
 const NO_NAMES: RefNames = { mentionNames: {}, topicTitles: {} }

@@ -20,5 +20,6 @@
   "scoreRequired": "通过时要给分：填 0–100 的整数",
   "submit": "提交",
   "submittedAt": "提交于 {time}",
-  "submittedBy": "{name} 提交于 {time}"
+  "submittedBy": "{name} 提交于 {time}",
+  "previewFailed": "无法读取这个文件"
 }
