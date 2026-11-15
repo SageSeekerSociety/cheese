@@ -1,0 +1,8 @@
+{
+  "failed": "Moving to GitHub didn't succeed",
+  "hint": "Create an empty repository on GitHub and enter its address. The platform pushes every branch and tag there as they are, and from then on GitHub is where this project's code lives. Open tasks get their PRs reopened on GitHub; the original platform repository is kept as a backup. A project with delivery cards still waiting for review can't move.",
+  "moved": "Moved to GitHub: {repo}",
+  "placeholder": "https://github.com/your-account/empty-repo",
+  "submit": "Move to GitHub",
+  "title": "Move to your own GitHub repository"
+}

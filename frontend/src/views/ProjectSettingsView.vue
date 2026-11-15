@@ -38,6 +38,7 @@ import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
 import CreditsPanel from '@/components/settings/CreditsPanel.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
+import GithubMigrateSettings from '@/components/settings/GithubMigrateSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
@@ -108,6 +109,8 @@ const {
   load,
   saveUpstream,
   connectGithubRepo,
+  migrateUrl,
+  migrateToGithub,
   consumeGithubCallbackNotice,
 } = useProjectSettings(() => props.projectId)
 
@@ -582,6 +585,15 @@ function close() {
             @save="saveUpstream"
           />
           <ForgeRepoStatus v-if="forgeConnection?.kind === 'forgejo'" :forge="forgeConnection" />
+          <GithubMigrateSettings
+            v-if="forgeConnection?.kind === 'forgejo' && forgeConnection.connected"
+            :url="migrateUrl"
+            :moving="connectingGithubRepo"
+            :notice="githubRepoNotice"
+            @update:url="migrateUrl = $event"
+            @move="migrateToGithub()"
+            @clear-notice="githubRepoNotice = null"
+          />
           <GithubRepoSettings
             v-if="forgeConnection?.kind === 'github_app'"
             :forge="forgeConnection"

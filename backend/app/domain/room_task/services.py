@@ -236,6 +236,28 @@ class TaskService:
         await self._session.flush()
         return task
 
+    async def forget_open_prs(self, project_id: uuid.UUID) -> int:
+        """The project's repository moved to another forge: an open task's PR
+        lives on the one it left. Forget it, so the draft sweep
+        (`open_without_pr`) opens the task's PR again where the branch now is.
+        A closed task keeps its PR link as the record of where it landed.
+        Returns how many tasks were reset."""
+        result = await self._session.execute(
+            update(Task)
+            .where(
+                Task.status == TaskStatus.open,
+                Task.pr_number.is_not(None),
+                Task.room_id.in_(
+                    select(Topic.id).where(Topic.project_id == project_id)
+                ),
+            )
+            .values(
+                pr_number=None, pr_url=None, pr_checks_head=None, pr_checks_state=None
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount or 0
+
     async def record_check(self, task: Task, *, ok: bool, detail: str) -> Task:
         task.last_check_at = datetime.now(UTC)
         task.last_check_ok, task.last_check_detail = ok, detail[:2000]
