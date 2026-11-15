@@ -93,3 +93,46 @@ test('有人被拒时，原话画在框里，加成了的人不再留在选择�
     await removeAdmin(page, 'bobby');
   }
 });
+
+test('上一次移出失败的红条，在这次加人成功之后让位给「已添加」', async ({ page }) => {
+  await apiLogin(page);
+  const token = await apiToken(page);
+  const added = await page.request.post('/api/admin/admins', {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { handle: 'bobby' },
+  });
+  expect(added.ok()).toBeTruthy();
+  // 移出失败在种子数据里造不出来，这里让那一次 DELETE 回 500。
+  await page.route('**/api/admin/admins/bobby', async (route) => {
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 500, message: 'e2e 造的移出失败', data: null }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+
+  try {
+    await page.goto('/admin/members');
+    await page.getByRole('button', { name: '移出', exact: true }).first().click();
+    await page.getByRole('dialog').getByRole('button', { name: '移出', exact: true }).click();
+    await expect(page.getByText(/e2e 造的移出失败/)).toBeVisible();
+
+    await page.getByRole('button', { name: '添加管理员' }).click();
+    await field(page).fill('carol');
+    await page.getByRole('option').filter({ hasText: 'Carol' }).click();
+    await dialog(page).getByRole('button', { name: '添加', exact: true }).click();
+
+    // 全部加成，框关上；页面上那条变成这次的结果。
+    await expect(dialog(page)).toBeHidden();
+    await expect(page.getByText('已添加：carol')).toBeVisible();
+    await expect(page.getByText(/e2e 造的移出失败/)).toHaveCount(0);
+  } finally {
+    await page.unroute('**/api/admin/admins/bobby');
+    await removeAdmin(page, 'bobby');
+    await removeAdmin(page, 'carol');
+  }
+});

@@ -144,6 +144,10 @@ async function addSelected() {
   // 加成了的人从选择里拿掉：框留着是为了让人改被拒的那几个再试，再点一次「添加」
   // 不该把刚加成的人又发一遍。
   selected.value = selected.value.filter((person) => !done.includes(person.handle))
+  // 加成了人，页面上那条旧的失败（上一次移出失败；或名单没读出来 —— 加人的回包已经
+  // 带回整份名单）就作废了，留着会盖住这次「已添加」的提示。没人加成时不动它：名单
+  // 没读出来的那条一清，表格就会把「读失败」画成两组都是空的。
+  if (done.length) error.value = null
   // 连接符也走词条（`、` vs `, `、`；` vs `; `），不在代码里写死某一种语言的标点。
   if (done.length) notice.value = t('members.notice.added', { handles: done.join(t('members.notice.listJoin')) })
   if (refused.length) addError.value = refused.join(t('members.notice.refusedJoin'))
