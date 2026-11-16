@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.block.authorship import speaker
-from app.domain.block.queries import awaiting_an_answer
+from app.domain.block.queries import awaiting_an_answer, latest_messages
 from app.domain.prompts import piece
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import presentation
@@ -171,6 +171,30 @@ def member(handle: str | None, names: Mapping[str, str]) -> str:
     if not handle:
         return ""
     return f"{names.get(handle, handle)}（handle: {handle}）"
+
+
+async def task_summary(session: "AsyncSession", task, names: Mapping[str, str]) -> str:
+    """One task as the main line looks into it (`cheese_task(action=look)`):
+    its line in the channel's list, where its work is, its latest delivery
+    and the last thing said in it. Only the platform's facts."""
+    phrase = (await _states(session, [task]))[task.id]
+    lines = [_task_line(task, phrase, names)]
+    if task.branch_name:
+        lines.append(piece("context/look_branch", branch=task.branch_name))
+    cards = await latest_cards_by_task(session, [task.id])
+    card = cards.get(task.id)
+    if card is not None:
+        lines.append(
+            piece(
+                "context/look_delivery",
+                subject=card.change_subject or "",
+                status=str(card.status),
+            )
+        )
+    said = await latest_messages(session, task.id, 1)
+    if said:
+        lines.append(piece("context/look_last", line=_line(said[-1])))
+    return "\n".join(lines)
 
 
 def _task_line(task, phrase: str, names: Mapping[str, str]) -> str:

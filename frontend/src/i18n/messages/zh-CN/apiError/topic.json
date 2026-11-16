@@ -63,5 +63,13 @@
   "threadRestoreSignIn": "恢复这条支线需要登录",
   "threadNotFound": "找不到这条支线",
   "addressingChanged": "这条消息现在不会交给 AI 队友，没有发出",
-  "chatTaskUnknown": "这个频道没有任务 {task}。频道里的任务列在「这个频道里还在进行的任务」一节。"
+  "chatTaskUnknown": "这个频道没有任务 {task}。频道里的任务列在「这个频道里还在进行的任务」一节。",
+  "coordinateFromMainLine": "只有频道主线能这样统筹任务。",
+  "coordinateOwnTasksOnly": "频道主线只能关闭或重新打开自己开的任务。",
+  "coordinateTellClosed": "这件任务已结束，不能再转达。要接着做，先重新打开它。",
+  "coordinateAlreadyClosed": "这件任务已经关闭。",
+  "coordinateCloseWhileReviewWaits": "这件任务的交付在等人审阅，不能关闭：关闭会作废这次交付，这由审阅人决定。",
+  "reportFromOwnTask": "只有任务自己的会话能向频道主线报告。",
+  "reportNotOpenedByMainLine": "这件任务不是频道主线开的，没有可以报告的对象；要人回答，在任务里直接问。",
+  "teammateTaskNotNamed": "只有成员点名的 AI 队友才能接这件任务：{teammate} 没有在这条消息里被点名。"
 }

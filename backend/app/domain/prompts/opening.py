@@ -525,6 +525,7 @@ def task_opening_prompt(
     materials: str = "",
     reviewer: str | None = None,
     has_checkout: bool,
+    reports_to_main_line: bool = False,
 ) -> str:
     """What a new task's agent is told first: where the task came from, what
     was put on the table there, and that it goes to the work from there; the
@@ -547,4 +548,8 @@ def task_opening_prompt(
             if has_checkout
             else "opening/task_opening_plain"
         ),
+    ) + (
+        # A task the channel's main line opened reports to it: it asks the
+        # members, or answers itself.
+        "\n" + piece("opening/task_reports") if reports_to_main_line else ""
     )

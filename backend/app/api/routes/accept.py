@@ -26,6 +26,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.delivery.agent import (
     dispatch_pending,
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
@@ -86,6 +87,7 @@ def _accept_service(db: AsyncSession) -> AcceptService:
         announce=announce,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
+        record_seat=record_seat_instruction,
         task_teammate=task_teammate,
         roster_team=project_team,
         executor=execution.call,
@@ -185,6 +187,7 @@ async def create_accept_card(
     body: AcceptCardCreate,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """Hand a task's change in for review; ``topic_id`` is the task's."""
     actor, room_id, task_id = await _task_actor(topic_id, db, resolver, writes=True)
@@ -228,6 +231,9 @@ async def create_accept_card(
             topic_id=topic_id,
             project_id=project_id,
         )
+    # The AI teammate that opened the task in the channel's main line hears of
+    # the version now, not on the next sweep.
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(await svc.describe(card))
 
 
