@@ -420,6 +420,7 @@ class ChatService(
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
         task_id: uuid.UUID | None = None,
+        default_effort: str | None = None,
     ) -> tuple[dict, str]:
         """Resolve a turn's model, model environment and usage route
         (gateway_usage.py)."""
@@ -434,6 +435,7 @@ class ChatService(
             agent=agent,
             acting_agent=acting_agent,
             task_id=task_id,
+            default_effort=default_effort,
         )
 
     async def project_gateway_key(

@@ -1,0 +1,1 @@
+- ⟦slot:number⟧ ⟦slot:title⟧　⟦slot:state⟧　提出人：⟦slot:proposer⟧　负责队友：⟦slot:teammate⟧

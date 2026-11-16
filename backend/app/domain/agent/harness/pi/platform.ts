@@ -899,6 +899,8 @@ const REPLY_OWED_ENV = "CHEESE_REPLY_OWED";
 type Debt = {
   id: string;
   answers: string[];
+  // False: nothing is held back; the answer is still owed at the turn's end.
+  held?: boolean;
   reads: string[];
   reason: string;
   answered: string;
@@ -936,7 +938,7 @@ function holdToAnswering(pi: any) {
       // A read is one verb of an object, by its key (`cheese_chat.list`).
       const action = event.input?.action;
       const key = typeof action === "string" && action ? `${event.toolName}.${action}` : event.toolName;
-      if (debt.reads.includes(key)) return;
+      if (debt.held === false || debt.reads.includes(key)) return;
       return { block: true, reason: debt.reason };
     }
     answered = debt.id;

@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import re
 import uuid
 
 import pytest
@@ -20,6 +21,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
 from tests.integration.conftest import project_service, registered
+
+
+def _line(line: str) -> str:
+    """A prompt line without the message id it leads with."""
+    return re.sub(r"^\[id=[^\]]+\] ", "", line)
 
 
 class RecordingScreen(StubChannel):
@@ -204,7 +210,7 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
     second = agent.prompts[1]
     # 这是一个人说的话：带说话人标签，且**不能**顶着平台权威的抬头。
     user_text, reminder = second.split("\n\n", 1)
-    assert user_text == "[u2]: 顺便把 README 也更了"
+    assert _line(user_text) == "[u2]: 顺便把 README 也更了"
     assert "<platform_notice" not in user_text
     assert reminder.startswith('<platform_notice type="contract">')
     assert "chat_send" in reminder
@@ -252,7 +258,7 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(
     # 两句都到了，各一次；先后就是上面定的那个 —— u1 进了会话之后才说 u2。
     # 新会话的第一条消息前面带着项目现状，所以按说话人那一段取，不按第一段。
     assert [
-        next(part for part in p.split("\n\n") if part.startswith("[u"))
+        next(_line(part) for part in p.split("\n\n") if _line(part).startswith("[u"))
         for p in agent.prompts
     ] == [
         "[u0]: 开工",

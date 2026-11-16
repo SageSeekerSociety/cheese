@@ -75,6 +75,8 @@ class Include:
     needs: tuple[str, ...] = ()
     #: Slots filled with a skill's body: slot name -> skill name.
     skill_slots: dict[str, str] = field(default_factory=dict)
+    #: Slots this kind fills with a fixed value.
+    slots: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,23 @@ class Profile:
     notice: str | None = None
     #: Pieces said to the session on occasion (reminders), checked like the rest.
     reminders: tuple[str, ...] = field(default=())
+    #: The thinking effort a session of this kind runs at when its teammate set
+    #: none. Fixed for the session's life: on several providers each effort has
+    #: a cache of its own, so changing it mid-session reads the whole history
+    #: again.
+    effort: str | None = None
+    #: The tools that answer a person who wrote to this session, and whether
+    #: every other tool waits until one of them is called (the runner's reply
+    #: rule, `driven.runner.REPLY_TOOLS_ENV`). The main line answers after it
+    #: has opened or told a task, so it holds nothing back.
+    reply_tools: tuple[str, ...] = ("chat_send", "cheese_ask")
+    reply_held: bool = True
+    #: The session is offered only `tools`, of the platform's and of the
+    #: harness's own, and the rest are refused; otherwise it is offered all.
+    narrowed: bool = False
+    #: Where the session may write files: None anywhere it works, "memory"
+    #: only its memory tree.
+    writes: str | None = None
 
 
 class ProfileError(LookupError):

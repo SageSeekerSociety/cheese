@@ -200,6 +200,13 @@ def socket_path(state: Path) -> str:
 
 #: The variable that names the file to the agent process and whatever it spawns.
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
+#: How the session's kind wants a person's message answered, from the launch
+#: (`prompts.Profile`): the tools that answer, comma-separated, and whether
+#: every other tool is held back until one of them is called. The channel's
+#: main line answers after it opens or tells a task, so it holds nothing back;
+#: it is still held to answering at the turn's end (`insist`).
+REPLY_TOOLS_ENV = "CHEESE_REPLY_TOOLS"
+REPLY_HELD_ENV = "CHEESE_REPLY_HELD"
 #: The platform tools that answer a person, by their name in the tool table.
 REPLY_TOOLS = ("chat_send", "cheese_ask")
 #: The platform tools that read the room's own messages: let through, and no
@@ -314,6 +321,10 @@ class Runner(Generic[J]):  # noqa: UP046
         self.held_closing: set[str] = set()
         # The calls the session made since its last reply, by key.
         self.since_reply: list[str] = []
+        # What answers a person, and whether the other tools wait for it
+        # (`REPLY_TOOLS_ENV`, `REPLY_HELD_ENV`), as the launch said.
+        self.reply_tools: tuple[str, ...] = REPLY_TOOLS
+        self.reply_held = True
         # 0 keeps the session however long it sits idle.
         self.idle_exit_s = idle_exit_s
         self.active_at = time.monotonic()
@@ -365,7 +376,12 @@ class Runner(Generic[J]):  # noqa: UP046
     # --- a person waiting for an answer --------------------------------------
 
     def agent_env(self, env: dict[str, str]) -> dict[str, str]:
-        """The agent's environment, with the file its tool path reads named."""
+        """The agent's environment, with the file its tool path reads named.
+        The launch's reply rule is read here, the one place every harness
+        hands the runner the session's environment."""
+        tools = [t for t in (env.get(REPLY_TOOLS_ENV) or "").split(",") if t]
+        self.reply_tools = tuple(tools) or REPLY_TOOLS
+        self.reply_held = env.get(REPLY_HELD_ENV, "1") != "0"
         return {**env, REPLY_OWED_ENV: str(reply_owed_path(self.state))}
 
     def owe_reply(self, identifier: str) -> None:
@@ -376,7 +392,9 @@ class Runner(Generic[J]):  # noqa: UP046
             json.dumps(
                 {
                     "id": identifier,
-                    "answers": list(REPLY_TOOLS),
+                    "answers": list(self.reply_tools),
+                    # False: nothing is held back, the answer is still owed.
+                    "held": self.reply_held,
                     "reads": list(REPLY_READS),
                     "reason": REPLY_OWED,
                     # Where the tool path writes the id down once it lets a
@@ -395,7 +413,7 @@ class Runner(Generic[J]):  # noqa: UP046
         session's). A reply starts the count again."""
         action = arguments.get("action") if isinstance(arguments, dict) else None
         key = f"{tool}.{action}" if isinstance(action, str) and action else tool
-        if tool in REPLY_TOOLS:
+        if tool in self.reply_tools:
             self.since_reply = []
         else:
             self.since_reply.append(key)

@@ -611,6 +611,15 @@ def prepare(
         else:
             refused.append("WebFetch")
         command.extend(["--disallowedTools", ",".join(refused)])
+    # A kind of session that holds fewer tools than the table (`CHEESE_TOOLS`,
+    # the channel's main line) is refused the build's own tools it does not
+    # hold, as the platform's are refused by `sandbox/cheese`.
+    held = os.environ.get("CHEESE_TOOLS")
+    if held:
+        names = set(json.loads(held))
+        narrowed = [tool for tool in NARROWABLE_NATIVE if tool not in names]
+        if narrowed:
+            command.extend(["--disallowedTools", ",".join(narrowed)])
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
@@ -622,6 +631,19 @@ def prepare(
     }
     (directory / "launch.json").write_text(json.dumps(launch))
     return launch
+
+
+#: The build's own tools a narrowed session is refused unless it holds them.
+NARROWABLE_NATIVE = (
+    "Agent",
+    "Task",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "NotebookEdit",
+    "Workflow",
+)
 
 
 def _take_leased_machine(target):

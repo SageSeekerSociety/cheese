@@ -357,7 +357,12 @@ async def prepare(
             else None
         )
         thread_tasks = (
-            await _channel_tasks(session, topic, root)
+            await _channel_tasks(
+                session,
+                topic,
+                root,
+                names={m["handle"]: m["name"] for m in roster},
+            )
             if root is not None or in_main_line
             else None
         )

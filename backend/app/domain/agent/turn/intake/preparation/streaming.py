@@ -18,13 +18,14 @@ from typing import TYPE_CHECKING
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.mcp_notice import unconnected_mcp
 from app.domain.agent.prompt import _sandbox_limits, _session_opening_lines
-from app.domain.agent.room.system_prompt import session_system_prompt
+from app.domain.agent.room.system_prompt import session_env, session_system_prompt
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.intake.context import TurnBail
 from app.domain.agent.turn.steps.prepared import PreparedSend
 from app.domain.agent.turn.steps.send import send_prepared
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.prompts import (
+    PROFILES,
     NoticeType,
     blocked_report_reminder,
     platform_prompt,
@@ -33,6 +34,7 @@ from app.domain.prompts import (
     resume_notice,
     untitled_task,
 )
+from app.domain.prompts.profile import holds
 from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.user.services import language_of
 
@@ -151,7 +153,10 @@ async def converse(
                 if needs_place
                 else ()
             ),
-            progress=prior_progress,
+            # Only a session that keeps a checklist is shown the last one.
+            progress=prior_progress
+            if holds(PROFILES[prepared.kind].tools, "todo_write")
+            else None,
             sandbox=_sandbox_limits(provider),
             # A resumed conversation already holds what was said in it.
             earlier_messages=(
@@ -203,7 +208,11 @@ async def converse(
         agent=prepared.agent,
         acting_agent=prepared.acting_agent,
         task_id=prepared.task_id,
+        default_effort=PROFILES[prepared.kind].effort,
     )
+    # What the kind of session differs by in its launch (`session_env`): the
+    # same for the prewarm (`launch.py`), so a prewarmed session is kept.
+    model_kwargs["env"] = {**model_kwargs.get("env", {}), **session_env(prepared.kind)}
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=model_ready "
         "elapsed_ms=%.3f unix_ms=%.3f",

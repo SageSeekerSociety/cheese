@@ -274,6 +274,7 @@ class ModelOptions(Protocol):
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
         task_id: uuid.UUID | None = None,
+        default_effort: str | None = None,
     ) -> tuple[dict, str]: ...
 
 

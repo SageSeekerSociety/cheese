@@ -121,10 +121,12 @@ def render_system(
             parts.append(base)
         elif inc.piece == SKILLS:
             bodies = [carried if name == CARRIED else read(name) for name in p.skills]
-            parts.append(SKILL_JOIN.join(b for b in bodies if b))
+            joined = SKILL_JOIN.join(b for b in bodies if b)
+            if joined:
+                parts.append(joined)
         else:
             _checked(p, inc.piece)
-            slots = dict(given)
+            slots = {**given, **inc.slots}
             slots.update({k: read(v) for k, v in inc.skill_slots.items()})
             parts.append(piece(inc.piece, **slots))
     return "\n\n".join(parts)

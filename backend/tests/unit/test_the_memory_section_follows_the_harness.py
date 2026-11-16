@@ -40,14 +40,14 @@ def test_a_harness_that_keeps_no_memory_is_not_told_about_it():
     写不回去的地方。"""
     system, sections = _told(INDEX, harness="codex")
 
-    assert piece("memory/instructions") not in system
+    assert piece("memory/team") not in system
     assert "memory" not in sections
 
 
 def test_a_harness_that_keeps_memory_is_told_how_it_works():
     system, sections = _told(INDEX, harness="claude-code")
 
-    assert piece("memory/instructions") in system
+    assert piece("memory/team") in system
     assert "记忆甲" in sections["memory"]
 
 
@@ -56,7 +56,7 @@ def test_the_rules_do_not_need_an_index_to_be_there():
     ——第一条记忆该写成什么样，只有它说了。"""
     system, sections = _told(None, harness="claude-code")
 
-    assert piece("memory/instructions") in system
+    assert piece("memory/team") in system
     assert "memory" not in sections
 
 
@@ -65,5 +65,5 @@ def test_an_empty_index_is_not_a_section():
         MemoryIndex(sections=[], warnings=[]), harness="claude-code"
     )
 
-    assert piece("memory/instructions") in system
+    assert piece("memory/team") in system
     assert "memory" not in sections

@@ -360,17 +360,61 @@ def switched_on(environ=None) -> bool:
     return str(env.get(COMPACT_ENV) or "").strip() not in ("", "0", "false", "False")
 
 
+#: The tools a kind of session holds, when it holds fewer than the table
+#: (`prompts.Profile.tools`, written by the launch as a JSON list): a tool by
+#: name holds all its verbs, `<tool>.<verb>` one of them. Unset holds the table.
+#: Like `COMPACT_ENV`, the one place the list and the refusal are decided for
+#: every harness.
+TOOLS_ENV = "CHEESE_TOOLS"
+
+
+def held_tools(environ=None):
+    """The tools this session holds (`TOOLS_ENV`), or None for the whole table."""
+    env = os.environ if environ is None else environ
+    raw = str(env.get(TOOLS_ENV) or "").strip()
+    if not raw:
+        return None
+    return frozenset(str(key) for key in json.loads(raw))
+
+
+def holds(held, key: str) -> bool:
+    """Whether ``held`` takes the call ``key`` (`<tool>` or `<tool>.<verb>`)."""
+    if held is None:
+        return True
+    name, _, verb = key.partition(".")
+    if key in held or name in held:
+        return True
+    return not verb and any(entry.startswith(name + ".") for entry in held)
+
+
 def offered_tools(environ=None) -> list[dict]:
-    """The table's rows this session is offered: everything, minus the tool a
-    deployment has not turned on."""
-    if switched_on(environ):
-        return PLATFORM_TOOLS.schemas()
-    tool, _, verb = COMPACT_TOOL.partition(".")
-    others = [v for v in PLATFORM_TOOLS.actions(tool) or () if v != verb]
-    return [
-        PLATFORM_TOOLS.narrowed(tool, others) if row["name"] == tool else row
-        for row in PLATFORM_TOOLS.schemas()
-    ]
+    """The table's rows this session is offered: everything its kind holds
+    (`TOOLS_ENV`), minus the tool a deployment has not turned on."""
+    held = held_tools(environ)
+    compact_tool, _, compact_verb = COMPACT_TOOL.partition(".")
+    rows = []
+    for row in PLATFORM_TOOLS.schemas():
+        name = row["name"]
+        verbs = PLATFORM_TOOLS.actions(name)
+        if verbs is None:
+            if holds(held, name):
+                rows.append(row)
+            continue
+        kept = [
+            verb
+            for verb in verbs
+            if holds(held, f"{name}.{verb}")
+            and not (
+                name == compact_tool
+                and verb == compact_verb
+                and not switched_on(environ)
+            )
+        ]
+        if len(kept) == len(verbs):
+            rows.append(row)
+        elif kept:
+            rows.append(PLATFORM_TOOLS.narrowed(name, kept))
+    return rows
 
 
 #: Which document: one of the project's own, by id (`cheese_doc(action=list)`). Left
@@ -3369,6 +3413,10 @@ def run_platform_tool(tool: str, args: dict, host, *, delegated: bool = False) -
         key = tool
     else:
         key = f"{tool}.{_checked(tool, actions, args, table)}"
+    if not delegated and not holds(held_tools(getattr(host, "environ", None)), key):
+        name, _, verb = key.partition(".")
+        call = f"{name}(action={verb})" if verb else name
+        raise PlatformToolError(f"这个会话不能用 {call}，可用的工具见工具清单。")
     if delegated:
         effect = table.effect(key)
         if effect is None:

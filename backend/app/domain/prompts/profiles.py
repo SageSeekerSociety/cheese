@@ -24,6 +24,7 @@ from app.domain.prompts.profile import (
 ROOM_TOOLS = frozenset(
     {
         "chat_send",
+        "chat_react",
         "todo_write",
         "cheese_chat",
         "cheese_doc",
@@ -51,6 +52,37 @@ ROOM_TOOLS = frozenset(
         "Grep",
         "Skill",
         "Agent",
+    }
+)
+
+#: The channel's main line: it talks with the members and coordinates the
+#: channel's tasks, so it holds what that takes and none of the tools that do
+#: the work — that is a task's. It reads files and looks things up (`Read`,
+#: `Bash`) to write a clear task, and writes only its memory (`Write`, `Edit`,
+#: held to `~/.cheese/memory/` by the platform). `cheese_doc` reads and edits
+#: the project's goals, which its opening shows.
+MAIN_LINE_TOOLS = frozenset(
+    {
+        "chat_send",
+        "chat_react",
+        "cheese_chat",
+        "cheese_task.open",
+        "cheese_task.tell",
+        "cheese_task.look",
+        "cheese_task.close",
+        "cheese_task.reopen",
+        "cheese_doc.get",
+        "cheese_doc.edit",
+        "cheese_library",
+        "cheese_web",
+        "cheese_help",
+        "cheese_session.status",
+        "platform_request",
+        "Skill",
+        "Read",
+        "Bash",
+        "Write",
+        "Edit",
     }
 )
 
@@ -125,25 +157,30 @@ def _working_directory(facts: Facts) -> bool:
     return facts.working_directory
 
 
-#: The rules of every session in a room. 规矩进系统提示词，现状进开场：系统提示词在
-#: 一个会话里一字不变，前缀缓存才接得上。
-ROOM_SYSTEM = (
-    Include("system/own_name", needs=("name",)),
-    Include(BASE),
-    Include("system/platform_rules"),
-    Include("system/always_push"),
-    Include("system/working_directory", when=_working_directory),
-    Include("system/todo_write"),
-    Include("system/task_state"),
-    Include("system/ask_only_cheese_ask"),
-    Include("writing"),
-    Include("system/doc_skill"),
-    Include(SKILLS),
-    Include("system/doc_section", when=_has_doc, skill_slots={"doc_form": "doc-form"}),
-    Include("memory/instructions", when=_keeps_memory),
-    Include("system/project_skills"),
-    Include("system/role", needs=("role",)),
-)
+# 规矩进系统提示词，现状进开场：系统提示词在一个会话里一字不变，前缀缓存才接得上。
+def _room_system(memory: str) -> tuple[Include, ...]:
+    """The rules of a session in a room, with ``memory`` the memory rules it
+    reads: a private chat's name both scopes, a shared place's only the team's."""
+    return (
+        Include("system/own_name", needs=("name",)),
+        Include(BASE),
+        Include("system/platform_rules"),
+        Include("system/always_push"),
+        Include("system/working_directory", when=_working_directory),
+        Include("system/todo_write"),
+        Include("system/task_state"),
+        Include("system/ask_only_cheese_ask"),
+        Include("writing", slots={"speaking": "在对话里说话"}),
+        Include("system/doc_skill"),
+        Include(SKILLS),
+        Include(
+            "system/doc_section", when=_has_doc, skill_slots={"doc_form": "doc-form"}
+        ),
+        Include(memory, when=_keeps_memory),
+        Include("system/project_skills"),
+        Include("system/role", needs=("role",)),
+    )
+
 
 #: What a room session's opening may hold (`opening.build_session_opening`).
 ROOM_OPENING = frozenset(
@@ -175,10 +212,46 @@ _ROOM_REMINDERS = (
 )
 
 
-def _room(kind: Kind, skills: tuple[str, ...]) -> Profile:
+#: The main line's own rulebook, in place of the rules for doing the work:
+#: those (push, checklist, task state, asking with cards, documents, project
+#: skills) belong to the task it opens.
+MAIN_LINE_SYSTEM = (
+    Include("system/own_name", needs=("name",)),
+    Include(BASE),
+    Include("system/platform_rules_main_line"),
+    Include("system/working_directory", when=_working_directory),
+    Include("main_line/rules"),
+    Include("main_line/teammates"),
+    Include("main_line/speaking"),
+    Include("writing", slots={"speaking": "说话"}),
+    Include("memory/team", when=_keeps_memory),
+    Include(SKILLS),
+    Include("system/role", needs=("role",)),
+)
+
+#: What the main line is told when it opens: where it is, the channel's tasks,
+#: who is here and what the project is for. Not a task's living document nor
+#: the deliverables list: they are a task's to keep.
+MAIN_LINE_OPENING = frozenset(
+    {
+        "channel",
+        "tasks",
+        "teaching",
+        "stages",
+        "package",
+        "topics",
+        "roster",
+        "overview",
+        "memory",
+        "environment",
+    }
+)
+
+
+def _room(kind: Kind, skills: tuple[str, ...], memory: str) -> Profile:
     return Profile(
         kind=kind,
-        system=ROOM_SYSTEM,
+        system=_room_system(memory),
         tools=ROOM_TOOLS,
         skills=skills,
         opening=ROOM_OPENING,
@@ -188,12 +261,27 @@ def _room(kind: Kind, skills: tuple[str, ...]) -> Profile:
 
 
 PROFILES: dict[Kind, Profile] = {
-    Kind.main_line: _room(Kind.main_line, ("chat", CARRIED)),
-    Kind.task: _room(Kind.task, ("chat", CARRIED)),
-    Kind.thread: _room(Kind.thread, ("chat", CARRIED)),
+    Kind.main_line: Profile(
+        kind=Kind.main_line,
+        system=MAIN_LINE_SYSTEM,
+        tools=MAIN_LINE_TOOLS,
+        skills=(CARRIED,),
+        opening=MAIN_LINE_OPENING,
+        notice="notices/main_line",
+        reminders=("notices/silence",),
+        reply_tools=("chat_send", "chat_react"),
+        reply_held=False,
+        narrowed=True,
+        writes="memory",
+        effort="high",
+    ),
+    Kind.task: _room(Kind.task, ("chat", CARRIED), "memory/team"),
+    Kind.thread: _room(Kind.thread, ("chat", CARRIED), "memory/team"),
     # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，private-chat
     # 只补私聊独有的那几条。
-    Kind.private: _room(Kind.private, ("chat", CARRIED, "private-chat")),
+    Kind.private: _room(
+        Kind.private, ("chat", CARRIED, "private-chat"), "memory/instructions"
+    ),
     Kind.document: Profile(
         kind=Kind.document,
         system=(
@@ -203,7 +291,7 @@ PROFILES: dict[Kind, Profile] = {
             # skill the agent may not load. The guide points at its blocks
             # reference by the path it has as a skill; here that file follows
             # under the same name.
-            Include("writing"),
+            Include("writing", slots={"speaking": "在对话里说话"}),
             Include("document/guide", skill_slots={"body": "cheese-docs"}),
             Include("document/ref_blocks", skill_slots={"body": "doc-blocks"}),
             Include("document/ref_live", skill_slots={"body": "doc-live"}),
@@ -232,7 +320,7 @@ PROFILES: dict[Kind, Profile] = {
         kind=Kind.situation,
         system=(
             Include("situation/rules"),
-            Include("writing"),
+            Include("writing", slots={"speaking": "在对话里说话"}),
             Include(
                 "situation/guide",
                 skill_slots={"guide": "cheese-docs", "blocks": "doc-blocks"},

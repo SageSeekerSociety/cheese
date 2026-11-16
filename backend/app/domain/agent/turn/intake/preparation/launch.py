@@ -19,7 +19,11 @@ from app.domain.agent.carried_bodies import carried_bodies
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.queries import _session_agent
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.system_prompt import session_kind, session_system_prompt
+from app.domain.agent.room.system_prompt import (
+    session_env,
+    session_kind,
+    session_system_prompt,
+)
 from app.domain.agent.turn.intake.context import (
     Launch,
     carried_skills,
@@ -30,6 +34,7 @@ from app.domain.agent_instance.own import current_role, owned_instance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.reads import load_project
+from app.domain.prompts import PROFILES
 from app.domain.room_task.place import PlaceResolver
 from app.domain.task import teaching as teaching_context
 from app.domain.topic.models import TopicStatus
@@ -86,6 +91,7 @@ async def launch_inputs(
         agents = AgentInstanceService(session)
         agent = await _session_agent(agents, topic, project, agent_handle)
         needs_place = not _is_dm(topic)
+        kind = session_kind(place, needs_place=needs_place)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
         role = await current_role(session, agent.instance_id) or (
             await agents.system_prompt(agent)
@@ -106,14 +112,20 @@ async def launch_inputs(
             carried_skills(agent, topic, teaching.teaching.skills if teaching else ()),
         )
     model_kwargs, _route = await prep.model_options(
-        project.id, provider, topic_id, agent=agent, acting_agent=acting
+        project.id,
+        provider,
+        topic_id,
+        agent=agent,
+        acting_agent=acting,
+        default_effort=PROFILES[kind].effort,
     )
+    model_kwargs["env"] = {**model_kwargs.get("env", {}), **session_env(kind)}
     return Launch(
         session=SessionRef(project.id, topic_id, agent.handle, harness=harness),
         runtime=provider,
         system_prompt=session_system_prompt(
             prep.base_prompt,
-            kind=session_kind(place, needs_place=needs_place),
+            kind=kind,
             has_doc=doc_text is not None,
             role=role,
             harness=provider.harness,
