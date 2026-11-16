@@ -11,6 +11,7 @@
 //   待回答 awaiting_answer    警示，问号；第一次看到时闪一下
 //   待审阅 卡在审阅链路上      强调
 //   退回   bounced            危险
+//   等部署 最后一步已合并      中性，火箭；主干 CI 红挡住部署时警示。悬停说在等什么
 //   已采纳                    绿勾，字是中性的
 //   开启 / 已关闭             淡
 //
@@ -24,7 +25,16 @@ import { waitedFor } from './replyWait'
 
 import { t } from '@/i18n'
 
-export type TaskStateKind = 'running' | 'waiting' | 'blocked' | 'asking' | 'review' | 'bounced' | 'open' | 'closed'
+export type TaskStateKind =
+  | 'running'
+  | 'waiting'
+  | 'blocked'
+  | 'asking'
+  | 'review'
+  | 'deploying'
+  | 'bounced'
+  | 'open'
+  | 'closed'
 
 /** 记号和字用哪一组 token（样式在 `TaskStateMark.vue`）。 */
 export type TaskStateTone = 'ok' | 'okMark' | 'neutral' | 'warn' | 'ink' | 'danger' | 'faint'
@@ -41,6 +51,8 @@ export interface TaskState {
   attention: string | null
   /** 标签下面那一行；没有就空串。 */
   line: string
+  /** 悬停在记号上说的那一句；没有就空串。 */
+  tip: string
 }
 
 const KIND: Record<BoardPhrase, TaskStateKind> = {
@@ -53,6 +65,8 @@ const KIND: Record<BoardPhrase, TaskStateKind> = {
   fixing_checks: 'review',
   resolving_conflict: 'review',
   updating_branch: 'review',
+  deploying: 'deploying',
+  deploy_blocked: 'deploying',
   awaiting_review: 'review',
   checks_failed: 'review',
   bounced: 'bounced',
@@ -76,6 +90,7 @@ const LOOK: Record<TaskStateKind, { icon: string; tone: TaskStateTone }> = {
   blocked: { icon: 'mdi-alert-circle', tone: 'warn' },
   asking: { icon: 'mdi-help-circle', tone: 'warn' },
   review: { icon: 'mdi-file-eye-outline', tone: 'ink' },
+  deploying: { icon: 'mdi-rocket-launch-outline', tone: 'neutral' },
   bounced: { icon: 'mdi-undo-variant', tone: 'danger' },
   open: { icon: 'mdi-circle-outline', tone: 'faint' },
   closed: { icon: 'mdi-minus-circle-outline', tone: 'faint' },
@@ -164,6 +179,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   let tone = look.tone
   let label = t(`work.taskState.label.${kind}`)
   let line = ''
+  let tip = ''
   switch (kind) {
     case 'running': {
       if (!live) icon = RUNNING_IDLE_ICON
@@ -203,6 +219,13 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       ])
       break
     }
+    case 'deploying':
+      // 合并了不等于上线了：主干 CI 跑完、部署上 dev 之后才写总结关闭。主干红了挡住
+      // 部署时换成警示色，那一句说卡在哪；红的那次 run 的链接在任务页头。
+      if (phrase === 'deploy_blocked') tone = 'warn'
+      tip = phraseLabel(phrase, ctx.agentName)
+      line = tip
+      break
     case 'bounced':
       line = t('work.taskState.bouncedLine', { name: ctx.agentName })
       break
@@ -224,5 +247,6 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     live,
     attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
     line,
+    tip,
   }
 }

@@ -10,12 +10,14 @@
     "bounced": "Returned",
     "accepted": "Accepted",
     "open": "Open",
-    "closed": "Closed"
+    "closed": "Closed",
+    "deploying": "Deploying"
   },
   "submitted": "Submitted {time}",
   "version": "Version {n}",
   "waitedFor": "{time} so far",
   "waitsOn": "{name}'s turn",
   "waitsOnYou": "Your turn",
-  "workedFor": "{time} so far"
+  "workedFor": "{time} so far",
+  "blockedRun": "See the failed CI run"
 }

@@ -215,3 +215,25 @@ describe('其余几种', () => {
     expect(taskState(task('running'), ctx).attention).toBeNull()
   })
 })
+
+describe('等部署', () => {
+  it('最后一步合并后在等部署：自成一种，和在做、待审阅分得开，悬停说在等 CI 与部署', () => {
+    const state = taskState(task('deploying', { status: 'open', deploying_since: minutesAgo(5) }), ctx)
+    expect(state.kind).toBe('deploying')
+    expect(state.label).toBe('等部署')
+    expect(state.icon).not.toBe(taskState(task('running', { session_running: true }), ctx).icon)
+    expect(state.icon).not.toBe(taskState(task('awaiting_review'), ctx).icon)
+    expect(state.tip).toBe('已合并，等待 CI 与部署')
+    expect(state.live).toBe(false)
+  })
+
+  it('主干 CI 红挡住部署：同一个记号换成警示色，那一句说卡在 CI', () => {
+    const waiting = taskState(task('deploying'), ctx)
+    const blocked = taskState(task('deploy_blocked', { deploy_blocked_url: 'https://ci/run/1' }), ctx)
+    expect(blocked.kind).toBe('deploying')
+    expect(blocked.icon).toBe(waiting.icon)
+    expect(blocked.tone).toBe('warn')
+    expect(waiting.tone).not.toBe('warn')
+    expect(blocked.tip).toContain('CI 没过')
+  })
+})

@@ -3,10 +3,10 @@
  *
  * 状态的记号（图标、颜色、动不动）和它下面那一行只有一份（`lib/taskState.ts`，画它的是
  * `TaskStateMark`），频道里的任务卡、全部任务、等你处理、任务页头、侧栏的任务行都用它。
- * 这一册把十种情形在五处各摆一遍，好一眼对出「同一件事在几处是不是同一个样子」：
+ * 这一册把十二种情形在五处各摆一遍，好一眼对出「同一件事在几处是不是同一个样子」：
  *
  *   在做（会话在跑，转）、在做（会话停着，不转）、在等、卡住（留了话）、卡住（没留话）、
- *   待回答、等审、退回、开启、关闭
+ *   待回答、等审、退回、等部署、部署被挡住、开启、关闭
  *
  * 等你处理只列下一步在人手上的那几种（卡住、待回答、等审、退回、检查没过），在做、在等、
  * 开启、关闭本来就不会出现在那里。
@@ -134,6 +134,26 @@ const CASES: Case[] = [
     phrase: 'bounced',
     over: {},
     title: '课程网站的导航栏',
+  },
+  {
+    name: '等部署',
+    note: '中性灰，火箭：最后一步已合并，在等主干 CI 跑完、部署上线，之后才写总结关闭。悬停在记号上说的也是这一句。',
+    column: 'delivering',
+    phrase: 'deploying',
+    over: { deploying_since: ago(9 * MIN), accepted_at: ago(9 * MIN) },
+    title: '侧栏并进项目切换器',
+  },
+  {
+    name: '部署被挡住',
+    note: '警示色，火箭：合并之后主干 CI 红了，部署停住。任务页头多一个链接，点开是红的那次 CI。',
+    column: 'delivering',
+    phrase: 'deploy_blocked',
+    over: {
+      deploying_since: ago(2 * 60 * MIN),
+      accepted_at: ago(2 * 60 * MIN),
+      deploy_blocked_url: 'https://github.com/SageSeekerSociety/cheese/actions/runs/1',
+    },
+    title: '左侧方块栏并进侧栏',
   },
   {
     name: '开启',
@@ -280,7 +300,7 @@ export const TASK_STATE_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-state-board',
     title: 'ProjectTasksView · 任务状态',
-    about: '全部任务：十种情形摆在一页里，按「下一步在谁手上」分组，每行的状态一列是记号，标题下面是那一句。',
+    about: '全部任务：十二种情形摆在一页里，按「下一步在谁手上」分组，每行的状态一列是记号，标题下面是那一句。',
     file: 'src/views/workspace/ProjectTasksView.vue',
     component: ProjectTasksView,
     needs: ['vuetify', 'i18n', 'router'],
