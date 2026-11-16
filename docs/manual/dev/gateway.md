@@ -139,7 +139,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `cheese_overseas: true` | 只有平台管理员开通过的团队能用（Claude、GPT、Gemini），别的团队看不到 |
 | `cheese_free: true` | 上游不收钱，输入、输出单价都写明为 0；可选模型唯一合法的零价 |
 | `cheese_upstream_headers`、`cheese_session_header` | 按行（部署）发的请求头，见下面「免费、订阅与中转」 |
-| `cheese_no_explicit_cache: true`、`cheese_spend_cap_usd` | 属于上游模型：去掉 Claude Code 的 `cache_control` 标记（`no_explicit_cache.py`）；上游累计花到这个数就拒（`spend_cap.py`） |
+| `cheese_no_explicit_cache: true`、`cheese_cache_ttl`、`cheese_spend_cap_usd` | 属于上游模型：去掉 Claude Code 的 `cache_control` 标记（`no_explicit_cache.py`）；在请求顶层补 `cache_control: {type: ephemeral, ttl: <值>}`，值只认 `"5m"`、`"1h"`，调用方自己带了顶层 `cache_control` 的不动（`cache_ttl.py`，见下面 Kimi 一段）；上游累计花到这个数就拒（`spend_cap.py`） |
 
 ### 一个模型，几条线路 {#sources}
 
@@ -183,7 +183,9 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 - 模型列表里每个模型带着跑在它上面的角色（`roles`）。有角色时停用、删除它，或停用、删除它最后一条在用的线路，服务层都拒绝，要先把角色指走；页面在编辑、停用、删除这个模型之前弹框列出这些角色。没人指过的角色读设置项，那个值也算「跑在它上面」：部署之后 `deepseek-flash`、`qwen-audio-asr`、`glm-5.2` 这几个设置项默认值指着的模型，同样不能直接停用或删除。
 - `agent_haiku_model`、`agent_sonnet_model`、`agent_opus_model` 不是角色：现在的执行通道都自己写模型环境变量，并把这三个别名清掉（`screen_model_env.py`），它们只在没有通道的那条老路上还会被读到。
 
-人民币标价的模型，价格用人民币价除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，它那一行引用的 `MOONSHOT_API_KEY` 要在网关 `.env` 里。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
+人民币标价的模型，价格用人民币价除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，它那一行引用的 `MOONSHOT_API_KEY` 要在网关 `.env` 里。
+
+Kimi 的缓存档位只在请求顶层的 `cache_control` 里读，消息里的标记它忽略，不写就是 5 分钟（[上下文缓存](https://platform.kimi.com/docs/guide/context-caching)：「`cache_control` 只在请求顶层生效，消息体内的同名标记会被忽略」）。Claude Code 只在消息里打标记，所以 Kimi 官方那一行要在 `model_info` 里写 `cheese_cache_ttl: "1h"`，否则对话停五分钟（等人回话就不止）缓存就全丢。一小时档的写入是五分钟档的两倍价（kimi-k3 每百万 ¥40 对 ¥20），那一行要有 `cache_creation_1h` 的价；命中价不变，命中按原档免费续期。档位在首次写入时锁定，两档的缓存互不相通，所以改档后已有的五分钟缓存不会变成一小时。管理页没有这个键的开关，用 `PATCH /model/{id}/update` 只带 `model_info` 写（合并写入，页面以后改这一行不会冲掉它）。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
 
 ## 上线前：跑一遍一致性套件 {#conformance}
 
