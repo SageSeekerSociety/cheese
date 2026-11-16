@@ -7,8 +7,11 @@
 // `HomeNav.vue` 那一份一一对应，含义见它。
 import type { SpaceLink, Team, TeamMember } from '@/types'
 
+import { computed } from 'vue'
+
 import HomeNav from './HomeNav.vue'
 
+import { useAppNav } from '@/components/common/Navigation/appNav'
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
 import { t } from '@/i18n'
 
@@ -32,6 +35,9 @@ defineProps<{
   createError?: string
 }>()
 
+const appNav = useAppNav()
+const framed = computed(() => !!appNav?.loggedIn.value)
+
 const emit = defineEmits<{
   openDisband: [team: Team]
   'update:disbanding': [team: Team | null]
@@ -47,7 +53,9 @@ const emit = defineEmits<{
 
 <template>
   <SecondaryNavigation v-if="mdAndUp">
-    <div class="sidebar-header">
+    <!-- 桌面上侧栏头已经是老鼠图标和项目切换器（SecondaryNavigation），「首页」这行标题
+         就不再重复画；没有外壳时（单测）照旧。 -->
+    <div v-if="!framed" class="sidebar-header">
       <span class="t-title">{{ t('navigation.home') }}</span>
       <v-spacer></v-spacer>
     </div>

@@ -9,11 +9,10 @@
     <!-- 桌面端：使用 StatusBar -->
     <template v-if="$vuetify.display.mdAndUp">
       <keep-alive>
-        <app-bar v-if="!hideAppBar" :links="[]" :logged-in="loggedIn" />
+        <app-bar v-if="!hideAppBar" :links="[]" :logged-in="loggedIn" :has-sidebar="hasSidebar" />
       </keep-alive>
-      <keep-alive>
-        <LeftAppRail v-if="!hideAppBar" :items="rail" @reorder="reorderRail" />
-      </keep-alive>
+      <!-- 左边那一列方块栏拿掉了（2026-11-16）：首页和项目进侧栏头，问芝士和头像进侧栏底，
+           没有侧栏时进顶栏。格子还在这里算，交给它们画（Navigation/appNav.ts）。 -->
 
       <!-- 二级导航：通过路由渲染 -->
       <router-view name="sidebar" />
@@ -186,6 +185,7 @@ import { copyLink } from '@/commands/copy'
 import ConsentGate from '@/components/account/ConsentGate.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
 import MyApp from '@/components/common/MyApp.vue'
+import { provideAppNav } from '@/components/common/Navigation/appNav'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
 import {
@@ -195,7 +195,6 @@ import {
   tabItems,
   workspaceProject,
 } from '@/components/common/Navigation/destinations'
-import LeftAppRail from '@/components/common/Navigation/LeftAppRail.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
@@ -465,6 +464,7 @@ const openProjectId = computed<string | null>(() => routeIds(currentRoute.params
 const navShell = computed(() => shellFor(railProjects.value, openProjectId.value) ?? DEFAULT_SHELL)
 
 const rail = computed(() => railItems(navSources.value, navShell.value))
+provideAppNav({ items: rail, projects: railProjects, reorder: reorderRail, loggedIn })
 
 // rail 的悬停浮层写着第 N 格的快捷键；这里是它真正被绑上的地方。浏览器里是 G 然后 N，
 // 桌面 app 里是 ⌘N（railShortcut 说了为什么）。只有真的对上某一格的数字才登记。
