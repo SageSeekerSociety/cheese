@@ -21,8 +21,7 @@
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, cast, exists, func, not_, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import and_, exists, func, literal_column, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError
@@ -67,7 +66,9 @@ def rank_scores(
 
 def _claim_rows(task_id: int, membership_ids: Sequence[int] | None):
     """领题 ⋈ 它开出的项目 ⋈ 账本行，只留不记在导师名下的行。"""
-    mentors = func.coalesce(TaskMembership.agreed_mentors, cast("[]", JSONB))
+    mentors = func.coalesce(
+        TaskMembership.agreed_mentors, literal_column("'[]'::jsonb")
+    )
     where = [
         TaskMembership.task_id == task_id,
         TaskMembership.deleted_at.is_(None),
@@ -108,7 +109,9 @@ async def credits_by_claim(
     if membership_ids is not None and not membership_ids:
         return {}
     where, joins = _claim_rows(task_id, membership_ids)
-    stmt = select(TaskMembership.id, func.sum(ResourceUsage.credits))
+    stmt = select(TaskMembership.id, func.sum(ResourceUsage.credits)).select_from(
+        TaskMembership
+    )
     for target, on in joins:
         stmt = stmt.join(target, on)
     stmt = stmt.where(*where, _owns()).group_by(TaskMembership.id)
@@ -121,7 +124,7 @@ async def credits_by_model(
     """一份领题按模型分的额度，多的在前。"""
     where, joins = _claim_rows(task_id, [membership_id])
     total = func.sum(ResourceUsage.credits)
-    stmt = select(ResourceUsage.model, total)
+    stmt = select(ResourceUsage.model, total).select_from(TaskMembership)
     for target, on in joins:
         stmt = stmt.join(target, on)
     stmt = (
