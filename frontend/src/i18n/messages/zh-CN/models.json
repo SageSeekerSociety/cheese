@@ -376,6 +376,6 @@
       "memory_migration_model": "记忆迁移"
     },
     "retry": "重新读取角色",
-    "inherits": "同{role}（{model}）"
+    "inherits": "同「{role}」（{model}）"
   }
 }
