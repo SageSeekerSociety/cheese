@@ -1,5 +1,5 @@
 {
-  "hint": "The hosting service can't be changed after the project is created",
+  "hint": "The code is stored on the platform; to use your own GitHub repository instead, move it below",
   "hosted": "Hosted on the platform",
   "preparing": "Preparing the repository",
   "title": "Code repository"
