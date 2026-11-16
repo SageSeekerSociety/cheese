@@ -20,6 +20,7 @@ from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
+    TaskKnowledgePointRepository,
 )
 from app.domain.task import package
 from app.domain.task.claims import own_claim
@@ -442,6 +443,30 @@ async def _enrich_task_topics(db, task_models: list[dict]) -> None:
             continue
         task_model["topics"] = [
             {"id": t.id, "name": t.name} for t in grouped.get(model_id, [])
+        ]
+
+
+async def _enrich_task_knowledge_points(db, task_models: list[dict]) -> None:
+    """把这一页每道题涉及的知识点填进列表响应（就地改）。§ learning analysis, step 1.
+
+    和 ``_enrich_task_topics`` 同一形状、同一理由：前端读 ``task.knowledgePoints``，
+    总是给一个数组（不是 undefined）；整页一次查询，不按题各发一条。设置页与发题页
+    的「涉及的知识点」也在单题上读它（那时列表只有一道题）。
+    """
+    if not task_models:
+        return
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    grouped = await TaskKnowledgePointRepository(session=db).list_by_task_ids(task_ids)
+    for task_model in task_models:
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["knowledgePoints"] = [
+            {"id": p.id, "name": p.name} for p in grouped.get(model_id, [])
         ]
 
 

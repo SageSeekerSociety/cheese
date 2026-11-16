@@ -12,6 +12,7 @@ from app.api.routes.tasks._common import (
 )
 from app.api.task_deps import _attachment_service
 from app.api.task_serialization import (
+    _enrich_task_knowledge_points,
     _enrich_task_models,
     _task_requirements,
     _task_to_api_model,
@@ -30,6 +31,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
+from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
@@ -101,6 +103,7 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
         0
     ]
+    await _enrich_task_knowledge_points(db, [task_model])
 
     return {"task": task_model}
 
@@ -330,6 +333,16 @@ async def update_task(
     if payload.topics is not None:
         await service.replace_topic_relations(task_id=task.id, topic_ids=payload.topics)
 
+    # 知识点列表（§ learning analysis, step 1）：同样整份替换，但先挑一遍 —— 只有
+    # 落在自己板上的知识点才算数，别处来的 id 当它不存在。
+    if payload.knowledge_point_ids is not None:
+        valid_points = await SpaceLearningAnalysisService.of(db).valid_point_ids(
+            space_id=task.space_id, point_ids=payload.knowledge_point_ids
+        )
+        await service.replace_knowledge_point_relations(
+            task_id=task.id, knowledge_point_ids=valid_points
+        )
+
     # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
     apply_task_teaching(task, coerce_teaching(payload.teaching))
     # 「默认队友」: 同一份 `protocol_override` 里的另一格 (#944)。
@@ -406,6 +419,7 @@ async def update_task(
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]
+    await _enrich_task_knowledge_points(db, [task_response])
 
     return {"task": task_response}
 

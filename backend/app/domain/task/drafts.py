@@ -63,6 +63,9 @@ FORM_FIELDS = frozenset(
         "teamLockingPolicy",
         "categoryId",
         "topics",
+        # 这道题涉及的知识点（§ learning analysis, step 1）：这块板知识点清单里的
+        # id，与 ``topics`` 同一形状。发布时随 ``POST /tasks`` 一起交上去。
+        "knowledgePointIds",
         "requireRealName",
         "accessControlEnabled",
         "accessDomainGroupIds",
@@ -115,6 +118,8 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "days_to_submit": ("defaultDeadline",),
     "category": ("categoryId",),
     "tags": ("topics",),
+    # 芝士也能写这道题涉及的知识点（§ learning analysis, step 1），落在同一格。
+    "knowledge_points": ("knowledgePointIds",),
     "real_name": ("requireRealName",),
     "registration_start": ("registrationStartAt",),
     "team_locking": ("teamLockingPolicy",),
@@ -1373,6 +1378,11 @@ def task_form(task: dict) -> dict:
         "teamLockingPolicy": task.get("teamLockingPolicy"),
         "categoryId": (task.get("category") or {}).get("id"),
         "topics": [t.get("id") for t in task.get("topics") or [] if t.get("id")],
+        # 这道题涉及的知识点（§ learning analysis, step 1），与 topics 同一形状：
+        # 已经挂上的那几个的 id。
+        "knowledgePointIds": [
+            k.get("id") for k in task.get("knowledgePoints") or [] if k.get("id")
+        ],
         "accessControlEnabled": bool(task.get("accessControlEnabled")),
         "accessDomainGroupIds": task.get("accessDomainGroupIds") or [],
         "mentors": [m.get("handle") for m in task.get("mentors") or []],

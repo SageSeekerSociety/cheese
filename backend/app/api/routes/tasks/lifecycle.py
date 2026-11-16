@@ -22,6 +22,7 @@ from app.api.task_deps import (
 )
 from app.api.task_serialization import (
     _enrich_task_attachment_counts,
+    _enrich_task_knowledge_points,
     _enrich_task_models,
     _enrich_task_submission_schema,
     _enrich_task_topics,
@@ -349,6 +350,10 @@ async def get_task(
         }
     )
 
+    # 这道题涉及的知识点（§ learning analysis, step 1）：详情的「涉及的知识点」那一格
+    # 读它。整页一次取（这里只有一道题）。
+    await _enrich_task_knowledge_points(db, [task_dict])
+
     enriched_task = (
         await _enrich_task_models(db, [task_dict], space_id=task.space_id)
     )[0]
@@ -518,6 +523,10 @@ async def get_tasks(
     # so undefined-checks behave consistently.
     if queryTopics:
         await _enrich_task_topics(db, items)
+
+    # 知识点与被点名的 topics 同一条件：卡片和清单也读 task.knowledgePoints，未点名
+    # 时也填一个空数组，undefined 判断才一致（§ learning analysis, step 1）。
+    await _enrich_task_knowledge_points(db, items)
 
     # Per-user state — joined / submittable / userDeadline / participationEligibility.
     # Only run when the frontend explicitly asks (queryJoined / querySubmittability /

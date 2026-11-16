@@ -13,6 +13,7 @@ from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
+    TaskKnowledgePoint,
     TaskMembership,
     TaskMentor,
     TaskRubricItem,
@@ -592,6 +593,39 @@ class TaskRepository:
                     created_at=now,
                     updated_at=now,
                     deleted_at=None,
+                )
+            )
+        await self._session.flush()
+
+    async def replace_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        """覆盖一道题的知识点关联：删掉现有的行，再插入这批。
+
+        与 ``PATCH /tasks/{id}`` 的 ``knowledgePointIds`` 同一语义（整份替换）。这里
+        **不能**照 ``replace_topic_relations`` 那样软删：``TaskKnowledgePoint`` 没有
+        ``deleted_at``（见它的 docstring），「这道题归在这几个知识点下」是一份清单，
+        整份替换就是把不再属于它的行删掉。校验（这些知识点属于这道题所在的板）在
+        ``TaskService`` 那层，与话题一样，这里只管写。
+        """
+        await self._session.execute(
+            delete(TaskKnowledgePoint).where(TaskKnowledgePoint.task_id == task_id)
+        )
+        await self.add_knowledge_point_relations(
+            task_id=task_id, knowledge_point_ids=knowledge_point_ids
+        )
+
+    async def add_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        """给一道新题挂上知识点关联行（不做删除，建题时本就没有旧关系）。"""
+        now = datetime.now(UTC)
+        for point_id in dict.fromkeys(knowledge_point_ids):
+            self._session.add(
+                TaskKnowledgePoint(
+                    task_id=task_id,
+                    knowledge_point_id=point_id,
+                    created_at=now,
                 )
             )
         await self._session.flush()

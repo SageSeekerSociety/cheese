@@ -34,6 +34,7 @@ from app.api.task_deps import (
     get_task_service,
 )
 from app.api.task_serialization import (
+    _enrich_task_knowledge_points,
     _enrich_task_models,
     _enrich_task_topics,
     _task_requirements,
@@ -195,6 +196,7 @@ async def _task_as_form(db, task, *, private: bool) -> dict:
     model.update(await _task_requirements(service, task.id))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     await _enrich_task_topics(db, [model])
+    await _enrich_task_knowledge_points(db, [model])
     return drafts.task_form(model)
 
 

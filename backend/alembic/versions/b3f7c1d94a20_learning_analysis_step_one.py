@@ -113,7 +113,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["knowledge_point_id"],
             ["space_knowledge_point.id"],
-            name="fk_task_knowledge_point_knowledge_point_id_space_knowledge_point",
+            # 目标表名省掉：带上的话到 64 字，超过 Postgres 的 63 字标识符上限
+            # （``fk_agent_environments_conversation_id`` 同一处境的先例）。
+            name="fk_task_knowledge_point_knowledge_point_id",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
