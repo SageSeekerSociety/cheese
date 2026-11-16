@@ -102,6 +102,8 @@ EXPECTED_RAIL_TASK_KEYS = {
     "created_by",
     "created_by_assistant",
     "delivered_head",
+    "deploy_blocked_url",
+    "deploying_since",
     "document_id",
     "historical_delivery_id",
     "id",
