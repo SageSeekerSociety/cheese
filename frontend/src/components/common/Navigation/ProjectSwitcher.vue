@@ -164,8 +164,9 @@ const projectItems = computed(() => projectItemsOf(items.value))
 const path = computed(() => navigation?.route?.path ?? '')
 const current = computed(() => projectItems.value.find((i) => i.match?.(path.value)) ?? null)
 const onHome = computed(() => !!homeItem.value?.match?.(path.value))
+// 只在项目里算：在首页时老鼠图标上那个数就是全部，这里再写一遍是重复。
 const othersAwaiting = computed(() =>
-  projectItems.value.filter((i) => i !== current.value).reduce((sum, i) => sum + (i.badge ?? 0), 0)
+  current.value ? projectItems.value.filter((i) => i !== current.value).reduce((sum, i) => sum + (i.badge ?? 0), 0) : 0
 )
 
 // 团队名那一行：和项目侧栏原来那一行同一套规矩（TopicSidebar 的 owningTeam）——个人
@@ -408,6 +409,7 @@ function clearDrag() {
   text-decoration: none;
   cursor: pointer;
   background: none;
+  text-align: left;
   border: 0;
   border-radius: var(--radius-md);
 }
