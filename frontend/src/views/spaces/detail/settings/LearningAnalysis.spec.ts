@@ -158,10 +158,7 @@ describe('空间设置：学情分析', () => {
     await fireEvent.click(view.getByTestId('learning-point-add'))
     await waitFor(() => expect(document.querySelector('.v-dialog')).toBeTruthy())
 
-    await fireEvent.update(
-      view.getByPlaceholderText('spaces.learningAnalysis.knowledgePoint.namePlaceholder'),
-      '递归'
-    )
+    await fireEvent.update(view.getByPlaceholderText('spaces.learningAnalysis.knowledgePoint.namePlaceholder'), '递归')
     await fireEvent.click(buttonWith('spaces.learningAnalysis.knowledgePoint.save'))
 
     await waitFor(() => expect(createKnowledgePoint).toHaveBeenCalledWith(11, { name: '递归' }))

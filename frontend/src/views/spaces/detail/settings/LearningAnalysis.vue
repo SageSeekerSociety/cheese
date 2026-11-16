@@ -32,11 +32,12 @@
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
+import { useSaveState } from '@/composables/useSaveState'
+import { useSpaceLearningAnalysis } from '@/composables/useSpaceLearningAnalysis'
+
 import LearningAnalysisView from './LearningAnalysisView.vue'
 
 import { axiosErrorMessage } from '@/api/axiosHttp'
-import { useSpaceLearningAnalysis } from '@/composables/useSpaceLearningAnalysis'
-import { useSaveState } from '@/composables/useSaveState'
 import { toast } from '@/lib/toast'
 
 const { t } = useI18n()
@@ -44,8 +45,17 @@ const route = useRoute()
 
 const spaceId = Number(route.params.spaceId)
 
-const { enabled, knowledgePoints, canManage, state, load, setEnabled, addKnowledgePoint, renameKnowledgePoint, removeKnowledgePoint } =
-  useSpaceLearningAnalysis(spaceId)
+const {
+  enabled,
+  knowledgePoints,
+  canManage,
+  state,
+  load,
+  setEnabled,
+  addKnowledgePoint,
+  renameKnowledgePoint,
+  removeKnowledgePoint,
+} = useSpaceLearningAnalysis(spaceId)
 
 /** 开关那一次保存的回执（§3.11）：就地写在开关旁边。 */
 const { saving, saved, error, run } = useSaveState({ feedback: 'inline' })
@@ -55,7 +65,7 @@ async function save(next: boolean) {
 }
 
 /** 清单那几条各是一次性动作：当下不换页，失败就说服务端那句话。 */
-async function guarded(action: () => Promise<void>, fallback: string) {
+async function guarded(action: () => Promise<unknown>, fallback: string) {
   try {
     await action()
   } catch (failure) {

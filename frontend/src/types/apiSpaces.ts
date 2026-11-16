@@ -1,11 +1,4 @@
-import type {
-  AnalyticsApproveType,
-  Page,
-  Space,
-  SpaceAnnouncement,
-  SpaceTeaching,
-  TaskSubmission,
-} from '@/types'
+import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
   /** `create`：新建空间待审；`open`：已有空间申请设为开放空间。 */

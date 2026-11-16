@@ -21,13 +21,7 @@ withDefaults(defineProps<{ acknowledging?: boolean }>(), { acknowledging: false 
 const emit = defineEmits<{ acknowledge: [] }>()
 
 /** 卡片正文的那几条：一句一条，顺序与设计稿一致（见 xueqing/demo.html 的 `#consent`）。 */
-const POINTS = [
-  'pointEvidence',
-  'pointTeacher',
-  'pointOtherRooms',
-  'pointLeaving',
-  'pointGroups',
-] as const
+const POINTS = ['pointEvidence', 'pointTeacher', 'pointOtherRooms', 'pointLeaving', 'pointGroups'] as const
 </script>
 
 <template>

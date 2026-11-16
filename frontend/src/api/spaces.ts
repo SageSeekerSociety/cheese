@@ -178,10 +178,7 @@ export const SpacesApi = {
     ),
   /** 删一条（软删：已经归在它下面的题还显示这个名字，同一个名字以后还能再加）。 */
   deleteKnowledgePoint: (spaceId: number, pointId: number) =>
-    axiosMutation(
-      { url: `/spaces/${spaceId}/learning-analysis/knowledge-points/${pointId}`, method: 'DELETE' },
-      true
-    ),
+    axiosMutation({ url: `/spaces/${spaceId}/learning-analysis/knowledge-points/${pointId}`, method: 'DELETE' }, true),
   /** AI 读题面给出的知识点建议（挂 / 超预算会是非 200 的信封，按普通 apiError 处理）。 */
   suggestKnowledgePoints: (spaceId: number, data: KnowledgeSuggestionRequestData) =>
     axiosRequest<{ suggestions: SpaceKnowledgeSuggestion[] }>(
@@ -190,16 +187,10 @@ export const SpacesApi = {
     ),
   /** 进这块板时要不要弹告知卡。 */
   readLearningNotice: (spaceId: number) =>
-    axiosRequest<SpaceLearningNoticeState>(
-      { url: `/spaces/${spaceId}/learning-analysis/notice`, method: 'GET' },
-      true
-    ),
+    axiosRequest<SpaceLearningNoticeState>({ url: `/spaces/${spaceId}/learning-analysis/notice`, method: 'GET' }, true),
   /** 点了「我已阅读并知悉」。幂等：再点一次不会出错，也不改第一次的时间。 */
   acknowledgeLearningNotice: (spaceId: number) =>
-    axiosRequest<{ acknowledged: true }>(
-      { url: `/spaces/${spaceId}/learning-analysis/notice`, method: 'POST' },
-      true
-    ),
+    axiosRequest<{ acknowledged: true }>({ url: `/spaces/${spaceId}/learning-analysis/notice`, method: 'POST' }, true),
   /** 只对成员开放，或开放给一组邮箱后缀。扩大范围要等平台审核，回来的空间带着那条申请。 */
   setAccess: (spaceId: number, data: PutSpaceAccessRequestData) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}/access`, method: 'PUT', data }, true),

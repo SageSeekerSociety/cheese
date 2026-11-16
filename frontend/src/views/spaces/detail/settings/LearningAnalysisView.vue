@@ -19,7 +19,6 @@ import type { SpaceKnowledgePoint } from '@/types'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import LearningNoticeDialog from '@/components/spaces/LearningNoticeDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseField from '@/components/base/BaseField.vue'
@@ -27,6 +26,7 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import SaveBar from '@/components/base/SaveBar.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import LearningNoticeDialog from '@/components/spaces/LearningNoticeDialog.vue'
 import { useDialog } from '@/plugins/dialog'
 
 const props = defineProps<{
@@ -82,7 +82,9 @@ const editing = ref<SpaceKnowledgePoint | null>(null)
 const nameDraft = ref('')
 
 const dialogTitle = computed(() =>
-  editing.value ? t('spaces.learningAnalysis.knowledgePoint.rename', { name: editing.value.name }) : t('spaces.learningAnalysis.knowledgePoint.add')
+  editing.value
+    ? t('spaces.learningAnalysis.knowledgePoint.rename', { name: editing.value.name })
+    : t('spaces.learningAnalysis.knowledgePoint.add')
 )
 
 /** 三条平台规则：原文照平台写死的说法，一个字不改。 */
@@ -186,7 +188,13 @@ async function removePoint(point: SpaceKnowledgePoint) {
       <p class="settings-card__desc">{{ t('spaces.learningAnalysis.knowledgePoint.hint') }}</p>
 
       <div v-if="canManage" class="la__inline-head">
-        <BaseButton kind="secondary" size="sm" prepend-icon="mdi-plus" data-testid="learning-point-add" @click="openCreate">
+        <BaseButton
+          kind="secondary"
+          size="sm"
+          prepend-icon="mdi-plus"
+          data-testid="learning-point-add"
+          @click="openCreate"
+        >
           {{ t('spaces.learningAnalysis.knowledgePoint.add') }}
         </BaseButton>
       </div>
