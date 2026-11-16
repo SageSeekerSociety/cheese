@@ -511,12 +511,20 @@ def facts_for_room(
     )
 
 
-def card_model(task: Task, *, spent: str | None, choices: dict[str, dict]) -> str:
+def card_model(
+    task: Task,
+    *,
+    spent: str | None,
+    choices: dict[str, dict],
+    planned: str | None = None,
+) -> str:
     """卡上写哪个模型。
 
     **花过就写它真花的那个** —— `spent` 是 `usage` 里这条活最后一行的 `model`，
     也就是钱实际花在谁身上。一分钱还没花过的卡没有这个事实，才退回它绑的那个
-    （`binding.resolve`），那是它下一轮会用的。
+    （`binding.resolve`），那是它下一轮会用的。没绑的活下一轮用的是调用方按
+    任务场合算好的那个（`planned`，`agent.model_catalog.pick`：这件任务的队友
+    在任务里用什么）；本层够不着队友和平台角色，所以由调用方递进来。
 
     这两个都不是存下来的状态：`tasks` 上没有一列记「显示什么」，也不会有。一列
     这样的状态要靠每一次真实用量去刷新它，而它对不上的那一天，卡上写着 A、账单
@@ -543,9 +551,9 @@ def card_model(task: Task, *, spent: str | None, choices: dict[str, dict]) -> st
     if spent:
         return catalog_id(spent, choices) or spent
     try:
-        return resolve(task, choices).model
+        return resolve(task, choices, default_model=planned).model
     except ValidationError:
-        return (task.model or "").strip()
+        return (task.model or "").strip() or planned or ""
 
 
 # —— 卡 ————————————————————————————————————————————————————————

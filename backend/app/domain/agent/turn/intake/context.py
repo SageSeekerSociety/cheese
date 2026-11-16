@@ -135,6 +135,9 @@ class TurnContext:
     # theirs.
     room_id: uuid.UUID
     inner_id: uuid.UUID | None
+    # The task, when the conversation is a task's own: its turns run in the
+    # task scene (`model_catalog.pick`).
+    task_id: uuid.UUID | None
     acting_agent: str
     agent: ResolvedAgent
     agent_pool: tuple[MemoryScope, str] | None
@@ -267,6 +270,7 @@ class ModelOptions(Protocol):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
+        task_id: uuid.UUID | None = None,
     ) -> tuple[dict, str]: ...
 
 

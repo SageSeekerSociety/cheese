@@ -256,13 +256,15 @@ def test_a_saved_configuration_carries_a_role_and_how_its_model_runs() -> None:
         == _A_ROLE
         | {
             "model",
+            "task_model",
+            "subagent_model",
             "effort",
             "compact_percent",
             "execution_device_id",  # #3717: each project teammate chooses its execution device.
             "execution_spec",  # a teammate may explicitly choose the platform standard sandbox instead.
         }
     ), (
-        "A teammate stores its role, an optional model override, and how that "
+        "A teammate stores its role, optional model overrides, and how that "
         "model thinks and compacts; not the harness or MCP servers."
     )
 

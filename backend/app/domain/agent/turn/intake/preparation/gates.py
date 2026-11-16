@@ -23,6 +23,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from app.core.sentences import say
+from app.domain.agent.model_catalog import scene_of
 from app.domain.agent.queries import (
     _bail_notice,
     _model_policy_call,
@@ -100,7 +101,7 @@ async def check_model_policy(
         proposed = await _pass_policy_gate(
             session,
             place.room_id,
-            _model_policy_call(project, agent),
+            _model_policy_call(project, agent, scene=scene_of(place.task_id)),
             policy,
             actor=actor_handle,
         )

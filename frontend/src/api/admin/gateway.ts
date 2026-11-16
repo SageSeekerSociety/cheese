@@ -354,6 +354,8 @@ export interface PlatformRole {
   role: string
   model: string | null
   fallback: string | null
+  /** 没人指过时跟着哪个角色的模型走（`fallback` 就是它现在的模型）；跟部署设置项走时为 null。 */
+  inherits: string | null
   chosen: boolean
   offered_only: boolean
 }

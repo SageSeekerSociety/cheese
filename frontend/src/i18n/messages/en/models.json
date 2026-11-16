@@ -352,11 +352,11 @@
     "confirm": "Change prices"
   },
   "roles": {
-    "hint": "The jobs the platform runs on a model it picks itself. A change applies at once, with no redeploy; a project's own default model and subagent default still win in that project.",
+    "hint": "The jobs the platform runs on a model it picks itself. A change applies at once, with no redeploy. The three AI teammate roles are what conversation, tasks and subagents run on when neither the project nor the teammate chose a model (automatic).",
     "now": "Now: {model}",
-    "unset": "Not set: falls back to the project's default model",
+    "unset": "Not set",
     "fallback": "Deployment default ({model})",
-    "fallbackNone": "Not set (the project's default model)",
+    "fallbackNone": "Not set",
     "separator": ", ",
     "loadFailed": "Couldn't load the platform model roles",
     "failed": "Couldn't change the role",
@@ -364,8 +364,9 @@
       "set": "{role} now points at the chosen model"
     },
     "role": {
-      "agent_model": "Default model",
-      "subagent_model": "Subagent default",
+      "agent_model": "AI teammates: conversation",
+      "task_model": "AI teammates: tasks",
+      "subagent_model": "AI teammates: subagents",
       "assistant_model": "Personal assistant",
       "docs_assistant_model": "Docs assistant",
       "topic_naming_model": "Topic naming",
@@ -374,6 +375,7 @@
       "voice_polish_model": "Voice input: transcript tidy-up",
       "memory_migration_model": "Memory migration"
     },
-    "retry": "Retry loading roles"
+    "retry": "Retry loading roles",
+    "inherits": "Same as {role} ({model})"
   }
 }

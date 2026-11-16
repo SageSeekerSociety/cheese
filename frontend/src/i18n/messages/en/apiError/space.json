@@ -8,5 +8,6 @@
   "openSpaceScopeRequired": "An open space needs at least one email suffix",
   "openSpaceScopeTooLong": "At most {max} email suffixes",
   "openSpaceSuffixInvalid": "Not a valid email suffix: {suffix}",
-  "openSpaceUnderReview": "A space under review cannot be opened"
+  "openSpaceUnderReview": "A space under review cannot be opened",
+  "spaceNameTaken": "That space name is taken. Pick another"
 }

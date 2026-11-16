@@ -3,6 +3,7 @@
 
 const ROLE_KEYS: Record<string, string> = {
   agent_model: 'models.roles.role.agent_model',
+  task_model: 'models.roles.role.task_model',
   subagent_model: 'models.roles.role.subagent_model',
   assistant_model: 'models.roles.role.assistant_model',
   docs_assistant_model: 'models.roles.role.docs_assistant_model',
