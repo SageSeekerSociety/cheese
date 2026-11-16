@@ -39,10 +39,10 @@ from app.domain.task.access import (
     bind_review_path,
 )
 from app.domain.task.claims import claim_of
+from app.domain.task.review_service import TaskSubmissionReviewService
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
-    TaskSubmissionReviewService,
     TaskSubmissionService,
 )
 from app.domain.task.stages import (

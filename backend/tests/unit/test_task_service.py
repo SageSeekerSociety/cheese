@@ -13,10 +13,10 @@ from app.core.domain_errors import (
 )
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.task import services as task_services
+from app.domain.task.review_service import TaskSubmissionReviewService
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
-    TaskSubmissionReviewService,
     TaskSubmissionService,
 )
 
