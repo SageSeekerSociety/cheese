@@ -302,7 +302,9 @@ async def create_space(
     db=Depends(get_db),
 ) -> dict:
     if await service.exists_by_name(payload.name):
-        raise ConflictError(f"Space with name '{payload.name}' already exists")
+        # 一句目录里的句子：这条提示会原样出现在「新建空间」弹窗里（弹窗显示服务端
+        # 自己那句话），写死一句英文只会让人不知道该怎么办。
+        raise ConflictError(say("spaceNameTaken"))
 
     task_templates = _expect_list(payload.task_templates, "taskTemplates")
     classification_topic_ids: list[int] = payload.classification_topics or []

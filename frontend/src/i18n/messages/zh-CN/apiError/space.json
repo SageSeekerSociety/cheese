@@ -8,5 +8,6 @@
   "openSpaceScopeRequired": "开放空间至少要填一个邮箱后缀",
   "openSpaceScopeTooLong": "邮箱后缀最多 {max} 个",
   "openSpaceSuffixInvalid": "邮箱后缀格式不对：{suffix}",
-  "openSpaceUnderReview": "空间还在审核中，不能设为开放空间"
+  "openSpaceUnderReview": "空间还在审核中，不能设为开放空间",
+  "spaceNameTaken": "这个空间名称已被占用，换一个"
 }
