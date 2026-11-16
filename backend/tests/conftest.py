@@ -1492,6 +1492,17 @@ def stub_project_forge(monkeypatch, tmp_path):
                 ["git", "-C", str(repo), "cat-file", "blob", oid]
             )
             return {"encoding": "base64", "content": base64.b64encode(data).decode()}
+        if route.startswith("/branches/"):
+            # As Forgejo: what the branch points at now; 404 (None) when there
+            # is no such branch. `forge.branch_head` reads `commit.id` here (the
+            # binding kind is forgejo), the same shape `branch_head` above uses.
+            branch = route.removeprefix("/branches/")
+            result = git_store.run(
+                ["git", "rev-parse", "--verify", branch], repo, 20, None
+            )
+            if result.returncode != 0:
+                return None
+            return {"commit": {"id": result.stdout.strip()}}
         if not route.startswith("/compare/"):
             return await remote_data(project_id, session, path, **kwargs)
         base, head = route.removeprefix("/compare/").split("...")
