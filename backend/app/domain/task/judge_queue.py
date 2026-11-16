@@ -28,9 +28,7 @@ QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 IN_FLIGHT = (QUEUED, RUNNING)
 
 
-async def latest_run(
-    session: AsyncSession, submission_id: int
-) -> TaskJudgeRun | None:
+async def latest_run(session: AsyncSession, submission_id: int) -> TaskJudgeRun | None:
     """这一版提交最近一次评测，没有就 None。改题重评会写新的一行，读的一直是
     最新的那一次。"""
     if submission_id <= 0:

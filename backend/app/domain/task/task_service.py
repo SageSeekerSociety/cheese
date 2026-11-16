@@ -282,9 +282,7 @@ class TaskService:
     async def replace_test_suites(
         self, task_id: int, lines: Sequence[test_suite.SuiteLine]
     ) -> bool:
-        return await test_suite.replace_suites(
-            self._require_session(), task_id, lines
-        )
+        return await test_suite.replace_suites(self._require_session(), task_id, lines)
 
     async def test_suite_stages(self, task_id: int) -> list[int]:
         """这道题挂了测试点的阶段 —— ``rubric`` 校验「设为测试点的那一项要有测试点」
