@@ -114,7 +114,7 @@
           <td class="rs__credits t-num">
             <template v-if="row.credits != null">
               {{ fmtNum(row.credits) }}
-              <span class="rs__bar" aria-hidden="true"><span :style="{ width: creditBar(row.credits) }" /></span>
+              <span class="rs__meter" aria-hidden="true"><span :style="{ width: creditBar(row.credits) }" /></span>
             </template>
             <span v-else class="rs__meta">—</span>
           </td>
@@ -293,8 +293,8 @@ type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDI
 // 才有）放着「86 / 20 暂定」这样一格。三条定宽按最长的量：`1,234,567` 配条、
 // 「100 / 100 暂定」。下面按有没有额度那一行拼出真正的列宽。
 const COL_BASE = [null, '104px', '140px', '208px', '104px']
-const COL_CREDITS = '132px'
-const COL_USAGE_SCORE = '124px'
+const COL_CREDITS = '112px'
+const COL_USAGE_SCORE = '104px'
 const COL_OPS = '150px'
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
@@ -675,10 +675,11 @@ function saveDeadline() {
 }
 
 /* 迷你条：一格宽的细轨，按本栏最大用量填。轨和填都是安静的灰，只有长度说话 ——
-   这一列是「谁用得多」，不需要颜色再加一层判断。 */
-.rs__bar {
+   这一列是「谁用得多」，不需要颜色再加一层判断。`.rs__bar` 是顶上那条筛选栏，
+   别同名。 */
+.rs__meter {
   display: inline-block;
-  width: 40px;
+  width: 32px;
   height: 4px;
   margin-left: 8px;
   overflow: hidden;
@@ -687,7 +688,7 @@ function saveDeadline() {
   border-radius: 2px;
 }
 
-.rs__bar > span {
+.rs__meter > span {
   display: block;
   height: 100%;
   background: var(--muted);

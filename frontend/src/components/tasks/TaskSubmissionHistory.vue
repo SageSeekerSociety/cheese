@@ -46,7 +46,7 @@
           <div class="tsh__usage-top">
             <span class="tsh__big t-num">{{ fmtNum(usage.credits) }}</span>
             <span class="tsh__meta">{{ t('tasks.submissionHistory.creditsUnit') }}</span>
-            <v-chip v-if="usageChip" size="small" variant="tonal" color="primary">{{ usageChip }}</v-chip>
+            <v-chip v-if="usageChip" size="small" variant="tonal">{{ usageChip }}</v-chip>
             <span v-if="usage.rank" class="tsh__meta">
               {{ t('tasks.submissionHistory.usageRank', { rank: usage.rank, ranked: usage.ranked ?? 0 }) }}
             </span>
