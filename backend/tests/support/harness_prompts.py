@@ -44,7 +44,10 @@ def event_prompts() -> dict[str, str]:
         ),
         "task_opening": platform_prompt(
             task_opening_prompt(
-                title="TASK_FIXTURE", owner="fixture_user", source="SOURCE_FIXTURE"
+                title="TASK_FIXTURE",
+                owner="fixture_user",
+                source="SOURCE_FIXTURE",
+                has_checkout=True,
             )
         ),
     }

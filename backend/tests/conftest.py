@@ -1302,7 +1302,6 @@ def stub_project_forge(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
 
-    default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
     remote_status = forge_clients.compare_status
@@ -1337,9 +1336,7 @@ def stub_project_forge(monkeypatch, tmp_path):
 
     async def read_default_branch(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
-        if binding is None:
-            return await default_branch(project_id, session)
-        return binding.default_branch
+        return None if binding is None else binding.default_branch
 
     async def test_repository(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
@@ -1519,8 +1516,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge, "prepare_repository", prepare_repository)
     monkeypatch.setattr(forge, "starter_remote", starter_remote)
     monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
-    monkeypatch.setattr(forge, "default_branch", read_default_branch)
-    monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
+    monkeypatch.setattr(forge, "default_branch_if_any", read_default_branch)
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)

@@ -120,6 +120,7 @@
   "taskBranchNothingToDeliver": "The task branch {branch} has no changes to deliver",
   "taskEndedOrNoBranch": "This task has ended or has no working branch",
   "taskNoPrForDependency": "The task has no PR yet. Sync its commits before removing the dependency",
+  "taskNoRepositoryToMerge": "This project has no code repository, so there are no changes to merge. Hand over a file with deliver or an address with deliver_url; with nothing to hand over, state the conclusion and close the task",
   "taskNotFound": "No such task",
   "topicArchivedCannotReview": "The channel is archived, so it can't be submitted for review",
   "topicArchivedNoAccept": "The channel is archived, so this can't be accepted",

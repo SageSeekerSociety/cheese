@@ -17,7 +17,9 @@ async def test_unavailable_live_files_offer_committed_version(monkeypatch, failu
     from app.domain.agent.device_hub import DeviceNotReady, DeviceOffline
     from app.domain.repository import forge_files
 
-    task = SimpleNamespace(id=uuid.uuid4(), room_id=uuid.uuid4())
+    task = SimpleNamespace(
+        id=uuid.uuid4(), room_id=uuid.uuid4(), branch_name="task/live"
+    )
     room = SimpleNamespace(id=task.room_id, resource_id=None)
     session = SimpleNamespace(get=AsyncMock(return_value=room))
     error = {
@@ -43,7 +45,9 @@ async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
     from app.core.errors import GatewayUnavailableError
     from app.domain.repository import forge_files
 
-    task = SimpleNamespace(id=uuid.uuid4(), room_id=uuid.uuid4())
+    task = SimpleNamespace(
+        id=uuid.uuid4(), room_id=uuid.uuid4(), branch_name="task/live"
+    )
     room = SimpleNamespace(id=task.room_id, resource_id=None)
     session = SimpleNamespace(get=AsyncMock(return_value=room))
     timeout = asyncio.timeout

@@ -120,6 +120,7 @@
   "taskBranchNothingToDeliver": "任务分支 {branch} 没有可交付的改动",
   "taskEndedOrNoBranch": "这条任务已结束或没有工作分支",
   "taskNoPrForDependency": "任务尚无 PR，请先同步提交后再移除依赖",
+  "taskNoRepositoryToMerge": "这个项目没有代码仓库，没有可合并的改动。交付文件用 deliver，交付地址用 deliver_url；没有要交付的东西时，写明结论后结束任务",
   "taskNotFound": "没有这个任务",
   "topicArchivedCannotReview": "频道已归档，不能提交验收",
   "topicArchivedNoAccept": "频道已归档，无法采纳",
