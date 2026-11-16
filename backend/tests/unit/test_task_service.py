@@ -117,8 +117,6 @@ def _make_review(**overrides):
         "accepted": True,
         "score": 90,
         "comment": "Good work",
-        # 老评审这一格是空的 —— 那时只填一个总分（方案 §数据结构, line_scores）。
-        "line_scores": None,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,
@@ -1572,8 +1570,6 @@ class TestTaskSubmissionServiceAdditional:
                 "accepted": True,
                 "score": 88,
                 "comment": "Nice",
-                # 这份老评审没有逐项打分（方案 §数据结构, line_scores）。
-                "lineScores": [],
             },
         }
 

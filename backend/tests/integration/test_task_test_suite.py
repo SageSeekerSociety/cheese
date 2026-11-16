@@ -199,18 +199,18 @@ def test_a_tests_rubric_line_needs_a_stage_with_test_cases(
         api_client,
         board,
         name="有 TESTS 项却没有测试点",
-        rubric=[{"item": "正确性", "points": 100, "criteria": "", "source": "TESTS"}],
+        rubric=[{"item": "正确性", "points": 100, "criteria": "", "kind": "tests"}],
     )
     assert resp.status_code == 400, resp.text
     assert resp.json()["error"]["i18n"]["key"] == "rubricTestsWithoutSuite"
 
-    # 有测试点时收下，读回来那一项带着 source。
+    # 有测试点时收下，读回来那一项的 kind 是 tests。
     task_id = _create_task(
         api_client,
         board,
         name="有 TESTS 项也有测试点",
         testSuite=SUITE,
-        rubric=[{"item": "正确性", "points": 100, "criteria": "", "source": "TESTS"}],
+        rubric=[{"item": "正确性", "points": 100, "criteria": "", "kind": "tests"}],
     )
     rubric = _read(api_client, task_id, board["creator_token"])["rubric"]
-    assert rubric[0]["source"] == "TESTS"
+    assert rubric[0]["kind"] == "tests"
