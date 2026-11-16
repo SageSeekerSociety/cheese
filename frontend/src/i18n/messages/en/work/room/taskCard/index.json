@@ -1,7 +1,7 @@
 {
-  "acceptedPr": "Accepted · PR #{pr}",
+  "acceptedPr": "PR #{pr}",
   "acceptedTimes": "Accepted {n} times",
-  "acceptedTimesPr": "Accepted {n} times · PR #{pr}",
+  "acceptedTimesPr": "Accepted {n} times, PR #{pr}",
   "created": "created a task",
   "owner": "Owner: {name}"
 }

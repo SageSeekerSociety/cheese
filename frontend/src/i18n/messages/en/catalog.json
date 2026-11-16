@@ -1190,10 +1190,10 @@
     }
   },
   "projectTasksView": {
-    "about": "The project's 'All tasks': tasks grouped by 'whose turn is next' (to-do, in review, in progress, not started), the ones waiting on a person written in warm colour; filterable on top by 'whose', 'which channel' and 'show closed'.",
+    "about": "The project's 'All tasks': tasks grouped by status (needs help, awaiting answer, in review, in progress, not started), the ones waiting on a person written in warm colour; filterable on top by 'whose', 'which channel' and 'show ended'.",
     "s1": {
       "name": "Tasks in progress",
-      "note": "Default cell: a row of filters (all / mine / helping / others, each with a count), a channel menu, show-closed; below, grouped by status, one task per row."
+      "note": "Default cell: a row of filters (all / mine / helping / others, each with a count), a channel menu, show-ended; below, grouped by status, one task per row."
     },
     "s2": {
       "name": "First load",

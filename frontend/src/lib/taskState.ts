@@ -1,20 +1,20 @@
-// 一件任务的状态长什么样：哪种状态、哪个图标、哪种颜色、动不动，以及标签下面那一行
-// 说什么。频道里的任务卡、全部任务、待处理清单、任务页头和侧栏的任务行都从这一处取，
-// 同一件任务在五处是同一个样子。
+// 一件任务的状态长什么样：七个状态词中的哪一个、哪个图标、哪种颜色、动不动，以及状态词
+// 下面那一行说什么。频道里的任务卡、全部任务、待处理清单、任务页头和侧栏的任务行都从这一处
+// 取，同一件任务在五处是同一个样子。
 //
 // 状态不在这里算：后端 `presentation.phrase` 已经说了它在哪一格（`room_task/presentation.py`），
-// 这里只把那个码归到界面上的几种状态，再挑图标和颜色。
+// 这里只把那个码归到七个状态词之一（`STATUS`），再挑图标和颜色。
 //
-//   在做   running            绿；会话真的在跑时转动，停着时换成静止的图标
-//   在等   waiting            中性
-//   卡住   blocked            警示；第一次看到时闪一下
-//   待回答 awaiting_answer    警示，问号；第一次看到时闪一下
-//   待审阅 卡在审阅链路上      强调
-//   退回   bounced            危险
-//   已采纳                    绿勾，字是中性的
-//   开启 / 已关闭             淡
+//   未开始 not_started      刚建，还没人动手（started）
+//   进行中 in_progress      在做、在等结果、被退回后修改中（running / waiting / bounced）
+//   待回答 awaiting_answer  芝士提了问题在等人答
+//   待协助 needs_help       队友说没人帮忙走不下去（blocked）
+//   待审阅 in_review        已提交，在审阅链路上：跑检查、修检查、解冲突、等人审阅
+//   已完成 done             最后一步已采纳，或以结论结束
+//   已关闭 closed           没做成就结束了
 //
-// 标签只说状态，两三个字；谁、为什么、多久写在后面那一行，那一行不再重复标签。
+// 图标和颜色比状态词细一层（`kind`）：同是进行中，在跑的转、退回的是危险色。
+// 状态词只说状态；谁、为什么、多久写在下面那一行，那一行不再重复状态词。
 
 import type { BoardPhrase, RoomTask } from '@/cx_types'
 
@@ -26,14 +26,26 @@ import { t } from '@/i18n'
 
 export type TaskStateKind = 'running' | 'waiting' | 'blocked' | 'asking' | 'review' | 'bounced' | 'open' | 'closed'
 
+/** 一件任务此刻的状态：全产品只用这七个词（`work.taskState.label.*`）。 */
+export type TaskStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'awaiting_answer'
+  | 'needs_help'
+  | 'in_review'
+  | 'done'
+  | 'closed'
+
 /** 记号和字用哪一组 token（样式在 `TaskStateMark.vue`）。 */
 export type TaskStateTone = 'ok' | 'okMark' | 'neutral' | 'warn' | 'ink' | 'danger' | 'faint'
 
 export interface TaskState {
   kind: TaskStateKind
+  /** 七个状态词中的哪一个。 */
+  status: TaskStatus
   icon: string
   tone: TaskStateTone
-  /** 标签：状态本身，两三个字（`work.taskState.label.*`）。 */
+  /** 状态词（`work.taskState.label.<status>`）。 */
   label: string
   /** 记号在转：只给「在做」且会话真的在跑的那一刻。 */
   live: boolean
@@ -65,10 +77,53 @@ const KIND: Record<BoardPhrase, TaskStateKind> = {
   archived: 'closed',
 }
 
-/** 后端码归到哪种状态。这一版不认识的码（后端先发了新短语）当作开启，不画成警示。 */
+/** 后端码归到哪种样子。这一版不认识的码（后端先发了新短语）当作未开始，不画成警示。 */
 export function stateKind(phrase: BoardPhrase): TaskStateKind {
   return KIND[phrase] ?? 'open'
 }
+
+const STATUS: Record<BoardPhrase, TaskStatus> = {
+  started: 'not_started',
+  draft: 'not_started',
+  running: 'in_progress',
+  waiting: 'in_progress',
+  bounced: 'in_progress',
+  idle: 'in_progress',
+  awaiting_answer: 'awaiting_answer',
+  blocked: 'needs_help',
+  gate_running: 'in_review',
+  awaiting_checks: 'in_review',
+  fixing_checks: 'in_review',
+  resolving_conflict: 'in_review',
+  updating_branch: 'in_review',
+  checks_failed: 'in_review',
+  awaiting_review: 'in_review',
+  accepted: 'done',
+  completed: 'done',
+  closed: 'closed',
+  archived: 'closed',
+}
+
+/** 后端码归到七个状态词中的哪一个。不认识的码当作未开始。 */
+export function taskStatus(phrase: BoardPhrase): TaskStatus {
+  return STATUS[phrase] ?? 'not_started'
+}
+
+/** 状态词，按当前语言现取。 */
+export function statusLabel(status: TaskStatus): string {
+  return t(`work.taskState.label.${status}`)
+}
+
+/** 全部任务按状态分组时的次序：要人出手的在前，结束的在后。 */
+export const STATUS_ORDER: readonly TaskStatus[] = [
+  'needs_help',
+  'awaiting_answer',
+  'in_review',
+  'in_progress',
+  'not_started',
+  'done',
+  'closed',
+]
 
 const LOOK: Record<TaskStateKind, { icon: string; tone: TaskStateTone }> = {
   running: { icon: 'mdi-timelapse', tone: 'ok' },
@@ -83,11 +138,11 @@ const LOOK: Record<TaskStateKind, { icon: string; tone: TaskStateTone }> = {
 
 /** 「在做」但会话停着：同一种颜色，换一个不转的图标 —— 转与不转关掉动画之后也分得开。 */
 const RUNNING_IDLE_ICON = 'mdi-progress-clock'
-/** 关闭里最后一步被采纳的那种画一个绿勾，没交付就关了的照旧淡色一道横。 */
+/** 已完成的画一个绿勾，没做成就关了的照旧淡色一道横。 */
 const ACCEPTED_ICON = 'mdi-check-circle-outline'
 
-/** 审阅链路上平台或队友正在做的那一步：写在「待审阅」后面那一行开头。等人审阅那一步
- *  不写（后面已经说了等谁）。 */
+/** 审阅链路上平台或队友正在做的那一步：写在「待审阅」下面那一行开头。等人审阅那一步
+ *  不写（那一行已经说了等谁）。 */
 const REVIEW_STEP: Partial<Record<BoardPhrase, true>> = {
   gate_running: true,
   awaiting_checks: true,
@@ -110,7 +165,6 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'awaits_me'
       | 'needs_my_action'
       | 'card'
-      | 'status'
     >
   >
 
@@ -133,9 +187,9 @@ export function firstSight(key: string): boolean {
 }
 
 export interface StateContext {
-  /** 看的人的 handle：等的是他就写「待你审阅」「待你回答」。 */
+  /** 看的人的 handle：等的是他就写「等你」。 */
   viewer: string
-  /** 做这件任务的 AI 队友叫什么（项目里给它起的名字）：标签和卡住那一句都点它的名。 */
+  /** 做这件任务的 AI 队友叫什么（项目里给它起的名字）：审阅链路那几步和待协助那一句点它的名。 */
   agentName: string
   /** handle → 名字。 */
   nameOf?: (handle: string) => string
@@ -143,16 +197,26 @@ export interface StateContext {
   now?: number
 }
 
-function joined(parts: (string | null | undefined | false)[]): string {
-  return parts.filter((part): part is string => !!part).join(' · ')
+/** 下面那一行的几段连成一句：中文用逗号，不用「·」。 */
+export function joined(parts: (string | null | undefined | false)[]): string {
+  return parts.filter((part): part is string => !!part).join(t('work.taskState.separator'))
+}
+
+/** 退回之后那一行：谁退回的、为什么，以及在修改。 */
+function bouncedLine(card: StateRow['card'], nameOf: (handle: string) => string): string {
+  if (card?.status === 'rejected')
+    return card.decided_by
+      ? t('work.taskState.bouncedBy', { name: nameOf(card.decided_by) })
+      : t('work.taskState.bouncedUnnamed')
+  if (card?.status === 'gate_failed' || card?.status === 'gate_blocked') return t('work.taskState.bouncedByChecks')
+  return t('work.taskState.revising')
 }
 
 /** 一件任务此刻的状态：图标、颜色、动不动、标签和下面那一行。 */
 export function taskState(row: StateRow, ctx: StateContext): TaskState {
   const { phrase } = row.presentation
-  // 最后一步采纳了、任务还开着（队友在写总结）的那一会儿：还是在做，不另起一个说法。
-  const wrappingUp = phrase === 'accepted' && !!row.status && row.status !== 'closed'
-  const kind = wrappingUp ? 'running' : stateKind(phrase)
+  const kind = stateKind(phrase)
+  const status = taskStatus(phrase)
   const look = LOOK[kind]
   const now = ctx.now ?? Date.now()
   const nameOf = ctx.nameOf ?? ((handle: string) => handle)
@@ -162,7 +226,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     mine ? t('work.taskState.waitsOnYou') : handle ? t('work.taskState.waitsOn', { name: nameOf(handle) }) : null
   let icon = look.icon
   let tone = look.tone
-  let label = t(`work.taskState.label.${kind}`)
+  const label = statusLabel(status)
   let line = ''
   switch (kind) {
     case 'running': {
@@ -204,13 +268,14 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       break
     }
     case 'bounced':
-      line = t('work.taskState.bouncedLine', { name: ctx.agentName })
+      line = bouncedLine(row.card, nameOf)
       break
     case 'closed':
-      if (phrase === 'accepted') {
+      if (status === 'done') {
         icon = ACCEPTED_ICON
         tone = 'okMark'
-        label = t('work.taskState.label.accepted')
+        const decider = row.card?.status === 'accepted' ? row.card.decided_by : null
+        if (phrase === 'accepted' && decider) line = t('work.taskState.acceptedBy', { name: nameOf(decider) })
       }
       break
     default:
@@ -218,6 +283,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   }
   return {
     kind,
+    status,
     icon,
     tone,
     label,

@@ -113,7 +113,7 @@ parts:
   - kind: head
     room: 综合
     title: 写 README.md 介绍项目
-    status: 在做
+    status: 进行中
     owner: 你 负责
     at: 2
   - kind: head
@@ -157,7 +157,7 @@ parts:
 :::walk
 1. 点「待你审阅」。右侧切换到「改动」，显示芝士写的「审阅重点」和修改的文件。
 2. 对照「审阅重点」查看 README.md 的改动。
-3. 点「采纳并完成任务」。页头状态变为「已采纳」，README.md 加入项目。
+3. 点「采纳并完成任务」。页头状态变为「已完成」，README.md 加入项目。
 
 ```demo-panel
 title: 检查并采纳 README.md
@@ -172,7 +172,7 @@ parts:
   - kind: head
     room: 综合
     title: 写 README.md 介绍项目
-    status: 已采纳
+    status: 已完成
     at: 3
   - kind: tabs
     items: 概览 | 现场 | 改动 | 预览

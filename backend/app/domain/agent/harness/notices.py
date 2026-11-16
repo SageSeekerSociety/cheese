@@ -94,8 +94,8 @@ _CHECKLIST_EN = (
 
 _PROGRESS_NONE_ZH = (
     "你还没说这件任务做到哪了。现在就用 cheese_task(action=state) 设一次：working "
-    "在做、waiting 在等结果、blocked 卡住了，note 写一句在做什么。做完要人审阅的"
-    "就递卡，看板会显示等审。"
+    "在做、waiting 在等结果、blocked 需要人协助，note 写一句在做什么。做完要人审阅的"
+    "就递卡，看板会显示待审阅。"
 )
 _PROGRESS_NONE_EN = (
     "You have not said where this task stands. Call cheese_task(action=state) now: "
@@ -115,9 +115,9 @@ _PROGRESS_EN = (
     "are doing or waiting on now."
 )
 _BLOCKED_ZH = (
-    "你上一次给这件任务报的状态是「卡住了，等人帮忙」。现在有人说话、这一轮开了："
+    "你上一次给这件任务报的是 blocked，看板显示「待协助」。现在有人说话、这一轮开了："
     "如果已经能往下走，就用 cheese_task(action=state) 报回 working 或 waiting——不然"
-    "你一停下，任务又显示卡住、等负责人来；还卡着就再报一次 blocked，note 写清在等什么。"
+    "你一停下，任务又显示待协助、等负责人处理；还需要协助就再报一次 blocked，note 写清在等什么。"
 )
 _BLOCKED_EN = (
     "You last reported this task as blocked, waiting for help. Someone has "

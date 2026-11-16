@@ -8,7 +8,7 @@ import type { TaskState } from './taskState'
 
 import { isAgentHandle } from './authorship'
 import { replySnippet } from './blockDisplay'
-import { taskState } from './taskState'
+import { joined, taskState } from './taskState'
 
 import { t } from '@/i18n'
 
@@ -40,7 +40,8 @@ export interface TaskLine {
   latest?: string | null
 }
 
-function acceptedLabel(task: ChannelTask): string | null {
+/** 最后一步采纳了的任务，状态词下面那一行接着写合进去的是哪个 PR。 */
+function acceptedPr(task: ChannelTask): string | null {
   if (task.presentation.phrase !== 'accepted' || !task.last_accepted_pr) return null
   const n = task.accepted_count ?? 1
   return n > 1
@@ -60,13 +61,13 @@ export function taskLine(
   const open = task.status !== 'closed'
   const n = task.accepted_count ?? 0
   const state = taskState(task, { viewer, nameOf, agentName })
-  const label = acceptedLabel(task)
+  const pr = acceptedPr(task)
   return {
     id: task.id,
     title: task.title,
     owner: task.owner_handle ?? null,
     creator: task.created_by ?? task.owner_handle ?? null,
-    state: label ? { ...state, label } : state,
+    state: pr ? { ...state, line: joined([state.line, pr]) } : state,
     mine,
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
     at: task.last_message?.created_at ?? task.updated_at,

@@ -227,7 +227,7 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 在做
+    status: 进行中
     owner: 你 负责
     at: 2
     until: 3
@@ -261,7 +261,7 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 在做
+    status: 进行中
     at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
@@ -295,7 +295,7 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 在做
+    status: 进行中
     owner: 你 负责
   - kind: bars
     lines: 2
@@ -344,7 +344,7 @@ parts:
 「全部任务」列出项目里的所有任务，「总览」按人汇总每位同学手上的任务。
 
 :::walk
-1. 点左侧栏顶部的项目名，在菜单中点「全部任务」。任务按「待处理」「检查中」「进行中」分组，每行写着负责人和状态。
+1. 点左侧栏顶部的项目名，在菜单中点「全部任务」。任务按状态分组，例如「待审阅」「进行中」，每行写着负责人和状态。
 2. 点上方的「其他人的」，只看同学负责的任务。
 3. 点左侧栏最上方的「总览」。「谁在做什么」按人列出每位同学手上的任务。
 
@@ -378,7 +378,7 @@ parts:
     at: 2
     until: 3
   - kind: line
-    text: 待处理
+    text: 待审阅
     at: 1
     until: 3
   - kind: task
@@ -394,13 +394,13 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 在做
+    status: 进行中
     at: 1
     until: 2
   - kind: task
     title: 实验报告
     owner: 王珊 负责
-    status: 在做
+    status: 进行中
     at: 1
     until: 2
   - kind: head
@@ -416,7 +416,7 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 在做
+    status: 进行中
     at: 3
   - kind: bars
     who: 陈默
@@ -434,7 +434,7 @@ parts:
   - kind: task
     title: 实验报告
     owner: 王珊 负责
-    status: 在做
+    status: 进行中
     at: 3
 ```
 :::

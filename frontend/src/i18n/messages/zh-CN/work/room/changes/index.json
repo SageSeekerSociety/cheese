@@ -42,7 +42,7 @@
   "saveFailed": "保存失败",
   "searchFiles": "搜索文件",
   "sourceUnavailable": "无法打开这个任务，换一个来源查看",
-  "statusReadOnly": "{status} · 只读",
+  "statusReadOnly": "{status}，只读",
   "summary": "{count} 个文件 · +{added} −{removed}",
   "switchToCommitted": "切换到已提交版本",
   "tooLarge": "文件过大，无法在浏览器中打开",

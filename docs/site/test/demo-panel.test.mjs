@@ -130,7 +130,7 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     ok(!w.querySelector('figcaption, [data-dp-replay], input[type=range], progress'), `walk ${i + 1}: no caption, no replay, no progress bar — the steps are all of it`)
   })
   ok(restWalk[0].includes('进行中') && restWalk[0].includes('芝士这一轮的清单'), `walk 1 rests on the task in progress with its checklist: ${restWalk[0]}`)
-  ok(restWalk[1].includes('已采纳') && restWalk[1].includes('任务已关闭'), `walk 2 rests on 已采纳 and 任务已关闭: ${restWalk[1]}`)
+  ok(restWalk[1].includes('已完成') && restWalk[1].includes('任务已关闭'), `walk 2 rests on 已完成 and 任务已关闭: ${restWalk[1]}`)
 
   // Reduced motion: nothing walks by itself, the last screen stays; a click switches.
   {
@@ -162,7 +162,7 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     const p1 = ws[1].querySelector('[data-walk-panel]')
     ws[1].querySelector('[data-walk-step="1"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }))
     eq(onStep(ws[1]), '1', 'clicking a step highlights it')
-    ok(await until(() => seen(p1).includes('审阅重点') && seen(p1).includes('改动') && !seen(p1).includes('已采纳'), 5000), `clicking step 1 of walk 2 shows this delivery in 改动: ${seen(p1)}`)
+    ok(await until(() => seen(p1).includes('审阅重点') && seen(p1).includes('改动') && !seen(p1).includes('已完成'), 5000), `clicking step 1 of walk 2 shows this delivery in 改动: ${seen(p1)}`)
     // The window is as tall as the frame on screen: nothing holds it at the
     // tallest frame, and once a step has settled no fixed height is left on it.
     await sleep(1200)

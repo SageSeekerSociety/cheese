@@ -63,7 +63,7 @@
   "taskOwnerNotInProject": "只能转交给项目成员",
   "taskOwnerOnly": "只有任务的负责人可以这样做",
   "taskParticipantsOnly": "只有任务的负责人和协作者可以这样做",
-  "taskProgressWhileInReview": "这件任务有一张卡在等审阅，现在由卡说它在哪一步；卡被退回或作废后，任务回到在做，再报你的状态",
+  "taskProgressWhileInReview": "这件任务待审阅，现在由卡说它在哪一步；卡被退回或作废后，任务回到进行中，再报你的状态",
   "taskReviewAdminsOnly": "只有空间管理员可以审核题目",
   "taskTeamSizeTeamOnly": "只有团队题可以设置每队人数",
   "taskTimeInvalid": "{field} 不是有效的时间",

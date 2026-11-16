@@ -41,8 +41,6 @@ export function projectMap(): CanvasBoard {
       room_id: '7a2b0000-0000-4000-8000-0000000000c1',
       column: 'building',
       phrase: 'started',
-      agent_name: '芝士',
-      agent_name_source: 'default',
     },
   })
   const ui = card(3, '改搜索框和结果页', {
@@ -53,8 +51,6 @@ export function projectMap(): CanvasBoard {
       room_id: '7a2b0000-0000-4000-8000-0000000000c1',
       column: 'needs_you',
       phrase: 'awaiting_review',
-      agent_name: '芝士',
-      agent_name_source: 'default',
     },
     updated_by: 'wang',
   })

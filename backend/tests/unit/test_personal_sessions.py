@@ -56,7 +56,7 @@ ANSWERS = {
     "/tasks/joined": [{"id": 7, "title": "一道题", "intro": "", "deadline": None}],
     "/topics/": {"content": "文档正文", "doc_version": 3},
     "/assistant/agent/read": {
-        "text": "任务「报名说明」（ml/tasks/12），进行中\n正文",
+        "text": "任务「报名说明」（ml/tasks/12），未结束\n正文",
         "subject": "任务「报名说明」",
     },
 }

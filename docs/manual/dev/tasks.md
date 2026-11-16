@@ -51,12 +51,12 @@ covers:
 |---|---|---|
 | `accepted_at` | 每次采纳（那次合并成功），记最近一次 | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
 | `delivered_head` | 同上，记下最近合进去的那一版 | 下一步的工作目录从这里把没合进去的提交带走 |
-| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写完总结用 `cheese_task(action=close)` 关掉它，最晚 45 分钟（`room_task.closing`），但任务里有总结以外的活在做、或有一条消息在等着被读时不关，最晚再等两小时；这期间显示「已采纳」 |
+| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写完总结用 `cheese_task(action=close)` 关掉它，最晚 45 分钟（`room_task.closing`），但任务里有总结以外的活在做、或有一条消息在等着被读时不关，最晚再等两小时；这期间显示「已完成」 |
 | `closed_at` | 负责人、协作者或任务的会话关闭（`cheese_task(action=close)`，写完总结的那次也是），或最后一步采纳后平台到点的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
 
-所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」或「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已采纳」。
+所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的按有没有采纳、有没有结论写「已完成」或「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已完成」。
 
-窗口跟着关闭一起结束：任何一条关闭路径都清掉 `closing_since`（`close_task`）。关了的任务没有在等的总结，而留着它，负责人重开时拿到的会是一条开着却写「已采纳」的任务 —— 左侧栏要 `closing_since` 为空、「未完成」要它不显示「已采纳」、「已关闭」要 `status` 是 closed，三个哪儿都不收它（2026-10-11，任务 #58）。
+窗口跟着关闭一起结束：任何一条关闭路径都清掉 `closing_since`（`close_task`）。关了的任务没有在等的总结，而留着它，负责人重开时拿到的会是一条开着却写「已完成」的任务 —— 左侧栏要 `closing_since` 为空、「未结束」要它不显示「已完成」、「已结束」要 `status` 是 closed，三个哪儿都不收它（2026-10-11，任务 #58）。
 
 ## 一条任务是一段对话 {#conversation}
 
@@ -93,7 +93,7 @@ covers:
 
 **转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务里执行环境落在新负责人不能用的电脑上的队友（原负责人自己的电脑，不进沙箱或那人电脑的规格），先照换环境的流程换到新负责人能用的那个（`environments.usable_by_owner`：任务的默认、房间的默认、项目默认，不能用的跳过，最后是标准沙箱），任务指着这样一台电脑的默认清掉；推送不成功就不转交，说明原因。
 
-**关闭**：`POST /topics/{task}/close`，参加这件活的人（负责人或协作者，`TaskService.takes_part`）或这条任务自己的会话（`cheese_task(action=close)`）。交付还在等人决定（任务上有一张 `OPEN_CARD_STATUSES` 的卡，`AcceptService.waiting_card`）时，任务自己的会话关不了，接口回 409（`taskCloseWhileDeliveryWaits`）：关掉会让这份交付作废，那是人的决定。拒绝的话告诉它人在界面上哪里点（输入框上方那一条上的采纳和「退回」、任务页「更多操作」里的「关闭任务」），`cheese_task` 的 close 和 `cheese_card` 的 request 的说明里也写着同一段（`DELIVERY_IS_DECIDED_IN_THE_UI`）；人在对话里说「采纳」「关掉吧」不算数，它回一句指给他看。这几处写的按钮名和前端文案由 `test_delivery_guidance_names_the_ui_labels.py` 核对。经 forge 代理关这样的 PR、删它的分支同样被拒（`forge_proxy.pr_close_targets`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——人关、任务的会话写完总结自己关、写总结的指令被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的活就被打断，写下的留着。「写完总结」只认会话调了 `cheese_task(action=close)` 这件事：会话读到了总结指令、之后停下来，平台看不出它写没写，任务照旧开着等到点。后两种是平台自己关的，下面几样都是平台核得了的事实，有一样就不关，等它们没了之后的那次再关（`closing.unfinished`）：任务的会话 runner 报着在干活、而它还没读到总结指令（那它在干的就是别的）；有发给 AI 队友的消息还没被读；有消息读进去之后那段工作失败了。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、会话照停，按会话的座位各记一条运行记录，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。关闭后任务对话照样能说话，和支线一样：会话的改动留不下（`Place.keeps_work`），只有被叫到才回答，`task_section(closed=True)` 告诉它只回答、不改；按关闭状态打断和结束轮次的两处（`turn_inputs.stop_work_in_closed_tasks`、`open_turns`）只管关闭之前开始的轮次，关闭之后有人来问的那一轮不受影响。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
+**关闭**：`POST /topics/{task}/close`，参加这件活的人（负责人或协作者，`TaskService.takes_part`）或这条任务自己的会话（`cheese_task(action=close)`）。交付还在等人决定（任务上有一张 `OPEN_CARD_STATUSES` 的卡，`AcceptService.waiting_card`）时，任务自己的会话关不了，接口回 409（`taskCloseWhileDeliveryWaits`）：关掉会让这份交付作废，那是人的决定。拒绝的话告诉它人在界面上哪里点（输入框上方那一条上的采纳和「退回」、任务页「更多操作」里的「关闭任务」），`cheese_task` 的 close 和 `cheese_card` 的 request 的说明里也写着同一段（`DELIVERY_IS_DECIDED_IN_THE_UI`）；人在对话里说「采纳」「关掉吧」不算数，它回一句指给他看。这几处写的按钮名和前端文案由 `test_delivery_guidance_names_the_ui_labels.py` 核对。经 forge 代理关这样的 PR、删它的分支同样被拒（`forge_proxy.pr_close_targets`）。留了结论的显示「已完成」，没留的显示「已关闭」；结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——人关、任务的会话写完总结自己关、写总结的指令被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的活就被打断，写下的留着。「写完总结」只认会话调了 `cheese_task(action=close)` 这件事：会话读到了总结指令、之后停下来，平台看不出它写没写，任务照旧开着等到点。后两种是平台自己关的，下面几样都是平台核得了的事实，有一样就不关，等它们没了之后的那次再关（`closing.unfinished`）：任务的会话 runner 报着在干活、而它还没读到总结指令（那它在干的就是别的）；有发给 AI 队友的消息还没被读；有消息读进去之后那段工作失败了。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、会话照停，按会话的座位各记一条运行记录，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。关闭后任务对话照样能说话，和支线一样：会话的改动留不下（`Place.keeps_work`），只有被叫到才回答，`task_section(closed=True)` 告诉它只回答、不改；按关闭状态打断和结束轮次的两处（`turn_inputs.stop_work_in_closed_tasks`、`open_turns`）只管关闭之前开始的轮次，关闭之后有人来问的那一轮不受影响。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
 
 人在任务上看得到的变化，做它的 AI 队友也要知道，不然人说的一句话它对不上（`room_task/heard.py`）。它自己做的（递卡、报状态、关任务、起名）由它调的那个工具在回复里说清对任务做了什么；别人做的——人，或者平台自己——分两种。要它动手的（验收退回、作废、检查红了、冲突、PR 被拒绝合并或离开合并队列、采纳之后接着做或写总结）是一条指令，经投递账本直接交给任务自己的会话，把它叫起来（`heard.act` → `delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转；给人看的那一行在同一个事务里落进任务对话，任务已关闭时只落那一行。依赖通知、消息被编辑也走投递账本，各自写在 `review/pr_publish.py` 和 `block/editing.py` 里。只要它知道的（换验收人、撤回采纳、人关闭或重新打开任务、改名、换负责人或协作者、换 AI 队友、平台关任务）不叫醒它：那句话挂在任务对话里一个块的 `agent_notice` 上，跟着它下一次的输入进去，读过就盖戳（`block/history.notices_after`）。这件事本来就有一行给人看的，话挂在那一行上（`heard.informing`）；没有的落一行房间里不显示的（`in_room: false`，`heard.inform`）。看板上的「已离开」不告诉它：那说的是它的会话不在，会话一回来这个标记就撤掉，它读得到的时候已经不成立了。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。任务里每位队友的执行环境是自己的；它第一次要手时按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目默认 取一份，之后默认再变也不跟着动。负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/sessions/{session}/environment` 换一位、用 `PUT /topics/{task}/environment-default` 改任务的默认；设备页的批量挪走对任务会话走的就是前一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`environment.works_tasks_of`）：选不了，那个人电脑的沙箱也不放在上面。
 
@@ -154,19 +154,19 @@ covers:
 
 两处显示状态**都不存库，读的时候从已有事实算**，而且只在后端算一次（`room_task/presentation.py`）。这条逻辑以前在前端是两份 TypeScript，同一句规矩写两遍就会走散；而 CLI、通知和以后的任何客户端问的是同一个问题，它们读不到那两份。这一层是纯函数：没有 I/O，不碰 session，不读时钟——「现在几点」是参数。
 
-列回答的不是「进行到哪一步」，是「**该谁动**」：
+列回答的不是「进行到哪一步」，是「**该谁动**」。列是内部判据（点到谁、侧栏的呼吸绿），界面上不写列名；人看到的是每个短语归到的状态词，七个之一（`lib/taskState.ts` 的 `taskStatus`），短语本身只用在状态词下面那一行：
 
-| 列 | 意思 | 允许出现的短语 |
+| 列 | 意思 | 短语 → 状态词 |
 |---|---|---|
-| `building` 进行中 | 在做，还没递出交付 | 芝士在做、在等结果、进行中、空闲（房间）、草稿（房间） |
-| `delivering` 检查中 | 下一步在平台 / 芝士手上 | 检查运行中、等待检查、修复检查、解决冲突、平台更新分支 |
-| `needs_you` 待处理 | 下一步在人手上 | 检查未通过、待审阅、已退回、待回答、卡住了 |
-| `done` 已关闭 | 已关闭：最后一步已采纳，或没交付就关了 | 已采纳、已关闭（留没留结论都是这一句） |
-| `archived` 已归档 | 房间才有；任务不归档 | 已归档 |
+| `building` | 在做，还没递出交付 | `running`、`waiting` → 进行中；`started` → 未开始；`idle`、`draft` 只有房间有 |
+| `delivering` | 下一步在平台 / 芝士手上 | `gate_running`、`awaiting_checks`、`fixing_checks`、`resolving_conflict`、`updating_branch` → 待审阅 |
+| `needs_you` | 下一步在人手上 | `checks_failed`、`awaiting_review` → 待审阅；`bounced` → 进行中；`awaiting_answer` → 待回答；`blocked` → 待协助 |
+| `done` | 任务结束了 | `accepted`、`completed`（留了结论）→ 已完成；`closed` → 已关闭 |
+| `archived` | 房间才有；任务不归档 | 已归档 |
 
-同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（显示「修复检查」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（显示「检查未通过」）。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。
+同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（下面那一行写「检查未通过，芝士修复中」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（写「检查未通过，等负责人处理」）。两者的状态词都是待审阅。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。
 
-一件任务只有一个状态：开启、在做、在等、卡住、待回答、待审阅、退回、关闭（`room_task/presentation.task_presentation` 是看板唯一的判据）。平台核得了的事实定它：有一张卡在等审阅就是待审阅，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回在做；人关闭、重新打开就是关闭、开启。没有卡的时候，做它的 AI 队友用 `cheese_task(action=state)`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：界面上的标签分别是「在做」「在等」「卡住」，它那句说明写在标签后面那一行（`lib/taskState.ts`）；卡住了落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_card(action=request)` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。做它的那位队友的会话在跑是核得了的事实：没有卡、也没有待回答的问题时，它的会话在跑就是在做，除非它在这一次跑里报了别的。「这一次跑」由 runner 自己说，平台不推：开始一次跑的那个 `running` 事件的 (epoch, seq) 就是这一次的名字，runner 记着它，会话里每一次平台工具调用都带上（`X-Cheese-Run`，`executor_transport.PlatformHost.run`；Claude Code 的工具在会话自己的 transport 进程里跑，它像 `compact` 一样经会话 socket 问 runner）。平台在应用这个事件时把它记在 `session_states.run_epoch` / `run_seq` 上（每一个应用到的 `running` 事件都记，不管是哪一次登记送来的、状态翻没翻：事件按 runner 写下的次序应用，最后一个就是正在跑的那一次；替掉一个还读作在跑的旧进程，新进程的这一次是新的），报状态时把调用带来的那一次记在 `tasks.progress_run_*` 上，看板拿 (座位, harness, epoch, seq) 和这条活自己那位队友此刻在跑的那一次比（`agent.teammate_runs`）。Codex 和 pi 的 runner 不报会话状态，没有「哪一次」可说，它们报的状态照旧算数；还没被替换的旧版 runner 不带这一次，它在跑时任务显示在做。报了「在等」之后被构建叫醒、报了「卡住」之后有人回了它，都是在做；在这一次里报的照它说的，runner 的报告晚到也一样。审阅的、被叫进来的别的 agent 在这段对话里跑，不算。会话开始或停下时，runner 的报告让任务所在的页面重读（`room_task/live.sessions_moved`）。平台不从轮次推断，会话停下不改它报的；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的——只认报这句话的那位队友自己的会话（`progress_set_by`），任务对话里别的队友的会话进出不算。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是「卡住了」时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
+一件任务只有一个状态（`room_task/presentation.task_presentation` 是唯一的判据），界面上写成七个状态词之一。平台核得了的事实定它：有一张卡在等审阅就是待审阅，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回进行中；人关闭就是已完成或已关闭，重新打开后从未开始算起。没有卡的时候，做它的 AI 队友用 `cheese_task(action=state)`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：界面上的状态词分别是「进行中」「进行中」「待协助」，它那句说明写在状态词下面那一行（`lib/taskState.ts`）；`blocked` 落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_card(action=request)` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。做它的那位队友的会话在跑是核得了的事实：没有卡、也没有待回答的问题时，它的会话在跑就是在做，除非它在这一次跑里报了别的。「这一次跑」由 runner 自己说，平台不推：开始一次跑的那个 `running` 事件的 (epoch, seq) 就是这一次的名字，runner 记着它，会话里每一次平台工具调用都带上（`X-Cheese-Run`，`executor_transport.PlatformHost.run`；Claude Code 的工具在会话自己的 transport 进程里跑，它像 `compact` 一样经会话 socket 问 runner）。平台在应用这个事件时把它记在 `session_states.run_epoch` / `run_seq` 上（每一个应用到的 `running` 事件都记，不管是哪一次登记送来的、状态翻没翻：事件按 runner 写下的次序应用，最后一个就是正在跑的那一次；替掉一个还读作在跑的旧进程，新进程的这一次是新的），报状态时把调用带来的那一次记在 `tasks.progress_run_*` 上，看板拿 (座位, harness, epoch, seq) 和这条活自己那位队友此刻在跑的那一次比（`agent.teammate_runs`）。Codex 和 pi 的 runner 不报会话状态，没有「哪一次」可说，它们报的状态照旧算数；还没被替换的旧版 runner 不带这一次，它在跑时任务显示进行中。报了 `waiting` 之后被构建叫醒、报了 `blocked` 之后有人回了它，都显示进行中；在这一次里报的照它说的，runner 的报告晚到也一样。审阅的、被叫进来的别的 agent 在这段对话里跑，不算。会话开始或停下时，runner 的报告让任务所在的页面重读（`room_task/live.sessions_moved`）。平台不从轮次推断，会话停下不改它报的；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的——只认报这句话的那位队友自己的会话（`progress_set_by`），任务对话里别的队友的会话进出不算。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是 `blocked` 时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
 
 「待我处理」那份清单（`api/awaiting_deps.py` 的 `waiting_items` + `room_task/awaiting.py`）读的是**同一个** `task_presentation` / `room_presentation`，差别只有范围：「全部任务」是一个项目内全部，清单是跨项目、且点到我的那些。它不能从通知表拼出来——通知是一条条事件记录，卡被驳回、作废或别人先处理掉了，那条记录还躺着，而从它身上读不出已经不作数了；一份「现在还没处理完的有哪些」必须从当下的事实重算。
 
@@ -218,7 +218,7 @@ covers:
 
 ## 边界与坑 {#traps}
 
-- 「待回答」压过队友报的「在做」：它停在那个问题上等回答，列表上显示「芝士在做」正是让人不来看的那句话。
+- 「待回答」压过队友报的 `working`：它停在那个问题上等回答，列表上显示「进行中」正是让人不来看的那个词。
 - 待回答只读问题上的回答、跳过记录：旁聊或提问 AI 继续发言都不结题。各任务视图共用寻址，包含多人提问、未点名时的任务参与者，并扣除已跳过的人。`awaits_me` 保留提需求人等关注提醒，个人称谓读 `needs_my_action`：只有当前实际被问、被指定审阅或需要处理问题的人，才写成「待你…」。显示单个人名的 `waiting_on` 不能代表多个被问者。
 - `Task.model` / `effort` 今天**只有卡片渲染读，没有任何接口写**，任务会话的执行路径也不读它们。卡上显示哪个模型从 `usage` 里这条任务最后一行算出来（`presentation.card_model`），不存一列。
 - 上一次检查点之后的改动只在那个沙箱里：沙箱换掉时它们就没有了；那次检查点的同步失败了也一样——现场里那条失败记录是唯一的信号。

@@ -1022,8 +1022,6 @@ defineExpose({
             :project-id="projectId"
             :active="shown('changes')"
             :refresh-tick="refreshTick"
-            :agent-name="agentName"
-            :member-names="memberNames"
           />
           <PanelPreviewHost
             v-if="mounted.has('preview')"

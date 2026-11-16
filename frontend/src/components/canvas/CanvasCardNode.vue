@@ -11,8 +11,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
-import { teammateName } from '@/lib/agentNames'
-import { columnDotStyle, phraseLabel } from '@/lib/board'
+import { columnDotStyle } from '@/lib/board'
+import { statusLabel, taskStatus } from '@/lib/taskState'
 
 const props = withDefaults(
   defineProps<{
@@ -72,12 +72,8 @@ function onKey(event: KeyboardEvent) {
 }
 
 const task = computed(() => props.card.task)
-/** 卡上那句状态说到的队友（「{agent}在做」）：做这件任务的那位，按读者的语言叫它。 */
-const phrase = computed(() =>
-  task.value
-    ? phraseLabel(task.value.phrase as BoardPhrase, teammateName(task.value.agent_name, task.value.agent_name_source))
-    : ''
-)
+/** 卡上写这件任务此刻的状态词。 */
+const phrase = computed(() => (task.value ? statusLabel(taskStatus(task.value.phrase as BoardPhrase)) : ''))
 const empty = computed(() => !props.card.content.trim())
 </script>
 

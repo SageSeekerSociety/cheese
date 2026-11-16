@@ -1,7 +1,7 @@
 // 任务状态的呈现规则 —— **这里没有一行在算状态**。
 //
 // 一件任务落哪一格、写哪句话，全部由后端算好放在 `presentation` 里。前端这边只留下
-// 和后端无关的几件事：格子叫什么、那句话怎么说、色点长什么样。
+// 和后端无关的几件事：那句话怎么说、色点长什么样。状态词在 `taskState.ts`。
 //
 // 前端不再自己推一遍，是因为两个算法算同一个东西必然会走散，而屏幕上那个词到底是
 // 哪一个算出来的，看的人分辨不了——他只会得出「界面在骗我」这一个结论。
@@ -12,11 +12,6 @@
 import type { BoardColumn, BoardPhrase, RoomTask } from '@/cx_types'
 
 import i18n, { t } from '@/i18n'
-
-// 列名按当前语言现取，不存成常量：切换语言后要跟着变。
-export function columnLabel(column: BoardColumn): string {
-  return t(`work.board.column.${column}`)
-}
 
 /** 卡面上那一句，按当前语言现取。后端给的是码（`presentation.phrase`）；这一版
  *  不认识的码（后端先发了新短语）照原样写出来，不写成空白。
@@ -50,7 +45,7 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
 /** 还有人要管的那些任务：去掉已归档频道里没走完的。
  *
  *  任务不归档，频道归档：一个频道收了尾，里面没走完的任务后端照样按它自己的状态落在
- *  进行中 / 检查中 / 待处理里，可频道归档了就没人会再去动它们——全部任务答的
+ *  各自那一列里，可频道归档了就没人会再去动它们——全部任务答的
  *  是「接下来谁要动什么」，它们不该在上面。已关闭的不筛：那是收了尾的东西。 */
 export function liveTasks<T extends { room_id: string; presentation: { column: BoardColumn } }>(
   tasks: readonly T[],

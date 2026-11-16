@@ -1,5 +1,6 @@
-// 画布上关联了任务的格子：那句状态说到做这件任务的队友时，叫项目给它起的名字。
+// 画布上关联了任务的格子：写这件任务此刻的状态词，和全部任务里同一个词。
 import type { Component } from 'vue'
+import type { BoardPhrase } from '@/cx_types'
 import type { CanvasCard } from '@/types/canvas'
 
 import { render } from '@testing-library/vue'
@@ -11,7 +12,7 @@ import { setLocale } from '@/i18n'
 
 beforeEach(() => setLocale('zh-CN'))
 
-function card(agent_name: string, agent_name_source: string): CanvasCard {
+function card(phrase: BoardPhrase): CanvasCard {
   return {
     id: 'c1',
     number: 1,
@@ -26,9 +27,7 @@ function card(agent_name: string, agent_name_source: string): CanvasCard {
       title: '重建搜索索引',
       room_id: 'r1',
       column: 'building',
-      phrase: 'running',
-      agent_name,
-      agent_name_source,
+      phrase,
     },
     task_hidden: false,
     updated_by: 'alice',
@@ -37,15 +36,14 @@ function card(agent_name: string, agent_name_source: string): CanvasCard {
 }
 
 describe('画布格子上的任务状态', () => {
-  it('项目给队友改了名，格子上写它的名字，不写「芝士」', () => {
-    const view = render(CanvasCardNode as Component, { props: { card: card('Nova', 'human'), editable: false } })
-    expect(view.container.textContent).toContain('Nova在做')
-    expect(view.container.textContent).not.toContain('芝士')
+  it('写任务的状态词', () => {
+    const view = render(CanvasCardNode as Component, { props: { card: card('gate_running'), editable: false } })
+    expect(view.container.textContent).toContain('待审阅')
   })
 
-  it('还用着出生时那个名字的队友，按读者的语言叫它', () => {
+  it('按读者的语言写', () => {
     setLocale('en')
-    const view = render(CanvasCardNode as Component, { props: { card: card('芝士', 'default'), editable: false } })
-    expect(view.container.textContent).not.toContain('芝士')
+    const view = render(CanvasCardNode as Component, { props: { card: card('running'), editable: false } })
+    expect(view.container.textContent).toContain('In progress')
   })
 })
