@@ -7,11 +7,12 @@ journal keeps every line and everything a person wrote comes through unchanged.
 """
 
 from app.api.routes.topics_transcript import hide_platform_reminders
-from app.domain.agent.harness.notices import (
+from app.domain.prompts import (
     PLATFORM_NOTICE,
+    Kind,
     blocked_report_reminder,
     platform_prompt,
-    publication_prompt,
+    render_notice,
     silence_reminder,
     stale_checklist_reminder,
     stale_progress_reminder,
@@ -23,9 +24,9 @@ NONCE = "⟪w:" + "0123456789abcdef01234567" + "⟫"
 
 
 def test_the_contract_goes_and_the_persons_words_stay():
-    assert without_reminders(publication_prompt("先看分页接口") + "\n" + NONCE) == (
-        "先看分页接口"
-    )
+    assert without_reminders(
+        render_notice(Kind.task, "先看分页接口") + "\n" + NONCE
+    ) == ("先看分页接口")
 
 
 def test_every_reminder_goes_in_both_languages():
@@ -56,8 +57,8 @@ def test_a_persons_own_text_is_returned_untouched():
 
 
 def test_two_notices_with_a_persons_words_between_them():
-    text = publication_prompt(
-        platform_prompt(silence_reminder(10)) + "\n\n先看分页接口"
+    text = render_notice(
+        Kind.task, platform_prompt(silence_reminder(10)) + "\n\n先看分页接口"
     )
     assert without_reminders(text) == "先看分页接口"
 
@@ -77,7 +78,7 @@ def test_a_notice_only_input_leaves_no_row_behind():
 
 
 def test_a_persons_input_keeps_its_words():
-    block = _block([{"kind": "text", "text": publication_prompt("你好")}])
+    block = _block([{"kind": "text", "text": render_notice(Kind.task, "你好")}])
     [shown] = hide_platform_reminders([block])
     assert shown["meta"]["parts"] == [{"kind": "text", "text": "你好"}]
     assert shown["content"] == "你好"
@@ -86,7 +87,7 @@ def test_a_persons_input_keeps_its_words():
 def test_a_tool_in_the_same_record_is_left_alone():
     block = _block(
         [
-            {"kind": "text", "text": publication_prompt("跑一下")},
+            {"kind": "text", "text": render_notice(Kind.task, "跑一下")},
             {"kind": "tool", "name": "Bash", "text": "make test"},
         ]
     )
@@ -97,7 +98,7 @@ def test_a_tool_in_the_same_record_is_left_alone():
 
 
 def test_the_raw_record_still_has_the_whole_line():
-    text = publication_prompt("你好")
+    text = render_notice(Kind.task, "你好")
     block = _block(
         [{"kind": "text", "text": text}],
         record={"type": "user", "message": {"content": text}},

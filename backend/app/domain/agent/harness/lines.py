@@ -15,11 +15,11 @@ from datetime import UTC, datetime
 
 from app.core import raster_images
 from app.core.config import settings
-from app.domain.agent.harness.notices import strip_platform_notice
 from app.domain.block.authorship import speaker
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.identity.handles import recipient_seat
+from app.domain.prompts import strip_platform_notice
 
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"

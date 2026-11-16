@@ -17,13 +17,13 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import TOPIC_DOC_CHAR_BUDGET, fit_doc_to_budget
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.contract import Image
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.scopes import MemoryScope
+from app.domain.prompts import TOPIC_DOC_CHAR_BUDGET, Kind, fit_doc_to_budget
 from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.place import Place, doc_text_of
 from app.domain.task.claims import StageProgress
@@ -184,7 +184,7 @@ class TurnContext:
     overview_doc_id: uuid.UUID | None
     # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
-    # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
+    # `prompts/pieces/memory/`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
     prior_progress: list[dict]
     #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
@@ -216,6 +216,9 @@ class TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
+    # Which kind of session this is (`room.system_prompt.session_kind`): what
+    # it reads and which tools it holds follow from it (`prompts.PROFILES`).
+    kind: Kind
     # A channel's main line and its 支线 keep no work: the session may read,
     # run and try things on its own machine, and nothing it does there reaches
     # the project. What changes the project is done in a task.

@@ -2,28 +2,31 @@
 
 from types import SimpleNamespace
 
-from app.domain.agent.harness.prompt import (
+from app.domain.agent.harness.lines import prompt_line
+from app.domain.agent.skills import load_skill
+from app.domain.block.models import BlockKind
+from app.domain.prompts import (
     PLATFORM_NOTICE,
-    build_system_prompt,
+    Facts,
+    Kind,
     platform_prompt,
-    prompt_line,
-    publication_prompt,
+    render_notice,
+    render_system,
     strip_platform_notice,
     task_opening_prompt,
 )
-from app.domain.block.models import BlockKind
 
 
 def system_prompt() -> str:
     # 全参数在场的一份 prompt，所以记忆说明也要在（`keeps_memory`）——它由调用方
     # 按 runtime 的能力传，而这个夹具要的是「每一段都有一份」。项目现状不在系统
     # 提示词里，它跟着新会话的第一条消息走。
-    return build_system_prompt(
-        "PLATFORM_FIXTURE",
-        "SKILL_FIXTURE",
-        has_doc=True,
-        role="ROLE_FIXTURE",
-        keeps_memory=True,
+    return render_system(
+        Kind.task,
+        Facts(has_doc=True, keeps_memory=True, role="ROLE_FIXTURE"),
+        skill=load_skill,
+        base="PLATFORM_FIXTURE",
+        carried="SKILL_FIXTURE",
     )
 
 
@@ -38,7 +41,7 @@ def event_prompts() -> dict[str, str]:
         embeds_images=True,
     )
     return {
-        "room_message": publication_prompt(human),
+        "room_message": render_notice(Kind.task, human),
         "platform_notice": platform_prompt(
             strip_platform_notice("DOCUMENT_CHANGED_FIXTURE " + PLATFORM_NOTICE)
         ),

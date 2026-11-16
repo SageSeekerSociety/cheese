@@ -34,9 +34,9 @@ from app.domain.memory.files import (
     prefix_of,
     without_entries,
 )
-from app.domain.memory.instructions import private_index_pointer
 from app.domain.memory.models import MemoryFileChange, MemoryFileRecord
 from app.domain.memory.writers import MemoryWriter
+from app.domain.prompts import private_index_pointer
 
 
 class MemoryFileConflict(ConflictError):

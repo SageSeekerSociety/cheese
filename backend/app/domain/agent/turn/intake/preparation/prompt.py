@@ -14,11 +14,12 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from app.domain.agent.harness.prompt import platform_prompt, prompt_line
+from app.domain.agent.harness.lines import prompt_line
 from app.domain.agent.prompt import _platform_preamble, _replay_notice
 from app.domain.agent.queries import require_pinned_seat
 from app.domain.block.output_effects import count_prompt_attempt
 from app.domain.block.queries import message_reply_target
+from app.domain.prompts import platform_prompt
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

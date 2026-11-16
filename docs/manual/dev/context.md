@@ -3,8 +3,7 @@ title: 提示词注入与上下文管理
 kind: 概念
 summary: 芝士的会话开场时拿到哪些上下文、按什么顺序、各占多少预算，会话接着跑时怎么补上变化，平台怎么区分人话、平台指令和外部内容，以及不同场景下有什么不同。
 covers:
-  - backend/app/domain/agent/harness/prompt.py
-  - backend/app/domain/agent/harness/opening.py
+  - backend/app/domain/prompts/
   - backend/app/domain/agent/skills.py
   - backend/app/domain/skill_library/
   - backend/sandbox/skills/cheese/SKILL.md

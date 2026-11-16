@@ -3,8 +3,7 @@ title: 系统提示词参考
 kind: 参考
 summary: 芝士的新会话开场时读到什么：系统提示词和开场快照各由哪些块组成，每块的出现条件、预算和原文，以及平台说明库的原文——在构建时从代码生成，不跟着代码漂移。
 covers:
-  - backend/app/domain/agent/harness/prompt.py
-  - backend/app/domain/memory/instructions.py
+  - backend/app/domain/prompts/
   - backend/app/domain/memory/files_store.py
   - backend/app/domain/agent/skills.py
   - backend/app/domain/skill_library/

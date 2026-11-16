@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.prompts import PLATFORM_NOTICE
 from tests.unit.test_a_person_is_answered_before_anything_else import (
     codex,
     monitor,

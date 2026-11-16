@@ -39,12 +39,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.harness import HARNESSES
-from app.domain.agent.harness.prompt import (
-    silence_reminder,
-    stale_checklist_reminder,
-    stale_progress_reminder,
-    still_working_reminder,
-)
 from app.domain.agent.models import AgentTurn, TurnResume
 from app.domain.agent.session_state import reports_lifecycle
 from app.domain.block.authorship import participant_blocks
@@ -52,6 +46,12 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import names_a_person
 from app.domain.notice_meta import EVENT_TURN_FAILED
+from app.domain.prompts import (
+    silence_reminder,
+    stale_checklist_reminder,
+    stale_progress_reminder,
+    still_working_reminder,
+)
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.reads import conversation_progress
 from app.domain.user.services import language_of

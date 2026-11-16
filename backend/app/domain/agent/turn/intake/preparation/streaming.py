@@ -16,25 +16,23 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.notices import blocked_report_reminder
-from app.domain.agent.harness.prompt import (
-    UNTITLED_TASK,
-    build_session_opening,
-    platform_prompt,
-    publication_prompt,
-)
 from app.domain.agent.mcp_notice import unconnected_mcp
-from app.domain.agent.prompt import (
-    _resume_notice,
-    _sandbox_limits,
-    _session_opening_lines,
-)
+from app.domain.agent.prompt import _sandbox_limits, _session_opening_lines
 from app.domain.agent.room.system_prompt import session_system_prompt
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.intake.context import TurnBail
 from app.domain.agent.turn.steps.prepared import PreparedSend
 from app.domain.agent.turn.steps.send import send_prepared
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.prompts import (
+    blocked_report_reminder,
+    platform_prompt,
+    render_notice,
+    render_opening,
+    resume_notice,
+    untitled_task,
+)
+from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.user.services import language_of
 
 if TYPE_CHECKING:
@@ -110,23 +108,18 @@ async def converse(
     # on what is producing the output, not on the machine underneath it.
     runtime = provider
     yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-    # 队友自己带的技能正文接在平台那份指引后面（`context.carried_skills`）：
-    # 空串时 system prompt 与只有平台指引时逐字节相同。
-    skills = (
-        f"{prep.skills}\n\n---\n\n{prepared.skill_bodies}"
-        if prepared.skill_bodies
-        else prep.skills
-    )
     system_prompt = session_system_prompt(
         prep.base_prompt,
-        skills,
-        needs_place=needs_place,
+        kind=prepared.kind,
         has_doc=doc_text is not None,
         role=role,
         harness=runtime.harness,
         name=prepared.agent.display_name,
+        # 队友自己带的技能正文接在平台那份指引后面（`context.carried_skills`）。
+        carried=prepared.skill_bodies,
     )
-    opening = build_session_opening(
+    opening = render_opening(
+        prepared.kind,
         thread=prepared.thread_context,
         channel=prepared.channel_context,
         tasks=prepared.thread_tasks,
@@ -176,9 +169,9 @@ async def converse(
         language = await language_of(session, author)
     if untitled:
         # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
-        prompt_text = f"{platform_prompt(UNTITLED_TASK)}\n\n{prompt_text}"
+        prompt_text = f"{platform_prompt(untitled_task(TITLE_CHARS))}\n\n{prompt_text}"
     if is_resume:
-        prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
+        prompt_text = f"{platform_prompt(resume_notice())}\n\n{prompt_text}"
     # 人说的话叫起来的那一轮（和 `send.py` 里 `summoned` 同一个判据）：重发、平台
     # 自己叫的都不算，那时没有人回过它，问它「还卡不卡」问的不是这回事。
     summoned = user_block_id is not None and not is_resume and not platform_turn
@@ -188,7 +181,7 @@ async def converse(
         prompt_text = (
             f"{platform_prompt(blocked_report_reminder(language))}\n\n{prompt_text}"
         )
-    prompt_text = publication_prompt(prompt_text, language)
+    prompt_text = render_notice(prepared.kind, prompt_text, language)
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
         "elapsed_ms=%.3f unix_ms=%.3f",

@@ -17,8 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness.prompt import build_session_opening, teaching_section
 from app.domain.memory.files_store import IndexSection, MemoryIndex
+from app.domain.prompts import build_session_opening, teaching_section
 from app.domain.task.protocol import Protocol, Teaching, resolve
 from app.domain.task.teaching import TeachingContext
 
@@ -456,10 +456,10 @@ def test_fill_substitutes_the_goals_variable() -> None:
 def test_a_teaching_change_waits_for_the_next_session() -> None:
     """教学配置**不**是逐轮重说的现状：一个会话保持开场那一份，直到下一次新会话。
 
-    这是 #8d772257 定的语义（`harness/prompt.py` 模块说明第 3 条），#4525 把它写进
+    这是 #8d772257 定的语义（`prompts/render.py` 模块说明第 3 条），#4525 把它写进
     了 `TRACKED_SECTIONS` 的注释里。往一个上下文里全是旧范围的会话塞新范围，比让它
     按旧的做完这一轮更糟。"""
-    from app.domain.agent.harness.prompt import TRACKED_SECTIONS
+    from app.domain.prompts import TRACKED_SECTIONS
 
     assert "teaching" not in TRACKED_SECTIONS
 

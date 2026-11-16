@@ -537,7 +537,7 @@ async def tell_agent(
 
 
 # 下面这三段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
-# 和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，可那个包里没有一处
+# 和 `agent` 的其它提示词放在一起，可那里没有一处
 # 用它们 —— 说它们的只有这里，`delivery_landed` 和 `_go_on`。第 9 步把 review 够
 # 不着 `agent` 的那几条调用收进端口时，纯字符串没有理由走端口，就搬回说它的地方。
 

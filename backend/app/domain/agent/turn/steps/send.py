@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.sentences import exception_text, say
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import SessionOpening, opening_changes
 from app.domain.agent.nonce import new_nonce
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
@@ -39,6 +38,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.prompts import SessionOpening, opening_changes
 
 logger = logging.getLogger(__name__)
 _SESSION_ROUTES_KEPT = 512

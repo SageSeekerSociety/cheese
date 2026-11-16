@@ -17,10 +17,11 @@ import re
 
 import pytest
 
-from app.domain.agent.harness.notices import blocked_report_reminder
-from app.domain.agent.harness.prompt import (
+from app.domain.prompts import (
     PLATFORM_NOTICE,
-    publication_prompt,
+    Kind,
+    blocked_report_reminder,
+    render_notice,
     silence_reminder,
     stale_checklist_reminder,
     still_working_reminder,
@@ -73,7 +74,7 @@ def test_a_person_reading_chinese_is_spoken_to_in_chinese(
     language: str | None,
 ) -> None:
     said = (
-        _said(publication_prompt("用户问了一件事", language))
+        _said(render_notice(Kind.task, "用户问了一件事", language))
         + _said(silence_reminder(10, language))
         + _said(still_working_reminder(10, language))
         + _said(stale_checklist_reminder(10, language))
@@ -84,7 +85,7 @@ def test_a_person_reading_chinese_is_spoken_to_in_chinese(
 
 
 def test_a_person_reading_english_is_spoken_to_in_english() -> None:
-    contract = _said(publication_prompt("Somebody asked something", "en"))
+    contract = _said(render_notice(Kind.task, "Somebody asked something", "en"))
     reminder = _said(silence_reminder(10, "en")) + _said(
         still_working_reminder(10, "en")
     )

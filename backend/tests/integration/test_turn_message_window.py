@@ -17,7 +17,7 @@ import pytest
 
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.prompts import PLATFORM_NOTICE
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
 from tests.integration.conftest import project_service, registered

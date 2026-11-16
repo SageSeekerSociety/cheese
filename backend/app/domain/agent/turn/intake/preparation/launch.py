@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.queries import _session_agent
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.system_prompt import session_system_prompt
+from app.domain.agent.room.system_prompt import session_kind, session_system_prompt
 from app.domain.agent.turn.intake.context import Launch, living_doc_text
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent_instance.own import current_role, owned_instance
@@ -98,8 +98,7 @@ async def launch_inputs(
         runtime=provider,
         system_prompt=session_system_prompt(
             prep.base_prompt,
-            prep.skills,
-            needs_place=needs_place,
+            kind=session_kind(place, needs_place=needs_place),
             has_doc=doc_text is not None,
             role=role,
             harness=provider.harness,

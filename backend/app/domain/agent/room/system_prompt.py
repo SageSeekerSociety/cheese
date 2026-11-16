@@ -1,47 +1,61 @@
-"""The system prompt a room's session starts with (`turn/intake/preparation/streaming.py`)."""
+"""The kind of session a place runs, and the system prompt it starts with.
 
-from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.prompt import build_system_prompt
+Both the turn that streams (`turn/intake/preparation/streaming.py`) and the
+prewarm that starts a session ahead of it (`preparation/launch.py`) come here,
+so the two cannot render different prompts for the same seat.
+"""
+
+from typing import TYPE_CHECKING
+
 from app.domain.agent.session_host.host import keeps_memory
-from app.domain.agent.skills import load_skills
+from app.domain.agent.skills import load_skill
+from app.domain.prompts import Facts, Kind, render_system
 
-PRIVATE_SKILLS = ["private-chat"]
+if TYPE_CHECKING:
+    from app.domain.room_task.place import Place
+
+
+def session_kind(place: "Place", *, needs_place: bool) -> Kind:
+    """Which kind of session runs at ``place``: a private chat has no place to
+    work in (`needs_place`); otherwise a task's own conversation, a 支线's, or
+    the channel's main line."""
+    if not needs_place:
+        return Kind.private
+    if place.task is not None:
+        return Kind.task
+    if place.thread is not None:
+        return Kind.thread
+    return Kind.main_line
 
 
 def session_system_prompt(
     base: str,
-    skills: str,
     *,
-    needs_place: bool,
+    kind: Kind,
     has_doc: bool,
     role: str | None,
     harness: str,
     name: str,
+    carried: str = "",
 ) -> str:
-    """The system prompt a session in this room starts with, for the teammate
-    called ``name``.
+    """The system prompt a session of ``kind`` starts with, for the teammate
+    called ``name`` on ``harness``. ``carried``: the skill bodies the teammate
+    brings (`context.carried_skills`).
 
     规矩进系统提示词，现状进开场快照：系统提示词在一个会话里一字不变，前缀缓存
-    才接得上（`build_system_prompt` 的说明）。
-
-    私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，private-chat
-    只补私聊独有的那几条。替换会让私聊成为全仓唯一一间系统提示词里没有
-    chat_send 的房间：终端里答完而没有发布，房间是空的。补的那几条说的正是
-    「这一轮没有地点，只有会话自己那块草稿区」，所以它跟着 `needs_place` 走，
-    而不是再问一遍这间房是不是私聊。
-    """
-    if not needs_place:
-        skills = "\n\n---\n\n".join([skills, load_skills(PRIVATE_SKILLS)])
-    return build_system_prompt(
-        base,
-        skills,
-        has_doc=has_doc,
-        role=role,
-        # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
-        # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
-        keeps_memory=keeps_memory(harness),
-        name=name,
-        # 短名是 `remote_execution.client` 放进会话环境的，只有 claude-code
-        # 的会话有它；别的骨架读到这一段只会 `cd` 到不存在的目录。
-        working_directory=harness == CLAUDE_CODE,
+    才接得上。"""
+    return render_system(
+        kind,
+        Facts(
+            harness=harness,
+            has_doc=has_doc,
+            # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
+            # 读到它只会以为自己在写项目记忆。
+            keeps_memory=keeps_memory(harness),
+            name=name,
+            role=role,
+        ),
+        skill=load_skill,
+        base=base,
+        carried=carried,
     )

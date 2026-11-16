@@ -20,14 +20,11 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from app.domain.agent.harness.prompt import (
-    live_input_lines,
-    platform_prompt,
-    publication_prompt,
-    strip_platform_notice,
-)
+from app.domain.agent.harness.lines import live_input_lines
 from app.domain.agent.input_registration import input_registrar
 from app.domain.agent.prompt import live_inputs, model_images
+from app.domain.agent.room.system_prompt import session_kind
+from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
 from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import (
@@ -40,6 +37,12 @@ from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
+from app.domain.prompts import (
+    Kind,
+    platform_prompt,
+    render_notice,
+    strip_platform_notice,
+)
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
@@ -147,7 +150,12 @@ class LiveInput:
                     else ({}, set())
                 )
             pictures = [images[path] for path, _ in files if path in images]
-            line = publication_prompt(
+            line = render_notice(
+                # Nowhere to deliver when the place is gone (`archived`); the
+                # line is not sent then.
+                session_kind(place, needs_place=not _is_dm(place.room))
+                if place is not None
+                else Kind.main_line,
                 "\n".join(
                     live_input_lines(
                         author,

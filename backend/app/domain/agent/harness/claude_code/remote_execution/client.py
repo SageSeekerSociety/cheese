@@ -248,7 +248,7 @@ def cheese_source() -> Path:
 # goes by — is imported from `executor_transport`: the name and the way its value
 # crosses to the executor are one thing to that module, not a second declaration
 # here. The line is told about it in its prompt
-# (`harness.prompt.WORKING_DIRECTORY`), and the shell prefix binds it in the
+# (`prompts` `system/working_directory`), and the shell prefix binds it in the
 # command's own shell (`shell_prefix.bind_working_directory`): it is set on this
 # process so the prefix can read it, and deliberately not exported to the
 # executor, where a native session has no such variable.

@@ -71,7 +71,6 @@ from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
-from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
 from app.domain.agent.own_calls import ask_owner_to_join, owner_chats_to_ask
 from app.domain.agent.staleness import announce_stale
@@ -88,6 +87,7 @@ from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.project_permissions import Permission
+from app.domain.prompts import task_opening_prompt
 from app.domain.review.archive import OPEN_CARD_STATUSES, close_cards_for_closed_task
 from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin_ended

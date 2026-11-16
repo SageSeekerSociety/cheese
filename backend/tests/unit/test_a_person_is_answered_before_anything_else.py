@@ -45,7 +45,7 @@ from app.domain.agent.harness.driven.runner import (
 )
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.prompts import PLATFORM_NOTICE
 from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions

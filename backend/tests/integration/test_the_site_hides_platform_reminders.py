@@ -8,10 +8,11 @@ actually applies it, and the raw record it projects from is left alone.
 import uuid
 from datetime import UTC, datetime
 
-from app.domain.agent.harness.notices import (
+from app.domain.prompts import (
     PLATFORM_NOTICE,
+    Kind,
     platform_prompt,
-    publication_prompt,
+    render_notice,
     silence_reminder,
 )
 from app.domain.session_record.models import SessionRecord
@@ -77,7 +78,7 @@ def _site(client, room_id: str) -> list[dict]:
 
 def test_the_site_keeps_the_words_and_drops_the_repeat(client):
     room = _room(client)
-    _input(client, room, publication_prompt("先看分页接口"))
+    _input(client, room, render_notice(Kind.task, "先看分页接口"))
     _input(client, room, platform_prompt(silence_reminder(10)))
 
     blocks = _site(client, room)

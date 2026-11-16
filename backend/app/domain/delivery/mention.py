@@ -39,6 +39,7 @@ from app.domain.delivery.agent import instances_for_seats, now, record_agent
 from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import DeliveryEvent, dedup_key
 from app.domain.notification.models import NotificationType
+from app.domain.prompts import piece
 from app.domain.topic_membership.services import TopicMemberService
 
 #: 同一间房一小时里，agent 点名能叫起几轮。人点名不受它限制。
@@ -63,12 +64,7 @@ def mention_prompt(*, author: str, message: str, block_id: uuid.UUID) -> str:
     话，它得先去翻聊天记录才知道自己为什么醒了。后半句是防环的第一道：只回一句「收
     到」还点对方的名，就又叫起对方一轮。
     """
-    return (
-        f"{author} 在房间里点了你的名（消息 id `{block_id}`）：\n\n"
-        f"---\n{message}\n---\n\n"
-        "按这条消息处理，回话用 chat_send。点名会把对方叫起来干活：只是回个话、"
-        "报个结果，不要点对方的名；要对方接着动手时才点。"
-    )
+    return piece("mention", author=author, message=message, block_id=block_id)
 
 
 @dataclass

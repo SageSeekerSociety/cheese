@@ -7,10 +7,10 @@ covers:
   - backend/app/domain/memory/files_store.py
   - backend/app/domain/memory/tree.py
   - backend/app/domain/memory/session.py
-  - backend/app/domain/memory/instructions.py
   - backend/app/domain/memory/models.py
   - backend/app/domain/memory/dream.py
   - backend/app/domain/memory/dream_prompt.py
+  - backend/app/domain/prompts/pieces/memory/
   - backend/app/domain/memory/migration.py
   - backend/app/domain/memory/migration_service.py
   - backend/app/domain/memory/reads.py
@@ -18,7 +18,7 @@ covers:
   - backend/app/api/routes/admin_memory.py
   - backend/scripts/memory_migration.py
   - backend/app/domain/agent/chat.py
-  - backend/app/domain/agent/harness/prompt.py
+  - backend/app/domain/prompts/
   - backend/app/domain/agent/harness/claude_code/runner.py
   - backend/sandbox/cheese
 ---

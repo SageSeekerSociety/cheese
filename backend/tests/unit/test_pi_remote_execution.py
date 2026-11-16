@@ -26,7 +26,7 @@ from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness.driven.runner import SessionStart
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.prompts import PLATFORM_NOTICE
 from tests.pinned_claude import pi_binary
 from tests.support.completions_fixture import Completions
 from tests.support.room_machine import room_machine
