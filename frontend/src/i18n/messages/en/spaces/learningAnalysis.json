@@ -36,6 +36,8 @@
   },
   "notice": {
     "ack": "I have read and understood",
+    "cardHint": "Shown once, the first time a member enters this board; the only button is “I have read and understood”",
+    "cardTitle": "The notice on joining",
     "lead": "Welcome. This board has learning analysis on, and every member is included: the AI reads your conversations with AI teammates inside this board's challenges to find the knowledge points you don't yet understand.",
     "pointEvidence": "You can see your own analysis, and which sentence each judgement rests on, under “My learning insights”.",
     "pointGroups": "A group with fewer than 3 people is not analysed; it just says “fewer than 3, not analysed”.",
@@ -59,6 +61,5 @@
   "saveFailed": "Could not save",
   "saveSuccess": "Saved",
   "switchHint": "Once on, every member is included, including those who join later",
-  "switchTitle": "Turn on learning analysis",
-  "title": "Learning analysis"
+  "switchTitle": "Turn on learning analysis"
 }
