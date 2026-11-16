@@ -49,7 +49,12 @@ vi.mock('@/services/account', () => ({ default: { user: { id: 42 } } }))
 const refreshProjects = vi.fn()
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ refreshProjects }) }))
 vi.mock('@/services/ErrorHandler', () => ({
-  default: { withErrorHandling: async (fn: () => Promise<unknown>) => fn().catch(() => undefined) },
+  default: {
+    withErrorHandling: async (fn: () => Promise<unknown>) => fn().catch(() => undefined),
+    // 真实那一条的判据：服务端有条有理回绝的（带着业务 code）就说它自己那句，其余的
+    // （网络断了、未知错误）退回调用方给的那句。这里照同一条判据替身。
+    explain: async (e: unknown, fallback: string) => ((e as { code?: string })?.code ? (e as Error).message : fallback),
+  },
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
 
@@ -472,5 +477,46 @@ describe('新建空间', () => {
 
     expect(await screen.findByText('创建失败，稍后重试')).toBeTruthy()
     expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox')
+  })
+
+  // 服务端说了为什么就说它那一句：它比「稍后重试」具体，人照着能改。以前不管服务端
+  // 说了什么，弹窗里都只有「创建失败，稍后重试」——重试多少次都一样。
+  it('服务端给了原因时，弹窗里就是它那一句', async () => {
+    spaceCreate.mockRejectedValue(new ApiError(409, '这个空间名称已被占用，换一个', 'ConflictError'))
+    await mount()
+    await fireEvent.click(await screen.findByText('新建空间'))
+    await fireEvent.update(await screen.findByLabelText('空间名称'), '编译原理')
+    await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+
+    expect(await screen.findByText('这个空间名称已被占用，换一个')).toBeTruthy()
+    expect(screen.queryByText('创建失败，稍后重试')).toBeNull()
+  })
+
+  // 服务端没给原因（网络断了）时退回「稍后重试」——不写这一句这里就是一片空白。
+  it('服务端没给原因时退回「稍后重试」', async () => {
+    spaceCreate.mockRejectedValue(new Error('offline'))
+    await mount()
+    await fireEvent.click(await screen.findByText('新建空间'))
+    await fireEvent.update(await screen.findByLabelText('空间名称'), '编译原理')
+    await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+
+    expect(await screen.findByText('创建失败，稍后重试')).toBeTruthy()
+    expect(screen.queryByText('offline')).toBeNull()
+  })
+
+  // 传图和存空间是两件事：传图没成时说的话和「存不下」不同，也不会真的去建空间。
+  // 一句「创建失败，稍后重试」会让人去重试同一张图，而那张图就是没成的原因。
+  it('传图没成时说的是传图，且不建空间', async () => {
+    createAvatar.mockRejectedValue(new Error('offline'))
+    await mount()
+    await fireEvent.click(await screen.findByText('新建空间'))
+    await fireEvent.update(await screen.findByLabelText('空间名称'), '编译原理')
+    const file = new File(['image'], 'avatar.png', { type: 'image/png' })
+    await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+
+    expect(await screen.findByText('上传头像失败，换一张或稍后重试')).toBeTruthy()
+    expect(screen.queryByText('创建失败，稍后重试')).toBeNull()
+    expect(spaceCreate).not.toHaveBeenCalled()
   })
 })
