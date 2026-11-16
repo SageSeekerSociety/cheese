@@ -66,9 +66,9 @@ const { closeSecondaryDrawer } = navigationStore
 // 计算是否为桌面端模式
 const isDesktop = computed(() => mdAndUp.value && !props.forceMobile)
 
-// 侧栏头和侧栏底那两行只在桌面画；没有外壳（单测单挂一个侧栏）或没登录时不画。
+// 侧栏头和侧栏底那两行只在桌面画；没有外壳（单测单挂一个侧栏）时不画。
 const appNav = useAppNav()
-const frame = computed(() => isDesktop.value && !!appNav?.loggedIn.value)
+const frame = computed(() => isDesktop.value && !!appNav)
 
 // 桌面窄档（960–1180）：这一栏是一只可收起的浮层，rail 顶上那颗开关管它。宽档里它
 // 常驻，手机上是另一套（`isSecondaryDrawerOpen`）。

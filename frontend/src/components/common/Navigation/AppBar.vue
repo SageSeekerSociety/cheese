@@ -77,7 +77,7 @@ const { compact, open, toggle } = useSidebarCollapse()
 const appNav = useAppNav()
 const homeItem = computed(() => homeItemOf(appNav?.items.value ?? []))
 // 侧栏看不见：这一页没有侧栏，或平板上侧栏收着。这时首页、问芝士、头像临时住在顶栏。
-const frameInBar = computed(() => props.loggedIn && (!props.hasSidebar || (compact.value && !open.value)))
+const frameInBar = computed(() => !props.hasSidebar || (compact.value && !open.value))
 
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()

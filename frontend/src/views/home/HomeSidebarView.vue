@@ -36,7 +36,7 @@ defineProps<{
 }>()
 
 const appNav = useAppNav()
-const framed = computed(() => !!appNav?.loggedIn.value)
+const framed = computed(() => !!appNav)
 
 const emit = defineEmits<{
   openDisband: [team: Team]

@@ -473,7 +473,7 @@ const railHeaderInBar = computed(() => props.page === true && props.column !== t
 // 桌面宽档：侧栏头是老鼠图标和项目切换器（SecondaryNavigation 画），这里的头只剩一整条
 // 搜索，项目菜单挂到总览、资料库下面的「更多」上。手机整页和平板两栏照旧。
 const appNav = useAppNav()
-const framed = computed(() => props.page !== true && props.column !== true && !!appNav?.loggedIn.value)
+const framed = computed(() => props.page !== true && props.column !== true && !!appNav)
 const pinnedMore = computed(() =>
   framed.value && props.selectedProjectId
     ? {
