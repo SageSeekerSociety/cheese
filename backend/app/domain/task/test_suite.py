@@ -258,6 +258,46 @@ async def suite_stages(session: AsyncSession, task_id: int) -> list[int]:
     return list(rows)
 
 
+async def case_of_task(
+    session: AsyncSession, task_id: int, case_id: int
+) -> TaskTestCase | None:
+    """The live case ``case_id`` of ``task_id``, or None.
+
+    A case's own id addresses nothing on its own: it is read only along the
+    task the suite it belongs to hangs off (``GET /tasks/{id}/judge/cases/{cid}``,
+    the graders' window over one hidden case). A case of another task, or one
+    ``superseded_at``, is not this task's case — the caller answers 404, the
+    same 口径 as ``access.bind_review_path``.
+    """
+    if case_id <= 0:
+        return None
+    return await session.scalar(
+        select(TaskTestCase)
+        .join(TaskTestSuite, TaskTestCase.suite_id == TaskTestSuite.id)
+        .where(
+            TaskTestCase.id == case_id,
+            TaskTestCase.superseded_at.is_(None),
+            TaskTestSuite.task_id == task_id,
+        )
+    )
+
+
+async def case_to_api(session: AsyncSession, case: TaskTestCase) -> dict:
+    """One case with its input and expected output read out of the private
+    store — the graders' view of a case (keys and files ``suites_to_api``
+    would fold away for a student)."""
+    text_in, text_out = (await _cases_text([case])).get(case.id, ("", ""))
+    return {
+        "id": case.id,
+        "index": case.index,
+        "name": case.name,
+        "points": case.points,
+        "visibility": case.visibility,
+        "input": text_in,
+        "expected": text_out,
+    }
+
+
 def _key(task_id: int, side: str) -> str:
     """The bytes' address in the private store. Dot-named, like the platform's
     other private trees, and unique per write: one case's input never lands on
