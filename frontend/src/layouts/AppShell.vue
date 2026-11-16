@@ -196,6 +196,8 @@ import {
   workspaceProject,
 } from '@/components/common/Navigation/destinations'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
+import ProjectSwitcher from '@/components/common/Navigation/ProjectSwitcher.vue'
+import SidebarFrameFoot from '@/components/common/Navigation/SidebarFrameFoot.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { t } from '@/i18n'
@@ -464,7 +466,13 @@ const openProjectId = computed<string | null>(() => routeIds(currentRoute.params
 const navShell = computed(() => shellFor(railProjects.value, openProjectId.value) ?? DEFAULT_SHELL)
 
 const rail = computed(() => railItems(navSources.value, navShell.value))
-provideAppNav({ items: rail, projects: railProjects, reorder: reorderRail, loggedIn })
+provideAppNav({
+  items: rail,
+  projects: railProjects,
+  reorder: reorderRail,
+  loggedIn,
+  frame: { top: ProjectSwitcher, foot: SidebarFrameFoot },
+})
 
 // rail 的悬停浮层写着第 N 格的快捷键；这里是它真正被绑上的地方。浏览器里是 G 然后 N，
 // 桌面 app 里是 ⌘N（railShortcut 说了为什么）。只有真的对上某一格的数字才登记。

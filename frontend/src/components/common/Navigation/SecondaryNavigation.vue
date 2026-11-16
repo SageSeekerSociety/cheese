@@ -15,9 +15,9 @@
     <div v-if="isDesktop" class="sidebar-resizer" :title="t('navigation.sidebar.resize')" @pointerdown="startResize" />
     <!-- 桌面上侧栏头和侧栏底：老鼠图标 + 项目切换器、头像 + 问芝士（appNav.ts）。四处侧栏
          （项目、首页、空间、后台）都长这两行，左边那一列拿掉后它们住在这里。 -->
-    <template v-if="frame" #prepend><ProjectSwitcher /></template>
+    <template v-if="frame" #prepend><component :is="frame.top" /></template>
     <slot></slot>
-    <template v-if="frame" #append><SidebarFrameFoot /></template>
+    <template v-if="frame" #append><component :is="frame.foot" /></template>
   </v-navigation-drawer>
 </template>
 
@@ -32,8 +32,6 @@ import { focusSidebarToggle, SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/com
 import { useSidebarWidth } from '@/composables/useSidebarWidth'
 
 import { useAppNav } from './appNav'
-import ProjectSwitcher from './ProjectSwitcher.vue'
-import SidebarFrameFoot from './SidebarFrameFoot.vue'
 
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
@@ -68,7 +66,7 @@ const isDesktop = computed(() => mdAndUp.value && !props.forceMobile)
 
 // 侧栏头和侧栏底那两行只在桌面画；没有外壳（单测单挂一个侧栏）时不画。
 const appNav = useAppNav()
-const frame = computed(() => isDesktop.value && !!appNav)
+const frame = computed(() => (isDesktop.value && appNav ? appNav.frame : null))
 
 // 桌面窄档（960–1180）：这一栏是一只可收起的浮层，rail 顶上那颗开关管它。宽档里它
 // 常驻，手机上是另一套（`isSecondaryDrawerOpen`）。

@@ -5,7 +5,7 @@
 // 项目切换器住进侧栏头，问芝士和头像住进侧栏底；没有侧栏的页面、平板上侧栏收起时，
 // 这几样临时回到顶栏。格子怎么来（顺序、件数、落点、快捷键）还是 destinations.ts 算，
 // 外壳算一次、在这里交出去，侧栏和顶栏只画。
-import type { ComputedRef, InjectionKey } from 'vue'
+import type { Component, ComputedRef, InjectionKey } from 'vue'
 import type { Project } from '@/cx_types'
 import type { DropEdge } from '@/lib/projectOrder'
 import type { NavGenericItem, NavItem } from './types'
@@ -20,6 +20,10 @@ export interface AppNav {
   /** 把 movedId 放到 targetId 的这一边。顺序归外壳保管，这里只报告动作。 */
   reorder: (movedId: string, targetId: string, edge: DropEdge) => void
   loggedIn: ComputedRef<boolean>
+  /** 侧栏头和侧栏底那两行的组件（ProjectSwitcher、SidebarFrameFoot）。由外壳交进来而不是
+   *  让 SecondaryNavigation 自己 import：那两样要读账号和芝士面板，侧栏一 import 它们，
+   *  每一处用侧栏的画面就不再能只靠 props 画出来（scene-ratchet）。 */
+  frame: { top: Component; foot: Component }
 }
 
 const KEY: InjectionKey<AppNav> = Symbol('app-nav')
