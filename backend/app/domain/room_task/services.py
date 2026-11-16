@@ -30,7 +30,10 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task import progress
-from app.domain.room_task.lock_order import lock_task_for_change
+from app.domain.room_task.lock_order import (
+    lock_task_for_change,
+    lock_tasks_for_change,
+)
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -235,6 +238,28 @@ class TaskService:
         task.pr_number, task.pr_url = number, url
         await self._session.flush()
         return task
+
+    async def forget_open_prs(self, project_id: uuid.UUID) -> int:
+        """The project's repository moved to another forge: an open task's PR
+        lives on the one it left. Forget it, so the draft sweep
+        (`open_without_pr`) opens the task's PR again where the branch now is.
+        A closed task keeps its PR link as the record of where it landed.
+        Returns how many tasks were reset."""
+        ids = await self._session.scalars(
+            select(Task.id).where(
+                Task.status == TaskStatus.open,
+                Task.pr_number.is_not(None),
+                Task.room_id.in_(
+                    select(Topic.id).where(Topic.project_id == project_id)
+                ),
+            )
+        )
+        tasks = await lock_tasks_for_change(self._session, list(ids))
+        for task in tasks:
+            task.pr_number = task.pr_url = None
+            task.pr_checks_head = task.pr_checks_state = None
+        await self._session.flush()
+        return len(tasks)
 
     async def record_check(self, task: Task, *, ok: bool, detail: str) -> Task:
         task.last_check_at = datetime.now(UTC)

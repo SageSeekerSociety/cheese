@@ -189,6 +189,11 @@ EVENT_CONTEXT_COMPACT: Final = "context_compact"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
+#: 对话压不下去了（`context_full`），平台不再指着这场原生会话：下一轮开一条新的、
+#: 把整份现状重新告诉它。记在现场，不在对话里 —— 说在房间里像一次报错，而这不是
+#: 报错，是平台自己换了一条接着走的路；对话本身没丢，丢的是没落到文件、任务或结论
+#: 里的那部分上下文。`agent_sessions.abandoned_at` 是同一件事的状态那一半。
+EVENT_CONVERSATION_ABANDONED: Final = "conversation_abandoned"
 #: 平台请房间里刚干过活的队友补第一版实况文档。频道不再有实况文档，平台也不再
 #: 这样提醒；这个值留给已经落在时间线上的那些行。
 EVENT_DOC_MISSING: Final = "doc_missing"
@@ -277,6 +282,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_API_RETRY,
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
+        EVENT_CONVERSATION_ABANDONED,
         EVENT_DOC_MISSING,
         EVENT_MCP_NOT_CONNECTED,
         EVENT_MENTION_FUSED,
@@ -300,6 +306,7 @@ RUN_RECORD_EVENTS: Final = frozenset(
         EVENT_API_RETRY,
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
+        EVENT_CONVERSATION_ABANDONED,
         EVENT_TIMED_DELIVERY,
         "cloud_startup",
         "cloud_provisioning",
