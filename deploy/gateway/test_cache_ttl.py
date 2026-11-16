@@ -91,6 +91,8 @@ async def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_port}"
     litellm.callbacks = [handler]
+    # As config.yaml sets it on the gateway.
+    litellm.drop_params = True
 
     def row(name, info):
         return {

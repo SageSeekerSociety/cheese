@@ -127,8 +127,8 @@ unsupported adaptive-thinking field.
 Moonshot takes the prompt cache lifetime only from a top-level `cache_control`
 and ignores the marks inside the messages, which are the only ones Claude Code
 writes; without it every Kimi cache lasts five minutes
-(https://platform.kimi.com/docs/guide/context-caching). The official Kimi row
-declares `cheese_cache_ttl: "1h"` in `model_info`, and `cache_ttl.py` adds
+(https://platform.kimi.com/docs/guide/context-caching). Give the official Kimi
+row `cheese_cache_ttl: "1h"` in `model_info`, and `cache_ttl.py` adds
 `cache_control: {"type": "ephemeral", "ttl": "1h"}` to every request sent to
 that row, unless the caller set a top-level `cache_control` of its own. An
 hour's cache write costs twice a five-minute one (CNY 40 against 20 per
