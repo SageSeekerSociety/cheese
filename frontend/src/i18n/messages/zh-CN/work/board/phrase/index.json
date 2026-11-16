@@ -19,5 +19,5 @@
   "updating_branch": "平台正在更新分支",
   "waiting": "在等结果",
   "deploying": "已合并，等待 CI 与部署",
-  "deploy_blocked": "已合并，主干 CI 没过，部署被挡住"
+  "deploy_blocked": "主干 CI 没过，部署被挡住"
 }
