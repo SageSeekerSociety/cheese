@@ -101,6 +101,9 @@ class Profile:
     #: has opened or told a task, so it holds nothing back.
     reply_tools: tuple[str, ...] = ("chat_send", "cheese_ask")
     reply_held: bool = True
+    #: A turn the platform started (a task's report, its turn among teammates
+    #: named together) is held to a visible act at its end, as a person's is.
+    answers_the_platform: bool = False
     #: The session is offered only `tools`, of the platform's and of the
     #: harness's own, and the rest are refused; otherwise it is offered all.
     narrowed: bool = False

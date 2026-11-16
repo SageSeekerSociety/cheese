@@ -245,6 +245,7 @@ async def converse(
             resume_session_id=prepared.resume_session_id,
             harness=prepared.harness,
             needs_place=prepared.needs_place,
+            answers_the_platform=PROFILES[prepared.kind].answers_the_platform,
             keeps_nothing=prepared.keeps_nothing,
             sender=runtime,
             activate=activate,

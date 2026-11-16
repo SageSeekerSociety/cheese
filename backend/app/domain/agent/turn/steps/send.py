@@ -315,7 +315,8 @@ async def send_prepared(
                 input_effects,
                 fence_delivery=delivery_id is not None,
             ),
-            owes_reply=summoned,
+            owes_reply=summoned
+            or (platform_turn and not is_resume and prepared.answers_the_platform),
         )
         _delivery_step("send")
         # 这一轮把现状说到了：下一轮只补在这之后变了的。

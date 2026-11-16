@@ -243,6 +243,15 @@ REPLY_INSIST = (
 )
 
 
+#: What a session that holds nothing back (`REPLY_HELD_ENV`, the channel's
+#: main line) is told once when its turn ends with nothing sent: it may have
+#: had nothing to say, which is its own to judge.
+TURN_END_HINT = (
+    "你这一轮写的文字没有发到对话里：成员只看得到 chat_send 发出的消息和 "
+    "chat_react 的表情回应。需要回复，现在就用 chat_send 发；不需要，就结束这一轮。"
+)
+
+
 CLOSING_INSIST = (
     "You are about to stop on a message the person who wrote to you in this "
     "room will never see: you went on working after your last reply to them, "
@@ -451,6 +460,8 @@ class Runner(Generic[J]):  # noqa: UP046
             )
             return None
         held.add(self.owed)
+        if not answered and not self.reply_held:
+            return TURN_END_HINT
         if answered:
             # One line per hold: how often it fires, and after what, is what
             # says whether it catches conclusions or repeats replies.

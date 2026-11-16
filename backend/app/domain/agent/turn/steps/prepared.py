@@ -55,6 +55,11 @@ class PreparedSend:
     resume_session_id: str | None
     harness: str
     needs_place: bool
+    # A turn the platform started still owes a visible act (`Profile.answers_the_platform`):
+    # the channel's main line is woken by its tasks and by its turn among
+    # teammates named together, and ending such a turn on words nobody sees is
+    # the failure it is held to once.
+    answers_the_platform: bool
     keeps_nothing: bool
     sender: SessionSender
     activate: Callable[[SessionRef], Awaitable[None]]

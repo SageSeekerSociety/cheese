@@ -271,6 +271,7 @@ PROFILES: dict[Kind, Profile] = {
         reminders=("notices/silence",),
         reply_tools=("chat_send", "chat_react"),
         reply_held=False,
+        answers_the_platform=True,
         narrowed=True,
         writes="memory",
         effort="high",
