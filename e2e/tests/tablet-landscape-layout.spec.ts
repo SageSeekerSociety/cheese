@@ -13,23 +13,35 @@ import { apiLogin, openFirstProject } from './helpers';
 // 这些差别**只在真浏览器里有**（宽度是算出来的布局，不是布尔 prop），所以守在这里：
 // vitest 用的是 happy-dom 的固定宽度，量不到「同一份 DOM 在两个窗口宽下不一样」。
 //
-// 为什么先开到 1280、进屋、再缩到 1024：话题列表长在二级侧栏里，而那一档默认收着，
+// **样本宽度在 2026-11-16 整体左移了 64px**（1024 → 960）。面板三档看的是**主区**宽度，
+// 而主区原来是「窗口 − 左边那一列 64px 方块栏」。那一列被拿掉之后（#5277），平板横放这
+// 一档里主区就等于窗口宽度，同样一条断言要落进同一档，窗口就得窄掉那 64px。三档本身
+// 没动：1000、840 这两条线是从内容需求推出来的（并排时对话至少留 480、面板至少 360），
+// #5277 没有改变这个需求，变的只是「多宽的窗口能凑出这么宽的主区」。
+//
+// 副作用是**浮层那一档（主区 < 840）今天已经不可能靠缩窗口达到了**：平板横放里主区
+// 等于窗口（≥ 960），宽档里主区 = 窗口 − 侧栏（1181 时是 900）；两头都够不着 840。
+// 它还是在的，只是换成两条真路径进得去——把侧栏拖宽（`cheesex.sidebarWidth` 到 480，
+// 1181 时主区剩 700），或者打开个人芝士（它自己占掉右边 380）。下面那条浮层用例走的是
+// 拖宽侧栏这条，因为它是纯粹布局的一件事，不用把助手的面板状态也拉进来。
+//
+// 为什么先开到 1280、进屋、再缩到样本宽度：话题列表长在二级侧栏里，而那一档默认收着，
 // `openFirstProject` 要等的行在收起状态里不可见。先在宽档进屋（侧栏常驻、行可见），
 // 再缩窗口——这也正是一条真路径：人横过来/缩窗口那一刻布局就换档。
 
 test.describe('平板横放（960–1180）', () => {
-  test('1024：侧栏默认收起；面板默认收着，「概览」把它并排打开并记住', async ({ page }) => {
+  test('960：侧栏默认收起；面板默认收着，「概览」把它并排打开并记住', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
     await page.waitForURL(/\/channels\//);
 
-    // 宽档（1280 > 1180）：侧栏常驻，rail 上没有它的开关。
+    // 宽档（1280 > 1180）：侧栏常驻，顶栏上没有它的开关。
     await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(0);
 
-    // 落到平板横放那一档。
-    await page.setViewportSize({ width: 1024, height: 900 });
+    // 落到平板横放那一档。主区 959：并排放得下（≥ 840），但还不够宽（< 1000），默认收着。
+    await page.setViewportSize({ width: 960, height: 900 });
 
     // 侧栏默认收起：rail 顶上那颗开关在，aria-expanded=false，抽屉不是 active。
     const sidebarToggle = page.locator('[data-sidebar-toggle]');
@@ -37,7 +49,7 @@ test.describe('平板横放（960–1180）', () => {
     await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#secondary-sidebar')).not.toHaveClass(/v-navigation-drawer--active/);
 
-    // 主区不到 1000：面板默认收着，只剩对话。
+    // 主区 959：不到 1000，面板默认收着，只剩对话。
     const panelToggle = page.locator('[data-panel-toggle]');
     await expect(panelToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#topic-panel')).toBeHidden();
@@ -65,13 +77,13 @@ test.describe('平板横放（960–1180）', () => {
     await expect(sidebarToggle).toBeFocused();
   });
 
-  test('1024：从侧栏浮层点进一个房间就收起它，而且不把这次收起记成人的选择', async ({ page }) => {
+  test('960：从侧栏浮层点进一个房间就收起它，而且不把这次收起记成人的选择', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await apiLogin(page);
     await openFirstProject(page);
 
-    // 落到平板横放那一档：侧栏默认收起，rail 顶上那颗开关在，话题列表在浮层里。
-    await page.setViewportSize({ width: 1024, height: 900 });
+    // 落到平板横放那一档：侧栏默认收起，顶栏上那颗开关在，话题列表在浮层里。
+    await page.setViewportSize({ width: 960, height: 900 });
     const sidebarToggle = page.locator('[data-sidebar-toggle]');
     await expect(sidebarToggle).toBeVisible();
 
@@ -93,8 +105,11 @@ test.describe('平板横放（960–1180）', () => {
   });
 
   test('主区放不下两栏时面板浮在对话上：Esc 收起，焦点回到「概览」', async ({ page }) => {
-    // 1181 起侧栏常驻，主区只剩 840 不到。
+    // 浮层那一档今天靠缩窗口进不去（见文件头：平板横放里主区等于窗口 ≥ 960，宽档里
+    // 是窗口 − 侧栏 ≥ 900，两头都在 840 以上）。换成把侧栏拖到最宽：1181 − 480 = 701。
+    // 这是同一件事，而且是条真路径——人把侧栏拉宽之后，主区就真的放不下两栏了。
     await page.setViewportSize({ width: 1181, height: 900 });
+    await page.addInitScript(() => localStorage.setItem('cheesex.sidebarWidth', '480'));
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
@@ -119,7 +134,7 @@ test.describe('平板横放（960–1180）', () => {
     await expect(panelToggle).toBeFocused();
   });
 
-  test('1024：地址里点名的 tab 仍然把面板拉起来', async ({ page }) => {
+  test('960：地址里点名的 tab 仍然把面板拉起来', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
@@ -128,7 +143,7 @@ test.describe('平板横放（960–1180）', () => {
     const topicUrl = page.url().split('?')[0];
 
     // 落到平板横放：地址里没有 ?tab=，面板收着。
-    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.setViewportSize({ width: 960, height: 900 });
     await expect(page.locator('#topic-panel')).toBeHidden();
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'false');
 
