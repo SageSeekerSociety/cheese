@@ -89,7 +89,7 @@ const groups = computed(() => {
       lines,
       manual: lines.filter(({ line }) => !isAuto(line)),
       auto: lines.filter(({ line }) => isAuto(line)),
-      total: lines.reduce((sum, { line }) => sum + (Number(line.points) || 0), 0),
+      total: pointsOf(lines.map(({ line }) => line)),
       hasAuto: lines.some(({ line }) => isAuto(line)),
     }
   })
@@ -134,15 +134,14 @@ function removeLine(index: number) {
   rubric.value = rubric.value.filter((_, i) => i !== index)
 }
 
-/** 一个阶段里评分要点的合计。 */
-const sum = (lines: { line: TaskRubricLine }[]) =>
-  lines.reduce((total, { line }) => total + (Number(line.points) || 0), 0)
-const total = computed(() => rubric.value.reduce((sum, line) => sum + (Number(line.points) || 0), 0))
+/** 一组评分要点的合计（每个阶段那一组在 `groups` 里算，这里是整份）。 */
+function pointsOf(lines: TaskRubricLine[]): number {
+  return lines.reduce((running, line) => running + (Number(line.points) || 0), 0)
+}
+const total = computed(() => pointsOf(rubric.value))
 
 /** 额度用量在合计里占几成。 */
-const usagePoints = computed(() =>
-  rubric.value.filter(isAuto).reduce((sum, line) => sum + (Number(line.points) || 0), 0)
-)
+const usagePoints = computed(() => pointsOf(rubric.value.filter(isAuto)))
 const usageShare = computed(() => (total.value ? Math.round((usagePoints.value / total.value) * 100) : 0))
 
 const nameMissing = (line: TaskRubricLine) =>
@@ -290,7 +289,7 @@ function ruleText(line: TaskRubricLine): string {
 
             <!-- 额度用量：名称由平台给，分值自己定，给分方式二选一。安静的一个框，不抢手动项的
                  位置；主题色只留给按钮。 -->
-            <div v-for="({ line, at }) in group.auto" :key="at" class="tfg__auto" data-testid="task-form-usage-line">
+            <div v-for="{ line, at } in group.auto" :key="at" class="tfg__auto" data-testid="task-form-usage-line">
               <div class="tfg__line">
                 <span class="tfg__usage-name">
                   {{ t('tasks.form.grading.usageName') }}
@@ -435,7 +434,11 @@ function ruleText(line: TaskRubricLine): string {
           </p>
         </div>
 
-        <span v-if="rubric.length && (staged || usagePoints)" class="tfg__total t-meta-read" data-testid="task-form-rubric-total">
+        <span
+          v-if="rubric.length && (staged || usagePoints)"
+          class="tfg__total t-meta-read"
+          data-testid="task-form-rubric-total"
+        >
           {{
             usagePoints
               ? t('tasks.form.grading.totalUsage', { n: total, usage: usagePoints, percent: usageShare })

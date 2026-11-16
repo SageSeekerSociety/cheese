@@ -5,7 +5,7 @@
 // 这份用 jsdom 而不是仓库默认的 happy-dom：表格排序那一组用例要「点表头 → Vue 重排
 // 已经画出来的行」，而 happy-dom 13 的 `insertBefore` 在把一个已有的子节点挪到某个
 // 兄弟前面时会把它复制一份（A B C → A B C A），jsdom 与浏览器一致。别把那一组用例
-// 挪到 happy-dom 下去跑，会看到不存在的多出來一行。
+// 挪到 happy-dom 下去跑，会看到不存在的多出来一行。
 import type { Latest } from './RosterView.vue'
 
 import { createVuetify } from 'vuetify'
@@ -19,7 +19,7 @@ import RosterView from './RosterView.vue'
 import i18n from '@/i18n'
 
 const DAY = 86_400_000
-const t = (key: string) => i18n.global.t(key)
+const t = (key: string, named?: Record<string, unknown>) => i18n.global.t(key, named ?? {})
 
 const TASK = { id: 42, submitterType: 'USER', requireRealName: false, defaultDeadline: 7 }
 

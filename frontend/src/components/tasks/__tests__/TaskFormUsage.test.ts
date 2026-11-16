@@ -111,17 +111,11 @@ describe('额度用量那一行', () => {
   })
 
   it('合计正好 100 时不报警；少了就当场说清', async () => {
-    mount([
-      { item: '正确性', points: 80, criteria: '照做', stage: null },
-      usageLine(20),
-    ])
+    mount([{ item: '正确性', points: 80, criteria: '照做', stage: null }, usageLine(20)])
     expect(screen.queryByTestId('task-form-auto-total')).toBeNull()
 
     cleanup()
-    mount([
-      { item: '正确性', points: 70, criteria: '照做', stage: null },
-      usageLine(20),
-    ])
+    mount([{ item: '正确性', points: 70, criteria: '照做', stage: null }, usageLine(20)])
     const warn = await screen.findByTestId('task-form-auto-total')
     expect(warn.textContent).toContain('100')
     expect(warn.textContent).toContain('90')

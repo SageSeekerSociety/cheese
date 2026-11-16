@@ -35,7 +35,13 @@
              以及它怎么算的。学生看不到评分要点时这里只剩用量。 -->
         <div v-if="usage" class="tsh__usage mt-4">
           <div class="tsh__eyebrow">
-            {{ t(reviewable ? 'tasks.submissionHistory.usageEyebrowTeacher' : 'tasks.submissionHistory.usageEyebrowStudent') }}
+            {{
+              t(
+                reviewable
+                  ? 'tasks.submissionHistory.usageEyebrowTeacher'
+                  : 'tasks.submissionHistory.usageEyebrowStudent'
+              )
+            }}
           </div>
           <div class="tsh__usage-top">
             <span class="tsh__big t-num">{{ fmtNum(usage.credits) }}</span>
@@ -113,9 +119,7 @@
               <!-- 手动项 + 额度那一行的账：这一版通过之后看到的每一部分各得几分。 -->
               <div v-if="manualCap != null" class="tsh__score mb-4">
                 <span>{{ t('tasks.submissionHistory.manualPart') }}</span>
-                <span class="t-num">
-                  {{ score == null ? '—' : score }} / {{ manualCap }}
-                </span>
+                <span class="t-num"> {{ score == null ? '—' : score }} / {{ manualCap }} </span>
                 <span>{{ t('tasks.submissionHistory.autoPart') }}</span>
                 <span class="t-num">{{ autoLineText }}</span>
                 <span class="tsh__total-label">{{ t('tasks.submissionHistory.totalPart') }}</span>
@@ -223,7 +227,6 @@ import dayjs from 'dayjs'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
-import { fmtNum } from '@/lib/usageFormat'
 import { vuetifyConfig } from '@/utils/form'
 
 import SubmissionContentCard from './SubmissionContentCard.vue'
@@ -233,6 +236,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import { fmtNum } from '@/lib/usageFormat'
 import { toTypedSchema } from '@/lib/zodTypedSchema'
 import { useTaskSubmissionHistory } from '@/views/tasks/composables'
 
@@ -368,9 +372,7 @@ function ofMax(value: number | null): string {
 }
 
 /** 总分那一格：手动项填了就加额度那一行，没填就画「—」。 */
-const totalPreview = computed(() =>
-  ofMax(score.value == null ? null : score.value + (autoLine.value.score ?? 0))
-)
+const totalPreview = computed(() => ofMax(score.value == null ? null : score.value + (autoLine.value.score ?? 0)))
 
 /** 判过之后手动项那一格：上限算得出来就写「n / 上限」。 */
 const savedManualText = computed(() => {

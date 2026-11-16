@@ -258,8 +258,8 @@ export function useTaskForm(
 
   /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。评分要点合计不对
    *  也算一项：它不在 zod 表里，但一样是发不出去的。 */
-  const invalidCount = computed(
-    () => (submitCount.value > 0 ? Object.keys(errors.value).length + (rubricBadTotal.value ? 1 : 0) : 0)
+  const invalidCount = computed(() =>
+    submitCount.value > 0 ? Object.keys(errors.value).length + (rubricBadTotal.value ? 1 : 0) : 0
   )
   watch(invalidCount, (count) => emit('invalid', count), { immediate: true })
 

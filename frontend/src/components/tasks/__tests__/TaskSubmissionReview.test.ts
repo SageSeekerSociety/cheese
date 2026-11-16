@@ -200,7 +200,14 @@ describe('reviewing a submission', () => {
 /** A task whose rubric gives the stage a manual item worth 70 and a usage line worth 30. */
 const RUBRIC = [
   { item: '正确性', points: 70, criteria: '照做', stage: null },
-  { item: '额度用量', points: 30, criteria: '', stage: null, kind: 'usage' as const, config: { mode: 'threshold' as const, full: 0, zero: 100 } },
+  {
+    item: '额度用量',
+    points: 30,
+    criteria: '',
+    stage: null,
+    kind: 'usage' as const,
+    config: { mode: 'threshold' as const, full: 0, zero: 100 },
+  },
 ]
 
 /** 列表接口把这一份的额度放在顶层（`usage_score.usage_of_claims` 的样子）。 */
@@ -301,13 +308,22 @@ describe('a challenge scored by credits used', () => {
               accepted: true,
               score: 78,
               comment: '还行',
-              autoScores: { manual: 66, final: true, lines: [{ index: 1, kind: 'usage', points: 30, score: 12, credits: 40, mode: 'threshold' }] },
+              autoScores: {
+                manual: 66,
+                final: true,
+                lines: [{ index: 1, kind: 'usage', points: 30, score: 12, credits: 40, mode: 'threshold' }],
+              },
             },
           },
         },
       ],
       page: { page_start: 0, page_size: 10, has_more: false, total: 1 },
-      usage: { credits: 40, line: { index: 1, points: 30, mode: 'threshold', full: 0, zero: 100 }, score: 12, final: true },
+      usage: {
+        credits: 40,
+        line: { index: 1, points: 30, mode: 'threshold', full: 0, zero: 100 },
+        score: 12,
+        final: true,
+      },
     })
     await mountUsageReview()
 

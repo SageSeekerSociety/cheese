@@ -123,7 +123,10 @@ function count(value: unknown): number | null {
 
 /** 芝士写的评分要点一行是谁给分（`rubric.LINE_KINDS`）：认得的自动行带上 `kind` 和
  *  `config`，其余（含只写「手动」或没写）都当手动行，表单照旧。 */
-function lineKind(kind: unknown, config: unknown): { kind?: TaskRubricLine['kind']; config?: TaskRubricLine['config'] } {
+function lineKind(
+  kind: unknown,
+  config: unknown
+): { kind?: TaskRubricLine['kind']; config?: TaskRubricLine['config'] } {
   if (kind !== 'usage') return {}
   const given = (config ?? {}) as { mode?: unknown; full?: unknown; zero?: unknown }
   const full = count(given.full)
