@@ -16,8 +16,10 @@ from app.domain.agent.harness.prompt import task_opening_prompt
 @pytest.mark.parametrize(
     "instruction",
     [
-        task_opening_prompt(title="T", owner="alice", source="S"),
-        task_opening_prompt(title="T", owner="alice", source="S", reviewer="bob"),
+        task_opening_prompt(title="T", owner="alice", source="S", has_checkout=True),
+        task_opening_prompt(
+            title="T", owner="alice", source="S", reviewer="bob", has_checkout=True
+        ),
     ],
     ids=["opened", "opened-reviewed-by-another"],
 )

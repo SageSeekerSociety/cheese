@@ -442,6 +442,7 @@ async def prepare(
             owner=task.owner_handle,
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
+            has_checkout=task.branch_name is not None,
         ),
         # 只看还开着的活：关闭不清这条上报（`closing.close_task` 不碰它），而关掉的
         # 活还能被人叫起来说话；那时看板显示的是关闭，再叫它报状态只会被 422 拒掉。

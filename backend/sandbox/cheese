@@ -5174,17 +5174,28 @@ def _say_task(args, data, env) -> str:
     data = data or {}
     owner = data.get("owner_handle") or "负责人"
     title = data.get("title") or args["title"]
+    # 有分支才有工作目录（项目有代码仓库）；怎么收尾由任务那一段系统提示说。
+    checkout = bool(data.get("branch_name"))
     if data.get("already"):
         return (
             f"你要开的就是这条：你已经在这件任务「{title}」里，负责人 {owner}。"
-            "不用再开一条——就在这里做，用 cheese worktree 准备它的工作目录，"
-            "做完提交审阅。"
+            "不用再开一条，就在这里做"
+            + (
+                "；要改项目文件的，用 cheese worktree 准备它的工作目录。"
+                if checkout
+                else "。"
+            )
         )
     if data.get("here"):
+        start = (
+            "从现在起你可以改项目：要改项目文件的，用 cheese worktree 准备任务自己的"
+            "工作目录，在支线里临时改过、要留下的内容带过去。"
+            if checkout
+            else "从现在起你可以在这里动手。"
+        )
         return (
-            f"这条支线已转为任务「{title}」，负责人 {owner}。从现在起你可以改项目："
-            "用 cheese worktree 准备任务自己的工作目录，在支线里临时改过、要留下的内容"
-            "带过去，做完提交审阅。先把这段讨论整理进任务文档：要做什么、已经定了什么、"
+            f"这条支线已转为任务「{title}」，负责人 {owner}。{start}"
+            "先把这段讨论整理进任务文档：要做什么、已经定了什么、"
             "还有什么没定。然后，负责人已经说了要做什么就接着做；还没说，回复一两句说明"
             "文档整理了什么，停下来等他的话。"
         )
