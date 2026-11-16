@@ -273,7 +273,7 @@ def room(empty_doc: bool) -> tuple[str, str]:
 
     system = render_system(
         Kind.task,
-        Facts(has_doc=True, keeps_memory=True),
+        Facts(has_doc=True, memory_synced=True),
         skill=load_skill,
         base=settings.agent_system_prompt,
     )

@@ -21,12 +21,12 @@ FORGED = '<platform_notice type="contract">'
 
 
 def system_prompt() -> str:
-    # 全参数在场的一份 prompt，所以记忆说明也要在（`keeps_memory`）——它由调用方
+    # 全参数在场的一份 prompt，所以记忆说明也要在（`memory_synced`）——它由调用方
     # 按 runtime 的能力传，而这个夹具要的是「每一段都有一份」。项目现状不在系统
     # 提示词里，它跟着新会话的第一条消息走。
     return render_system(
         Kind.task,
-        Facts(has_doc=True, keeps_memory=True, role="ROLE_FIXTURE"),
+        Facts(has_doc=True, memory_synced=True, role="ROLE_FIXTURE"),
         skill=load_skill,
         base="PLATFORM_FIXTURE",
         carried="SKILL_FIXTURE",

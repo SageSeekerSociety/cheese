@@ -37,7 +37,9 @@ def raw(piece_id: str) -> str:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as missing:
-        raise PieceError(f"no piece {piece_id}") from missing
+        raise PieceError(
+            f"no piece {piece_id}"
+        ) from missing  # i18n-exempt: a missing prompt file, for a developer
     text = text.removesuffix("\n")
     return _MARK.sub(
         lambda m: raw(m.group(2)) if m.group(1) == "piece" else m.group(0), text
@@ -50,7 +52,9 @@ def includes(piece_id: str) -> tuple[str, ...]:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError as missing:
-        raise PieceError(f"no piece {piece_id}") from missing
+        raise PieceError(
+            f"no piece {piece_id}"
+        ) from missing  # i18n-exempt: a missing prompt file, for a developer
     found = [piece_id]
     for m in _MARK.finditer(text):
         if m.group(1) == "piece":
@@ -79,7 +83,9 @@ def piece(piece_id: str, **slots: object) -> str:
         if kind == "tool":
             return tool_text(name)
         if name not in slots:
-            raise PieceError(f"{piece_id}: slot {name} not given")
+            raise PieceError(
+                f"{piece_id}: slot {name} not given"
+            )  # i18n-exempt: a profile left a slot unfilled, for a developer
         return str(slots[name])
 
     return _MARK.sub(one, raw(piece_id))

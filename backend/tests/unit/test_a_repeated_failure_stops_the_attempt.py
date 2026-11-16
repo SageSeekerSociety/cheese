@@ -17,18 +17,19 @@ from app.domain.prompts import SUBAGENT_RULES, Facts, Kind, piece, selected
 
 
 @pytest.mark.parametrize(
-    ("harness", "has_doc", "keeps_memory", "role"),
-    itertools.product(
-        ("claude-code", "codex", "pi"), (False, True), (False, True), (None, "后端")
-    ),
+    ("working_directory", "has_doc", "memory_synced", "role"),
+    itertools.product((True, False), (False, True), (False, True), (None, "后端")),
 )
 def test_a_task_session_reads_the_rule_whatever_else_it_has(
-    harness, has_doc, keeps_memory, role
+    working_directory, has_doc, memory_synced, role
 ):
     """提示词的每一段都是有条件的，而无条件的规则最容易被拼进某个条件里 ——
     那个条件假的时候没有任何地方会响。"""
     facts = Facts(
-        harness=harness, has_doc=has_doc, keeps_memory=keeps_memory, role=role
+        working_directory=working_directory,
+        has_doc=has_doc,
+        memory_synced=memory_synced,
+        role=role,
     )
     assert "system/repeated_failure" in selected(Kind.task, facts)
 

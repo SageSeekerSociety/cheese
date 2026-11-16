@@ -29,16 +29,19 @@ VALUES = {
     Kind.document: {"agent": "芝士", "place": "这里", "answer": "回答", "machine": "无"}
 }
 
-SWITCHES = list(
-    itertools.product(("claude-code", "codex", "pi"), (False, True), (False, True))
-)
+SWITCHES = list(itertools.product((True, False), (False, True), (False, True)))
 
 
 @pytest.mark.parametrize("kind", list(Kind))
-@pytest.mark.parametrize(("harness", "has_doc", "keeps_memory"), SWITCHES)
-def test_every_kind_renders_with_every_switch(kind, harness, has_doc, keeps_memory):
+@pytest.mark.parametrize(("working_directory", "has_doc", "memory_synced"), SWITCHES)
+def test_every_kind_renders_with_every_switch(
+    kind, working_directory, has_doc, memory_synced
+):
     facts = Facts(
-        harness=harness, has_doc=has_doc, keeps_memory=keeps_memory, name="芝士"
+        working_directory=working_directory,
+        has_doc=has_doc,
+        memory_synced=memory_synced,
+        name="芝士",
     )
     system = render_system(
         kind, facts, skill=load_skill, base="底稿", values=VALUES.get(kind)

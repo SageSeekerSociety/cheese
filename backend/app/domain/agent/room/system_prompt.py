@@ -8,6 +8,7 @@ so the two cannot render different prompts for the same seat.
 import json
 from typing import TYPE_CHECKING
 
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.driven.runner import (
     REPLY_HELD_ENV,
     REPLY_TOOLS,
@@ -53,11 +54,13 @@ def session_system_prompt(
     return render_system(
         kind,
         Facts(
-            harness=harness,
+            # 短名是 `remote_execution.client` 放进会话环境的，只有 claude-code
+            # 的会话有它；别的骨架读到这一段只会 `cd` 到不存在的目录。
+            working_directory=harness == CLAUDE_CODE,
             has_doc=has_doc,
             # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
             # 读到它只会以为自己在写项目记忆。
-            keeps_memory=keeps_memory(harness),
+            memory_synced=keeps_memory(harness),
             name=name,
             role=role,
         ),

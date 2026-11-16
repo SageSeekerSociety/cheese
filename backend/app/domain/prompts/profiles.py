@@ -143,11 +143,11 @@ def _has_doc(facts: Facts) -> bool:
     return facts.has_doc
 
 
-def _keeps_memory(facts: Facts) -> bool:
+def _memory_synced(facts: Facts) -> bool:
     """这一轮的骨架会把记忆文件同步回平台（Claude Code）"""
     # The memory rules follow the harness this turn runs: one that does not
     # sync the tree back would read them and think it writes project memory.
-    return facts.keeps_memory
+    return facts.memory_synced
 
 
 def _working_directory(facts: Facts) -> bool:
@@ -176,7 +176,7 @@ def _room_system(memory: str) -> tuple[Include, ...]:
         Include(
             "system/doc_section", when=_has_doc, skill_slots={"doc_form": "doc-form"}
         ),
-        Include(memory, when=_keeps_memory),
+        Include(memory, when=_memory_synced),
         Include("system/project_skills"),
         Include("system/role", needs=("role",)),
     )
@@ -224,7 +224,7 @@ MAIN_LINE_SYSTEM = (
     Include("main_line/teammates"),
     Include("main_line/speaking"),
     Include("writing", slots={"speaking": "说话"}),
-    Include("memory/team", when=_keeps_memory),
+    Include("memory/team", when=_memory_synced),
     Include(SKILLS),
     Include("system/role", needs=("role",)),
 )

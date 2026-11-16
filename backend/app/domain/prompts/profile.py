@@ -10,10 +10,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-#: The harness that hands its session a short name for the working directory
-#: (`remote_execution.client` puts `$T` in the session's environment).
-CLAUDE_CODE = "claude-code"
-
 
 class Kind(StrEnum):
     """The kinds of session the platform runs."""
@@ -33,22 +29,20 @@ class Kind(StrEnum):
 class Facts:
     """What a profile's conditions may ask about one session."""
 
-    harness: str = CLAUDE_CODE
+    #: The session's commands carry `$T`, the working directory's short name
+    #: (only the harness that puts it in their environment).
+    working_directory: bool = False
     #: The place has a living document.
     has_doc: bool = False
-    #: The harness syncs the memory tree back to the platform (`keeps_memory`).
-    keeps_memory: bool = False
+    #: The harness this turn runs syncs the memory tree back to the platform
+    #: (`session_host.host.keeps_memory`).
+    memory_synced: bool = False
     #: The teammate's name on the roster.
     name: str | None = None
     #: The teammate's expert role, as its owner wrote it.
     role: str | None = None
     #: The language the person who woke the session reads (`user.language`).
     language: str | None = None
-
-    @property
-    def working_directory(self) -> bool:
-        """The session's commands carry `$T`, the working directory's short name."""
-        return self.harness == CLAUDE_CODE
 
 
 def always(_: Facts) -> bool:
@@ -119,9 +113,8 @@ class ProfileError(LookupError):
     """A piece a profile renders names a tool the profile does not hold."""
 
     def __init__(self, kind: Kind, piece: str, tool: str):
-        super().__init__(
-            f"{kind}: piece {piece} names {tool}, which {kind} does not hold"
-        )
+        # i18n-exempt: a profile names a tool it does not hold, for a developer
+        super().__init__(f"{kind}: piece {piece} names {tool}, which it does not hold")
         self.kind = kind
         self.piece = piece
         self.tool = tool

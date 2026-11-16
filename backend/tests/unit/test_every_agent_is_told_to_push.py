@@ -17,20 +17,23 @@ import pytest
 
 from app.domain.prompts import Facts, Kind, selected
 
-HARNESSES = ("claude-code", "codex", "pi")
+HARNESSES = (True, False)
 
 
 @pytest.mark.parametrize(
-    ("harness", "has_doc", "keeps_memory", "role"),
+    ("working_directory", "has_doc", "memory_synced", "role"),
     itertools.product(HARNESSES, (False, True), (False, True), (None, "后端")),
 )
 def test_a_task_session_is_told_to_push_whatever_else_it_has(
-    harness, has_doc, keeps_memory, role
+    working_directory, has_doc, memory_synced, role
 ):
     """提示词的每一段都是有条件的，一条无条件的规则最容易被拼进某个条件里，而那个
     条件假的时候没有任何地方会响。"""
     facts = Facts(
-        harness=harness, has_doc=has_doc, keeps_memory=keeps_memory, role=role
+        working_directory=working_directory,
+        has_doc=has_doc,
+        memory_synced=memory_synced,
+        role=role,
     )
     assert "system/always_push" in selected(Kind.task, facts)
 
@@ -38,5 +41,5 @@ def test_a_task_session_is_told_to_push_whatever_else_it_has(
 @pytest.mark.parametrize("kind", list(Kind))
 def test_the_naming_ask_is_not_part_of_any_system_prompt(kind):
     """起名是这一轮的事，起完就不该再说；系统提示词在会话里一字不变，所以它不在这里。"""
-    facts = Facts(has_doc=True, keeps_memory=True)
+    facts = Facts(has_doc=True, memory_synced=True)
     assert "notices/untitled_task" not in selected(kind, facts)

@@ -35,6 +35,11 @@ TOPIC = TASK
 #: 读回来 —— 从表里读一遍再断言它等于自己，删掉一整行也是绿的。
 CALLS = {
     "chat_send": ({"content": "这一轮我在这里"}, "POST", f"/topics/{TOPIC}/messages"),
+    "chat_react": (
+        {"message_id": "m-1", "emoji": "👍"},
+        "POST",
+        "/blocks/m-1/reactions",
+    ),
     "cheese_chat.edit": (
         {"action": "edit", "message_id": "m-1", "content": "改过的这一句"},
         "PATCH",

@@ -53,7 +53,7 @@ LABELS = {
 
 #: The facts every kind is shown with: every switch on.
 FACTS = Facts(
-    harness="claude-code", has_doc=True, keeps_memory=True, name="芝士", role="你是推荐系统方面的专家。"
+    working_directory=True, has_doc=True, memory_synced=True, name="芝士", role="你是推荐系统方面的专家。"
 )
 #: Slot values the non-room kinds take, as plain samples.
 VALUES = {
