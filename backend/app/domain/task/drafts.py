@@ -34,6 +34,7 @@ from app.core.sentences import say
 from app.domain.agent_type.library import preset_types
 from app.domain.skill_library import native_skill_doc, shipped_skill_names
 from app.domain.task.models import Task, TaskDraft, new_stage_key
+from app.domain.task.rubric import AUTOMATIC_KINDS, automatic_rule
 from app.domain.task.stages import rows_after_stage_change, settled_stage
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
@@ -919,14 +920,19 @@ def _rubric(lines, stages: list) -> list[dict]:
             points = int(line.get("points") or 0)
         except (TypeError, ValueError):
             points = -1
-        out.append(
-            {
-                "item": str(line.get("item") or "").strip(),
-                "points": points,
-                "criteria": str(line.get("criteria") or "").strip(),
-                "stage": _stage_ref(line, stages),
-            }
-        )
+        row = {
+            "item": str(line.get("item") or "").strip(),
+            "points": points,
+            "criteria": str(line.get("criteria") or "").strip(),
+            "stage": _stage_ref(line, stages),
+        }
+        # An automatic line (``rubric.LINE_KINDS``) keeps who scores it and
+        # how; a manual one is written the way it always was.
+        kind = str(line.get("kind") or "manual")
+        if kind != "manual":
+            row["kind"] = kind
+            row["config"] = dict(line.get("config") or {})
+        out.append(row)
     return out
 
 
@@ -1223,6 +1229,11 @@ def _view(
         *(
             f"  - {r.get('item')}｜{r.get('points')} 分｜{r.get('criteria')}"
             + in_stage(r)
+            + (
+                f"｜自动：{automatic_rule(r.get('kind'), r.get('config') or {})}"
+                if r.get("kind") in AUTOMATIC_KINDS
+                else ""
+            )
             for r in fields.get("rubric") or []
         ),
         "description:",

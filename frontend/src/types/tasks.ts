@@ -61,6 +61,18 @@ export interface TaskSubmissionSchemaEntry {
   stage?: string | null
 }
 
+/** 评分要点的一行由谁给分（`app/domain/task/rubric.py` 的 `LINE_KINDS`）：老师评审时
+ *  手填，或平台按这份领题用掉的额度自动算分。老题的行都没有这一项，读作 `manual`。 */
+export type TaskRubricLineKind = 'manual' | 'usage'
+
+/** 自动算分那一行的设置（`rubric._usage_config`）：按阈值，或按全班排名。按阈值时
+ *  `full` 是不超过多少额度得满分、`zero` 是达到多少额度得 0 分（`zero > full`）。 */
+export interface TaskRubricLineConfig {
+  mode: 'threshold' | 'rank'
+  full?: number
+  zero?: number
+}
+
 /** 评分要点的一行：评什么、多少分、怎样算做到（`app/domain/task/rubric.py`）。 */
 export interface TaskRubricLine {
   item: string
@@ -68,6 +80,10 @@ export interface TaskRubricLine {
   criteria: string
   /** 评的是哪个阶段的提交：阶段的 id；不分阶段的题是 null。 */
   stage?: string | null
+  /** 谁给这一行分。手动行写出去时省略它，自动行必须带上；读回来时缺省是 `manual`。 */
+  kind?: TaskRubricLineKind
+  /** 自动行怎么给分；手动行没有这一项。 */
+  config?: TaskRubricLineConfig
 }
 
 /** 题目的一个阶段（`app/domain/task/stages.py`）：名称、要做到什么、截止时间。 */
@@ -177,12 +193,33 @@ export interface Task {
   defaultRole?: string | null
 }
 
+/** 一条评审里额度和手动两部分的来源（`usage_score.compose_review`）。题目在这一版的
+ *  阶段上有 `usage` 行、又是判通过时才有：`score` 是总分，`manual` 是老师填的那部分，
+ *  `lines` 说自动那几行各得几分（现在只有额度那一行）。老题的评审没有这一项。 */
+export interface TaskSubmissionAutoScores {
+  /** 老师手填的那部分分（0 到该阶段手动项分值之和）。 */
+  manual: number
+  /** 自动那部分的分定下了没有：按排名给分的题在截止前是 false（总分显示「暂定」）。 */
+  final: boolean
+  lines: {
+    index: number
+    kind: string
+    points: number
+    score: number
+    /** 这份领题当时用掉的额度。 */
+    credits: number
+    mode: string
+  }[]
+}
+
 export interface TaskSubmissionReview {
   reviewed: boolean
   detail: {
     accepted: boolean
     score: number
     comment: string
+    /** 合成总分的账（手动 + 自动）。手动给分的旧题没有这一项。 */
+    autoScores?: TaskSubmissionAutoScores
   }
 }
 
@@ -230,6 +267,38 @@ export interface TaskTeamParticipantMemberSummary {
   realNameInfo?: TaskParticipantRealNameInfo
 }
 
+/** 额度那一行给的分（`usage_score.usage_of_claims`）：这一行的分值和给分方式，排名
+ *  模式的题还带名次和参与份数（名次是「用得比它少的份数 + 1」）。 */
+export interface TaskUsageLine {
+  /** 这一行在评分要点里的位置。 */
+  index: number
+  points: number
+  mode: 'threshold' | 'rank'
+  /** 按阈值时：不超过多少额度得满分、达到多少额度得 0 分。 */
+  full?: number
+  zero?: number
+}
+
+/** 一份领题在这道题上用掉的额度。题目有额度那一行时多带它的分（`line`/`score`/…）；
+ *  没有那一行的老题只有 `credits`。学生本人看、且评分要点不公开时，`line` 那几项也
+ *  一并省掉。 */
+export interface TaskUsage {
+  /** 这份领题（团队题是全体队员）在这道题的项目里调用 AI 用掉的额度合计。 */
+  credits: number
+  /** 额度那一行的分值和给分方式；题目没有这一行时没有它。 */
+  line?: TaskUsageLine
+  /** 自动算出来的分：还没交作业是 null（交了才算），排名模式在截止前是暂定分。 */
+  score?: number | null
+  /** 这个分定下了没有：排名截止前 false（「暂定」）。 */
+  final?: boolean
+  /** 排名模式：在交过作业的人里第几少（并列同名次）。 */
+  rank?: number
+  /** 排名模式：参与排名的份数（交过作业的领题数）。 */
+  ranked?: number
+  /** 按模型分的额度，多的在前（只有单个领题的接口给）。 */
+  models?: { model: string; credits: number }[]
+}
+
 export interface TaskMembership {
   id: number
   member: TaskParticipantSummary
@@ -250,6 +319,8 @@ export interface TaskMembership {
   teamMembers?: TaskTeamParticipantMemberSummary[]
   /** 开始做的时刻：这条报名的项目建好的那一下（列表接口给的）。还没开始做是 null。 */
   startedAt?: number | null
+  /** 这份领题用掉的额度；列表接口给的。 */
+  usage?: TaskUsage | null
 }
 
 export type TaskFormSubmitData = {

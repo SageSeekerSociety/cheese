@@ -30,6 +30,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.task import usage_score
 from app.domain.task.claims import started_at_of
 from app.domain.task.repositories import (
     TaskRepository,
@@ -145,6 +146,8 @@ async def get_task_participants(
     # 开始做的时刻（项目建好的那一下）：「数据」页签数谁开始做了却没动，从这里起算，
     # 不从申请那一下。还没开始做的是 null。
     started = await started_at_of(db, [m.id for m in memberships])
+    # 每份领题用掉的额度，题目有额度那一行时再加它的分（`usage_score`）。
+    usage = await usage_score.usage_of_claims(db, task, [m.id for m in memberships])
     participants = []
     for m in memberships:
         participant_info = _build_participant_user_info(
@@ -161,6 +164,7 @@ async def get_task_participants(
             team=team_map.get(m.member_id) if m.is_team else None,
         )
         model["startedAt"] = _ms(started.get(m.id))
+        model["usage"] = usage.get(m.id)
         participants.append(model)
 
     return ok({"participants": participants})

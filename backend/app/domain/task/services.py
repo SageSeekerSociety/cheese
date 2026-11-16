@@ -790,14 +790,15 @@ class TaskSubmissionService:
     ) -> dict | None:
         if review is None:
             return {"reviewed": False}
-        return {
-            "reviewed": True,
-            "detail": {
-                "accepted": review.accepted,
-                "score": review.score,
-                "comment": review.comment,
-            },
+        detail = {
+            "accepted": review.accepted,
+            "score": review.score,
+            "comment": review.comment,
         }
+        auto_scores = getattr(review, "auto_scores", None)
+        if auto_scores:
+            detail["autoScores"] = auto_scores
+        return {"reviewed": True, "detail": detail}
 
     async def _build_submission_dto(
         self,
@@ -1265,14 +1266,15 @@ class TaskSubmissionReviewService:
         )
         if review is None:
             return {"reviewed": False}
-        return {
-            "reviewed": True,
-            "detail": {
-                "accepted": review.accepted,
-                "score": review.score,
-                "comment": review.comment,
-            },
+        detail = {
+            "accepted": review.accepted,
+            "score": review.score,
+            "comment": review.comment,
         }
+        auto_scores = getattr(review, "auto_scores", None)
+        if auto_scores:
+            detail["autoScores"] = auto_scores
+        return {"reviewed": True, "detail": detail}
 
     async def create_review(
         self,
@@ -1282,6 +1284,7 @@ class TaskSubmissionReviewService:
         accepted: bool,
         score: int,
         comment: str,
+        auto_scores: dict | None = None,
     ) -> dict:
         review = await self._review_repo.create_review(
             submission_id=submission_id,
@@ -1290,6 +1293,9 @@ class TaskSubmissionReviewService:
             score=score,
             comment=comment,
         )
+        if auto_scores is not None:
+            review.auto_scores = auto_scores
+            await self._review_repo.save(review)
         has_upgraded = await self._maybe_award_rank(
             submission_id=submission_id,
             previous_accepted=None,
@@ -1309,6 +1315,8 @@ class TaskSubmissionReviewService:
         accepted: bool | None = None,
         score: int | None = None,
         comment: str | None = None,
+        auto_scores: dict | None = None,
+        rescored: bool = False,
     ) -> dict:
         """改一条评审。给了 `reviewer_id` 就改那个人的那份，没给就是最早的一份
         （单评审时两者是同一份）。
@@ -1326,6 +1334,10 @@ class TaskSubmissionReviewService:
             review.accepted = accepted
         if score is not None:
             review.score = score
+        if rescored:
+            # 分是重新合成的（`usage_score.compose_review`）：怎么来的跟着换，
+            # 不再有自动行时清掉。
+            review.auto_scores = auto_scores
         if comment is not None:
             review.comment = comment
         review.updated_at = datetime.now(UTC)

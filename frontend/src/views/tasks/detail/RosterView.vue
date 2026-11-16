@@ -41,7 +41,16 @@
       :title="rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty')"
     />
 
-    <BaseTable v-else class="rs__grid" :cols="ROSTER_COLS" :label="t('tasks.roster.tableLabel')" min-width="842px">
+    <BaseTable
+      v-else
+      class="rs__grid"
+      :cols="cols"
+      :label="t('tasks.roster.tableLabel')"
+      :min-width="minWidth"
+      :sort-key="sortKey"
+      :sort-dir="sortDir"
+      @sort="onSort"
+    >
       <template #head>
         <tr>
           <BaseTableTh>{{ t('tasks.roster.col.who') }}</BaseTableTh>
@@ -49,12 +58,19 @@
           <BaseTableTh>{{ t('tasks.roster.col.status') }}</BaseTableTh>
           <BaseTableTh>{{ t('tasks.roster.col.latest') }}</BaseTableTh>
           <BaseTableTh>{{ t('tasks.roster.col.deadline') }}</BaseTableTh>
+          <!-- 「额度用量」这一列谁都有：题目不按额度计分时它只是一个参考数。点表头
+               排序，升序就是「用得少的在前」。 -->
+          <BaseTableTh align="end" sort-key="credits">{{ t('tasks.roster.col.credits') }}</BaseTableTh>
+          <!-- 「额度得分」只在评分要点里有额度那一行的题上画 —— 别的题没有这个分。 -->
+          <BaseTableTh v-if="hasUsage" align="end" sort-key="usageScore">
+            {{ t('tasks.roster.col.usageScore') }}
+          </BaseTableTh>
           <BaseTableTh>
             <span class="rs__sr">{{ t('tasks.roster.col.ops') }}</span>
           </BaseTableTh>
         </tr>
       </template>
-      <template v-for="row in visible" :key="row.id">
+      <template v-for="row in sorted" :key="row.id">
         <tr
           class="rs__row"
           :data-status="row.status"
@@ -95,6 +111,20 @@
             <span v-else class="rs__meta">—</span>
           </td>
           <td class="rs__meta t-num">{{ row.deadline ? day(row.deadline) : '—' }}</td>
+          <td class="rs__credits t-num">
+            <template v-if="row.credits != null">
+              {{ fmtNum(row.credits) }}
+              <span class="rs__meter" aria-hidden="true"><span :style="{ width: creditBar(row.credits) }" /></span>
+            </template>
+            <span v-else class="rs__meta">—</span>
+          </td>
+          <td v-if="hasUsage" class="rs__usage t-num">
+            <template v-if="row.usage?.score != null">
+              {{ t('tasks.roster.usageOf', { score: row.usage.score, points: row.usage.line?.points ?? 0 }) }}
+              <span v-if="row.usage.final === false" class="rs__tag">{{ t('tasks.roster.tentative') }}</span>
+            </template>
+            <span v-else class="rs__meta">{{ t('tasks.roster.usageNotYet') }}</span>
+          </td>
           <td>
             <div class="rs__ops">
               <template v-if="row.status === 'CLAIM_PENDING'">
@@ -128,7 +158,7 @@
           </td>
         </tr>
         <tr v-if="expanded === row.id" class="rs__detail">
-          <td colspan="6">
+          <td :colspan="cols.length">
             <dl>
               <div v-if="row.m.realNameInfo?.realName">
                 <dt>{{ t('tasks.roster.detail.realName') }}</dt>
@@ -171,6 +201,11 @@
         </tr>
       </template>
     </BaseTable>
+    <!-- 「额度用量」这几个字第一次出现在这里（评分要点那一页才有它的定义），所以表下
+         补一句它算的是什么。 -->
+    <p v-if="!loading && !denied && !failed && visible.length" class="rs__note rs__usage-note">
+      {{ t('tasks.roster.usageNote') }}
+    </p>
 
     <AdaptiveDialog
       v-model="deadlineOpen"
@@ -214,13 +249,16 @@
 </template>
 
 <script setup lang="ts">
+import type { SortDir } from '@/components/base/tableSort'
 import type { MenuAction } from '@/components/common/menuAction'
 import type {
   Task,
   TaskMembership,
   TaskParticipantRealNameInfo,
+  TaskRubricLine,
   TaskSubmissionReview,
   TaskTeamParticipantMemberSummary,
+  TaskUsage,
 } from '@/types'
 
 import { computed, ref } from 'vue'
@@ -236,11 +274,13 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
+import { compareBy } from '@/components/base/tableSort'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { calendarDaysAgo, clockTime, dayTimeText } from '@/lib/dateText'
 import { vRovingTabs } from '@/lib/rovingTabs'
+import { fmtNum } from '@/lib/usageFormat'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */
 type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDING' | 'PASSED' | 'FAILED'
@@ -249,7 +289,13 @@ type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDI
 // 定宽按两种界面语言里最长的那一格量（格内左右各 16px）：状态是英文的
 // 「Awaiting approval」，最新提交是「Version 12 · Yesterday 16:11」。格子不换行，
 // 窄了字就压到下一列上。
-const ROSTER_COLS = [null, '104px', '140px', '208px', '104px', '150px']
+// 「额度用量」那一格是右对齐的数字加一条迷你条；「额度得分」（只有按额度计分的题
+// 才有）放着「86 / 20 暂定」这样一格。三条定宽按最长的量：`1,234,567` 配条、
+// 「100 / 100 暂定」。下面按有没有额度那一行拼出真正的列宽。
+const COL_BASE = [null, '104px', '140px', '208px', '104px']
+const COL_CREDITS = '112px'
+const COL_USAGE_SCORE = '104px'
+const COL_OPS = '150px'
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
   CLAIM_PENDING: { label: 'tasks.roster.claimPending', tone: 'muted' },
@@ -273,6 +319,10 @@ type Row = {
   status: Status
   latest: Latest | null
   hasDetails: boolean
+  /** 这份领题用掉的额度；接口没给（比如老题）时是 `null`，那一格画「—」。 */
+  credits: number | null
+  /** 额度那一行算出来的分（`TaskUsage`）。题目不按额度计分时只有 `credits`。 */
+  usage: TaskUsage | undefined
 }
 
 const props = defineProps<{
@@ -343,6 +393,7 @@ const rows = computed<Row[]>(() =>
     .sort((a, b) => b.createdAt - a.createdAt)
     .map((m) => {
       const latest = props.latestByParticipant.get(m.id)
+      const usage = m.usage ?? undefined
       return {
         id: m.id,
         m,
@@ -361,9 +412,43 @@ const rows = computed<Row[]>(() =>
             m.applyReason ||
             m.personalAdvantage
         ),
+        credits: usage?.credits ?? null,
+        usage,
       }
     })
 )
+
+/** 这道题的评分要点里有没有额度那一行。有就多画「额度得分」那一列。 */
+const hasUsage = computed(() =>
+  (props.taskData?.rubric ?? []).some((line: TaskRubricLine) => (line.kind ?? 'manual') !== 'manual')
+)
+
+// 列宽按有没有额度那一列拼出来；`min-width` 是各定宽列之和再加第一列的 136px
+// （原来 `842px` 的算法 —— 见上面 `COL_BASE` 那段）。两处都由同一份列宽算，
+// 表头和横滚下限不会飘开。
+const cols = computed(() => [...COL_BASE, COL_CREDITS, ...(hasUsage.value ? [COL_USAGE_SCORE] : []), COL_OPS])
+const minWidth = computed(() => {
+  const fixed = cols.value.reduce((sum, width) => sum + (width ? Number.parseInt(width, 10) : 0), 0)
+  return `${fixed + 136}px`
+})
+
+// ── 排序 ──────────────────────────────────────────────────────────────────────
+// 只有「额度用量」和「额度得分」两列可点。用量按数字；得分没算出来（还没交、
+// 或者提交时还没定）时是空值，`compareBy` 把空值一律放最后 —— 「没有」不是最小。
+
+const sortKey = ref<string | null>(null)
+const sortDir = ref<SortDir>('asc')
+
+function pick(row: Row, key: string): unknown {
+  if (key === 'credits') return row.credits
+  if (key === 'usageScore') return row.usage?.score ?? null
+  return null
+}
+
+function onSort(key: string, dir: SortDir) {
+  sortKey.value = key
+  sortDir.value = dir
+}
 
 type FilterKey = 'all' | 'claim' | 'review' | 'passed' | 'rejected'
 const filter = ref<FilterKey>('all')
@@ -401,6 +486,18 @@ const visible = computed(() => {
       (!q || r.name.toLowerCase().includes(q) || (r.m.member?.name ?? '').toLowerCase().includes(q))
   )
 })
+
+/** 筛完再排：未点表头时是原来的「最近领的在最上面」。 */
+const sorted = computed(() => compareBy(visible.value, sortKey.value, sortDir.value, pick))
+
+/** 迷你条：以这一栏里最多的那份用量为满格。全是 0（或只有一行）时不画条 —— 满格
+ *  的一条会让人以为「大家都用满了」。 */
+const maxCredits = computed(() => Math.max(0, ...visible.value.map((r) => r.credits ?? 0)))
+
+function creditBar(credits: number): string {
+  if (maxCredits.value <= 0 || credits <= 0) return '0%'
+  return `${Math.round((credits / maxCredits.value) * 100)}%`
+}
 
 function day(ms: number): string {
   return dayjs(ms).format(t('tasks.page.dateFormat'))
@@ -532,6 +629,12 @@ function saveDeadline() {
   line-height: var(--lh-13);
 }
 
+/* 表下那句「额度是什么」：紧挨着表，所以上边距小；其余跟 `rs__note` 一样。 */
+.rs__usage-note {
+  margin: 10px 0 0;
+  color: var(--faint);
+}
+
 /* 表格壳是 BaseTable；这里只留名册自己的：不换行、正文色。 */
 .rs__grid td {
   color: var(--text);
@@ -562,6 +665,44 @@ function saveDeadline() {
 .rs__chev,
 .rs__meta {
   color: var(--faint);
+}
+
+/* 额度那两格：右对齐（表头也是），数字用等宽的数字形。 */
+.rs__credits,
+.rs__usage {
+  color: var(--text);
+  text-align: end;
+}
+
+/* 迷你条：一格宽的细轨，按本栏最大用量填。轨和填都是安静的灰，只有长度说话 ——
+   这一列是「谁用得多」，不需要颜色再加一层判断。`.rs__bar` 是顶上那条筛选栏，
+   别同名。 */
+.rs__meter {
+  display: inline-block;
+  width: 32px;
+  height: 4px;
+  margin-left: 8px;
+  overflow: hidden;
+  vertical-align: middle;
+  background: var(--fill-2);
+  border-radius: 2px;
+}
+
+.rs__meter > span {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+}
+
+/* 「暂定」：排名的分要等题目截止才定稿，在那之前它就是个小的灰字标记。 */
+.rs__tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  background: var(--fill-2);
+  border-radius: var(--radius-sm);
 }
 
 .rs__status--muted {
