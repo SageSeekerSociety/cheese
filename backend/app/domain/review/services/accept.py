@@ -142,6 +142,14 @@ async def accept(
     # Everything below that records the decision records ``decided_by``'s: this
     # is whose hand it was.
     card.decided_by_assistant = by_assistant
+    if (
+        card.pr_number is None
+        and not card.delivered_task_ids
+        and card.deliverable_kind in (DeliverableKind.file, DeliverableKind.link)
+    ):
+        # A file or an address handed over with no change to land: nothing
+        # goes through a forge, and a project with no repository has none.
+        return await self._accept_discussion(card, topic, decided_by)
     forge = await self._resolve_forge(topic.project_id, card=card)
     return await forge.accept(self, card, topic, decided_by, seen_head=seen_head)
 
@@ -155,16 +163,6 @@ async def _accept_github(
     seen_head: str | None,
 ) -> AcceptCard:
     """GitHub proposals never fall back to a local merge after a failure."""
-    if (
-        card.pr_number is None
-        and not card.delivered_task_ids
-        and card.deliverable_kind
-        in (
-            DeliverableKind.file,
-            DeliverableKind.link,
-        )
-    ):
-        return await self._accept_discussion(card, topic, decided_by)
     if card.pr_number is None:
         await self._publish_pr_for_accept(card, topic)
         if card.pr_number is not None:

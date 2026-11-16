@@ -223,7 +223,11 @@ async def _go_on_if_asked(
             task_teammate=task_teammate,
         ):
             return False
-        base = await default_branch(task.project_id, session)
+        base = (
+            await default_branch(task.project_id, session)
+            if task.branch_name is not None
+            else None
+        )
         await session.commit()
     async with sessions() as session:
         task = await session.scalar(

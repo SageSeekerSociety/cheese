@@ -22,7 +22,6 @@
   "deleteChannelSignIn": "删除频道需要登录",
   "messageOrAttachment": "请输入消息或添加附件",
   "noDefaultModel": "当前项目没有可用的默认模型，请检查模型服务",
-  "pastTaskNoBranch": "历史任务没有可依赖的工作分支",
   "privateChatHasNoTasks": "私聊里不能创建任务，请到频道里创建",
   "privateChatHasNoThreads": "私聊里没有支线，在频道里开",
   "privateChatProjectMembersOnly": "无法与项目外的人私聊",

@@ -2911,7 +2911,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         if not body:
             raise ValueError("redeliver 要给 deliver 或 deliver_url")
         if "deliver" in body:
-            body["deliver"] = _task_relative(body["deliver"], topic)
+            body["deliver"] = _task_relative(
+                body["deliver"], topic, env.get("CHEESE_WORK", "")
+            )
         return {
             "method": "POST",
             "path": here + "/accept-card/redeliver",
@@ -4173,20 +4175,25 @@ def _doc_set(args: dict, host) -> str:
     return "\n".join(lines)
 
 
-def _task_relative(path: str, task: str) -> str:
+def _task_relative(path: str, task: str, work: str = "") -> str:
     """交付物的路径，写成后端认的那种：相对这条任务的工作目录。
 
     后端从任务目录里读它（`ProjectFiles.raw`），而 agent 手上常常是
     `cheese worktree` 打印的那个绝对路径——把那一截前缀剥掉，别让一次能读到的
-    交付因为写法被打回。"""
+    交付因为写法被打回。没有工作目录的任务（项目没有仓库）从会话所在的目录
+    ``work``（`CHEESE_WORK`）读，那一截前缀同样剥掉。"""
     marker = f"/.cheese/tasks/{task}/"
-    return path.split(marker, 1)[1] if marker in path else path
+    if marker in path:
+        return path.split(marker, 1)[1]
+    root = work.rstrip("/") + "/" if work else ""
+    return path[len(root) :] if root and path.startswith(root) else path
 
 
 def _accept_request(args: dict, host) -> str:
     if args.get("deliver"):
         task = host.environ.get("CHEESE_TOPIC", "")
-        args = {**args, "deliver": _task_relative(args["deliver"], task)}
+        work = host.environ.get("CHEESE_WORK", "")
+        args = {**args, "deliver": _task_relative(args["deliver"], task, work)}
     plan = request_plan("cheese_card.request", args, host.environ)
     # 卡读的是 forge 上那条分支：先让机器把这条任务的提交推上去，推不上去就不递
     # ——递一张照着旧提交的卡，比一次「机器够不着」更糟，因为没人会发现。
@@ -6571,10 +6578,33 @@ def _checkout_step(name: str):
         _CHECKOUT_STEPS[name] = round(monotonic() - began, 3)
 
 
+#: What the platform answers opening a task that has no checkout to open: its
+#: project has no repository, or the repository has no default branch. The
+#: launch reads these keys as "work where the session is" (`task_checkout`).
+NO_CHECKOUT = ("taskWithoutRepository", "forgeNoDefaultBranch")
+
+
+class NoCheckout(SystemExit):
+    """The task has no checkout: it is worked where its session is."""
+
+
+def _open_task(project: str, task_id: str) -> dict:
+    path = f"/projects/{project}/git/tasks/{task_id}"
+    answer = _call("POST", path, tolerate=(404,))
+    if answer.get("ok") is False:
+        error = answer.get("error") or {}
+        key = (error.get("i18n") or {}).get("key") or ""
+        said = f"{error.get('message') or ''}（{key}）"
+        if key in NO_CHECKOUT:
+            raise NoCheckout(f"[cheese] {said}")
+        raise SystemExit(f"[cheese] POST {path} 失败 HTTP 404: {said}")
+    return answer["data"]
+
+
 def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
-    data = _call("POST", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    data = _open_task(project, task_id)
     if data["closed"]:
         raise SystemExit("[cheese] 这条任务已结束，请创建新任务")
     cache = Path.home() / ".cheese" / "repositories"
@@ -7044,7 +7074,10 @@ def _sync_task(task_id: str) -> None:
     task_id = str(uuid.UUID(task_id))
     worktree = _task_root() / task_id
     if not (worktree / ".git").exists():
-        worktree = _task_worktree(task_id)
+        try:
+            worktree = _task_worktree(task_id)
+        except NoCheckout:
+            return  # nothing of it is in a checkout to deliver
     admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
     log = admin / "cheese-sync.log"
     with log.open("a") as record:
