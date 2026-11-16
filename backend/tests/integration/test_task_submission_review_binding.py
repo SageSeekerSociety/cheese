@@ -41,6 +41,9 @@ from tests.integration.conftest import (
 _ORIGINAL = {"accepted": True, "score": 90, "comment": "原评审"}
 # 越权尝试写入的取值：与上面不同，改没改过一眼可辨。
 _ATTACK = {"accepted": False, "score": 1, "comment": "不该落地的评审"}
+# 读回来的那一份复核详情多带一格逐项打分；这份老评审没打分，是空的。
+_ORIGINAL_READ = {**_ORIGINAL, "lineScores": []}
+_ATTACK_READ = {**_ATTACK, "lineScores": []}
 
 
 def _auth(token: str | None) -> dict[str, str]:
@@ -258,7 +261,7 @@ class TestAForeignSubmissionIdIsNotAKey:
             url, json=dict(_ORIGINAL), headers=_auth(scene.teacher.token)
         )
         assert created.status_code == 200, created.text
-        assert created.json()["data"]["review"]["detail"] == _ORIGINAL
+        assert created.json()["data"]["review"]["detail"] == _ORIGINAL_READ
 
         # 两种写法都要挡住：报上自己在攻击者那道题里的报名，或者干脆写上受害者
         # 自己的 participantId —— 只要 path 的题不是提交所属的题，就什么都不是。
@@ -289,7 +292,7 @@ class TestAForeignSubmissionIdIsNotAKey:
             scene.teacher.token,
         )
         assert after["reviewed"] is True
-        assert after["detail"] == _ORIGINAL
+        assert after["detail"] == _ORIGINAL_READ
 
     def test_creating_a_review_through_a_foreign_task_writes_nothing(
         self, scene: _Scene, api_client: TestClient
@@ -383,7 +386,7 @@ class TestReadingAReview:
         for allowed in (scene.teacher, scene.admin, scene.victim):
             review = _read_review(api_client, url, allowed.token)
             assert review["reviewed"] is True
-            assert review["detail"] == _ORIGINAL
+            assert review["detail"] == _ORIGINAL_READ
 
         # 攻击者在自己的题上通过鉴权，但这条提交不是他这道题的。
         for refused, status in (
@@ -409,7 +412,7 @@ class TestTheNormalPathsStillWork:
             url, json=dict(_ORIGINAL), headers=_auth(scene.teacher.token)
         )
         assert created.status_code == 200, created.text
-        assert created.json()["data"]["review"]["detail"] == _ORIGINAL
+        assert created.json()["data"]["review"]["detail"] == _ORIGINAL_READ
 
         patched = api_client.patch(
             url,
@@ -424,10 +427,12 @@ class TestTheNormalPathsStillWork:
             url, json=dict(_ATTACK), headers=_auth(scene.admin.token)
         )
         assert replaced.status_code == 200, replaced.text
-        assert replaced.json()["data"]["review"]["detail"] == _ATTACK
+        assert replaced.json()["data"]["review"]["detail"] == _ATTACK_READ
 
         # 提交者本人读得到自己的评审（哪怕是管理员刚改过的）。
-        assert _read_review(api_client, url, scene.victim.token)["detail"] == _ATTACK
+        assert (
+            _read_review(api_client, url, scene.victim.token)["detail"] == _ATTACK_READ
+        )
 
         deleted = api_client.delete(url, headers=_auth(scene.admin.token))
         assert deleted.status_code == 200, deleted.text
@@ -438,7 +443,10 @@ class TestTheNormalPathsStillWork:
             url, json=dict(_ORIGINAL), headers=_auth(scene.teacher.token)
         )
         assert again.status_code == 200, again.text
-        assert _read_review(api_client, url, scene.teacher.token)["detail"] == _ORIGINAL
+        assert (
+            _read_review(api_client, url, scene.teacher.token)["detail"]
+            == _ORIGINAL_READ
+        )
 
     def test_two_teachers_each_keep_their_own_review(
         self, scene: _Scene, api_client: TestClient
