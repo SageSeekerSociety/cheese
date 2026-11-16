@@ -94,14 +94,14 @@ _CHECKLIST_EN = (
 
 _PROGRESS_NONE_ZH = (
     "你还没说这件任务做到哪了。现在就用 cheese_task(action=state) 设一次：working "
-    "在做、waiting 在等结果、blocked 卡住了，note 写一句在做什么。做完了就"
-    "递卡，看板会显示等审。"
+    "在做、waiting 在等结果、blocked 卡住了，note 写一句在做什么。做完要人审阅的"
+    "就递卡，看板会显示等审。"
 )
 _PROGRESS_NONE_EN = (
     "You have not said where this task stands. Call cheese_task(action=state) now: "
     "working, waiting (on a build, CI or a long command) or blocked, with a "
-    "one-line note. When the work is done, file a card: the board then "
-    "shows it awaiting review."
+    "one-line note. When work that needs review is done, file a card: the "
+    "board then shows it awaiting review."
 )
 _PROGRESS_ZH = (
     "你报的任务状态已经 {minutes} 分钟没动过了，你停下以后看板显示的就是那一句。"

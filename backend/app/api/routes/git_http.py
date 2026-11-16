@@ -80,15 +80,19 @@ async def open_task_workspace(
     if task.status == "closed":
         raise ValidationError(say("taskEndedCreateNew"))
     await TaskService(db).record_author(task, acting)
-    if task.branch_name is None:
+    if task.branch_name is None and not await TaskService(db).give_branch(task):
         # deferred-import: tests patch this name on app.domain.project.forge
         from app.domain.project.forge import binding_for_project
 
-        # A room turned into a task carries no branch; its own session opening
-        # it is the moment it needs one. Without it the opening was a 404 that
-        # said the task was not in the project (dev, 2026-10-06).
-        if await binding_for_project(project_id, db) is not None:
-            await TaskService(db).give_branch(task)
+        # A task made while the project had no default branch is worked
+        # without a checkout until it has one; its session's launch reads this
+        # answer as that (`task_checkout`), not as a failure to retry.
+        await db.commit()
+        raise NotFoundError(
+            say("taskWithoutRepository")
+            if await binding_for_project(project_id, db) is None
+            else say("forgeNoDefaultBranch")
+        )
     result = await task_workspace(project_id, task_id, db, credential)
     await db.commit()
     return result
@@ -105,11 +109,12 @@ async def task_workspace(
     from app.domain.project.forge import binding_for_project
 
     task = await _task_for(db, project_id, task_id, credential)
-    if task.branch_name is None:
-        raise NotFoundError(say("workTaskNotInProject"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
-        raise NotFoundError(say("projectHasNoRepo"))
+        raise NotFoundError(say("taskWithoutRepository"))
+    if task.branch_name is None:
+        # Opening the task (POST) gives it its branch.
+        raise NotFoundError(say("taskNoOwnFileVersion"))
 
     room = await TopicService(db).get_or_404(task.room_id)
     # Who the task's commits are by, and who they credit: the same rule the
