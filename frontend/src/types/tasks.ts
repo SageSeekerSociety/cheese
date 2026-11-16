@@ -1,4 +1,14 @@
-import type { Material, Space, SpaceCategory, SpaceTeaching, Team, TeamSummary, Topic, User } from '.'
+import type {
+  Material,
+  Space,
+  SpaceCategory,
+  SpaceKnowledgePoint,
+  SpaceTeaching,
+  Team,
+  TeamSummary,
+  Topic,
+  User,
+} from '.'
 
 export type TaskSubmitterType = 'USER' | 'TEAM'
 
@@ -156,6 +166,12 @@ export interface Task {
   joined?: boolean
   joinedTeams?: Team[]
   topics?: Topic[]
+  /**
+   * 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。与 `topics`
+   * 同一形状；详情、列表、编辑表单草稿都带，未点名时是空数组。服务端按知识点是否
+   * 软删过滤（`TaskKnowledgePointRepository`），所以已删的名字不在这里。
+   */
+  knowledgePoints?: SpaceKnowledgePoint[]
   userDeadline?: number
   participationEligibility?: ParticipationEligibility
   /** 我（或我的团队）从这道题来的那个项目：题目页的「继续做」打开它。详情接口才带；
@@ -290,6 +306,11 @@ export type TaskFormSubmitData = {
   defaultRole?: string
   /** 加入每个领取者项目的导师（#3830）；空 = 没有导师。 */
   mentors?: string[]
+  /**
+   * 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。与 `topics`
+   * 同一语义：给了就整份替换，省略不动。只在这块板开着学情分析时那一栏才在。
+   */
+  knowledgePointIds?: number[]
   /** 学生提交时逐项填写的东西。 */
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]

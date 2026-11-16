@@ -1,4 +1,11 @@
-import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
+import type {
+  AnalyticsApproveType,
+  Page,
+  Space,
+  SpaceAnnouncement,
+  SpaceTeaching,
+  TaskSubmission,
+} from '@/types'
 
 export type SpaceApplication = {
   /** `create`：新建空间待审；`open`：已有空间申请设为开放空间。 */
@@ -49,6 +56,28 @@ export type PatchSpaceRequestData = {
   /** 这块板的默认「给 AI 队友的指导」。写上就**整份替换**（协议那套整键语义），
    *  省掉它则原样不动；`{}` 是清空，于是没有任何默认。 */
   teaching?: SpaceTeaching
+}
+
+// ---- 学情分析（§ learning analysis, step 1）--------------------------------------
+//
+// 一块题目板的学情分析底座：开关、知识点清单、AI 建议、加入时的告知卡。契约见
+// `SpacesApi` 那几条 `learning-analysis` 方法；服务端在
+// `app/api/routes/spaces_learning_analysis.py`。
+
+/** 开关那一条（`PATCH .../learning-analysis`）：开还是关。 */
+export type PatchLearningAnalysisRequestData = {
+  enabled: boolean
+}
+
+/** 新建 / 改名一条知识点（`{ name }`）。 */
+export type KnowledgePointRequestData = {
+  name: string
+}
+
+/** AI 知识点建议的问：题目名 + 题面（纯文本，缺省空串）。 */
+export type KnowledgeSuggestionRequestData = {
+  name: string
+  description: string
 }
 
 export type PostSpaceAnnouncementRequestData = {
