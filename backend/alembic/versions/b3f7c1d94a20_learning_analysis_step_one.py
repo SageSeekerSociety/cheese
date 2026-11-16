@@ -173,7 +173,9 @@ def downgrade() -> None:
         "uq_task_knowledge_point_task_point", table_name="task_knowledge_point"
     )
     op.drop_table("task_knowledge_point")
-    op.drop_index("ix_space_knowledge_point_space_id", table_name="space_knowledge_point")
+    op.drop_index(
+        "ix_space_knowledge_point_space_id", table_name="space_knowledge_point"
+    )
     op.drop_index(
         "uq_space_knowledge_point_live_name", table_name="space_knowledge_point"
     )
