@@ -59,9 +59,7 @@ from app.domain.assistant import changes
 from app.domain.attachment.reading import read_document
 from app.domain.library import records as library_records
 from app.domain.space import permissions as space_seats
-from app.domain.space.learning_analysis_repositories import (
-    SpaceKnowledgePointRepository,
-)
+from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.task import drafts, package
@@ -482,8 +480,7 @@ async def _space_terms(db, spaces: SpaceService, space_id: int, user_id: int):
 
 async def _knowledge_points(db, space_id: int) -> dict[str, int]:
     """The space's 知识点清单 by name: what 芝士 may tag a 题目 with."""
-    rows = await SpaceKnowledgePointRepository(db).list_for_space(space_id)
-    return {row.name: row.id for row in rows}
+    return await SpaceLearningAnalysisService.of(db).point_ids_by_name(space_id)
 
 
 async def _draft_text(db, spaces: SpaceService, row, user_id: int) -> str:

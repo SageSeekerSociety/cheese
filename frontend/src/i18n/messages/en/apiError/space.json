@@ -14,5 +14,6 @@
   "learningPointNameTooLong": "A knowledge point name is at most {max} characters",
   "learningPointNameTaken": "\"{name}\" is already on the list",
   "learningPointLimit": "At most {max} knowledge points",
+  "learningPointNotFound": "That knowledge point does not exist or was removed",
   "learningAnalysisNoModel": "Learning analysis is unavailable right now; try again later"
 }

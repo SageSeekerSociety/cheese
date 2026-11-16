@@ -445,6 +445,7 @@ class TestATasksKnowledgePoints:
         self, user_client: UserCreator, api_client: TestClient
     ):
         board = _board(user_client, api_client)
+        _set_switch(api_client, board["token"], board["space_id"], True)
         point = _add_point(api_client, board["token"], board["space_id"], "临时")
         published = _publish(
             api_client,
@@ -454,7 +455,10 @@ class TestATasksKnowledgePoints:
             point_ids=[point["id"]],
         )
         task_id = published.json()["data"]["task"]["id"]
-        assert published.json()["data"]["task"]["knowledgePoints"]
+        before = api_client.get(f"/tasks/{task_id}", headers=_auth(board["token"]))
+        assert [
+            p["name"] for p in before.json()["data"]["task"]["knowledgePoints"]
+        ] == ["临时"]
 
         api_client.delete(
             f"/spaces/{board['space_id']}/learning-analysis/knowledge-points/"
@@ -465,6 +469,32 @@ class TestATasksKnowledgePoints:
         assert read.status_code == 200, read.text
         # 软删掉的知识点不再出现在这道题的清单里（关联行还留着）。
         assert read.json()["data"]["task"]["knowledgePoints"] == []
+
+    def test_switching_off_hides_a_tasks_points_without_dropping_them(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        board = _board(user_client, api_client)
+        _set_switch(api_client, board["token"], board["space_id"], True)
+        point = _add_point(api_client, board["token"], board["space_id"], "索引")
+        published = _publish(
+            api_client,
+            board,
+            token=board["token"],
+            name="题",
+            point_ids=[point["id"]],
+        )
+        task_id = published.json()["data"]["task"]["id"]
+
+        def _detail_points() -> list[str]:
+            read = api_client.get(f"/tasks/{task_id}", headers=_auth(board["token"]))
+            assert read.status_code == 200, read.text
+            return [p["name"] for p in read.json()["data"]["task"]["knowledgePoints"]]
+
+        _set_switch(api_client, board["token"], board["space_id"], False)
+        assert _detail_points() == []
+
+        _set_switch(api_client, board["token"], board["space_id"], True)
+        assert _detail_points() == ["索引"]
 
 
 @pytest.fixture

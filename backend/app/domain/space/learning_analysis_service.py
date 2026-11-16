@@ -66,6 +66,11 @@ class SpaceLearningAnalysisService:
         rows = await self._points.list_for_space(space_id)
         return [self._point_to_api(row) for row in rows]
 
+    async def point_ids_by_name(self, space_id: int) -> dict[str, int]:
+        """这块板的知识点清单，名字 → id：芝士写题目草稿时按名字挂知识点读这一份。"""
+        rows = await self._points.list_for_space(space_id)
+        return {row.name: row.id for row in rows}
+
     @staticmethod
     def _point_to_api(row: SpaceKnowledgePoint) -> dict:
         return {"id": row.id, "name": row.name, "displayOrder": row.display_order}
@@ -109,7 +114,7 @@ class SpaceLearningAnalysisService:
         row = await self._points.get(space_id=space_id, point_id=point_id)
         if row is None:
             raise NotFoundError(
-                "Knowledge point not found",
+                say("learningPointNotFound"),
                 data={"spaceId": space_id, "knowledgePointId": point_id},
             )
         return row

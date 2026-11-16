@@ -350,13 +350,14 @@ async def get_task(
         }
     )
 
-    # 这道题涉及的知识点（§ learning analysis, step 1）：详情的「涉及的知识点」那一格
-    # 读它。整页一次取（这里只有一道题）。
-    await _enrich_task_knowledge_points(db, [task_dict])
-
     enriched_task = (
         await _enrich_task_models(db, [task_dict], space_id=task.space_id)
     )[0]
+    # 这道题涉及的知识点（§ learning analysis, step 1）：详情的「涉及的知识点」那一格
+    # 读它；板没开学情分析时不查。
+    await _enrich_task_knowledge_points(
+        db, [enriched_task], shown_in_space=task.space_id
+    )
 
     return ok(
         {
