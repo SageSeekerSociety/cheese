@@ -795,8 +795,9 @@ class TaskSubmissionService:
             "score": review.score,
             "comment": review.comment,
         }
-        if review.auto_scores:
-            detail["autoScores"] = review.auto_scores
+        auto_scores = getattr(review, "auto_scores", None)
+        if auto_scores:
+            detail["autoScores"] = auto_scores
         return {"reviewed": True, "detail": detail}
 
     async def _build_submission_dto(
@@ -1270,8 +1271,9 @@ class TaskSubmissionReviewService:
             "score": review.score,
             "comment": review.comment,
         }
-        if review.auto_scores:
-            detail["autoScores"] = review.auto_scores
+        auto_scores = getattr(review, "auto_scores", None)
+        if auto_scores:
+            detail["autoScores"] = auto_scores
         return {"reviewed": True, "detail": detail}
 
     async def create_review(
