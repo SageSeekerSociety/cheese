@@ -352,11 +352,11 @@
     "confirm": "改价"
   },
   "roles": {
-    "hint": "平台自己挑模型的那几件事各跑在哪个模型上。改了立即生效，不用重新部署；项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准。",
+    "hint": "平台自己挑模型的那几件事各跑在哪个模型上。改了立即生效，不用重新部署。AI 队友的对话、任务、分身三项，用在项目和队友都没选模型（自动）的时候。",
     "now": "现在：{model}",
-    "unset": "未设置：跟着项目的默认模型",
+    "unset": "未设置",
     "fallback": "部署默认（{model}）",
-    "fallbackNone": "不设置（跟着项目的默认模型）",
+    "fallbackNone": "不设置",
     "separator": "、",
     "loadFailed": "读取平台模型角色失败",
     "failed": "改角色失败",
@@ -364,8 +364,9 @@
       "set": "{role} 已指到选中的模型"
     },
     "role": {
-      "agent_model": "默认模型",
-      "subagent_model": "分身默认",
+      "agent_model": "AI 队友：对话",
+      "task_model": "AI 队友：任务",
+      "subagent_model": "AI 队友：分身",
       "assistant_model": "个人芝士",
       "docs_assistant_model": "问芝士（文档助手）",
       "topic_naming_model": "话题命名",
@@ -374,6 +375,7 @@
       "voice_polish_model": "语音输入：整理转写",
       "memory_migration_model": "记忆迁移"
     },
-    "retry": "重新读取角色"
+    "retry": "重新读取角色",
+    "inherits": "同{role}（{model}）"
   }
 }

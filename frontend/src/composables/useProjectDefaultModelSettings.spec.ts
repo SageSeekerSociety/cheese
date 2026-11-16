@@ -22,8 +22,12 @@ import { useProjectDefaultModelSettings } from './useProjectDefaultModelSettings
 function state(overrides: Partial<ProjectDefaultModel> = {}): ProjectDefaultModel {
   return {
     model: null,
-    subagent_model: null,
     deployment_default: 'sonnet',
+    automatic: {
+      conversation: { id: 'kimi-k3', label: 'Kimi K3' },
+      task: { id: 'deepseek-flash', label: 'DeepSeek Flash' },
+      subagent: { id: 'deepseek-flash', label: 'DeepSeek Flash' },
+    },
     choices: [
       { id: 'sonnet', label: 'Claude Sonnet 5', description: '', default: false, allowed: true, requires_plan: null },
       {
@@ -68,11 +72,11 @@ describe('useProjectDefaultModelSettings', () => {
     expect(model.state.value).toEqual(state())
   })
 
-  it('saves both selections and reports the receipt', async () => {
+  it('saves the selection and reports the receipt', async () => {
     const { model } = host()
     await tick()
-    await model.save('deepseek-flash', null)
-    expect(setProjectDefaultModel).toHaveBeenCalledWith('p', 'deepseek-flash', null)
+    await model.save('deepseek-flash')
+    expect(setProjectDefaultModel).toHaveBeenCalledWith('p', 'deepseek-flash')
     expect(model.state.value?.model).toBe('deepseek-flash')
     expect(model.saved.value).toBe(true)
     expect(model.saveError.value).toBe('')
