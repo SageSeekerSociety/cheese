@@ -714,7 +714,19 @@ PLATFORM_TOOLS = ToolTable(
                     "UUID from an uncertain prior result; "
                     "reuse with the same content to retry."
                 ),
+                "task": _text(
+                    '这条消息涉及的任务，写编号，如 "#15"；只能是这个频道里的任务'
+                ),
             },
+        ),
+        _tool(
+            "chat_react",
+            "对一条消息做表情回应，回应署你的名。已有同一个回应时不重复添加。",
+            {
+                "message_id": _text("要回应的消息 id，即消息行开头 [id=…] 里的值"),
+                "emoji": _text("一个表情"),
+            },
+            ["message_id", "emoji"],
         ),
         _tool(
             "todo_write",
@@ -2814,9 +2826,17 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "request_id": str(uuid.UUID(args["request_id"]))
             if args.get("request_id")
             else str(uuid.uuid4()),
-            **_given(args, "reply_to"),
+            **_given(args, "reply_to", "task"),
         }
         return {"method": "POST", "path": here + "/messages", "body": body}
+    if tool == "chat_react":
+        return {
+            "method": "POST",
+            "path": "/blocks/"
+            + urllib.parse.quote(str(args["message_id"]).strip(), safe="")
+            + "/reactions",
+            "body": {"emoji": str(args["emoji"]).strip(), "add_only": True},
+        }
     if tool == "cheese_chat.edit":
         return {
             "method": "PATCH",
@@ -5686,6 +5706,7 @@ def _say_skills_read(args, data, env) -> str:
 
 _SAY = {
     "chat_send": _say_chat_send,
+    "chat_react": lambda a, d, e: "已回应。",
     "cheese_chat.edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
     "todo_write": _say_todo,
     "cheese_task.open": _say_task,

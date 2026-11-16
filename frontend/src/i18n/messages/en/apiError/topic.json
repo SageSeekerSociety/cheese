@@ -62,5 +62,6 @@
   "threadRestoreNotYours": "Only whoever started this thread, or a channel admin, can restore it",
   "threadRestoreSignIn": "Sign in to restore this thread",
   "threadNotFound": "Thread not found",
-  "addressingChanged": "This message would no longer go to an AI teammate, so it was not sent"
+  "addressingChanged": "This message would no longer go to an AI teammate, so it was not sent",
+  "chatTaskUnknown": "This channel has no task {task}. Its tasks are listed in the section on the channel's open tasks."
 }

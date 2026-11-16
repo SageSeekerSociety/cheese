@@ -103,6 +103,7 @@ from app.domain.agent.turn.intake.human import preview_addressing
 from app.domain.agent.turn.store.human import AddressingChanged, HumanHandoff
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import (
+    TASK_TAG,
     ChatAddressingIn,
     ChatAddressingOut,
     ChatAttachmentIn,
@@ -118,6 +119,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.project.address import Numbered, things_by_ref
 from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
@@ -409,6 +411,7 @@ async def _publish_as_agent(
         if parent is None or parent.conversation_id != place.conversation_id:
             raise ValidationError("reply_to must belong to this conversation")
         reply_parent = parent
+    tagged = await _tagged_task(db, place, body.task) if body.task else None
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     prepared = (
         await asyncio.to_thread(_read_agent_attachments, body.attachments)
@@ -478,9 +481,15 @@ async def _publish_as_agent(
         topic_refs=[],
         author=author,
         publication_id=publication_id,
-        extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
-        if body.quoted_context
-        else None,
+        extra_meta={
+            **(
+                {"quoted_context": body.quoted_context.model_dump(mode="json")}
+                if body.quoted_context
+                else {}
+            ),
+            **({TASK_TAG: str(tagged)} if tagged is not None else {}),
+        }
+        or None,
     )
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
@@ -497,6 +506,18 @@ async def _publish_as_agent(
             naming.nudge(place.conversation_id, "message")
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
+
+
+async def _tagged_task(db, place, ref: str) -> uuid.UUID:
+    """The task of this channel an AI teammate's message is about, by its
+    number or id; a ref that names none of this channel's tasks is refused
+    with what to use instead."""
+    found = (
+        await things_by_ref(db, place.project_id, Numbered.task, [ref.strip()])
+    ).get(ref.strip())
+    if found is None or found.room_id != place.room_id:
+        raise ValidationError(say("chatTaskUnknown", task=ref.strip()))
+    return found.id
 
 
 async def _summon_the_named(

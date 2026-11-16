@@ -285,6 +285,11 @@ class ChatAttachmentIn(BaseModel):
     content_b64: str | None = None
 
 
+#: The key on a message's meta naming the task it is about (`chat_send`'s
+#: ``task``): the timeline draws the task's tag above the message.
+TASK_TAG = "task_tag"
+
+
 class ChatMessageIn(BaseModel):
     content: str = Field(default="", max_length=100000)
     request_id: uuid.UUID
@@ -297,6 +302,9 @@ class ChatMessageIn(BaseModel):
     # never makes a message call anyone: who is called is read from the
     # message itself (invariant I13).
     expects_agent: bool = False
+    # An AI teammate's message about one task of this channel: its number
+    # (`#15`) or id. The message then carries the task's tag.
+    task: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def quote_is_bounded_message_data(self):

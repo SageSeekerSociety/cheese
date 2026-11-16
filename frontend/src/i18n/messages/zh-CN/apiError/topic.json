@@ -62,5 +62,6 @@
   "threadRestoreNotYours": "只有开这条支线的人和频道管理员能把它放回来",
   "threadRestoreSignIn": "恢复这条支线需要登录",
   "threadNotFound": "找不到这条支线",
-  "addressingChanged": "这条消息现在不会交给 AI 队友，没有发出"
+  "addressingChanged": "这条消息现在不会交给 AI 队友，没有发出",
+  "chatTaskUnknown": "这个频道没有任务 {task}。频道里的任务列在「这个频道里还在进行的任务」一节。"
 }

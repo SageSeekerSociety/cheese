@@ -60,6 +60,7 @@ export const TOOL_LABELS: Record<string, string> = {
   // 工具表说出来。`cheese_<命令>` 那几条（`cheese_worktree` 等）给旧记录用：pi
   // 房间曾把 CLI 的命令当工具，现在和别的骨架一样在 bash 里跑 `cheese …`。
   chat_send: 'toolLabels.chatSend',
+  chat_react: 'toolLabels.chatReact',
   'cheese_chat.edit': 'toolLabels.chatEdit',
   todo_write: 'toolLabels.todoWrite',
   'cheese_chat.list': 'toolLabels.cheeseChatList',

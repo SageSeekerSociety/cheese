@@ -10,6 +10,7 @@
   "bashWrite": "Send input to the task",
   "chatEdit": "Edit a message",
   "chatSend": "Send a message",
+  "chatReact": "React to a message",
   "cheeseAcceptRequest": "Submit for review",
   "cheeseApp": "Work on a mini-app",
   "cheeseAppGet": "Read a mini-app",

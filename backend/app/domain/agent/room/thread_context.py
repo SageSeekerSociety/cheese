@@ -18,7 +18,7 @@ THREAD_CONTEXT_MESSAGES = 10
 
 
 def _line(block) -> str:
-    return f"[{speaker(block)}] {block.content}"
+    return f"[id={block.id}] [{speaker(block)}] {block.content}"
 
 
 async def channel_context(session: "AsyncSession", room: Topic, first) -> str:
