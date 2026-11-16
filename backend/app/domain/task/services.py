@@ -918,9 +918,15 @@ class TaskSubmissionService:
         submitter_id: int,
         contents: list[dict],
         stage: int = 0,
+        code_sha: str = "",
     ) -> dict:
         """Create a new submission for a participant in one stage, bumping its
-        version (versions count across the membership's stages)."""
+        version (versions count across the membership's stages).
+
+        ``code_sha`` is 「这一版要评测的代码」（方案 §数据结构）：提交那一刻默认分支指着的
+        那个 commit，由路由读好递进来（``app.domain.task.code_version``）；读不到、或者
+        项目连的是 GitHub 时留空。这一层只把它记下来，不去问托管方。
+        """
         membership = await self._membership_repo.list_memberships_for_task(
             task_id=task_id,
             approved=None,
@@ -953,6 +959,7 @@ class TaskSubmissionService:
                 if self._session is not None
                 else None
             ),
+            code_sha=code_sha,
         )
 
         await self._entry_repo.create_entries(
