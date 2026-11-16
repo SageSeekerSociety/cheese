@@ -276,6 +276,10 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "cliModelLimitReachedHint",
         "turnWedged",
         "turnWedgedDetail",
+        # A project's subagent default moved onto each teammate; old overview
+        # lines still say who changed it, and what to.
+        "settingSubagentModel",
+        "settingInheritMain",
     }
 )
 
