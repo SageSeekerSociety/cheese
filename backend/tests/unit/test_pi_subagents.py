@@ -307,7 +307,7 @@ async def test_a_subagent_runs_the_model_it_was_given_and_reports_back(tmp_path)
         ]
 
 
-async def test_a_subagent_given_no_model_runs_the_project_subagent_default(tmp_path):
+async def test_a_subagent_given_no_model_runs_the_model_admission_picks(tmp_path):
     def route(body):
         if body["model"] != PARENT:
             return child_says(body) or {"text": "?"}

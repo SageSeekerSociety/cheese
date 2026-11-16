@@ -1,15 +1,15 @@
 """A project's settings that 芝士 may change, written out for it.
 
 What it reads before it changes them for the person: the project's short name,
-how its tasks are named, the AI teammate and the model new channels start
-with — each with what it can be set to — and who manages each channel.
+how its tasks are named, the AI teammate new channels start with, its main
+model — each with what it can be set to — and who manages each channel.
 """
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.model_catalog import model_choices
+from app.domain.agent.model_catalog import automatic_models, model_choices
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.assistant import refs
 from app.domain.project.models import Project
@@ -33,14 +33,18 @@ async def settings(session: AsyncSession, project: Project, channels: list) -> s
         for m in model_choices(project.settings)
         if access.shows(m) and access.allows(m)
     ]
-    chosen = (project.settings or {}).get("default_model") or "平台默认"
+    automatic = automatic_models()
+    chosen = (project.settings or {}).get("default_model") or (
+        f"自动（auto：对话 {automatic['conversation']}，任务 {automatic['task']}，"
+        f"分身 {automatic['subagent']}）"
+    )
     lines = [
         f"项目「{project.name}」的设置",
         f"短名（slug）：{project.slug}",
         f"任务命名（task_naming）：{_NAMING[naming_mode(project.settings)]}",
         f"默认 AI 队友（default_agent）：{default or '未设'}；可选："
         + "、".join(a.handle for a in agents),
-        f"默认模型（default_model）：{chosen}；可选：" + "、".join(models),
+        f"项目主模型（default_model）：{chosen}；可选：auto、" + "、".join(models),
         "频道负责人（在频道编号上改 manager）：",
     ]
     members = TopicMemberService(session)

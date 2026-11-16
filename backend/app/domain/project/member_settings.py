@@ -12,9 +12,7 @@ What makes a setting safe to open is that nobody learns of a change by
 accident: every change is said in the project's 综合, credited to whoever made
 it. ``ProjectService.merge_settings`` refuses these keys, so the only write is
 ``ProjectService.change_member_settings``, whose one caller
-(``app/api/member_settings.py``) says each change in the room. The one other
-write fills an unset ``default_model`` from the 题目 a project was made from
-(``ProjectService._seed_default_model``): a starting value nobody changed.
+(``app/api/member_settings.py``) says each change in the room.
 """
 
 from dataclasses import dataclass
@@ -28,7 +26,6 @@ from typing import Final
 MEMBER_SETTINGS: Final = frozenset(
     {
         "default_model",
-        "default_subagent_model",
         "execution_environment",
         "max_concurrent_turns",
         "task_naming",
