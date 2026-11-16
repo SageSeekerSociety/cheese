@@ -73,8 +73,8 @@
             class="switcher__row-wrap"
             :class="{
               'switcher__row-wrap--dragging': draggingId === row.item.projectId,
-              'switcher__row-wrap--before': dropAt?.id === row.item.projectId && dropAt.edge === 'before',
-              'switcher__row-wrap--after': dropAt?.id === row.item.projectId && dropAt.edge === 'after',
+              'switcher__row-wrap--before': edgeFor(row.item.projectId) === 'before',
+              'switcher__row-wrap--after': edgeFor(row.item.projectId) === 'after',
             }"
             :draggable="!query"
             :data-project-id="row.item.projectId"
@@ -221,6 +221,9 @@ const DRAG_TYPE = 'application/x-cheese-project'
 const draggingId = ref<string | null>(null)
 const dropAt = ref<{ id: string; edge: DropEdge } | null>(null)
 
+function edgeFor(id: string | undefined): DropEdge | null {
+  return id && dropAt.value?.id === id ? dropAt.value.edge : null
+}
 function onDragStart(e: DragEvent, id: string) {
   if (!e.dataTransfer || query.value) return
   e.dataTransfer.setData(DRAG_TYPE, id)
