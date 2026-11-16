@@ -6,7 +6,14 @@
 // 定数，页面用它覆盖预览。所以这里只做页面能当场做的换算，拿不准的值（没写完的日期、
 // 空间里没有的分类）先不填，等服务端那一份。
 import type { TypistPace } from '@/lib/typist'
-import type { SpaceTeaching, TaskDraftField, TaskDraftFields, TaskSubmissionEntryType, TeachingMode } from '@/types'
+import type {
+  SpaceTeaching,
+  TaskDraftField,
+  TaskDraftFields,
+  TaskRubricLine,
+  TaskSubmissionEntryType,
+  TeachingMode,
+} from '@/types'
 
 import dayjs from 'dayjs'
 
@@ -115,6 +122,22 @@ function text(value: unknown): string | null {
 
 function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null
+}
+
+/** 芝士写的评分要点一行是谁给分（`rubric.LINE_KINDS`）：认得的自动行带上 `kind` 和
+ *  `config`，其余（含只写「手动」或没写）都当手动行，表单照旧。 */
+function lineKind(
+  kind: unknown,
+  config: unknown
+): { kind?: TaskRubricLine['kind']; config?: TaskRubricLine['config'] } {
+  if (kind !== 'usage') return {}
+  const given = (config ?? {}) as { mode?: unknown; full?: unknown; zero?: unknown }
+  const full = count(given.full)
+  const zero = count(given.zero)
+  // `rank` 只认这一个模式；`threshold`（或没说）要两个阈值都给了才算数，否则交给表单的默认值。
+  if (given.mode === 'rank') return { kind: 'usage', config: { mode: 'rank' } }
+  if (full === null || zero === null) return { kind: 'usage', config: { mode: 'threshold' } }
+  return { kind: 'usage', config: { mode: 'threshold', full, zero } }
 }
 
 /** 芝士按阶段的 id 或名称指一个阶段；表单按 id 归组。名称在这次写的阶段里找得到
@@ -273,13 +296,25 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
   }
   if (Array.isArray(given.rubric)) {
     fields.rubric = given.rubric
-      .map((line) => line as { item?: unknown; points?: unknown; criteria?: unknown; stage?: unknown })
+      .map(
+        (line) =>
+          line as {
+            item?: unknown
+            points?: unknown
+            criteria?: unknown
+            stage?: unknown
+            kind?: unknown
+            config?: unknown
+          }
+      )
       .filter((line) => typeof line.item === 'string')
       .map((line) => ({
         item: String(line.item),
         points: count(line.points) ?? 0,
         criteria: text(line.criteria) ?? '',
         stage: stageRef(line.stage, written),
+        // 自动算分那一行带着谁给分、怎么给（`rubric.LINE_KINDS`）；手动行照旧。
+        ...lineKind(line.kind, line.config),
       }))
   }
   if (typeof given.rubric_public === 'boolean') fields.rubricPublic = given.rubric_public

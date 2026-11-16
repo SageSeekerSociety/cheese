@@ -242,6 +242,17 @@ async function publish(view: ReturnType<typeof render>) {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+/** 评分要点那一节的「添加一项」是一张菜单：「手动评分项」和「额度用量」二选一
+ *  （后者由平台自动算分）。点开的那一张菜单挂在浮层里，所以要拿最后一张。 */
+async function addRubricLine(
+  view: ReturnType<typeof render>,
+  { group = 0, kind = 'manual' }: { group?: number; kind?: 'manual' | 'usage' } = {}
+) {
+  await fireEvent.click(view.getAllByRole('button', { name: '添加一项' })[group])
+  const items = await view.findAllByTestId(kind === 'manual' ? 'task-form-add-manual' : 'task-form-add-usage')
+  await fireEvent.click(items[items.length - 1])
+}
+
 /** 选中分类那枚下拉里的一项。选项画在浮层里，查询挂在 `document.body` 上找得到。 */
 async function pickCategory(view: ReturnType<typeof render>, name = '基础题') {
   const field = view.container.querySelector('[data-agent-field="category"]') as HTMLElement
@@ -440,11 +451,11 @@ describe('发题页：发一道', () => {
     await fireEvent.update(view.getByLabelText('第 2 个提交项'), '合作与参考说明')
     await fireEvent.click(view.getAllByRole('radio', { name: '文字' })[1])
 
-    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await addRubricLine(view)
     await fireEvent.update(view.getByLabelText('第 1 项项目'), '正确性')
     await fireEvent.update(view.getByLabelText('第 1 项分值'), '60')
     await fireEvent.update(view.getByLabelText('第 1 项评分标准'), '8 组记录全对')
-    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await addRubricLine(view)
     await check(view.getByTestId('task-form-rubric-public').querySelector('input')!)
 
     await publish(view)
@@ -470,7 +481,7 @@ describe('发题页：发一道', () => {
     await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
     await fireEvent.update(view.getByLabelText('第 2 个阶段的名称'), '实现')
     await fireEvent.update(view.getAllByLabelText('第 1 个提交项')[1], '代码')
-    await fireEvent.click(view.getAllByRole('button', { name: '添加一项' })[1])
+    await addRubricLine(view, { group: 1 })
     await fireEvent.update(view.getByLabelText('第 1 项项目'), '正确性')
 
     await publish(view)
@@ -533,7 +544,7 @@ describe('发题页：发一道', () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
-    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await addRubricLine(view)
     await fireEvent.update(view.getByLabelText('第 1 项评分标准'), '格式规范')
 
     await publish(view)

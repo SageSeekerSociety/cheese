@@ -317,6 +317,16 @@ class TaskRubricItem(Base):
     stage: Mapped[int] = mapped_column(
         "stage", Integer, nullable=False, default=0, server_default="0"
     )
+    # Who scores the line (``app.domain.task.rubric.LINE_KINDS``): the grader by
+    # hand (``manual``, every line written before kinds existed), or the
+    # platform (``usage``: the credits the claim spent). ``config`` holds the
+    # automatic line's own settings and is empty on a manual one.
+    kind: Mapped[str] = mapped_column(
+        "kind", String(16), nullable=False, default="manual", server_default="manual"
+    )
+    config: Mapped[dict] = mapped_column(
+        "config", JSONB, nullable=False, default=dict, server_default="{}"
+    )
 
 
 class TaskMentor(Base):
@@ -531,6 +541,13 @@ class TaskSubmissionReview(Base):
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # On a task whose rubric has an automatic line, how ``score`` was made: the
+    # points the grader gave the manual lines and what each automatic line
+    # scored when the review was written (``app.domain.task.usage_score``).
+    # NULL on every other review, whose ``score`` the grader typed whole.
+    auto_scores: Mapped[dict | None] = mapped_column(
+        "auto_scores", JSONB, nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

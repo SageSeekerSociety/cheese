@@ -139,7 +139,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `cheese_overseas: true` | 只有平台管理员开通过的团队能用（Claude、GPT、Gemini），别的团队看不到 |
 | `cheese_free: true` | 上游不收钱，输入、输出单价都写明为 0；可选模型唯一合法的零价 |
 | `cheese_upstream_headers`、`cheese_session_header` | 按行（部署）发的请求头，见下面「免费、订阅与中转」 |
-| `cheese_no_explicit_cache: true`、`cheese_spend_cap_usd` | 属于上游模型：去掉 Claude Code 的 `cache_control` 标记（`no_explicit_cache.py`）；上游累计花到这个数就拒（`spend_cap.py`） |
+| `cheese_no_explicit_cache: true`、`cheese_cache_ttl`、`cheese_spend_cap_usd` | 属于上游模型：去掉 Claude Code 的 `cache_control` 标记（`no_explicit_cache.py`）；在请求顶层补 `cache_control: {type: ephemeral, ttl: <值>}`，值只认 `"5m"`、`"1h"`，调用方自己带了顶层 `cache_control` 的不动（`cache_ttl.py`，见下面 Kimi 一段）；上游累计花到这个数就拒（`spend_cap.py`） |
 
 ### 一个模型，几条线路 {#sources}
 
@@ -168,8 +168,9 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 
 | 角色 | 用在哪 | 没人指过时读的设置项 |
 |---|---|---|
-| `agent_model` | 没设默认模型的项目跑在它上面；网关从没答过话时目录只剩它 | `AGENT_MODEL` |
-| `subagent_model` | 分身默认和项目主模型都没设、且有权用这个模型的项目，分身默认跑它。有没有权和它自己的轮次过同一道闸门（`policy.gate.check`：团队方案的档位、管理员的境外开通、项目自己的档位策略）；没权的项目落到平台的默认模型 | 无：不设就落到平台的默认模型 |
+| `agent_model` | 「自动」的对话：队友和项目都没选模型时，频道主线、支线、私聊跑在它上面；网关从没答过话时目录只剩它 | `AGENT_MODEL` |
+| `task_model` | 「自动」的任务：队友和项目都没选模型时，任务里跑在它上面 | 无：跟着 `agent_model` |
+| `subagent_model` | 「自动」的分身：队友和项目都没选模型时，分身跑在它上面 | 无：跟着 `agent_model` |
 | `assistant_model` | 个人芝士、助手的动作闸门 | `ASSISTANT_MODEL` |
 | `docs_assistant_model` | 问芝士 | `DOCS_ASSISTANT_MODEL` |
 | `topic_naming_model` | 话题命名 | `TOPIC_NAMING_MODEL` |
@@ -177,13 +178,17 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `voice_asr_model` / `voice_polish_model` | 语音输入的转写与整理 | `VOICE_ASR_MODEL` / `VOICE_POLISH_MODEL` |
 | `memory_migration_model` | 旧记忆表的迁移 | `MEMORY_MIGRATION_MODEL` |
 
-- 选择存在平台库的 `platform_model_roles` 里，审计记在 `gateway_admin_audit`（动作 `role.set`）。读的一方在 `app.core.model_roles`，后台每 30 秒从库里刷新一次，写的那个进程写完当场刷新。项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准：分身先取项目的分身默认，再取项目主模型，都没设才轮到 `subagent_model`。
-- 默认模型与分身默认只能指到上架的模型（它们要提供给项目选），指着它们的模型也不能下架；其余角色只能指到在用、计价的模型：两向都写了价、至少一向 > 0，或者是免费线路（语音转写跑在一个不上架、输出价为 0 的模型上）。
+- 选择存在平台库的 `platform_model_roles` 里，审计记在 `gateway_admin_audit`（动作 `role.set`）。读的一方在 `app.core.model_roles`，后台每 30 秒从库里刷新一次，写的那个进程写完当场刷新。
+- 前三个角色只在没人选模型时用，取模型的唯一入口是 `model_catalog.pick`，按场合往下找：对话是 队友的模型 → 项目主模型 → `agent_model`；任务是 队友的「任务里使用」→ 队友的模型 → 项目主模型 → `task_model`；分身是 队友的「分身使用」→ 队友的模型 → 项目主模型 → `subagent_model`。没有队友的项目级工作（项目现状起草）从项目主模型开始，再落到 `subagent_model`；文档提问按回答它的那位队友的对话场合取。
+- 角色挑出来的模型（`Pick.automatic`）不受团队方案「能选哪些模型」的限制：方案管的是人能选什么，这个没人选过（`gate.Call.automatic`，闸门跳过方案档位那一条）。管理员的境外开通和项目自己的档位策略照常管它，所以这三个角色不要指到境外模型，没开通的团队会被拒。人自己选的模型（项目主模型、队友的三项）照旧受方案限制。
+- 这三个角色只能指到上架的模型（它们要提供给项目用），指着它们的模型也不能下架；其余角色只能指到在用、计价的模型：两向都写了价、至少一向 > 0，或者是免费线路（语音转写跑在一个不上架、输出价为 0 的模型上）。
 - 这些工作各用一把平台自己铸的虚拟 key，key 只放行一个模型（`service_keys.KeySpec`）。改角色时服务层先把 key 放宽到新旧两个模型，存好选择；等每个进程都读到新选择（30 秒刷新之后再过 15 秒）再收窄到新模型，所以没有一刻哪个进程用的模型被 key 拒掉。收窄没做成（进程退出、网关拒绝）时 key 多放行一个模型，只记日志。
 - 模型列表里每个模型带着跑在它上面的角色（`roles`）。有角色时停用、删除它，或停用、删除它最后一条在用的线路，服务层都拒绝，要先把角色指走；页面在编辑、停用、删除这个模型之前弹框列出这些角色。没人指过的角色读设置项，那个值也算「跑在它上面」：部署之后 `deepseek-flash`、`qwen-audio-asr`、`glm-5.2` 这几个设置项默认值指着的模型，同样不能直接停用或删除。
 - `agent_haiku_model`、`agent_sonnet_model`、`agent_opus_model` 不是角色：现在的执行通道都自己写模型环境变量，并把这三个别名清掉（`screen_model_env.py`），它们只在没有通道的那条老路上还会被读到。
 
-人民币标价的模型，价格用人民币价除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，它那一行引用的 `MOONSHOT_API_KEY` 要在网关 `.env` 里。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
+人民币标价的模型，价格用人民币价除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，它那一行引用的 `MOONSHOT_API_KEY` 要在网关 `.env` 里。
+
+Kimi 的缓存档位只在请求顶层的 `cache_control` 里读，消息里的标记它忽略，不写就是 5 分钟（[上下文缓存](https://platform.kimi.com/docs/guide/context-caching)：「`cache_control` 只在请求顶层生效，消息体内的同名标记会被忽略」）。Claude Code 只在消息里打标记，所以 Kimi 官方那一行要在 `model_info` 里写 `cheese_cache_ttl: "1h"`，否则对话停五分钟（等人回话就不止）缓存就全丢。一小时档的写入是五分钟档的两倍价（kimi-k3 每百万 ¥40 对 ¥20），那一行要有 `cache_creation_1h` 的价；命中价不变，命中按原档免费续期。档位在首次写入时锁定，两档的缓存互不相通，所以改档后已有的五分钟缓存不会变成一小时。管理页没有这个键的开关，用 `PATCH /model/{id}/update` 只带 `model_info` 写（合并写入，页面以后改这一行不会冲掉它）。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
 
 ## 上线前：跑一遍一致性套件 {#conformance}
 

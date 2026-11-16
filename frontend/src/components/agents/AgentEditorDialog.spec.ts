@@ -111,6 +111,8 @@ beforeAll(() => {
 
 const CONFIG = {
   model: null,
+  task_model: null,
+  subagent_model: null,
   body: 'Review code',
   skills: [],
   effort: null,
@@ -319,6 +321,39 @@ describe('修改时', () => {
     await waitFor(() =>
       expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
         configuration: { ...CONFIG, body: 'Check security' },
+        expected_version: 1,
+      })
+    )
+  })
+
+  it('saves what the teammate uses in tasks and for subagents apart from its model', async () => {
+    mountDialog(existing)
+    await fireEvent.click(await screen.findByRole('button', { name: /高级设置/ }))
+    await fireEvent.mouseDown(await screen.findByRole('combobox', { name: '任务里使用' }))
+    await fireEvent.click(await screen.findByRole('option', { name: 'DeepSeek' }))
+    await fireEvent.mouseDown(screen.getByRole('combobox', { name: '分身使用' }))
+    await fireEvent.click(await screen.findByRole('option', { name: 'GLM-5.2' }))
+    await clickSave()
+    await waitFor(() =>
+      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
+        configuration: { ...CONFIG, task_model: 'deepseek-flash', subagent_model: 'glm-5.2' },
+        expected_version: 1,
+      })
+    )
+  })
+
+  it('opens with a task model it was given showing, and follows its model when cleared', async () => {
+    mountDialog({ ...existing, configuration: { ...CONFIG, task_model: 'deepseek-flash' } })
+    expect(await screen.findByText('DeepSeek')).toBeTruthy()
+    await waitFor(async () => {
+      await fireEvent.mouseDown(screen.getByRole('combobox', { name: '任务里使用' }))
+      expect(screen.getByRole('option', { name: /同上/ })).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByRole('option', { name: /同上/ }))
+    await clickSave()
+    await waitFor(() =>
+      expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
+        configuration: CONFIG,
         expected_version: 1,
       })
     )

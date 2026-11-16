@@ -1,7 +1,7 @@
 """学情分析：一块题目板的开关、知识点清单与告知确认记录
 
 Revision ID: b3f7c1d94a20
-Revises: 85dc942e2596
+Revises: c4e8a2f61d93
 Create Date: 2026-11-16
 
 第一步只有底座（§ learning analysis, step 1）：开关、知识点清单、题目↔知识点关联、
@@ -24,7 +24,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "b3f7c1d94a20"
-down_revision: str | Sequence[str] | None = "85dc942e2596"
+down_revision: str | Sequence[str] | None = "c4e8a2f61d93"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

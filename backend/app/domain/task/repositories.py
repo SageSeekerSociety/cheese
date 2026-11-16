@@ -966,6 +966,8 @@ class TaskRubricRepository:
                     points=line.points,
                     criteria=line.criteria,
                     stage=line.stage,
+                    kind=line.kind,
+                    config=dict(line.config),
                 )
             )
         await self._session.flush()

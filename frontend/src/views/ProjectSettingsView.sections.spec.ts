@@ -335,8 +335,8 @@ describe('两个「连接」入口', () => {
   it('打开 AI 队友分栏时不请求未打开的仓库与分支保护接口，且默认模型只读一次', async () => {
     vi.mocked(api.getProjectDefaultModel).mockResolvedValue({
       model: null,
-      subagent_model: null,
       deployment_default: 'sonnet',
+      automatic: { conversation: null, task: null, subagent: null },
       choices: [],
     })
     await openSettings('agents')

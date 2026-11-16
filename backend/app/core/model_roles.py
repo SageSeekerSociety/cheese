@@ -18,9 +18,10 @@ split as ``app.domain.agent.gateway_catalog``), so the readers on the request
 path neither make a database call nor have to become async. Another process
 picks a change up within ``Settings.platform_model_roles_refresh_interval_s``.
 
-A project's own settings still win where a project has them: ``default_model``
-over ``agent_model``; ``default_subagent_model``, then ``default_model``, over
-``subagent_model`` (``model_catalog.subagent_default``).
+Three roles are what a project runs on when nobody chose a model (「自动」):
+``agent_model`` in conversation, ``task_model`` in a task, ``subagent_model``
+for a subagent. A teammate's own choice, then the project main model, win over
+them (``model_catalog.pick``).
 
 Infrastructure, not a domain: every domain that calls a model reads it, so it
 needs nothing but ``Settings``.
@@ -38,17 +39,21 @@ class Role:
     (None: no fallback, the role is unset). ``offered``: the model must be one
     the picker offers, because the role is what a project is offered by
     default. ``keys``: the aliases of the gateway virtual keys minted for this
-    job (``service_keys.KeySpec.alias``), which allow only this model."""
+    job (``service_keys.KeySpec.alias``), which allow only this model.
+    ``inherits``: another role whose model this one runs on while nobody has
+    pointed it, in place of a ``Settings`` field."""
 
     fallback: str | None
     offered: bool = False
     keys: tuple[str, ...] = ()
+    inherits: str | None = None
 
 
 # Order is the order the admin page lists them in.
 ROLES: dict[str, Role] = {
     "agent_model": Role("agent_model", offered=True),
-    "subagent_model": Role(None, offered=True),
+    "task_model": Role(None, offered=True, inherits="agent_model"),
+    "subagent_model": Role(None, offered=True, inherits="agent_model"),
     "assistant_model": Role("assistant_model", keys=("assistant-gate",)),
     "docs_assistant_model": Role("docs_assistant_model", keys=("docs-assistant",)),
     # Both gates that name things off a message: a task's title, and a
@@ -81,8 +86,12 @@ _state = _State(chosen={})
 
 
 def fallback(role: str) -> str | None:
-    """What ``role`` reads while nobody has pointed it: its ``Settings`` field."""
-    field = ROLES[role].fallback
+    """What ``role`` reads while nobody has pointed it: the role it inherits,
+    else its ``Settings`` field."""
+    spec = ROLES[role]
+    if spec.inherits is not None:
+        return get(spec.inherits)
+    field = spec.fallback
     value = getattr(settings, field) if field else None
     return value if isinstance(value, str) and value else None
 
@@ -93,8 +102,8 @@ def get(role: str) -> str | None:
 
 
 def model(role: str) -> str:
-    """``get`` for a role that always has a value (every role but
-    ``subagent_model`` falls back to a ``Settings`` field with a default)."""
+    """``get`` for a role that always has a value (every role falls back to a
+    ``Settings`` field with a default, or inherits a role that does)."""
     value = get(role)
     if value is None:
         # A caller asked for a role with no fallback: a bug, never shown.

@@ -432,6 +432,7 @@ async def prepare(
     return TurnContext(
         room_id=place.room_id,
         inner_id=place.inner_id,
+        task_id=place.task_id,
         # Except the turn that is a routine's run in a 支线: a rule its
         # owner confirmed, which keeps what it produces.
         keeps_nothing=not place.keeps_work

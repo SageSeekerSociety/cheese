@@ -11,6 +11,7 @@ import type {
   TaskProgress,
   TaskStage,
   TaskSubmission,
+  TaskUsage,
   TeamSummary,
 } from '@/types'
 import type {
@@ -261,7 +262,7 @@ export namespace TaskBoardApi {
       stage?: string
     }
   ) =>
-    axiosRequest<{ submissions: TaskSubmission[]; page: Page }>(
+    axiosRequest<{ submissions: TaskSubmission[]; page: Page; usage?: TaskUsage }>(
       { url: `/tasks/${taskId}/participants/${participantId}/submissions`, method: 'GET', params },
       true
     )

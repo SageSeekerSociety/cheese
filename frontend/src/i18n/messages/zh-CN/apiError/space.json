@@ -9,6 +9,7 @@
   "openSpaceScopeTooLong": "邮箱后缀最多 {max} 个",
   "openSpaceSuffixInvalid": "邮箱后缀格式不对：{suffix}",
   "openSpaceUnderReview": "空间还在审核中，不能设为开放空间",
+  "spaceNameTaken": "这个空间名称已被占用，换一个",
   "learningPointNameRequired": "请填知识点名称",
   "learningPointNameTooLong": "知识点名称最多 {max} 个字",
   "learningPointNameTaken": "已经有「{name}」这条知识点了",
