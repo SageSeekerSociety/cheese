@@ -53,8 +53,7 @@ vi.mock('@/services/ErrorHandler', () => ({
     withErrorHandling: async (fn: () => Promise<unknown>) => fn().catch(() => undefined),
     // 真实那一条的判据：服务端有条有理回绝的（带着业务 code）就说它自己那句，其余的
     // （网络断了、未知错误）退回调用方给的那句。这里照同一条判据替身。
-    explain: async (e: unknown, fallback: string) =>
-      (e as { code?: string })?.code ? (e as Error).message : fallback,
+    explain: async (e: unknown, fallback: string) => ((e as { code?: string })?.code ? (e as Error).message : fallback),
   },
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))

@@ -119,9 +119,7 @@ describe('creating a team', () => {
     await mountPage()
     await submit('一个新名字')
 
-    await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith('内容安全审核暂时不可用，这次没有保存，稍后重试')
-    )
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('内容安全审核暂时不可用，这次没有保存，稍后重试'))
   })
 
   // 服务端没给原因（网络断了）时退回「稍后重试」——不写这一句这里就是一片空白。
