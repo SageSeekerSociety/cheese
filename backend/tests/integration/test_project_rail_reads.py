@@ -422,6 +422,7 @@ def test_an_unmirrored_pending_card_really_is_waiting_for_review(client):
         "reviewer": row["card"]["reviewer"],
         "subject": None,
         "since": row["card"]["since"],
+        "decided_by": None,
     }
 
 
