@@ -853,6 +853,27 @@ class ReportIn(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
 
 
+class TaskNamed(BaseModel):
+    id: str
+    number: int | None
+    title: str
+
+
+class ExchangeLine(BaseModel):
+    at: str
+    kind: str | None
+    content: str
+
+
+class TaskLook(TaskNamed):
+    summary: str
+    exchange: list[ExchangeLine]
+
+
+class ReportOut(BaseModel):
+    reported: Literal["question", "blocked"]
+
+
 async def _coordinated(db, at: InChannel, ref: str):
     """The task of this channel that ``ref`` names (its number or id), asked
     from the channel's main line."""
@@ -876,7 +897,7 @@ def _opened_by(task, actor) -> None:
         raise ForbiddenError(say("coordinateOwnTasksOnly"))
 
 
-@router.get("/{topic_id}/tasks/{ref}")
+@router.get("/{topic_id}/tasks/{ref}", **typed_response(TaskLook))
 async def look_into_task(
     ref: str,
     at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
@@ -908,7 +929,7 @@ async def look_into_task(
     )
 
 
-@router.post("/{topic_id}/tasks/{ref}/tell")
+@router.post("/{topic_id}/tasks/{ref}/tell", **typed_response(TaskNamed))
 async def tell_coordinated_task(
     ref: str,
     body: TellIn,
@@ -953,7 +974,7 @@ async def tell_coordinated_task(
     return ok({"id": str(task.id), "number": task.number, "title": task.title})
 
 
-@router.post("/{topic_id}/tasks/{ref}/close")
+@router.post("/{topic_id}/tasks/{ref}/close", **typed_response(TaskOut))
 async def close_coordinated_task(
     ref: str,
     body: ConclusionIn,
@@ -976,7 +997,7 @@ async def close_coordinated_task(
     return ok(await _close(db, place, at.actor, task, body, chat, own_session=False))
 
 
-@router.post("/{topic_id}/tasks/{ref}/reopen")
+@router.post("/{topic_id}/tasks/{ref}/reopen", **typed_response(TaskOut))
 async def reopen_coordinated_task(
     ref: str,
     at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
@@ -991,7 +1012,7 @@ async def reopen_coordinated_task(
     return ok(await _reopen(db, place, at.actor, task))
 
 
-@router.post("/{topic_id}/report")
+@router.post("/{topic_id}/report", **typed_response(ReportOut))
 async def report_to_main_line(
     body: ReportIn,
     at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],

@@ -134,8 +134,8 @@ def render_system(
 
 def _no_skills(name: str) -> str:
     raise LookupError(
-        f"rendering needs the skill {name}; pass skill="
-    )  # i18n-exempt: a caller passed no skill reader, for a developer
+        f"rendering needs the skill {name}; pass skill="  # i18n-exempt: for a developer
+    )
 
 
 def render_opening(kind: Kind, **sections: object) -> SessionOpening:

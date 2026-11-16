@@ -27,6 +27,7 @@ from tests.integration.conftest import (
     room_agent_headers,
     room_agent_seat,
     session_auth_headers,
+    teammate_task,
 )
 from tests.integration.test_project_reads_need_membership import off_the_street
 from tests.integration.test_who_may_act_on_a_project import Project, seat_everyone
@@ -41,8 +42,8 @@ def _agents_only():
     return routes
 
 
-def _url(path: str, *, topic: str) -> str:
-    url = path.replace("{topic_id}", topic)
+def _url(path: str, *, topic: str, task: str) -> str:
+    url = path.replace("{topic_id}", topic).replace("{ref}", task)
     assert not re.search(r"\{[^}]+\}", url), f"no sample for a parameter of {path}"
     return url
 
@@ -101,9 +102,11 @@ def test_people_are_refused_and_the_room_s_ai_teammate_is_let_through(client):
     assert other.status_code == 200, other.text
     other_id = other.json()["data"]["id"]
     elsewhere = _agent_of(client, other_id, _room(client, other_id, "别处", by="bob"))
+    # A task of this channel its AI teammate opened, for the routes that act on one.
+    task = str(teammate_task(client, room)["number"])
 
     for route in _agents_only():
-        url = _url(route.path, topic=room)
+        url = _url(route.path, topic=room, task=task)
         refused = {
             "the owner, who holds every permission a person can": (
                 p.headers["owner"],
@@ -117,6 +120,7 @@ def test_people_are_refused_and_the_room_s_ai_teammate_is_let_through(client):
         for who, (headers, status) in refused.items():
             r = client.request(route.method, url, json={}, headers=headers)
             assert r.status_code == status, (route.path, who, r.text)
+        not_allowed = _refusal(r)
         with off_the_street(client):
             r = client.request(route.method, url, json={})
             assert r.status_code == 401, (route.path, "nobody signed in", r.text)
@@ -125,6 +129,17 @@ def test_people_are_refused_and_the_room_s_ai_teammate_is_let_through(client):
             route.method, url, json={}, headers=room_agent_headers(client, room)
         )
         assert own.status_code not in (401, 403, 404), (route.path, own.text)
-        # The development override the test client carries opens them too.
+        # The development override the test client carries opens them too. It
+        # is not the teammate that opened the sample task, so a route that acts
+        # only on a task its caller opened may still say so; it is never refused
+        # as one who may not do this at all.
         dev = client.request(route.method, url, json={})
-        assert dev.status_code not in (401, 403, 404), (route.path, dev.text)
+        assert dev.status_code not in (401, 404), (route.path, dev.text)
+        assert _refusal(dev) != not_allowed, (route.path, dev.text)
+
+
+def _refusal(r) -> object:
+    """Which refusal a response is, by its message; None for no refusal."""
+    if r.status_code != 403:
+        return None
+    return r.json().get("message")
