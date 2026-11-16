@@ -79,12 +79,14 @@ function mount(tasks: RoomTask[], extra: Record<string, unknown> = {}) {
 const titles = (view: ReturnType<typeof mount>) =>
   Array.from(view.container.querySelectorAll('.tasks__title')).map((el) => el.textContent)
 
-it('下一步在人手上的那一组排在最前面', () => {
-  const building = task({ title: '在做的' })
-  const waiting = task({ title: '等人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
-  const checking = task({ title: '在检查的', presentation: { column: 'delivering', phrase: 'awaiting_checks' } })
-  const view = mount([building, checking, waiting])
-  expect(titles(view)).toEqual(['等人的', '在检查的', '在做的'])
+it('按状态词分组，要人出手的那一组排在最前面', () => {
+  const building = task({ title: '在做的', presentation: { column: 'building', phrase: 'running' } })
+  const reviewing = task({ title: '在审阅的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
+  const blocked = task({ title: '要协助的', presentation: { column: 'needs_you', phrase: 'blocked' } })
+  const view = mount([building, reviewing, blocked])
+  expect(titles(view)).toEqual(['要协助的', '在审阅的', '在做的'])
+  const heads = view.getAllByRole('heading', { level: 2 }).map((el) => el.textContent?.replace(/\d+/g, '').trim())
+  expect(heads).toEqual(['待协助', '待审阅', '进行中'])
 })
 
 it('等你的那一件在后面那一行说「等你」，两件的标签都只说状态', () => {
@@ -99,7 +101,8 @@ it('等你的那一件在后面那一行说「等你」，两件的标签都只�
   const view = mount([mine, theirs])
   // 等你的那一件只有一行写「等你」；两件的状态标签都是「待审阅」。
   expect(view.getAllByText(t('work.taskState.waitsOnYou'))).toHaveLength(1)
-  expect(view.getAllByText(t('work.taskState.label.review'))).toHaveLength(2)
+  const states = view.getAllByTestId('task-state').map((el) => el.textContent?.trim())
+  expect(states.filter((text) => text?.startsWith(t('work.taskState.label.in_review')))).toHaveLength(2)
 })
 
 it('关注结果的人保留提醒，但不写成等待本人回答', () => {
@@ -207,7 +210,7 @@ it('全部状态同时列进行中与已关闭，并把两边的总数相加', (
   expect(view.getByRole('button', { name: `${t('work.channelTasks.mine')} 41` })).toBeTruthy()
   const row = view.getByRole('button', { name: /结束了/ })
   // 状态那一格自己说「已采纳」（不是「已关闭」），交付那一列另说交付被采纳。
-  expect(within(row).getByTestId('task-state').textContent?.trim()).toBe(t('work.taskState.label.accepted'))
+  expect(within(row).getByTestId('task-state').textContent?.trim()).toBe(t('work.taskState.label.done'))
   expect(row.textContent).toContain(t('taskList.deliveryAccepted'))
 })
 
@@ -240,8 +243,8 @@ it('按采纳记录筛选，保留已采纳前几步和仍在收尾的进行中�
   await fireEvent.click(view.getByRole('button', { name: t('taskList.acceptedDelivery') }))
   expect(titles(view)).toEqual(['前几步采纳了', '正在写总结'])
   expect(view.getByRole('button', { name: /^全部 2$/ })).toBeTruthy()
-  // 最后一步采纳后、任务还开着（在写总结）的那一会儿：还是在做。
-  expect(view.getByRole('button', { name: /正在写总结/ }).textContent).toContain(t('work.taskState.label.running'))
+  // 最后一步采纳后、任务还开着（在写总结）的那一会儿：已完成。
+  expect(view.getByRole('button', { name: /正在写总结/ }).textContent).toContain(t('work.taskState.label.done'))
   await fireEvent.click(view.getByRole('button', { name: t('taskList.anyDelivery') }))
   expect(titles(view)).toHaveLength(4)
 })
@@ -283,6 +286,6 @@ it('任务没单独指定队友时，卡住那一句叫它所在频道那位队�
     agentName: '芝士',
     roomAgentNames: { front: 'Nova' },
   })
-  expect(view.container.textContent).toContain('打开看看Nova需要什么')
+  expect(view.container.textContent).toContain(t('work.taskState.blockedFallback', { name: 'Nova' }))
   expect(view.container.textContent).not.toContain('芝士')
 })
