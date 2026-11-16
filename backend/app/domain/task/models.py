@@ -358,6 +358,59 @@ class TaskTagRelation(Base):
     )
 
 
+class TaskKnowledgePoint(Base):
+    """Which 知识点 a 题目 is filed under (§ learning analysis, step 1).
+
+    The 知识点 itself belongs to the board (``app.domain.space.models.
+    SpaceKnowledgePoint``) — the same list is what makes two 题目 comparable —
+    so what a 题目 owns is the link, and the link lives here beside
+    ``TaskTagRelation`` for the same reason that one does: a 题目's own
+    relations are read and replaced with the 题目, and with its row.
+
+    One row per (题目, 知识点); the unique index holds that even when two
+    writes race. No ``deleted_at``: "a 题目 files under these and no longer
+    under those" is one list, so replacing it deletes rows the way
+    ``TaskTagRelation`` rows are replaced, and the partial index would only
+    make the same fact readable two ways.
+    """
+
+    __tablename__ = "task_knowledge_point"
+    __table_args__ = (
+        Index(
+            "uq_task_knowledge_point_task_point",
+            "task_id",
+            "knowledge_point_id",
+            unique=True,
+        ),
+        # 删掉一个知识点时按它找到并带走这些行（也是这一列的外键索引）。
+        Index("ix_task_knowledge_point_knowledge_point_id", "knowledge_point_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task.id",
+            ondelete="CASCADE",
+            name="fk_task_knowledge_point_task_id_task",
+        ),
+        nullable=False,
+    )
+    knowledge_point_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="CASCADE",
+            name="fk_task_knowledge_point_knowledge_point_id_space_knowledge_point",
+        ),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class TaskSubmission(Base):
     """Minimal mapping for task_submission table."""
 
