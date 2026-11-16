@@ -86,7 +86,7 @@ describe('useProjectDefaultModelSettings', () => {
     setProjectDefaultModel.mockRejectedValue(new Error('save down'))
     const { model } = host()
     await tick()
-    await model.save('deepseek-flash', null)
+    await model.save('deepseek-flash')
     expect(model.saveError.value).toBe('save down')
     expect(model.saved.value).toBe(false)
   })
