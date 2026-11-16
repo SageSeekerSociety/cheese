@@ -69,6 +69,14 @@ class ErrorHandlerService {
     return hasServerRefusal(error) ? error.message || fallback : fallback
   }
 
+  /** 自己有一处地方要显示这次失败（弹窗里的一格、toast 的下面一行），不想再弹一个
+   *  toast：记一笔照旧走上面那条路，只把服务端自己那句回绝交回去。不是回绝
+   *  （网络断了、未知错误）就没有——调用方留着自己那句通用文案。 */
+  async refusal(error: Error, fallback: string): Promise<string | null> {
+    await this.handle(error, { showToast: false, defaultMessage: fallback })
+    return hasServerRefusal(error) ? error.message || null : null
+  }
+
   // 包装 async 函数，提供自动错误处理
   async withErrorHandling<T>(fn: () => Promise<T>, options?: ErrorHandlerOptions): Promise<T | undefined> {
     try {

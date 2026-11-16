@@ -103,22 +103,42 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   // `onSpacesChanged` 重读，这里不用管。
   const createOpen = ref(false)
   const createBusy = ref(false)
+  // 弹窗里的失败分两行说：上一行是这一步本身没成（存不下 / 图没举上去），下一行是
+  // 服务端给的原因——它和上一行不是同一种信息，「稍后重试」也仍然要留着。
   const createError = ref('')
+  const createReason = ref<string | null>(null)
   watch(createOpen, (open) => {
-    if (open) createError.value = ''
+    if (!open) return
+    createError.value = ''
+    createReason.value = null
   })
   async function createSpace(payload: { name: string; intro: string; avatarFile?: File }) {
     const name = payload.name.trim()
     if (createBusy.value || !name) return
     createBusy.value = true
     createError.value = ''
+    createReason.value = null
+    const fail = async (e: unknown, fallback: string) => {
+      createError.value = fallback
+      createReason.value = await errorHandler.refusal(e instanceof Error ? e : new Error(String(e)), fallback)
+    }
+    // 上传头像和创建空间分开 catch：举不上去和存不下是两件事，说的话也不一样。
+    // 合成一句「创建失败，稍后重试」时，人只会照着重试同一张图。
+    let avatarId: number | undefined
     try {
-      const avatarId = payload.avatarFile ? (await createAvatar(payload.avatarFile)).avatarId : undefined
+      if (payload.avatarFile) {
+        try {
+          avatarId = (await createAvatar(payload.avatarFile)).avatarId
+        } catch (e) {
+          await fail(e, t('spaces.create.avatarFailed'))
+          return
+        }
+      }
       const { space } = await SpacesApi.create({ name, intro: payload.intro.trim(), avatarId })
       createOpen.value = false
       void router.push({ name: 'HomeSpaceApplication', params: { spaceId: String(space.id) } })
-    } catch {
-      createError.value = t('spaces.create.failed')
+    } catch (e) {
+      await fail(e, t('spaces.create.failed'))
     } finally {
       createBusy.value = false
     }
@@ -242,6 +262,7 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     createOpen,
     createBusy,
     createError,
+    createReason,
     createSpace,
     disbanding,
     disbandBusy,

@@ -31,6 +31,9 @@ import { createAvatar } from '@/api/avatars'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { toast } from '@/lib/toast'
+import errorHandler from '@/services/ErrorHandler'
+
+const asError = (e: unknown) => (e instanceof Error ? e : new Error(String(e)))
 
 const createTeamDialog = ref(false)
 const teamName = ref('')
@@ -44,6 +47,14 @@ const creatingTeam = ref(false)
 
 const router = useRouter()
 
+/** 一次没建成的失败：上一行说这一步没成（多半是「稍后重试」这一档），下一行放服务端
+ *  给的原因。两句都留着——只留原因时人不知道能不能再试，只留上一行时他不知道为什么。
+ *  服务端没给原因（网络断了、未知错误）就只有一行。 */
+const explain = async (error: unknown, failed: string) => {
+  const reason = await errorHandler.refusal(asError(error), failed)
+  toast.error(failed, reason ? { description: reason } : undefined)
+}
+
 /** 简介那一句由画面从编辑器正文里取好递过来（编辑器住在画面那一半）。 */
 const createTeam = async (intro: string) => {
   if (!teamName.value) {
@@ -56,7 +67,16 @@ const createTeam = async (intro: string) => {
   try {
     creatingTeam.value = true
 
-    const { avatarId } = teamAvatar.value ? await createAvatar(teamAvatar.value) : { avatarId: null }
+    // 上传头像和建团队分开说：举不上去和存不下是两件事，人要做的事也不一样。
+    let avatarId: number | null = null
+    if (teamAvatar.value) {
+      try {
+        avatarId = (await createAvatar(teamAvatar.value)).avatarId
+      } catch (error) {
+        await explain(error, t('teams.index.avatarFailed'))
+        return
+      }
+    }
 
     const { team } = await TeamsApi.create({
       name: teamName.value,
@@ -80,7 +100,9 @@ const createTeam = async (intro: string) => {
       teamNameError.value = t('work.teamProfile.nameTaken')
       return
     }
-    toast.error(t('teams.index.createFailed'))
+    // 服务端有条有理回绝的（带着业务 code）就说它自己那句——「内容安全审核暂时不可用」
+    // 这类，人照着能改；其余的（网络断了、未知错误）才用通用文案。
+    await explain(error, t('teams.index.createFailed'))
     console.error(error)
   } finally {
     creatingTeam.value = false
