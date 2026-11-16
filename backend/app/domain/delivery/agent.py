@@ -371,6 +371,10 @@ async def dispatch_pending(
             )
         )
         for row in rows:
+            if (row.payload or {}).get("held"):
+                # Waits its turn behind the teammate named before it
+                # (`delivery.mention.HELD`), released when that one is done.
+                continue
             if row.state == "sending":
                 row.state = "uncertain"
                 row.last_error = "Sender stopped before recording the receiver result"

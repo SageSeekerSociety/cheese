@@ -67,6 +67,12 @@ def mention_prompt(*, author: str, message: str, block_id: uuid.UUID) -> str:
     return piece("mention", author=author, message=message, block_id=block_id)
 
 
+#: On a delivery a message recorded for a teammate named after another: the
+#: seat whose turn on that message comes first, and that it waits for it.
+AFTER = "after"
+HELD = "held"
+
+
 @dataclass
 class Summoned:
     """一条消息点名的结果：叫醒了谁，因为熔断没叫醒谁。"""
@@ -132,10 +138,15 @@ async def record_mentions(
     occurred_at: datetime,
     skip: frozenset[str] = frozenset(),
     quoted_context: dict | None = None,
+    after: str | None = None,
 ) -> Summoned:
     """把 ``content`` 里点到的每一位 AI 队友记成一条投递。写调用方的 session，不提交。
 
     ``conversation_id`` 是被点到的队友回答的地方：消息所在的那段对话。
+
+    ``after``：这条消息已经直接叫起的那一位。给了它，点到的几位按点名的先后一个
+    接一个：每一条投递记下前一位（`AFTER`），先压着（`HELD`），前一位这一轮做完才放
+    出去（`agent.pending_messages.release_in_turn`），后一位读得到前一位说了什么。
     """
     named = await named_seats(
         session, room_id=room_id, author=author, content=content, skip=skip
@@ -162,10 +173,15 @@ async def record_mentions(
             )
         ).all()
     )
+    previous = after
     for seat in named:
         instance = instances.get(seat)
         if instance is None:
             continue
+        in_turn = (
+            {AFTER: previous, HELD: True} if after is not None and previous else {}
+        )
+        previous = seat
         if dedup_key(block_id, seat) in already:
             continue
         if budget is not None and budget <= 0:
@@ -182,6 +198,7 @@ async def record_mentions(
                     "eventType": BY_AGENT if by_agent else BY_PERSON,
                     "author": author,
                     "blockId": str(block_id),
+                    **in_turn,
                 },
                 occurred_at=occurred_at,
             ),

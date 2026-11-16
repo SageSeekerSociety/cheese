@@ -526,7 +526,12 @@ async def _summon_the_named(
     """这条消息 @ 到的 AI 队友，各起一轮（`delivery/mention.py`）。
 
     消息先落库、先广播，再记投递：被点名的那位醒来时，房间里已经有它要读的那一行。
+
+    频道主线上不这样：AI 队友在主线的话不叫醒别的 AI 队友，要别的队友做的事开成
+    任务交给它（`cheese_task(action=open)` 的 ``teammate``）。任务和支线里照旧。
     """
+    if place.inner_id is None:
+        return
     # deferred-import: tests patch this name on app.domain.delivery.mention
     from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 

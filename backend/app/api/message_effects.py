@@ -59,6 +59,10 @@ async def announce_edited_message(
 
     # A teammate the text named before the edit was called when it was posted.
     skip = frozenset(mentioned_handles(before))
+    if sent.by_agent and block.conversation_id == sent.room.id:
+        # An AI teammate's word in a channel's main line wakes no other AI
+        # teammate, as when it is sent (`topics_messages._summon_the_named`).
+        return False
     named = await named_seats(
         session, room_id=sent.room.id, author=author, content=sent.text, skip=skip
     )
