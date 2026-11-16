@@ -49,8 +49,26 @@ export interface TaskFormProps {
 /** 新发一道题时学生要交的东西：一个文件。 */
 export const DEFAULT_SUBMISSION_SCHEMA: TaskSubmissionSchemaEntry[] = [{ prompt: '提交文件', type: 'FILE' }] // i18n-data: 存进题目数据的提交项名，和出题人写的题面一样不随界面语言变
 
-/** 评分要点里一行还空着（加了没填）：提交时去掉，不算错。 */
-const blankLine = (line: TaskRubricLine) => !line.item.trim() && !line.criteria.trim()
+/** 评分要点里一行还空着（加了没填）：提交时去掉，不算错。自动算分那一行不算空着的
+ *  —— 它没有标准可写，名称由表单填好（`rubric.USAGE_DEFAULT_NAME`）。 */
+const blankLine = (line: TaskRubricLine) =>
+  (line.kind ?? 'manual') === 'manual' && !line.item.trim() && !line.criteria.trim()
+
+/** 有自动算分行的阶段，评分要点合计要到的数（后端 `rubric.AUTO_TOTAL`）。 */
+export const AUTO_TOTAL = 100
+
+/** 有自动算分那一行的阶段（不分阶段就是全部行）合计不是 100（`rubric._check_automatic`
+ *  会 400）；返回第一个这样的阶段的 id，没有就是 null。 */
+export function badAutoTotal(lines: TaskRubricLine[], stages: TaskStage[]): string | null {
+  const ids: (string | null)[] = stages.length ? stages.map((stage) => stage.id ?? null) : [null]
+  for (const id of ids) {
+    const own = lines.filter((line) => settledStage(stages, line.stage) === id)
+    if (!own.some((line) => (line.kind ?? 'manual') !== 'manual')) continue
+    const total = own.reduce((sum, line) => sum + (Number(line.points) || 0), 0)
+    if (total !== AUTO_TOTAL) return id
+  }
+  return null
+}
 
 /** 富文本那一份内容：编辑器的 JSON 文档（`description` 这个 ref 装的就是它）。 */
 export type DescriptionDoc = JSONContent
@@ -220,7 +238,16 @@ export function useTaskForm(
   const rubricPublic = ref(props.initialData?.rubricPublic ?? true)
   /** 点过发布后，有写了标准却没写名称的那一行。 */
   const rubricMissingName = ref(false)
-  watch(rubric, () => (rubricMissingName.value = false), { deep: true })
+  /** 点过发布后，有自动算分行、而那个阶段合计不是 100 分。 */
+  const rubricBadTotal = ref(false)
+  watch(
+    rubric,
+    () => {
+      rubricMissingName.value = false
+      rubricBadTotal.value = false
+    },
+    { deep: true }
+  )
 
   // 阶段：每个已保存的阶段带着题目给它的 id，挪了位置也带着，已交的提交跟着它走
   // （`app/domain/task/stages.py`）。
@@ -229,8 +256,11 @@ export function useTaskForm(
   const stageMissingName = ref(false)
   watch(stages, () => (stageMissingName.value = false), { deep: true })
 
-  /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。 */
-  const invalidCount = computed(() => (submitCount.value > 0 ? Object.keys(errors.value).length : 0))
+  /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。评分要点合计不对
+   *  也算一项：它不在 zod 表里，但一样是发不出去的。 */
+  const invalidCount = computed(
+    () => (submitCount.value > 0 ? Object.keys(errors.value).length + (rubricBadTotal.value ? 1 : 0) : 0)
+  )
   watch(invalidCount, (count) => emit('invalid', count), { immediate: true })
 
   const pendingSubmission = ref<{ descriptionText: string | undefined; values: any } | null>(null)
@@ -255,6 +285,11 @@ export function useTaskForm(
     }
     if (stages.value.some((stage) => !stage.name.trim())) {
       stageMissingName.value = true
+      return
+    }
+    // 有自动算分行的阶段合计必须是 100（后端也会 400，这里先拦住、指出来）。
+    if (badAutoTotal(lines, stages.value) !== null) {
+      rubricBadTotal.value = true
       return
     }
     const written = submissionSchema.value
@@ -295,12 +330,18 @@ export function useTaskForm(
       accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
       mentors: mentorsJoin.value ? mentors.value : [],
       submissionSchema: items,
-      rubric: lines.map((line) => ({
-        item: line.item.trim(),
-        points: Number(line.points) || 0,
-        criteria: line.criteria.trim(),
-        stage: settledStage(stages.value, line.stage),
-      })),
+      rubric: lines.map((line) => {
+        // An automatic line keeps who scores it and how; a manual one goes out
+        // the way it always did (`app/domain/task/rubric.py`).
+        const kind = line.kind ?? 'manual'
+        return {
+          item: line.item.trim(),
+          points: Number(line.points) || 0,
+          criteria: line.criteria.trim(),
+          stage: settledStage(stages.value, line.stage),
+          ...(kind === 'manual' ? {} : { kind, config: line.config ?? {} }),
+        }
+      }),
       rubricPublic: rubricPublic.value,
       stages: stages.value.map((stage) => ({
         name: stage.name.trim(),
@@ -432,6 +473,7 @@ export function useTaskForm(
     rubric,
     rubricPublic,
     rubricMissingName,
+    rubricBadTotal,
     stages,
     stageMissingName,
     isSubmitting,
