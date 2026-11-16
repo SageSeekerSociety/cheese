@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -309,24 +310,34 @@ def _as_text(value: object) -> str:
     return "" if value is None else str(value)
 
 
+async def _read_side(location: str | None, key: str | None) -> str:
+    """One stored side back as text; a blank address or missing bytes read ""."""
+    if not location or not key:
+        return ""
+    try:
+        return (await blob_store.store(location).get(key)).decode()
+    except (LookupError, UnicodeDecodeError):
+        return ""
+
+
 async def _cases_text(rows: Sequence[TaskTestCase]) -> dict[int, tuple[str, str]]:
-    """Each case's (input, expected) read back out of the private store."""
-    out: dict[int, tuple[str, str]] = {}
-    for row in rows:
-        sides = []
-        for location, key in (
-            (row.input_location, row.input_key),
-            (row.expected_location, row.expected_key),
-        ):
-            if not location or not key:
-                sides.append("")
-                continue
-            try:
-                sides.append((await blob_store.store(location).get(key)).decode())
-            except (LookupError, UnicodeDecodeError):
-                sides.append("")
-        out[row.id] = (sides[0], sides[1])
-    return out
+    """Each case's (input, expected) read back out of the private store.
+
+    Every side is read at once (``asyncio.gather``): a suite can hold
+    :data:`MAX_CASES` cases here and a read one at a time would go to the
+    store two hundred times over.
+    """
+    sides = await asyncio.gather(
+        *(
+            _read_side(location, key)
+            for row in rows
+            for location, key in (
+                (row.input_location, row.input_key),
+                (row.expected_location, row.expected_key),
+            )
+        )
+    )
+    return {row.id: (sides[2 * i], sides[2 * i + 1]) for i, row in enumerate(rows)}
 
 
 async def replace_suites(
