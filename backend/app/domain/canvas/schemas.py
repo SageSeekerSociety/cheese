@@ -114,10 +114,14 @@ class CanvasTaskOut(BaseModel):
     number: int | None
     title: str
     room_id: uuid.UUID
-    #: The column and phrase the task list shows (`room_task.presentation`);
-    #: the card reads the task's status word off the phrase.
+    #: The column and phrase the task list shows (`room_task.presentation`).
     column: str
     phrase: str
+    #: The teammate working it, which the card names beside the status word:
+    #: its name, and ``default`` while that is still the 芝士 it was born
+    #: with, which a screen says in its reader's language.
+    agent_name: str
+    agent_name_source: str
 
 
 class CanvasCardOut(BaseModel):

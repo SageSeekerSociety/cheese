@@ -11,6 +11,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
+import { teammateName } from '@/lib/agentNames'
 import { columnDotStyle } from '@/lib/board'
 import { statusLabel, taskStatus } from '@/lib/taskState'
 
@@ -72,7 +73,8 @@ function onKey(event: KeyboardEvent) {
 }
 
 const task = computed(() => props.card.task)
-/** 卡上写这件任务此刻的状态词。 */
+/** 卡上写做这件任务的队友（项目给它起的名字，按读者的语言叫它）和任务此刻的状态词，各是一样。 */
+const agent = computed(() => (task.value ? teammateName(task.value.agent_name, task.value.agent_name_source) : ''))
 const phrase = computed(() => (task.value ? statusLabel(taskStatus(task.value.phrase as BoardPhrase)) : ''))
 const empty = computed(() => !props.card.content.trim())
 </script>
@@ -93,6 +95,7 @@ const empty = computed(() => !props.card.content.trim())
     >
       <span class="canvas-card__dot" :style="columnDotStyle(task.column as BoardColumn)" aria-hidden="true" />
       <span class="canvas-card__task-title">{{ task.title }}</span>
+      <span class="canvas-card__agent">{{ agent }}</span>
       <span class="canvas-card__phrase">{{ phrase }}</span>
     </button>
     <div v-else-if="card.task_hidden" class="canvas-card__task canvas-card__task--hidden">
@@ -237,6 +240,7 @@ const empty = computed(() => !props.card.content.trim())
   white-space: nowrap;
 }
 
+.canvas-card__agent,
 .canvas-card__phrase {
   flex: 0 0 auto;
   color: var(--faint);
