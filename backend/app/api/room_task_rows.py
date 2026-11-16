@@ -112,7 +112,8 @@ def card_row(card, version: int | None, reviewers: Sequence[str]) -> dict | None
     """The card a task row carries: where it rides (PR) and, for a card in
     review, what the row's second line says — whom it waits on (``reviewers``,
     the card's own set from `accept_card_reviewer`), 「第 N 版」 (``version``,
-    how many cards the task has filed), what was handed in, and since when.
+    how many cards the task has filed), what was handed in, and since when;
+    for a settled card, who accepted or returned it.
     ``card`` is the `AcceptCard` row or the `RailCard` value; both carry these
     fields."""
     if card is None:
@@ -125,6 +126,8 @@ def card_row(card, version: int | None, reviewers: Sequence[str]) -> dict | None
         "version": version,
         # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
         "reviewer": "、".join(reviewers) or None,
+        # 谁采纳或退回了这张卡：任务状态下面那一行写「林老师已采纳」「林老师已退回」。
+        "decided_by": card.decided_by,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
     }

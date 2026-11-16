@@ -20,7 +20,7 @@ import type { LiveSourceFallback, PanelChangesProps } from './panelChanges/types
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { getForgeConnection, listRoomTasks } from '../api'
-import { phraseLabel } from '../lib/board'
+import { statusLabel, taskStatus } from '../lib/taskState'
 
 import { usePanelDocument } from './panelChanges/documentPane'
 import { usePanelFilePane } from './panelChanges/filePane'
@@ -42,10 +42,8 @@ export function usePanelChanges(props: PanelChangesProps) {
   const currentTask = computed(() => (taskRow.value?.id === selectedTask.value ? taskRow.value : undefined))
   // 任务结束了，它的文件就只读——跟在状态后面说。
   const sourceStatus = computed(() => {
-    const task = currentTask.value
-    const phrase = task?.presentation.phrase
-    const agent = (task?.agent_handle && props.memberNames?.[task.agent_handle]) || props.agentName
-    const status = phrase ? phraseLabel(phrase, agent) : ''
+    const phrase = currentTask.value?.presentation.phrase
+    const status = phrase ? statusLabel(taskStatus(phrase)) : ''
     return currentTask.value && currentTask.value.status !== 'open'
       ? t('work.room.changes.statusReadOnly', { status })
       : status

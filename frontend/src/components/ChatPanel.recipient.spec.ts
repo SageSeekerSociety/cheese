@@ -215,7 +215,7 @@ describe('送到时已经不交给队友了', () => {
 
     expect(server.sent[0]).toMatchObject({ content: '再加一个导出接口', expects_agent: true })
     expect(composerText(view.box)).toBe('再加一个导出接口')
-    expect(view.container.textContent).toContain('任务已关闭，这条不会再自动交给芝士')
+    expect(view.container.textContent).toContain('任务已结束，这条不会再自动交给芝士')
     // 时间线上没有一条「发送失败」或冒充交给了队友的那条：它整条回到了输入框。
     expect(view.container.querySelector('.outbox-fail')).toBeNull()
     expect(view.container.querySelector('.timeline-zone')?.textContent ?? '').not.toContain('再加一个导出接口')

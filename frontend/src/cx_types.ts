@@ -427,6 +427,8 @@ export interface ThreadCard {
   subject?: string | null
   /** 这张卡递给谁审阅（可能已经改由别人审阅，和任务建时定的那位不同）。 */
   reviewer?: string | null
+  /** 谁采纳或退回了这张卡；还没定、或自动合并的是空。 */
+  decided_by?: string | null
 }
 
 export interface TopicProgress {

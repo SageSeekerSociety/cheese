@@ -1,6 +1,6 @@
 {
   "failed": "迁到 GitHub 没有成功",
-  "hint": "先在 GitHub 上建一个空仓库，填它的地址。平台把所有分支和标签原样推过去，之后这个项目以 GitHub 为准；开着的任务会在 GitHub 上重开 PR，平台上原来的仓库留着当备份。项目里还有等审的验收卡时不能迁。",
+  "hint": "先在 GitHub 上建一个空仓库，填它的地址。平台把所有分支和标签原样推过去，之后这个项目以 GitHub 为准；开着的任务会在 GitHub 上重开 PR，平台上原来的仓库留着当备份。项目里还有待审阅的验收卡时不能迁。",
   "moved": "已迁到 GitHub：{repo}",
   "placeholder": "https://github.com/你的账号/空仓库",
   "submit": "迁到 GitHub",

@@ -6,7 +6,7 @@
  * 这一册把十二种情形在五处各摆一遍，好一眼对出「同一件事在几处是不是同一个样子」：
  *
  *   在做（会话在跑，转）、在做（会话停着，不转）、在等、卡住（留了话）、卡住（没留话）、
- *   待回答、等审、退回、等部署、部署被挡住、开启、关闭
+ *   待回答、等审、等部署、部署被挡住、退回、开启、关闭
  *
  * 等你处理只列下一步在人手上的那几种（卡住、待回答、等审、退回、检查没过），在做、在等、
  * 开启、关闭本来就不会出现在那里。
@@ -49,7 +49,7 @@ interface Case {
 
 const CASES: Case[] = [
   {
-    name: '在做（会话在跑）',
+    name: '进行中（会话在跑）',
     note: '绿色，图标慢慢转：AI 队友这一刻真的在跑。下面一行是它报的那句和已经做了多久。',
     column: 'building',
     phrase: 'running',
@@ -63,7 +63,7 @@ const CASES: Case[] = [
     title: '登录页加「记住我」',
   },
   {
-    name: '在做（会话停着）',
+    name: '进行中（会话停着）',
     note: '还是绿色，但换成一个不转的图标：它说过在做，这一刻没有在跑。关掉动画后两种也分得开。',
     column: 'building',
     phrase: 'running',
@@ -77,15 +77,15 @@ const CASES: Case[] = [
     title: '首页轮播换成静态图',
   },
   {
-    name: '在等',
-    note: '中性灰，沙漏：在等构建或检查的结果。下面一行是在等什么、已经等了多久。',
+    name: '进行中（等结果）',
+    note: '中性灰，沙漏：队友在等构建或检查的结果。状态词是进行中，下面一行是在等什么、已经等了多久。',
     column: 'building',
     phrase: 'waiting',
     over: { progress_note: '等 CI 跑完再看失败的两个用例', progress_set_at: ago(25 * MIN) },
     title: '修复注册页的两个用例',
   },
   {
-    name: '卡住（留了话）',
+    name: '待协助（留了话）',
     note: '警示色，叹号；第一次出现时闪一下，之后不再闪。下面一行是它要你做的事。',
     column: 'needs_you',
     phrase: 'blocked',
@@ -93,8 +93,8 @@ const CASES: Case[] = [
     title: '预发环境验证登录',
   },
   {
-    name: '卡住（没留话）',
-    note: '它没说卡在哪：下面一行让你打开看看它需要什么，叫的是做它的那位队友的名字。',
+    name: '待协助（没留话）',
+    note: '它没说需要什么：下面一行写它未说明，叫的是做它的那位队友的名字。',
     column: 'needs_you',
     phrase: 'blocked',
     over: { progress_note: null, progress_set_at: ago(3 * MIN) },
@@ -102,7 +102,7 @@ const CASES: Case[] = [
   },
   {
     name: '待回答',
-    note: '警示色，问号，和卡住一样第一次出现时闪一下。下面一行说在等谁回答。',
+    note: '警示色，问号，和待协助一样第一次出现时闪一下。下面一行说在等谁回答。',
     column: 'needs_you',
     phrase: 'awaiting_answer',
     over: { waiting_on: 'alice', awaits_me: true },
@@ -128,24 +128,16 @@ const CASES: Case[] = [
     title: '作业 3 的参考答案',
   },
   {
-    name: '退回',
-    note: '危险色，回退的箭头：交付被退回了，还等着队友去改。不动。',
-    column: 'needs_you',
-    phrase: 'bounced',
-    over: {},
-    title: '课程网站的导航栏',
-  },
-  {
-    name: '等部署',
-    note: '中性灰，火箭：最后一步已合并，在等主干 CI 跑完、部署上线，之后才写总结关闭。悬停在记号上说的也是这一句。',
+    name: '待审阅（等部署）',
+    note: '同是待审阅，换成火箭、中性灰：最后一步已合并，在等主干 CI 跑完、部署上线，之后才写总结关闭。悬停在记号上说的也是这一句。',
     column: 'delivering',
     phrase: 'deploying',
     over: { deploying_since: ago(9 * MIN), accepted_at: ago(9 * MIN) },
     title: '侧栏并进项目切换器',
   },
   {
-    name: '部署被挡住',
-    note: '警示色，火箭：合并之后主干 CI 红了，部署停住。任务页头多一个链接，点开是红的那次 CI。',
+    name: '待审阅（部署被挡住）',
+    note: '火箭换警示色：合并之后主干 CI 红了，部署停住。任务页头多一个链接，点开是红的那次 CI。',
     column: 'delivering',
     phrase: 'deploy_blocked',
     over: {
@@ -156,7 +148,15 @@ const CASES: Case[] = [
     title: '左侧方块栏并进侧栏',
   },
   {
-    name: '开启',
+    name: '进行中（已退回）',
+    note: '危险色，回退的箭头：交付被退回、队友还没接着改，状态词是进行中，下面一行写谁退回的。不动。',
+    column: 'needs_you',
+    phrase: 'bounced',
+    over: { card: { id: 'card-bounced', status: 'rejected', decided_by: 'bobby' } },
+    title: '课程网站的导航栏',
+  },
+  {
+    name: '未开始',
     note: '淡色空心圈：开着，还没有人报在做什么。没有第二行。',
     column: 'building',
     phrase: 'started',
@@ -164,11 +164,15 @@ const CASES: Case[] = [
     title: '换一门课的题目板',
   },
   {
-    name: '已采纳',
-    note: '最后一步被采纳：绿色的勾，字是中性的。没交付就关掉的是淡色的一道横，写「已关闭」。没有第二行。',
+    name: '已完成',
+    note: '最后一步被采纳：绿色的勾，写「已完成」，下面一行是谁采纳的。没做成就关掉的是淡色的一道横，写「已关闭」。',
     column: 'done',
     phrase: 'accepted',
-    over: { status: 'closed', closed_at: ago(60 * MIN) },
+    over: {
+      status: 'closed',
+      closed_at: ago(60 * MIN),
+      card: { id: 'card-accepted', status: 'accepted', decided_by: 'bobby' },
+    },
     title: '把实验指导书发下去',
   },
 ]
@@ -323,7 +327,7 @@ export const TASK_STATE_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '每种状态各一行',
-        note: '进行中的九件按列分组；最后一件已关闭的在「已关闭」里（筛选选了「全部」）。',
+        note: '未结束的九件按状态分组；最后一件已结束的在「已结束」里（筛选选了「全部」）。',
         props: {
           tasks: TASKS.filter((task) => task.status === 'open'),
           closedTasks: TASKS.filter((task) => task.status === 'closed'),

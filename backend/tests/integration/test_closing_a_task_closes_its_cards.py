@@ -72,7 +72,7 @@ def test_closing_a_task_revokes_its_undecided_cards(client):
     card = _card(client, card_id)
     assert card.status is AcceptStatus.revoked
     assert card.note_code is NoteCode.task_closed
-    assert "任务已关闭" in card.note
+    assert "任务已结束" in card.note
     # 骑着未合并的 PR：留痕说清平台不再跟进，并留着链接。
     assert "#3528" in card.note
     # 关任务的人是这个决定的人。

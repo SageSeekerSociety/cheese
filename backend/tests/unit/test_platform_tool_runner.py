@@ -1161,7 +1161,7 @@ def test_filing_a_card_says_what_it_did_to_the_task():
         host,
     )
 
-    assert "等审" in said
+    assert "待审阅" in said
     assert "清掉" in said
     assert "cheese_task 的 state" in said
     assert "退回或作废" in said
