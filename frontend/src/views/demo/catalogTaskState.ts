@@ -129,7 +129,7 @@ const CASES: Case[] = [
   },
   {
     name: '进行中（已退回）',
-    note: '危险色，回退的箭头：交付被退回，状态词是进行中，下面一行写谁退回的、修改中。不动。',
+    note: '危险色，回退的箭头：交付被退回、队友还没接着改，状态词是进行中，下面一行写谁退回的。不动。',
     column: 'needs_you',
     phrase: 'bounced',
     over: { card: { id: 'card-bounced', status: 'rejected', decided_by: 'bobby' } },

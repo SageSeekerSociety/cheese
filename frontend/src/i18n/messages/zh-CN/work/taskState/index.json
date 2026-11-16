@@ -1,9 +1,7 @@
 {
   "acceptedBy": "{name}已采纳",
   "blockedFallback": "{name}未说明需要什么协助",
-  "bouncedBy": "{name}已退回，修改中",
-  "bouncedByChecks": "检查未通过，修改中",
-  "bouncedUnnamed": "已退回，修改中",
+  "checksFailed": "检查未通过",
   "label": {
     "not_started": "未开始",
     "in_progress": "进行中",
@@ -13,6 +11,8 @@
     "done": "已完成",
     "closed": "已关闭"
   },
+  "returned": "已退回",
+  "returnedBy": "{name}已退回",
   "revising": "修改中",
   "separator": "，",
   "submitted": "{time}提交",

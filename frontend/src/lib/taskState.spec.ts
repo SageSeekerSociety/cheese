@@ -146,6 +146,13 @@ describe('待审阅', () => {
     const state = taskState(task('checks_failed', { reviewer_handle: 'linxiao', card }), ctx)
     expect(state.line).not.toContain('等林晓')
   })
+
+  it('检查没过、芝士清不掉：写等负责人，是看的人就写等你', () => {
+    const theirs = taskState(task('checks_failed', { owner_handle: 'linxiao', card }), ctx)
+    expect(theirs.line).toContain('检查未通过，等林晓')
+    const mine = taskState(task('checks_failed', { owner_handle: 'chenmo', needs_my_action: true, card }), ctx)
+    expect(mine.line).toContain('检查未通过，等你')
+  })
 })
 
 describe('当前行动人和关注人', () => {
@@ -210,10 +217,31 @@ describe('七个状态词', () => {
     expect(taskState(task('awaiting_answer', { waiting_on: 'linxiao' }), ctx).line).toBe('等林晓')
   })
 
-  it('被退回：写谁退回的，正在修改', () => {
-    const state = taskState(task('bounced', { card: { id: 'c1', status: 'rejected', decided_by: 'linxiao' } }), ctx)
+  it('被退回、平台把它放回进行中：写谁退回的，修改中', () => {
+    const state = taskState(
+      task('running', { progress_state: 'working', card: { id: 'c1', status: 'rejected', decided_by: 'linxiao' } }),
+      ctx
+    )
     expect(state.label).toBe('进行中')
     expect(state.line).toBe('林晓已退回，修改中')
+  })
+
+  it('被退回之后没人在改：写谁退回的，不说修改中', () => {
+    const state = taskState(task('bounced', { card: { id: 'c1', status: 'rejected', decided_by: 'linxiao' } }), ctx)
+    expect(state.label).toBe('进行中')
+    expect(state.line).toBe('林晓已退回')
+  })
+
+  it('队友退回后说了自己在改什么：写它的原话', () => {
+    const state = taskState(
+      task('running', {
+        progress_state: 'working',
+        progress_note: '按意见改标题',
+        card: { id: 'c1', status: 'rejected', decided_by: 'linxiao' },
+      }),
+      ctx
+    )
+    expect(state.line).toContain('按意见改标题')
   })
 
   it('最后一步采纳了、任务还开着（在写总结）：已完成', () => {

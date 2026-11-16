@@ -201,7 +201,7 @@ parts:
     press: 3
     until: 3
   - kind: composer
-    placeholder: 任务已关闭，可以继续讨论
+    placeholder: 任务已结束，可以继续讨论
     at: 3
 ```
 :::

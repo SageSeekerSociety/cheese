@@ -136,7 +136,7 @@ BACK_TO_WORK = (
 
 #: The closed-task ending of an instruction: the line still goes out, but there
 #: is nothing left to work on.
-TASK_CLOSED = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+TASK_CLOSED = "原任务已结束或不存在；如需继续修改，请由新任务承接。"
 
 
 def card_voided(

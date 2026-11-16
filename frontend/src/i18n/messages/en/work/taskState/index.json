@@ -1,9 +1,7 @@
 {
   "acceptedBy": "Accepted by {name}",
   "blockedFallback": "{name} has not said what help it needs",
-  "bouncedBy": "Returned by {name}, being revised",
-  "bouncedByChecks": "Checks failed, being revised",
-  "bouncedUnnamed": "Returned, being revised",
+  "checksFailed": "Checks failed",
   "label": {
     "not_started": "Not started",
     "in_progress": "In progress",
@@ -13,7 +11,9 @@
     "done": "Done",
     "closed": "Closed"
   },
-  "revising": "Being revised",
+  "returned": "Returned",
+  "returnedBy": "Returned by {name}",
+  "revising": "being revised",
   "separator": ", ",
   "submitted": "Submitted {time}",
   "version": "Version {n}",

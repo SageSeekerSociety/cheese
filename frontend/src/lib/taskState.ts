@@ -164,6 +164,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'waiting_on'
       | 'awaits_me'
       | 'needs_my_action'
+      | 'owner_handle'
       | 'card'
     >
   >
@@ -202,14 +203,14 @@ export function joined(parts: (string | null | undefined | false)[]): string {
   return parts.filter((part): part is string => !!part).join(t('work.taskState.separator'))
 }
 
-/** 退回之后那一行：谁退回的、为什么，以及在修改。 */
-function bouncedLine(card: StateRow['card'], nameOf: (handle: string) => string): string {
+/** 卡被退回时写谁退回的：「林晓已退回」。不是退回（闸门判红、没跑成）写检查未通过。 */
+function returnedBy(card: StateRow['card'], nameOf: (handle: string) => string): string | null {
   if (card?.status === 'rejected')
     return card.decided_by
-      ? t('work.taskState.bouncedBy', { name: nameOf(card.decided_by) })
-      : t('work.taskState.bouncedUnnamed')
-  if (card?.status === 'gate_failed' || card?.status === 'gate_blocked') return t('work.taskState.bouncedByChecks')
-  return t('work.taskState.revising')
+      ? t('work.taskState.returnedBy', { name: nameOf(card.decided_by) })
+      : t('work.taskState.returned')
+  if (card?.status === 'gate_failed' || card?.status === 'gate_blocked') return t('work.taskState.checksFailed')
+  return null
 }
 
 /** 一件任务此刻的状态：图标、颜色、动不动、标签和下面那一行。 */
@@ -231,8 +232,13 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   switch (kind) {
     case 'running': {
       if (!live) icon = RUNNING_IDLE_ICON
-      // 那句话和那个时刻只在它报的就是「在做」时属于这一格：它报了在等、卡住，会话又跑
-      // 起来了（后端照会话判成在做），那句说的是在等什么、卡在哪，写在「在做」后面就是假话。
+      // 卡被退回，平台把任务放回进行中、队友还没说自己在改什么：写谁退回的，修改中。
+      if (!note && row.card?.status === 'rejected') {
+        line = joined([returnedBy(row.card, nameOf), t('work.taskState.revising')])
+        break
+      }
+      // 那句话和那个时刻只在它报的就是在做时属于这一格：它报了在等、需要协助，会话又跑
+      // 起来了（后端照会话判成进行中），那句说的是在等什么、卡在哪，写在下面就是假话。
       if (row.progress_state !== 'working') break
       const time = waitedFor(row.progress_set_at, now)
       line = joined([note, time && t('work.taskState.workedFor', { time })])
@@ -259,8 +265,15 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       const reviewer = phrase === 'awaiting_review' ? row.waiting_on ?? card?.reviewer ?? null : null
       const since = card?.since ? relTime(card.since) : ''
       const mine = phrase === 'awaiting_review' && row.needs_my_action === true
+      // 检查没过、芝士清不掉：下一步在负责人手上，写等谁。
+      const step =
+        phrase === 'checks_failed'
+          ? joined([t('work.taskState.checksFailed'), waitsOn(row.owner_handle, row.needs_my_action === true)])
+          : REVIEW_STEP[phrase]
+            ? phraseLabel(phrase, ctx.agentName)
+            : waitsOn(reviewer, mine)
       line = joined([
-        REVIEW_STEP[phrase] ? phraseLabel(phrase, ctx.agentName) : waitsOn(reviewer, mine),
+        step,
         card?.subject,
         card?.version ? t('work.taskState.version', { n: card.version }) : null,
         since && t('work.taskState.submitted', { time: since }),
@@ -268,7 +281,8 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       break
     }
     case 'bounced':
-      line = bouncedLine(row.card, nameOf)
+      // 退回或检查没过之后没人在改：只写发生了什么，不写修改中。
+      line = returnedBy(row.card, nameOf) ?? ''
       break
     case 'closed':
       if (status === 'done') {

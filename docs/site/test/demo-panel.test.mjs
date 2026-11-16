@@ -130,7 +130,7 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     ok(!w.querySelector('figcaption, [data-dp-replay], input[type=range], progress'), `walk ${i + 1}: no caption, no replay, no progress bar — the steps are all of it`)
   })
   ok(restWalk[0].includes('进行中') && restWalk[0].includes('芝士这一轮的清单'), `walk 1 rests on the task in progress with its checklist: ${restWalk[0]}`)
-  ok(restWalk[1].includes('已完成') && restWalk[1].includes('任务已关闭'), `walk 2 rests on 已完成 and 任务已关闭: ${restWalk[1]}`)
+  ok(restWalk[1].includes('已完成') && restWalk[1].includes('任务已结束'), `walk 2 rests on 已完成 and 任务已结束: ${restWalk[1]}`)
 
   // Reduced motion: nothing walks by itself, the last screen stays; a click switches.
   {
