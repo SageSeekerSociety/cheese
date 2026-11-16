@@ -1,6 +1,6 @@
 // 「提交与评分」里额度用量那一行：加得进来、加过就不能再加第二行、试算按后端的算法给分、
 // 含自动算分那一行的阶段合计不是 100 时当场说清。
-import type { TaskRubricLine } from '@/types'
+import type { TaskRubricLine, TaskSubmissionSchemaEntry } from '@/types'
 
 import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -35,7 +35,7 @@ afterEach(cleanup)
 
 function mount(initial: TaskRubricLine[] = []) {
   const rubric = ref<TaskRubricLine[]>([...initial])
-  const items = ref<unknown[]>([])
+  const items = ref<TaskSubmissionSchemaEntry[]>([])
   const Host = defineComponent({
     setup: () => () =>
       h(components.VApp, null, () =>
@@ -43,7 +43,7 @@ function mount(initial: TaskRubricLine[] = []) {
           rubric: rubric.value,
           'onUpdate:rubric': (next: TaskRubricLine[]) => (rubric.value = next),
           submissionSchema: items.value,
-          'onUpdate:submissionSchema': (next: unknown[]) => (items.value = next),
+          'onUpdate:submissionSchema': (next: TaskSubmissionSchemaEntry[]) => (items.value = next),
           rubricPublic: true,
           'onUpdate:rubricPublic': () => undefined,
         })
