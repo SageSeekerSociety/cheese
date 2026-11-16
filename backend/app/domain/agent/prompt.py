@@ -48,7 +48,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.prompts import piece, platform_prompt, strip_platform_notice
+from app.domain.prompts import NoticeType, piece, platform_prompt, strip_platform_notice
 from app.domain.task import package
 from app.domain.topic.models import (
     Topic,
@@ -167,7 +167,9 @@ def _platform_preamble(notices: list[Block]) -> str:
     forgeable from the content side.
     """
     said = "\n".join(str(agent_notice(b)) for b in notices)
-    return platform_prompt(strip_platform_notice(said)) if said else ""
+    return (
+        platform_prompt(strip_platform_notice(said), NoticeType.change) if said else ""
+    )
 
 
 def _topic_ref_lists(

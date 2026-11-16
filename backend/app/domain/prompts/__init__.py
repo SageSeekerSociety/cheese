@@ -10,8 +10,11 @@ from app.domain.prompts.memory import (
     private_index_pointer,
 )
 from app.domain.prompts.notices import (
-    PLATFORM_NOTICE,
+    HIDDEN_TYPES,
+    LEGACY_MARKER,
+    NoticeType,
     blocked_report_reminder,
+    notice_template,
     platform_prompt,
     silence_reminder,
     stale_checklist_reminder,
@@ -66,7 +69,9 @@ def resume_notice() -> str:
 __all__ = [
     "MEMORY_DIR",
     "OVERVIEW_DOC_CHAR_BUDGET",
-    "PLATFORM_NOTICE",
+    "HIDDEN_TYPES",
+    "LEGACY_MARKER",
+    "NoticeType",
     "PROFILES",
     "SUBAGENT_RULES",
     "TOPIC_DOC_CHAR_BUDGET",
@@ -85,6 +90,7 @@ __all__ = [
     "fit_doc_to_budget",
     "in_language",
     "memory_block",
+    "notice_template",
     "opening_changes",
     "piece",
     "platform_prompt",

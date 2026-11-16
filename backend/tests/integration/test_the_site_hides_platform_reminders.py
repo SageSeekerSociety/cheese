@@ -9,8 +9,8 @@ import uuid
 from datetime import UTC, datetime
 
 from app.domain.prompts import (
-    PLATFORM_NOTICE,
     Kind,
+    NoticeType,
     platform_prompt,
     render_notice,
     silence_reminder,
@@ -79,7 +79,7 @@ def _site(client, room_id: str) -> list[dict]:
 def test_the_site_keeps_the_words_and_drops_the_repeat(client):
     room = _room(client)
     _input(client, room, render_notice(Kind.task, "先看分页接口"))
-    _input(client, room, platform_prompt(silence_reminder(10)))
+    _input(client, room, platform_prompt(silence_reminder(10), NoticeType.reminder))
 
     blocks = _site(client, room)
     said = [
@@ -88,9 +88,9 @@ def test_the_site_keeps_the_words_and_drops_the_repeat(client):
         for part in (block.get("meta") or {}).get("parts", [])
     ]
     assert "先看分页接口" in said
-    assert not any(PLATFORM_NOTICE in text for text in said), said
+    assert not any("<platform_notice" in text for text in said), said
     assert not any("分钟了还没回" in text for text in said), said
 
     # The record is untouched: 现场 is a projection, not an edit.
     records = [str((block.get("meta") or {}).get("record")) for block in blocks]
-    assert any(PLATFORM_NOTICE in record for record in records), records
+    assert any("<platform_notice" in record for record in records), records

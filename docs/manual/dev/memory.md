@@ -29,7 +29,7 @@ covers:
 
 这棵树在**会话机**上，在会话自己的家里（`~/.cheese/memory/`），不在执行机上：runner 在那里对账，而 agent 的文件工具（Read / Write / Edit）平时跑在执行机上，只有碰到这棵树的路径时留在会话机（`remote_execution/proxy.js` 的 `memoryPath`，守卫是 `client.py` 的 `own_memory`）。agent 按 `~/.cheese/memory/...` 写，或者按它 shell 里的 `$HOME`（那是执行机的家）拼出一个绝对路径，落到的都是这一棵。shell 看不到它，所以 `rm` 删不掉一条记忆：删一条就用 Write 把它写成空内容。runner 收树时把写空了的那条（索引除外，空索引就是一份空索引）当成会话删了，照样过批量删除那道闸，并把那个空文件从会话机上清掉（`runner.read_memory`）。
 
-> 讲：分层、两个作用域、写入与对账的时机、上限与权限、整理（dream）、旧表迁移、正文读数。不讲：每个 `type` 该怎么写（那是 `instructions.py` 里那段散文）。
+> 讲：分层、两个作用域、写入与对账的时机、上限与权限、整理（dream）、旧表迁移、正文读数。不讲：每个 `type` 该怎么写（那是 `prompts/pieces/memory/` 里那段散文）。
 
 ```demo-steps
 title: 一轮里记忆怎么流转
@@ -65,15 +65,15 @@ steps:
 
 | 层 | 是什么 | 怎么进到模型眼前 |
 |---|---|---|
-| L1 索引 | 每个作用域一份 `MEMORY.md`，一行一条记忆：`- [标题](文件.md) — 一句钩子` | **每轮注入**（`memory_index()` → `build_system_prompt`） |
+| L1 索引 | 每个作用域一份 `MEMORY.md`，一行一条记忆：`- [标题](文件.md) — 一句钩子` | **每轮注入**（`memory_index()` → `prompts.render_opening`） |
 | L2 记忆文件 | `<短名>.md`，带 `name` / `description` / `type` 三个 frontmatter 字段 | 注入了索引，正文让 agent **自己去读**（它有 Read） |
 | L3 原料 | 这个会话里说过的话、跑过的命令、工具结果 | 不进记忆。它们是记忆的**来源**，不是记忆 |
 
 `MEMORY.md` 本身没有 frontmatter，永远不写正文——它是目录，不是文件（`parse_index` / `fit_index`，`files.py`）。
 
-**这一段只对会对账的骨架注入。** 说明书（`MEMORY_INSTRUCTIONS`）进系统提示词、L1 进开场快照，条件都是 `keeps_memory=True`（`build_system_prompt` 和 `build_session_opening` 各收一份），由调用方按当前骨架的事实传入（注册表的 `Harness.keeps_memory`，经 `session_host.host.keeps_memory` 读：Claude Code 是 `True`，codex、pi 是 `False`）。说明书写的是「写进 `~/.cheese/memory/`，下一轮平台那一份里有它」，而 codex、pi 没有这条回路——照它写下的文件永远同步不回来，agent 却以为自己在写项目记忆。
+**这一段只对会对账的骨架注入。** 规矩（`prompts/pieces/memory/`）进系统提示词、L1 进开场快照，条件都是骨架会对账（清单里的 `keeps_memory`，开场的 `keeps_memory` 参数），由调用方按当前骨架的事实传入（注册表的 `Harness.keeps_memory`，经 `session_host.host.keeps_memory` 读：Claude Code 是 `True`，codex、pi 是 `False`）。说明书写的是「写进 `~/.cheese/memory/`，下一轮平台那一份里有它」，而 codex、pi 没有这条回路——照它写下的文件永远同步不回来，agent 却以为自己在写项目记忆。
 
-四类记忆（`type`）：`user`（这个人是谁、懂什么）、`feedback`（活该怎么干，含被认可的判断）、`project`（项目里正在进行的事，代码里读不出来的）、`reference`（外部系统的入口）。各自的 `scope` 规矩、正文怎么组织（feedback / project 要写 `**Why:**` 和 `**How to apply:**`）、什么**不**该写——整段在 `instructions.py` 的 `MEMORY_INSTRUCTIONS` 里，照搬 Claude Code 2.1.283 的 memory 段翻成中文，**原样进系统提示词**。
+四类记忆（`type`）：`user`（这个人是谁、懂什么）、`feedback`（活该怎么干，含被认可的判断）、`project`（项目里正在进行的事，代码里读不出来的）、`reference`（外部系统的入口）。各自的 `scope` 规矩、正文怎么组织（feedback / project 要写 `**Why:**` 和 `**How to apply:**`）、什么**不**该写——整段在 `prompts/pieces/memory/` 里，照搬 Claude Code 2.1.283 的 memory 段翻成中文，**原样进系统提示词**。
 
 ## 两个作用域 {#scopes}
 
@@ -89,7 +89,7 @@ steps:
 
 **成员自己电脑上跑的会话只带电脑主人自己的 private**：成员自己的 Claude Code 连接在他电脑上时，会话跑在那台电脑上（`owner_provider`），铺在那里的东西电脑的主人都读得到，所以别人在和这个芝士的私聊里也不带他自己的那一份；主人和它的私聊带主人的（认主人用设备行的 `owner_user_id`）。其余会话都跑在平台的会话主机上。
 
-规矩（`instructions.MEMORY_INSTRUCTIONS`）要求私聊里平台给过那个人的 private 索引在哪，每一轮开工前先 Read 它，连着几轮也每轮都读。没读的那一轮记一行日志 `memory_private_index_unread`（`MemoryLedger.sync_once`：runner 每次对账报上自上次以来有没有干活、读过谁的索引），用来数生产上跳过了多少。
+规矩（`prompts/pieces/memory/`）要求私聊里平台给过那个人的 private 索引在哪，每一轮开工前先 Read 它，连着几轮也每轮都读。没读的那一轮记一行日志 `memory_private_index_unread`（`MemoryLedger.sync_once`：runner 每次对账报上自上次以来有没有干活、读过谁的索引），用来数生产上跳过了多少。
 
 会话记录房间里的人都读得到（现场、原始记录、它们的逐行投影、单独取一条），而 private 只给本人看。哪一段是谁的，只按平台自己记下的结构认，从不按记录里的文字认：文字谁都写得进去（team 的索引、消息、项目里的文件），一段说自己属于某人的文字什么都证明不了。会话碰到某人的 private 只有一条路：它的文件工具读写 `private/<handle>/` 下的文件；runner 看到这一次调用时就给调用和答它的结果记上主人（`cheese.private`，调用编号 → 主人，`files.private_owner`）。所有读会话记录的路都经过 `session_record.service.read`，它必须被告知谁在读，把记着别人名字的调用和结果换成一句占位（`privacy.for_reader`），搜索也只搜换过之后的。现场还实时显示 agent 正在写的那个工具调用，参数一边流进来一边显示，这一帧发给房间里所有人：runner 用同一个判据认出落在某人 private 上的调用，参数换成存下的记录里那同一个占位（`privacy.hidden_input`），文件工具的路径还没写出来之前参数一个字都不显示（`runner.live_arguments`）；这一帧是广播，所以本人实时看到的也是占位，写完之后在会话记录里看原文。
 
@@ -97,7 +97,7 @@ steps:
 
 ## 写入、更新、删除 {#write}
 
-**agent 自己写。** 它用手里那套文件工具（Write / Edit）改 `.cheese/memory/` 下的文件——新建一条记忆是新建一个文件加索引里一行，改一条是改那个文件（**先查重**：同一件事别新建副本），不成立的那条直接改掉或删掉，不写「更正：」。写入的规矩在系统提示词里（`MEMORY_INSTRUCTIONS`），不在工具的参数里：一条记忆的形状（文件名、frontmatter、索引行、≤150 字符）用一段散文说得清，用一个 `cheese_remember(fact, core)` 说不清——这正是换这套机制的原因（那个工具
+**agent 自己写。** 它用手里那套文件工具（Write / Edit）改 `.cheese/memory/` 下的文件——新建一条记忆是新建一个文件加索引里一行，改一条是改那个文件（**先查重**：同一件事别新建副本），不成立的那条直接改掉或删掉，不写「更正：」。写入的规矩在系统提示词里（`prompts/pieces/memory/`），不在工具的参数里：一条记忆的形状（文件名、frontmatter、索引行、≤150 字符）用一段散文说得清，用一个 `cheese_remember(fact, core)` 说不清——这正是换这套机制的原因（那个工具
 已经撤掉了）。
 
 **平台侧的对账两个时刻，一次一件事**（`ChatService._sync_memory`，挂在 harness 的两个钩子上）：

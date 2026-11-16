@@ -60,7 +60,7 @@ covers:
 
 ## 一条任务是一段对话 {#conversation}
 
-任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。项目里的人都能在里面说话，AI 队友里只有这条任务自己的会话能发（`POST /topics/{task}/messages`）。负责人和协作者说的话直接叫醒任务的 AI 队友，别人的话 `@` 了它才叫醒，否则跟着下一轮读到（`agent/turn/intake/human.py` 的 `prepare_human`）；会话开场的「这个任务」一段告诉它谁的话是指令（`harness/prompt.task_section`）。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
+任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。项目里的人都能在里面说话，AI 队友里只有这条任务自己的会话能发（`POST /topics/{task}/messages`）。负责人和协作者说的话直接叫醒任务的 AI 队友，别人的话 `@` 了它才叫醒，否则跟着下一轮读到（`agent/turn/intake/human.py` 的 `prepare_human`）；会话开场的「这个任务」一段告诉它谁的话是指令（`prompts.task_section`）。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
 
 **创建只由人做**，创建的人就是负责人：
 

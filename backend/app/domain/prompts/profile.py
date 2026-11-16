@@ -52,6 +52,7 @@ class Facts:
 
 
 def always(_: Facts) -> bool:
+    """总在"""
     return True
 
 

@@ -26,7 +26,7 @@ select, for the tests and the docs generator.
 
 from collections.abc import Callable, Mapping
 
-from app.domain.prompts.notices import platform_prompt
+from app.domain.prompts.notices import NoticeType, platform_prompt
 from app.domain.prompts.opening import SessionOpening, build_session_opening
 from app.domain.prompts.profile import (
     BASE,
@@ -162,4 +162,8 @@ def render_notice(kind: Kind, content: str, language: str | None = None) -> str:
     if p.notice is None:
         return content
     _checked(p, f"{p.notice}.{'en' if language == 'en' else 'zh'}")
-    return content + "\n\n" + platform_prompt(in_language(p.notice, language))
+    return (
+        content
+        + "\n\n"
+        + platform_prompt(in_language(p.notice, language), NoticeType.contract)
+    )

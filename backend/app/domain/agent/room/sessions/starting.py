@@ -35,7 +35,7 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.project_skill.service import session_skill_files
-from app.domain.prompts import PLATFORM_NOTICE
+from app.domain.prompts import NoticeType, notice_template
 
 
 async def ensure(
@@ -141,7 +141,7 @@ async def ensure(
             skills=session_skill_files(session.project_id),
             # The marker platform instructions carry in this room, so the
             # one a harness raises is not a second convention to learn.
-            notice=PLATFORM_NOTICE,
+            notice=notice_template(NoticeType.harness),
         )
         access = Access(
             prepared.token,

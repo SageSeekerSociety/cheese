@@ -130,6 +130,12 @@ function ask(socket: string, method: string, params: unknown): Promise<any> {
   });
 }
 
+// A platform notice in the form the room's notices take: the template the
+// platform hands over (`SessionSpec.notice`) with `⟦slot:text⟧` for the text.
+function noticed(body: string, spec: Manifest): string {
+  return spec.notice ? spec.notice.replace("⟦slot:text⟧", body) : body;
+}
+
 function text(body: string) {
   return { content: [{ type: "text" as const, text: body }] };
 }
@@ -844,8 +850,11 @@ function announceExits(pi: any, spec: Manifest) {
         {
           customType: "cheese-background",
           content:
-            `${spec.notice}\n后台任务 ${describe(path.join(spec.jobs, id), id)}。` +
-            (body ? `\n最后的输出：\n${body}` : "") ,
+            noticed(
+              `后台任务 ${describe(path.join(spec.jobs, id), id)}。` +
+                (body ? `\n最后的输出：\n${body}` : ""),
+              spec,
+            ),
           display: true,
         },
         { deliverAs: "followUp" },

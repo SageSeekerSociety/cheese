@@ -45,7 +45,7 @@ from app.domain.agent.harness.driven.runner import (
 )
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
-from app.domain.prompts import PLATFORM_NOTICE
+from app.domain.prompts import NoticeType, notice_template, platform_prompt
 from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions
@@ -612,7 +612,7 @@ async def pi(tmp_path: Path, steps: list):
                 args=arguments("fixture-model"),
                 target=target,
                 extension=extension(),
-                notice=PLATFORM_NOTICE,
+                notice=notice_template(NoticeType.harness),
             )
             session = Session(machine, model.requests, runner.dispatch)
             session.backend = backend
@@ -682,7 +682,9 @@ async def test_the_session_may_read_the_room_before_it_answers(tmp_path, harness
 async def test_a_turn_nobody_asked_for_owes_nobody_an_answer(tmp_path, harness):
     steps = [shell("touch FIRST")]
     async with harness(tmp_path, steps) as session:
-        await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
+        await session.send(
+            platform_prompt("run the patrol", NoticeType.instruction), owes_reply=False
+        )
         await session.finished(len(steps) + 1)
 
         assert (session.machine / "FIRST").exists()
@@ -707,7 +709,9 @@ async def test_a_person_who_writes_mid_turn_is_answered_before_the_next_tool(
         shell("touch AFTER"),
     ]
     async with harness(tmp_path, steps) as session:
-        await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
+        await session.send(
+            platform_prompt("run the patrol", NoticeType.instruction), owes_reply=False
+        )
         await session.ran("STARTED")
         spoke = time.monotonic()
         await session.steer("[someone]: stop, that device is offline", owes_reply=True)
@@ -733,9 +737,13 @@ async def test_a_platform_notice_mid_turn_holds_nothing_back(tmp_path, harness):
         shell("touch NEXT"),
     ]
     async with harness(tmp_path, steps) as session:
-        await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
+        await session.send(
+            platform_prompt("run the patrol", NoticeType.instruction), owes_reply=False
+        )
         await session.ran("STARTED")
-        await session.steer(f"{PLATFORM_NOTICE}\nthe doc changed", owes_reply=False)
+        await session.steer(
+            platform_prompt("the doc changed", NoticeType.instruction), owes_reply=False
+        )
         (session.machine / "RELEASE").touch()
         await session.finished(len(steps) + 1)
 
@@ -758,7 +766,9 @@ async def test_a_subagent_reports_to_its_session_and_is_never_held_back(tmp_path
         publish("stopping"),
     ]
     async with claude_code(tmp_path, steps) as session:
-        await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
+        await session.send(
+            platform_prompt("run the patrol", NoticeType.instruction), owes_reply=False
+        )
         await session.ran("STARTED")
         await session.steer("[someone]: stop, that device is offline", owes_reply=True)
         await session.ran("CHILD", timeout=30)
@@ -807,7 +817,9 @@ async def test_a_session_held_once_that_still_does_not_answer_is_let_go(
 async def test_a_turn_nobody_asked_for_ends_when_it_ends(tmp_path, harness):
     steps = [say("patrol done")]
     async with harness(tmp_path, steps) as session:
-        await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
+        await session.send(
+            platform_prompt("run the patrol", NoticeType.instruction), owes_reply=False
+        )
         await session.finished(len(steps))
         # A turn held for an answer is held as it ends, before `finished` saw it
         # idle; this only gives a late one time to show.

@@ -107,16 +107,19 @@ PERSONAL_TOOLS = frozenset(
 
 
 def _has_doc(facts: Facts) -> bool:
+    """这里有实况文档的位置（空着也算）"""
     return facts.has_doc
 
 
 def _keeps_memory(facts: Facts) -> bool:
+    """这一轮的骨架会把记忆文件同步回平台（Claude Code）"""
     # The memory rules follow the harness this turn runs: one that does not
     # sync the tree back would read them and think it writes project memory.
     return facts.keeps_memory
 
 
 def _working_directory(facts: Facts) -> bool:
+    """会话的命令带着工作目录的短名 `$T`（Claude Code）"""
     # `$T` is in the environment only of the harness that puts it there; any
     # other would `cd` into a directory that does not exist.
     return facts.working_directory

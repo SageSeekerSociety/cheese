@@ -294,11 +294,10 @@ for (const f of fs.readdirSync(path.join(MANUAL, 'dev'))) {
   devFiles[f.slice(0, -3)] = { data: { ...data, covers }, body, file }
 }
 
-// ---------- system prompt reference: the blocks, from the code that builds them ----------
-// gen/prompt.py runs `build_system_prompt` and `build_session_opening` with one
-// sample per switch and splits what comes back; this only lays it out, so a
-// block that is added or renamed shows up here by itself.
-const PROMPT_SRC = 'backend/app/domain/agent/harness/prompt.py'
+// ---------- system prompt reference: every kind of session, from its profile ----------
+// gen/prompt.py renders each profile in backend/app/domain/prompts with every
+// switch on; this only lays it out, so a kind, a piece or a tool that is added
+// shows up here by itself.
 const GITHUB = 'https://github.com/SageSeekerSociety/cheese'
 const blob = (path, line) => `${GITHUB}/blob/main/${path}${line ? `#L${line}` : ''}`
 
@@ -314,9 +313,6 @@ const fold = (summary, body) => `<details class="fold"><summary>${summary}</summ
 // <summary> is HTML, not markdown, so inline `code` is turned into an element by hand.
 const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>')
 const cell = (s) => mdCell(inline(s))
-// A block is normally a `## ` part; the `skills` argument is the exception — it
-// is a skill body with a `# ` heading of its own, so the page says so.
-const blockLabel = (b) => (b.base ? '底稿（`base` 参数）' : b.headline ? b.title : `（不带标题的一段：${b.title}）`)
 
 function promptReference() {
   const shell = devFiles['ref-prompt']
@@ -324,41 +320,35 @@ function promptReference() {
   const p = gen('prompt.py')
   const out = []
 
-  if (p.mode !== 'exec') out.push(`> 这一页这次是**静态解析**出来的：${p.note}。下面标着「动态生成」的块是源码里的表达式，不是渲染后的文本。`)
-  if (p.unknown_params?.length) out.push(`> \`build_system_prompt\` 或 \`build_session_opening\` 有了生成器还不认识的参数：${p.unknown_params.map((name) => inline(name)).join('、')}——它们的样本值是按类型补的，见[样本参数](#samples)。` + `参数是自己加的，就把 \`docs/site/gen/prompt.py\` 里对应的一组样本补上。`)
-  if (p.failed_samples?.length) out.push(`> 有样本跑不出来，它们没有出现在下面的表里：${p.failed_samples.map((f) => `${inline(f.name)}（${inline(f.error)}）`).join('、')}。`)
+  out.push(`## 各类会话 {#kinds}
 
-  out.push(`## 装配顺序 {#blocks}
+每一类会话一份清单（\`backend/app/domain/prompts/profiles.py\`）。下表的字数是每个开关都打开时系统提示词的长度。
 
-一个新会话开场时芝士读到的就是这些块，顺序就是这个顺序。到「你的专家角色」为止是系统提示词（\`build_system_prompt\`），只有规矩，整个会话里一字不变；从「本话题现在的情况」起是第一条消息前面的开场快照（\`build_session_opening\`），会话接着跑时只把变了的那几段再说一次。「出现条件」是这一块的开关：不满足就整块不出现，一个字都不加。
-
-| # | 块 | 出现条件 | 预算 |
+| 会话 | 系统提示词 | 每条消息后的提醒 | 工具 |
 |---|---|---|---|
-${p.blocks.map((b, i) => `| ${i + 1} | ${cell(blockLabel(b))}${b.origin === 'dynamic' ? ' · 动态生成' : ''} | ${cell(b.condition)} | ${b.budget ? `${inline(b.budget.const)} = ${b.budget.value} 字符` : '—'} |`).join('\n')}`)
+${p.kinds.map((k) => `| ${cell(k.label)}（\`${k.kind}\`） | ${k.chars} 字符 | ${k.notice.zh ? '有' : '—'} | ${k.tools.length} 个 |`).join('\n')}`)
 
-  out.push(`## 每一块的原文 {#texts}
+  for (const k of p.kinds) {
+    out.push(`## ${k.label} {#kind-${k.kind.replace(/_/g, '-')}}
 
-按装配顺序逐块展开。\`{…}\` 是只有到运行时才有的值（参数、函数返回值）。
+系统提示词按下面的顺序拼，「条件」不满足的那一篇整篇不出现。
 
-${p.blocks.map((b) => fold(`${inline(blockLabel(b))} · ${b.chars} 字符`, [
-    `条件：${inline(b.condition)}`,
-    b.budget ? `预算：${inline(b.budget.const)} = ${b.budget.value} 字符，超了按丢弃顺序压缩，并在末尾附一行说明` : '',
-    b.origin === 'dynamic' ? `动态生成：这一块来自源码里的表达式，行号 ${b.source_line ? `[${b.source_line}](${blob(PROMPT_SRC, b.source_line)})` : '见上'}` : '',
-    code(b.text),
-    ...b.variants.map(([name, text]) => `**${inline(name)} 时的另一种形态**\n\n${code(text)}`),
-  ].filter(Boolean).join('\n\n'))).join('\n\n')}`)
-
-  if (p.samples.length) out.push(`## 样本参数 {#samples}
-
-原文不是「大概长这样」写的：它是用下面这些参数真跑一遍 \`build_system_prompt\` 和 \`build_session_opening\` 得到的输出。「最小」是除底稿外什么都不传的样子，「全部打开」是每个开关都给值。
-
-| 样本 | 参数 | 说明 |
+| # | 篇 | 条件 |
 |---|---|---|
-${p.samples.map((s) => `| ${s.name} | ${s.params.map((x) => inline(x)).join('<br>')} | ${cell(s.about)} |`).join('\n')}`)
+${k.parts.map((part, i) => `| ${i + 1} | ${part.file ? `[\`${part.piece}\`](${blob(part.file)})` : cell(part.piece)} | ${cell(part.condition)} |`).join('\n')}
+
+${k.skills.length ? `技能正文：${k.skills.map((s) => inline(`\`${s}\``)).join('、')}。\n\n` : ''}工具：${k.tools.map((t) => `\`${t}\``).join('、') || '无'}。
+
+${[
+      fold(`系统提示词全文 · ${k.chars} 字符`, code(k.system)),
+      k.opening ? fold(`开场（样本） · 可有的段：${k.opening_sections.join('、')}`, code(k.opening)) : '',
+      k.notice.zh ? fold('每条消息后的提醒', `${code(k.notice.zh)}\n\n读的人界面选了英文时：\n\n${code(k.notice.en)}`) : '',
+    ].filter(Boolean).join('\n\n')}`)
+  }
 
   out.push(`## 平台说明库 {#library}
 
-\`skill_library/\` 里是平台自己的几份说明。\`chat.md\` 就是上面「在房间里说话」那一块（\`skills\` 参数），\`doc_form.md\` 拼进「当前话题的实况文档」；\`doc_writing.md\` 和 \`doc_blocks.md\` 不进系统提示词，作为 \`cheese-docs\` 技能发给会话，用到才读。
+\`skill_library/\` 里是平台自己的几份说明。\`chat.md\` 是房间会话技能正文的第一份，\`doc_form.md\` 拼进「实况文档」那一篇；\`doc_writing.md\` 和 \`doc_blocks.md\` 作为 \`cheese-docs\` 技能发给会话，用到才读，文档里的芝士和写项目现状的那一次调用整份读。
 
 | 文件 | 名称 | 说明 |
 |---|---|---|
@@ -367,17 +357,6 @@ ${p.library.files.map((f) => `| [\`${f.file}\`](${blob(f.file)}) | ${cell(f.titl
 正文：
 
 ${p.library.files.map((f) => fold(`${inline(f.title)} · ${f.chars} 字符`, code(f.body))).join('\n\n')}`)
-
-  out.push(`## 相关常量 {#constants}
-
-\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码——常量写在哪个文件就链到哪个文件（提示词分成 \`prompt.py\` 和它同目录的三个模块之后，预算和引用上限不在门面那一份里）。
-
-| 常量 | 类型 | 值 | 代码里的说明 |
-|---|---|---|---|
-${p.constants.map((c) => {
-    const shown = c.kind === 'int' ? `\`${c.value}\`` : c.value.length <= 40 ? `\`${c.value}\`` : `${c.value.length} 字符${c.in_blocks.length ? '，见上面「' + inline(c.in_blocks[0]) + '」那一块' : ''}`
-    return `| [\`${c.name}\`](${blob(c.file || PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
-  }).join('\n')}`)
 
   return {
     title: shell.data.title,

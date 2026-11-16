@@ -39,6 +39,7 @@ from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
 from app.domain.prompts import (
     Kind,
+    NoticeType,
     platform_prompt,
     render_notice,
     strip_platform_notice,
@@ -205,6 +206,7 @@ class LiveInput:
         *,
         blocks: Sequence[uuid.UUID] = (),
         recipient_seat: str | None = None,
+        kind: NoticeType = NoticeType.change,
     ) -> bool | InputReconciliationPending:
         """Tell the session already working in this topic that the world
         changed under it: ``recipient_seat``'s, or the room's only working one.
@@ -234,7 +236,7 @@ class LiveInput:
         if working is None:
             return False
         seat_agent, _acting = working
-        line = platform_prompt(strip_platform_notice(notice))
+        line = platform_prompt(strip_platform_notice(notice), kind)
         registrar = self._input_registrar(
             InputEffects(held_block_ids=tuple(blocks), block_ids=tuple(blocks)),
             probe_unread=bool(blocks),
@@ -310,7 +312,9 @@ class LiveInput:
         # Framed as the work it would otherwise have started frames it: a
         # ledger delivery's work is the platform's, which reads the content
         # under the platform marker (`turn.intake.preparation.prompt`).
-        line = platform_prompt(str(payload.get("content") or ""))
+        line = platform_prompt(
+            str(payload.get("content") or ""), NoticeType.instruction
+        )
         by_person = payload.get("eventType") == BY_PERSON
         registrar = self._input_registrar(
             InputEffects(delivery_id=delivery_id, attempt_id=attempt_id),

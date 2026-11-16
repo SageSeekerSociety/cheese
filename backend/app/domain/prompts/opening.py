@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from app.domain.prompts.memory import memory_block
-from app.domain.prompts.notices import platform_prompt
+from app.domain.prompts.notices import NoticeType, platform_prompt
 from app.domain.prompts.text import piece
 
 
@@ -363,7 +363,8 @@ class SessionOpening:
         if not self.sections:
             return ""
         return platform_prompt(
-            piece("opening/situation", sections="\n\n".join(self.sections.values()))
+            piece("opening/situation", sections="\n\n".join(self.sections.values())),
+            NoticeType.state,
         )
 
     def digests(self) -> dict[str, str]:
@@ -393,7 +394,9 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
     ]
     if not changed:
         return ""
-    return platform_prompt(piece("opening/changes", sections="\n\n".join(changed)))
+    return platform_prompt(
+        piece("opening/changes", sections="\n\n".join(changed)), NoticeType.state
+    )
 
 
 def build_session_opening(

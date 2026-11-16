@@ -23,7 +23,7 @@ from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.driven.runner import SessionStart, reply_owed_path
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
-from app.domain.prompts import PLATFORM_NOTICE
+from app.domain.prompts import NoticeType, notice_template
 from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions
@@ -105,7 +105,7 @@ async def _pi_machine(tmp_path: Path):
             args=arguments("fixture-model"),
             target=NO_MACHINE,
             extension=extension(),
-            notice=PLATFORM_NOTICE,
+            notice=notice_template(NoticeType.harness),
         )
         return runner
 

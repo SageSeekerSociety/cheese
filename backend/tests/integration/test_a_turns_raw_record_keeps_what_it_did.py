@@ -804,6 +804,7 @@ def test_the_platforms_repeated_words_are_not_in_the_file(client, tmp_path):
     Code is the harness that journals an input at all."""
     from app.domain.prompts import (
         Kind,
+        NoticeType,
         platform_prompt,
         render_notice,
         silence_reminder,
@@ -815,7 +816,7 @@ def test_the_platforms_repeated_words_are_not_in_the_file(client, tmp_path):
         _claude_input(
             render_notice(Kind.task, "照我说的做")
             + "\n\n"
-            + platform_prompt(silence_reminder(10)),
+            + platform_prompt(silence_reminder(10), NoticeType.reminder),
             work,
         )
     )

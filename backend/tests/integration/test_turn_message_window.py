@@ -17,7 +17,6 @@ import pytest
 
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
-from app.domain.prompts import PLATFORM_NOTICE
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, settle_turn, stub_compute
 from tests.integration.conftest import project_service, registered
@@ -206,8 +205,8 @@ async def test_mid_turn_summon_is_not_relabelled_as_a_platform_instruction(
     # 这是一个人说的话：带说话人标签，且**不能**顶着平台权威的抬头。
     user_text, reminder = second.split("\n\n", 1)
     assert user_text == "[u2]: 顺便把 README 也更了"
-    assert PLATFORM_NOTICE not in user_text
-    assert reminder.startswith(PLATFORM_NOTICE)
+    assert "<platform_notice" not in user_text
+    assert reminder.startswith('<platform_notice type="contract">')
     assert "chat_send" in reminder
 
 
@@ -309,6 +308,6 @@ async def test_resume_turn_still_speaks_as_the_platform(business_db_factory, tmp
 
     assert len(agent.prompts) == 2, "没人说话的轮次不是冗余轮，不能被吞掉"
     resumed = agent.prompts[1]
-    assert PLATFORM_NOTICE in resumed  # 兜底还在
+    assert "<platform_notice" in resumed  # 兜底还在
     assert "从上一轮的断点继续" in resumed
     assert "[system]:" not in resumed  # 平台不冒充说话人

@@ -18,7 +18,6 @@ import re
 import pytest
 
 from app.domain.prompts import (
-    PLATFORM_NOTICE,
     Kind,
     blocked_report_reminder,
     render_notice,
@@ -59,14 +58,9 @@ def _chinese_characters(text: str) -> list[str]:
 
 
 def _said(text: str) -> str:
-    """What the platform says, minus the marker that delimits it.
-
-    `PLATFORM_NOTICE` is a protocol token, not prose: the harness prompt teaches
-    the model to recognize exactly this literal, and human text is neutralized
-    against the same one (`strip_platform_notice`). It is one fixed string in
-    every room, which is why the assertions below look past it.
-    """
-    return text.replace(PLATFORM_NOTICE, "")
+    """What the platform says, minus the tag that delimits it: the tag is a
+    protocol token, not prose, the same in every room."""
+    return re.sub(r"</?platform_notice[^>]*>", "", text)
 
 
 @pytest.mark.parametrize("language", [None, "zh-CN"])

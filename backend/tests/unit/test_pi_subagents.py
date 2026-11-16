@@ -37,7 +37,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.session_host import pi as pi_host
 from app.domain.agent.session_host.contract import Access, SessionRef, SessionSpec
-from app.domain.prompts import PLATFORM_NOTICE, piece
+from app.domain.prompts import NoticeType, notice_template, piece
 from tests.pinned_claude import pi_binary
 from tests.support.completions_fixture import Completions
 from tests.support.room_machine import room_machine
@@ -230,7 +230,7 @@ async def pi(tmp_path: Path, route, *, default: str = "child-default"):
                 args=arguments(PARENT),
                 target=target,
                 extension=extension(),
-                notice=PLATFORM_NOTICE,
+                notice=notice_template(NoticeType.harness),
                 subagent_rules=config.get("subagent_rules", ""),
             )
             yield Session(runner, model, admission)
