@@ -7,5 +7,6 @@
   "open": "New space",
   "ownership": "A platform admin reviews it first. Once approved, you can publish challenges.",
   "placeholder": "e.g. Programming exercises",
-  "submit": "Submit for review"
+  "submit": "Submit for review",
+  "avatarFailed": "Couldn't upload the avatar. Try another picture or try again later."
 }
