@@ -244,7 +244,14 @@ async def upgrade_block(
         if made:
             # Its AI teammate starts at once: the discussion into the task's
             # document, then on with the work if its owner already said what.
-            await tell_task(db, task, became_task_prompt(owner=task.owner_handle))
+            await tell_task(
+                db,
+                task,
+                became_task_prompt(
+                    owner=task.owner_handle,
+                    has_checkout=task.branch_name is not None,
+                ),
+            )
         await db.commit()
         await announce_stale(parent.id, "topics", id=parent.id)
         if made:
@@ -272,6 +279,7 @@ async def upgrade_block(
             source=await source_text(db, block),
             materials=materials_text(materials((await discussion(db, task))[1])),
             reviewer=task.reviewer_handle,
+            has_checkout=task.branch_name is not None,
         ),
         opening=True,
     )

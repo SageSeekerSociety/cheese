@@ -773,6 +773,7 @@ async def create_teammate_task(
             source=teammate_source_text(actor.handle, body.summary, blocks),
             materials=materials_text(materials(blocks)),
             reviewer=task.reviewer_handle,
+            has_checkout=task.branch_name is not None,
         ),
         opening=True,
     )

@@ -22,7 +22,6 @@
   "deleteChannelSignIn": "Sign in to delete a channel",
   "messageOrAttachment": "Type a message or add an attachment",
   "noDefaultModel": "This project has no default model available. Check the model service",
-  "pastTaskNoBranch": "A past task has no working branch to depend on",
   "privateChatHasNoTasks": "A direct chat has no tasks; create one in a channel",
   "privateChatHasNoThreads": "A direct chat has no threads; start one in a channel",
   "privateChatProjectMembersOnly": "Can't start a direct chat with someone outside this project",
