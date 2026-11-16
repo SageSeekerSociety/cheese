@@ -60,12 +60,14 @@ export function useSpaceLearningAnalysis(spaceId: MaybeRefOrGetter<number | unde
     enabled.value = res.learningAnalysis.enabled
   }
 
-  /** 加一条知识点，加完重读清单（新的一条排在末尾，顺序以服务端为准）。 */
-  async function addKnowledgePoint(name: string) {
+  /** 加一条知识点，加完接在清单末尾（顺序以服务端为准）。**交回新那一条**：「采用一条清单里
+   *  还没有的建议」要拿它的编号挂到这道题上，调用点不该再去名字里猜。 */
+  async function addKnowledgePoint(name: string): Promise<SpaceKnowledgePoint | null> {
     const id = toValue(spaceId)
-    if (!id) return
+    if (!id) return null
     const res = await SpacesApi.createKnowledgePoint(id, { name })
     knowledgePoints.value = [...knowledgePoints.value, res.knowledgePoint]
+    return res.knowledgePoint
   }
 
   /** 改一条的名字。 */
@@ -92,7 +94,11 @@ export function useSpaceLearningAnalysis(spaceId: MaybeRefOrGetter<number | unde
     return res.suggestions ?? []
   }
 
-  watch(() => toValue(spaceId), () => void load(), { immediate: true })
+  watch(
+    () => toValue(spaceId),
+    () => void load(),
+    { immediate: true }
+  )
 
   return {
     enabled,
@@ -131,7 +137,11 @@ export function useSpaceLearningEnabled(spaceId: MaybeRefOrGetter<number | undef
     }
   }
 
-  watch(() => toValue(spaceId), () => void load(), { immediate: true })
+  watch(
+    () => toValue(spaceId),
+    () => void load(),
+    { immediate: true }
+  )
 
   return { enabled, state, load }
 }
@@ -148,6 +158,8 @@ export function useSpaceLearningNotice(spaceId: MaybeRefOrGetter<number | undefi
       return
     }
     state.value = 'loading'
+    // 换成别人的板（或者刚进这一页）时先别摆上一次读到的那份：弹出来的会是别的板该弹的卡。
+    notice.value = null
     try {
       const res = await SpacesApi.readLearningNotice(id)
       if (toValue(spaceId) !== id) return
@@ -168,7 +180,11 @@ export function useSpaceLearningNotice(spaceId: MaybeRefOrGetter<number | undefi
     notice.value = { enabled: notice.value?.enabled ?? true, needsAcknowledge: false, acknowledged: true }
   }
 
-  watch(() => toValue(spaceId), () => void load(), { immediate: true })
+  watch(
+    () => toValue(spaceId),
+    () => void load(),
+    { immediate: true }
+  )
 
   return { notice, state, load, acknowledge }
 }

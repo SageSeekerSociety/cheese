@@ -210,6 +210,25 @@ describe('writesView', () => {
     expect(JSON.stringify(view.changes[0].rows)).not.toContain('报名')
   })
 
+  it('涉及的知识点：卡上按清单里的名字说改了哪几条', () => {
+    setLocale('zh-CN')
+    const view = writesView(
+      [edit(1, 7, { knowledgePointIds: [21, 22] })],
+      {
+        ...terms,
+        knowledgePoints: [
+          { id: 21, name: '相关子查询' },
+          { id: 22, name: '索引' },
+        ],
+      },
+      7
+    )
+
+    const row = view.changes[0].rows[0]
+    expect(row.label).toBe(t('spaces.learningAnalysis.field.label'))
+    expect(row.value).toBe('相关子查询、索引')
+  })
+
   it('直接开始的题：开始日期那一格叫开放日期', () => {
     setLocale('zh-CN')
     const view = writesView([edit(1, 7, { registrationStartAt: 0 }, { startMode: 'DIRECT' })], terms, 7)
