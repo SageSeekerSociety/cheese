@@ -835,10 +835,17 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 });
 
-// 侧栏顶上项目名那一条，和右边内容区的页头是同一条线：一样高、顶在同一处，两条底
-// 线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
-// 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
-// 查都看不见。项目设置不在这里：它是盖在整个窗口上的一层，没有这条页头。
+// 侧栏顶上那一条，和右边内容区的页头是同一条线：一样高、顶在同一处，两条底线接成
+// 一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到成员页，
+// 页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检查都看不见。
+// 项目设置不在这里：它是盖在整个窗口上的一层，没有这条页头。
+//
+// 桌面宽档下侧栏顶上那一条是 `[data-testid="sidebar-frame-top"]`（ProjectSwitcher 的
+// 老鼠图标 + 项目切换器），不是项目侧栏自己的 `.rail-header`：2026-11-16 起项目名那
+// 一行在最宽档让给了侧栏头，`.rail-header` 只在手机整页和平板两栏里还在，桌面上根本
+// 不渲染（量出来是 null）。两条都是 48px 基线 + 一条底线（`--app-page-header-height`、
+// `--app-page-header-rule`），所以这条不变量照旧成立，只是锚点换了地方。名字里带上
+// `data-testid`，就是为了不让它再随侧栏头的长相一起改。
 test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
@@ -850,7 +857,10 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();
-    const [side, main] = await Promise.all([page.locator('.rail-header').boundingBox(), head.boundingBox()]);
+    const [side, main] = await Promise.all([
+      page.locator('[data-testid="sidebar-frame-top"]').boundingBox(),
+      head.boundingBox(),
+    ]);
     expect(side, sub).not.toBeNull();
     expect(main, sub).not.toBeNull();
     expect(main!.y, `${sub} · top`).toBeCloseTo(side!.y, 0);

@@ -23,6 +23,12 @@ const rowsOf = (page: Page) => page.locator('.switcher__row-wrap[data-project-id
 
 async function dragTo(page: Page, from: number, to: number, edge: 'before' | 'after', target: string) {
   const rows = rowsOf(page);
+  // 先等列表落定再量盒子。菜单是 v-menu，默认过渡（VDialogTransition）进场时把 overlay
+  // 设成 pointer-events:none 并做 225ms 的缩放动画；这段里量出来的行盒子还没到位（行高
+  // 27.8px 而不是落定的 32px，并且整体偏高），照它算出的落点会落到错误的那一半——量到的
+  // 行比真实的低，指针就落在上半边，本该 --after 的变成 --before，顺序只挪一格。
+  // hover() 会等到元素稳定、能收指针事件，正是这三样都就绪的时刻。
+  await rows.nth(from).hover();
   const source = (await rows.nth(from).boundingBox())!;
   const dest = (await rows.nth(to).boundingBox())!;
   const line = page.locator(`.switcher__row-wrap--${edge}[data-project-id="${target}"]`);
