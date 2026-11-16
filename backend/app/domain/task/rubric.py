@@ -142,7 +142,9 @@ def tests_line(rows: Sequence[object], stage: int) -> object | None:
     测试点 — the case where a run is still worth writing down for the graders
     and the students, but lands in no score."""
     for row in rows:
-        if (getattr(row, "kind", MANUAL) or MANUAL) == TESTS and row.stage == stage:
+        if (getattr(row, "kind", MANUAL) or MANUAL) == TESTS and getattr(
+            row, "stage", None
+        ) == stage:
             return row
     return None
 
@@ -150,7 +152,7 @@ def tests_line(rows: Sequence[object], stage: int) -> object | None:
 def lines_for_stage(rows: Sequence[object], stage: int) -> list[RubricLine]:
     """The stage's lines in order (a submission is graded on its own stage,
     方案 §分阶段的题：每个阶段各自合成)."""
-    return [_line_of(row) for row in rows if row.stage == stage]
+    return [_line_of(row) for row in rows if getattr(row, "stage", None) == stage]
 
 
 def _number(value: object) -> float:

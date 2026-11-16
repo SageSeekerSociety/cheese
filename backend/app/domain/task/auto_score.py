@@ -38,8 +38,11 @@ def _tests_override(raw: object, points: int) -> tuple[int, str]:
     reason = str(entry.get("reason") or "").strip()
     if not reason:
         raise BadRequestError(say("lineScoreNeedsReason"))
+    value = entry.get("score")
+    if value is None:
+        raise BadRequestError(say("lineScoreRange", points=points))
     try:
-        score = int(entry.get("score"))
+        score = int(value)
     except (TypeError, ValueError):
         raise BadRequestError(say("lineScoreRange", points=points)) from None
     if not 0 <= score <= max(points, 0):
