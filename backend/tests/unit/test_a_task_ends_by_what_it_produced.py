@@ -51,3 +51,24 @@ def test_a_task_without_a_repository_is_not_sent_to_a_checkout(moment):
 @pytest.mark.parametrize("moment", ["turned into a task", "opened"])
 def test_the_start_of_a_task_does_not_presume_filing_for_review(moment, has_checkout):
     assert "提交审阅" not in _said_to(has_checkout)[moment]
+
+
+def test_a_landed_step_of_a_task_without_a_repository_is_not_a_merge():
+    """A task without a repository hands over files or addresses: when a step
+    of it is accepted, it is not told of a merge or sent to a new branch."""
+    from app.domain.review.task_landing import (
+        task_next_step_prompt,
+        task_step_landed_while_working_prompt,
+        task_summary_prompt,
+    )
+
+    for said in (
+        task_next_step_prompt(title="T", task_id="t", has_checkout=False),
+        task_step_landed_while_working_prompt(
+            title="T", task_id="t", has_checkout=False
+        ),
+        task_summary_prompt(title="T", has_checkout=False),
+    ):
+        assert "合并" not in said
+        assert "cheese worktree" not in said
+        assert "工作目录" not in said
