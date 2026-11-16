@@ -932,6 +932,7 @@ class TaskRubricRepository:
                     points=line.points,
                     criteria=line.criteria,
                     stage=line.stage,
+                    source=line.source,
                 )
             )
         await self._session.flush()

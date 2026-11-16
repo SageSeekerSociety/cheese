@@ -192,7 +192,7 @@ async def _task_as_form(db, task, *, private: bool) -> dict:
     private guidance comes with it; anyone else gets the form without it."""
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=private)
-    model.update(await _task_requirements(service, task.id))
+    model.update(await _task_requirements(service, task.id, teacher=private))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     await _enrich_task_topics(db, [model])
     return drafts.task_form(model)

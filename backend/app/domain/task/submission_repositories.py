@@ -72,6 +72,7 @@ class TaskSubmissionRepository:
         version: int,
         stage: int = 0,
         package_revision: int | None = None,
+        code_sha: str = "",
     ) -> TaskSubmission:
         now = datetime.now(UTC)
         submission = TaskSubmission(
@@ -80,6 +81,10 @@ class TaskSubmissionRepository:
             version=version,
             stage=stage,
             package_revision=package_revision,
+            # 这一版要评测的代码版本（方案 §数据结构）：提交那一刻默认分支的 commit，
+            # 之后学生再推送不影响这一版；连了 GitHub 的项目这一版留空（第 1 步
+            # 只支持平台托管的仓库）。
+            code_sha=code_sha,
             created_at=now,
             updated_at=now,
             deleted_at=None,
@@ -499,6 +504,7 @@ class TaskSubmissionReviewRepository:
         accepted: bool,
         score: int,
         comment: str,
+        line_scores: list[dict] | None = None,
     ) -> TaskSubmissionReview:
         now = datetime.now(UTC)
         review = TaskSubmissionReview(
@@ -507,6 +513,7 @@ class TaskSubmissionReviewRepository:
             accepted=accepted,
             score=score,
             comment=comment,
+            line_scores=line_scores,
             created_at=now,
             updated_at=now,
             deleted_at=None,

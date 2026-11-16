@@ -38,7 +38,8 @@ from app.db.session import get_db
 from app.domain.task.access import (
     bind_review_path,
 )
-from app.domain.task.claims import claim_of
+from app.domain.task import grading, judge_queue, package
+from app.domain.task.claims import claim_of, project_claim
 from app.domain.task.review_service import TaskSubmissionReviewService
 from app.domain.task.services import (
     TaskMembershipService,
@@ -397,15 +398,58 @@ async def post_task_submission_review(
     if existing.get("reviewed"):
         raise ConflictError("Review already exists for this submission")
 
+    score, line_scores = await _settled_review(
+        db, task, submission_id, payload, review_service
+    )
     review_dto = await review_service.create_review(
         submission_id=submission_id,
         reviewer_id=auth_user.user_id,
         accepted=payload.accepted,
-        score=payload.score,
+        score=score,
         comment=payload.comment,
+        line_scores=line_scores,
     )
     await _tell_reviewed(db, task, membership, submission_id, review_dto, auth_user)
     return ok({"review": review_dto})
+
+
+async def _settled_review(
+    db, task, submission_id: int, payload, review_service
+) -> tuple[int | None, list[dict] | None]:
+    """The review's total and per-requirement scores, from what the request sent
+    and what the judge run over this version found.
+
+    A 题目 with no 测试点 line: nothing changes — the caller's ``score`` stands
+    (or ``None`` for a PATCH that only re-comments). A 题目 with one: the
+    per-requirement scores are settled by ``grading`` (the 测试点 line filled in
+    from the run, the teacher's lines as sent), the total composed from them,
+    and ``lineScores`` stored on the review. A 测试点 line the teacher filled in
+    by hand carries its reason.
+
+    ``accepted``: what the review will say. A PUT sends it; a PATCH that does not
+    change it leaves the review as it stands, so the stored one is read — pass on
+    the teacher lines being all scored only holds for a review that is accepted.
+    """
+    lines = await TaskService.of(db).list_rubric(task.id)
+    has_tests = any(
+        (getattr(line, "source", "") or "TEACHER") == grading.TESTS for line in lines
+    )
+    if not has_tests or not lines:
+        return payload.score, (payload.line_scores or None)
+
+    accepted = payload.accepted
+    if accepted is None:
+        held = await review_service.get_review_dto(submission_id)
+        accepted = bool((held.get("detail") or {}).get("accepted"))
+    run = await judge_queue.latest_run(db, submission_id)
+    settled = grading.settle_line_scores(
+        lines,
+        payload.line_scores,
+        accepted=bool(accepted),
+        passed_points=run.passed_points if run is not None else None,
+        total_points=run.total_points if run is not None else None,
+    )
+    return grading.compose_total(settled), grading.line_scores_to_api(settled)
 
 
 async def _tell_reviewed(db, task, membership, submission_id: int, review: dict, who):
@@ -485,11 +529,15 @@ async def _update_task_submission_review(
         participant_id=participant_id,
         submission_id=submission_id,
     )
+    score, line_scores = await _settled_review(
+        db, task, submission_id, payload, review_service
+    )
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
         accepted=payload.accepted,
-        score=payload.score,
+        score=score,
         comment=payload.comment,
+        line_scores=line_scores,
     )
     await _tell_reviewed(db, task, membership, submission_id, review_dto, auth_user)
     return ok({"review": review_dto})

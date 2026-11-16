@@ -71,6 +71,7 @@ FORM_FIELDS = frozenset(
         "rubric",
         "rubricPublic",
         "stages",
+        "testSuite",
         "attachmentIds",
         "attachmentFiles",
         "starterAttachmentId",
@@ -105,6 +106,9 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "submission": ("submissionSchema",),
     "rubric": ("rubric",),
     "rubric_public": ("rubricPublic",),
+    # 测试点（``testSuite``）不在芝士这一版能写的字段里：它的词表要和前端的
+    # ``taskDraftAgent.AGENT_FIELDS`` 一一对上，那是第 3 步（前端）的事。在这里只让
+    # 表单字段能存下来，供发布页原样带回 ``POST/PATCH /tasks``。
     "form": ("submitterType",),
     "team_min": ("minTeamSize",),
     "team_max": ("maxTeamSize",),
@@ -925,6 +929,9 @@ def _rubric(lines, stages: list) -> list[dict]:
                 "points": points,
                 "criteria": str(line.get("criteria") or "").strip(),
                 "stage": _stage_ref(line, stages),
+                # 评分方式：老师评（``TEACHER``）或测试点（``TESTS``）。芝士写的
+                # 行多半不说它，给了就照抄，校验交给 ``rubric_lines``。
+                "source": str(line.get("source") or "").strip() or "TEACHER",
             }
         )
     return out
@@ -1223,7 +1230,23 @@ def _view(
         *(
             f"  - {r.get('item')}｜{r.get('points')} 分｜{r.get('criteria')}"
             + in_stage(r)
+            + (
+                "｜评分方式：" + ("测试点" if r.get("source") == "TESTS" else "老师评")
+                if r.get("source")
+                else ""
+            )
             for r in fields.get("rubric") or []
+        ),
+        # 测试点在芝士这一版只读：它的词表还没进 ``AGENT_FIELDS``（第 3 步前端）。
+        # 读得出来，是为了让芝士知道这道题挂了哪些测试点、各多少分。
+        "tests:" + ("" if fields.get("testSuite") else " （无测试点）"),
+        *(
+            f"  - {suite.get('kind')}｜{suite.get('runtime')}"
+            + f"｜运行命令 {suite.get('runCmd') or '（无）'}"
+            + f"｜{suite.get('caseCount') or len(suite.get('cases') or [])} 个用例"
+            + f"｜合计 {suite.get('totalPoints') or 0} 分"
+            + in_stage(suite)
+            for suite in fields.get("testSuite") or []
         ),
         "description:",
         markdown_of(fields) or "（空）",
@@ -1320,6 +1343,7 @@ def blank(fields: dict) -> bool:
         or _doc_text(fields.get("description")).strip()
         or fields.get("rubric")
         or fields.get("stages")
+        or fields.get("testSuite")
     )
 
 
@@ -1380,6 +1404,8 @@ def task_form(task: dict) -> dict:
         "rubric": task.get("rubric") or [],
         "rubricPublic": task.get("rubricPublic", True),
         "stages": task.get("stages") or [],
+        # 测试点：出题人自己编这道题时读到的样子（含隐藏用例），见 test_suite。
+        "testSuite": task.get("testSuite") or [],
         "teaching": task.get("teaching") or {},
         "teachingOwn": bool(task.get("teaching")),
         # The 题目's own default teammate; None when it has none, so leaving the

@@ -135,10 +135,16 @@ def _submission_schema_to_api(
     ]
 
 
-async def _task_requirements(service, task_id: int) -> dict:
+async def _task_requirements(service, task_id: int, *, teacher: bool) -> dict:
     """What a 题目 asks of whoever takes it, as the detail, the edit form and
-    the change draft read it: its stages, its submission items and its rubric,
-    the items and lines naming their stage by the stage's id."""
+    the change draft read it: its stages, its submission items, its rubric and
+    its 测试点, the items and lines naming their stage by the stage's id.
+
+    ``teacher``: whether the reader may grade the 题目. Suites come back through
+    ``test_suite.suites_to_api``, which shows a hidden case's input and expected
+    output only to whoever may grade it; a reader who may not gets the name, the
+    points and whether it passed. The edit form and the change draft always read
+    as a teacher (only whoever teaches the 题目 gets there)."""
     stage_rows = await service.list_stages(task_id)
     keys = [stage.key for stage in stage_rows]
     return {
@@ -147,6 +153,7 @@ async def _task_requirements(service, task_id: int) -> dict:
             await service.list_submission_schema(task_id), keys
         ),
         "rubric": rubric_to_api(await service.list_rubric(task_id), keys),
+        "testSuite": await service.suites_to_api(task_id, keys, teacher=teacher),
     }
 
 

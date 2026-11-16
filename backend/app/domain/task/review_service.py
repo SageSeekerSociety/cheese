@@ -1,6 +1,9 @@
 """批改一版提交：多位老师各判一份，判通过就推进领取的完成状态、按题目排名发放空间等级。
 
 从 ``app.domain.task.services`` 搬来，逐行未改 —— 那个模块超了文件行数上限。
+
+逐项得分（``line_scores``，方案 §评审那一行）：合成规则在 ``app.domain.task.grading``，
+由路由在调这里之前算好、写成接口形状的列表存进来；这里只管存和读。
 """
 
 from datetime import UTC, datetime
@@ -73,6 +76,7 @@ class TaskSubmissionReviewService:
                 "accepted": review.accepted,
                 "score": review.score,
                 "comment": review.comment,
+                "lineScores": list(review.line_scores or []),
             },
         }
 
@@ -84,6 +88,7 @@ class TaskSubmissionReviewService:
         accepted: bool,
         score: int,
         comment: str,
+        line_scores: list[dict] | None = None,
     ) -> dict:
         review = await self._review_repo.create_review(
             submission_id=submission_id,
@@ -91,6 +96,7 @@ class TaskSubmissionReviewService:
             accepted=accepted,
             score=score,
             comment=comment,
+            line_scores=line_scores,
         )
         has_upgraded = await self._maybe_award_rank(
             submission_id=submission_id,
@@ -111,6 +117,7 @@ class TaskSubmissionReviewService:
         accepted: bool | None = None,
         score: int | None = None,
         comment: str | None = None,
+        line_scores: list[dict] | None = None,
     ) -> dict:
         """改一条评审。给了 `reviewer_id` 就改那个人的那份，没给就是最早的一份
         （单评审时两者是同一份）。
@@ -130,6 +137,8 @@ class TaskSubmissionReviewService:
             review.score = score
         if comment is not None:
             review.comment = comment
+        if line_scores is not None:
+            review.line_scores = line_scores
         review.updated_at = datetime.now(UTC)
         await self._review_repo.save(review)
         has_upgraded = await self._maybe_award_rank(

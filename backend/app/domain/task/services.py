@@ -793,6 +793,9 @@ class TaskSubmissionService:
                 "accepted": review.accepted,
                 "score": review.score,
                 "comment": review.comment,
+                # 逐项得分（§评审那一行）：``[{index, points, source, score, adjusted, note}]``。
+                # 老评审这一格是空的 —— 那时只填一个总分。
+                "lineScores": list(review.line_scores or []),
             },
         }
 
@@ -852,6 +855,9 @@ class TaskSubmissionService:
             "stage": stage_ref(submission.stage, keys),
             # 交的是题目的第几版；有版本之前交的是 None。
             "packageRevision": submission.package_revision,
+            # 交这一版时记下的代码版本（commit）；空 = 没记下（连着 GitHub 的项目，
+            # 或这一列存在之前交的）。§提交：表单里显示「将要评测的代码」用它。
+            "codeSha": getattr(submission, "code_sha", "") or "",
             "createdAt": created_ms,
             "updatedAt": updated_ms,
             "content": content_dtos,

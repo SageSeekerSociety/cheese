@@ -36,6 +36,7 @@ from app.domain.task.inputs import (
 )
 from app.domain.task.mentors import require_consent, set_mentors
 from app.domain.task.rubric import rubric_lines
+from app.domain.task.test_suite import suite_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
@@ -81,6 +82,9 @@ class CreateTaskRequest(BaseModel):
     # 阶段：每个 ``{name, description, dueAt}``，见 app.domain.task.stages。提交项与
     # 评分要点各用 ``stage`` 指它属于第几个；不给就是一个阶段。
     stages: list[dict] = Field(default_factory=list)
+    # 测试点（§数据结构）：一个阶段一套，每套 ``{kind, runtime, ..., cases}``，见
+    # app.domain.task.test_suite。不给就是这道题没有测试点，和现在完全一样。
+    test_suite: list[dict] = Field(default_factory=list, alias="testSuite")
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -174,6 +178,8 @@ class PatchTaskRequest(BaseModel):
     rubric_public: bool | None = Field(default=None, alias="rubricPublic")
     # 阶段：给了就整份替换，省略不动；已有的阶段带回它的 ``id``，提交跟着它走。
     stages: list[dict] | None = None
+    # 测试点：给了就整份替换，省略不动。
+    test_suite: list[dict] | None = Field(default=None, alias="testSuite")
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(
         default=None, alias="accessControlEnabled"
@@ -205,11 +211,15 @@ class PatchTaskRequest(BaseModel):
 
 
 class CreateSubmissionReviewRequest(BaseModel):
+    # 评分要点逐项得分（§评审）：``[{index, score, adjusted, note}]``，按要点的
+    # ``index`` 对位。省略 = 回调旧路（只填一个总分，没有逐项得分）。``score`` 现在
+    # 可选：挂了测试点的题，总分由后端按 ``grading`` 合成，前端不必自己算。
     model_config = ConfigDict(populate_by_name=True)
 
     accepted: bool
-    score: int
+    score: int | None = None
     comment: str
+    line_scores: list[dict] | None = Field(default=None, alias="lineScores")
 
 
 class PatchSubmissionReviewRequest(BaseModel):
@@ -218,6 +228,7 @@ class PatchSubmissionReviewRequest(BaseModel):
     accepted: bool | None = None
     score: int | None = None
     comment: str | None = None
+    line_scores: list[dict] | None = Field(default=None, alias="lineScores")
 
 
 async def _create_task_entity(
@@ -253,6 +264,7 @@ async def _create_task_entity(
         rubric_raw = payload.rubric
         rubric_public = payload.rubric_public
         stages_raw = payload.stages
+        test_suite_raw = payload.test_suite or []
         teaching = coerce_teaching(payload.teaching)
         default_role = payload.default_role
     else:
@@ -353,6 +365,7 @@ async def _create_task_entity(
         rubric_raw = payload.get("rubric") or []
         rubric_public = bool(payload.get("rubricPublic", True))
         stages_raw = payload.get("stages") or []
+        test_suite_raw = payload.get("testSuite") or []
 
     # Every stage gets its id now, so the items and lines sent with it can name
     # it; one naming a stage the task will not have is refused before anything
@@ -367,8 +380,20 @@ async def _create_task_entity(
     ]
     keys = [line.key for line in stages if line.key]
     submission_schema = with_stage_index(submission_schema, keys)
+    # 测试点先定：评分要点里设为「测试点」的那一项要指着有测试点的阶段，
+    # ``rubric_lines`` 据此拒掉落空的项。
+    test_suite = suite_lines(
+        with_stage_index(
+            [e for e in test_suite_raw if isinstance(e, dict)]
+            if isinstance(test_suite_raw, list)
+            else [],
+            keys,
+        )
+    )
+    suite_stage_indexes = [line.stage for line in test_suite]
     rubric = rubric_lines(
-        with_stage_index(rubric_raw if isinstance(rubric_raw, list) else [], keys)
+        with_stage_index(rubric_raw if isinstance(rubric_raw, list) else [], keys),
+        suite_stages=suite_stage_indexes,
     )
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
@@ -493,6 +518,10 @@ async def _create_task_entity(
         await task_service.replace_submission_schema(task.id, submission_schema)
     if rubric:
         await task_service.replace_rubric(task.id, rubric)
+    # 测试点整份写：入参里的每个阶段一套，用例的输入/期望输出写私有存储。写在评分
+    # 要点之后（两者都在同一个事务里，顺序不影响结果）。
+    if test_suite:
+        await task_service.replace_test_suites(task.id, test_suite)
 
     return task
 

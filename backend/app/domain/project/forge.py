@@ -538,6 +538,19 @@ async def default_branch(project_id: uuid.UUID, session: AsyncSession) -> str:
     return binding.default_branch
 
 
+async def branch_commit(
+    project_id: uuid.UUID, session: AsyncSession, branch: str
+) -> str | None:
+    """``branch`` 现在指着的那个 commit（sha），分支不存在时 None。
+
+    提交时记下「这一版要评测的代码」（方案 §数据结构：提交改加提交时的代码版本号）。
+    就是 ``branch_head`` 那句话，只是读的人要的是「这一版的代码」，语义上比它清楚，
+    所以另起一个名字给它。平台托管的仓库才有；连了 GitHub 的项目这一步留空
+    （方案 §分步计划：第 1 步先只支持平台托管的仓库，另一件任务再补 GitHub 的只读
+    凭据）。"""
+    return await branch_head(project_id, session, branch)
+
+
 _ACCOUNT_PREFIX = "cheese-"
 _PROJECT_ACCOUNT = re.compile(r"cheese-([0-9a-f]{32})")
 # Longer than any creation can still be running: its project row is invisible

@@ -315,12 +315,13 @@ async def get_task(
                 )
             )
 
-    # 阶段、提交表单与评分要点。评分要点：批改的人（出题人、空间管理员）总能读到；
-    # 别人只在它公开时读到。
-    requirements = await _task_requirements(service, task_id)
+    # 阶段、提交表单、评分要点与测试点。评分要点：批改的人（出题人、空间管理员）
+    # 总能读到；别人只在它公开时读到。测试点：批改的人读到每个用例的输入与期望输出；
+    # 别人读到隐藏用例的名称、分值和通过与否（可能的情形），拿不到字节。
     may_grade = auth_user.user_id > 0 and await task_seats.teaches(
         db, task, auth_user.user_id
     )
+    requirements = await _task_requirements(service, task_id, teacher=may_grade)
     if not (task.rubric_public or may_grade):
         requirements["rubric"] = []
     task_dict.update(requirements)

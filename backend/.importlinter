@@ -263,6 +263,18 @@ unmatched_ignore_imports_alerting = warn
 # 进来。拆完 `--measure` 从 27 条降到 14 条。注意：基线是从 merge base 量的，主干树
 # 里这四条边还在，把它们加回来检查不会红，所以由
 # `tests/unit/test_agent_instance_does_not_read_the_agent_package.py` 钉住。
+#
+# **2026-11-16** `app.domain.task.review_service -> app.domain.space.rank_service`：
+# `TaskSubmissionReviewService` 从 `task/services.py` 原样搬进了 `task/review_service.py`
+# （那个文件超了 1500 行上限，只许缩），它读空间排名的这一条边跟着搬过来换了导入方。
+# 基线量的是 merge base 那棵树，那里这条边写在 `task.services` 下、认成
+# `task.services -> space.rank_service`；搬进新模块后，工具认得「同一份债换了个模块」
+# 只在被导入的一侧（`space.rank_service` 那条一直在基线里），换的是**导入方**
+# `task.services -> task.review_service` —— 那是个新模块名，于是报成新债。这是同一条
+# 旧债，不是新欠的：`task.services` 那条在基线树里就是它。等 task 域里排名这一处的
+# 方向真的倒过来（评审不直接读空间排名服务），这条豁免连同基线那条一起消失。
+ignore_imports =
+    app.domain.task.review_service -> app.domain.space.rank_service
 
 [importlinter:contract:turn-layers]
 # T1 — every turn module belongs to one of these four layers.
