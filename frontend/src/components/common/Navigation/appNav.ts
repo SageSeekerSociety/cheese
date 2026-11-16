@@ -5,10 +5,10 @@
 // 项目切换器住进侧栏头，问芝士和头像住进侧栏底；没有侧栏的页面、平板上侧栏收起时，
 // 这几样临时回到顶栏。格子怎么来（顺序、件数、落点、快捷键）还是 destinations.ts 算，
 // 外壳算一次、在这里交出去，侧栏和顶栏只画。
-import type { NavGenericItem, NavItem } from './types'
+import type { ComputedRef, InjectionKey } from 'vue'
 import type { Project } from '@/cx_types'
 import type { DropEdge } from '@/lib/projectOrder'
-import type { ComputedRef, InjectionKey } from 'vue'
+import type { NavGenericItem, NavItem } from './types'
 
 import { inject, provide } from 'vue'
 

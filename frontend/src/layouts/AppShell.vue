@@ -185,8 +185,8 @@ import { copyLink } from '@/commands/copy'
 import ConsentGate from '@/components/account/ConsentGate.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
 import MyApp from '@/components/common/MyApp.vue'
-import { provideAppNav } from '@/components/common/Navigation/appNav'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
+import { provideAppNav } from '@/components/common/Navigation/appNav'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
 import {
   railItems,

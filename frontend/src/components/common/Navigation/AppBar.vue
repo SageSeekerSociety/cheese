@@ -52,7 +52,6 @@
 import { computed, ref, watch } from 'vue'
 
 import { usePageTitle } from '@/composables/usePageTitle'
-
 import { SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 
 import AccountButton from './AccountButton.vue'
@@ -64,7 +63,6 @@ import RailItem from './RailItem.vue'
 
 import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
-
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'

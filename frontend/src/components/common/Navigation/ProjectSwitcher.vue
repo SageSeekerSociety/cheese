@@ -38,7 +38,7 @@
         </button>
       </template>
 
-      <div class="switcher" role="menu" :aria-label="t('work.sidebar.switchProject')" @keydown.esc="open = false">
+      <div class="switcher">
         <label class="switcher__search">
           <v-icon size="16" icon="mdi-magnify" />
           <input
@@ -66,6 +66,7 @@
             <kbd v-if="homeItem.shortcut" class="switcher__kbd">{{ keyLabel(homeItem.shortcut) }}</kbd>
           </router-link>
           <div v-if="homeItem && !query && rows.length" class="switcher__rule" />
+          <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- drag handlers for reordering with the pointer; keyboard users reorder nothing here, same as the old rail -->
           <div
             v-for="row in rows"
             :key="row.item.key"
@@ -137,7 +138,8 @@
 import type { DropEdge } from '@/lib/projectOrder'
 
 import { computed, nextTick, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import { addItemOf, homeItemOf, projectItemsOf, useAppNav } from './appNav'
 import { railShortcut } from './destinations'
@@ -152,15 +154,14 @@ import { inDesktopApp } from '@/lib/desktopApp'
 import { myHandle } from '@/me'
 
 const nav = useAppNav()
-const route = useRoute()
-const router = useRouter()
+const navigation = useNavigation()
 
 const items = computed(() => nav?.items.value ?? [])
 const homeItem = computed(() => homeItemOf(items.value))
 const addItem = computed(() => addItemOf(items.value))
 const projectItems = computed(() => projectItemsOf(items.value))
 
-const path = computed(() => route?.path ?? '')
+const path = computed(() => navigation?.route?.path ?? '')
 const current = computed(() => projectItems.value.find((i) => i.match?.(path.value)) ?? null)
 const onHome = computed(() => !!homeItem.value?.match?.(path.value))
 const othersAwaiting = computed(() =>
@@ -193,7 +194,9 @@ watch(open, async (isOpen) => {
 const rows = computed(() => {
   const q = query.value.trim().toLowerCase()
   return projectItems.value
-    .filter((i) => !q || i.title.toLowerCase().includes(q) || (teamOf(i.projectId)?.label ?? '').toLowerCase().includes(q))
+    .filter(
+      (i) => !q || i.title.toLowerCase().includes(q) || (teamOf(i.projectId)?.label ?? '').toLowerCase().includes(q)
+    )
     .map((item) => ({ item, current: item === current.value, team: teamOf(item.projectId)?.label ?? '' }))
 })
 
@@ -204,7 +207,7 @@ function openFirst() {
   const first = rows.value[0]?.item
   if (!first?.to) return
   open.value = false
-  void router.push(first.to)
+  void navigation?.navigate(first.to)
 }
 
 function createProject() {
@@ -228,7 +231,8 @@ function onDragOver(e: DragEvent, id: string) {
   e.preventDefault()
   e.dataTransfer.dropEffect = 'move'
   const box = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  dropAt.value = id === draggingId.value ? null : { id, edge: e.clientY < box.top + box.height / 2 ? 'before' : 'after' }
+  dropAt.value =
+    id === draggingId.value ? null : { id, edge: e.clientY < box.top + box.height / 2 ? 'before' : 'after' }
 }
 function onDrop(e: DragEvent, id: string) {
   const moved = e.dataTransfer?.getData(DRAG_TYPE)
