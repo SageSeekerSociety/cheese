@@ -37,7 +37,7 @@ from app.domain.review.deploy_scope import (
     projects_of,
     repository_of_url,
 )
-from app.domain.review.models import DeployReport
+from app.domain.review.models import AcceptCard, AcceptStatus, DeployReport
 from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.review.task_landing import deploy_landed
 from app.domain.room_task.lock_order import lock_task_for_change
@@ -82,7 +82,22 @@ async def _waiting_ids(
         return []
     prs = {n for c in commits if (n := pull_request_of(c.get("message", "")))}
     times = [t for c in commits if (t := _merged_at(c)) is not None]
-    live = [Task.pr_number.in_(prs)] if prs else []
+    live = (
+        [
+            Task.pr_number.in_(prs),
+            # The PR the task's card merged, which a task whose own PR the
+            # platform did not open does not carry itself.
+            select(AcceptCard.id)
+            .where(
+                AcceptCard.task_id == Task.id,
+                AcceptCard.status == AcceptStatus.accepted,
+                AcceptCard.pr_number.in_(prs),
+            )
+            .exists(),
+        ]
+        if prs
+        else []
+    )
     if times:
         live.append(Task.accepted_at < min(times))
     if not live:

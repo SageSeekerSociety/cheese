@@ -39,7 +39,7 @@ def deploy_repositories() -> set[str]:
 
 
 def repository_of_url(url: str) -> str:
-    """"owner/repo" of a forge URL such as https://github.com/OWNER/REPO, lower
+    """ "owner/repo" of a forge URL such as https://github.com/OWNER/REPO, lower
     case; the input as given, lowered, when it is already that."""
     path = url.strip().rstrip("/")
     if path.endswith(".git"):

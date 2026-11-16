@@ -35,9 +35,7 @@ def upgrade() -> None:
         sa.Column("reported_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_deploy_reports_repo", "deploy_reports", ["repo"], unique=False
-    )
+    op.create_index("ix_deploy_reports_repo", "deploy_reports", ["repo"], unique=False)
     with_lock_retries("tasks")
     op.add_column(
         "tasks",
