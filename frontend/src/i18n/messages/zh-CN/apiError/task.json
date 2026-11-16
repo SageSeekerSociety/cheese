@@ -83,7 +83,12 @@
   "claimDeadlinePassedForStart": "你的提交截止时间已经过了，不能再开始做这道题",
   "claimBeingChanged": "这份申请正在处理，过一会儿再试一次",
   "taskCloseWhileDeliveryWaits": "这件任务的交付还在等人决定，任务没有关：关掉会让这份交付作废，这个决定归人。在对话里回一句告诉他在哪里点：采纳点任务对话输入框上方那一条上的「采纳并完成任务」（不是最后一步的交付写「采纳」；手机上先点那一条上的「审阅」，到「改动」页签底部的同一条上点），退回点同一条上的「退回」；关掉任务点任务页右上角「更多操作」里的「关闭任务」。",
-  "rubricSourceReserved": "评分方式只能是老师评或测试点（token 用量还没做）",
+  "reviewManualScoreRange": "手动评分的几项合计要填 0 到 {max} 之间的整数",
+  "rubricAutoTotal": "有自动算分项的阶段，评分要点合计要等于 {required} 分，现在是 {total} 分",
+  "rubricKindUnknown": "评分要点里有一项的评分方式不认识",
+  "rubricUsageModeUnknown": "额度用量的给分方式只能是按阈值或按全班排名",
+  "rubricUsageOnce": "一道题只能有一项额度用量",
+  "rubricUsageThresholds": "额度用量按阈值给分时，要填得满分和得 0 分的额度，得 0 分的要比得满分的大",
   "rubricOneTestsLine": "同一阶段只能有一项评分要点设为「测试点」",
   "rubricTestsWithoutSuite": "这一项设为「测试点」，但这个阶段还没有配测试点",
   "testSuiteKindLater": "这一版只支持输入/输出用例，测试脚本和命令判分还没有做",
@@ -105,9 +110,6 @@
   "testSuiteMemoryRange": "内存需要是 {low} 到 {high} MB",
   "testSuiteSelfTestRange": "自测次数需要是 {low} 到 {high} 之间的整数，或者关掉自测",
   "submissionCodeMoved": "你项目默认分支的代码已经变了，先看一眼这一版要评测的代码再提交",
-  "lineScoreUnknownLine": "逐项得分里有一个评分要点不存在：{index}",
   "lineScoreRange": "这一项的得分需要是 0 到 {points} 之间的整数",
-  "lineScoreTestsManual": "测试那一项要手动填，得先标成「手动调整」",
-  "lineScoreNeedsReason": "手动调整测试分要写明原因，学生看得到",
-  "lineScoreMissing": "「{item}」这一项还没有给分"
+  "lineScoreNeedsReason": "手动调整测试分要写明原因，学生看得到"
 }

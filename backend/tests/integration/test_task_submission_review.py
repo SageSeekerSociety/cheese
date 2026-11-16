@@ -336,7 +336,6 @@ class TestTaskSubmissionReviewIntegration:
             "accepted": False,
             "score": 4,
             "comment": "Second pass",
-            "lineScores": [],
         }
 
         replaced = api_client.put(
@@ -349,7 +348,6 @@ class TestTaskSubmissionReviewIntegration:
             "accepted": True,
             "score": 3,
             "comment": "Third pass",
-            "lineScores": [],
         }
 
         fetched = api_client.get(url, headers=headers)
@@ -358,7 +356,6 @@ class TestTaskSubmissionReviewIntegration:
             "accepted": True,
             "score": 3,
             "comment": "Third pass",
-            "lineScores": [],
         }
 
         listed = api_client.get(
@@ -373,7 +370,6 @@ class TestTaskSubmissionReviewIntegration:
             "accepted": True,
             "score": 3,
             "comment": "Third pass",
-            "lineScores": [],
         }
 
     def test_update_review_forbidden_for_participant(

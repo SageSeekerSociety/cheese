@@ -1,9 +1,10 @@
 """批改一版提交：多位老师各判一份，判通过就推进领取的完成状态、按题目排名发放空间等级。
 
-从 ``app.domain.task.services`` 搬来，逐行未改 —— 那个模块超了文件行数上限。
+从 ``app.domain.task.services`` 搬来 —— 那个模块超了文件行数上限。
 
-逐项得分（``line_scores``，方案 §评审那一行）：合成规则在 ``app.domain.task.grading``，
-由路由在调这里之前算好、写成接口形状的列表存进来；这里只管存和读。
+自动行的合成（``auto_scores``，方案 §评审那一行）：规则在
+``app.domain.task.grading``/``usage_score``，由路由在调这里之前算好、按本来的形状
+存进来；这里只管存和读。
 """
 
 from datetime import UTC, datetime
@@ -70,15 +71,15 @@ class TaskSubmissionReviewService:
         )
         if review is None:
             return {"reviewed": False}
-        return {
-            "reviewed": True,
-            "detail": {
-                "accepted": review.accepted,
-                "score": review.score,
-                "comment": review.comment,
-                "lineScores": list(review.line_scores or []),
-            },
+        detail = {
+            "accepted": review.accepted,
+            "score": review.score,
+            "comment": review.comment,
         }
+        auto_scores = getattr(review, "auto_scores", None)
+        if auto_scores:
+            detail["autoScores"] = auto_scores
+        return {"reviewed": True, "detail": detail}
 
     async def create_review(
         self,
@@ -88,7 +89,7 @@ class TaskSubmissionReviewService:
         accepted: bool,
         score: int,
         comment: str,
-        line_scores: list[dict] | None = None,
+        auto_scores: dict | None = None,
     ) -> dict:
         review = await self._review_repo.create_review(
             submission_id=submission_id,
@@ -96,8 +97,10 @@ class TaskSubmissionReviewService:
             accepted=accepted,
             score=score,
             comment=comment,
-            line_scores=line_scores,
         )
+        if auto_scores is not None:
+            review.auto_scores = auto_scores
+            await self._review_repo.save(review)
         has_upgraded = await self._maybe_award_rank(
             submission_id=submission_id,
             previous_accepted=None,
@@ -117,7 +120,8 @@ class TaskSubmissionReviewService:
         accepted: bool | None = None,
         score: int | None = None,
         comment: str | None = None,
-        line_scores: list[dict] | None = None,
+        auto_scores: dict | None = None,
+        rescored: bool = False,
     ) -> dict:
         """改一条评审。给了 `reviewer_id` 就改那个人的那份，没给就是最早的一份
         （单评审时两者是同一份）。
@@ -135,10 +139,12 @@ class TaskSubmissionReviewService:
             review.accepted = accepted
         if score is not None:
             review.score = score
+        if rescored:
+            # 分是重新合成的（``auto_score.compose_review``）：怎么来的跟着换，
+            # 不再有自动行时清掉。
+            review.auto_scores = auto_scores
         if comment is not None:
             review.comment = comment
-        if line_scores is not None:
-            review.line_scores = line_scores
         review.updated_at = datetime.now(UTC)
         await self._review_repo.save(review)
         has_upgraded = await self._maybe_award_rank(

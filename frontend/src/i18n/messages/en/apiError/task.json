@@ -83,7 +83,12 @@
   "claimDeadlinePassedForStart": "Your hand-in deadline has passed, so you can no longer start this task",
   "claimBeingChanged": "This application is being changed. Try again in a moment",
   "taskCloseWhileDeliveryWaits": "This task's delivery is still waiting for a person's decision, so the task was not closed: closing it would void the delivery, and that decision is theirs. Reply in the conversation telling them where to click: to accept, “Accept and complete the task” on the bar just above the conversation's input box (“Accept” when this is not the last step; on a phone, tap “Review” on that bar and use the same bar at the bottom of the “Changes” tab); to send it back, “Send back” on the same bar; to close the task, “Close task” under “More actions” at the task page's top right.",
-  "rubricSourceReserved": "A line is scored by a person or by the tests (token usage is not built yet)",
+  "reviewManualScoreRange": "The manually scored lines take a whole number from 0 to {max}",
+  "rubricAutoTotal": "A stage with an automatically scored line must total {required} points; it totals {total}",
+  "rubricKindUnknown": "A rubric line has a scoring method that is not recognised",
+  "rubricUsageModeUnknown": "Credit usage is scored by thresholds or by rank in the class",
+  "rubricUsageOnce": "A task has at most one credit usage line",
+  "rubricUsageThresholds": "Scoring credit usage by thresholds needs the credits for full points and for zero, and zero must be above full",
   "rubricOneTestsLine": "A stage has at most one rubric line scored by the tests",
   "rubricTestsWithoutSuite": "This line is scored by the tests, but the stage has no test points yet",
   "testSuiteKindLater": "This version supports input/output cases only; test scripts and command scoring are not built yet",
@@ -105,9 +110,6 @@
   "testSuiteMemoryRange": "Memory must be {low} to {high} MB",
   "testSuiteSelfTestRange": "Self-test runs must be a whole number from {low} to {high}, or off",
   "submissionCodeMoved": "Your project's default branch has moved; look at the code this version will be judged on before submitting",
-  "lineScoreUnknownLine": "A line score names a rubric line that does not exist: {index}",
   "lineScoreRange": "This line's score must be a whole number from 0 to {points}",
-  "lineScoreTestsManual": "Filling in the tests line by hand means marking it adjusted",
-  "lineScoreNeedsReason": "A hand-adjusted test score needs a reason; the student sees it",
-  "lineScoreMissing": "「{item}」 has no score yet"
+  "lineScoreNeedsReason": "A hand-adjusted test score needs a reason; the student sees it"
 }

@@ -51,6 +51,7 @@ from app.domain.task.models import (
     TaskStage,
     TaskSubmissionSchemaEntry,
 )
+from app.domain.task.rubric import AUTOMATIC_KINDS, automatic_rule
 from app.domain.user.models import User
 
 #: 题目资料库里每一版生成的那份题目说明。它不是出题人传的材料：材料清单里不列它，
@@ -235,6 +236,11 @@ async def brief(session: AsyncSession, task: Task, number: int) -> str:
             lines += [
                 f"- {row.item}（{row.points} 分{in_stage(row.stage)}）"
                 + (f"：{row.criteria}" if row.criteria else "")
+                + (
+                    f"（{automatic_rule(row.kind, row.config or {})}）"
+                    if row.kind in AUTOMATIC_KINDS
+                    else ""
+                )
                 for row in rubric
             ]
             lines.append("")

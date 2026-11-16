@@ -36,7 +36,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.db.session import get_db
-from app.domain.task import code_version, grading, judge_queue
+from app.domain.task import auto_score, code_version, usage_score
 from app.domain.task.access import (
     bind_review_path,
 )
@@ -247,7 +247,27 @@ async def get_task_submissions(
         "total": total,
     }
 
-    return ok({"submissions": items, "page": page})
+    return ok(
+        {
+            "submissions": items,
+            "page": page,
+            "usage": await _claim_usage(db, task, membership, auth_user.user_id),
+        }
+    )
+
+
+async def _claim_usage(db, task, membership, user_id: int) -> dict:
+    """这份领题用掉的额度，和评分要点里额度那一行的分（`usage_score`）。
+
+    批改的人什么都看得到；领题人自己看得到用量和按模型的明细，评分要点不公开时
+    看不到额度那一行怎么给分。"""
+    view = (await usage_score.usage_of_claims(db, task, [membership.id]))[membership.id]
+    view["models"] = await usage_score.credits_by_model(db, task.id, membership.id)
+    if "line" in view and not task.rubric_public:
+        if not (user_id > 0 and await task_seats.teaches(db, task, user_id)):
+            for key in ("line", "score", "rank", "ranked", "final"):
+                view.pop(key, None)
+    return view
 
 
 @router.post(
@@ -413,8 +433,15 @@ async def post_task_submission_review(
     if existing.get("reviewed"):
         raise ConflictError("Review already exists for this submission")
 
-    score, line_scores = await _settled_review(
-        db, task, submission_id, payload, review_service
+    # 题目有自动算分的行时，老师填的是手动几项的分，总分在这里合成。
+    score, auto_scores = await auto_score.compose_review(
+        db,
+        task=task,
+        membership=membership,
+        submission_id=submission_id,
+        accepted=payload.accepted,
+        score=payload.score,
+        tests_override=payload.tests_override,
     )
     review_dto = await review_service.create_review(
         submission_id=submission_id,
@@ -422,49 +449,10 @@ async def post_task_submission_review(
         accepted=payload.accepted,
         score=score,
         comment=payload.comment,
-        line_scores=line_scores,
+        auto_scores=auto_scores,
     )
     await _tell_reviewed(db, task, membership, submission_id, review_dto, auth_user)
     return ok({"review": review_dto})
-
-
-async def _settled_review(
-    db, task, submission_id: int, payload, review_service
-) -> tuple[int | None, list[dict] | None]:
-    """The review's total and per-requirement scores, from what the request sent
-    and what the judge run over this version found.
-
-    A 题目 with no 测试点 line: nothing changes — the caller's ``score`` stands
-    (or ``None`` for a PATCH that only re-comments). A 题目 with one: the
-    per-requirement scores are settled by ``grading`` (the 测试点 line filled in
-    from the run, the teacher's lines as sent), the total composed from them,
-    and ``lineScores`` stored on the review. A 测试点 line the teacher filled in
-    by hand carries its reason.
-
-    ``accepted``: what the review will say. A PUT sends it; a PATCH that does not
-    change it leaves the review as it stands, so the stored one is read — pass on
-    the teacher lines being all scored only holds for a review that is accepted.
-    """
-    lines = await TaskService.of(db).list_rubric(task.id)
-    has_tests = any(
-        (getattr(line, "source", "") or "TEACHER") == grading.TESTS for line in lines
-    )
-    if not has_tests or not lines:
-        return payload.score, (payload.line_scores or None)
-
-    accepted = payload.accepted
-    if accepted is None:
-        held = await review_service.get_review_dto(submission_id)
-        accepted = bool((held.get("detail") or {}).get("accepted"))
-    run = await judge_queue.latest_run(db, submission_id)
-    settled = grading.settle_line_scores(
-        lines,
-        payload.line_scores,
-        accepted=bool(accepted),
-        passed_points=run.passed_points if run is not None else None,
-        total_points=run.total_points if run is not None else None,
-    )
-    return grading.compose_total(settled), grading.line_scores_to_api(settled)
 
 
 async def _tell_reviewed(db, task, membership, submission_id: int, review: dict, who):
@@ -544,15 +532,43 @@ async def _update_task_submission_review(
         participant_id=participant_id,
         submission_id=submission_id,
     )
-    score, line_scores = await _settled_review(
-        db, task, submission_id, payload, review_service
-    )
+    score, auto_scores, rescored = payload.score, None, False
+    if (
+        payload.score is not None
+        or payload.accepted is not None
+        or payload.tests_override is not None
+    ):
+        current = (await review_service.get_review_dto(submission_id)).get("detail")
+        accepted = (
+            payload.accepted
+            if payload.accepted is not None
+            else bool((current or {}).get("accepted"))
+        )
+        # 只改通过与否时，沿用原来手动那部分的分重新合成总分。
+        manual = payload.score
+        if manual is None:
+            manual = int(
+                ((current or {}).get("autoScores") or {}).get(
+                    "manual", (current or {}).get("score") or 0
+                )
+            )
+        score, auto_scores = await auto_score.compose_review(
+            db,
+            task=task,
+            membership=membership,
+            submission_id=submission_id,
+            accepted=accepted,
+            score=manual,
+            tests_override=payload.tests_override,
+        )
+        rescored = True
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
         accepted=payload.accepted,
         score=score,
         comment=payload.comment,
-        line_scores=line_scores,
+        auto_scores=auto_scores,
+        rescored=rescored,
     )
     await _tell_reviewed(db, task, membership, submission_id, review_dto, auth_user)
     return ok({"review": review_dto})

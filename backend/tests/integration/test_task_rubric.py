@@ -13,8 +13,6 @@ RUBRIC = [
     {"item": "实现", "points": 20, "criteria": "LRU 替换正确", "stage": None},
     {"item": "报告", "points": 20, "criteria": "", "stage": None},
 ]
-#: 读回来的那一份：每一项都带着评分方式（``source``，默认 ``TEACHER``）。
-RUBRIC_READ = [{**line, "source": "TEACHER"} for line in RUBRIC]
 
 
 def _login(user_client: UserCreator, api_client: TestClient):
@@ -97,7 +95,7 @@ def test_a_public_rubric_is_read_by_everyone(api_client: TestClient, board: dict
 
     task = _read(api_client, board["student"], task_id)
     assert task["rubricPublic"] is True
-    assert task["rubric"] == RUBRIC_READ
+    assert task["rubric"] == RUBRIC
 
 
 def test_a_private_rubric_is_read_only_by_the_graders(
@@ -108,7 +106,7 @@ def test_a_private_rubric_is_read_only_by_the_graders(
     ]["task"]["id"]
     _approve(api_client, board, task_id)
 
-    assert _read(api_client, board["creator"], task_id)["rubric"] == RUBRIC_READ
+    assert _read(api_client, board["creator"], task_id)["rubric"] == RUBRIC
     seen = _read(api_client, board["student"], task_id)
     assert seen["rubricPublic"] is False
     assert seen["rubric"] == []
@@ -131,17 +129,12 @@ def test_editing_replaces_the_rubric_and_its_visibility(
         headers=_headers(board["creator"]),
     )
     assert resp.status_code == 200, resp.text
-    edited = [
-        {
-            "item": "正确性",
-            "points": 100,
-            "criteria": "全对",
-            "stage": None,
-            "source": "TEACHER",
-        }
+    assert resp.json()["data"]["task"]["rubric"] == [
+        {"item": "正确性", "points": 100, "criteria": "全对", "stage": None}
     ]
-    assert resp.json()["data"]["task"]["rubric"] == edited
-    assert _read(api_client, board["student"], task_id)["rubric"] == edited
+    assert _read(api_client, board["student"], task_id)["rubric"] == [
+        {"item": "正确性", "points": 100, "criteria": "全对", "stage": None}
+    ]
 
     # An edit that leaves the rubric out leaves it as it is.
     api_client.patch(
@@ -162,7 +155,7 @@ def test_empty_rows_are_dropped_and_bad_rows_refused(
     )
     assert resp.status_code == 200, resp.text
     task_id = resp.json()["data"]["task"]["id"]
-    assert _read(api_client, board["creator"], task_id)["rubric"] == [RUBRIC_READ[0]]
+    assert _read(api_client, board["creator"], task_id)["rubric"] == [RUBRIC[0]]
 
     for bad in (
         {"item": "", "points": 10, "criteria": "no name"},

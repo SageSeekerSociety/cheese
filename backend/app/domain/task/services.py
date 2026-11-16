@@ -787,17 +787,15 @@ class TaskSubmissionService:
     ) -> dict | None:
         if review is None:
             return {"reviewed": False}
-        return {
-            "reviewed": True,
-            "detail": {
-                "accepted": review.accepted,
-                "score": review.score,
-                "comment": review.comment,
-                # 逐项得分（§评审那一行）：``[{index, points, source, score, adjusted, note}]``。
-                # 老评审这一格是空的 —— 那时只填一个总分。
-                "lineScores": list(review.line_scores or []),
-            },
+        detail = {
+            "accepted": review.accepted,
+            "score": review.score,
+            "comment": review.comment,
         }
+        auto_scores = getattr(review, "auto_scores", None)
+        if auto_scores:
+            detail["autoScores"] = auto_scores
+        return {"reviewed": True, "detail": detail}
 
     async def _build_submission_dto(
         self,

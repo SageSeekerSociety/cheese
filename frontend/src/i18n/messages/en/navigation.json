@@ -14,7 +14,8 @@
     "skills": "Skills",
     "pages": "Project pages",
     "overview": "Overview",
-    "tasks": "All tasks"
+    "tasks": "All tasks",
+    "more": "More"
   },
   "spaces": "Spaces",
   "teams": "Teams",
@@ -199,5 +200,11 @@
     "artifact": "Artifact",
     "member": "Member",
     "taskVersions": "Version history"
+  },
+  "switcher": {
+    "search": "Search projects",
+    "empty": "No project matches “{q}”",
+    "othersAwaiting": "{n} waiting for you in other projects",
+    "actions": "Actions for {name}"
   }
 }

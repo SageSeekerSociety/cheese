@@ -13,7 +13,11 @@
     <!-- 右边缘拖动改宽度。宽度是四处侧栏共用的一个数（useSidebarWidth）。 -->
     <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the sidebar keeps its width -->
     <div v-if="isDesktop" class="sidebar-resizer" :title="t('navigation.sidebar.resize')" @pointerdown="startResize" />
+    <!-- 桌面上侧栏头和侧栏底：老鼠图标 + 项目切换器、头像 + 问芝士（appNav.ts）。四处侧栏
+         （项目、首页、空间、后台）都长这两行，左边那一列拿掉后它们住在这里。 -->
+    <template v-if="frame" #prepend><component :is="frame.top" /></template>
     <slot></slot>
+    <template v-if="frame" #append><component :is="frame.foot" /></template>
   </v-navigation-drawer>
 </template>
 
@@ -26,6 +30,8 @@ import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { useNavigation } from '@/composables/useNavigation'
 import { focusSidebarToggle, SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 import { useSidebarWidth } from '@/composables/useSidebarWidth'
+
+import { useAppNav } from './appNav'
 
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
@@ -57,6 +63,10 @@ const { closeSecondaryDrawer } = navigationStore
 
 // 计算是否为桌面端模式
 const isDesktop = computed(() => mdAndUp.value && !props.forceMobile)
+
+// 侧栏头和侧栏底那两行只在桌面画；没有外壳（单测单挂一个侧栏）时不画。
+const appNav = useAppNav()
+const frame = computed(() => (isDesktop.value && appNav ? appNav.frame : null))
 
 // 桌面窄档（960–1180）：这一栏是一只可收起的浮层，rail 顶上那颗开关管它。宽档里它
 // 常驻，手机上是另一套（`isSecondaryDrawerOpen`）。
@@ -171,6 +181,7 @@ const drawerClass = computed(() => {
   if (props.customClass) {
     classes.push(props.customClass)
   }
+  if (frame.value) classes.push('page-sidebar--framed')
   return classes.join(' ')
 })
 
@@ -190,6 +201,22 @@ watch(
   }
 )
 </script>
+
+<style>
+/* 有了侧栏头和侧栏底，中间那段要让出它们的高度：Vuetify 给 content 的是 height: 100%，
+   不改的话底下那一行被挤出抽屉。 */
+.page-sidebar .v-navigation-drawer__content {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 侧栏头那一行（ProjectSwitcher）已经画了 48px 基线和底边线；各侧栏自己的标题行
+   （空间名、后台分区）跟在它下面，不再画第二条线。 */
+.page-sidebar--framed .v-navigation-drawer__content .sidebar-header {
+  border-block-end: 0;
+  border-top-left-radius: 0;
+}
+</style>
 
 <style scoped>
 /* 抓手比看得见的那条宽：11px 好抓，中间 2px 在悬停时变成琥珀。 */

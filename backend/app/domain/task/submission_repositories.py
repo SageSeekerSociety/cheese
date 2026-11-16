@@ -504,7 +504,6 @@ class TaskSubmissionReviewRepository:
         accepted: bool,
         score: int,
         comment: str,
-        line_scores: list[dict] | None = None,
     ) -> TaskSubmissionReview:
         now = datetime.now(UTC)
         review = TaskSubmissionReview(
@@ -513,7 +512,6 @@ class TaskSubmissionReviewRepository:
             accepted=accepted,
             score=score,
             comment=comment,
-            line_scores=line_scores,
             created_at=now,
             updated_at=now,
             deleted_at=None,

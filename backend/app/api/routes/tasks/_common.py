@@ -211,15 +211,15 @@ class PatchTaskRequest(BaseModel):
 
 
 class CreateSubmissionReviewRequest(BaseModel):
-    # 评分要点逐项得分（§评审）：``[{index, score, adjusted, note}]``，按要点的
-    # ``index`` 对位。省略 = 回调旧路（只填一个总分，没有逐项得分）。``score`` 现在
-    # 可选：挂了测试点的题，总分由后端按 ``grading`` 合成，前端不必自己算。
+    # ``score`` 是这一阶段**手动**几项的分（挂了自动行的题，总分后面加自动行的分，
+    # 由 ``auto_score.compose_review`` 合成，前端不必自己算）。``testsOverride``
+    # （``{score, reason}``）是老师手动改 tests 行分时的原因，只有挂了测试点的题用。
     model_config = ConfigDict(populate_by_name=True)
 
     accepted: bool
     score: int | None = None
     comment: str
-    line_scores: list[dict] | None = Field(default=None, alias="lineScores")
+    tests_override: dict | None = Field(default=None, alias="testsOverride")
 
 
 class PatchSubmissionReviewRequest(BaseModel):
@@ -228,7 +228,7 @@ class PatchSubmissionReviewRequest(BaseModel):
     accepted: bool | None = None
     score: int | None = None
     comment: str | None = None
-    line_scores: list[dict] | None = Field(default=None, alias="lineScores")
+    tests_override: dict | None = Field(default=None, alias="testsOverride")
 
 
 async def _create_task_entity(

@@ -1,8 +1,10 @@
-"""测试点与评测结果的表，评分要点多一列「评分方式」
+"""测试点与评测结果的表，提交记下评测的是哪一版代码
 
 方案 §11「数据结构」。#4767 的第 1 步（① 打分底座）：在数据库里留出放测试点、放评测
-结果的地方，记下每一版提交是学生项目里的哪一版代码，并给评分要点加「评分方式」一
-列、给评审加逐项得分。
+结果的地方，并记下每一版提交是学生项目里的哪一版代码。评分要点那一列的「评分方式」
+不在这里加 —— 主干已有的 ``task_rubric_item.kind`` 就是干这个的（``e5a17c3d9b42``），
+这一步只给它多一种取值 ``tests``（由那一阶段的评测结果折算），没有约束要改
+（``kind`` 上没有 CHECK）。
 
 三张新表都在这一步建全（测试套、测试用例、评测记录），三种测试形态的列都有：
 第 1 步只有「输入/输出用例」这一种形态出得来，但第 2 步要的脚本形态和命令判分形态
@@ -11,13 +13,11 @@
 ``task_test_case.test_id``）现在就留好，免得再动一次这几张热表。三张表都是新的，上一版
 后端不读它们，写进去的行也就不会有人看见。
 
-改的三张旧表只加列，都是常量默认值，所以加列不重写表，上一版后端照常读写：它不认识
-这些列，插的行取默认值（``source`` 为 ``TEACHER``、``code_sha`` 为空、``line_scores``
-为空 —— 正是它们在上一版行为下的含义）。``ck_task_rubric_item_source`` 先 ``NOT
-VALID`` 再在 ``autocommit_block`` 里 ``VALIDATE``，不在加约束那个事务里扫表。
+改的那张旧表只加一列，是常量默认值，所以加列不重写表，上一版后端照常读写：它不认识
+``code_sha``，插的行取默认值（空串 —— 正是它在上一版行为下的含义）。
 
 辨认 ID: 9c1f4e7b2a35
-Revises: 85dc942e2596
+Revises: e5a17c3d9b42
 Create Date: 2026-11-16
 """
 
@@ -30,39 +30,20 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "9c1f4e7b2a35"
-down_revision: str | Sequence[str] | None = "85dc942e2596"
+down_revision: str | Sequence[str] | None = "e5a17c3d9b42"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_TABLES = "task_rubric_item, task_submission, task_submission_review, task"
-
-_CHECK = "ck_task_rubric_item_source"
+_TABLES = "task_submission, task"
 
 
 def upgrade() -> None:
     # 新表的两个外键指向 task 与 task_submission，所以这两张也要点名。
     with_lock_retries(_TABLES)
-    # 评分方式：老师评（TEACHER）或测试点（TESTS，由那一阶段的评测结果折算）。
-    # 常量默认值，所以这一列直接 NOT NULL。
-    op.add_column(
-        "task_rubric_item",
-        sa.Column("source", sa.String(16), nullable=False, server_default="TEACHER"),
-    )
-    op.create_check_constraint(
-        _CHECK,
-        "task_rubric_item",
-        "source IN ('TEACHER', 'TESTS')",
-        postgresql_not_valid=True,
-    )
     # 交这一版时学生项目默认分支的代码版本；以前的行是空串（没记下）。
     op.add_column(
         "task_submission",
         sa.Column("code_sha", sa.String(64), nullable=False, server_default=""),
-    )
-    # 逐项得分，按评分要点那一行的 index 对位；现有评审没有这一列，读作空。
-    op.add_column(
-        "task_submission_review",
-        sa.Column("line_scores", postgresql.JSONB(), nullable=True),
     )
 
     op.execute(sa.schema.CreateSequence(sa.Sequence("task_test_suite_seq")))
@@ -246,18 +227,12 @@ def upgrade() -> None:
         postgresql_where=sa.text("state = 'queued'"),
     )
 
-    with op.get_context().autocommit_block():
-        op.execute(f"ALTER TABLE task_rubric_item VALIDATE CONSTRAINT {_CHECK}")
-
 
 def downgrade() -> None:
     with_lock_retries(_TABLES)
     op.drop_table("task_judge_run")
     op.drop_table("task_test_case")
     op.drop_table("task_test_suite")
-    op.drop_constraint(_CHECK, "task_rubric_item", type_="check")
-    op.drop_column("task_rubric_item", "source")
-    op.drop_column("task_submission_review", "line_scores")
     op.drop_column("task_submission", "code_sha")
     op.execute(sa.schema.DropSequence(sa.Sequence("task_judge_run_seq")))
     op.execute(sa.schema.DropSequence(sa.Sequence("task_test_case_seq")))

@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { apiLogin } from './helpers';
+import { apiLogin, clickFirstProject } from './helpers';
 
 // `default` 壳的验收：没声明壳的项目必须和今天逐屏一样。
 //
 // 壳最容易出的错不是崩，是**悄悄换了一屏**——第一屏换了地方，或者侧栏少了一格。
 // 那种错单测问不出来（单测问的是函数返回什么），只有真开一个项目、看屏幕上还剩下
 // 什么才发现。所以这一条走真浏览器：登录 → 点开第一个项目（种子里那三个都没声明
-// 壳）→ 第一屏落在哪、项目名下有哪几行、点项目名弹出的菜单里有什么。
+// 壳）→ 第一屏落在哪、项目名下有哪几行、「更多」弹出的项目菜单里有什么。
 //
 // 等号右边是**今天**的样子，不是壳的某种理想形态：这一格、这个顺序、这一屏，就是
 // 此刻每个人打开项目看到的。改这一条等于改「老项目长什么样」，要单独想清楚。
@@ -24,27 +24,22 @@ const MENU = ['项目文档', '成员', '例行事务', '技能', '全部任务'
 test('没声明壳的项目：第一屏是项目总览，侧栏就是今天这一格，菜单里几页都在', async ({ page }) => {
   await apiLogin(page);
 
-  // 从 rail 点进第一个项目。`--tile` 才是一个项目；不带 `--tile` 的第一格是首页。
-  //
-  // 带着重试：rail 先画浏览器缓存里那份清单，服务端那份到货后再重画一遍，两次画的
-  // 是不同的 DOM 节点。点正好落在重画中间就会点到已经不在了的那个节点上（Playwright
-  // 会一直重试到超时，看起来像"点不动"）。所以点不动就再点一次，而不是把超时调到
-  // 比重画更长——那只是把同一场比赛的起跑线往后挪。
-  await page.locator('.app-rail-item--tile').first().waitFor();
-  await expect(async () => {
-    await page.locator('.app-rail-item--tile').first().click({ timeout: 2_000 });
-  }).toPass({ timeout: 30_000 });
+  // 从侧栏头的项目切换器点进第一个项目（左边那一列方块栏 2026-11-16 拿掉了）。
+  // 点不动就再点一次：列表先画缓存里那份、服务端那份到货再重画一遍（见 helpers）。
+  await clickFirstProject(page);
 
   // 第一屏 = default 壳的 home = 项目总览（路由名 workspace-overview）。中转地址
   // `/projects/:id` 自己什么都不画，它只是去第一屏路上的一瞬。
   await page.waitForURL(/\/projects\/[^/]+\/overview$/);
 
   // 侧栏是常驻的，板块页上也在。等它画出来再数格子。
+  // 第三格「更多」不是一页，是项目菜单的入口：桌面上侧栏头换成了项目切换器（2026-11-16），
+  // 原来点项目名弹出的菜单挂到了这一行最后。
   const pages = page.locator('[aria-label="项目页面"] .v-list-item-title');
-  await expect(pages).toHaveText(PAGES);
+  await expect(pages).toHaveText([...PAGES, '更多']);
 
   // 菜单里是这一版前端认得、又没摆在项目名下的全部页。少了谁，就说明有页掉出了导航。
-  await page.getByRole('button', { name: '项目菜单', exact: true }).click();
+  await page.getByTestId('project-more').click();
   // 菜单项**没有 role**：Vuetify 3 的 `v-list-item` 渲染成不带 role 的 `<div>`，
   // 外层 `v-list` 才是 `role="listbox"`，条目既不 `menuitem` 也不 `option`（对着
   // vuetify@3.9.3 实测：整份 DOM 里 `[role="menuitem"]` 是 0 个）。所以按 role 找

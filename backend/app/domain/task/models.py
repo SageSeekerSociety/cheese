@@ -302,11 +302,6 @@ class TaskRubricItem(Base):
     submission form above."""
 
     __tablename__ = "task_rubric_item"
-    __table_args__ = (
-        CheckConstraint(
-            "source IN ('TEACHER', 'TESTS')", name="ck_task_rubric_item_source"
-        ),
-    )
 
     task_id: Mapped[int] = mapped_column(
         "task_id",
@@ -322,14 +317,16 @@ class TaskRubricItem(Base):
     stage: Mapped[int] = mapped_column(
         "stage", Integer, nullable=False, default=0, server_default="0"
     )
-    # 这一项怎么评分（`app.domain.task.grading`）：``TEACHER`` 老师评，
-    # ``TESTS`` 由那一阶段的测试点得分折算（同一个阶段最多一项是 TESTS）。
-    source: Mapped[str] = mapped_column(
-        "source",
-        String(16),
-        nullable=False,
-        default="TEACHER",
-        server_default="TEACHER",
+    # Who scores the line (``app.domain.task.rubric.LINE_KINDS``): the grader by
+    # hand (``manual``, every line written before kinds existed), the platform
+    # from the credits the claim spent (``usage``), or the stage's test points
+    # (``tests``: ``app.domain.task.grading``). ``config`` holds an automatic
+    # line's own settings and is empty on a manual one.
+    kind: Mapped[str] = mapped_column(
+        "kind", String(16), nullable=False, default="manual", server_default="manual"
+    )
+    config: Mapped[dict] = mapped_column(
+        "config", JSONB, nullable=False, default=dict, server_default="{}"
     )
 
 
@@ -495,11 +492,13 @@ class TaskSubmissionReview(Base):
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str] = mapped_column(String, nullable=False, default="")
-    #: 逐项得分（§数据结构「评审」）：``[{index, points, score, note}]``，按评分要点的
-    #: 那一行 ``index`` 对位；``note`` 是手动调整测试分时的原因（学生看得到）。
-    #: 合成规则见 ``app.domain.task.grading``；``score`` 仍存合成后的 0–100 分。
-    line_scores: Mapped[list | None] = mapped_column(
-        "line_scores", JSONB, nullable=True
+    # On a task whose rubric has an automatic line, how ``score`` was made: the
+    # points the grader gave the manual lines and what each automatic line
+    # scored when the review was written (``app.domain.task.usage_score`` and
+    # ``app.domain.task.grading``). NULL on every other review, whose ``score``
+    # the grader typed whole.
+    auto_scores: Mapped[dict | None] = mapped_column(
+        "auto_scores", JSONB, nullable=True
     )
 
     created_at: Mapped[datetime] = mapped_column(

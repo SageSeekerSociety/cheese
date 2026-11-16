@@ -31,6 +31,7 @@ import { myHandle } from '../me'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
+import { useAppNav } from './common/Navigation/appNav'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import UserAvatar from './common/UserAvatar.vue'
 import VirtualList from './common/VirtualList.vue'
@@ -469,6 +470,21 @@ const onDocs = computed(() => !!props.activeDocs)
 
 // 项目名那一行：标识、搜索、项目菜单。手机上整页形态的频道列表把它交给顶栏。
 const railHeaderInBar = computed(() => props.page === true && props.column !== true)
+// 桌面宽档：侧栏头是老鼠图标和项目切换器（SecondaryNavigation 画），这里的头只剩一整条
+// 搜索，项目菜单挂到总览、资料库下面的「更多」上。手机整页和平板两栏照旧。
+const appNav = useAppNav()
+const framed = computed(() => props.page !== true && props.column !== true && !!appNav)
+const pinnedMore = computed(() =>
+  framed.value && props.selectedProjectId
+    ? {
+        menuPages: menuPages.value,
+        docsActive: onDocs.value,
+        privateUnreadTotal: unref(privateUnreadTotal),
+        canTransfer: canTransfer.value,
+        canLeave: canLeave.value,
+      }
+    : null
+)
 const railHeaderBinding = computed(() => ({
   page: props.page === true,
   column: props.column === true,
@@ -484,6 +500,7 @@ const railHeaderBinding = computed(() => ({
   projectSelected: !!props.selectedProjectId,
   canTransfer: canTransfer.value,
   canLeave: canLeave.value,
+  framed: framed.value,
   'onOpen-page': openProjectPage,
   'onOpen-palette': () => openPalette(),
   'onOpen-sheet': () => (projectSheetOpen.value = true),
@@ -578,7 +595,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :route-name="routeName"
             :terms="terms"
             :page="page === true"
+            :more="pinnedMore"
             @open-page="openProjectPage"
+            @select-docs="emit('select-docs', 'charter')"
+            @open-transfer="transferOpen = true"
+            @open-leave="leaveOpen = true"
             @hover-page="hoverProjectPage"
             @press-page="emit('press-page', $event)"
             @cancel-prefetch="cancelPrefetch()"

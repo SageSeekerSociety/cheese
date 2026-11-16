@@ -6,10 +6,12 @@
   "claimPending": "申请中",
   "col": {
     "claimedAt": "申请于",
+    "credits": "额度用量",
     "deadline": "截止",
     "latest": "最新提交",
     "ops": "操作",
     "status": "状态",
+    "usageScore": "额度得分",
     "who": "名字"
   },
   "dateTimeFormat": "M月D日 HH:mm",
@@ -54,9 +56,13 @@
   "setDeadline": "设置截止时间",
   "tableLabel": "参与者名单",
   "teamSize": "团队 {n} 人",
+  "tentative": "暂定",
   "today": "今天 {time}",
   "unknownTeam": "未知团队",
   "unknownUser": "未知用户",
+  "usageNotYet": "交了才算",
+  "usageNote": "额度＝这份领题开出的项目里，领题人（团队题是全体队员）调用 AI 用掉的额度合计；导师在项目里的调用不算。",
+  "usageOf": "{score} / {points}",
   "view": "查看提交",
   "yesterday": "昨天 {time}"
 }

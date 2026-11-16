@@ -120,7 +120,7 @@ def test_a_draft_is_saved_as_written_and_published_as_a_task(
     assert task["intro"].startswith("用 C 写一个缓存模拟器")
     read = api_client.get(f"/tasks/{task['id']}", headers=_headers(teacher))
     assert read.json()["data"]["task"]["rubric"] == [
-        {**line, "stage": None, "source": "TEACHER"} for line in FORM["rubric"]
+        {**line, "stage": None} for line in FORM["rubric"]
     ]
 
     gone = api_client.get(f"/task-drafts/{draft['id']}", headers=_headers(teacher))

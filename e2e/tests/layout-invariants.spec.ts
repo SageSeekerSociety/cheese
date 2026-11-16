@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
+import { api, apiLogin, clickFirstProject, openFirstProject, projectIdOf } from './helpers';
 import { fieldDefects, TOKEN_FIELDS } from './field-layout';
 
 // Parallel so CI shards split this file by test rather than handing one shard
@@ -518,7 +518,7 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
 test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   test('artifact comparison keeps diff lines vertical on desktop and mobile', async ({ page }) => {
     await apiLogin(page);
-    await page.locator('.app-rail-item--tile').first().click();
+    await clickFirstProject(page);
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = await projectIdOf(page);
     const artifactId = '00000000-0000-0000-0000-000000000123';
@@ -575,7 +575,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
   test('「修改 AI 队友」对话框', async ({ page }) => {
     await apiLogin(page);
-    await page.locator('.app-rail-item--tile').first().click();
+    await clickFirstProject(page);
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = await projectIdOf(page);
 
