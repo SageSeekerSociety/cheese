@@ -302,6 +302,11 @@ class TaskRubricItem(Base):
     submission form above."""
 
     __tablename__ = "task_rubric_item"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('TEACHER', 'TESTS')", name="ck_task_rubric_item_source"
+        ),
+    )
 
     task_id: Mapped[int] = mapped_column(
         "task_id",
@@ -316,6 +321,15 @@ class TaskRubricItem(Base):
     # The stage (``TaskStage.index``) whose submissions this line scores.
     stage: Mapped[int] = mapped_column(
         "stage", Integer, nullable=False, default=0, server_default="0"
+    )
+    # 这一项怎么评分（`app.domain.task.grading`）：``TEACHER`` 老师评，
+    # ``TESTS`` 由那一阶段的测试点得分折算（同一个阶段最多一项是 TESTS）。
+    source: Mapped[str] = mapped_column(
+        "source",
+        String(16),
+        nullable=False,
+        default="TEACHER",
+        server_default="TEACHER",
     )
 
 
@@ -385,6 +399,12 @@ class TaskSubmission(Base):
     #: Which version of the 题目 this was handed in under
     #: (``TaskPackageRevision.number``); None for the ones from before versions.
     package_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 交这一版时学生项目默认分支的代码版本（commit）。空 = 没记下（连着 GitHub 的
+    #: 项目要等另一件任务给只读凭据，历史提交也都没有）。§提交：记下来之后学生再推
+    #: 也不影响这一版评测的是哪一份代码。
+    code_sha: Mapped[str] = mapped_column(
+        "code_sha", String(64), nullable=False, default="", server_default=""
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -475,6 +495,12 @@ class TaskSubmissionReview(Base):
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str] = mapped_column(String, nullable=False, default="")
+    #: 逐项得分（§数据结构「评审」）：``[{index, points, score, note}]``，按评分要点的
+    #: 那一行 ``index`` 对位；``note`` 是手动调整测试分时的原因（学生看得到）。
+    #: 合成规则见 ``app.domain.task.grading``；``score`` 仍存合成后的 0–100 分。
+    line_scores: Mapped[list | None] = mapped_column(
+        "line_scores", JSONB, nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
