@@ -1806,6 +1806,22 @@ TASK_WRITE_FIELDS = {
                 "points": {"type": "integer"},
                 "criteria": {"type": "string", "description": "怎样算做到"},
                 "stage": {"type": "string", "description": "所属阶段的 id 或名称"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["manual", "usage"],
+                    "description": "谁给分：manual 老师评（默认）；usage 平台按学生这道题"
+                    "用掉的额度自动给分，一道题最多一行。有自动行的阶段各项合计必须 100",
+                },
+                "config": {
+                    "type": "object",
+                    "description": "usage 行的设置：mode 为 threshold（再给 full：不超过"
+                    "多少额度得满分，zero：达到多少额度得 0 分）或 rank（全班排名）",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["threshold", "rank"]},
+                        "full": {"type": "number"},
+                        "zero": {"type": "number"},
+                    },
+                },
             },
             "required": ["item", "points"],
         },
