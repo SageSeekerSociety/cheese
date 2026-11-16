@@ -973,6 +973,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
 
     # --- the platform's own repo: CI activity ---
     platform_repository: str = "SageSeekerSociety/cheese"
+    # Repositories whose dev deploy tells this platform what it put live
+    # (`.github/workflows/deploy-dev.yml` → `scripts.ship_tasks`). A task in a
+    # project on one of them waits for that deploy before it is written up and
+    # closed (`review.deploy_wait`) — while reports keep arriving, so an
+    # instance no deploy reports to is not affected.
+    task_deploy_wait_repositories: list[str] = ["SageSeekerSociety/cheese"]
+    task_deploy_blocked_interval_s: int = 300
     ci_activity_sweep_interval_s: int = 300
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;

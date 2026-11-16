@@ -7,7 +7,7 @@ from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.delivery_events import SettleCard
-from app.domain.review import gate_sweep, pr_poll
+from app.domain.review import deploy_wait, gate_sweep, pr_poll
 from app.domain.review.ports import (
     Announce,
     Chat,
@@ -104,4 +104,9 @@ def register_periodic_jobs(
         "gate sweep",
         settings.gate_sweep_interval_s,
         lambda: sweep_abandoned_gates(gate_sessions, nudge_factory=gate_nudge_factory),
+    )
+    jobs.register(
+        "deploy blocked marks",
+        settings.task_deploy_blocked_interval_s,
+        lambda: deploy_wait.mark_blocked(gate_sessions),
     )
