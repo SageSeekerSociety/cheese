@@ -18,5 +18,6 @@
   "recentDone": "最近关闭",
   "running": "进行中的任务 · {count}",
   "save": "保存",
+  "waiting": "等你处理",
   "writeProject": "写项目目标"
 }

@@ -374,3 +374,40 @@ def test_a_session_without_its_machine_keeps_the_placeholder(
     assert launch["env"][client.WORKING_DIRECTORY] == DEFERRED_WORKSPACE
     # Nothing was opened: there is no machine to open it on.
     assert not [method for method, _ in machine if method == "invoke"]
+
+
+def test_the_cli_step_times_come_back_before_the_path(tmp_path):
+    """The CLI writes its step times to stderr when asked; the command hands
+    them back on the line before the path, which stays the last line."""
+    from app.domain.agent.task_checkout import _CHECKOUT, checkout_steps
+
+    checkout = str(tmp_path / "tasks" / TASK)
+    fake = tmp_path / "cheese"
+    fake.write_text(
+        "#!/bin/sh\n"
+        '[ -n "$CHEESE_CHECKOUT_TIMINGS" ] || exit 3\n'
+        "printf 'installing\\n'\n"
+        """printf 'cheese-timings {"seed": 0.4, "fetch": 1.5, "deps": 17.2}\\n' >&2\n"""
+        "printf '[cheese] a warning\\n' >&2\n"
+        f"printf '%s\\n' '{checkout}'\n"
+    )
+    fake.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "-c", _CHECKOUT.format(topic="task")],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == checkout
+    assert checkout_steps(result.stdout) == {"seed": 0.4, "fetch": 1.5, "deps": 17.2}
+
+
+def test_an_answer_without_step_times_has_none():
+    from app.domain.agent.task_checkout import checkout_steps
+
+    assert checkout_steps("/home/cheese/.cheese/tasks/x\n") == {}
+    assert checkout_steps("cheese-timings not json\n/x\n") == {}
+    assert checkout_steps('cheese-timings {"deps": "slow", "other": 3}\n') == {}

@@ -510,6 +510,33 @@ class ProjectFiles:
             for item in commits
         ]
 
+    async def commits(self, path: str | None = None, limit: int = 30) -> list[dict]:
+        """The default branch's commits, newest first: what landed, when, and
+        whose name the commit carries. With ``path``, only the commits that
+        changed that one file.
+
+        The project's current version, never a task's: this is the history the
+        project's files show, the one every task's delivery lands on."""
+        if path is not None:
+            path = clean_path(path)
+        head = await self.revision()
+        query = (
+            f"/commits?sha={head}&per_page={limit}&limit={limit}"
+            "&stat=false&files=false&verification=false"
+        )
+        if path:
+            query += f"&path={quote(path, safe='')}"
+        items = await self._data(self.project_id, self.session, query) or []
+        return [
+            {
+                "sha": item["sha"],
+                "subject": (item["commit"]["message"].splitlines() or [""])[0],
+                "author": item["commit"]["author"]["name"],
+                "at": item["commit"]["committer"]["date"],
+            }
+            for item in items
+        ]
+
     async def changed_files(self):
         """The task's changed paths. A head commit's changes against its base
         stay what they were, so they are kept by commit (`_CHANGED_FILES_TTL`)

@@ -25,6 +25,7 @@ from app.api.write_access import HOLDS_LINK, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
+from app.domain.space.permissions import SPACE
 from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.services import SpaceService
 
@@ -103,7 +104,11 @@ async def get_space_join_link(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     service: SpaceService = Depends(get_space_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await SPACE.refuse_way_in(
+        db, space_id, auth_user.user_id, SpacePermission.manage_members
+    )
     return _join_link_payload(await service.join_link(space_id=space_id))
 
 
@@ -118,7 +123,11 @@ async def update_space_join_link(
     payload: JoinLinkSettings,
     service: SpaceService = Depends(get_space_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await SPACE.refuse_way_in(
+        db, space_id, auth_user.user_id, SpacePermission.manage_members
+    )
     space = await service.join_link(space_id=space_id, approval=payload.approval)
     return _join_link_payload(space)
 
@@ -133,7 +142,11 @@ async def reset_space_join_link(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     service: SpaceService = Depends(get_space_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await SPACE.refuse_way_in(
+        db, space_id, auth_user.user_id, SpacePermission.manage_members
+    )
     return _join_link_payload(await service.join_link(space_id=space_id, reset=True))
 
 
@@ -177,7 +190,18 @@ async def approve_space_join_request(
     request_id: Annotated[int, Path(ge=1, alias="requestId")],
     service: SpaceService = Depends(get_space_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> Response:
+    # Answering one's own request is seating oneself.
+    waiting = await service.list_join_requests(space_id=space_id)
+    asker = next((r.user_id for r in waiting if r.id == request_id), None)
+    await SPACE.refuse_own_seat(
+        db,
+        space_id,
+        auth_user.user_id,
+        SpacePermission.manage_members,
+        seats=asker,
+    )
     await service.decide_join_request(
         space_id=space_id,
         request_id=request_id,

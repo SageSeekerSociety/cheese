@@ -35,7 +35,7 @@ test.describe("房间里的任务", () => {
     await openFirstProject(page);
   });
 
-  test("任务出现在房间总览里，点一下在右半边打开，整页打开进它自己的页面", async ({
+  test("任务出现在房间总览里，点一下进它自己的任务页", async ({
     page,
   }) => {
     const projectId = await projectIdOf(page);
@@ -54,16 +54,9 @@ test.describe("房间里的任务", () => {
     await expect(progress.getByText(`第一件事 ${stamp}`)).toBeVisible();
     await expect(progress.getByText(`第二件事 ${stamp}`)).toBeVisible();
 
-    // 总览里的一行必须是个入口，不然它只是一张表：任务和支线一样在频道页右半边
-    // 打开，页头写着它的标题。
+    // 总览里的一行必须是个入口，不然它只是一张表：点它进那件任务的任务页，和侧栏
+    // 任务行点开的是同一处。
     await progress.getByText(`第一件事 ${stamp}`).click();
-    await expect(page).toHaveURL(new RegExp(`/threads/${first.id}(\\?|$)`));
-    const pane = page.getByTestId("thread-pane");
-    await expect(pane.getByRole("heading", { level: 2 })).toHaveText(
-      `第一件事 ${stamp}`,
-    );
-    // 「整页打开」进它自己的页面。
-    await pane.getByTestId("thread-open-page").click();
     await expect(page).toHaveURL(new RegExp(`/tasks/${first.number}(\\?|$)`));
     await expect(page.locator(".task-header__title")).toHaveText(
       `第一件事 ${stamp}`,

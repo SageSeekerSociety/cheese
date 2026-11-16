@@ -8,7 +8,7 @@ import type { Block, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { groupAskBlocks } from '../../lib/askGroups'
+import { askWithdrawn, groupAskBlocks } from '../../lib/askGroups'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../../lib/chatGrouping'
 import { collapseNotices } from '../../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../../lib/renderMessage'
@@ -42,12 +42,16 @@ export function usePanelRows(deps: {
   // event blocks, because an event is a hard boundary and must prevent an
   // accidental merge.
   const collapsed = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(deps.messages.value)))
+  // 提问方已经收回来的题整行不画：它不等人答，也没人答得上，留在频道里只是占地方。
+  // 它那条消息本身还在（历史、支线里照旧），只是频道主线不再露这一行。过期的题不算：
+  // 过期的还能答，卡照画。
+  const shown = computed(() => collapsed.value.filter((r) => !askWithdrawn(r.block)))
   // 一次问的几道题收成一张卡（`lib/askGroups`）：头一条留着画整组，其余几条不再
   // 单独占一行——它们的内容已经在头一条那张卡里了。判据是纯函数，测试在它旁边。
-  const askBlocks = computed(() => groupAskBlocks(collapsed.value.map((r) => r.block)))
+  const askBlocks = computed(() => groupAskBlocks(shown.value.map((r) => r.block)))
   const rows = computed(() => {
-    if (!askBlocks.value.hidden.size) return collapsed.value
-    return collapsed.value.filter((r) => !askBlocks.value.hidden.has(r.block.id))
+    if (!askBlocks.value.hidden.size) return shown.value
+    return shown.value.filter((r) => !askBlocks.value.hidden.has(r.block.id))
   })
   const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
 

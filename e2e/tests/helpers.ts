@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 // Seeded by backend/alembic/versions/219831eb75a3_seed_demo_data.py — every demo
 // user (alice, bobby, ...) shares this bcrypt-hashed password. alice additionally
@@ -151,13 +151,32 @@ export async function projectIdOf(page: Page): Promise<string> {
   return (await api(page, "get", `/addresses/projects/${ref}`)).id as string;
 }
 
-// Opens the first project from the rail and waits for its topic sidebar to
+// The project list behind the sidebar head's switcher (the left rail of
+// project tiles went away on 2026-11-16 — frontend/src/components/common/
+// Navigation/appNav.ts). Opens it if it is not open yet.
+export async function openProjectSwitcher(page: Page) {
+  const rows = page.getByTestId("project-switcher-row");
+  if (await rows.first().isVisible().catch(() => false)) return rows;
+  await page.getByTestId("project-switcher").click();
+  await rows.first().waitFor();
+  return rows;
+}
+
+// Opens the first project in the switcher list. Retries the click: the list is
+// drawn from the cached project list first and redrawn when the server's copy
+// lands, and a click landing between the two hits a node that is gone.
+export async function clickFirstProject(page: Page) {
+  await page.getByTestId("project-switcher").waitFor();
+  await expect(async () => {
+    const rows = await openProjectSwitcher(page);
+    await rows.first().click({ timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
+}
+
+// Opens the first project from the switcher and waits for its topic sidebar to
 // finish loading, returning the count of visible (non-archived) topic rows.
 export async function openFirstProject(page: Page) {
-  // Project tiles carry `--tile` (they render an avatar image); the bare
-  // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
-  // sits first in the rail — clicking it lands on the inbox, not a project.
-  await page.locator(".app-rail-item--tile").first().click();
+  await clickFirstProject(page);
   const rows = page.locator(".topic-row");
   // Wait for the rows themselves: a caller that counts before the seeded ones
   // arrive would see zero, and a later `toHaveCount(before + 1)` would pass

@@ -139,6 +139,7 @@ const RECORD_VERB: Record<string, string> = {
   turn_resume_started: 'work.room.site.record.recovery',
   turn_resume_stopped: 'work.room.site.record.recovery',
   context_compact: 'work.room.site.record.compact',
+  conversation_abandoned: 'work.room.site.record.abandoned',
   device_waiting: 'work.room.site.record.environment',
   cloud_startup: 'work.room.site.record.environment',
   cloud_provisioning: 'work.room.site.record.environment',

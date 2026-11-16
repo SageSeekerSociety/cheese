@@ -283,6 +283,25 @@ class Protocol:
         requirements; that migration's PR removes this."""
         return _text(self.resource_pack.get("prompt"))
 
+    @property
+    def model(self) -> str | None:
+        """The model the pack's credits do the work on
+        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``):
+        a project opened from it runs its tasks on it unless the teammate
+        chose another — it becomes the default teammate's ``task_model`` when
+        that is unset. None leaves tasks to the teammate's and the project's
+        own choice."""
+        return _text(self.resource_pack.get("model"))
+
+    @property
+    def once_per_person(self) -> bool:
+        """Whether this pack's credits go out once per person across every
+        题目 of the same 分组 (``resource_pack["once_per_person"]``), not once
+        per project. The new-user starters set it: an account gets one
+        starter's credits however many starters it takes. Only ``True`` turns
+        it on, so a stray string is not a switch."""
+        return self.resource_pack.get("once_per_person") is True
+
     def mentor_required_for(self, topic_title: str) -> bool:
         """Does a condition demand a mentor accept a topic with this title?
 

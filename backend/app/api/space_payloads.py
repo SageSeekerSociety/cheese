@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.domain.space.access_service import SpaceAccessService
+from app.domain.space.permissions import SPACE
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.services import SpaceService
 from app.domain.task.protocol import Teaching
 from app.domain.user.repositories import (
@@ -356,13 +358,20 @@ async def _build_full_space_payload(
     *,
     service: SpaceService,
     db,
+    viewer_id: int,
     include_private: bool = False,
 ) -> dict:
     """Build a Space response dict that matches the frontend Space type.
 
-    Always includes `admins` (hydrated) and `classificationTopics` so that any
-    GET/POST/PATCH response is interchangeable from the frontend's perspective
-    (its store overwrites local state with the response payload).
+    Always includes `admins` (hydrated), `classificationTopics` and
+    `viewerPermissions` so that any GET/POST/PATCH response is interchangeable
+    from the frontend's perspective (its store overwrites local state with the
+    response payload).
+
+    ``viewerPermissions`` is what the person asking may do to the space
+    (``app.domain.space.permissions``): the page shows its management only to
+    whoever holds it, and that is not always someone on the `admins` list — a
+    platform admin manages every space without a seat in it.
 
     ``include_private`` is passed through to the teaching payload — a board
     manager's view (settings page, create/patch reply) carries the 私有指导;
@@ -376,6 +385,11 @@ async def _build_full_space_payload(
     )
     topics = await service.list_classification_topics(space.id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    space_data["viewerPermissions"] = [
+        permission.value
+        for permission in SpacePermission
+        if await SPACE.allows(db, space.id, viewer_id, permission)
+    ]
     if include_private:
         # The settings page shows whether opening the space is waiting for
         # review, or why it was sent back; nobody else is told.

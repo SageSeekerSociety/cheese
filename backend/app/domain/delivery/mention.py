@@ -139,8 +139,7 @@ async def record_mentions(
 ) -> Summoned:
     """把 ``content`` 里点到的每一位 AI 队友记成一条投递。写调用方的 session，不提交。
 
-    ``conversation_id`` 是被点到的队友回答的地方：消息所在的支线或任务，主线上的
-    消息则是它那条支线（`thread.services.answered_in`）。
+    ``conversation_id`` 是被点到的队友回答的地方：消息所在的那段对话。
     """
     named = await named_seats(
         session, room_id=room_id, author=author, content=content, skip=skip

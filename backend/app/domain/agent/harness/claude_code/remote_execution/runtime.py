@@ -531,6 +531,7 @@ class Executor:
                 "protocol_version": PROTOCOL_VERSION,
                 "release": self.config.get("release"),
                 "sandbox": bool(self.config.get("sandbox")),  # launch.can_prepare
+                "sandbox_image": self.config.get("sandbox_image"),
                 "upgrading": self.upgrading,
                 "running_commands": len(self.running),
                 # Which ones: the sweep stops a command that outlasts its

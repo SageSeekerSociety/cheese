@@ -42,6 +42,8 @@ function renderCard(blocks: Block[]) {
   })
 }
 
+const answer = { kind: 'option', option: 'A', note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: 'r1' }
+
 function tabTexts(tabs: HTMLElement[]): string[] {
   return tabs.map((tab) => tab.textContent?.replace(/\s+/g, ' ').trim() ?? '')
 }
@@ -70,11 +72,66 @@ describe('AskGroupCard question numbers', () => {
   })
 
   it('keeps the number and completion mark for recorded answers', () => {
-    const answered = question('a', {
-      answer_log: [{ kind: 'option', option: 'A', note: null, by: 'u1', at: '2026-08-01T00:01:00Z', reply_id: 'r1' }],
-    })
+    const answered = question('a', { answer_log: [answer] })
     const { getAllByRole } = renderCard([answered, question('b')])
 
     expect(tabTexts(getAllByRole('tab'))).toEqual(['✓1', '2'])
+  })
+})
+
+describe('AskGroupCard answers arriving from elsewhere', () => {
+  it('答案从别处进来时，卡片跟上、按题列出答案，不再画成「未作答」', async () => {
+    const { getAllByRole, queryAllByRole, rerender } = renderCard([question('a'), question('b')])
+    expect(getAllByRole('radio')).toHaveLength(2)
+
+    // 另一台设备上答的、或者房间里的一条回复被记成了答案：两道题上都记上了，而这张
+    // 卡这一屏自己什么也没选。
+    await rerender({
+      blocks: [question('a', { answer_log: [answer] }), question('b', { answer_log: [answer] })],
+      viewer: 'u1',
+      names: {},
+    })
+
+    expect(queryAllByRole('radio')).toHaveLength(0)
+    expect(tabTexts(getAllByRole('tab'))).toEqual(['✓1', '✓2'])
+    const recap = document.querySelector('.ask-group__recap')!
+    expect(recap.textContent).not.toContain('未作答')
+    expect(recap.textContent).toContain('A')
+  })
+
+  it('别人把整组都答了，我这边照答案的样子画，不再摆选项', () => {
+    const { queryAllByRole, getAllByRole } = renderCard([
+      question('a', { answer_log: [{ ...answer, by: 'carol' }] }),
+      question('b', { answer_log: [{ ...answer, by: 'carol' }] }),
+    ])
+
+    expect(queryAllByRole('radio')).toHaveLength(0)
+    expect(tabTexts(getAllByRole('tab'))).toEqual(['✓1', '✓2'])
+  })
+
+  it('只答了一部分：还在答题屏，答过的题预填好', async () => {
+    const { getAllByRole, getByRole } = renderCard([
+      question('a', { answer_log: [{ ...answer, by: 'carol' }] }),
+      question('b'),
+    ])
+
+    expect((getByRole('radio', { name: 'A' }) as HTMLInputElement).checked).toBe(true)
+
+    await fireEvent.click(getByRole('tab', { name: '2' }))
+    expect((getAllByRole('radio') as HTMLInputElement[]).every((r) => !r.checked)).toBe(true)
+  })
+
+  it('手上还没交的选择不被别人答的答案冲掉', async () => {
+    const { getByRole, rerender } = renderCard([question('a'), question('b')])
+    await fireEvent.change(getByRole('radio', { name: 'B' }))
+
+    await rerender({
+      blocks: [question('a', { answer_log: [{ ...answer, by: 'carol' }] }), question('b')],
+      viewer: 'u1',
+      names: {},
+    })
+
+    // 还在答题屏，自己选的那个还在。
+    expect((getByRole('radio', { name: 'B' }) as HTMLInputElement).checked).toBe(true)
   })
 })

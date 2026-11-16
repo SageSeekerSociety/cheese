@@ -26,7 +26,6 @@ from typing import Final
 MEMBER_SETTINGS: Final = frozenset(
     {
         "default_model",
-        "default_subagent_model",
         "execution_environment",
         "max_concurrent_turns",
         "task_naming",

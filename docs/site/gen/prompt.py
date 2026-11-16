@@ -329,6 +329,15 @@ THREAD = (
     "这条消息之前，主线上说的是：\n"
     "[lisi] 下午三点评审登录页"
 )
+CHANNEL = (
+    "你在频道「#前端」的主线里。"
+    "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
+    "查资料、PR 和 issue；但不推送、不交付、不摆预览。"
+    "要改的事用 `cheese_task(action=open)` 创建成任务。别处定过的事不记得时，用 "
+    "`cheese_chat(action=search)` 加 `channel` 搜整个频道。\n\n"
+    "在这之前，主线上说的是：\n"
+    "[lisi] 下午三点评审登录页"
+)
 TASKS = (
     "## 这个频道里还在进行的任务\n"
     "要做的事已经有任务了，就告诉人去那个任务，不再新建。标着「从这条支线的"
@@ -409,9 +418,15 @@ TOGGLES = [
         "params": ["thread=…"],
     },
     {
+        "id": "channel",
+        "kwargs": {"channel": CHANNEL},
+        "label": "`channel` 非空：会话在频道的主线上",
+        "params": ["channel=…"],
+    },
+    {
         "id": "tasks",
         "kwargs": {"tasks": TASKS},
-        "label": "`tasks` 非空：会话在一条支线里，这一段是它所在频道还在进行的任务",
+        "label": "`tasks` 非空：会话在频道主线或一条支线里，这一段是频道里还在进行的任务",
         "params": ["tasks=…"],
     },
     {

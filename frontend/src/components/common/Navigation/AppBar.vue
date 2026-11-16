@@ -10,6 +10,21 @@
     :class="{ 'app-system-bar--window-buttons': titleBarInset }"
     :data-tauri-drag-region="titleBarInset ? 'deep' : undefined"
   >
+    <!-- 平板横放那一档（960–1180）：侧栏默认收起，这颗开关管它（原来在左边那一列顶上）。 -->
+    <BaseButton
+      v-if="compact && hasSidebar"
+      data-sidebar-toggle
+      icon="mdi-page-layout-sidebar-left"
+      size="sm"
+      :aria-expanded="open ? 'true' : 'false'"
+      :aria-controls="SIDEBAR_DRAWER_ID"
+      :aria-label="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
+      :title="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
+      @click="toggle"
+    />
+    <!-- 侧栏头上那颗老鼠图标（回首页）：侧栏看不见的时候（这一页没有侧栏、平板上侧栏
+         收着）画在这里，回首页总够得着（Navigation/appNav.ts）。 -->
+    <RailItem v-if="frameInBar && homeItem" :item="homeItem" class="app-bar-home" />
     <ParentBackButton />
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
@@ -25,6 +40,11 @@
     <HelpAndFeedbackMenu :logged-in="loggedIn" />
     <!-- 登录后语言在「我」的菜单里（和外观并排）；没登录的人没有那个菜单，语言留在这儿。 -->
     <LanguageToggle v-if="!loggedIn" />
+    <!-- 问芝士和我的头像：平时在侧栏底，侧栏看不见时在这里。 -->
+    <template v-if="frameInBar">
+      <AgentRailEntry class="app-bar-agent" />
+      <AccountButton placement="bar" />
+    </template>
   </v-system-bar>
 </template>
 
@@ -32,11 +52,17 @@
 import { computed, ref, watch } from 'vue'
 
 import { usePageTitle } from '@/composables/usePageTitle'
+import { SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 
+import AccountButton from './AccountButton.vue'
+import { homeItemOf, useAppNav } from './appNav'
 import DesktopUpdateReady from './DesktopUpdateReady.vue'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
+import RailItem from './RailItem.vue'
 
+import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'
@@ -45,7 +71,13 @@ import { usePageTitleStore } from '@/stores/title'
 // 登录态由外壳传进来（`layouts/AppShell.vue` 本来就有它）：这个组件在
 // `src/components/**` 下，不能自己去读 `services/account`
 // （`.claude/rules/architecture.md`）。
-const props = defineProps<{ loggedIn: boolean }>()
+const props = withDefaults(defineProps<{ loggedIn: boolean; hasSidebar?: boolean }>(), { hasSidebar: false })
+
+const { compact, open, toggle } = useSidebarCollapse()
+const appNav = useAppNav()
+const homeItem = computed(() => homeItemOf(appNav?.items.value ?? []))
+// 侧栏看不见：这一页没有侧栏，或平板上侧栏收着。这时首页、问芝士、头像临时住在顶栏。
+const frameInBar = computed(() => !props.hasSidebar || (compact.value && !open.value))
 
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
@@ -117,6 +149,28 @@ const loggedIn = computed(() => props.loggedIn)
 
 .app-system-bar.app-system-bar .language-toggle:hover {
   background: var(--fill);
+}
+
+/* 顶栏里的老鼠图标和问芝士：压成和这一簇按钮一样高。 */
+.app-system-bar .app-bar-home.app-rail-item {
+  width: 28px;
+  height: 28px;
+  margin-inline-end: 4px;
+}
+
+.app-system-bar .app-bar-home .cheese-icon {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.app-system-bar .app-bar-home.app-rail-item::before {
+  display: none;
+}
+
+.app-system-bar .app-bar-agent.agent-rail {
+  width: 32px;
+  height: 32px;
+  margin: 0 2px;
 }
 
 .cursor-pointer {

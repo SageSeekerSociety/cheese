@@ -445,8 +445,10 @@ async def repository_data(
         raise GatewayUnavailableError(say("forgeRepositoryUnavailable"))
     if release_session:
         await release_read_session(session)
-    token, _ = await tokens.installation_token()
     try:
+        # The mint is itself a call to GitHub, so it fails the same ways the
+        # read does and is answered the same way.
+        token, _ = await tokens.installation_token()
         async with forge_client(timeout=30) as client:
             response = await client.get(
                 f"{binding.api_url.rstrip('/')}/repos/{binding.repo}{path}",
@@ -461,6 +463,8 @@ async def repository_data(
         raise GatewayUnavailableError(say("forgeTimeout")) from exc
     except httpx.RequestError as exc:
         raise GatewayUnavailableError(say("forgeUnreachable")) from exc
+    except GitHubAppError as exc:
+        raise GatewayUnavailableError(say("forgeRepositoryUnavailable")) from exc
     if response.status_code == 404:
         return None
     if forge_quota.rate_limited(response):
@@ -520,7 +524,7 @@ async def default_branch(project_id: uuid.UUID, session: AsyncSession) -> str:
         # ponytail: 本地没有 forgejo（`FORGEJO_URL` 空）时项目没有仓库绑定，而
         # `default_branch` 是建任务的第一句话（`room_task/services.open_thread`），
         # 于是连一个任务都建不出来（503「项目没有代码仓库」），agent 也就拿不到
-        # 那台能跑命令的工作机（房间主线只在只读支线作答）。开发档假定主干叫 main。
+        # 那台能跑命令的工作机（频道里只读作答）。开发档假定主干叫 main。
         # 上限：分支不存在；推送、合并、交付在本地仍然一律不可用（各自另有出口）。
         # 升级路径：配好 FORGEJO_URL 并建出仓库后，这条不再触发。
         if settings.environment == "development" and not settings.forgejo_url:

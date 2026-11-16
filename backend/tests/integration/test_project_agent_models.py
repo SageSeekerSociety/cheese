@@ -1,10 +1,12 @@
-"""Project defaults, teammate overrides, and native child requests stay distinct."""
+"""The project main model, a teammate's own models, and native child requests
+stay distinct."""
 
 import uuid
 
 import pytest
 
 from app.api import deps as session_turn_deps
+from app.core import model_roles
 from app.core.config import settings
 from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
 from app.domain.agent import gateway_catalog
@@ -13,11 +15,14 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.agent_instance.models import AgentInstance
 from tests.conftest import stub_compute
 from tests.integration.conftest import (
     approve_overseas,
+    open_task,
     post_project,
     put_on_plan,
+    read_task,
     session_auth_headers,
 )
 
@@ -56,6 +61,16 @@ def agents(client, pid):
     return client.get(f"/projects/{pid}/agents").json()["data"]["data"]
 
 
+def configure_teammate(client, pid, configuration, teammate=None):
+    """Save the teammate's configuration (the project's own one by default)."""
+    teammate = teammate or agents(client, pid)[0]
+    response = client.put(
+        f"/projects/{pid}/agents/{teammate['id']}",
+        json={"configuration": configuration},
+    )
+    assert response.status_code == 200, response.text
+
+
 @pytest.mark.anyio
 async def test_project_name_defaults_and_teammate_model_reach_execution(
     client, tmp_path
@@ -65,19 +80,11 @@ async def test_project_name_defaults_and_teammate_model_reach_execution(
     teammate = agents(client, pid)[0]
     assert teammate["display_name"] == "Moss"
     response = client.put(
-        f"/projects/{pid}/default-model",
-        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["subagent_model"] == "sonnet"
-    # A partial main-model update cannot clear the native child default.
-    response = client.put(
         f"/projects/{pid}/default-model", json={"model": "deepseek-flash"}
     )
-    assert response.json()["data"]["subagent_model"] == "sonnet"
-    route = f"/projects/{pid}/agents/{teammate['id']}"
-    response = client.put(route, json={"configuration": {"model": "opus"}})
     assert response.status_code == 200, response.text
+    route = f"/projects/{pid}/agents/{teammate['id']}"
+    configure_teammate(client, pid, {"model": "opus", "subagent_model": "sonnet"})
     chat = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
@@ -106,12 +113,12 @@ async def test_project_name_defaults_and_teammate_model_reach_execution(
     ).json()["data"]
     assert "opus" in main["supply"]["model"]
     assert "sonnet" in child["supply"]["model"]
-    client.put(route, json={"configuration": {"model": None}})
+    client.put(route, json={"configuration": {"subagent_model": "sonnet"}})
     main = client.post("/llm/admission", headers=headers).json()["data"]
     assert main["supply"]["model"] == "deepseek-flash"
     assert main["supply"]["pool"] == "gateway"
     assert child["supply"]["pool"] == "subscription"
-    client.put(f"/projects/{pid}/default-model", json={"subagent_model": None})
+    client.put(route, json={"configuration": {}})
     child = client.post(
         "/llm/admission", headers={**headers, "X-Cheese-Subagent": "1"}
     ).json()["data"]
@@ -120,22 +127,22 @@ async def test_project_name_defaults_and_teammate_model_reach_execution(
 
 def test_unavailable_models_are_rejected_at_every_write(client):
     pid = create(client)["id"]
-    for field in ("model", "subagent_model"):
-        response = client.put(
-            f"/projects/{pid}/default-model", json={field: "not-offered"}
-        )
-        assert response.status_code == 422, response.text
+    response = client.put(
+        f"/projects/{pid}/default-model", json={"model": "not-offered"}
+    )
+    assert response.status_code == 422, response.text
     response = client.post(
         f"/projects/{pid}/agents",
         json={"display_name": "Spark", "configuration": {"model": "not-offered"}},
     )
     assert response.status_code == 422, response.text
     teammate = agents(client, pid)[0]
-    response = client.put(
-        f"/projects/{pid}/agents/{teammate['id']}",
-        json={"configuration": {"model": "not-offered"}},
-    )
-    assert response.status_code == 422, response.text
+    for field in ("model", "task_model", "subagent_model"):
+        response = client.put(
+            f"/projects/{pid}/agents/{teammate['id']}",
+            json={"configuration": {field: "not-offered"}},
+        )
+        assert response.status_code == 422, (field, response.text)
 
 
 @pytest.mark.anyio
@@ -234,13 +241,22 @@ async def test_removed_main_is_refused_but_unused_defaults_do_not_block_override
     # Claude Code is launched on the model admission puts each request on, so
     # its system prompt and self-description are for that model.
     assert kwargs["env"]["ANTHROPIC_MODEL"] == main["supply"]["model"]
-    assert kwargs["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "opus"
-    assert (
-        client.put(
-            f"/projects/{pid}/default-model", json={"subagent_model": "sonnet"}
-        ).status_code
-        == 200
+    # A subagent model it can no longer run does not stop the teammate's own
+    # turns: the session is launched with it by name, and a subagent's request
+    # is refused at admission.
+    async with client.test_factory() as session:
+        row = await session.get(AgentInstance, uuid.UUID(teammate["id"]))
+        assert row is not None
+        row.configuration = {**row.configuration, "subagent_model": "opus"}
+        await session.commit()
+    kwargs, _ = await chat._model_kwargs(
+        uuid.UUID(pid),
+        RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
+        uuid.UUID(project["root_topic_id"]),
     )
+    assert "sonnet" in kwargs["model"]
+    assert kwargs["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "opus"
+    configure_teammate(client, pid, {"model": "sonnet", "subagent_model": "sonnet"})
     child = client.post(
         "/llm/admission", headers={**headers, "X-Cheese-Subagent": "1"}
     ).json()["data"]
@@ -253,18 +269,18 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
     client,
 ):
     """child_model 显式指定走目录语义（与队友身份无关）：目录没有的名字拒绝
-    并列出目录可选；目录内（含项目显式配置的两个默认）绑定；主对话不能借
+    并列出目录可选；目录内（含项目主模型和队友分身用的模型）绑定；主对话不能借
     child 头走私模型；显式指定的模型照过 tier 策略闸。"""
     project = create(client)
     pid = project["id"]
     teammate = agents(client, pid)[0]
     assert (
         client.put(
-            f"/projects/{pid}/default-model",
-            json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+            f"/projects/{pid}/default-model", json={"model": "deepseek-flash"}
         ).status_code
         == 200
     )
+    configure_teammate(client, pid, {"subagent_model": "sonnet"})
     token = mint_scoped_token(
         project_id=pid,
         topic_id=project["root_topic_id"],
@@ -279,7 +295,7 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
     assert not unlisted["allow"], unlisted
     assert unlisted["reason_kind"] == "binding"
     assert "可指定" in unlisted["reason"]
-    # 项目显式配置的两个默认跨池也合法（供给跟着绑定走），目录内本名照绑。
+    # 项目主模型和队友分身用的模型跨池也合法（供给跟着绑定走），目录内本名照绑。
     for model in ("deepseek-flash", "sonnet"):
         result = client.post(
             "/llm/admission", headers={**headers, "X-Cheese-Child-Model": model}
@@ -294,18 +310,9 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
         },
     ).json()["data"]
     assert result["supply"]["model"] == "deepseek-flash"
-    # 项目把分身默认配成订阅的 opus：claude-opus-5 由此可指定（供给跟着模型
-    # 走）—— 但档位是 premium，过 tier 策略闸时被拒。
-    from app.domain.project.repositories import ProjectRepository
-
-    async with client.test_factory() as session:
-        orm_project = await ProjectRepository(session).get(uuid.UUID(pid))
-        assert orm_project is not None
-        orm_project.settings = {
-            **(orm_project.settings or {}),
-            "default_subagent_model": "opus",
-        }
-        await session.commit()
+    # 队友把分身用的模型配成订阅的 opus：claude-opus-5 由此可指定（供给跟着
+    # 模型走）—— 但档位是 premium，过 tier 策略闸时被拒。
+    configure_teammate(client, pid, {"subagent_model": "opus"}, teammate)
     premium = client.post(
         "/llm/admission", headers={**headers, "X-Cheese-Child-Model": "claude-opus-5"}
     ).json()["data"]
@@ -327,9 +334,9 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
 # --- 开分身时指定模型（范围 = 项目模型目录，与队友身份无关） ------------------
 # CC 把主 agent 给分身指定的模型写进分身请求体的顶层 model 成员，计量代理解
 # 析出来随 admission 带上来（X-Cheese-Requested-Model）。可指定的集合是项目模
-# 型目录（本池 + 项目显式配置的两个默认），不是任何参与者的配置（2026-09-23
-# 拍板）。指定了就要么绑它、要么明说为什么不行 —— 静默改写回分身默认正是
-# 「指定了却不生效」那个旧行为。
+# 型目录的本池，加上父会话的模型、分身用的模型和项目主模型（2026-09-23 拍板）。
+# 指定了就要么绑它、要么明说为什么不行 —— 静默改写回分身用的模型正是「指定了
+# 却不生效」那个旧行为。
 
 
 def _subagent_headers(pid, topic_id, requested=None):
@@ -384,17 +391,17 @@ async def test_a_subagent_asking_for_the_main_model_is_allowed(client):
 
 @pytest.mark.anyio
 async def test_a_subagent_naming_the_parents_model_runs_on_it(client):
-    """指定和父会话同一个模型就是指定了它，不退回分身默认。
+    """指定和父会话同一个模型就是指定了它，不退回分身用的模型。
 
-    会话启动时 CLAUDE_CODE_SUBAGENT_MODEL 钉着分身默认，没指定的分身体里写
-    的是分身默认；体里写父会话的模型，只能是主 agent 要它和自己同模型。"""
+    会话启动时 CLAUDE_CODE_SUBAGENT_MODEL 钉着队友分身用的模型，没指定的分身
+    体里写的是它；体里写父会话的模型，只能是主 agent 要它和自己同模型。"""
     project = create(client)
     pid = project["id"]
     response = client.put(
-        f"/projects/{pid}/default-model",
-        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+        f"/projects/{pid}/default-model", json={"model": "deepseek-flash"}
     )
     assert response.status_code == 200, response.text
+    configure_teammate(client, pid, {"subagent_model": "sonnet"})
     # Asked by the metering proxy, as itself, for the session's subagent.
     asked = _subagent_headers(pid, project["root_topic_id"], "deepseek-flash")
     session = asked["Authorization"].removeprefix("Bearer ")
@@ -418,7 +425,7 @@ async def test_a_subagent_naming_its_teammate_parents_model_runs_on_it_across_po
     """父会话是绑了订阅模型的队友：分身指定同一个模型照样绑上。
 
     订阅模型本来不在可随意指定的范围里（那里只有平台池的模型），但父会话此刻就在这个席位上跑着
-    它 —— 「让分身和我同模型」不该被拒，更不该被悄悄换成分身默认。"""
+    它 —— 「让分身和我同模型」不该被拒，更不该被悄悄换成分身用的模型。"""
     project = create(client)
     pid = project["id"]
     teammate = agents(client, pid)[0]
@@ -475,22 +482,22 @@ async def test_a_subagent_asking_for_a_model_the_catalogue_lacks_is_refused(clie
 
 
 @pytest.mark.anyio
-async def test_an_unspecified_subagent_keeps_the_project_default(client):
-    """没指定模型的分身走分身默认。"""
+async def test_an_unspecified_subagent_runs_on_its_teammates_subagent_model(client):
+    """没指定模型的分身走队友「分身使用」的那个。"""
     project = create(client)
     pid = project["id"]
     response = client.put(
-        f"/projects/{pid}/default-model",
-        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+        f"/projects/{pid}/default-model", json={"model": "deepseek-flash"}
     )
     assert response.status_code == 200, response.text
+    configure_teammate(client, pid, {"subagent_model": "sonnet"})
     body = client.post(
         "/llm/admission",
         headers=_subagent_headers(pid, project["root_topic_id"]),
     ).json()["data"]
     assert body["allow"] is True
     assert "sonnet" in body["supply"]["model"]
-    # 而「指定的恰好就是分身默认」是合法的 —— 复述默认值不该吃到一个拒绝。
+    # 而「指定的恰好就是分身用的那个」是合法的 —— 复述它不该吃到一个拒绝。
     body = client.post(
         "/llm/admission",
         headers=_subagent_headers(pid, project["root_topic_id"], "sonnet"),
@@ -538,15 +545,15 @@ def test_the_picker_reports_a_main_model_that_left_the_catalog_as_saved(
 
 
 def test_a_subagent_naming_no_model_is_refused_a_model_its_team_lost(client):
-    """A subagent default saved while the team was approved is refused once the
+    """A subagent model saved while the team was approved is refused once the
     approval is withdrawn, whether the subagent names the model or not."""
     project = create(client)
     pid = project["id"]
     response = client.put(
-        f"/projects/{pid}/default-model",
-        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+        f"/projects/{pid}/default-model", json={"model": "deepseek-flash"}
     )
     assert response.status_code == 200, response.text
+    configure_teammate(client, pid, {"subagent_model": "sonnet"})
 
     async def withdraw() -> None:
         from sqlalchemy import delete
@@ -613,3 +620,60 @@ def test_a_turn_on_a_model_its_team_lost_is_refused_before_it_runs(client, tmp_p
                 uuid.UUID(project["root_topic_id"]),
             )
         )
+
+
+@pytest.mark.anyio
+async def test_a_teammate_works_a_task_on_its_task_model_and_talks_on_its_model(
+    client, tmp_path
+):
+    """In a task's own conversation a teammate runs in the task scene; in the
+    channel it runs in the conversation scene. The session is launched on the
+    model admission binds each request to, and the task's card names it."""
+    project = create(client)
+    pid = project["id"]
+    room = project["root_topic_id"]
+    task = open_task(client, room, owner="alice")
+    teammate = agents(client, pid)[0]
+    chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
+        session_factory=client.test_factory,
+        compute=stub_compute(),
+        base_system_prompt="Test",
+        workspace_root=str(tmp_path / "ws"),
+    )
+
+    def admitted(conversation: str) -> str:
+        token = mint_scoped_token(
+            project_id=pid, topic_id=conversation, agent_handle=teammate["seat_handle"]
+        )
+        body = client.post(
+            "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+        ).json()["data"]
+        assert body["allow"], body
+        return body["supply"]["model"]
+
+    async def launched(task_id) -> str:
+        kwargs, _ = await chat._model_kwargs(
+            uuid.UUID(pid),
+            RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
+            uuid.UUID(room),
+            task_id=task_id,
+        )
+        return kwargs["model"]
+
+    # 「自动」: conversation on the conversation role, the task on the task role.
+    model_roles.install({"task_model": "sonnet"})
+    try:
+        assert admitted(room) == "deepseek-flash"
+        assert "sonnet" in admitted(task["id"])
+        assert await launched(None) == "deepseek-flash"
+        assert "sonnet" in await launched(uuid.UUID(task["id"]))
+        assert read_task(client, task["id"])["model"] == "sonnet"
+
+        configure_teammate(client, pid, {"task_model": "opus"})
+        assert admitted(room) == "deepseek-flash"
+        assert "opus" in admitted(task["id"])
+        assert "opus" in await launched(uuid.UUID(task["id"]))
+        assert read_task(client, task["id"])["model"] == "opus"
+    finally:
+        model_roles.reset()

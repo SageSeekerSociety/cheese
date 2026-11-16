@@ -37,6 +37,11 @@ class RoutineTrigger(enum.StrEnum):
     library_file_added = "library_file_added"
     task_closed = "task_closed"
     card_accepted = "card_accepted"
+    # 任务这一层的审阅：一件活提交了审阅（``task_filed``）、它的审阅有了结果
+    # （``task_decided``，``spec["outcome"]`` 说采纳还是退回）。和个人那边同一套
+    # 名字，同一条活两边都能等。
+    task_filed = "task_filed"
+    task_decided = "task_decided"
 
 
 class RoutineState(enum.StrEnum):

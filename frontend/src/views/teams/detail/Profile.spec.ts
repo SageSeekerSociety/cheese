@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { Team } from '@/types'
+import type { Team, TeamPermission } from '@/types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -29,8 +29,17 @@ import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
+/** What the server says each seat may do to the team (`app/domain/team/permissions.py`). */
+function held(role: Team['role']): TeamPermission[] {
+  if (role === 'OWNER')
+    return ['view_members', 'edit_settings', 'manage_members', 'change_roles', 'recruit', 'disband', 'transfer']
+  if (role === 'ADMIN') return ['view_members', 'edit_settings', 'manage_members', 'recruit']
+  return role === 'MEMBER' ? ['view_members'] : []
+}
+
 function crew(overrides: Partial<Team> = {}): Team {
   return {
+    viewerPermissions: held(overrides.role ?? 'OWNER'),
     id: 7,
     handle: 'crew',
     name: '知是开发组',

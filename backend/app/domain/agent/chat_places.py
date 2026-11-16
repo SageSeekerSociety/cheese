@@ -20,9 +20,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.domain.agent.harness import harness_for
-from app.domain.agent.queries import _agent_at
+from app.domain.agent.queries import agent_for_seat
 from app.domain.agent.room_events import post_system_event
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.repositories import ProjectRepository
@@ -99,16 +98,10 @@ class ConversationPlaces:
                     # the seat, it is never found and every cold start opens
                     # a new conversation. A room-derived seat, the shared one
                     # and an event that names nobody are the room's agent.
-                    owner = await ProjectRepository(session).get(place.project_id)
-                    agent = (
-                        await AgentInstanceService(session).for_seat_handle(
-                            owner, agent_handle
-                        )
-                        if owner is not None
-                        else None
-                    ) or await _agent_at(session, place)
+                    agent = await agent_for_seat(session, place, agent_handle)
                     # 事件没说骨架，就问这个项目跑的是哪个——同一个答法，和开
                     # 这一轮用的那一个（结论 28）。
+                    owner = await ProjectRepository(session).get(place.project_id)
                     harness = harness or harness_for(owner.settings if owner else None)
                     # Lock the pointer row before moving it: the active-source
                     # guard in `turn.intake.native_entries` holds the same lock

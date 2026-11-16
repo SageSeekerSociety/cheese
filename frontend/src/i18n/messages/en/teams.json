@@ -121,7 +121,8 @@
     "descriptionPlaceholder": "Describe your team's focus, goals and culture…",
     "cancel": "Cancel",
     "createDone": "Team created",
-    "createFailed": "Couldn't create the team. Try again later."
+    "createFailed": "Couldn't create the team. Try again later.",
+    "avatarFailed": "Couldn't upload the avatar. Try another picture or try again later."
   },
   "mine": {
     "title": "My teams",

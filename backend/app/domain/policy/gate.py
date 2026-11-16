@@ -127,6 +127,10 @@ class Call:
     approver: str
     #: 境外模型（Claude、GPT、Gemini）：团队要被平台管理员开通过才能用。
     overseas: bool = False
+    #: 没人选、由平台按场合挑的模型（项目和队友都是「自动」，
+    #: `model_catalog.pick`）。方案管的是人能选哪些模型，这个没人选过，所以不受
+    #: 方案的档位限制；境外开通和项目自己的档位策略照常管它。
+    automatic: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +178,7 @@ def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
     """
     if (
         call.resource == Resource.model
+        and not call.automatic
         and policy.plan_model_tiers is not None
         and call.tier not in policy.plan_model_tiers
     ):

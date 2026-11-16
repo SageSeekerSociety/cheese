@@ -71,6 +71,7 @@ HOST_TOOLS_REVISION = "2"
 #: view is mounted through (`fusepy` loads it by path, `FUSE_LIBRARY_PATH`).
 #: A machine's own `fusermount` is used; the package holds no setuid binary.
 FUSE_RUNTIME_REVISION = "2.9.9-cheese.2"
+CRANE_VERSION = "0.22.1"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -132,6 +133,18 @@ class Artifact:
 
 
 ARTIFACTS: dict[tuple[str, str], Artifact] = {
+    ("crane", "linux-x64"): Artifact(
+        f"https://github.com/google/go-containerregistry/releases/download/v{CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz",
+        "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0",
+        16496784,
+        ".tar.gz",
+    ),
+    ("crane", "linux-arm64"): Artifact(
+        f"https://github.com/google/go-containerregistry/releases/download/v{CRANE_VERSION}/go-containerregistry_Linux_arm64.tar.gz",
+        "898c0cff975f898a33e8c4580bdafb0e7c02c7faa33374e946762f97c4ab7110",
+        14831376,
+        ".tar.gz",
+    ),
     ("bubblewrap", "linux-x64"): Artifact(
         f"{_BWRAP_BASE}-linux-x64.tar.gz",
         "df8769e412c53e1065bc9e94383599992c78bbf8265d66067422b098680683c1",
@@ -549,6 +562,10 @@ def resolve(tool: str, platform: str) -> tuple[str, Artifact] | None:
     key = _ANY if tool in PLATFORM_FREE else platform
     artifact = ARTIFACTS.get((tool, key))
     return (key, artifact) if artifact else None
+
+
+# Cloud enrollment only: enrolled personal devices keep their own rootfs.
+CLOUD_PLACEMENTS = (("crane", CRANE_VERSION, "bin", "crane"),)
 
 
 def node_path() -> str:

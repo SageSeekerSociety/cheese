@@ -38,6 +38,8 @@ COPY upstream_headers.py /app/.venv/lib/python3.13/site-packages/cheese_upstream
 COPY test_upstream_headers.py test_chat_route.py /opt/cheese-gateway/
 COPY no_explicit_cache.py /app/.venv/lib/python3.13/site-packages/cheese_no_explicit_cache.py
 COPY test_no_explicit_cache.py /opt/cheese-gateway/
+COPY cache_ttl.py /app/.venv/lib/python3.13/site-packages/cheese_cache_ttl.py
+COPY test_cache_ttl.py /opt/cheese-gateway/
 COPY spend_cap.py /app/.venv/lib/python3.13/site-packages/cheese_spend_cap.py
 COPY test_spend_cap.py /opt/cheese-gateway/
 COPY provider_credit.py /app/.venv/lib/python3.13/site-packages/cheese_provider_credit.py
@@ -83,6 +85,7 @@ RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_chat_route.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_gemini_generation.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_no_explicit_cache.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_cache_ttl.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_spend_cap.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_provider_credit.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_qwen_asr.py \

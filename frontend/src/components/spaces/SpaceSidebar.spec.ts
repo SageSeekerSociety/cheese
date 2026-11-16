@@ -65,6 +65,8 @@ async function mount(userId: number) {
     id: SPACE_ID,
     name: '数据结构空间',
     admins: [{ user: { id: ADMIN_ID }, role: 'ADMIN' }],
+    // What the server says this reader may do: an admin manages, anyone else views.
+    viewerPermissions: userId === ADMIN_ID ? ['view', 'edit_settings', 'teach'] : ['view', 'publish'],
   } as never
   store.setPendingAuditCount(3)
 

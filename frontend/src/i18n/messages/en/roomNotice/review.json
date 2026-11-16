@@ -123,5 +123,7 @@
   "mainChecksFailed": "Checks failed after merge: {checks}. {agent} will fix them in this step",
   "mainChecksFailedReopened": "Checks failed after merge: {checks}. The task is reopened for {agent} to fix",
   "deployedTo": "Deployed to {environment}",
-  "deployFailedTo": "Deploying to {environment} failed"
+  "deployFailedTo": "Deploying to {environment} failed",
+  "taskFiledForReview": "\"{title}\" was submitted for review",
+  "taskReturned": "{who} returned \"{title}\""
 }

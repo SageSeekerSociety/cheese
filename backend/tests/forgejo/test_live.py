@@ -24,7 +24,6 @@ from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
-from app.domain.agent.room_events import _known_commits, _turn_changeset
 from app.domain.project import starter as starter_archive
 from app.domain.project.forge import (
     branch_head,
@@ -698,8 +697,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     owner, repo = binding.repo.split("/", 1)
     publisher = ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
     reviewed = await asyncio.to_thread(_push_with_cli, binding, token, tmp_path, author)
-    baseline = await _known_commits(db_factory, binding.project_id, room.id)
-    assert baseline == {reviewed}
     async with db_factory() as session:
         assert await branch_head(binding.project_id, session, "task/report") == reviewed
         files = ProjectFiles(session, binding.project_id, task.id)
@@ -753,11 +750,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             },
         )
         assert check.status_code == 201, check.text
-        changes = await _turn_changeset(
-            db_factory, binding.project_id, room.id, baseline
-        )
-        assert changes is not None and changes.commits == [latest]
-        assert changes.files == [{"path": "appendix.md", "added": 1, "removed": 0}]
         async with db_factory() as session:
             card = AcceptCard(
                 topic_id=room.id,

@@ -674,7 +674,7 @@ function actionTestId(id: string): string | undefined {
   min-width: 0;
   overflow: hidden;
 }
-/* 手机顶栏里两行（和支线转成任务时的 ThreadHead 一个样子）：任务名独占第一行；状态和
+/* 手机顶栏里两行：任务名独占第一行；状态和
    负责人退到第二行，同一号字、同一种灰，各成一格，靠间距和小头像分开，不拿点号串。
    负责人那颗照旧点开任务信息，⋯ 竖跨两行贴右。 */
 .task-header--bar {

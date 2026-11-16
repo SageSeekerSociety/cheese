@@ -3,22 +3,33 @@
 Every model in a project's picker says whether the team's plan allows it, and
 for one it does not, the first plan the administrator ranks that would, by its
 name; the tier itself is never the answer. Saving a model the plan does not
-allow is refused, as the project default, as the default for 分身 and as a teammate's
-own model.
+allow is refused, as the project main model and as any of a teammate's own
+models. A model nobody picked — what 「自动」 runs on, the platform's choice — is
+not held to the plan.
 
 The models here are Claude's, which a team also needs an administrator's
 approval for (test_overseas_model_access.py), so every team below is approved
 first: what is under test is the plan.
 """
 
+import uuid
+
 import pytest
 from sqlalchemy import update
 
+from app.api import deps as session_turn_deps
+from app.core import model_roles
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import gateway_catalog
+from app.domain.agent.chat import ChatService
+from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.room.sessions import RoomSessions
+from app.domain.agent.session_host.host import SessionHost
 from app.domain.usage.models import OverseasModelApproval, Plan
-from tests.conftest import seed_user
-from tests.integration.conftest import post_project, put_on_plan
+from tests.conftest import seed_user, stub_compute
+from tests.integration.conftest import open_task, post_project, put_on_plan
 
 
 @pytest.fixture(autouse=True)
@@ -80,20 +91,20 @@ def test_a_free_team_sees_which_plan_a_premium_model_needs_and_cannot_save_it(
     assert choices["deepseek-flash"]["allowed"] is True
     assert choices["deepseek-flash"]["requires_plan"] is None
 
-    for field in ("model", "subagent_model"):
-        r = client.put(
-            f"/projects/{pid}/default-model", json={field: "sonnet"}, headers=owner
-        )
-        assert r.status_code == 422, r.text
+    r = client.put(
+        f"/projects/{pid}/default-model", json={"model": "sonnet"}, headers=owner
+    )
+    assert r.status_code == 422, r.text
     teammate = client.get(f"/projects/{pid}/agents", headers=owner).json()["data"][
         "data"
     ][0]
-    r = client.put(
-        f"/projects/{pid}/agents/{teammate['id']}",
-        json={"configuration": {"model": "sonnet"}},
-        headers=owner,
-    )
-    assert r.status_code == 422, r.text
+    for field in ("model", "task_model", "subagent_model"):
+        r = client.put(
+            f"/projects/{pid}/agents/{teammate['id']}",
+            json={"configuration": {field: "sonnet"}},
+            headers=owner,
+        )
+        assert r.status_code == 422, (field, r.text)
     r = client.post(
         f"/projects/{pid}/agents",
         json={"display_name": "Spark", "configuration": {"model": "sonnet"}},
@@ -102,7 +113,7 @@ def test_a_free_team_sees_which_plan_a_premium_model_needs_and_cannot_save_it(
     assert r.status_code == 422, r.text
 
     state = client.get(f"/projects/{pid}/default-model", headers=owner).json()["data"]
-    assert state["model"] is None and state["subagent_model"] is None
+    assert state["model"] is None
 
 
 def test_the_plan_named_is_the_plans_own_name(client):
@@ -135,7 +146,7 @@ def test_a_team_whose_plan_allows_the_model_picks_and_saves_it(client):
     assert choices["sonnet"]["requires_plan"] is None
     r = client.put(
         f"/projects/{pid}/default-model",
-        json={"model": "sonnet", "subagent_model": "sonnet"},
+        json={"model": "sonnet"},
         headers=owner,
     )
     assert r.status_code == 200, r.text
@@ -196,3 +207,47 @@ def test_the_plan_named_is_the_first_the_administrator_ranks_that_allows_it(clie
     assert _choices(client, pid, owner)["sonnet"]["requires_plan"] == "Team"
     client.portal.call(plans, 10, 20)
     assert _choices(client, pid, owner)["sonnet"]["requires_plan"] == "Pro"
+
+
+def test_automatic_runs_a_model_the_plan_would_not_let_anyone_pick(client, tmp_path):
+    """A free team cannot pick Sonnet, but when the platform's roles put
+    「自动」 on it, the team's turns and subagents run on it all the same."""
+    owner = _auth("mp-auto", client)
+    project = _shared_project(client, owner, "mpauto")
+    pid = project["id"]
+    _approve(client, project["team_id"])
+    assert _choices(client, pid, owner)["sonnet"]["allowed"] is False
+    model_roles.install({"task_model": "sonnet", "subagent_model": "sonnet"})
+    try:
+        chat = ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
+            session_factory=client.test_request_factory,
+            compute=stub_compute(),
+            base_system_prompt="Test",
+            workspace_root=str(tmp_path / "ws"),
+        )
+        task = open_task(client, project["root_topic_id"], owner="mp-auto")
+        kwargs, _ = client.portal.call(
+            lambda: chat._model_kwargs(
+                uuid.UUID(pid),
+                RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
+                uuid.UUID(project["root_topic_id"]),
+                task_id=uuid.UUID(task["id"]),
+            )
+        )
+        assert "sonnet" in kwargs["model"]
+        assert "sonnet" in kwargs["env"]["CLAUDE_CODE_SUBAGENT_MODEL"]
+        token = mint_scoped_token(project_id=pid, topic_id=project["root_topic_id"])
+        child = client.post(
+            "/llm/admission",
+            headers={"Authorization": f"Bearer {token}", "X-Cheese-Subagent": "1"},
+        ).json()["data"]
+        assert child["allow"] is True, child
+        assert "sonnet" in child["supply"]["model"]
+        # Picked by a person, the same model is refused.
+        r = client.put(
+            f"/projects/{pid}/default-model", json={"model": "sonnet"}, headers=owner
+        )
+        assert r.status_code == 422, r.text
+    finally:
+        model_roles.reset()

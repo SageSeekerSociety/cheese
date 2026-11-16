@@ -19,6 +19,7 @@
 // 哪一份和写操作接到地址与状态上（`useLibrarySelection`／`useLibraryTransfers`）、摆出
 // 这一列和右栏。每一行长什么样在 `library/LibraryRows.vue`。
 import type { LocationQueryRaw } from 'vue-router'
+import type { ProjectChange } from '@/cx_types'
 import type { ListedDocument } from '../api/projectDocuments'
 import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
 import type { LibrarySort } from '../lib/libraryQuery'
@@ -28,10 +29,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { useQuery } from '@tanstack/vue-query'
 
+import { listProjectChanges } from '../api'
 import DocMoveDialog from '../components/library/DocMoveDialog.vue'
 import DocShareDialog from '../components/library/DocShareDialog.vue'
 import LibraryDocumentHits from '../components/library/LibraryDocumentHits.vue'
 import LibraryDocumentPage from '../components/library/LibraryDocumentPage.vue'
+import ProjectFilesEntry from '../components/library/ProjectFilesEntry.vue'
 import { useDocumentMove } from '../composables/useDocumentMove'
 import { useDocumentShare } from '../composables/useDocumentShare'
 import { useLibraryDocuments } from '../composables/useLibraryDocuments'
@@ -129,6 +132,28 @@ const pages = useLibraryPages(
   () => !props.docId
 )
 const { rows: entries, loading, loadFailed, loadReason } = pages
+
+// 项目文件那一行：项目里有提交才有（`listProjectChanges` 问到最近一次）。资料库不等它，
+// 问不到——还没有提交、代码托管服务慢或断了——就不画这一行，资料库照常。整页开着一份
+// 文档时不画列表，也就不问。
+const projectFilesLatest = ref<ProjectChange | null>(null)
+watch(
+  () => (props.docId ? null : props.projectId),
+  async (projectId) => {
+    projectFilesLatest.value = null
+    if (!projectId) return
+    try {
+      const [latest] = await listProjectChanges(projectId, { limit: 1 })
+      if (props.projectId === projectId) projectFilesLatest.value = latest ?? null
+    } catch {
+      projectFilesLatest.value = null
+    }
+  },
+  { immediate: true }
+)
+function openProjectFiles() {
+  void router.push({ name: 'project-library-files', params: { projectId: props.projectId } })
+}
 const inFolder = computed(() => browsing.value && !!dir.value)
 // 这一层是只读的（项目资料库里的 `题目/`）：服务端在每一行上说，这里只看它。
 const readonlyHere = computed(
@@ -528,6 +553,11 @@ function read(file: LibraryFile) {
           @keep="make"
         />
 
+        <ProjectFilesEntry
+          v-if="projectFilesLatest && browsing && !dir"
+          :latest="projectFilesLatest"
+          @open="openProjectFiles"
+        />
         <LibraryRows
           v-if="entries.length"
           :rows="entries"

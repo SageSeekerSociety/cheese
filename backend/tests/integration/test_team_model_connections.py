@@ -479,3 +479,22 @@ def test_account_closure_keeps_shared_team_connections_and_teammates(client, ser
             )
 
     assert client.portal.call(close) == (True, True, True, True)
+
+
+def test_one_connection_and_model_on_one_device_is_added_once(client, service):
+    """A second teammate on the same connection, model and device would be
+    indistinguishable in the team list, numbered name or not."""
+    project, team, device, _ = setup_team(client)
+    connection = keep(client, team)
+
+    def add(model: str):
+        return client.post(
+            f"/projects/{project}/own-agents",
+            headers=session_auth_headers("bob"),
+            json={"connection_id": connection, "model": model, "device_id": device},
+        )
+
+    assert add("sonnet").status_code == 200
+    twin = add("sonnet")
+    assert twin.status_code in (400, 422), twin.text
+    assert "agentIdenticalExists" in twin.text or "名字和配置都一样" in twin.text

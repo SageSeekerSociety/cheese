@@ -36,7 +36,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
 )
 from app.domain.task import claims, package
-from app.domain.task.inputs import map_approve_type, map_start_mode
+from app.domain.task.inputs import map_start_mode
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -114,8 +114,8 @@ async def update_task(
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
 
-    # 「审批/驳回」只认教这块板的人，出题者不可自审 —— 比「教这道题」更窄，
-    # 不能拿 ``teaches`` 顶。
+    # 「审批/驳回」只认教这块板的人 —— 比「教这道题」更窄，不能拿 ``teaches``
+    # 顶：只是出题人、不教这块板的人审不了。出题人自己教这块板时，审自己的题。
     is_space_admin = await task_seats.TASK.allows(
         db, task.id, user_id, task_seats.Permission.approve
     )
@@ -217,25 +217,16 @@ async def update_task(
     if payload.has_rank is False:
         task.rank = None
 
-    # 审批状态与驳回原因 — 需要 space admin 权限，任务创建者不可自审
+    # 审批状态与驳回原因 — 需要教这块板（见上面 ``is_space_admin``）
     if payload.approved is not None or payload.reject_reason is not None:
         if not is_space_admin:
             raise ForbiddenError(say("taskReviewAdminsOnly"))
-        if payload.approved is not None:
-            next_approved = map_approve_type(payload.approved)
-            if next_approved == 0 and task.approved != 0:
-                if await service.has_prior_pending_task_for_creator(task):
-                    raise BadRequestError(say("taskEarlierPending"))
-                if task.published_at is None:
-                    task.published_at = datetime.now(UTC)
-            task.approved = next_approved
-        if payload.reject_reason is not None:
-            task.reject_reason = payload.reject_reason
-        # 审核痕迹只在这里写：过了上面那道门才落，通过和驳回是同一次写入，落的是
-        # 审核人（不是出题人）与此刻。驳回后作者重新提交、再被审时覆盖成最新一次
-        # —— 「审没审过」看 approved，这两列说的是「上一次是谁、什么时候点的」。
-        task.reviewed_by = user_id
-        task.reviewed_at = datetime.now(UTC)
+        await service.review(
+            task,
+            approved=payload.approved,
+            reject_reason=payload.reject_reason,
+            reviewer_id=user_id,
+        )
 
     if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
         if not await task_seats.teaches(db, task, user_id):

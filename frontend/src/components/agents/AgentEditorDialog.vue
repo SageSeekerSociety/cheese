@@ -34,12 +34,19 @@ const compactPercent = ref(80)
 
 // 模型目录和「新建 / 更新」那两下都在这里，组件只画和接线
 // （`.claude/rules/architecture.md`：`src/components/**` 不碰 API 层）。
-const { choices, connectionModel, modelsLoading, saving, error, clearError, loadModels, save } = useAgentEditor(
-  () => props.projectId
-)
+const { choices, projectAutomatic, connectionModel, modelsLoading, saving, error, clearError, loadModels, save } =
+  useAgentEditor(() => props.projectId)
 
 function blankConfiguration(): AgentConfiguration {
-  return { body: '', skills: [], model: null, effort: null, compact_percent: null }
+  return {
+    body: '',
+    skills: [],
+    model: null,
+    task_model: null,
+    subagent_model: null,
+    effort: null,
+    compact_percent: null,
+  }
 }
 
 const presetItems = computed(() => [
@@ -57,15 +64,22 @@ const modelItems = computed(() =>
     : [
         {
           id: null,
-          label: projectModel.value
-            ? t('work.projectSettings.agents.editor.modelInherit', { model: projectModel.value.label })
-            : t('work.projectSettings.agents.editor.modelInheritPlain'),
+          label: projectAutomatic.value
+            ? t('work.projectSettings.agents.editor.modelInherit', { model: t('work.models.automaticPlain') })
+            : projectModel.value
+              ? t('work.projectSettings.agents.editor.modelInherit', { model: projectModel.value.label })
+              : t('work.projectSettings.agents.editor.modelInheritPlain'),
           allowed: true,
           requires_plan: null,
         },
         ...choices.value,
       ]
 )
+// In tasks and for subagents: the first item follows the model above.
+const sceneItems = computed(() => [
+  { id: null, label: t('work.projectSettings.agents.editor.sameAsModel'), allowed: true, requires_plan: null },
+  ...choices.value,
+])
 const runsOn = computed(() =>
   draft.value.model ? choices.value.find((choice) => choice.id === draft.value.model) ?? null : projectModel.value
 )
@@ -124,6 +138,8 @@ watch(
     void loadModels(props.agent)
     if (props.agent) draft.value = { ...blankConfiguration(), ...structuredClone(toRaw(props.agent.configuration)) }
     else applyPreset(null)
+    // A teammate set apart for tasks or subagents opens with that showing.
+    advancedOpen.value = Boolean(draft.value.task_model || draft.value.subagent_model)
     allowMax.value = draft.value.effort === 'max'
     customCompact.value = draft.value.compact_percent != null
     compactPercent.value = draft.value.compact_percent ?? 80
@@ -146,9 +162,11 @@ function close() {
 async function submit() {
   submitted.value = true
   if (nameProblem.value || handleProblem.value) return
+  const available = (model: string | null | undefined) =>
+    choices.value.some((choice) => choice.id === model && choice.allowed)
   if (
-    (connectionModel.value || draft.value.model) &&
-    !choices.value.some((choice) => choice.id === draft.value.model && choice.allowed)
+    ((connectionModel.value || draft.value.model) && !available(draft.value.model)) ||
+    [draft.value.task_model, draft.value.subagent_model].some((model) => model && !available(model))
   ) {
     error.value = t('work.models.chooseAvailable')
     return
@@ -158,6 +176,8 @@ async function submit() {
     configuration: {
       ...draft.value,
       model: draft.value.model ?? null,
+      task_model: connectionModel.value ? null : draft.value.task_model ?? null,
+      subagent_model: connectionModel.value ? null : draft.value.subagent_model ?? null,
       effort: draft.value.effort ?? null,
       compact_percent: customCompact.value ? compactPercent.value : null,
     },
@@ -252,6 +272,32 @@ async function submit() {
     </button>
     <v-expand-transition>
       <div v-if="advancedOpen" class="advanced">
+        <template v-if="!connectionModel">
+          <v-select
+            v-model="draft.task_model"
+            :items="sceneItems"
+            item-title="label"
+            item-value="id"
+            :item-props="modelChoiceProps"
+            :label="t('work.projectSettings.agents.editor.taskModel')"
+            :loading="modelsLoading"
+            :disabled="modelsLoading || saving"
+            variant="outlined"
+            autocomplete="off"
+          />
+          <v-select
+            v-model="draft.subagent_model"
+            :items="sceneItems"
+            item-title="label"
+            item-value="id"
+            :item-props="modelChoiceProps"
+            :label="t('work.projectSettings.agents.editor.subagentModel')"
+            :loading="modelsLoading"
+            :disabled="modelsLoading || saving"
+            variant="outlined"
+            autocomplete="off"
+          />
+        </template>
         <v-checkbox
           v-if="honoured.has('max') || draft.effort === 'max'"
           v-model="allowMax"

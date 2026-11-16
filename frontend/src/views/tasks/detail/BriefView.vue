@@ -56,9 +56,15 @@
             </thead>
             <tbody>
               <tr v-for="(line, index) in group.rows" :key="index">
-                <td data-user-content>{{ line.item }}</td>
+                <td>
+                  <!-- 自动算分那一行的名称是平台给的，不是出题人写的，不当作用户内容。 -->
+                  <span v-if="isAuto(line)">{{ line.item }}</span>
+                  <span v-else data-user-content>{{ line.item }}</span>
+                </td>
                 <td class="tb__pts t-num">{{ line.points }}</td>
-                <td data-user-content>{{ line.criteria }}</td>
+                <!-- 自动算分那一行没有标准可写：这里说的是它怎么给分（`rubric.automatic_rule`）。 -->
+                <td v-if="isAuto(line)">{{ autoRule(line) }}</td>
+                <td v-else data-user-content>{{ line.criteria }}</td>
               </tr>
             </tbody>
           </table>
@@ -82,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import type { Task, TaskProgress } from '@/types'
+import type { Task, TaskProgress, TaskRubricLine, TaskRubricLineConfig } from '@/types'
 import type { TaskFileData } from '@/types/taskBoard'
 
 import { computed } from 'vue'
@@ -124,6 +130,17 @@ function grouped<T extends { stage?: string | null }>(rows: T[]) {
 
 const itemGroups = computed(() => grouped(props.taskData?.submissionSchema ?? []))
 const lineGroups = computed(() => grouped(props.taskData?.rubric ?? []))
+
+/** 这一行是不是平台自动算分的（额度用量）；老题的评分要点都是手动行。 */
+const isAuto = (line: { kind?: string }) => (line.kind ?? 'manual') !== 'manual'
+
+/** 自动算分那一行怎么给分，和出题表单、后端 `rubric.automatic_rule` 说的是同一件事。 */
+function autoRule(line: TaskRubricLine): string {
+  // 缺省的起点和后端给的那一份相同（按阈值 0–100），读回来缺设置时也不用到处判空。
+  const config: TaskRubricLineConfig = line.config ?? { mode: 'threshold', full: 0, zero: 100 }
+  if (config.mode === 'rank') return t('tasks.brief.rubricRuleRank')
+  return t('tasks.brief.rubricRuleThreshold', { full: config.full ?? 0, zero: config.zero ?? 0 })
+}
 </script>
 
 <style scoped>

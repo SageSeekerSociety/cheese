@@ -122,7 +122,6 @@ from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
 from app.domain.room_task.place import place_or_404
-from app.domain.thread.services import answered_in
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -511,14 +510,11 @@ async def _summon_the_named(
     from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 
     async with chat.session_factory() as session:
-        block = await BlockRepository(session).get(uuid.UUID(payload["id"]))
         summoned = await record_mentions(
             session,
             project_id=place.project_id,
             room_id=place.room_id,
-            conversation_id=await answered_in(session, block)
-            if block is not None
-            else place.conversation_id,
+            conversation_id=place.conversation_id,
             block_id=uuid.UUID(payload["id"]),
             author=author,
             content=payload["content"],

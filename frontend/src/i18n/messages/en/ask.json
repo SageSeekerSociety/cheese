@@ -19,6 +19,17 @@
     "failed": "Could not submit — try again",
     "listSeparator": ", "
   },
+  "fold": {
+    "whoNamed": "{asker} asks {people}",
+    "whoBare": "Asks {people}",
+    "everyone": "everyone",
+    "anyone": "anyone here",
+    "waiting": "No answer yet",
+    "closed": "Closed",
+    "questions": "{n} questions",
+    "multi": "multi-select",
+    "answered": "{name}: {text}"
+  },
   "replies": {
     "label": "Quick replies",
     "recommended": "Recommended",

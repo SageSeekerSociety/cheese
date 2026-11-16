@@ -127,7 +127,10 @@ class CloudHostRepository:
     async def put_home(self, host_id: uuid.UUID, home: dict) -> SandboxHome:
         """Place a new home on a host, from its fields. The host now keeps its
         project's store too, whatever happens to this home later."""
-        row = SandboxHome(host_id=host_id, **home)
+        host = await self._session.get(CloudHost, host_id)
+        row = SandboxHome(
+            host_id=host_id, sandbox_image=host.sandbox_image if host else None, **home
+        )
         self._session.add(row)
         project_key = home.get("project_id") or home.get("topic_id")
         if project_key is not None:

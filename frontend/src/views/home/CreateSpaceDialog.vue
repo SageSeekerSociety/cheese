@@ -12,7 +12,8 @@ import { t } from '@/i18n'
 const props = defineProps<{
   /** 正在提交：按钮转圈，这时候关不掉。 */
   busy?: boolean
-  /** 上一次没提交成的那一句。 */
+  /** 上一次没成的那一句：服务端回绝了就写它自己那句话，没回绝（网络断了、
+   *  未知错误）才写「稍后重试」那一档。只有一句。 */
   error?: string
 }>()
 const emit = defineEmits<{
@@ -75,6 +76,7 @@ function submit() {
         rows="3"
         variant="outlined"
       />
+      <!-- 一句：服务端说了为什么就显示它那一句，没说的失败才退回「稍后重试」。 -->
       <v-alert v-if="error" type="error" variant="tonal" role="alert">{{ error }}</v-alert>
     </v-form>
   </AdaptiveDialog>

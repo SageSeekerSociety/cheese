@@ -1,17 +1,21 @@
 <script setup lang="ts">
 // 新手引导的画面（页面是同目录的 Welcome.vue）。
 //
-// 两问：主要用知是做什么、想先做成什么。每个回答都有去处，右边的「你的项目」随回答
-// 长出来；点「建好项目」才把回答交出去（`finish`）。称呼用注册时填的昵称，邀请队友
-// 和换电脑都在项目里做，这里不问。建项目、进「综合」由页面做（Welcome.vue），这里
-// 只画两问。
+// 两问：主要用知是做什么、第一件事做什么。第二问默认是领一道平台的新手题：按身份
+// 推荐一道，可以换另外两道；素材、额度、带节奏的芝士都随题目来，点「领这道题」就建好
+// 项目（后端 `app/domain/onboarding/starters.py`）。目标明确的人点「自己写第一件事」，
+// 回到原来那一问：挑一件或自己写一句。每个回答都有去处，右边的「你的项目」随回答
+// 长出来；点按钮才把回答交出去（`finish`）。称呼用注册时填的昵称，邀请队友和换电脑都
+// 在项目里做，这里不问。建项目、进「综合」由页面做（Welcome.vue），这里只画两问。
+import type { StarterKey } from '@/api'
+
 import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
 import { t } from '@/i18n'
 
-export type WorkRole = 'student' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
+export type WorkRole = 'student' | 'highschool' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
 
 /** 「建好项目」交出去的东西：建项目要的回答，加上建好以后要做的事。 */
 export interface WelcomeFinish {
@@ -21,10 +25,12 @@ export interface WelcomeFinish {
     intent: string
     work_role?: WorkRole | null
     organization?: string
+    /** 领的新手题；有它时项目由题目建，名字和简报不用。 */
+    starter?: StarterKey
   }
   /** 跳过了引导：只建一个以名字命名的项目，不写请求、不记身份。 */
   skipAll: boolean
-  /** 写进「综合」输入框的第一句（带 @芝士），和要附上的文件。 */
+  /** 写进「综合」输入框的第一句，不带 @：点名哪位由页面按建好的项目里实际的队友补上。 */
   draft: string
   files: File[]
 }
@@ -51,9 +57,10 @@ const TASKS = {
   general: ['tidy', 'research', 'build', 'plan'],
 } as const
 type TaskGroup = keyof typeof TASKS
-const ROLES: WorkRole[] = ['student', 'teacher', 'office', 'research', 'maker', 'other']
+const ROLES: WorkRole[] = ['student', 'highschool', 'teacher', 'office', 'research', 'maker', 'other']
 const ROLE_ICONS: Record<WorkRole, string> = {
   student: 'mdi-school-outline',
+  highschool: 'mdi-bag-personal-outline',
   teacher: 'mdi-human-male-board',
   office: 'mdi-briefcase-outline',
   research: 'mdi-flask-outline',
@@ -83,11 +90,42 @@ const TASK_ICONS: Record<string, string> = {
   build: 'mdi-application-brackets-outline',
 }
 
+// 三道新手题（文案在 welcome.starter.<键>），按身份默认推荐一道。按交出的东西分题，
+// 身份只决定先推哪道。
+const STARTERS: StarterKey[] = ['web', 'slides', 'lesson']
+const STARTER_ICONS: Record<StarterKey, string> = {
+  web: 'mdi-web',
+  slides: 'mdi-presentation',
+  lesson: 'mdi-chart-bell-curve-cumulative',
+}
+const STARTER_FOR_ROLE: Record<WorkRole, StarterKey> = {
+  student: 'web',
+  highschool: 'lesson',
+  teacher: 'slides',
+  office: 'slides',
+  research: 'slides',
+  maker: 'web',
+  other: 'web',
+}
+
 const step = ref(1)
 const LAST = 2
 const role = ref<WorkRole | null>((me?.work_role as WorkRole | null | undefined) ?? null)
 const organization = ref(me?.organization ?? '')
 const taskKey = ref<string | null>(null)
+// 第二问是领新手题（starter）还是自己写第一件事（own）。
+const mode = ref<'starter' | 'own'>('starter')
+const recommended = computed<StarterKey>(() => STARTER_FOR_ROLE[role.value ?? 'other'])
+const starter = ref<StarterKey>(recommended.value)
+// 推荐的那道排第一。
+const starterOrder = computed(() => [recommended.value, ...STARTERS.filter((k) => k !== recommended.value)])
+const starterText = (key: StarterKey, part: 'label' | 'hint' | 'yields' | 'name' | 'brief' | 'files') =>
+  t(`welcome.starter.${key}.${part}`)
+const taking = computed(() => mode.value === 'starter')
+const finishLabel = computed(() => {
+  if (props.busy) return t('welcome.finishing')
+  return taking.value ? t('welcome.starter.take') : t('welcome.finish')
+})
 const own = ref('')
 const files = ref<File[]>([])
 const picker = ref<HTMLInputElement | null>(null)
@@ -101,12 +139,21 @@ const displayName = computed(() => me?.nickname?.trim() || me?.username || '')
 const fallbackName = computed(() => t('welcome.preview.nameFallback', { name: displayName.value }))
 
 const projectName = computed(() => {
+  if (taking.value) return starterText(starter.value, 'name')
   const mine = own.value.trim()
   if (mine) return mine.length > 30 ? `${mine.slice(0, 30)}…` : mine
   return taskKey.value ? taskText(taskKey.value, 'name') : fallbackName.value
 })
-const intent = computed(() => own.value.trim() || (taskKey.value ? taskText(taskKey.value, 'label') : ''))
+const intent = computed(() =>
+  taking.value
+    ? starterText(starter.value, 'brief')
+    : own.value.trim() || (taskKey.value ? taskText(taskKey.value, 'label') : '')
+)
+const fileNames = computed(() =>
+  taking.value ? starterText(starter.value, 'files') : files.value.map((f) => f.name).join(t('welcome.preview.listSep'))
+)
 const request = computed(() => {
+  if (taking.value) return t('welcome.starter.request')
   const mine = own.value.trim()
   if (mine) return `${mine}\n${t('welcome.task.ownPlan')}`
   return taskKey.value ? taskText(taskKey.value, 'text') : ''
@@ -121,7 +168,10 @@ function pickTask(key: string) {
   taskKey.value = taskKey.value === key ? null : key
 }
 function pickRole(next: WorkRole) {
-  if (role.value !== next) taskKey.value = null
+  if (role.value !== next) {
+    taskKey.value = null
+    starter.value = STARTER_FOR_ROLE[next]
+  }
   role.value = next
 }
 function addFiles(list: FileList | null) {
@@ -141,14 +191,14 @@ function finish(skipAll = false) {
         intent: intent.value,
         work_role: role.value,
         organization: organization.value,
+        ...(taking.value ? { starter: starter.value } : {}),
       }
-  // 输入框里那句和起手卡写进去的一样带 @：直接回车只发给成员，芝士不会接。
-  const draft = !skipAll && request.value ? `@${t('work.room.defaultAgentName')} ${request.value}` : ''
   emit('finish', {
     answers,
     skipAll,
-    draft,
-    files: skipAll ? [] : files.value,
+    draft: skipAll ? '' : request.value,
+    // 新手题的素材随题目来，这一问不收文件。
+    files: skipAll || taking.value ? [] : files.value,
   })
 }
 </script>
@@ -189,6 +239,33 @@ function finish(skipAll = false) {
             <span class="welcome__field-label">{{ t('welcome.role.org') }}</span>
             <input id="welcome-org" v-model="organization" class="welcome__input" autocomplete="off" />
           </label>
+        </template>
+
+        <template v-else-if="taking">
+          <h1 class="t-page-title">{{ t('welcome.starter.q') }}</h1>
+          <p class="welcome__why">{{ t('welcome.starter.why') }}</p>
+          <div class="welcome__options welcome__options--stack">
+            <button
+              v-for="key in starterOrder"
+              :key="key"
+              type="button"
+              class="welcome__option"
+              :aria-pressed="starter === key"
+              @click="starter = key"
+            >
+              <span class="welcome__icon"><v-icon :icon="STARTER_ICONS[key]" size="20" /></span>
+              <span class="welcome__label">
+                <span class="t-title">
+                  {{ starterText(key, 'label') }}
+                  <span v-if="key === recommended" class="welcome__tag">{{ t('welcome.starter.recommended') }}</span>
+                </span>
+                <span class="welcome__hint">{{ starterText(key, 'hint') }}</span>
+                <span class="welcome__hint">{{
+                  t('welcome.starter.yields', { what: starterText(key, 'yields') })
+                }}</span>
+              </span>
+            </button>
+          </div>
         </template>
 
         <template v-else>
@@ -253,6 +330,10 @@ function finish(skipAll = false) {
             {{ t('welcome.exit') }}
           </BaseButton>
           <span v-else />
+          <!-- 第二问里，领题和自己写第一件事互相切换，放在跳过的位置旁边。 -->
+          <BaseButton v-if="step === LAST" kind="ghost" :disabled="busy" @click="mode = taking ? 'own' : 'starter'">
+            {{ taking ? t('welcome.starter.own') : t('welcome.starter.back') }}
+          </BaseButton>
           <span class="welcome__go">
             <BaseButton v-if="step > 1" kind="ghost" :disabled="busy" @click="step -= 1">
               {{ t('welcome.back') }}
@@ -261,7 +342,7 @@ function finish(skipAll = false) {
               {{ t('welcome.next') }}
             </BaseButton>
             <BaseButton v-else kind="primary" :loading="busy" @click="finish()">
-              {{ busy ? t('welcome.finishing') : t('welcome.finish') }}
+              {{ finishLabel }}
             </BaseButton>
           </span>
         </div>
@@ -287,13 +368,13 @@ function finish(skipAll = false) {
           <p class="welcome__nav on"><span class="welcome__hash">#</span>{{ t('navigation.project.general') }}</p>
         </div>
         <dl class="welcome__facts">
-          <template v-if="intent">
+          <template v-if="step >= 2 && intent">
             <dt>{{ t('welcome.preview.brief') }}</dt>
             <dd>{{ intent }}</dd>
           </template>
-          <template v-if="files.length">
+          <template v-if="step >= 2 && fileNames">
             <dt>{{ t('welcome.preview.files') }}</dt>
-            <dd>{{ files.map((f) => f.name).join(t('welcome.preview.listSep')) }}</dd>
+            <dd>{{ fileNames }}</dd>
           </template>
           <dt>{{ t('welcome.preview.members') }}</dt>
           <dd>{{ displayName }} · {{ t('work.room.defaultAgentName') }}</dd>
@@ -303,7 +384,7 @@ function finish(skipAll = false) {
           </template>
         </dl>
       </div>
-      <p class="welcome__why">{{ t('welcome.preview.hint') }}</p>
+      <p class="welcome__why">{{ step >= 2 && taking ? t('welcome.starter.hint') : t('welcome.preview.hint') }}</p>
     </aside>
   </div>
 </template>
@@ -397,6 +478,9 @@ function finish(skipAll = false) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
+.welcome__options--stack {
+  grid-template-columns: minmax(0, 1fr);
+}
 .welcome__option {
   display: flex;
   align-items: flex-start;
@@ -442,6 +526,16 @@ function finish(skipAll = false) {
   color: var(--faint);
   font-size: 13px;
 }
+.welcome__tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: 2px;
+}
 .welcome__drop {
   display: flex;
   align-items: center;
@@ -466,9 +560,10 @@ function finish(skipAll = false) {
   padding-top: 8px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
 }
 .welcome__go {
+  margin-left: auto;
   display: flex;
   gap: 8px;
 }

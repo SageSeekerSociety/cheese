@@ -179,8 +179,24 @@ class ApplicationType(str, Enum):
     INVITATION = "INVITATION"
 
 
+#: A person has at most one pending request or invitation per team. The service
+#: checks first so the refusal is a sentence; this index is what holds when two
+#: submissions race past that check (a double click on 邀请, two admins at once).
+#: The migration that builds it is ``b7e2c4a91f30``; keep the predicate the same.
+PENDING_APPLICATION_INDEX = "uq_team_membership_application_pending"
+
+
 class TeamMembershipApplication(Base):
     __tablename__ = "team_membership_application"
+    __table_args__ = (
+        Index(
+            PENDING_APPLICATION_INDEX,
+            "user_id",
+            "team_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDING' AND deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         BigInteger, team_membership_application_seq, primary_key=True

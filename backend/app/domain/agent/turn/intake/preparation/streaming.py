@@ -128,6 +128,7 @@ async def converse(
     )
     opening = build_session_opening(
         thread=prepared.thread_context,
+        channel=prepared.channel_context,
         tasks=prepared.thread_tasks,
         task=prepared.task_rules,
         doc=doc_text,
@@ -207,6 +208,7 @@ async def converse(
         prepared.room_id,
         agent=prepared.agent,
         acting_agent=prepared.acting_agent,
+        task_id=prepared.task_id,
     )
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=model_ready "

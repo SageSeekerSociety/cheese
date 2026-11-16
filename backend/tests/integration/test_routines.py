@@ -1,6 +1,7 @@
 """Standing work: a saved rule wakes the room's teammate, once per moment or
 event, and whoever set it hears how each run went."""
 
+import itertools
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -8,6 +9,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
@@ -957,3 +959,133 @@ def test_a_teammates_rule_keeps_its_owners_time(client):
 
     assert made.status_code == 200, made.text
     assert made.json()["data"]["timezone"] == "Europe/Berlin"
+
+
+_review_numbers = itertools.count(1000)
+
+
+def _review(client, project, room, title, *, status=None, decided_ago=None):
+    """A task and the review card filed for it — the row both triggers read.
+
+    Its number is picked per row because (project, number) is unique and a
+    test files more than one card in the same project."""
+    task_id = uuid.uuid4()
+    # Now, not earlier: a rule reads what happened after it was made, and its
+    # cursor starts at that moment.
+    filed_at = datetime.now(UTC)
+
+    async def go(session):
+        session.add(
+            Task(
+                id=task_id,
+                project_id=uuid.UUID(project),
+                room_id=uuid.UUID(room),
+                title=title,
+                number=next(_review_numbers),
+                created_at=filed_at,
+            )
+        )
+        # The task first: the card names it by a foreign key, and SQLAlchemy
+        # orders two pending inserts it cannot relate (the card has no
+        # relationship to the task object, only its id).
+        await session.flush()
+        session.add(
+            AcceptCard(
+                topic_id=uuid.UUID(room),
+                task_id=task_id,
+                focus="看一眼",
+                status=status or AcceptStatus.pending,
+                created_at=filed_at,
+                decided_at=None
+                if decided_ago is None
+                else datetime.now(UTC) - decided_ago,
+            )
+        )
+
+    _db(client, go)
+    return task_id
+
+
+def test_a_task_going_to_review_fires_a_rule_waiting_on_it(client):
+    """「任务提交审阅」, as the channel's own scope: a card filed in this room
+    fires it, one filed elsewhere does not, and its own run does not fire it
+    again."""
+    project = _project(client)
+    room = _room(client, project)
+    elsewhere = _room(client, project, "别的房间")
+    rule = client.post(
+        f"/topics/{room}/routines",
+        json={
+            "title": "审阅一提交就先看",
+            "instructions": "先过一遍改动",
+            "trigger": "task_filed",
+            "spec": {"scope": "room"},
+        },
+        headers=PERSON,
+    ).json()["data"]
+    assert rule["state"] == "active"
+
+    _review(client, project, elsewhere, "别的房间的活")
+    (_, runner) = _sweep(client)
+    assert runner.submitted == [], "a card outside the rule's room fired it"
+
+    _review(client, project, room, "接入搜索")
+    (_, runner) = _sweep(client)
+    (_, again) = _sweep(client)
+    assert len(runner.submitted) == 1, runner.submitted
+    assert again.submitted == [], "the same filing fired twice"
+    assert "接入搜索" in runner.submitted[0][1]["content"]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "only", "fired"),
+    [
+        ("accepted", None, True),
+        ("rejected", None, True),
+        ("accepted", "accepted", True),
+        ("accepted", "rejected", False),
+        ("rejected", "rejected", True),
+        ("rejected", "accepted", False),
+    ],
+)
+def test_a_decided_review_fires_a_rule_waiting_on_that_result(
+    client, outcome, only, fired
+):
+    """「任务被采纳」「任务被退回」: one event (``task_decided``) with the
+    result in ``spec["outcome"]``; a rule that names one result ignores the
+    other."""
+    project = _project(client)
+    room = _room(client, project)
+    spec = {"scope": "room"}
+    if only:
+        spec["outcome"] = only
+    client.post(
+        f"/topics/{room}/routines",
+        json={
+            "title": "有结果就整理",
+            "instructions": "把审阅意见整理成待办",
+            "trigger": "task_decided",
+            "spec": spec,
+        },
+        headers=PERSON,
+    )
+    status = AcceptStatus.accepted if outcome == "accepted" else AcceptStatus.rejected
+    _review(client, project, room, "接入搜索", status=status, decided_ago=timedelta(0))
+    (_, runner) = _sweep(client)
+    assert bool(runner.submitted) is fired, runner.submitted
+
+
+def test_a_rule_waiting_on_a_result_cannot_be_saved_with_a_result_it_is_not(client):
+    project = _project(client)
+    room = _room(client, project)
+    refused = client.post(
+        f"/topics/{room}/routines",
+        json={
+            "title": "有结果就整理",
+            "instructions": "整理",
+            "trigger": "task_decided",
+            "spec": {"scope": "room", "outcome": "maybe"},
+        },
+        headers=PERSON,
+    )
+    assert refused.status_code == 422, refused.text
