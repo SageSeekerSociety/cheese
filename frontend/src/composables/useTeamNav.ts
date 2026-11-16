@@ -103,24 +103,20 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   // `onSpacesChanged` 重读，这里不用管。
   const createOpen = ref(false)
   const createBusy = ref(false)
-  // 弹窗里的失败分两行说：上一行是这一步本身没成（存不下 / 图没举上去），下一行是
-  // 服务端给的原因——它和上一行不是同一种信息，「稍后重试」也仍然要留着。
+  // 弹窗里那一句失败：服务端回绝了就说它自己那句话（「这个空间名称已被占用」这类，
+  // 人照着能改），没回绝（网络断了、未知错误）才说上一行那句「稍后重试」。
   const createError = ref('')
-  const createReason = ref<string | null>(null)
   watch(createOpen, (open) => {
     if (!open) return
     createError.value = ''
-    createReason.value = null
   })
   async function createSpace(payload: { name: string; intro: string; avatarFile?: File }) {
     const name = payload.name.trim()
     if (createBusy.value || !name) return
     createBusy.value = true
     createError.value = ''
-    createReason.value = null
     const fail = async (e: unknown, fallback: string) => {
-      createError.value = fallback
-      createReason.value = await errorHandler.refusal(e instanceof Error ? e : new Error(String(e)), fallback)
+      createError.value = await errorHandler.explain(e instanceof Error ? e : new Error(String(e)), fallback)
     }
     // 上传头像和创建空间分开 catch：举不上去和存不下是两件事，说的话也不一样。
     // 合成一句「创建失败，稍后重试」时，人只会照着重试同一张图。
@@ -262,7 +258,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     createOpen,
     createBusy,
     createError,
-    createReason,
     createSpace,
     disbanding,
     disbandBusy,

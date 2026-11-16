@@ -111,8 +111,8 @@ describe('creating a team', () => {
   })
 
   // 服务端说了原因，人却只看到「创建团队失败，请稍后重试」，他会照着重试，每次都
-  // 一样失败。现在两行都在：上一行还是那句「稍后重试」，下一行是服务端自己那句话。
-  it('keeps the retry line and adds what the server said under it', async () => {
+  // 一样失败。现在说服务端自己那一句。
+  it('says what the server said instead of the retry line', async () => {
     create.mockRejectedValueOnce(
       new ApiError(503, '内容安全审核暂时不可用，这次没有保存，稍后重试', 'UpstreamUnavailable')
     )
@@ -120,35 +120,27 @@ describe('creating a team', () => {
     await submit('一个新名字')
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith('创建团队失败，请稍后重试', {
-        description: '内容安全审核暂时不可用，这次没有保存，稍后重试',
-      })
+      expect(toastError).toHaveBeenCalledWith('内容安全审核暂时不可用，这次没有保存，稍后重试')
     )
   })
 
-  // 服务端没给原因（网络断了）时只有一行，不凑一个空的第二行。
-  it('says one line when there is no reason from the server', async () => {
+  // 服务端没给原因（网络断了）时退回「稍后重试」——不写这一句这里就是一片空白。
+  it('falls back to the retry line when the server said nothing', async () => {
     create.mockRejectedValueOnce(new Error('offline'))
     await mountPage()
     await submit('一个新名字')
 
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith('创建团队失败，请稍后重试', undefined))
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('创建团队失败，请稍后重试'))
   })
 
   // 传图和建团队是两件事。都说「创建团队失败」时，人会去重试同一张图——而那张图
   // 就是没成的原因。
   it('blames the avatar when the avatar is what failed', async () => {
-    createAvatar.mockRejectedValueOnce(
-      new ApiError(503, '内容安全审核暂时不可用，这次没有保存，稍后重试', 'UpstreamUnavailable')
-    )
+    createAvatar.mockRejectedValueOnce(new Error('offline'))
     await mountPage()
     await submit('一个新名字', new File(['x'], 'avatar.png', { type: 'image/png' }))
 
-    await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith('上传头像失败，换一张或稍后重试', {
-        description: '内容安全审核暂时不可用，这次没有保存，稍后重试',
-      })
-    )
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('上传头像失败，换一张或稍后重试'))
     expect(create).not.toHaveBeenCalled()
   })
 })

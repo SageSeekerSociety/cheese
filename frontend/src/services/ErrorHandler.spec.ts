@@ -61,27 +61,27 @@ describe('ErrorHandler', () => {
     expect(reportError).not.toHaveBeenCalled()
   })
 
-  // 调用方自己在别处显示这次失败（弹窗里的一格、toast 的第二行）时用它：不要额外
-  // 再弹一个 toast，但该记的那一笔照记；它只要服务端那一句，通用文案留在调用方。
-  describe('refusal', () => {
-    it('records the failure and hands back nothing when the server said nothing', async () => {
-      const reason = await errorHandler.refusal(new Error('offline'), '保存失败')
+  // 调用方自己在别处显示这次失败（弹窗里的一格、toast 那一行）时用它：不要额外再弹
+  // 一个 toast，但该记的那一笔照记；它交回人该看到的那一句话。
+  describe('explain', () => {
+    it('falls back when the server said nothing', async () => {
+      const said = await errorHandler.explain(new Error('offline'), '保存失败')
 
-      expect(reason).toBeNull()
+      expect(said).toBe('保存失败')
       expect(reportError).toHaveBeenCalledTimes(1)
     })
 
-    it('hands back what the server said', async () => {
-      const reason = await errorHandler.refusal(
+    it('hands back what the server said, without the fallback line', async () => {
+      const said = await errorHandler.explain(
         new ApiError(409, '这个空间名称已被占用，换一个', 'ConflictError'),
         '创建失败，稍后重试'
       )
 
-      expect(reason).toBe('这个空间名称已被占用，换一个')
+      expect(said).toBe('这个空间名称已被占用，换一个')
     })
 
-    it('still says nothing for a refusal the product means', async () => {
-      await errorHandler.refusal(new ApiError(403, 'denied', 'AccessDeniedError'), '兜底')
+    it('still records nothing for a refusal the product means', async () => {
+      await errorHandler.explain(new ApiError(403, 'denied', 'AccessDeniedError'), '兜底')
 
       expect(reportError).not.toHaveBeenCalled()
     })

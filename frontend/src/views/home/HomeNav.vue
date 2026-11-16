@@ -58,7 +58,6 @@ const props = defineProps<{
   createOpen: boolean
   createBusy?: boolean
   createError?: string
-  createReason?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -339,7 +338,6 @@ const transferModel = computed({
     v-model="createModel"
     :busy="createBusy"
     :error="createError"
-    :reason="createReason"
     @submit="(payload) => emit('createSpace', payload)"
   />
   <DisbandTeamDialog

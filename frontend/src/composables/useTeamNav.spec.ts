@@ -51,9 +51,10 @@ vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ refreshProjec
 vi.mock('@/services/ErrorHandler', () => ({
   default: {
     withErrorHandling: async (fn: () => Promise<unknown>) => fn().catch(() => undefined),
-    // 真实那一条的判据：服务端有条有理回绝的（带着业务 code）就交出它自己那句，
-    // 其余的（网络断了、未知错误）交不出原因。这里照同一条判据替身。
-    refusal: async (e: unknown) => ((e as { code?: string })?.code ? (e as Error).message : null),
+    // 真实那一条的判据：服务端有条有理回绝的（带着业务 code）就说它自己那句，其余的
+    // （网络断了、未知错误）退回调用方给的那句。这里照同一条判据替身。
+    explain: async (e: unknown, fallback: string) =>
+      (e as { code?: string })?.code ? (e as Error).message : fallback,
   },
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
@@ -479,21 +480,21 @@ describe('新建空间', () => {
     expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox')
   })
 
-  // 失败在弹窗里分两行说：「这一步没成」和「服务端为什么」。只留原因时人不知道能
-  // 不能再试，只留「稍后重试」时他不知道为什么——以前只有后者，服务端明明说了原因。
-  it('服务端给了原因时，两行都在：上一行说没成，下一行说原因', async () => {
+  // 服务端说了为什么就说它那一句：它比「稍后重试」具体，人照着能改。以前不管服务端
+  // 说了什么，弹窗里都只有「创建失败，稍后重试」——重试多少次都一样。
+  it('服务端给了原因时，弹窗里就是它那一句', async () => {
     spaceCreate.mockRejectedValue(new ApiError(409, '这个空间名称已被占用，换一个', 'ConflictError'))
     await mount()
     await fireEvent.click(await screen.findByText('新建空间'))
     await fireEvent.update(await screen.findByLabelText('空间名称'), '编译原理')
     await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
 
-    expect(await screen.findByText('创建失败，稍后重试')).toBeTruthy()
-    expect(screen.getByText('这个空间名称已被占用，换一个')).toBeTruthy()
+    expect(await screen.findByText('这个空间名称已被占用，换一个')).toBeTruthy()
+    expect(screen.queryByText('创建失败，稍后重试')).toBeNull()
   })
 
-  // 服务端没给原因（网络断了）时只有上一行，不留一个空行让它看起来像还没加载出来。
-  it('服务端没给原因时就一行，不留空行', async () => {
+  // 服务端没给原因（网络断了）时退回「稍后重试」——不写这一句这里就是一片空白。
+  it('服务端没给原因时退回「稍后重试」', async () => {
     spaceCreate.mockRejectedValue(new Error('offline'))
     await mount()
     await fireEvent.click(await screen.findByText('新建空间'))
@@ -504,12 +505,10 @@ describe('新建空间', () => {
     expect(screen.queryByText('offline')).toBeNull()
   })
 
-  // 传图和存空间是两件事：传图没成时上一行说传图，说出来的话也和「存不下」不同。
+  // 传图和存空间是两件事：传图没成时说的话和「存不下」不同，也不会真的去建空间。
   // 一句「创建失败，稍后重试」会让人去重试同一张图，而那张图就是没成的原因。
   it('传图没成时说的是传图，且不建空间', async () => {
-    createAvatar.mockRejectedValue(
-      new ApiError(503, '内容安全审核暂时不可用，这次没有保存，稍后重试', 'UpstreamUnavailable')
-    )
+    createAvatar.mockRejectedValue(new Error('offline'))
     await mount()
     await fireEvent.click(await screen.findByText('新建空间'))
     await fireEvent.update(await screen.findByLabelText('空间名称'), '编译原理')
@@ -518,7 +517,7 @@ describe('新建空间', () => {
     await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
 
     expect(await screen.findByText('上传头像失败，换一张或稍后重试')).toBeTruthy()
-    expect(screen.getByText('内容安全审核暂时不可用，这次没有保存，稍后重试')).toBeTruthy()
+    expect(screen.queryByText('创建失败，稍后重试')).toBeNull()
     expect(spaceCreate).not.toHaveBeenCalled()
   })
 })

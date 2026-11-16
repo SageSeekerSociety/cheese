@@ -47,12 +47,11 @@ const creatingTeam = ref(false)
 
 const router = useRouter()
 
-/** 一次没建成的失败：上一行说这一步没成（多半是「稍后重试」这一档），下一行放服务端
- *  给的原因。两句都留着——只留原因时人不知道能不能再试，只留上一行时他不知道为什么。
- *  服务端没给原因（网络断了、未知错误）就只有一行。 */
+/** 一次没建成的失败，只有一句：服务端有条有理回绝的（带着业务 code）就说它自己那句
+ *  ——「这个空间名称已被占用」这类，人照着能改；其余的（网络断了、未知错误）才说
+ *  `failed` 那一句「稍后重试」。两句一起说时后一句只是把前一句盖上一层。 */
 const explain = async (error: unknown, failed: string) => {
-  const reason = await errorHandler.refusal(asError(error), failed)
-  toast.error(failed, reason ? { description: reason } : undefined)
+  toast.error(await errorHandler.explain(asError(error), failed))
 }
 
 /** 简介那一句由画面从编辑器正文里取好递过来（编辑器住在画面那一半）。 */

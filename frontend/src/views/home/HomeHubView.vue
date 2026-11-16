@@ -25,7 +25,6 @@ defineProps<{
   createOpen: boolean
   createBusy?: boolean
   createError?: string
-  createReason?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -59,7 +58,6 @@ const emit = defineEmits<{
       :create-open="createOpen"
       :create-busy="createBusy"
       :create-error="createError"
-      :create-reason="createReason"
       @open-disband="(team) => emit('openDisband', team)"
       @update:disbanding="(team) => emit('update:disbanding', team)"
       @confirm-disband="emit('confirmDisband')"

@@ -12,11 +12,9 @@ import { t } from '@/i18n'
 const props = defineProps<{
   /** 正在提交：按钮转圈，这时候关不掉。 */
   busy?: boolean
-  /** 上一次没提交成的那一句：这一步本身没成，多半是「稍后重试」这一档。 */
+  /** 上一次没成的那一句：服务端回绝了就写它自己那句话，没回绝（网络断了、
+   *  未知错误）才写「稍后重试」那一档。只有一句。 */
   error?: string
-  /** 服务端给的原因，单独一行。它比上面那一句具体，但两句都要留着：上面那句说
-   *  「这一步没成、可以再试」，这一句说「为什么」。没有回绝原因时为空。 */
-  reason?: string | null
 }>()
 const emit = defineEmits<{
   submit: [payload: { name: string; intro: string; avatarFile?: File }]
@@ -78,13 +76,8 @@ function submit() {
         rows="3"
         variant="outlined"
       />
-      <!-- 两行：上面是这一步没成，下面（有时）是服务端给的原因。分成两行而不是
-           拼成一句，是因为它们回答两个不同的问题——「成没成、能不能再试」和
-           「为什么」——只留一句时人会丢掉其中一半。 -->
-      <v-alert v-if="error" type="error" variant="tonal" role="alert">
-        <div>{{ error }}</div>
-        <div v-if="reason" class="create-space__reason">{{ reason }}</div>
-      </v-alert>
+      <!-- 一句：服务端说了为什么就显示它那一句，没说的失败才退回「稍后重试」。 -->
+      <v-alert v-if="error" type="error" variant="tonal" role="alert">{{ error }}</v-alert>
     </v-form>
   </AdaptiveDialog>
 </template>
@@ -92,12 +85,5 @@ function submit() {
 <style scoped>
 .create-space__avatar {
   width: 120px;
-}
-
-/* 原因那一行：比上一行小一号、淡一档，读起来是「附注」而不是第二句结论。 */
-.create-space__reason {
-  margin-top: 4px;
-  font-size: 0.875em;
-  opacity: 0.85;
 }
 </style>

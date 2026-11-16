@@ -26,7 +26,6 @@ const {
   createOpen,
   createBusy,
   createError,
-  createReason,
   createSpace,
   disbanding,
   disbandBusy,
@@ -61,7 +60,6 @@ const {
     :transfer-error="transferError"
     :create-busy="createBusy"
     :create-error="createError"
-    :create-reason="createReason"
     @open-disband="openDisband"
     @confirm-disband="confirmDisband"
     @open-transfer="openTransfer"
