@@ -99,7 +99,7 @@ covers:
 | `cheese_card(action=decide)` | 采纳或退回一项待审阅的改动 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
 | `cheese_people` | 项目里邀请、改角色、移出；频道里加入、移出；团队里邀请、改角色、移出；空间里加入、移出、设或撤管理员 | 经授权判断，成员接口 |
 | `cheese_room(action=create)` | 新建频道 | 经授权判断，`POST /topics` |
-| `cheese_room(action=set)` | 项目短名、任务命名、默认 AI 队友、默认模型；频道负责人 | 经授权判断，项目设置的接口 |
+| `cheese_room(action=set)` | 项目短名、任务命名、默认 AI 队友、项目主模型（`auto` 改回自动）；频道负责人 | 经授权判断，项目设置的接口 |
 | `cheese_space` | 空间的名称、简介、可见题目上限；公告；分类；加入链接（是否要批准、重置）；审核待审核的题目 | 经授权判断，空间设置、公告、加入链接和 `PATCH /tasks/{id}` |
 | `cheese_settings` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
 | `cheese_web(action=fetch)` | 读一个网页 | 经授权判断，`POST /fetch` |
