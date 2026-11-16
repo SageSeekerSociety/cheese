@@ -38,7 +38,6 @@ from app.domain.space.repositories import (
 from app.domain.task import claims, package
 from app.domain.task.inputs import map_start_mode
 from app.domain.task.rubric import rubric_lines
-from app.domain.task.test_suite import suite_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
@@ -46,6 +45,7 @@ from app.domain.task.services import (
 )
 from app.domain.task.stages import stage_lines, stage_news, with_stage_index
 from app.domain.task.submission_state import refresh_task_claims
+from app.domain.task.test_suite import suite_lines
 from app.domain.task_notices import notices as task_notices
 
 

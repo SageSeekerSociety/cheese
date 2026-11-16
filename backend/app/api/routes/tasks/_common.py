@@ -36,13 +36,13 @@ from app.domain.task.inputs import (
 )
 from app.domain.task.mentors import require_consent, set_mentors
 from app.domain.task.rubric import rubric_lines
-from app.domain.task.test_suite import suite_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
 from app.domain.task.stages import new_stage_key, stage_lines, with_stage_index
+from app.domain.task.test_suite import suite_lines
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
