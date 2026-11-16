@@ -11,6 +11,7 @@
   "settingCompact": "上下文整理时机",
   "settingSkills": "技能",
   "settingFollowDefault": "跟随系统默认",
+  "settingAutomatic": "自动",
   "settingInheritMain": "跟随项目主模型",
   "settingNamingAuto": "智能命名",
   "settingNamingManual": "手动命名",

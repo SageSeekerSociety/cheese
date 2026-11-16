@@ -87,7 +87,7 @@ from app.domain.agent.environment import (
     parse,
     project_default,
 )
-from app.domain.agent.model_catalog import model_choices
+from app.domain.agent.model_catalog import automatic_models, model_choices
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.environments import check_allowed, offered_specs
@@ -103,7 +103,7 @@ from app.domain.usage.services import UsageService
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-# --- Project main and native subagent model defaults ---
+# --- Project main model ---
 
 
 def _default_model_state(project_settings: dict | None, access: ModelAccess) -> dict:
@@ -119,12 +119,18 @@ def _default_model_state(project_settings: dict | None, access: ModelAccess) -> 
     deployment_settings = dict(project_settings or {})
     deployment_settings.pop("default_model", None)
     deployment_choices = model_choices(deployment_settings)
+    labels = {c["id"]: c["label"] for c in deployment_choices}
     return {
         "model": chosen if isinstance(chosen, str) and chosen else None,
-        "subagent_model": (project_settings or {}).get("default_subagent_model"),
         "deployment_default": next(
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
+        # What 「自动」 runs on now, scene by scene — the platform's roles, run
+        # whatever the team's plan lets it pick (`model_catalog.pick`).
+        "automatic": {
+            scene: {"id": model, "label": labels.get(model, model)} if model else None
+            for scene, model in automatic_models().items()
+        },
         "choices": choices,
     }
 
@@ -148,28 +154,23 @@ async def save_default_model(
     body: ProjectDefaultModelUpdate,
     db: DbSession,
 ) -> dict:
-    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。
-    方案不允许的模型照样拒（``member_settings``）。"""
+    """设/清项目主模型；清掉就是「自动」。设一个目录里没有的名字直接拒，不静默
+    换池（I27）。方案不允许的模型照样拒（``member_settings``）。"""
     project = at.project
     access = await UsageService(db).model_access(project.team_id)
     valid = {c["id"]: c for c in model_choices(project.settings)}
     patch: dict[str, object] = {}
     remove: list[str] = []
-    for field, key in (
-        ("model", "default_model"),
-        ("subagent_model", "default_subagent_model"),
-    ):
-        if field not in body.model_fields_set:
-            continue
-        chosen = getattr(body, field)
+    if "model" in body.model_fields_set:
+        chosen = body.model
         if chosen is None:
-            remove.append(key)
+            remove.append("default_model")
         elif chosen not in valid or not access.shows(valid[chosen]):
             raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
         elif not access.allows(valid[chosen]):
             raise ValidationError(say("modelNotInPlan", label=valid[chosen]["label"]))
         else:
-            patch[key] = chosen
+            patch["default_model"] = chosen
     settings = await change_project_settings(
         db, project, patch, remove=remove, by=at.actor.handle
     )
