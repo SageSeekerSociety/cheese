@@ -96,6 +96,7 @@ async def default_teammate(
     display_name: str | None = None,
     type_name: str | None = None,
     pack_prompt: str | None = None,
+    task_model: str | None = None,
 ) -> None:
     """`app.domain.project.ports.DefaultTeammate`：这个项目的默认 AI 队友。
 
@@ -113,6 +114,8 @@ async def default_teammate(
             # The 资源包's prompt, until the contract migration after
             # b7d4e1a9c2f3 moves it into the 题目's guidance.
             await agents.append_to_persona(teammate, pack_prompt)
+    if task_model:
+        await agents.seed_task_model(teammate, task_model)
 
 
 async def project_team(

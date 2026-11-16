@@ -2066,8 +2066,8 @@ DELEGATED_TOOLS = ToolTable(
                     "以用户的名义改项目或频道的一项设置，改之前先用 cheese_read 读「项目短名/"
                     "settings」看现在的值和能选的值。where 给项目短名时 key 为 slug（短名）、"
                     "task_naming（value 为 auto 自动命名或 manual 手动命名）、default_agent（新"
-                    "频道默认的 AI 队友，value 写它的 handle）或 default_model（默认模型，value 写"
-                    "模型 id）；where 给频道编号时 key 为 manager（频道负责人），value 写新负责人"
+                    "频道默认的 AI 队友，value 写它的 handle）或 default_model（项目主模型，value 写"
+                    "模型 id，写 auto 改回自动）；where 给频道编号时 key 为 manager（频道负责人），value 写新负责人"
                     "的 handle 或名字。空间的设置用 cheese_space，成员用 cheese_people。",
                     {
                         "where": _text("项目短名或频道编号"),

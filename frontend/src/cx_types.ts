@@ -812,6 +812,10 @@ export interface AgentConfiguration {
   body: string
   skills: string[]
   model?: string | null
+  /** 任务里使用的模型；null 同 `model`。 */
+  task_model?: string | null
+  /** 分身使用的模型；null 同 `model`。 */
+  subagent_model?: string | null
   effort?: 'low' | 'medium' | 'high' | 'max' | null
   compact_percent?: number | null
 }

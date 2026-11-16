@@ -7,7 +7,8 @@ made with the requirements as its brief, the materials sit in its 资料库 unde
 pays for the run. Three things set these apart, all in the pack
 (``resource_pack``, read by `app.domain.task.protocol`):
 
-* ``model``: the project runs on DeepSeek V4.1 Flash unless it chose otherwise;
+* ``model``: the project's tasks run on DeepSeek V4.1 Flash unless its teammate
+  chose another (it becomes the default teammate's ``task_model``);
 * ``once_per_person``: an account gets one starter's credits, however many
   starters it takes;
 * ``compute_credits``: 50 per starter (see ``STARTER_CREDITS``).

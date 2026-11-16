@@ -208,6 +208,7 @@ async def converse(
         prepared.room_id,
         agent=prepared.agent,
         acting_agent=prepared.acting_agent,
+        task_id=prepared.task_id,
     )
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=model_ready "

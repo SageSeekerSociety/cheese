@@ -1,5 +1,6 @@
-"""Taking a new-user starter from the guide: the project is the 题目's, runs on
-the starter model, and the platform's credits go out once per account."""
+"""Taking a new-user starter from the guide: the project is the 题目's, its
+tasks run on the starter model, and the platform's credits go out once per
+account."""
 
 import uuid
 
@@ -43,15 +44,20 @@ def _grants(api_client, token, project_id: str) -> list[tuple[int, float]]:
     ]
 
 
+def _teammate(api_client, token, project_id: str) -> dict:
+    """The project's default teammate, as its settings list it."""
+    resp = api_client.get(f"/projects/{project_id}/agents", headers=_headers(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["data"][0]
+
+
 def _project(api_client, token, project_id: str) -> dict:
     resp = api_client.get(f"/projects/{project_id}", headers=_headers(token))
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]
 
 
-def test_taking_a_starter_makes_the_tasks_project_on_the_starter_model(
-    api_client, user_client
-):
+def test_taking_a_starter_runs_its_tasks_on_the_starter_model(api_client, user_client):
     person = user_client.create_user()
     token = _token(api_client, person)
     done = _take(api_client, token, "web")
@@ -61,10 +67,16 @@ def test_taking_a_starter_makes_the_tasks_project_on_the_starter_model(
     assert done["teammate"] == "芝士"
     project = _project(api_client, token, done["project_id"])
     assert project["external_task_id"]
+    # The pack's model is what its credits do the work on: the teammate's
+    # model in tasks. The project main model stays unset (「自动」), so
+    # conversation runs on the platform's pick.
     model = api_client.get(
         f"/projects/{done['project_id']}/default-model", headers=_headers(token)
     ).json()["data"]
-    assert model["model"] == STARTER_MODEL
+    assert model["model"] is None
+    configuration = _teammate(api_client, token, done["project_id"])["configuration"]
+    assert configuration["task_model"] == STARTER_MODEL
+    assert configuration["model"] is None
     assert _grants(api_client, token, done["project_id"]) == [
         (project["external_task_id"], float(STARTER_CREDITS))
     ]
@@ -200,18 +212,30 @@ def test_a_starter_on_a_deleted_board_is_made_again_on_a_new_one(
     assert new.id != old.id and new.deleted_at is None
 
 
-def test_a_project_that_chose_its_model_keeps_it(api_client, user_client):
+def test_a_teammate_that_chose_its_task_model_keeps_it(api_client, user_client):
     person = user_client.create_user()
     token = _token(api_client, person)
     done = _take(api_client, token, "web")
-    url = f"/projects/{done['project_id']}/default-model"
-    # Taking the same starter again goes through the pack once more.
-    state = api_client.get(url, headers=_headers(token)).json()["data"]
-    other = next(c["id"] for c in state["choices"] if c["id"] != STARTER_MODEL)
-    resp = api_client.put(url, json={"model": other}, headers=_headers(token))
+    pid = done["project_id"]
+    state = api_client.get(
+        f"/projects/{pid}/default-model", headers=_headers(token)
+    ).json()["data"]
+    other = next(
+        c["id"]
+        for c in state["choices"]
+        if c["id"] != STARTER_MODEL and c.get("allowed", True)
+    )
+    teammate = _teammate(api_client, token, pid)
+    resp = api_client.put(
+        f"/projects/{pid}/agents/{teammate['id']}",
+        json={"configuration": {**teammate["configuration"], "task_model": other}},
+        headers=_headers(token),
+    )
     assert resp.status_code == 200, resp.text
+    # Taking the same starter again goes through the pack once more.
     _take(api_client, token, "web")
-    assert api_client.get(url, headers=_headers(token)).json()["data"]["model"] == other
+    configuration = _teammate(api_client, token, pid)["configuration"]
+    assert configuration["task_model"] == other
 
 
 def test_after_the_board_is_deleted_every_starter_is_remade_on_one_new_board(

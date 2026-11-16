@@ -8,10 +8,10 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { roleLabelKey } from '@/lib/platformRoles'
 
 // 平台模型角色那一段：平台自己挑模型的那几件事（默认模型、语音输入、话题命名……）各跑在
-// 哪个网关模型上，每个一个下拉。改了立即生效，不用重新部署；没人指过的角色读部署的设置项，
+// 哪个网关模型上，每个一个下拉。改了立即生效，不用重新部署；没人指过的角色读部署的设置项（任务、分身两项跟着对话那一项），
 // 下拉的第一项就是回到它。
 //
-// 下拉里只列这个角色能用的模型：要提供给项目的角色（默认模型、分身默认）只列上架的；
+// 下拉里只列这个角色能用的模型：要提供给项目的角色（AI 队友的对话、任务、分身）只列上架的；
 // 别的只列在用、有价的（语音输入跑在一个不上架的模型上）。判据与服务端相同，服务端说了算。
 const props = defineProps<{
   roles: PlatformRole[] | null
@@ -32,9 +32,12 @@ const FALLBACK = '\u0000fallback'
 function items(role: PlatformRole) {
   const fits = props.models.filter((m) => (role.offered_only ? m.offered : !m.blocked && m.priced))
   const names = fits.map((m) => ({ value: m.name, title: m.label === m.name ? m.name : `${m.label} (${m.name})` }))
-  const fallbackTitle = role.fallback
-    ? t('models.roles.fallback', { model: role.fallback })
-    : t('models.roles.fallbackNone')
+  const fallbackTitle =
+    role.inherits && role.fallback
+      ? t('models.roles.inherits', { role: t(roleLabelKey(role.inherits)), model: role.fallback })
+      : role.fallback
+        ? t('models.roles.fallback', { model: role.fallback })
+        : t('models.roles.fallbackNone')
   return [{ value: FALLBACK, title: fallbackTitle }, ...names]
 }
 

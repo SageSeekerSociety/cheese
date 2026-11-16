@@ -39,7 +39,7 @@ from app.core.sentences import say
 from app.domain.agent.admission import Hold, Pool, Slot, enter, holding
 from app.domain.agent.document.machine import machine_to_read
 from app.domain.agent.harness.prompt import WRITING
-from app.domain.agent.model_catalog import catalog
+from app.domain.agent.model_catalog import Scene, catalog, pick
 from app.domain.agent.session_host.consumptions import Consumption
 from app.domain.agent.session_host.contract import SessionRef
 from app.domain.agent.session_host.host import SessionHost
@@ -57,7 +57,6 @@ from app.domain.living_doc.services import Documents
 from app.domain.memory.files_store import memory_index
 from app.domain.policy import gate
 from app.domain.project.services import ProjectService
-from app.domain.room_task import binding
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from app.domain.usage.services import UsageService
@@ -303,6 +302,8 @@ class Bound:
     model: str
     wire_model: str
     supply: str
+    #: Nobody chose the model: the platform's role did (``Pick.automatic``).
+    automatic: bool = False
 
 
 async def seats(session: AsyncSession, asked: Asked) -> set[str]:
@@ -345,18 +346,21 @@ async def bind(session: AsyncSession, asked: Asked, seat: str | None = None) -> 
         await agents.for_seat_handle(project, seat) if seat else None
     ) or await agents.for_project(project)
     seat = seat or agent_instance_handle(agent.instance_id)
-    bound = binding.resolve(
-        None,
+    # A question is talked through with the agent, so it runs in the
+    # conversation scene even about a task's file.
+    picked = pick(
+        Scene.conversation,
         catalog(project.settings),
-        agent_model=agent.configuration.get("model"),
-        default_model=(project.settings or {}).get("default_model"),
+        project_settings=project.settings,
+        teammate=agent.configuration,
     )
     return Bound(
         agent_handle=seat or agent.handle,
         agent_name=agent.display_name or "芝士",
-        model=bound.model,
-        wire_model=bound.wire_model,
-        supply=bound.supply,
+        model=picked.model,
+        wire_model=picked.binding.wire_model,
+        supply=picked.binding.supply,
+        automatic=picked.automatic,
     )
 
 
@@ -372,6 +376,7 @@ async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> N
             tier=choice["tier"],
             approver=project.owner_handle or "",
             overseas=choice["overseas"],
+            automatic=bound.automatic,
         ),
         gate.policy_of(
             project.settings,

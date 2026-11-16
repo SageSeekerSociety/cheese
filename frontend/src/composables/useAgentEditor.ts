@@ -27,6 +27,8 @@ export interface AgentDraftPayload {
 export function useAgentEditor(projectId: MaybeRefOrGetter<string>) {
   /** 这个项目的模型目录。取不回来就是空的，下拉只剩「跟随项目」那一项。 */
   const choices = ref<AgentFieldChoice[]>([])
+  /** 项目没设主模型（「自动」）：跟随项目主模型的队友按场合用平台指的模型。 */
+  const projectAutomatic = ref(false)
   const connectionModel = ref(false)
   const modelsLoading = ref(false)
   const saving = ref(false)
@@ -41,10 +43,12 @@ export function useAgentEditor(projectId: MaybeRefOrGetter<string>) {
   async function loadModels(agent?: ProjectAgent | null) {
     modelsLoading.value = true
     choices.value = []
+    projectAutomatic.value = false
     connectionModel.value = false
     try {
       const state = await getProjectDefaultModel(toValue(projectId))
       choices.value = state.choices
+      projectAutomatic.value = state.model === null
       if (agent) {
         const team = await getOwnAgents(toValue(projectId))
         const connection = team.agents.find((a) => a.handle === agent.seat_handle)?.connection
@@ -106,5 +110,15 @@ export function useAgentEditor(projectId: MaybeRefOrGetter<string>) {
     }
   }
 
-  return { choices, connectionModel, modelsLoading, saving, error, clearError, loadModels, save }
+  return {
+    choices,
+    projectAutomatic,
+    connectionModel,
+    modelsLoading,
+    saving,
+    error,
+    clearError,
+    loadModels,
+    save,
+  }
 }
