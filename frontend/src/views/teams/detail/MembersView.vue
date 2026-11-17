@@ -16,6 +16,7 @@ import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
+import { userName, userOriginalName } from '@/lib/userNames'
 
 // 团队设置「成员」那一栏的画法：加入方式、加入申请、成员、已发送邀请四张卡（申请和邀请
 // 有内容才出现）加一个邀请框，只吃数据、往上报动作。取数与写入都在页面里（`Members.vue`）—— 所以「谁在管理这个团队」由页面算好
@@ -281,14 +282,17 @@ const getStatusText = (status: string) => {
         <li v-for="request in joinRequests" :key="request.id" class="members-row">
           <UserAvatar
             :avatar="getAvatarUrl(request.user.avatarId)"
-            :name="request.user.nickname"
+            :name="userName(request.user)"
             :seed="request.user.username"
             size="36"
           />
           <div class="members-row__main">
             <div class="members-row__name">
-              <span class="members-row__nick">{{ request.user.nickname }}</span>
+              <span class="members-row__nick">{{ userName(request.user) }}</span>
               <span v-if="request.status !== 'PENDING'" class="members-chip">{{ getStatusText(request.status) }}</span>
+            </div>
+            <div v-if="request.user.remark" class="members-row__note">
+              {{ userOriginalName(request.user) }} · {{ request.user.username }}
             </div>
             <div v-if="request.message" class="members-row__note">{{ request.message }}</div>
             <div class="members-row__note">
@@ -309,11 +313,16 @@ const getStatusText = (status: string) => {
             </BaseButton>
           </div>
           <div v-else-if="request.status === 'APPROVED' || request.status === 'REJECTED'" class="members-row__note">
-            <i18n-t v-if="request.processedBy?.nickname" scope="global" keypath="teams.members.processedBy" tag="span">
+            <i18n-t
+              v-if="request.processedBy && userName(request.processedBy)"
+              scope="global"
+              keypath="teams.members.processedBy"
+              tag="span"
+            >
               <template #name>
                 <UserRef
                   :handle="request.processedBy.username"
-                  :name="request.processedBy.nickname"
+                  :name="userName(request.processedBy)"
                   :project-id="null"
                 />
               </template>
@@ -352,15 +361,18 @@ const getStatusText = (status: string) => {
         >
           <UserAvatar
             :avatar="getAvatarUrl(member.user.avatarId)"
-            :name="member.user.nickname"
+            :name="userName(member.user)"
             :seed="member.user.username"
             size="36"
           />
           <div class="members-row__main">
             <!-- The name truncates on its own; the role chip beside it never shrinks. -->
             <div class="members-row__name">
-              <span class="members-row__nick">{{ member.user.nickname }}</span>
+              <span class="members-row__nick">{{ userName(member.user) }}</span>
               <span class="members-chip">{{ roleLabel(member.role) }}</span>
+            </div>
+            <div v-if="member.user.remark" class="members-row__note">
+              {{ userOriginalName(member.user) }} · {{ member.user.username }}
             </div>
             <!-- What this role can actually do: a bare 管理员 leaves the difference to a member unstated. -->
             <div class="members-row__note">{{ roleHint(member.role) }}</div>
@@ -369,14 +381,14 @@ const getStatusText = (status: string) => {
             v-if="memberActions(member).length"
             v-bind="rowMenu.bind(member.user.id)"
             :actions="memberActions(member)"
-            :title="member.user.nickname"
+            :title="userName(member.user)"
           >
             <template #activator="{ props: activatorProps }">
               <BaseButton
                 v-bind="activatorProps"
                 icon="mdi-dots-horizontal"
                 size="sm"
-                :aria-label="t('teams.members.actions', { name: member.user.nickname })"
+                :aria-label="t('teams.members.actions', { name: userName(member.user) })"
               />
             </template>
           </AdaptiveMenu>
@@ -408,14 +420,17 @@ const getStatusText = (status: string) => {
         <li v-for="invitation in invitations" :key="invitation.id" class="members-row">
           <UserAvatar
             :avatar="getAvatarUrl(invitation.user.avatarId)"
-            :name="invitation.user.nickname"
+            :name="userName(invitation.user)"
             :seed="invitation.user.username"
             size="36"
           />
           <div class="members-row__main">
             <div class="members-row__name">
-              <span class="members-row__nick">{{ invitation.user.nickname }}</span>
+              <span class="members-row__nick">{{ userName(invitation.user) }}</span>
               <span class="members-chip">{{ getStatusText(invitation.status) }}</span>
+            </div>
+            <div v-if="invitation.user.remark" class="members-row__note">
+              {{ userOriginalName(invitation.user) }} · {{ invitation.user.username }}
             </div>
             <div v-if="invitation.message" class="members-row__note">{{ invitation.message }}</div>
             <div class="members-row__note">

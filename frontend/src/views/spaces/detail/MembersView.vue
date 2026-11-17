@@ -15,6 +15,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { userName, userOriginalName } from '@/lib/userNames'
 import { myHandle } from '@/me'
 
 export type Role = SpaceAdminRoleType | 'MEMBER'
@@ -23,6 +24,7 @@ export interface Row {
   userId: number
   handle: string
   name: string
+  originalName?: string
   avatarId?: number | null
   role: Role
 }
@@ -70,7 +72,9 @@ const keyword = ref('')
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return props.rows
-  return props.rows.filter((r) => r.name.toLowerCase().includes(kw) || r.handle.toLowerCase().includes(kw))
+  return props.rows.filter((r) =>
+    [r.name, r.originalName ?? '', r.handle].some((name) => name.toLowerCase().includes(kw))
+  )
 })
 
 function roleLabel(role: Role): string {
@@ -91,7 +95,7 @@ const domainGroupsTarget = { name: 'SpacesDetailSettingsDomainGroups', params: {
 const showRequests = computed(() => !!props.joinLink?.approval || props.requests.length > 0 || props.requestsFailed)
 
 function requesterName(request: SpaceJoinRequest): string {
-  return request.user?.nickname || request.user?.username || String(request.userId)
+  return userName(request.user) || String(request.userId)
 }
 
 function formatTime(at: number): string {
@@ -150,6 +154,9 @@ function formatTime(at: number): string {
           />
           <div class="mem__request-main">
             <div class="mem__name">{{ requesterName(request) }}</div>
+            <div v-if="request.user?.remark" class="mem__muted">
+              {{ userOriginalName(request.user) }} · {{ request.user.username }}
+            </div>
             <div class="mem__muted">
               {{ t('spaces.members.requests.requestedAt', { time: formatTime(request.createdAt) }) }}
             </div>
@@ -219,7 +226,10 @@ function formatTime(at: number): string {
                   {{ row.name }}
                   <span v-if="row.handle === myHandle()" class="mem__muted">{{ t('spaces.members.you') }}</span>
                 </div>
-                <div class="mem__muted">{{ row.handle }}</div>
+                <div class="mem__muted">
+                  <span v-if="row.originalName && row.originalName !== row.name">{{ row.originalName }} · </span
+                  >{{ row.handle }}
+                </div>
               </div>
             </div>
           </td>

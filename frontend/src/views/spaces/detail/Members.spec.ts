@@ -158,6 +158,50 @@ describe('空间成员页', () => {
     vi.clearAllMocks()
   })
 
+  it('shows and searches remarks without losing original names or handles', async () => {
+    listMembers.mockResolvedValue({
+      members: [
+        {
+          userId: 3,
+          joinedAt: 0,
+          user: { id: 3, username: 'reader', nickname: 'Public reader', remark: 'My colleague' },
+        },
+      ],
+    })
+    const store = await mount(OWNER.id)
+    store.currentSpace!.admins = store.currentSpace!.admins.map((admin) =>
+      admin.user.id === ADMIN.id
+        ? { ...admin, user: { ...admin.user, nickname: 'Public admin', remark: 'My administrator' } }
+        : admin
+    )
+    expect(await screen.findByText('My colleague')).toBeTruthy()
+    expect(await screen.findByText('My administrator')).toBeTruthy()
+    expect(rowOf('My colleague').textContent).toContain('Public reader')
+    expect(rowOf('My administrator').textContent).toContain('Public admin')
+    const search = screen.getByRole('textbox', { name: 'spaces.members.search' })
+    for (const query of ['My colleague', 'Public reader', 'reader']) {
+      await fireEvent.update(search, query)
+      expect(screen.getByText('My colleague')).toBeTruthy()
+      expect(screen.queryByText('My administrator')).toBeNull()
+    }
+  })
+
+  it('identifies join applicants by remark while retaining public identity', async () => {
+    listJoinRequests.mockResolvedValue({
+      requests: [
+        {
+          id: 12,
+          userId: 5,
+          createdAt: 0,
+          user: { id: 5, username: 'applicant', nickname: 'Public applicant', remark: 'My applicant' },
+        },
+      ],
+    })
+    await mount(OWNER.id)
+    expect(await screen.findByText('My applicant')).toBeTruthy()
+    expect(screen.getByText(/Public applicant.*applicant/)).toBeTruthy()
+  })
+
   it('管理员不在成员表里也会列出来', async () => {
     await mount(OWNER.id)
     await waitFor(() => expect(rows().length).toBe(4))

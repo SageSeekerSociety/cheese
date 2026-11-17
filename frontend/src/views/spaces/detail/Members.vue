@@ -47,6 +47,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import MembersView from './MembersView.vue'
 
 import { SpacesApi } from '@/api/spaces'
+import { userName, userOriginalName } from '@/lib/userNames'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 
@@ -89,7 +90,8 @@ const rows = computed<Row[]>(() => {
     byId.set(admin.user.id, {
       userId: admin.user.id,
       handle: admin.user.username,
-      name: admin.user.nickname || admin.user.username,
+      name: userName(admin.user) || admin.user.username,
+      originalName: userOriginalName(admin.user),
       avatarId: admin.user.avatarId,
       role: admin.role,
     })
@@ -100,7 +102,8 @@ const rows = computed<Row[]>(() => {
     byId.set(m.userId, {
       userId: m.userId,
       handle,
-      name: m.user?.nickname || handle,
+      name: userName(m.user) || handle,
+      originalName: userOriginalName(m.user),
       avatarId: m.user?.avatarId,
       role: 'MEMBER',
     })

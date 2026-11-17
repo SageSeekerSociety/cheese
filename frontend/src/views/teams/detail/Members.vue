@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { userName } from '@/lib/userNames'
 // 团队设置的「成员」（`/teams/:handle/members`）。这一页原来 865 行，装了三件事：取数与那一堆
 // 写操作、「谁在管这个团队」的判断、以及列表的画法。现在画法全在同目录的 `MembersView.vue`，
 // 这一层只剩**接线** —— 哪一件点哪一下、递什么上去，看下面那个模板就够了：
@@ -323,7 +324,7 @@ const removeMember = async (userId: number) => {
   }
 
   // 移出后他不再能进这个团队，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
-  const name = teamMembers.value.find((member) => member.user.id === userId)?.user.nickname ?? ''
+  const name = userName(teamMembers.value.find((member) => member.user.id === userId)?.user)
   const confirmed = await dialog
     .confirm(t('teams.members.removeBody'), {
       title: t('teams.members.removeTitle', { name }),

@@ -215,6 +215,7 @@ export type SpaceMember = {
     id: number
     username: string
     nickname?: string
+    remark?: string | null
     avatarId?: number | null
     intro?: string
   }
