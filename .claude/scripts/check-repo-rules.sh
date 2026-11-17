@@ -607,10 +607,14 @@ if [ "$SELF_TEST" = 1 ]; then
   printf '      - run: docker exec -i "$backend" python -m scripts.alpha_one --sha "$(git rev-parse HEAD)"\n' \
     > "$tmp/.github/workflows/deploy.yml"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a docker exec the image carries must pass"
-  # The same text without the container is the runner's checkout, where the whole
-  # source tree is present — the reason the workflows were skipped before.
-  printf '      - run: uv run python -m scripts.beta_two --all\n' > "$tmp/.github/workflows/deploy.yml"
+  # The same module without the container is the runner's checkout, where the
+  # whole source tree is present — the reason the workflows were skipped before.
+  # Written bare on purpose: a `uv run` line would pass even if every workflow
+  # line were read, because the docs/ grep drops those by name.
+  printf '      - run: python3 -m scripts.beta_two --all\n' > "$tmp/.github/workflows/deploy.yml"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a plain python -m on the runner must pass"
+  printf '      - run: uv run python -m scripts.beta_two --all\n' > "$tmp/.github/workflows/deploy.yml"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a uv run on the runner must pass"
   rm -rf "$tmp/.github/workflows" "$tmp/backend/Dockerfile"
   # No Dockerfile, nothing to compare against — inert, not red.
   printf 'python -m scripts.beta_two\n' > "$tmp/docs/ops.md"
