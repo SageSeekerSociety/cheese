@@ -295,10 +295,8 @@ def test_the_read_releases_an_initial_hold_and_acceptance_does_not(client):
     client.portal.call(run)
 
 
-@pytest.mark.parametrize("invalid", ["missing", "topic", "project", "seen_by"])
-def test_registration_cannot_own_foreign_blocks_or_mark_another_receiver(
-    client, invalid
-):
+@pytest.mark.parametrize("invalid", ["missing", "topic", "project"])
+def test_registration_cannot_own_foreign_blocks(client, invalid):
     project = uuid.UUID(_project(client, "block ownership"))
     topic = uuid.UUID(_room(client, str(project), "input"))
     other_project = (
@@ -323,13 +321,7 @@ def test_registration_cannot_own_foreign_blocks_or_mark_another_receiver(
                 await register_input(
                     session,
                     identity,
-                    InputEffects(
-                        held_block_ids=ids,
-                        seen_block_ids=ids,
-                        seen_by="someone-else"
-                        if invalid == "seen_by"
-                        else identity.recipient_handle,
-                    ),
+                    InputEffects(held_block_ids=ids),
                 )
             await session.rollback()
         async with factory() as session:

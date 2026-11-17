@@ -169,6 +169,10 @@ class TurnContext:
     # not be read again — but kept separate up to that point, because every
     # other question asked of `pending_ids` is about who spoke.
     notice_ids: list[uuid.UUID]
+    # Every block the prompt carries — whoever said it and whoever it was for —
+    # which is what the seat has read once the prompt reaches its session
+    # (`block.message_reads`). What the window left out is not among them.
+    read_ids: list[uuid.UUID]
     # Where this seat's reading stands once this turn finishes cleanly: the
     # timeline position of the newest block the prompt carried. None when it
     # carried none. A turn that fails leaves it alone, exactly as it leaves

@@ -27,8 +27,6 @@ class InputReceipt:
 class InputEffects:
     held_block_ids: tuple[uuid.UUID, ...] = ()
     block_ids: tuple[uuid.UUID, ...] = ()
-    seen_block_ids: tuple[uuid.UUID, ...] = ()
-    seen_by: str | None = None
     delivery_id: uuid.UUID | None = None
     attempt_id: uuid.UUID | None = None
 
