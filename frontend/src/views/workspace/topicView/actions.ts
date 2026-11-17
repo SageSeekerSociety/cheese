@@ -13,6 +13,7 @@
 import type { Ref } from 'vue'
 import type TaskOverview from '@/components/task/TaskOverview.vue'
 import type { AgentControlState, Block } from '@/cx_types'
+import type { DeliveryAct } from '@/lib/channelTasks'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '@/lib/previewQuestion'
@@ -58,6 +59,8 @@ export function useTopicActions(opts: {
   handleTurnDone: () => void
   handleWorking: (now: boolean) => void
   handleStateChanged: (resource: string) => void
+  /** 主线上交付那几颗按钮（`adoptInPlace.ts`）。 */
+  onDelivery: (act: DeliveryAct) => void
 }) {
   const router = useRouter()
 
@@ -98,6 +101,7 @@ export function useTopicActions(opts: {
     'open-thread': opts.opening.onOpenThread,
     'open-topic': opts.openTopic,
     'open-card': opts.opening.openTask,
+    delivery: opts.onDelivery,
     review: opts.onReview,
   }
 

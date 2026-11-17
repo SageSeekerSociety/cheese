@@ -384,6 +384,8 @@ export interface RoomTask {
   opening?: 'drafting' | 'waiting' | 'failed' | null
   /** 这件任务里最后说的一句：频道概览上的「最新进展」。只在频道的任务列表里。 */
   last_message?: Block | null
+  /** 这件任务有东西可预览（队友在任务里摆出过一份）。只在频道的任务列表里。 */
+  has_preview?: boolean
 }
 
 /** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
