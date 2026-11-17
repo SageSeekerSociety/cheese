@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -104,6 +105,28 @@ def test_output_past_the_limit_is_cut_off_and_said_so(fake_docker, monkeypatch):
     monkeypatch.setattr(runner, "OUTPUT_LIMIT_BYTES", 64 * 1024)
     reply = runner.judge(_job("head -c 1000000 /dev/zero", [("", "")]))
     assert _statuses(reply) == ["output_limit"]
+
+
+def test_output_past_the_limit_is_killed_while_stdout_keeps_draining(
+    fake_docker, monkeypatch
+):
+    # A real docker does not let a killed container exit while its stdout is
+    # unread, so a kill waited on by the thread that reads stdout never
+    # returns (seen on the CI's docker: 47 s, then a platform failure). The
+    # kill has to come from the thread that waits on the container.
+    monkeypatch.setattr(runner, "OUTPUT_LIMIT_BYTES", 64 * 1024)
+    real = runner._docker
+    killers = []
+
+    def docker(*args, **kwargs):
+        if args[:1] == ("kill",):
+            killers.append(threading.current_thread() is threading.main_thread())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "_docker", docker)
+    reply = runner.judge(_job("while :; do head -c 65536 /dev/zero; done", [("", "")]))
+    assert _statuses(reply) == ["output_limit"]
+    assert killers == [True]
 
 
 def test_a_crash_is_a_runtime_error_with_what_it_said(fake_docker):

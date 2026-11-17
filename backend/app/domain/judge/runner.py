@@ -74,6 +74,8 @@ COMPILE_LIMIT_S = 60
 COMPILE_MEMORY_MB = 1024
 PULL_TIMEOUT_S = 300
 DOCKER = "docker"
+#: How often ``_run`` looks whether the container is done.
+POLL_S = 0.05
 
 
 class PlatformError(Exception):
@@ -163,7 +165,12 @@ class Ran:
         self.memory_kb = None
 
 
-def _pump_stdout(stream, sink, ran, name):
+def _pump_stdout(stream, sink, ran, over):
+    """Copy stdout into ``sink`` up to the output limit, then keep draining.
+
+    Past the limit it only says so (``over``); ``_run`` does the killing. It
+    must never stop reading: docker does not let a killed container exit while
+    its stdout is unread, so a ``docker kill`` waited on here never returns."""
     written = 0
     while True:
         chunk = stream.read(65536)
@@ -175,7 +182,7 @@ def _pump_stdout(stream, sink, ran, name):
         if len(chunk) > room:
             sink.write(chunk[: max(room, 0)])
             ran.truncated = True
-            _docker("kill", name, timeout=30)
+            over.set()
             continue
         sink.write(chunk)
         written += len(chunk)
@@ -231,21 +238,28 @@ def _run(args, name, stdin, wall_s, out_path):
     except OSError as exc:
         why = f"docker run: {exc}"
         raise PlatformError(why) from exc
+    over = threading.Event()
     with open(out_path, "wb") as sink:
         threads = [
             threading.Thread(target=_feed, args=(process.stdin, stdin)),
             threading.Thread(
-                target=_pump_stdout, args=(process.stdout, sink, ran, name)
+                target=_pump_stdout, args=(process.stdout, sink, ran, over)
             ),
             threading.Thread(target=_pump_stderr, args=(process.stderr, ran)),
         ]
         for thread in threads:
             thread.daemon = True
             thread.start()
-        try:
-            process.wait(timeout=wall_s)
-        except subprocess.TimeoutExpired:
-            ran.timed_out = True
+        deadline = time.monotonic() + wall_s
+        while process.poll() is None and not over.is_set():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                ran.timed_out = True
+                break
+            over.wait(min(left, POLL_S))
+        if process.poll() is None:
+            # Over the wall clock or the output limit. The pumps keep
+            # draining while docker kills it.
             _docker("kill", name, timeout=30)
             try:
                 process.wait(timeout=30)
