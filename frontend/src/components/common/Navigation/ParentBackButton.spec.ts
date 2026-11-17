@@ -395,8 +395,9 @@ describe('两颗箭头互指时，退到最外层那一页', () => {
   // （项目根）在桌面上又会被弹回自己——所以它退到项目所属的团队页，是上面那组
   // 「没有来路时，退到项目所属的小队」管的那件事。整条链子有没有环见最后一条用例。
 
-  // 最外层那一页没有上一层，就不画 ←：退一格只会在别的页面之间来回弹。
-  it('待办自己不画 ←', async () => {
+  // 待办是根：来处要是别的根（首页那一页在桌面上会被换成待办），底栏 / 侧栏那一下
+  // 是「换一格」不是「回去」，所以不画。
+  it('待办自己在根之间切换时不画 ←', async () => {
     const router = webRouter()
     await router.push('/home')
     await router.push('/inbox')
@@ -417,14 +418,53 @@ describe('两颗箭头互指时，退到最外层那一页', () => {
   })
 })
 
-// 手机底栏三格的落点是根：底栏就是在它们之间切换的地方，根上再给一颗 ←，按下去只是
-// 换到人没想去的那一格（刚才在哪就退到哪）。
-describe('手机上底栏三格的落点是根', () => {
-  it.each(['/home', '/projects/project-a', '/inbox'])('%s 上没有 ←，哪怕是从别处点过来的', async (root) => {
+// 根上那颗 ←：有来路就画，没有就不画。根是终点站——刷新、贴链接进来时身后什么都没有，
+// 画一颗只能原地打转；可人是从别处点下来的，「我刚才在哪」照样有答案。
+describe('根上有来路才画 ←', () => {
+  it.each([
+    ['桌面：从频道落到待办', DESKTOP, '/projects/project-a/channels/7', '/inbox'],
+    ['手机：从频道落到首页', PHONE, '/projects/project-a/channels/7', '/home'],
+  ])('%s，← 退回来路', async (_, width, from, root) => {
+    widthIs(width)
+    const router = webRouter()
+    await router.push(from)
+    await router.push(root)
+    const go = vi.spyOn(window.history, 'go')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    await fireEvent.click(getByRole('button', { name: '返回' }))
+    expect(go).toHaveBeenCalledWith(-1)
+  })
+
+  // 刷新、贴链接直开：历史里没有上一页，根上什么都不画——不用一颗按了没反应的按钮
+  // 假装还有上一层。
+  it.each(['/inbox', '/home', '/projects/project-a'])('直开 %s 不画 ←', async (root) => {
+    widthIs(PHONE)
+    const view = await open(root)
+    expect(view.queryByRole('link', { name: /^返回/ })).toBeNull()
+    expect(view.queryByRole('button', { name: /^返回/ })).toBeNull()
+  })
+
+  // 来路也是根（底栏 / 侧栏在几格之间换）：那是换一格，不是回去。
+  it.each([
+    ['手机：首页 → 待办', PHONE, '/home', '/inbox'],
+    ['手机：待办 → 首页', PHONE, '/inbox', '/home'],
+  ])('%s 不画 ←', async (_, width, from, root) => {
+    widthIs(width)
+    const router = webRouter()
+    await router.push(from)
+    await router.push(root)
+    const { container } = await mount(router)
+    expect(container.querySelector('a, button')).toBeNull()
+  })
+
+  // 手机上频道列表就是项目根：身后那条频道的 ← 正落在它身上，再画一颗就是两颗箭头
+  // 互指（见 `behindPointsHere`）。这一颗不画，圈断在频道那儿。
+  it('手机：从频道落到频道列表不画 ←，那一颗会跟频道的 ← 互指', async () => {
     widthIs(PHONE)
     const router = webRouter()
     await router.push('/projects/project-a/channels/7')
-    await router.push(root)
+    await router.push('/projects/project-a')
     const { container } = await mount(router)
     expect(container.querySelector('a, button')).toBeNull()
   })
