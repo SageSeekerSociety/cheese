@@ -258,15 +258,16 @@ async def get_spaces(
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
 
-    # The admins of the whole page are read and hydrated in one pass, not one
-    # space at a time: a remark is another query per page, and paying it inside
-    # this loop is the N+1 this endpoint was rewritten to avoid (`_hydrate_people`).
+    # People are hydrated once for the whole page, not once per space: the
+    # viewer's remark is one query per page instead of one per space. The
+    # relations themselves are still read per space — that debt predates this
+    # change and `tests/integration/test_list_endpoints_do_not_scale.py` tracks it.
     admins_by_space: dict[int, Sequence[SpaceAdminRelationRow]] = {
         s.id: await service.list_admins(s.id) for s in spaces
     }
     everyone = [rel.user_id for rels in admins_by_space.values() for rel in rels]
-    # Everyone on the page, hydrated once: users, profiles, avatars and the
-    # viewer's remarks are each one query for the page, not one per space.
+    # Users, profiles, avatars and the viewer's remarks are each one query for
+    # the page, not one per space.
     people = await _hydrate_people(
         everyone,
         user_repo=user_repo,

@@ -25,7 +25,12 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
-from app.domain.notification.names import names_for, with_names, with_snapshot_names
+from app.domain.notification.names import (
+    names_for,
+    snapshot_swaps_for,
+    with_names,
+    with_snapshot_names,
+)
 from app.domain.notification.ports import DecisionLine
 from app.domain.notification.preferences import in_app_allowed
 from app.domain.notification.preferences_models import PreferencesRepository
@@ -295,7 +300,15 @@ class NotificationQueryService:
         if names is None and self._session is not None:
             names = await names_for(self._session, metadata_map, viewer_id=viewer_id)
         if names:
-            metadata_map = with_snapshot_names(with_names(metadata_map, names), names)
+            metadata_map = with_names(metadata_map, names)
+            if self._session is not None:
+                metadata_map = with_snapshot_names(
+                    metadata_map,
+                    names,
+                    await snapshot_swaps_for(self._session, names, metadata_map),
+                )
+            else:
+                metadata_map = with_snapshot_names(metadata_map, names)
 
         if resolved_entities is None:
             entities = (

@@ -78,8 +78,10 @@ function rowName(row: Row): string {
 
 /** 一行的副行身份（原名与账号）；昵称等于账号时只写一次。 */
 function rowIdentity(row: Row): string {
-  // 这一行原来就总写账号；有备注时再补上原名。
-  return secondaryIdentity({ nickname: row.name, username: row.handle, remark: row.remark }) || row.handle
+  // 这一行原来就总写账号；有备注时再补上原名。没备注、且名字已经是账号本身时不再重复。
+  const identity = secondaryIdentity({ nickname: row.name, username: row.handle, remark: row.remark })
+  if (identity) return identity
+  return row.name === row.handle ? '' : row.handle
 }
 
 // 搜备注、原名和账号都算：设了备注的人被原来的名字找到，仍是同一个人。
@@ -115,7 +117,10 @@ function requesterName(request: SpaceJoinRequest): string {
 
 /** 申请人的副行身份（原名与账号），设了备注时才画。 */
 function requesterIdentity(request: SpaceJoinRequest): string {
-  return secondaryIdentity(request.user) || request.user?.username || ''
+  const identity = secondaryIdentity(request.user)
+  if (identity) return identity
+  const handle = request.user?.username || ''
+  return handle && handle !== requesterName(request) ? handle : ''
 }
 
 function formatTime(at: number): string {

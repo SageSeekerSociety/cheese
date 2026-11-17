@@ -146,3 +146,56 @@ def test_a_live_push_renames_people_by_the_readers_own_remark(
     frame = _portal.call(read)
     said = " ".join(item["title"] + " " + item["body"] for item in frame["items"])
     assert REMARK in said, said
+
+
+def test_a_reference_snapshot_is_swapped_by_the_persons_id_not_their_name(
+    user_client: UserCreator, api_client: TestClient, db_session, _portal
+):
+    """Two people sharing a nickname must not take each other's remark.
+
+    The snapshot beside a user reference is frozen at send time, so its string
+    can equal another person's current public name. Keying the swap on the
+    reference's id keeps the remark with the person the notification is about.
+    """
+    from app.domain.notification.live import notices_after
+
+    reader = user_client.create_user(nickname="same-name-reader")
+    reader.token = user_client.login(api_client, reader.username, reader.password)
+    # Two accounts with the same public nickname.
+    sender = user_client.create_user(username="twins-a", nickname="Twin")
+    other = user_client.create_user(username="twins-b", nickname="Twin")
+
+    saved = api_client.put(
+        f"/users/{sender.username}/remark",
+        json={"remark": "The one I know"},
+        headers={"Authorization": f"Bearer {reader.token}"},
+    )
+    assert saved.status_code == 200, saved.text
+
+    async def seed() -> int:
+        row = Notification(
+            receiver_id=reader.user_id,
+            type=NotificationType.TEAM_JOIN_REQUEST,
+            read=False,
+            finalized=True,
+            metadata_payload={
+                "requester": {"type": "user", "id": str(other.user_id)},
+                "requesterName": "Twin",
+                "teamName": "一个团队",
+            },
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db_session.add(row)
+        await db_session.commit()
+        return row.id
+
+    row_id = _portal.call(seed)
+
+    async def read() -> dict:
+        return await notices_after(db_session, reader.user_id, row_id - 1)
+
+    frame = _portal.call(read)
+    said = " ".join(item["title"] + " " + item["body"] for item in frame["items"])
+    assert REMARK not in said, said
+    assert "Twin" in said, said

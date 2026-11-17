@@ -30,7 +30,7 @@ from app.domain.notification.names import (
     handles_in,
     names_by_handles,
     names_for_reader,
-    snapshot_swaps,
+    snapshot_id_swaps,
     user_ids_in,
     with_names,
     with_snapshot_names,
@@ -137,7 +137,7 @@ async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> di
     names = await names_for_reader(db, sorted(handles), public_names, viewer_id=user_id)
     # The snapshot beside a handle (`authorName`, `requesterName`) is written at
     # send time; the page relabels it too, so a push and the inbox row agree.
-    swaps = snapshot_swaps(names, public_names)
+    swaps = snapshot_id_swaps(names, referents)
     items = []
     for row in rows:
         payload = with_snapshot_names(

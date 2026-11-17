@@ -18,7 +18,7 @@ from app.domain.notification.names import (
     handles_in,
     handles_of_ids,
     names_for_reader,
-    snapshot_swaps,
+    snapshot_id_swaps,
     user_ids_in,
     with_names,
     with_snapshot_names,
@@ -124,7 +124,7 @@ class ChannelIntentHandler:
                 viewer_handle=viewer_handles.get(recipient_id),
             )
             names_by_recipient[recipient_id] = named
-            swaps_by_recipient[recipient_id] = snapshot_swaps(named, public_names)
+            swaps_by_recipient[recipient_id] = snapshot_id_swaps(named, referents)
         for delivery in deliveries:
             intent = intents[delivery.delivery_key]
             common = {
