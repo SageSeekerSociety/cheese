@@ -31,6 +31,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.model_catalog import Scene, catalog, gate_call, pick
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
+    memory_dropped_notice,
     memory_handed_back_notice,
 )
 from app.domain.agent.proposals import propose
@@ -554,6 +555,14 @@ async def _say_memory_change(
         )
         if room is not None:
             await keep_record(session, conversation_id=room, content=content, meta=meta)
+    if change.dropped:
+        # 平台没收、也没留副本的写入：只有路径和原因，说给写它的 agent。
+        told.append(
+            (
+                say("memoryDropped", count=len(change.dropped)),
+                memory_dropped_notice(change.dropped),
+            )
+        )
     # `writer_room` is the writer's conversation: a room's line, or a task or
     # 支线 inside one, which `announce` reaches through its room.
     writer = await PlaceResolver(session).conversation(writer_room)

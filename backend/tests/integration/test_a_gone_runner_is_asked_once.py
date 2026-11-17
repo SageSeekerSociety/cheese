@@ -58,6 +58,7 @@ async def _place(factory, channel_name, topic) -> None:
             agent_handle=AGENT,
             resume_token="the-old-conversation",
             harness=CLAUDE_CODE,
+            generation=0,
         )
         await db.commit()
 

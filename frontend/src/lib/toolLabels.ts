@@ -108,6 +108,7 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_task.tell': 'toolLabels.cheeseTaskTell',
   'cheese_task.look': 'toolLabels.cheeseTaskLook',
   'cheese_task.report': 'toolLabels.cheeseTaskReport',
+  'cheese_task.accept': 'toolLabels.cheeseTaskAccept',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   'cheese_web.fetch': 'toolLabels.cheeseFetch',
   // 个人芝士的工具（backend/sandbox/cheese 的 DELEGATED_TOOLS）。

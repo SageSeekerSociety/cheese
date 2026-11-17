@@ -32,6 +32,7 @@ from app.domain.prompts import (
     render_notice,
     render_opening,
     resume_notice,
+    talk_pointer,
     untitled_task,
 )
 from app.domain.prompts.profile import holds
@@ -166,7 +167,19 @@ async def converse(
         keeps_memory=keeps_memory(runtime.harness),
     )
     async with prep.sessions() as session:
-        told = await AgentSessionService(session).told(
+        sessions = AgentSessionService(session)
+        # A conversation started under rules this kind has replaced is given
+        # up on as an un-compactable one is, once: what it was told goes with
+        # it, so the new conversation is told the whole state even if its
+        # token is recorded before this opening reaches it.
+        if await sessions.retire_older(
+            topic_id,
+            prepared.agent.handle,
+            harness=prepared.harness,
+            generation=PROFILES[prepared.kind].generation,
+        ):
+            await session.commit()
+        told = await sessions.told(
             topic_id, prepared.agent.handle, harness=prepared.harness
         )
         # 平台自己说给模型的那几句按提问的人的语言走（`user.language`）：一次
@@ -176,6 +189,9 @@ async def converse(
     if untitled:
         # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
         prompt_text = f"{platform_prompt(untitled_task(TITLE_CHARS), NoticeType.turn)}\n\n{prompt_text}"
+    if prepared.talk_for and keeps_memory(runtime.harness):
+        # 只对这一轮成立：下一轮答的可能是别人。
+        prompt_text = f"{platform_prompt(talk_pointer(prepared.talk_for), NoticeType.turn)}\n\n{prompt_text}"
     if is_resume:
         prompt_text = (
             f"{platform_prompt(resume_notice(), NoticeType.turn)}\n\n{prompt_text}"
@@ -243,6 +259,7 @@ async def converse(
             turn_images=prepared.turn_images,
             replay_notice=prepared.replay_notice,
             resume_session_id=prepared.resume_session_id,
+            retired_session_id=prepared.retired_session_id,
             harness=prepared.harness,
             needs_place=prepared.needs_place,
             answers_the_platform=PROFILES[prepared.kind].answers_the_platform,

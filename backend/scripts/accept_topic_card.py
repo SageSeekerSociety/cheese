@@ -21,7 +21,7 @@ TOPIC_ID = uuid.UUID(sys.argv[1])
 async def main() -> int:
     from sqlalchemy import select
 
-    from app.api.routes.accept import _accept_service
+    from app.api.accept_service import accept_service
     from app.core.db import async_session_factory
     from app.domain.review.models import AcceptCard, AcceptStatus
 
@@ -46,7 +46,7 @@ async def main() -> int:
         # `review` cannot reach are handed in at the API ring, and this script is
         # the button's own path run from a shell. Listing them here a second time
         # is what let this call go stale when the ports became required.
-        decided = await _accept_service(session).accept(
+        decided = await accept_service(session).accept(
             card_id=card.id, decided_by="andy"
         )
         await session.commit()

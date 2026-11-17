@@ -40,12 +40,14 @@ from app.domain.agent.harness.codex.host import configure as start_codex
 from app.domain.agent.harness.driven.runner import (
     REPLY_INSIST,
     REPLY_OWED,
+    TURN_END_HINT,
     SessionStart,
     socket_path,
 )
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
-from app.domain.prompts import NoticeType, notice_template, platform_prompt
+from app.domain.agent.room.system_prompt import session_env
+from app.domain.prompts import Kind, NoticeType, notice_template, platform_prompt
 from tests.pinned_claude import claude_binary, codex_binary, pi_binary
 from tests.support import executor_release
 from tests.support.completions_fixture import Completions
@@ -61,6 +63,8 @@ SUBAGENT_TASK = "SUBAGENT_TASK: run the commands"
 REFUSED = REPLY_OWED.split(":")[0]
 #: …and of the reminder a turn that tried to end unanswered is held to.
 HELD = REPLY_INSIST.split(";")[0]
+#: …and of what a main line that sent nothing is told as its turn ends.
+UNSENT = TURN_END_HINT.split("：")[0]
 #: What the person wrote, as the room's record holds it.
 IN_THE_ROOM = "the build broke on the arm runner, see the log above"
 
@@ -277,7 +281,7 @@ class Session:
 
 
 @asynccontextmanager
-async def claude_code(tmp_path: Path, steps: list):
+async def claude_code(tmp_path: Path, steps: list, env: dict | None = None):
     """The runner archive over the pinned build, launched with the
     remote-execution function hook and the native MCP server a room gets."""
     sys.path.insert(0, str(SCRIPTS))
@@ -396,6 +400,7 @@ async def claude_code(tmp_path: Path, steps: list):
         env={
             **contract.fixture_env(home, tmp_path, model.server_port),
             **backend.room_env(),
+            **(env or {}),
             "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
             "CHEESE_CLAUDE_COMMAND": command,
             "CHEESE_AUTHOR": "cheese",
@@ -446,7 +451,7 @@ class CodexSession(Session):
 
 
 @asynccontextmanager
-async def codex(tmp_path: Path, steps: list):
+async def codex(tmp_path: Path, steps: list, env: dict | None = None):
     """The Codex runner archive, its tools on a real executor over the project."""
     home = tmp_path / "executor-home"
     helper = executor_release.install(home / ".cheese")
@@ -518,7 +523,7 @@ async def codex(tmp_path: Path, steps: list):
                 },
                 "codex_config": model.config(),
                 "artifact": str(artifact),
-                "env": backend.room_env(),
+                "env": {**backend.room_env(), **(env or {})},
             },
         )
 
@@ -556,7 +561,7 @@ async def codex(tmp_path: Path, steps: list):
 
 
 @asynccontextmanager
-async def pi(tmp_path: Path, steps: list):
+async def pi(tmp_path: Path, steps: list, env: dict | None = None):
     """The pi runner over the pinned build, with the platform extension."""
     backend = Backend()
     model = Completions(
@@ -589,6 +594,7 @@ async def pi(tmp_path: Path, steps: list):
         "PI_OFFLINE": "1",
         "PI_TELEMETRY": "0",
         **backend.room_env(),
+        **(env or {}),
     }
     # The runner runs the platform's tools in its own process, as on the host.
     saved = {key: os.environ.get(key) for key in env}
@@ -954,3 +960,45 @@ async def test_a_turn_held_for_its_reply_is_still_held_to_its_conclusion(
         assert len(session.requests) == len(steps)
         assert session.backend.published == ["on it"]
         assert not session.working(await session.call("ping", {}))
+
+
+# --- a session that holds nothing back: the channel's main line ---------------
+
+#: The launch a channel's main line is started with.
+MAIN_LINE = session_env(Kind.main_line)
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_main_line_turn_that_answered_ends_however_it_goes_on(
+    tmp_path, harness
+):
+    """The main line owes one visible act. Once it has sent its answer, what it
+    goes on to do and the words it ends on are its own: it is not held again
+    to send them."""
+    steps = [
+        publish("收到，开了任务 #8"),
+        shell("touch LOOKED"),
+        say("任务已经开好，等它报告。"),
+    ]
+    async with harness(tmp_path, steps, env=MAIN_LINE) as session:
+        await session.send("[someone]: 把 README 的标题改一下", owes_reply=True)
+        await session.finished(len(steps))
+        # A turn held as it ends is held before `finished` saw it idle; this
+        # only gives a late one time to show.
+        await asyncio.sleep(1)
+
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == ["收到，开了任务 #8"]
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_main_line_turn_that_sent_nothing_is_told_so_once(tmp_path, harness):
+    steps = [say("我看过了"), publish("看过了，没问题")]
+    async with harness(tmp_path, steps, env=MAIN_LINE) as session:
+        await session.send("[someone]: 看一下现在的进度", owes_reply=True)
+        await session.finished(len(steps))
+
+        assert UNSENT in session.told(1)
+        assert session.backend.published == ["看过了，没问题"]

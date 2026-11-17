@@ -23,6 +23,7 @@ class SessionSender(Protocol):
         on_mark: Callable[[uuid.UUID], None],
         register_input: InputRegistrar,
         resume_token: str | None = None,
+        retired_token: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -53,6 +54,7 @@ class PreparedSend:
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
+    retired_session_id: str | None
     harness: str
     needs_place: bool
     # A turn the platform started still owes a visible act (`Profile.answers_the_platform`):

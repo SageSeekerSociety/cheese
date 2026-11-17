@@ -1,4 +1,7 @@
-"""The 现场 timeline is a read projection of immutable harness records."""
+"""The 现场 timeline is a read projection of immutable harness records.
+
+A task's also holds what passed between it and its channel's main line
+(`api.task_exchange`)."""
 
 import uuid
 from datetime import datetime
@@ -10,6 +13,7 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.session_record_rows import no_platform_reminders, text_of
+from app.api.task_exchange import exchange_rows
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
@@ -134,7 +138,12 @@ async def _newer_page(
             uuid.UUID(record["id"]).int,
         )
         record["meta"]["cursor"] = service.encode_cursor(key)
-    candidates = sorted([*items, *old, *records], key=_order)
+    exchanged = (
+        await exchange_rows(db, place.task.id, after=forward, author=author)
+        if place.task is not None
+        else []
+    )
+    candidates = sorted([*items, *old, *records, *exchanged], key=_order)
     taken = candidates[:limit]
     # 游标取**交出去的那几条**里的最后一条，不是藏掉平台提醒之后剩下的最后一条：
     # 否则一页全是提醒时读者手上的游标不动，下一次又把同一段读回来。
@@ -249,10 +258,15 @@ async def topic_transcript(
             uuid.UUID(record["id"]).int,
         )
         record["meta"]["cursor"] = service.encode_cursor(key)
+    exchanged = (
+        await exchange_rows(db, place.task.id, before=cursor, author=author)
+        if place.task is not None
+        else []
+    )
     candidates = sorted(
         (
             item
-            for item in [*items, *old, *records]
+            for item in [*items, *old, *records, *exchanged]
             if cursor is None or _order(item) < cursor
         ),
         key=_order,

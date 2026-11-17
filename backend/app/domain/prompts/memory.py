@@ -1,12 +1,16 @@
 """What a session is told about its memory: the rules (`pieces/memory/`), the
-index it opens with, and where one person's private index is.
+index it opens with, and where one person's private notes are.
 
-The rules are Claude Code 2.1.283's memory section, translated, with three
-changes for the platform: the scopes are `team/` and `private/<handle>/` and
-follow the project, not a repository; what the platform already records as
-structured data (progress, members, tasks, the living document) is not
-written into memory; and `private/` exists only in one person's private chat.
+The rules are Claude Code 2.1.283's memory section, translated, with the
+platform's changes: the scopes are `team/` and `private/<handle>/` and follow
+the project, not a repository; what the platform already records as structured
+data (progress, members, tasks, the living document) is not written into
+memory; a private chat carries its person's whole `private/`, and a
+multi-person place only the `communication` notes of the people a turn answers
+(`talk_pointer`).
 """
+
+from app.domain.prompts.text import piece
 
 #: 会话里那份记忆副本的根，按 agent 在文件工具里该写的那个样子写：`~` 是会话
 #: 自己的家，在会话机上，runner 就在那里对账（`runner.memory_root`）。不写成
@@ -42,3 +46,18 @@ def private_index_pointer(owner: str) -> str:
         f"这一轮答的是 {owner}。他的 private 记忆只有他本人看得到，索引在 `{path}`："
         "这一轮动手之前先用 Read 读它，正文在同一个目录下，需要时再读。"
     )
+
+
+def talk_pointer(people: list[dict]) -> str:
+    """多人的地方里，跟着这一轮的那一句：这一轮答的人里，谁有 communication 记录、
+    在哪。
+
+    和 `private_index_pointer` 同一个道理：记录本身不进输入（输入在场的人都读得
+    到），只说在哪；agent 用 Read 读它的那一次调用只给本人看。``people`` 是
+    ``{"handle", "name"}``。"""
+    lines = "\n".join(
+        f"- {p['name']}（handle: {p['handle']}）："
+        f"`{MEMORY_DIR}/private/{p['handle']}/MEMORY.md`"
+        for p in people
+    )
+    return piece("memory/talk_pointer", people=lines)

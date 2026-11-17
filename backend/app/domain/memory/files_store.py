@@ -31,6 +31,7 @@ from app.domain.memory.files import (
     check_path,
     fit_index,
     limit_breach,
+    policy_breach,
     prefix_of,
     without_entries,
 )
@@ -101,8 +102,8 @@ class MemoryIndex:
 
 #: What a private chat or private channel tells the agent about `team/`.
 SHARED_READ_ONLY = (
-    "这里是私聊或私密频道，`team/` 只读：在这里了解到的事写进说话那个人的 "
-    "`private/<handle>/`，写进 `team/` 的改动不会保存。"
+    "这里是私聊或私密频道，`team/` 只读：在这里听到的话只有在场的人能读，"
+    "写进 `team/` 的改动不会保存。"
 )
 
 
@@ -247,7 +248,10 @@ class MemoryFileStore:
         """
         check_path(path)
         row = await self.get(project_id, scope, owner_handle, path, for_update=True)
-        if breach := limit_breach(path, content, row.content if row else None):
+        previous = row.content if row else None
+        if breach := limit_breach(path, content, previous) or policy_breach(
+            f"{prefix_of(scope, owner_handle)}/{path}", content, previous
+        ):
             raise MemoryFileLimit(path, breach)
         if row is None:
             if expected_version is not None:

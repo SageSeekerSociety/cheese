@@ -113,6 +113,8 @@ class Launch:
     runtime: RoomSessions
     system_prompt: str
     resume_token: str | None
+    #: The conversation it must not take up again (`Continuation.retired`).
+    retired_token: str | None
     model: str | None
     env: dict[str, str] | None
     needs_place: bool
@@ -175,6 +177,9 @@ class TurnContext:
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
+    # The conversation this seat's session must not take up again
+    # (`Continuation.retired`).
+    retired_session_id: str | None
 
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
@@ -186,6 +191,10 @@ class TurnContext:
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
     # `prompts/pieces/memory/`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
+    # 多人的地方里，这一轮答的人中有 communication 记录的那几位（handle、名字）：
+    # 这一轮先读他们的记录（`prompts.talk_pointer`）。私聊里是空的——那里的整棵
+    # private 在 `memory` 里指着。
+    talk_for: list[dict]
     prior_progress: list[dict]
     #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
     #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：
@@ -259,7 +268,7 @@ class _MemoryBooks(Protocol):
         seat: tuple[uuid.UUID, str],
         *,
         acting: str,
-        speaker: str | None,
+        speakers: tuple[str, ...],
         pointed: bool = False,
     ) -> None: ...
 

@@ -110,6 +110,12 @@ class Profile:
     #: Where the session may write files: None anywhere it works, "memory"
     #: only its memory tree.
     writes: str | None = None
+    #: Which rulebook of this kind a session is started under. Raised by hand
+    #: when the kind's role changes so that its earlier turns would contradict
+    #: the new rules: a session started under another generation is not
+    #: resumed, and the place starts a new one (`agent_sessions.generation`).
+    #: A session recorded before generations were counted is generation 0.
+    generation: int = 0
 
 
 class ProfileError(LookupError):

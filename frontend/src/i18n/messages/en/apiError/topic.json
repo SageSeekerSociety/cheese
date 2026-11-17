@@ -69,6 +69,10 @@
   "coordinateTellClosed": "This task has ended and takes nothing more. Reopen it to go on.",
   "coordinateAlreadyClosed": "This task is already closed.",
   "coordinateCloseWhileReviewWaits": "This task has a delivery waiting for review and cannot be closed: closing would void it, which is the reviewer's decision.",
+  "coordinateAcceptNothingWaiting": "This task has no delivery waiting for review.",
+  "coordinateAcceptReviewerWordOnly": "You can adopt for a reviewer only in a turn that {reviewer} started by asking for it. Tell {reviewer} the delivery is waiting for their review.",
+  "coordinateAcceptNewerDelivery": "This version was handed in after {reviewer} sent that message, so they have not seen it. Tell {reviewer} the new version is waiting for their review.",
+  "chatRepliesMainLineOnly": "Quick replies are for a channel's main line only; to ask for an answer in a task or a thread, ask a question.",
   "reportFromOwnTask": "Only a task's own session reports to the main line.",
   "reportNotOpenedByMainLine": "This task was not opened from the main line, so there is no one to report to; ask in the task itself.",
   "teammateTaskNotNamed": "Only an AI teammate a member named can take this task: {teammate} was not named in this message."

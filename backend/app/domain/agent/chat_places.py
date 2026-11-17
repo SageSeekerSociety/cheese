@@ -21,10 +21,12 @@ from sqlalchemy import select
 
 from app.domain.agent.harness import harness_for
 from app.domain.agent.queries import agent_for_seat
+from app.domain.agent.room.system_prompt import place_kind
 from app.domain.agent.room_events import post_system_event
 from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.prompts import PROFILES
 from app.domain.room_task.place import PlaceResolver
 
 if TYPE_CHECKING:
@@ -125,6 +127,9 @@ class ConversationPlaces:
                         agent_handle=agent.handle,
                         resume_token=session_id,
                         harness=harness,
+                        # A conversation recorded here for the first time was
+                        # started under the rules its kind has now.
+                        generation=PROFILES[place_kind(place)].generation,
                     )
                     await session.commit()
         except Exception:  # never mask the original failure

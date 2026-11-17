@@ -29,6 +29,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
 
+from app.api.accept_service import accept_service
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
@@ -69,7 +70,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import checkout_sweep
-from app.domain.agent.announce import announce
+from app.domain.agent.announce import announce, open_turn_of, word_that_started
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.opening import opening_content
@@ -99,7 +100,7 @@ from app.domain.project_permissions import Permission
 from app.domain.prompts import piece, task_opening_prompt
 from app.domain.review.archive import OPEN_CARD_STATUSES, close_cards_for_closed_task
 from app.domain.review.close_grounds import grounds_to_close
-from app.domain.review.services import AcceptService
+from app.domain.review.services import AcceptService, deliverable_revision
 from app.domain.review.task_landing import (
     main_line_opener,
     task_named,
@@ -905,6 +906,13 @@ class TaskNamed(BaseModel):
     title: str
 
 
+class TaskAccepted(TaskNamed):
+    #: Where the delivery stands after the adoption: `accepted` when it
+    #: landed, `conflict` when the merge met a conflict the task is now
+    #: resolving.
+    status: str
+
+
 class ExchangeLine(BaseModel):
     at: str
     kind: str | None
@@ -1014,6 +1022,7 @@ async def tell_coordinated_task(
         ),
         event_type=TASK_TOLD,
         asker=asker,
+        exchanged=(at.actor.handle, body.content.strip()),
     )
     await db.commit()
     await dispatch(chat)
@@ -1058,6 +1067,59 @@ async def reopen_coordinated_task(
     return ok(await _reopen(db, place, at.actor, task))
 
 
+@router.post("/{topic_id}/tasks/{ref}/accept", **typed_response(TaskAccepted))
+async def accept_coordinated_task(
+    ref: str,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    db: DbSession,
+) -> dict:
+    """The main line adopts a task's delivery on its reviewer's word: the
+    reviewer said so in the message that started this turn, and the AI
+    teammate adopts for them, recorded as such (`decided_by_assistant`).
+
+    Only then. The delivery is the one waiting on that very person, handed in
+    before they spoke, and what is adopted is what the platform holds for it
+    (the head on the card, the deliverable's current version) — the caller
+    names no version. The ordinary acceptance service does the rest, so its
+    gates, merge, PR and what follows are the ones a click goes through."""
+    task = await _coordinated(db, at, ref)
+    service = accept_service(db)
+    card = await service.waiting_card(task.id)
+    if card is None:
+        raise ConflictError(say("coordinateAcceptNothingWaiting"))
+    reviewers = (await service.reviewer_handles_for_cards([card.id])).get(card.id, [])
+    roster = await room_roster(db, at.place.project_id, at.place.room)
+    names = {m["handle"]: m["name"] for m in roster}
+    waiting_on = "、".join(member(handle, names) for handle in reviewers)
+    turn = await open_turn_of(
+        db, at.place.project_id, at.place.conversation_id, at.actor.handle
+    )
+    reviewer = turn.author if turn is not None else None
+    if reviewer is None or reviewer not in reviewers:
+        raise ForbiddenError(
+            say("coordinateAcceptReviewerWordOnly", reviewer=waiting_on)
+        )
+    assert turn is not None
+    said = await word_that_started(db, turn)
+    if said is None or card.created_at > said.created_at:
+        raise ConflictError(say("coordinateAcceptNewerDelivery", reviewer=waiting_on))
+    decided = await service.accept(
+        card_id=card.id,
+        decided_by=reviewer,
+        head_sha=card.pr_head_sha,
+        deliverable_revision=deliverable_revision(task.project_id, card),
+        by_assistant=True,
+    )
+    return ok(
+        {
+            "id": str(task.id),
+            "number": task.number,
+            "title": task.title,
+            "status": decided.status.value,
+        }
+    )
+
+
 @router.post("/{topic_id}/report", **typed_response(ReportOut))
 async def report_to_main_line(
     body: ReportIn,
@@ -1080,6 +1142,8 @@ async def report_to_main_line(
         task,
         seat=opener,
         kind=body.kind,
+        sender=at.actor.handle,
+        said=body.content.strip(),
         content=piece(
             f"main_line/report_{body.kind}",
             task=task_named(task),
