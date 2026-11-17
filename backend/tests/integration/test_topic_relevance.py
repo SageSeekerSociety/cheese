@@ -277,7 +277,7 @@ def test_a_question_asked_on_a_card_awaits_on_its_channel(client):
     assert _seen_by(client, pid, "alice")["T"]["awaits_me"] is False
 
     # 点选项就灭：频道等的是那道题，题了结，这一格跟着走。
-    _say(client, card["id"], "bob", "按部门", reply_to=card_question["id"])
+    _say(client, card["id"], "bob", "cursor", reply_to=card_question["id"])
     assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is False
 
 
