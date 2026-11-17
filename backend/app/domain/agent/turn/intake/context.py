@@ -113,6 +113,8 @@ class Launch:
     runtime: RoomSessions
     system_prompt: str
     resume_token: str | None
+    #: The conversation it must not take up again (`Continuation.retired`).
+    retired_token: str | None
     model: str | None
     env: dict[str, str] | None
     needs_place: bool
@@ -175,6 +177,9 @@ class TurnContext:
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
+    # The conversation this seat's session must not take up again
+    # (`Continuation.retired`).
+    retired_session_id: str | None
 
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.

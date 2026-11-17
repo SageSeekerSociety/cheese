@@ -243,6 +243,7 @@ async def converse(
             turn_images=prepared.turn_images,
             replay_notice=prepared.replay_notice,
             resume_session_id=prepared.resume_session_id,
+            retired_session_id=prepared.retired_session_id,
             harness=prepared.harness,
             needs_place=prepared.needs_place,
             answers_the_platform=PROFILES[prepared.kind].answers_the_platform,

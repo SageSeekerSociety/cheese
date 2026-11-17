@@ -63,7 +63,7 @@ from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import memory_index
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
-from app.domain.prompts import task_section
+from app.domain.prompts import PROFILES, task_section
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import PlaceResolver
@@ -317,10 +317,14 @@ async def prepare(
         # does not fail, it hands back None and starts a brand-new
         # conversation, which is the failure this whole path prevents.
         session_agent = agent
-        resume_session_id = await AgentSessionService(session).resume_token(
+        kind = session_kind(place, needs_place=needs_place)
+        # A conversation started under rules this kind has since replaced is
+        # not continued: its own turns would teach the old role.
+        continuation = await AgentSessionService(session).continuation(
             place.conversation_id,
             session_agent.handle,
             harness=wanted_harness,
+            generation=PROFILES[kind].generation,
         )
         # The platform names tasks itself (room_task/naming.py). Only where
         # it cannot — no gateway to call — is the task's own session asked
@@ -478,9 +482,10 @@ async def prepare(
         provider=provider,
         harness=wanted_harness,
         needs_place=needs_place,
-        kind=session_kind(place, needs_place=needs_place),
+        kind=kind,
         replay_notice=replay_notice,
-        resume_session_id=resume_session_id,
+        resume_session_id=continuation.resume,
+        retired_session_id=continuation.retired,
         role=role,
         roster=roster,
         topic_refs=topic_refs,

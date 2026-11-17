@@ -172,6 +172,7 @@ async def _after_a_compaction_that_could_not_be_made(factory) -> tuple:
             agent_handle=seat["agent_handle"],
             resume_token="native-1",
             harness=seat["harness"],
+            generation=0,
         )
         await session.commit()
     from app.domain.agent.turn.store.session_inputs import remember_opening
@@ -191,9 +192,12 @@ async def _after_a_compaction_that_could_not_be_made(factory) -> tuple:
     )
     async with factory() as session:
         service = AgentSessionService(session)
-        token = await service.resume_token(
-            topic_id, seat["agent_handle"], harness=seat["harness"]
-        )
+        token = (
+            await service.conversation(
+                topic_id, seat["agent_handle"], harness=seat["harness"]
+            )
+            or (None,)
+        )[0]
         told = await service.told(
             topic_id, seat["agent_handle"], harness=seat["harness"]
         )
@@ -250,6 +254,7 @@ async def _two_seats_one_given_up(factory) -> dict:
                 agent_handle=handle,
                 resume_token=token,
                 harness="claude-code",
+                generation=0,
             )
         await session.commit()
     for handle in seats:
@@ -272,9 +277,10 @@ async def _two_seats_one_given_up(factory) -> dict:
         service = AgentSessionService(session)
         for handle in seats:
             out[handle] = {
-                "token": await service.resume_token(
-                    topic_id, handle, harness="claude-code"
-                ),
+                "token": (
+                    await service.conversation(topic_id, handle, harness="claude-code")
+                    or (None,)
+                )[0],
                 "told": await service.told(topic_id, handle, harness="claude-code"),
             }
     return out
@@ -359,11 +365,11 @@ async def test_a_give_up_leaves_one_quiet_line_in_the_site(
         assert handles, "this conversation had a session row to give up"
         [given_up] = handles
         assert (
-            await AgentSessionService(session).resume_token(
+            await AgentSessionService(session).conversation(
                 conversation, given_up, harness="claude-code"
             )
-            is None
-        )
+            or (None,)
+        )[0] is None
 
     [line] = _of_kind(rows, "conversation_abandoned")
     assert line["meta"]["severity"] == "info"
@@ -482,6 +488,7 @@ async def _a_failure_that_names_no_seat_leaves_the_room_alone(
             agent_handle=room_agent,
             resume_token="native-room",
             harness="claude-code",
+            generation=0,
         )
         await session.commit()
 
@@ -502,9 +509,12 @@ async def _a_failure_that_names_no_seat_leaves_the_room_alone(
     )
 
     async with factory() as session:
-        token = await AgentSessionService(session).resume_token(
-            topic_id, room_agent, harness="claude-code"
-        )
+        token = (
+            await AgentSessionService(session).conversation(
+                topic_id, room_agent, harness="claude-code"
+            )
+            or (None,)
+        )[0]
         rows = await for_site(session, topic_id, since=None, until=None)
     narrated = [
         r for r in rows if r["meta"].get("event_type") == "conversation_abandoned"
@@ -552,15 +562,19 @@ async def _abandon_a_conversation_the_event_named_no_harness_for(factory) -> tup
             agent_handle="cheese",
             resume_token="native-1",
             harness="claude-code",
+            generation=0,
         )
         await session.commit()
     given_up = await abandon_opening(
         factory, conversation_id=topic_id, seat="cheese", harness=None
     )
     async with factory() as session:
-        token = await AgentSessionService(session).resume_token(
-            topic_id, "cheese", harness="claude-code"
-        )
+        token = (
+            await AgentSessionService(session).conversation(
+                topic_id, "cheese", harness="claude-code"
+            )
+            or (None,)
+        )[0]
     return given_up, token
 
 
@@ -605,6 +619,7 @@ async def _a_resumed_start_does_not_revive_the_given_up_conversation(factory) ->
             agent_handle="cheese",
             resume_token="native-1",
             harness="claude-code",
+            generation=0,
         )
         await session.commit()
     await abandon_opening(
@@ -617,11 +632,15 @@ async def _a_resumed_start_does_not_revive_the_given_up_conversation(factory) ->
             agent_handle="cheese",
             resume_token="native-1",
             harness="claude-code",
+            generation=0,
         )
         await session.commit()
-        token = await AgentSessionService(session).resume_token(
-            topic_id, "cheese", harness="claude-code"
-        )
+        token = (
+            await AgentSessionService(session).conversation(
+                topic_id, "cheese", harness="claude-code"
+            )
+            or (None,)
+        )[0]
     return token
 
 

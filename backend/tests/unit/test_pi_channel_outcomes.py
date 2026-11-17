@@ -44,7 +44,11 @@ async def _place(db_factory, topic, agent, state, sid, machine=DEVICE) -> None:
     async with db_factory() as session:
         service = AgentSessionService(session)
         await service.remember(
-            conversation_id=topic, agent_handle=agent, resume_token=sid, harness=PI
+            conversation_id=topic,
+            agent_handle=agent,
+            resume_token=sid,
+            harness=PI,
+            generation=0,
         )
         await service.remember_place(
             conversation_id=topic,

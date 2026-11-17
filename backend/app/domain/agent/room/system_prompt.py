@@ -17,6 +17,7 @@ from app.domain.agent.harness.driven.runner import (
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skill
 from app.domain.prompts import PROFILES, Facts, Kind, render_system
+from app.domain.topic.models import is_private_chat
 
 if TYPE_CHECKING:
     from app.domain.room_task.place import Place
@@ -33,6 +34,12 @@ def session_kind(place: "Place", *, needs_place: bool) -> Kind:
     if place.thread is not None:
         return Kind.thread
     return Kind.main_line
+
+
+def place_kind(place: "Place") -> Kind:
+    """``session_kind`` for a place, asked the way a turn asks it: a private
+    chat is the one room that needs no place (`turn.intake.rooms._is_dm`)."""
+    return session_kind(place, needs_place=not is_private_chat(place.room))
 
 
 def session_system_prompt(

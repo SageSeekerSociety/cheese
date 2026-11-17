@@ -44,6 +44,7 @@ async def ensure(
     *,
     system_prompt: str,
     resume_token: str | None = None,
+    retired_token: str | None = None,
     model: str | None = None,
     env: dict[str, str] | None = None,
     acting: str | None = None,
@@ -118,6 +119,7 @@ async def ensure(
             model=model or model_roles.model("agent_model"),
             gone_after_s=pkg.RUNNER_GONE_S,
             resume_token=resume_token,
+            retired_token=retired_token,
             model_settings=ModelSettings(effort=effort),
             env={
                 **launched_env,

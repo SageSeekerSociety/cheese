@@ -137,6 +137,12 @@ class SessionSpec:
     model_settings: ModelSettings = ModelSettings()
     #: The conversation it resumes.
     resume_token: str | None = None
+    #: A conversation it must not take up again, even from what its own state
+    #: recorded: given up on, or started under rules its kind has replaced. A
+    #: session still running it is started afresh once it is idle. Claude Code
+    #: keeps to it; the Codex and pi runners keep one conversation per state
+    #: directory and go on with it.
+    retired_token: str | None = None
     #: What its tools read of where they act (the project, the room).
     env: Mapping[str, str] = field(default_factory=dict)
     #: Who it acts as, when that is a teammate's handle.
