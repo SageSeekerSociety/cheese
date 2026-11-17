@@ -248,12 +248,12 @@ const moreActions = computed<MenuAction[]>(() => {
       <div class="review-head__tools">
         <BaseButton
           v-if="card.pr_url"
-          kind="ghost"
+          kind="secondary"
           size="sm"
           append-icon="mdi-open-in-new"
           :href="card.pr_url"
           target="_blank"
-          rel="noopener"
+          rel="noopener noreferrer"
         >
           PR #{{ card.pr_number }}
         </BaseButton>
@@ -509,11 +509,12 @@ const moreActions = computed<MenuAction[]>(() => {
 }
 .review-head__title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 8px;
 }
 .review-head__title {
-  flex: 1 1 auto;
+  flex: 1 1 240px;
   min-width: 0;
   margin: 2px 0 0;
 }
