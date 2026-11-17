@@ -87,7 +87,8 @@ def _docker(*args, timeout=60):
             [DOCKER, *args], capture_output=True, text=True, timeout=timeout
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise PlatformError(f"docker {args[0]}: {exc}") from exc
+        why = f"docker {args[0]}: {exc}"
+        raise PlatformError(why) from exc
 
 
 def _ensure_image(image):
@@ -95,7 +96,8 @@ def _ensure_image(image):
         return
     pulled = _docker("pull", image, timeout=PULL_TIMEOUT_S)
     if pulled.returncode:
-        raise PlatformError(f"docker pull {image}: {pulled.stderr.strip()[:500]}")
+        why = f"docker pull {image}: {pulled.stderr.strip()[:500]}"
+        raise PlatformError(why)
 
 
 def _unpack(code_b64, into):
@@ -105,7 +107,8 @@ def _unpack(code_b64, into):
     os.makedirs(into)
     if data:
         if not hasattr(tarfile, "data_filter"):
-            raise PlatformError("this Python has no tarfile data filter")
+            why = "this Python has no tarfile data filter"
+            raise PlatformError(why)
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
             archive.extractall(into, filter="data")
     os.chmod(into, 0o777)
@@ -226,7 +229,8 @@ def _run(args, name, stdin, wall_s, out_path):
             args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
     except OSError as exc:
-        raise PlatformError(f"docker run: {exc}") from exc
+        why = f"docker run: {exc}"
+        raise PlatformError(why) from exc
     with open(out_path, "wb") as sink:
         threads = [
             threading.Thread(target=_feed, args=(process.stdin, stdin)),
@@ -256,7 +260,8 @@ def _run(args, name, stdin, wall_s, out_path):
         # No container: docker could not start it (no daemon, no image, a
         # bad mount). That is the host's failure, not the program's.
         detail = ran.stderr_head.decode("utf-8", "replace").strip()
-        raise PlatformError(f"docker run: {detail[:500] or found.stderr.strip()}")
+        why = f"docker run: {detail[:500] or found.stderr.strip()}"
+        raise PlatformError(why)
     try:
         state = json.loads(found.stdout or "{}")
     except ValueError:

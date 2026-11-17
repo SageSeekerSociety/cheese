@@ -1,0 +1,20 @@
+{
+  "judgeCodeTooLarge": "The code is over {mb} MB, so it was not judged",
+  "judgeCodeUnreadable": "The project's code couldn't be read just now; it will be tried again",
+  "judgeGitHubLater": "Projects connected to GitHub can't be judged yet; the teacher can score the tests by hand",
+  "judgeKindUnsupported": "This kind of test can't be judged yet; the teacher can score the tests by hand",
+  "judgeNoPayer": "This space has no owner to pay for judging, so it was not judged",
+  "judgeNoRepository": "This project has no code repository, so it was not judged",
+  "judgePlatformFailed": "Judging couldn't finish for a reason on the platform's side, even after one retry; this version loses no points, and the teacher can score the tests by hand",
+  "judgeQueueTimedOut": "Judging waited too long for a free judge host; this version loses no points, and the teacher can score the tests by hand",
+  "judgeSuiteGone": "This task's tests were removed, so it was not judged",
+  "judgeTrialBadPath": "The file path “{path}” is not valid: use a relative path without ..",
+  "judgeTrialBadZip": "The reference code archive can't be opened, or it contains links",
+  "judgeTrialNeedsSuite": "A trial run needs a set of tests",
+  "judgeTrialNoCode": "There is no reference code yet; add the files to try",
+  "judgeTrialNotPublisher": "Only people who can publish tasks in this space can run a trial",
+  "judgeTrialTooManyFiles": "The reference code can have at most {max} files",
+  "judgeTrialUploadTooLarge": "The reference code can be at most {mb} MB",
+  "judgeUnavailable": "Judging is unavailable: the platform has no judge hosts yet; the teacher can score the tests by hand",
+  "judgeUnpriced": "Judging is unavailable: the platform hasn't set a price for judging; the teacher can score the tests by hand"
+}
