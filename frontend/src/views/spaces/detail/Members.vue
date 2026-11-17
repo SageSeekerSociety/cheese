@@ -47,7 +47,6 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import MembersView from './MembersView.vue'
 
 import { SpacesApi } from '@/api/spaces'
-import { userName, userOriginalName } from '@/lib/userNames'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 
@@ -90,8 +89,9 @@ const rows = computed<Row[]>(() => {
     byId.set(admin.user.id, {
       userId: admin.user.id,
       handle: admin.user.username,
-      name: userName(admin.user) || admin.user.username,
-      originalName: userOriginalName(admin.user),
+      name: admin.user.nickname || admin.user.username,
+      // 个人备注按当前查看者回，只给设置它的人看；没有就用昵称。
+      remark: admin.user.remark ?? null,
       avatarId: admin.user.avatarId,
       role: admin.role,
     })
@@ -102,8 +102,8 @@ const rows = computed<Row[]>(() => {
     byId.set(m.userId, {
       userId: m.userId,
       handle,
-      name: userName(m.user) || handle,
-      originalName: userOriginalName(m.user),
+      name: m.user?.nickname || handle,
+      remark: m.user?.remark ?? null,
       avatarId: m.user?.avatarId,
       role: 'MEMBER',
     })

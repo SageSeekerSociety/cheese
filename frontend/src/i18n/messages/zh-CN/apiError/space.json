@@ -19,5 +19,13 @@
   "learningAnalysisDisabled": "这个空间没有开启学情分析",
   "learningJudgmentNotFound": "这条判断不存在，可能已经更新了",
   "learningGroupNotFound": "这一组不存在，可能已经更新了",
-  "learningExportEmpty": "至少勾选一项要导出的内容"
+  "learningExportEmpty": "至少勾选一项要导出的内容",
+  "learningPracticeBoardCapped": "今天这个空间的学情分析次数已经用完，明天再来",
+  "learningPracticeDailyCap": "你今天已经用了 {limit} 次，明天再来",
+  "learningPracticeNoJudgment": "这个知识点还没有对你的判断，暂时出不了题",
+  "learningPracticeNotFound": "这组巩固题不存在",
+  "learningPracticeNotReady": "这组巩固题还在准备，稍后再来",
+  "learningPracticeUnanswered": "还有题没做完",
+  "learningPracticeBadAnswer": "没有这道题或这个选项",
+  "learningPracticeUnreadable": "这次出的题读不出来，再试一次"
 }

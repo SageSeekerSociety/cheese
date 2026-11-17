@@ -21,7 +21,7 @@ slug: publish-a-site
 
 芝士工作期间，任务页右侧的「预览」显示它最近打开的网页。需要修改时，在任务中告诉芝士。
 
-芝士提交后，检查展示页并点「采纳并完成任务」，步骤见[检查结果：采纳或退回](/working-with-cheese#review-result)。网站只发布采纳之后的版本。
+芝士提交后，检查展示页并点「采纳」，步骤见[检查结果：采纳或退回](/working-with-cheese#review-result)。网站只发布采纳之后的版本。
 
 ## 发布网站 {#publish}
 

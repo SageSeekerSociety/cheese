@@ -107,6 +107,10 @@ class TeachingRequest(BaseModel):
     skills: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
         default_factory=list
     )
+    #: 「引导为主」时的两项保护：提示阶梯、输出检查（`Teaching.hint_ladder` /
+    #: `Teaching.output_check`）。只在 `mode` 是 ``guide`` 时生效；缺省关着。
+    hint_ladder: bool = Field(default=False, alias="hintLadder")
+    output_check: bool = Field(default=False, alias="outputCheck")
 
 
 def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
@@ -130,6 +134,8 @@ def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dic
         "materialIds": list(teaching.material_ids),
         "documentIds": list(teaching.document_ids),
         "skills": list(teaching.skills),
+        "hintLadder": teaching.hint_ladder,
+        "outputCheck": teaching.output_check,
     }
     if include_private:
         data["privatePrompt"] = teaching.private_prompt

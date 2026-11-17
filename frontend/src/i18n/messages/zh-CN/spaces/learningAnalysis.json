@@ -110,5 +110,42 @@
       "other": "其他"
     },
     "taskQuote": "「{name}」"
+  },
+  "practice": {
+    "title": "巩固练习",
+    "aiMade": "AI 生成",
+    "lede": "根据你卡住的地方出的题。做完会更新你的学习洞察，只有你自己看得到。",
+    "question": "第 {n} 题",
+    "right": "答对了。",
+    "wrong": "再看一下：",
+    "again": "换一组",
+    "done": "做完了，更新我的学习洞察",
+    "close": "关闭",
+    "score": "答对 {correct} / {total}",
+    "moved": "「{from}」变成了「{to}」",
+    "kept": "仍是「{level}」",
+    "nextReview": "下次复习：{date}",
+    "lastScore": "最近一组巩固题答对 {correct} / {total}",
+    "start": "生成 3 道巩固题",
+    "explain": "先看一段讲解",
+    "left": "今天还能用 {n} 次",
+    "openTitle": "待做的巩固题",
+    "sources": {
+      "self": "自己生成的",
+      "pushed": "老师推送的",
+      "review": "复习"
+    },
+    "progress": "已答 {answered} / {total}",
+    "preparing": "正在出题",
+    "go": "去做",
+    "reviewTitle": "复习提醒",
+    "dueOn": "{date} 到期",
+    "reviewAgain": "再做一组",
+    "reviewNext": "做过的巩固题按 1、3、7、14 天的间隔排期，下次在 {date} 提醒你复习「{name}」。",
+    "reviewNone": "做过巩固题之后，这里会按 1、3、7、14 天的间隔提醒你复习。",
+    "failed": "没能出题，稍后再试",
+    "explainFailed": "没能写出讲解，稍后再试",
+    "answerFailed": "没交上，再点一次",
+    "completeFailed": "没能更新，再试一次"
   }
 }

@@ -97,6 +97,7 @@ class _Week:
     learning_goals = ["能自己写出循环", "能讲清数组和循环怎么配合"]
     private_prompt = "参考答案在第 6 周讲义第 12 页；评分只看能否独立跑通，不看代码风格。"
     skills: list[str] = []
+    ladder = True
 
     @property
     def is_empty(self) -> bool:

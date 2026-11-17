@@ -15,7 +15,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.user.services import names_by_handles
+from app.domain.user.repositories import UserRepository
+from app.domain.user.services import names_by_handles, remarks_by_handles
 
 _TOKEN = re.compile(r"<@([\w-]+)>")
 
@@ -49,9 +50,37 @@ def with_names(value: Any, names: Mapping[str, str]) -> Any:
     return value
 
 
-async def names_for(session: AsyncSession, *values: Any) -> dict[str, str]:
-    """The names of everyone the tokens inside ``values`` name, in one query."""
+async def names_for(
+    session: AsyncSession,
+    *values: Any,
+    viewer_id: int | None = None,
+) -> dict[str, str]:
+    """The names of everyone the tokens inside ``values`` name, in one query.
+
+    ``viewer_id`` is the reader this text is being rendered for. A personal
+    remark (``UserTeammateRemark``) is private to the person who set it, and a
+    notification is shown to one recipient, so the reader's own remarks replace
+    the public nickname here exactly as the roster does on a page. Absent, the
+    text keeps the public name — the sharing, export and push-to-others paths
+    that must not carry a private alias.
+    """
     handles: set[str] = set()
     for value in values:
         handles |= handles_in(value)
-    return await names_by_handles(session, sorted(handles)) if handles else {}
+    if not handles:
+        return {}
+    names = await names_by_handles(session, sorted(handles))
+    viewer_handle = await handle_of_id(session, viewer_id)
+    if not viewer_handle:
+        return names
+    remarks = await remarks_by_handles(session, viewer_handle, sorted(handles))
+    names.update(remarks)
+    return names
+
+
+async def handle_of_id(session: AsyncSession, user_id: int | None) -> str | None:
+    """The account handle behind a user id, or None when there is no such user."""
+    if user_id is None:
+        return None
+    user = await UserRepository(session).get_by_id(user_id)
+    return user.username if user is not None else None

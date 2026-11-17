@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { userName, userOriginalName } from './userNames'
+import { userName, userOriginalName } from './agentNames'
 
 describe('personal names on user-shaped rows', () => {
   it('uses only this row’s private remark and leaves public identity intact', () => {

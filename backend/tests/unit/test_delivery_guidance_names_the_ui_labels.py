@@ -25,11 +25,10 @@ MESSAGES = ROOT / "frontend/src/i18n/messages"
 CLI = ROOT / "backend/sandbox/cheese"
 
 #: (catalog file, key): the buttons and places a person uses to decide a
-#: waiting delivery — the bar above the input box (accept for a last step and
-#: for an earlier one, send back, and the review button a phone shows instead),
+#: waiting delivery — the bar above the input box (accept, send back, and the
+#: review button a phone shows instead),
 #: the Changes tab, and the task page's More actions menu with Close task.
 LABELS = (
-    ("work/room/accept/index.json", "acceptAndComplete"),
     ("work/room/accept/index.json", "acceptAction"),
     ("work/room/accept/index.json", "review"),
     ("work/room/accept/index.json", "sendBack"),

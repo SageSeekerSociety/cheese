@@ -608,12 +608,17 @@ unmatched_ignore_imports_alerting = warn
 # `chapter` joined at layer 4 beside `pin` (2026-10-21): it reads a block by id
 # and the conversation's place, and is read by the room snapshot and the routes
 # only — nothing below reads it back.
+#
+# `judge` joined at layer 5 beside `machine` (2026-11-17): it sends the judging
+# of a student's code to a judge host over the device link (`agent.device_hub`)
+# and reads the task's suites and queue rows from `task` at layer 4, which may
+# not reach a device itself. The task side queues a run; this side takes it.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
     platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding : account
     routine : task_quiet : task_notices : admin : room_cleanup
-    agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
+    agent : agent_instance : machine : judge : device : local_fs : shell : site : preview : assistant : delivery
     block : thread : pin : chapter : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material : voice : machine_skill : skill_market
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ci_activity

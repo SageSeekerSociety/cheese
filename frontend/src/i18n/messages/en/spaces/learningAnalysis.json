@@ -110,5 +110,42 @@
       "other": "other"
     },
     "taskQuote": "“{name}”"
+  },
+  "practice": {
+    "title": "Practice",
+    "aiMade": "AI-made",
+    "lede": "Questions made from where you got stuck. Finishing updates your learning insight, which only you can see.",
+    "question": "Question {n}",
+    "right": "Correct.",
+    "wrong": "Take another look:",
+    "again": "New set",
+    "done": "Done — update my learning insight",
+    "close": "Close",
+    "score": "{correct} of {total} correct",
+    "moved": "{from} became {to}",
+    "kept": "still {level}",
+    "nextReview": "Next review: {date}",
+    "lastScore": "Last practice set: {correct} of {total} correct",
+    "start": "Make 3 practice questions",
+    "explain": "Read a short explanation first",
+    "left": "{n} left today",
+    "openTitle": "Practice to do",
+    "sources": {
+      "self": "made by you",
+      "pushed": "sent by your teacher",
+      "review": "review"
+    },
+    "progress": "{answered} of {total} answered",
+    "preparing": "Being prepared",
+    "go": "Open",
+    "reviewTitle": "Review reminders",
+    "dueOn": "due {date}",
+    "reviewAgain": "Do another set",
+    "reviewNext": "Practice you have done is scheduled at 1, 3, 7 and 14 days; next you'll be reminded on {date} to review “{name}”.",
+    "reviewNone": "Once you have done some practice, reminders to review it come here at 1, 3, 7 and 14 days.",
+    "failed": "Could not make the questions; try again later",
+    "explainFailed": "Could not write the explanation; try again later",
+    "answerFailed": "Not sent; tap again",
+    "completeFailed": "Could not update; try again"
   }
 }

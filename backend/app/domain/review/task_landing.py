@@ -53,10 +53,12 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.event_author import AuthorType
+from app.domain.identity.actor import acted_by
 from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_handle
 from app.domain.notice_meta import (
     EVENT_TASK_ENDED,
     EVENT_TASK_FILED,
+    EVENT_TASK_LANDED,
     SEVERITY_INFO,
     WHO_PLATFORM,
     notice,
@@ -104,9 +106,16 @@ async def delivery_landed(
     handed_over: datetime | None,
     record_instruction: RecordInstruction | None,
     task_teammate: TaskTeammate | None,
+    announce: Announce | None = None,
 ) -> bool:
     """``task``'s delivery merged. ``handed_over``: when its card went up; None
     for a merge no card asked for, which wakes nobody (module docstring).
+
+    A delivery someone adopted is recorded where the task came from as one
+    platform line naming who adopted it (`_step_landed`, ``announce``), not
+    said by the teammate: the reviewer's decision is something that happened,
+    not anyone's words. A door that hands in no ``announce``, and a merge
+    nobody adopted, have the teammate say that it landed (`tell_origin`).
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
@@ -151,12 +160,21 @@ async def delivery_landed(
         )
     await session.flush()
     if goes_on:
-        await tell_origin(
-            session,
-            task,
-            _step_landed(task, pr_number),
-            task_teammate=task_teammate,
-        )
+        adopted_by = by if handed_over is not None else None
+        line = await _step_landed(session, task, adopted_by)
+        if announce is not None and adopted_by is not None:
+            await record_at_origin(
+                session, task, EVENT_TASK_LANDED, line, announce=announce
+            )
+        else:
+            # Said by the teammate, it names nobody: a name in its words would
+            # be an @ that notifies.
+            await tell_origin(
+                session,
+                task,
+                await _step_landed(session, task, None),
+                task_teammate=task_teammate,
+            )
     return True
 
 
@@ -238,7 +256,7 @@ async def deploy_landed(
         await tell_origin(
             session,
             task,
-            _step_landed(task, task.pr_number),
+            await _step_landed(session, task, None),
             task_teammate=task_teammate,
         )
     else:
@@ -249,10 +267,14 @@ async def deploy_landed(
     return True
 
 
-def _step_landed(task: Task, pr_number: int | None) -> str:
-    """The origin's line for a step that landed with the task going on."""
-    if pr_number is not None:
-        return say("taskStepLanded", title=said_title(task), pr=pr_number)
+async def _step_landed(session: AsyncSession, task: Task, by: str | None) -> str:
+    """The origin's line for a step that landed with the task going on: who
+    adopted it (``by``, named by `_adopted_by`), as one line with no PR number
+    in it. With nobody to name — a PR merged on the forge by hand, or a line
+    the teammate says itself — it says only that it landed."""
+    who = await _adopted_by(session, task, by)
+    if who is not None:
+        return say("taskAdopted", who=who, title=said_title(task))
     return say("taskStepLandedNoPr", title=said_title(task))
 
 
@@ -289,10 +311,37 @@ async def tell_origin_ended(
     )
 
 
+async def _adopted_by(
+    session: AsyncSession, task: Task, by: str | None
+) -> object | None:
+    """How a room line names ``by``, who adopted ``task``'s delivery, from what
+    the card recorded: the person (``<@handle>``); 「<teammate>代 <person>」
+    when a project AI teammate adopted it on their word (`decided_by_seat`);
+    the existing 「芝士代 <person>」 (`acted_by`) when their own personal
+    assistant did, and on cards from before the seat was kept. None when
+    nobody adopted it."""
+    if by is None:
+        return None
+    person = f"<@{by}>"
+    card = await session.scalar(
+        select(AcceptCard)
+        .where(AcceptCard.task_id == task.id, AcceptCard.decided_by == by)
+        .order_by(AcceptCard.created_at.desc())
+        .limit(1)
+    )
+    if card is None or not card.decided_by_assistant:
+        return person
+    if card.decided_by_seat is not None:
+        return say("actedByTeammate", agent=f"<@{card.decided_by_seat}>", person=person)
+    return acted_by(by, by_assistant=True)
+
+
 def _how_it_ended(task: Task) -> tuple[str, str]:
     """How ``task`` ended: the line its origin records, and the same facts as
     its opener is told them. One reading of the task's row for both, so the
-    two never say different things."""
+    two never say different things. Who adopted what landed was said when it
+    landed (`_step_landed`); the end says how the task ended, with no PR
+    number in the sentence."""
     accepted = (
         f"交付已采纳（PR #{task.pr_number}）"
         if task.pr_number is not None
@@ -306,11 +355,7 @@ def _how_it_ended(task: Task) -> tuple[str, str]:
             else f"没有哪一版交付被采纳，关闭时的结论是「{task.conclusion}」"
         )
     elif task.accepted_at is not None:
-        line = (
-            say("taskLanded", title=said_title(task), pr=task.pr_number)
-            if task.pr_number is not None
-            else say("taskLandedNoPr", title=said_title(task))
-        )
+        line = say("taskLandedNoPr", title=said_title(task))
         facts = f"{accepted}，任务总结没有写成"
     else:
         line = say("taskClosed", title=said_title(task))
@@ -489,7 +534,7 @@ async def _go_on_if_asked(
         await tell_origin(
             session,
             task,
-            _step_landed(task, task.pr_number),
+            await _step_landed(session, task, None),
             task_teammate=task_teammate,
         )
         await session.commit()

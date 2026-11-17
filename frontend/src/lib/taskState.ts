@@ -70,6 +70,9 @@ export interface TaskState {
   attention: string | null
   /** 标签下面那一行；没有就空串。 */
   line: string
+  /** 在等谁（「等你」「等林老师」）：只在等人审阅或回答时有。主线上任务标签只写这一句，
+   *  整行留给有地方放的列表。 */
+  waits?: string
   /** 悬停在记号上说的那一句；没有就空串。 */
   tip: string
 }
@@ -79,6 +82,8 @@ export const STALE_AFTER_MS = 30 * 60_000
 /** 标着在做、会话却没在跑，超过这么久没回来，就算「可能已断线」。 */
 export const OFFLINE_AFTER_MS = 15 * 60_000
 const OFFLINE_ICON = 'mdi-cloud-off-outline'
+/** 搁置（很久没人理会，快要自动关闭）：灰色月亮。 */
+const NEGLECT_ICON = 'mdi-power-sleep'
 /** 进度很久没变：空心环（不转）+ 右上角橙点，转着会让人以为还在往前走。 */
 const STALE_ICON = 'mdi-circle-outline'
 
@@ -193,6 +198,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'progress_note'
       | 'progress_set_at'
       | 'agent_left_at'
+      | 'neglect'
       | 'session_running'
       | 'moving'
       | 'waiting_on'
@@ -263,6 +269,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   let tone = look.tone
   const label = statusLabel(status)
   let line = ''
+  let waits = ''
   let tip = ''
   let stale = false
   let offline = false
@@ -305,6 +312,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     case 'asking': {
       const mine = row.needs_my_action === true
       line = waitsOn(row.waiting_on, mine) ?? ''
+      waits = line
       break
     }
     case 'review': {
@@ -322,6 +330,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
           : REVIEW_STEP[phrase]
             ? phraseLabel(phrase, ctx.agentName)
             : waitsOn(reviewer, mine)
+      if (phrase === 'awaiting_review') waits = waitsOn(reviewer, mine) ?? ''
       line = joined([
         step,
         card?.subject,
@@ -352,7 +361,23 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     default:
       break
   }
-  if (phrase === 'running') tip = detailOf({ row, label, note, line, live, stale, offline, now })
+  // 搁置：很久没人理会，快要自动关闭。图标换成月亮，状态词不变；说清还剩几天、能做什么。
+  const neglected = !!row.neglect && kind !== 'closed'
+  if (neglected && row.neglect) {
+    icon = NEGLECT_ICON
+    tone = 'faint'
+    const days = Math.max(1, Math.ceil((Date.parse(row.neglect.close_at) - now) / 86_400_000))
+    const quiet = waitedFor(row.neglect.since, now)
+    line = joined([line, t('work.taskState.neglect.closeIn', { days })])
+    tip = [
+      t('work.taskState.neglect.title'),
+      t(row.neglect.waiting_on_someone ? 'work.taskState.neglect.waiting' : 'work.taskState.neglect.quiet', {
+        time: quiet,
+      }),
+      t('work.taskState.neglect.closeIn', { days }),
+      t('work.taskState.neglect.hint'),
+    ].join('\n')
+  } else if (phrase === 'running') tip = detailOf({ row, label, note, line, live, stale, offline, now })
   return {
     kind,
     stale,
@@ -364,6 +389,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     live,
     attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
     line,
+    waits,
     tip,
   }
 }

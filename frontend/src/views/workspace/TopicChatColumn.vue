@@ -16,6 +16,7 @@ import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
+import AgentNowStrip from '@/components/room/AgentNowStrip.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
@@ -73,6 +74,8 @@ const props = defineProps<{
   acceptElsewhere?: boolean
   /** 手机上：采纳那一条只放「审阅」，决定在「改动」页底部。 */
   acceptReviewButton?: boolean
+  /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
+  adoptingTask?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -111,6 +114,8 @@ const emit = defineEmits<{
   (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
+  /** 主线上交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   // AI 队友一条回复上的「查看过程」：右半边换成那一轮的现场。
   (e: 'open-process', turnId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -223,6 +228,12 @@ async function join() {
 const linkDown = computed(() => !!chatRef.value?.linkDown)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
+const agentLines = ref<MemberActivityLine[]>([])
+function onActivity(lines: MemberActivityLine[]) {
+  agentLines.value = lines
+  emit('activity', lines)
+}
+
 defineExpose({
   linkDown,
   reloadFeedback: () => feedbackRef.value?.reload(),
@@ -235,6 +246,8 @@ defineExpose({
 
 <template>
   <div class="chat-col">
+    <!-- 进频道或支线页就能看到：每位 AI 此刻在干什么（和输入框上方那一行同一份数据）。 -->
+    <AgentNowStrip :lines="agentLines" />
     <ChatPanel
       ref="chatRef"
       :topic="topic"
@@ -245,6 +258,7 @@ defineExpose({
       :ask-closed="askClosed"
       :always-summon="alwaysSummon"
       :place-state="task?.status ?? null"
+      :adopting-task="adoptingTask ?? null"
       :in-thread="beside"
       hide-header
       :show-composer="!rejecting"
@@ -263,7 +277,7 @@ defineExpose({
       @agent-control="emit('agent-control', $event)"
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
-      @activity="emit('activity', $event)"
+      @activity="onActivity"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
       @delivery-arrived="emit('delivery-arrived', $event)"
@@ -277,6 +291,7 @@ defineExpose({
       @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
+      @delivery="emit('delivery', $event)"
       @open-process="emit('open-process', $event)"
     >
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得

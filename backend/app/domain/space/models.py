@@ -799,6 +799,13 @@ class SpaceLearningJudgment(Base):
     disputed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: 最近一组巩固题（§ step 4）答对几道、共几道、什么时候做完：做完一组会改档位，
+    #: 这三格就是那次改动的依据（对话里的依据仍在 ``evidence_block_ids``）。没做过为空。
+    practice_correct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    practice_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    practiced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     #: 模型最近一次给出（或改写）这条判断的时刻。
     analyzed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

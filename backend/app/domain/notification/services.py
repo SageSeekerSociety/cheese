@@ -7,7 +7,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -281,6 +281,7 @@ class NotificationQueryService:
         *,
         resolved_entities: dict[str, ResolvedEntityInfoDTO | None] | None = None,
         names: Mapping[str, str] | None = None,
+        viewer_id: int | None = None,
     ) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata.
 
@@ -292,7 +293,7 @@ class NotificationQueryService:
         # A row names people by name, not by the room's <@handle> token
         # (`names.py`). ``names`` is the page's, read once for every row.
         if names is None and self._session is not None:
-            names = await names_for(self._session, metadata_map)
+            names = await names_for(self._session, metadata_map, viewer_id=viewer_id)
         if names:
             metadata_map = with_names(metadata_map, names)
 
@@ -304,6 +305,8 @@ class NotificationQueryService:
             )
         else:
             entities = resolved_entities
+        if names:
+            entities = _named_entities(entities, names)
 
         return NotificationDTO.from_notification(
             notification=notification,
@@ -312,14 +315,21 @@ class NotificationQueryService:
         )
 
     async def build_notification_dtos(
-        self, notifications: Sequence[Notification]
+        self, notifications: Sequence[Notification], *, viewer_id: int | None = None
     ) -> list[NotificationDTO]:
-        """整页 DTO，实体解析每类只发一次查询。列表端点走这里。"""
+        """整页 DTO，实体解析每类只发一次查询。列表端点走这里。
+
+        ``viewer_id`` 是这一页给谁看：设了个人备注的人在这里用备注，和名册一致。
+        """
         if not notifications:
             return []
         resolved_pages = await self.resolve_entities_for_notifications(notifications)
         names = (
-            await names_for(self._session, *map(_metadata_map_of, notifications))
+            await names_for(
+                self._session,
+                *map(_metadata_map_of, notifications),
+                viewer_id=viewer_id,
+            )
             if self._session is not None
             else {}
         )
@@ -331,6 +341,27 @@ class NotificationQueryService:
                 notifications, resolved_pages, strict=True
             )
         ]
+
+
+def _named_entities(
+    entities: dict[str, ResolvedEntityInfoDTO | None], names: Mapping[str, str]
+) -> dict[str, ResolvedEntityInfoDTO | None]:
+    """A person entity's name, read the way the reader calls them.
+
+    ``names`` already carries the reader's own remarks over the public nickname
+    (``names.py``); a resolved entity is the same person the metadata tokens
+    name, so it gets the same label instead of a chip showing the public name
+    beside a remark elsewhere on the row.
+    """
+    renamed: dict[str, ResolvedEntityInfoDTO | None] = {}
+    for key, entity in entities.items():
+        handle = getattr(entity, "handle", None)
+        name = names.get(handle) if handle else None
+        if entity is None or not name or name == entity.name:
+            renamed[key] = entity
+        else:
+            renamed[key] = replace(entity, name=name)
+    return renamed
 
 
 def asks_for_decision(notification: Notification) -> bool:

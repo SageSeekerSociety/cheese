@@ -29,7 +29,11 @@ from app.domain.space.teaching_queue import teaching_queue
 from app.domain.team import membership_services as team_applications
 from app.domain.team.models import TeamMembershipApplication
 from app.domain.team.services import team_service
-from app.domain.user.services import faces_by_handle, usernames_by_ids
+from app.domain.user.services import (
+    faces_by_handle,
+    remarks_by_handles,
+    usernames_by_ids,
+)
 
 AskKind = Literal["project_invite", "project_transfer", "team_invite", "join_request"]
 
@@ -170,10 +174,16 @@ async def membership_asks(
         ],
     )
 
+    # 这一份清单只给 `handle` 本人看：他给谁设过备注，这里就用那个称呼，
+    # 和成员页、名册是同一条规矩。
+    remarks = await remarks_by_handles(
+        db, handle, [p for p in people if p != handle]
+    )
+
     def person(person_handle: str) -> Face:
         nickname, avatar_id = people.get(person_handle, (None, None))
         return Face(
-            name=nickname or person_handle,
+            name=remarks.get(person_handle) or nickname or person_handle,
             handle=person_handle,
             avatar_url=_avatar(avatar_id),
         )
@@ -291,13 +301,19 @@ async def run_asks(db: AsyncSession, *, handle: str) -> list[RunAsk]:
         db, [a.author for a in waiting if a.source == "settings" and a.author]
     )
 
+    remarks = await remarks_by_handles(db, handle, [p for p in people if p != handle])
+
     def author(a) -> Face | None:
         if not a.author:
             return None
         if a.source != "settings":
-            return Face(a.author, None, None)
+            return Face(remarks.get(a.author) or a.author, None, None)
         nickname, avatar_id = people.get(a.author, (None, None))
-        return Face(nickname or a.author, a.author, _avatar(avatar_id))
+        return Face(
+            remarks.get(a.author) or nickname or a.author,
+            a.author,
+            _avatar(avatar_id),
+        )
 
     return [
         RunAsk(

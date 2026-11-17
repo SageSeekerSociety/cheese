@@ -304,6 +304,52 @@ describe('空间成员页', () => {
     expect(rowOf('成员丁').textContent).toContain('spaces.members.role.memberHint')
   })
 
+  it('成员有个人备注时显示备注，原名与账号仍认得出', async () => {
+    listMembers.mockResolvedValue({
+      members: [
+        { userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙', remark: '小林' } },
+        { userId: 4, joinedAt: 0, user: { id: 4, username: 'zhou', nickname: '成员丁' } },
+      ],
+    })
+    await mount(OWNER.id)
+    await waitFor(() => expect(rows().length).toBe(4))
+    const row = rowOf('小林')
+    expect(row.textContent).toContain('(成员丙)')
+    expect(row.textContent).toContain('lin')
+    // 没设备注的人照旧显示昵称。
+    expect(rowOf('成员丁').textContent).not.toContain('(成员丁)')
+  })
+
+  it('搜索认备注、原名和账号，都是同一个人', async () => {
+    listMembers.mockResolvedValue({
+      members: [{ userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙', remark: '小林' } }],
+    })
+    await mount(OWNER.id)
+    // 两位管理员 + 这一位成员。
+    await waitFor(() => expect(rows().length).toBe(3))
+    const search = document.querySelector('.mem__search input') as HTMLInputElement
+
+    await fireEvent.update(search, '小林')
+    expect(rows().some((r) => r.includes('小林'))).toBe(true)
+
+    await fireEvent.update(search, '成员丙')
+    expect(rows().some((r) => r.includes('小林'))).toBe(true)
+
+    await fireEvent.update(search, 'lin')
+    expect(rows().some((r) => r.includes('小林'))).toBe(true)
+  })
+
+  it('加入申请的申请人显示备注与原名', async () => {
+    listJoinRequests.mockResolvedValue({
+      requests: [
+        { id: 31, userId: 9, createdAt: 0, user: { id: 9, username: 'qinmo', nickname: 'qinmo', remark: '秦老师' } },
+      ],
+    })
+    await mount(OWNER.id)
+    await waitFor(() => expect(document.body.textContent).toContain('秦老师'))
+    expect(document.body.textContent).toContain('(qinmo)')
+  })
+
   it('读失败时成员那一块换成原因和一条重试，不再假装只有管理员', async () => {
     listMembers.mockRejectedValueOnce(new Error('HTTP 500 for /members'))
     await mount(OWNER.id)

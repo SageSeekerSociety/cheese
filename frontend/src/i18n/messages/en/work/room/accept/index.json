@@ -1,6 +1,5 @@
 {
   "acceptAction": "Accept",
-  "acceptAndComplete": "Accept and complete the task",
   "accepted": "Accepted",
   "approve": "Approve",
   "approvedCount": "{done}/{total} approved",

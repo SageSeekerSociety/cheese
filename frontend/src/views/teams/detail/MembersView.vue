@@ -16,7 +16,7 @@ import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
-import { userName, userOriginalName } from '@/lib/userNames'
+import { userName, userOriginalName } from '@/lib/agentNames'
 
 // 团队设置「成员」那一栏的画法：加入方式、加入申请、成员、已发送邀请四张卡（申请和邀请
 // 有内容才出现）加一个邀请框，只吃数据、往上报动作。取数与写入都在页面里（`Members.vue`）—— 所以「谁在管理这个团队」由页面算好
@@ -291,10 +291,10 @@ const getStatusText = (status: string) => {
               <span class="members-row__nick">{{ userName(request.user) }}</span>
               <span v-if="request.status !== 'PENDING'" class="members-chip">{{ getStatusText(request.status) }}</span>
             </div>
-            <div v-if="request.user.remark" class="members-row__note">
-              {{ userOriginalName(request.user) }} · {{ request.user.username }}
-            </div>
             <div v-if="request.message" class="members-row__note">{{ request.message }}</div>
+            <div v-if="request.user.remark" class="members-row__note">
+              ({{ userOriginalName(request.user) }}) · {{ request.user.username }}
+            </div>
             <div class="members-row__note">
               {{ t('teams.members.requestedAt', { time: formatDate(request.createdAt) }) }}
             </div>
@@ -313,12 +313,7 @@ const getStatusText = (status: string) => {
             </BaseButton>
           </div>
           <div v-else-if="request.status === 'APPROVED' || request.status === 'REJECTED'" class="members-row__note">
-            <i18n-t
-              v-if="request.processedBy && userName(request.processedBy)"
-              scope="global"
-              keypath="teams.members.processedBy"
-              tag="span"
-            >
+            <i18n-t v-if="request.processedBy?.nickname" scope="global" keypath="teams.members.processedBy" tag="span">
               <template #name>
                 <UserRef
                   :handle="request.processedBy.username"
@@ -371,11 +366,12 @@ const getStatusText = (status: string) => {
               <span class="members-row__nick">{{ userName(member.user) }}</span>
               <span class="members-chip">{{ roleLabel(member.role) }}</span>
             </div>
-            <div v-if="member.user.remark" class="members-row__note">
-              {{ userOriginalName(member.user) }} · {{ member.user.username }}
-            </div>
             <!-- What this role can actually do: a bare 管理员 leaves the difference to a member unstated. -->
             <div class="members-row__note">{{ roleHint(member.role) }}</div>
+            <!-- 设了个人备注时，原名与账号仍要认得出这个人是谁。 -->
+            <div v-if="member.user.remark" class="members-row__note">
+              ({{ userOriginalName(member.user) }}) · {{ member.user.username }}
+            </div>
           </div>
           <AdaptiveMenu
             v-if="memberActions(member).length"
@@ -429,10 +425,10 @@ const getStatusText = (status: string) => {
               <span class="members-row__nick">{{ userName(invitation.user) }}</span>
               <span class="members-chip">{{ getStatusText(invitation.status) }}</span>
             </div>
-            <div v-if="invitation.user.remark" class="members-row__note">
-              {{ userOriginalName(invitation.user) }} · {{ invitation.user.username }}
-            </div>
             <div v-if="invitation.message" class="members-row__note">{{ invitation.message }}</div>
+            <div v-if="invitation.user.remark" class="members-row__note">
+              ({{ userOriginalName(invitation.user) }}) · {{ invitation.user.username }}
+            </div>
             <div class="members-row__note">
               {{ t('teams.members.invitedAt', { time: formatDate(invitation.createdAt) }) }}
             </div>

@@ -219,6 +219,9 @@ async def task_rows(
     }
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
+    # 哪几件任务有东西可预览（队友在任务里摆出过一份）：主线上交付那一条下面的
+    # 「预览」只在这时候给。
+    previews = await BlockRepository(db).with_preview(thread_ids)
     in_place = await from_threads(
         db, [t.id for t, _ in threads if t.upgraded_from_block_id is not None]
     )
@@ -266,6 +269,7 @@ async def task_rows(
                     task, card, shown, asked.get(task.id), actor.handle, reviewers
                 ),
                 "from_thread": task.id in in_place,
+                "has_preview": task.id in previews,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
                 "blocks": [
@@ -374,6 +378,19 @@ async def incomplete_tasks(
     return await MemberWaits(db).unresolved_failures({t: [t] for t in task_ids})
 
 
+def _neglect_json(
+    clock: presentation.Neglect | None, now: datetime, *, running: bool
+) -> dict | None:
+    """The row's `neglect`: set once the task is dormant, with when it closes."""
+    if clock is None or running or not clock.dormant(now):
+        return None
+    return {
+        "close_at": clock.close_at.isoformat(),
+        "since": clock.since.isoformat(),
+        "waiting_on_someone": clock.waiting_on_someone,
+    }
+
+
 async def project_task_rows(
     db: AsyncSession,
     me: str,
@@ -473,6 +490,14 @@ async def project_task_rows(
                     shown, last_activity=last_activity, now=now
                 ),
                 "last_activity_at": last_activity.isoformat(),
+                # 很久没人理会、已经进了「搁置」（等人审阅的是催过）的活：什么时候自动
+                # 关闭。None = 不在搁置（会话在跑的也不算）。判据一份，在
+                # `presentation.neglect`，自动关闭的那一拍读的是同一个函数。
+                "neglect": _neglect_json(
+                    presentation.neglect(shown, last_activity=last_activity),
+                    now,
+                    running=is_running(task.id),
+                ),
                 "card": card_row(
                     card,
                     versions.get(task.id),

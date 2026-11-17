@@ -247,7 +247,7 @@ def test_a_written_up_task_ends_in_the_main_line_once(client, app_world):
     # Accepted: the hand-in and the step that landed, and no ending yet.
     handed_in, landed = _told(client, room, task_id)
     assert handed_in["meta"].get("delivery") is not None
-    assert "任务继续进行" in landed["content"]
+    assert landed["content"] == "<@alice> 采纳了「Test delivery」"
 
     written_up(client, str(task_id))
 
@@ -267,6 +267,6 @@ def test_a_merge_its_teammate_never_follows_up_leaves_the_task_open(client, app_
 
     *_, landed = _told(client, room, task_id)
     assert len(_told(client, room, task_id)) == 2
-    assert "已采纳" in landed["content"]
+    assert landed["content"] == "<@alice> 采纳了「Test delivery」"
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "open"
