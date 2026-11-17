@@ -156,7 +156,6 @@ async def create_card(
     about: str | None = None,
     deliver: str | None = None,
     deliver_url: str | None = None,
-    completes_task: bool = True,
     admits_reviewer: ReviewerAdmission,
 ) -> AcceptCard:
     focus = clean_focus(focus)
@@ -301,7 +300,6 @@ async def create_card(
         ),
         deliverable_name=snapshot[0] if snapshot else None,
         deliverable_url=(deliver_url or "").strip() or None,
-        completes_task=completes_task,
     )
     if snapshot is not None:
         await asyncio.to_thread(
