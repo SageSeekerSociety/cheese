@@ -12,16 +12,14 @@ The rules, as a person would state them:
 """
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from app.domain.agent.models import AgentTurn
-from app.domain.block.models import Block, BlockKind
-from app.domain.event_author import AuthorType
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
-from app.domain.topic.models import Topic
 from tests.integration.conftest import (
     join_project_team,
     mint_scoped_token,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -31,11 +29,7 @@ from tests.integration.conftest import (
 def _channel(client) -> tuple[str, str, str]:
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, project["id"], "bob")
-    room = client.post(
-        "/topics",
-        json={"project_id": project["id"], "title": "开发"},
-        headers=session_auth_headers("alice"),
-    ).json()["data"]["id"]
+    room = project["root_topic_id"]
     return project["id"], room, room_agent_seat(client, room)
 
 
@@ -78,40 +72,32 @@ def _task_with_delivery(client, project: str, room: str, seat: str) -> dict:
 
 
 def _say_then_wake(client, room: str, seat: str, author: str, words: str) -> None:
-    """``author`` says ``words`` in the main line and the main line's turn for
-    it is running (``author`` is ``system`` for a turn the platform began)."""
-    now = datetime.now(UTC)
+    """``author`` says ``words`` in the main line, and the main line's turn for
+    that message is running, named by it as the runtime names a turn a
+    person's message starts (``author`` is ``system`` for a turn the platform
+    began, which no message started)."""
+    said = (
+        uuid.UUID(post_message(client, room, author, {"content": words})["id"])
+        if author != "system"
+        else uuid.uuid4()
+    )
 
-    async def seed():
+    async def wake():
         async with client.test_factory() as db:
-            if author != "system":
-                room_row = await db.get(Topic, uuid.UUID(room))
-                db.add(
-                    Block(
-                        project_id=room_row.project_id,
-                        conversation_id=uuid.UUID(room),
-                        author=author,
-                        author_type=AuthorType.participant,
-                        kind=BlockKind.message,
-                        content=words,
-                        created_at=now,
-                    )
-                )
-            turn = uuid.uuid4()
             db.add(
                 AgentTurn(
-                    id=turn,
+                    id=uuid.uuid4(),
                     conversation_id=uuid.UUID(room),
-                    continuation_id=turn,
+                    continuation_id=said,
                     agent_handle=seat,
                     author=author,
                     content=words,
-                    started_at=now + timedelta(seconds=1),
+                    started_at=datetime.now(UTC),
                 )
             )
             await db.commit()
 
-    client.portal.call(seed)
+    client.portal.call(wake)
 
 
 def _card(client, card_id) -> AcceptCard:

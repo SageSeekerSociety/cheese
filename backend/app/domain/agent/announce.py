@@ -509,19 +509,14 @@ async def open_turn_of(
 
 
 async def word_that_started(session: AsyncSession, turn: AgentTurn) -> Block | None:
-    """The message its author sent in ``turn``'s conversation last before the
-    turn started: what that person said when they started it."""
-    return await session.scalar(
-        select(Block)
-        .where(
-            Block.conversation_id == turn.conversation_id,
-            Block.author == turn.author,
-            Block.kind == BlockKind.message,
-            Block.created_at <= turn.started_at,
-        )
-        .order_by(Block.created_at.desc())
-        .limit(1)
-    )
+    """The message that started ``turn``: a turn a person's message starts is
+    named by that message (`continuation_id` is the message's id, and a
+    resumed attempt keeps it). None for a turn no message of its author's
+    started."""
+    said = await session.get(Block, turn.continuation_id)
+    if said is None or said.author != turn.author or said.kind != BlockKind.message:
+        return None
+    return said
 
 
 async def _notify(

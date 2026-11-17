@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 from app.domain.agent.models import AgentTurn
 from tests.integration.conftest import (
+    join_project_team,
     mint_scoped_token,
     open_task,
     post_message,
@@ -114,3 +115,21 @@ def test_replies_are_offered_only_in_the_main_line(client):
 
     assert refused.status_code == 422, refused.text
     assert refused.json()["error"]["i18n"]["key"] == "chatRepliesMainLineOnly"
+
+
+def test_replies_go_to_the_person_the_message_names(client):
+    project_id, room, seat = _channel(client)
+    join_project_team(client, project_id, "bob")
+    _alice_is_answered(client, room, seat)
+
+    asked = _say(
+        client,
+        project_id,
+        room,
+        seat,
+        {"content": "@bob 闭幕写 16:00 可以吗？", "replies": ["可以", "改成 16:30"]},
+    )
+
+    assert asked.status_code == 200, asked.text
+    message = _message(client, room, asked.json()["data"]["id"])
+    assert message["meta"]["asked"] == ["bob"]

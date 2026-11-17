@@ -101,7 +101,7 @@ from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import _MENTION_RE, mentioned_outside, unasked
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.intake.human import preview_addressing
-from app.domain.agent.turn.intake.rooms import room_roster
+from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.store.human import AddressingChanged, HumanHandoff
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import (
@@ -522,9 +522,9 @@ async def _quick_replies(db, place, seat: str, content: str, replies) -> dict:
     """What makes a main-line message offer ``replies`` under it
     (`quick_replies_meta`). It asks the people it @-mentions; naming nobody,
     whoever started the turn it answers; started by the platform, nobody in
-    particular. Only the main line offers them: in a task or a 支线 a question
-    is asked with `cheese_ask`."""
-    if place.inner_id is not None:
+    particular. Only a channel's main line offers them: in a task, a 支线 or
+    a private chat a question is asked with `cheese_ask`."""
+    if place.inner_id is not None or _is_dm(place.room):
         raise ValidationError(say("chatRepliesMainLineOnly"))
     roster = await room_roster(db, place.project_id, place.room)
     people = {row["handle"] for row in roster if not row.get("agent")}

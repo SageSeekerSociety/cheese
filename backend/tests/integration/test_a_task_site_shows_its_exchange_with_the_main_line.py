@@ -5,6 +5,9 @@ Neither is said in any conversation; the 现场 is where a member reads it, in
 order, as the words each side said, with who said it.
 """
 
+import uuid
+
+from app.domain.run_record.service import record
 from tests.integration.conftest import (
     join_project_team,
     mint_scoped_token,
@@ -60,6 +63,18 @@ def test_the_task_site_shows_what_the_main_line_told_it_and_what_it_reported(
         {"content": "按钮改成蓝色", "asker": "bob"},
     )
     assert told.status_code == 200, told.text
+
+    async def a_platform_line():
+        async with client.test_factory() as db:
+            await record(
+                db,
+                conversation_id=uuid.UUID(task["id"]),
+                content="环境已就绪",
+                meta={"event_type": "environment_ready"},
+            )
+            await db.commit()
+
+    client.portal.call(a_platform_line)
     reported = _as(
         client,
         project["id"],
@@ -76,12 +91,24 @@ def test_the_task_site_shows_what_the_main_line_told_it_and_what_it_reported(
     )
 
     assert site.status_code == 200, site.text
-    exchange = [
-        (row["meta"]["exchange"], row["author"], row["content"])
-        for row in site.json()["data"]["data"]
-        if row["meta"].get("exchange")
+    rows = site.json()["data"]["data"]
+    lines = [
+        (row["meta"].get("exchange"), row["author"], row["content"])
+        for row in rows
+        if row["meta"].get("exchange") or row["content"] == "环境已就绪"
     ]
-    assert exchange == [
+    assert lines == [
         ("told", seat, "按钮改成蓝色"),
+        (None, "system", "环境已就绪"),
         ("report", seat, "蓝色用哪一个色号？"),
+    ]
+
+    newest = next(row for row in rows if row["meta"].get("exchange") == "report")
+    earlier = client.get(
+        f"/topics/{task['id']}/transcript",
+        params={"before": newest["meta"]["cursor"]},
+        headers=session_auth_headers("bob"),
+    ).json()["data"]["data"]
+    assert [row["content"] for row in earlier if row["meta"].get("exchange")] == [
+        "按钮改成蓝色"
     ]
