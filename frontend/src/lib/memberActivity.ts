@@ -71,3 +71,11 @@ export interface RailMemberMark {
   /** 悬停时说的那一句：谁、在做什么。 */
   title: string
 }
+
+/** 在干活，但这一轮的最后一帧（没有帧就从开工起）已超过 `STALE_AFTER_MS`：进度很久没变。
+ *  输入框上方那一行和频道顶部「AI 现在在干什么」读同一个判断。 */
+export function lineStale(line: MemberActivityLine, now: number, staleAfterMs: number): boolean {
+  if (line.kind !== 'working') return false
+  const last = Math.max(line.lastFrameAt ?? 0, line.since * 1000)
+  return now - last >= staleAfterMs
+}

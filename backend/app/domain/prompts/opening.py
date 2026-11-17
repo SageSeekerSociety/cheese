@@ -61,6 +61,9 @@ class TeachingLike(Protocol):
     @property
     def is_empty(self) -> bool: ...
 
+    @property
+    def ladder(self) -> bool: ...
+
     def fill(self, template: str) -> str: ...
 
 
@@ -154,6 +157,10 @@ def teaching_section(context: TeachingContextLike) -> str | None:
     parts = ["## 辅导学生" + (f"（课程：{context.course}）" if context.course else "")]
     if teaching.mode in _MODES:
         parts.append(piece(f"opening/mode_{teaching.mode}"))
+    if teaching.ladder:
+        # 引导为主且打开了提示阶梯：四级逐级给，每条回复标出第几级
+        # （`app.domain.task.guide` 读这个标记、记下、从消息里去掉）。
+        parts.append(piece("opening/hint_ladder"))
     if teaching.space_prompt and teaching.system_prompt:
         parts.append(
             piece("opening/teaching_space", text=teaching.fill(teaching.space_prompt))

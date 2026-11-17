@@ -128,6 +128,8 @@ export const LEARNING_CLASS_POINT: LearningClassPointDetail = {
     text: '用一张「外层逐行扫描、内层每次重算」的示意，配同一题的相关子查询和派生表两种写法对照，5 分钟左右。',
     generatedAt: at,
   },
+  practice: { practiced: 9, improved: 5 },
+  lastPush: { at, recipients: 22 },
 }
 
 export const LEARNING_CLASS_QUESTIONS: LearningClassQuestions = {

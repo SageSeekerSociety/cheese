@@ -25,6 +25,7 @@ import {
   WANG_LINES,
 } from '../catalogFixtures'
 
+import AgentNowStrip from '@/components/room/AgentNowStrip.vue'
 import MemberActivity from '@/components/room/MemberActivity.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
@@ -427,6 +428,34 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         note: '各占一行，上下对齐，只差开头那颗点和那句话。',
         props: { lines: [CHEESE_WORKING, SPARK_RETRYING] },
         expect: '芝士正在工作',
+      },
+    ],
+  },
+  {
+    id: 'agent-now-strip',
+    title: 'AgentNowStrip',
+    about: '频道、支线页顶部「AI 现在在干什么」：每位在干活的 AI 队友一行，图标、名字、一句话；悬停出详情。',
+    file: 'src/components/room/AgentNowStrip.vue',
+    component: AgentNowStrip,
+    needs: ['i18n'],
+    states: [
+      {
+        name: '一位在干活',
+        note: '绿色旋转圈（和任务行同一个图标），名字加此刻那一步，右边是用时。',
+        props: { lines: [CHEESE_WORKING] },
+        expect: '执行命令 pnpm test',
+      },
+      {
+        name: '一位在等自动重试',
+        note: '黄色警示图标，说调用的模型出错了、正在自动重试。',
+        props: { lines: [SPARK_RETRYING] },
+        expect: '正在自动重试',
+      },
+      {
+        name: '两位同时',
+        note: '各占一行，上下对齐。',
+        props: { lines: [CHEESE_WORKING, SPARK_RETRYING] },
+        expect: '芝士',
       },
     ],
   },

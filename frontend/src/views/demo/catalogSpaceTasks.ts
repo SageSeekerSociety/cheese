@@ -18,6 +18,7 @@ import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
   DOMAIN_GROUP,
   MY_LEARNING_INSIGHT,
+  MY_LEARNING_PRACTICE,
   PUBLISH_DRAFTS,
   SPACE_CATEGORY,
   SPACE_KNOWLEDGE_POINTS,
@@ -500,6 +501,17 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         props: { insight: null, failed: true },
         // 读不出来不画成「还没有结果」：整块换成错误加一条重试（§3.10）。
         expectSelector: '[role="alert"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s5.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s5.note')
+        },
+        props: { practice: MY_LEARNING_PRACTICE },
+        // 第 4 步：生成巩固题 / 先看讲解、待做的巩固题、复习提醒。
+        expectSelector: '[data-testid="insight-review-due"]',
       },
     ],
   },

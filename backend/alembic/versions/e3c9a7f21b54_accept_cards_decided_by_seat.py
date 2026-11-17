@@ -1,7 +1,7 @@
 """accept_cards.decided_by_seat: which AI teammate adopted a delivery for its reviewer
 
 Revision ID: e3c9a7f21b54
-Revises: d7a2e41f8b06
+Revises: 972eebafc2ef
 Create Date: 2026-11-17
 
 A channel's main line adopts a delivery on its reviewer's word
@@ -20,7 +20,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "e3c9a7f21b54"
-down_revision: str | Sequence[str] | None = "d7a2e41f8b06"
+down_revision: str | Sequence[str] | None = "972eebafc2ef"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

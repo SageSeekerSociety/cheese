@@ -112,6 +112,7 @@ PERIODIC_JOB_NAMES = (
     "credit warnings",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
     "learning analysis nightly",
+    "learning practice queue",
 )
 
 
