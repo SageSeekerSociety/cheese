@@ -31,6 +31,17 @@
           </div>
         </v-card>
 
+        <!-- 评测结果：这一版挂了测试点时，跑的是哪一版代码、逐个用例过没过。 -->
+        <TaskSubmissionJudge
+          v-if="judge"
+          class="mt-4"
+          :run="judge"
+          :teacher="reviewable"
+          :suite="stageSuite"
+          :line-points="testsRubricLine?.points ?? null"
+          :waiting-points="!reviewable && !latestSubmission.review?.reviewed && manualCap ? manualCap : null"
+        />
+
         <!-- 额度：这份领题在这道题上用掉多少。题目按额度计分时这一块还带那一行的分，
              以及它怎么算的。学生看不到评分要点时这里只剩用量。 -->
         <div v-if="usage" class="tsh__usage mt-4">
@@ -120,14 +131,67 @@
               <div v-if="manualCap != null" class="tsh__score mb-4">
                 <span>{{ t('tasks.submissionHistory.manualPart') }}</span>
                 <span class="t-num"> {{ score == null ? '—' : score }} / {{ manualCap }} </span>
-                <span>{{ t('tasks.submissionHistory.autoPart') }}</span>
-                <span class="t-num">{{ autoLineText }}</span>
+                <template v-if="usageRubricLine || !testsRubricLine">
+                  <span>{{ t('tasks.submissionHistory.autoPart') }}</span>
+                  <span class="t-num">{{ autoLineText }}</span>
+                </template>
+                <template v-if="testsRubricLine">
+                  <span data-user-content>{{ t('tasks.judge.review.testsPart', { name: testsRubricLine.item }) }}</span>
+                  <span class="t-num" data-testid="task-review-tests-score">{{ liveTestsText }}</span>
+                </template>
                 <span class="tsh__total-label">{{ t('tasks.submissionHistory.totalPart') }}</span>
-                <span class="tsh__total-label t-num">{{ totalPreview }}</span>
+                <span class="tsh__total-label t-num" data-testid="task-review-total">{{ totalPreview }}</span>
               </div>
-              <p v-if="manualCap != null" class="tsh__meta mb-4">
+              <p v-if="manualCap != null && usageRubricLine" class="tsh__meta mb-4">
                 {{ usageModeHint }}
               </p>
+              <!-- 测试点那一项可以手动改（比如某个用例题面有歧义）：要写原因，学生看得到。 -->
+              <div v-if="testsRubricLine && accepted !== false" class="tsh__adjust mb-4">
+                <BaseButton
+                  v-if="!testsAdjust"
+                  kind="secondary"
+                  size="sm"
+                  prepend-icon="mdi-pencil-outline"
+                  data-testid="task-review-tests-adjust"
+                  @click="startAdjust"
+                  >{{ t('tasks.judge.review.adjust') }}</BaseButton
+                >
+                <template v-else>
+                  <BaseField
+                    :label="t('tasks.judge.review.adjustScore', { max: testsRubricLine.points })"
+                    required
+                    :error="adjustError"
+                  >
+                    <v-text-field
+                      :model-value="testsScore"
+                      autocomplete="off"
+                      type="number"
+                      min="0"
+                      :max="testsRubricLine.points"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                      data-testid="task-review-tests-override"
+                      @update:model-value="testsScore = $event === '' ? undefined : Number($event)"
+                    />
+                  </BaseField>
+                  <v-textarea
+                    v-model="testsReason"
+                    autocomplete="off"
+                    :label="t('tasks.judge.review.adjustReason')"
+                    rows="2"
+                    auto-grow
+                    maxlength="500"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    data-testid="task-review-tests-reason"
+                  />
+                  <BaseButton kind="ghost" size="sm" data-testid="task-review-tests-restore" @click="stopAdjust">{{
+                    t('tasks.judge.review.restore')
+                  }}</BaseButton>
+                </template>
+              </div>
               <v-textarea
                 v-model="comment"
                 autocomplete="off"
@@ -151,11 +215,24 @@
         <div v-if="!reviewable && autoScores" class="tsh__score mt-2">
           <span>{{ t('tasks.submissionHistory.manualPart') }}</span>
           <span class="t-num">{{ savedManualText }}</span>
-          <span>{{ t('tasks.submissionHistory.autoPart') }}</span>
-          <span class="t-num">{{ autoLineText }}</span>
+          <template v-if="autoScores.lines.some((line) => line.kind === 'usage')">
+            <span>{{ t('tasks.submissionHistory.autoPart') }}</span>
+            <span class="t-num">{{ autoLineText }}</span>
+          </template>
+          <template v-if="savedTests">
+            <span data-user-content>{{
+              t('tasks.judge.review.testsPart', { name: testsRubricLine?.item || t('tasks.judge.form.defaultName') })
+            }}</span>
+            <span class="t-num" data-testid="task-saved-tests-score"
+              >{{ savedTests.score }} / {{ savedTests.points }}</span
+            >
+          </template>
           <span class="tsh__total-label">{{ t('tasks.submissionHistory.totalPart') }}</span>
           <span class="tsh__total-label t-num">{{ savedTotalText }}</span>
         </div>
+        <p v-if="!reviewable && savedTests?.adjusted" class="tsh__meta mt-1" data-testid="task-saved-tests-reason">
+          {{ t('tasks.judge.review.adjustedNote', { reason: savedTests.reason || '' }) }}
+        </p>
       </template>
     </v-card>
 
@@ -219,9 +296,9 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskRubricLine, TaskSubmissionReview } from '@/types'
+import type { TaskRubricLine, TaskSubmissionReview, TaskTestsScoreLine, TaskTestSuite } from '@/types'
 
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 import { useForm } from 'vee-validate'
@@ -231,6 +308,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import SubmissionContentCard from './SubmissionContentCard.vue'
 import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
+import TaskSubmissionJudge from './TaskSubmissionJudge.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -238,7 +316,7 @@ import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { fmtNum } from '@/lib/usageFormat'
 import { toTypedSchema } from '@/lib/zodTypedSchema'
-import { useTaskSubmissionHistory } from '@/views/tasks/composables'
+import { useSubmissionJudge, useTaskSubmissionHistory } from '@/views/tasks/composables'
 
 const { t } = useI18n()
 
@@ -264,6 +342,8 @@ interface Props {
   /** 这道题的评分要点；题目按额度计分时用它算这版评审手动项的上限。 `null` = 没有
    *  （不分阶段的老题、或者调用方没传）：这时按老规矩 0–100。 */
   rubric?: TaskRubricLine[] | null
+  /** 这道题各阶段挂的测试点；有就读这一版的评测结果。 */
+  testSuite?: TaskTestSuite[] | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -279,6 +359,7 @@ const props = withDefaults(defineProps<Props>(), {
   isDialog: false,
   stage: null,
   rubric: null,
+  testSuite: null,
 })
 
 // 取数与写评审都在这个 composable 里：组件不许够到 API 层，只收 props、发 `changed`。
@@ -337,11 +418,75 @@ const manualCap = computed<number | null>(() => {
 
 const scoreMax = computed(() => manualCap.value ?? 100)
 
+// ── 测试点那一项 ──────────────────────────────────────────────────────────────
+// 这一版的阶段上有测试点那一行时，它的分来自这一版的评测结果（后端 `auto_score`）：
+// 通过分值 ÷ 总分值 × 行分值，四舍五入；还没出结果时记 0、标待评测。老师可以改，要写原因。
+
+const stageLines = computed(() => (props.rubric ?? []).filter((line) => (line.stage ?? null) === currentStage.value))
+const testsRubricLine = computed(() => stageLines.value.find((line) => line.kind === 'tests') ?? null)
+const usageRubricLine = computed(() => stageLines.value.find((line) => line.kind === 'usage') ?? null)
+const stageSuite = computed(
+  () => props.testSuite?.find((suite) => (suite.stage ?? null) === currentStage.value) ?? null
+)
+
+const { judge, load: loadJudge } = useSubmissionJudge({
+  taskId: () => props.taskId,
+  participantId: () => props.participantId,
+  submissionId: () => (props.testSuite?.length ? latestSubmission.value?.id ?? 0 : 0),
+})
+watch(
+  () => latestSubmission.value?.id,
+  () => void loadJudge()
+)
+
+/** 已判那一版记下的测试点那一行。 */
+const savedTests = computed(
+  () => (autoScores.value?.lines.find((line) => line.kind === 'tests') as TaskTestsScoreLine | undefined) ?? null
+)
+
+const testsAdjust = ref(false)
+const testsScore = ref<number | undefined>(undefined)
+const testsReason = ref('')
+const adjustError = ref('')
+
+/** 按评测结果算的测试分；还没出结果是 null。 */
+const autoTestsScore = computed<number | null>(() => {
+  const line = testsRubricLine.value
+  const run = judge.value
+  if (!line || !run || run.state !== 'done' || !run.totalPoints) return null
+  return Math.round((run.passedPoints / run.totalPoints) * line.points)
+})
+
+/** 批改窗口里测试点那一项此刻的分：改过就是改的那个数，否则按评测结果，没结果是 null。 */
+const liveTestsScore = computed<number | null>(() =>
+  testsAdjust.value ? testsScore.value ?? null : autoTestsScore.value
+)
+
+const liveTestsText = computed(() => {
+  const points = testsRubricLine.value?.points ?? 0
+  const value = liveTestsScore.value
+  if (value == null) return t('tasks.judge.review.pending', { points })
+  return testsAdjust.value ? t('tasks.judge.review.adjusted', { score: value, points }) : `${value} / ${points}`
+})
+
+function startAdjust() {
+  testsAdjust.value = true
+  testsScore.value = liveTestsScore.value ?? undefined
+  adjustError.value = ''
+}
+function stopAdjust() {
+  testsAdjust.value = false
+  testsScore.value = undefined
+  testsReason.value = ''
+  adjustError.value = ''
+}
+
 const totalMax = computed(() => {
   const cap = manualCap.value
   if (cap == null) return null
   const line = usage.value?.line
-  return cap + (line ? Number(line.points) || 0 : 0)
+  const usagePoints = usageRubricLine.value?.points ?? (line ? Number(line.points) || 0 : 0)
+  return cap + usagePoints + (testsRubricLine.value?.points ?? 0)
 })
 
 /** 已判过的那一版评审里手动和自动各自的来源（老题的评审没有这一项）。 */
@@ -372,7 +517,15 @@ function ofMax(value: number | null): string {
 }
 
 /** 总分那一格：手动项填了就加额度那一行，没填就画「—」。 */
-const totalPreview = computed(() => ofMax(score.value == null ? null : score.value + (autoLine.value.score ?? 0)))
+const totalPreview = computed(() =>
+  ofMax(
+    score.value == null
+      ? null
+      : score.value +
+          (usageRubricLine.value || !testsRubricLine.value ? autoLine.value.score ?? 0 : 0) +
+          (liveTestsScore.value ?? 0)
+  )
+)
 
 /** 判过之后手动项那一格：上限算得出来就写「n / 上限」。 */
 const savedManualText = computed(() => {
@@ -453,8 +606,35 @@ const scoreError = computed(() => errors.value.score)
 const savedManual = computed(() => autoScores.value?.manual ?? latestSubmission.value?.review?.detail?.score)
 
 const submitReview = handleSubmit(async (form) => {
+  // 改了测试分就要有一个范围内的整数和原因（学生看得到这句原因）。
+  const line = testsRubricLine.value
+  if (form.accepted && line && testsAdjust.value) {
+    const value = testsScore.value
+    if (value === undefined || !Number.isInteger(value) || value < 0 || value > line.points) {
+      adjustError.value = t('tasks.judge.review.adjustRange', { max: line.points })
+      return
+    }
+    if (!testsReason.value.trim()) {
+      adjustError.value = t('tasks.judge.review.reasonRequired')
+      return
+    }
+  }
+  adjustError.value = ''
   // The review row keeps a score either way; a rejection's is never shown, so it is 0.
-  await saveReview({ accepted: form.accepted, score: form.accepted ? form.score ?? 0 : 0, comment: form.comment })
+  await saveReview({
+    accepted: form.accepted,
+    score: form.accepted ? form.score ?? 0 : 0,
+    comment: form.comment,
+    // 每次判都重新合成：不带就回到按测试点算，所以改过的分每次都要带上。
+    ...(form.accepted && line
+      ? {
+          testsOverride:
+            testsAdjust.value && testsScore.value !== undefined
+              ? { score: testsScore.value, reason: testsReason.value.trim() }
+              : null,
+        }
+      : {}),
+  })
 })
 
 onMounted(refresh)
@@ -467,8 +647,15 @@ watch(latestSubmission, (newVal) => {
       accepted.value = newVal.review.detail.accepted
       score.value = savedManual.value
       comment.value = newVal.review.detail.comment
+      const tests = savedTests.value
+      if (tests?.adjusted) {
+        testsAdjust.value = true
+        testsScore.value = tests.score
+        testsReason.value = tests.reason ?? ''
+      } else stopAdjust()
     } else {
       resetForm()
+      stopAdjust()
     }
   }
 })
@@ -497,6 +684,12 @@ defineExpose({
 </script>
 
 <style scoped>
+.tsh__adjust {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .gradient-card {
   background: linear-gradient(to right bottom, rgba(var(--v-theme-primary), 0.05), rgba(var(--v-theme-primary), 0.01));
   border: 1px solid rgba(var(--v-theme-primary), 0.1);

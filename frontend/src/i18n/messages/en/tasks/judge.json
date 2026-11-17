@@ -92,5 +92,40 @@
     "actual": "Actual output",
     "firstDiff": "Differs from the expected output from line {line}",
     "stderr": "Program errors"
+  },
+  "submit": {
+    "title": "Code to be judged",
+    "refresh": "Read again",
+    "suite": "This stage has {n} test points ({samples} samples); your hand-in is judged automatically",
+    "suiteLine": "This stage has {n} test points ({samples} samples); the result counts toward \"{name}\", {points} points",
+    "pushed": "Pushed {when}",
+    "today": "today {time}",
+    "yesterday": "yesterday {time}",
+    "hint": "The platform records this version when you hand in and judges it; later pushes don't change it. Changes not pushed yet aren't in it, so have Cheese push first.",
+    "missing": "The project's code can't be read right now. You can still hand in; this version won't be judged automatically and the teacher will score the tests by hand."
+  },
+  "history": {
+    "title": "Judge result",
+    "code": "Code",
+    "took": "took {s} s",
+    "waiting": "The other {points} points wait for the teacher"
+  },
+  "review": {
+    "testsPart": "{name} (test points)",
+    "pending": "Not judged yet / {points}",
+    "adjusted": "{score} / {points} (adjusted)",
+    "adjust": "Adjust the test score",
+    "adjustScore": "Test score (0–{max})",
+    "adjustReason": "Why it's adjusted (students see this)",
+    "restore": "Back to the test points' score",
+    "adjustRange": "The test score must be a whole number from 0 to {max}",
+    "reasonRequired": "Write why the test score is adjusted",
+    "adjustedNote": "The teacher adjusted the test score: {reason}"
+  },
+  "roster": {
+    "col": "Test points",
+    "passed": "{n}/{total}",
+    "failed": "Judging failed",
+    "running": "Judging"
   }
 }

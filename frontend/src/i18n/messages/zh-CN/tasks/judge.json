@@ -92,5 +92,40 @@
     "actual": "实际输出",
     "firstDiff": "第 {line} 行开始和期望输出不一样",
     "stderr": "程序报错"
+  },
+  "submit": {
+    "title": "将要评测的代码",
+    "refresh": "重新读一次",
+    "suite": "这个阶段挂了 {n} 个测试点（{samples} 个样例），交上去后自动评测",
+    "suiteLine": "这个阶段挂了 {n} 个测试点（{samples} 个样例），评测结果计入「{name}」{points} 分",
+    "pushed": "推送于 {when}",
+    "today": "今天 {time}",
+    "yesterday": "昨天 {time}",
+    "hint": "交的那一刻平台记下这一版去评测，之后再推送不影响这一版。本地还没推上去的改动不在里面，先让芝士推送。",
+    "missing": "这一刻读不到项目里的代码。照常可以交，这一版不会自动评测，老师会手动给测试分。"
+  },
+  "history": {
+    "title": "评测结果",
+    "code": "代码",
+    "took": "用时 {s} 秒",
+    "waiting": "其余 {points} 分等老师批改"
+  },
+  "review": {
+    "testsPart": "{name}（测试点）",
+    "pending": "待评测 / {points}",
+    "adjusted": "{score} / {points}（已调整）",
+    "adjust": "调整测试分",
+    "adjustScore": "测试分（0–{max}）",
+    "adjustReason": "调整原因（学生看得到）",
+    "restore": "恢复按测试点算",
+    "adjustRange": "测试分要是 0 到 {max} 之间的整数",
+    "reasonRequired": "调整测试分要写原因",
+    "adjustedNote": "老师调整了测试分：{reason}"
+  },
+  "roster": {
+    "col": "测试点",
+    "passed": "{n}/{total}",
+    "failed": "评测失败",
+    "running": "评测中"
   }
 }

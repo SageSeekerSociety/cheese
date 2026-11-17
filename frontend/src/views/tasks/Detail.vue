@@ -509,6 +509,7 @@ onMounted(() => {
         :participant-id="reviewing.id"
         :stage="stages[reviewStage]?.id ?? null"
         :rubric="taskData.rubric ?? []"
+        :test-suite="taskData.testSuite ?? []"
         :reviewable="true"
         :is-dialog="true"
         :outlined="true"

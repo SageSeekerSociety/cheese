@@ -65,6 +65,10 @@
           <BaseTableTh v-if="hasUsage" align="end" sort-key="usageScore">
             {{ t('tasks.roster.col.usageScore') }}
           </BaseTableTh>
+          <!-- 「测试点」只在挂了测试点的题上画：每人最新一版通过几个。 -->
+          <BaseTableTh v-if="hasTests" align="end" sort-key="tests">
+            {{ t('tasks.judge.roster.col') }}
+          </BaseTableTh>
           <BaseTableTh>
             <span class="rs__sr">{{ t('tasks.roster.col.ops') }}</span>
           </BaseTableTh>
@@ -124,6 +128,14 @@
               <span v-if="row.usage.final === false" class="rs__tag">{{ t('tasks.roster.tentative') }}</span>
             </template>
             <span v-else class="rs__meta">{{ t('tasks.roster.usageNotYet') }}</span>
+          </td>
+          <td v-if="hasTests" class="rs__usage t-num" data-testid="roster-tests-cell">
+            <template v-if="row.judge?.state === 'done'">
+              {{ t('tasks.judge.roster.passed', { n: row.judge.passedCases, total: row.judge.caseCount }) }}
+            </template>
+            <span v-else-if="row.judge?.state === 'failed'" class="rs__fail">{{ t('tasks.judge.roster.failed') }}</span>
+            <span v-else-if="row.judge" class="rs__meta">{{ t('tasks.judge.roster.running') }}</span>
+            <span v-else class="rs__meta">—</span>
           </td>
           <td>
             <div class="rs__ops">
@@ -253,6 +265,7 @@ import type { SortDir } from '@/components/base/tableSort'
 import type { MenuAction } from '@/components/common/menuAction'
 import type {
   Task,
+  TaskJudgeSummary,
   TaskMembership,
   TaskParticipantRealNameInfo,
   TaskRubricLine,
@@ -295,6 +308,7 @@ type Status = 'CLAIM_PENDING' | 'CLAIM_REJECTED' | 'IN_PROGRESS' | 'REVIEW_PENDI
 const COL_BASE = [null, '104px', '140px', '208px', '104px']
 const COL_CREDITS = '112px'
 const COL_USAGE_SCORE = '104px'
+const COL_TESTS = '96px'
 const COL_OPS = '150px'
 
 const STATUS: Record<Status, { label: string; tone: string }> = {
@@ -323,6 +337,8 @@ type Row = {
   credits: number | null
   /** 额度那一行算出来的分（`TaskUsage`）。题目不按额度计分时只有 `credits`。 */
   usage: TaskUsage | undefined
+  /** 最新那一版最近一次评测的摘要；没挂测试点或没评测过是 undefined。 */
+  judge: TaskJudgeSummary | undefined
 }
 
 const props = defineProps<{
@@ -330,6 +346,8 @@ const props = defineProps<{
   participants: TaskMembership[]
   /** participantId → 最新那一版提交。 */
   latestByParticipant: Map<number, Latest>
+  /** submissionId → 那一版最近一次评测的摘要（挂了测试点的题才有）。 */
+  judgeBySubmission?: Map<number, TaskJudgeSummary>
   loading: boolean
   /** 名单接口由服务端按 `task_roles.teaches` 把关；403 是「不给你看」，说的是这一句。 */
   denied: boolean
@@ -414,19 +432,27 @@ const rows = computed<Row[]>(() =>
         ),
         credits: usage?.credits ?? null,
         usage,
+        judge: latest ? props.judgeBySubmission?.get(latest.submissionId) : undefined,
       }
     })
 )
 
 /** 这道题的评分要点里有没有额度那一行。有就多画「额度得分」那一列。 */
-const hasUsage = computed(() =>
-  (props.taskData?.rubric ?? []).some((line: TaskRubricLine) => (line.kind ?? 'manual') !== 'manual')
-)
+const hasUsage = computed(() => (props.taskData?.rubric ?? []).some((line: TaskRubricLine) => line.kind === 'usage'))
+
+/** 这道题挂没挂测试点。挂了就多画「测试点」那一列。 */
+const hasTests = computed(() => (props.taskData?.testSuite?.length ?? 0) > 0)
 
 // 列宽按有没有额度那一列拼出来；`min-width` 是各定宽列之和再加第一列的 136px
 // （原来 `842px` 的算法 —— 见上面 `COL_BASE` 那段）。两处都由同一份列宽算，
 // 表头和横滚下限不会飘开。
-const cols = computed(() => [...COL_BASE, COL_CREDITS, ...(hasUsage.value ? [COL_USAGE_SCORE] : []), COL_OPS])
+const cols = computed(() => [
+  ...COL_BASE,
+  COL_CREDITS,
+  ...(hasUsage.value ? [COL_USAGE_SCORE] : []),
+  ...(hasTests.value ? [COL_TESTS] : []),
+  COL_OPS,
+])
 const minWidth = computed(() => {
   const fixed = cols.value.reduce((sum, width) => sum + (width ? Number.parseInt(width, 10) : 0), 0)
   return `${fixed + 136}px`
@@ -442,6 +468,9 @@ const sortDir = ref<SortDir>('asc')
 function pick(row: Row, key: string): unknown {
   if (key === 'credits') return row.credits
   if (key === 'usageScore') return row.usage?.score ?? null
+  // 测试点按通过的比例排；没跑完、没评测的算空值，排最后。
+  if (key === 'tests')
+    return row.judge?.state === 'done' && row.judge.caseCount ? row.judge.passedCases / row.judge.caseCount : null
   return null
 }
 
@@ -663,6 +692,10 @@ function saveDeadline() {
 
 .rs__small,
 .rs__chev,
+.rs__fail {
+  color: var(--danger-ink);
+}
+
 .rs__meta {
   color: var(--faint);
 }
