@@ -634,7 +634,8 @@ def _push_with_cli(binding, token, root, author):
 async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     db_factory, monkeypatch, tmp_path, owner_credit
 ):
-    from app.api.routes.accept import _accept_service, _pr_checks_payload
+    from app.api.accept_service import accept_service
+    from app.api.routes.accept import _pr_checks_payload
     from app.domain.review import services as review_services
     from app.domain.site.services import (
         publication_source,
@@ -775,12 +776,12 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await _accept_service(session).push_fix(task.id)
+            refreshed = await accept_service(session).push_fix(task.id)
             assert refreshed["pushed"] is True
             # The checks read closed its session, so the card is read again.
             card = await session.get(AcceptCard, card.id)
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            again = await _accept_service(session).push_fix(task.id)
+            again = await accept_service(session).push_fix(task.id)
             assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
@@ -801,7 +802,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await _accept_service(session).accept(
+            accepted = await accept_service(session).accept(
                 card_id=card.id, decided_by="reviewer", head_sha=latest
             )
             await session.commit()

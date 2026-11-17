@@ -42,6 +42,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWaits
 from app.domain.identity.actor import Actor
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_and_counts_by_task
@@ -106,6 +107,10 @@ async def task_out(db, task, card: Any = _CARD_UNSET, *, me: str) -> dict:
         task.upgraded_from_block_id is not None
         and task.id in await from_threads(db, [task.id])
     )
+    # 做它的那位 AI 队友的席位：拿这一行换掉列表里那一行时，任务标签上的头像不跟着
+    # 丢。交给了某位队友的任务写的就是它；没交给谁的不再多查一趟（列表那一行查过，
+    # `task_rows`），落空时标签上不画头像。
+    out["teammate"] = task.agent_handle
     return out
 
 
@@ -247,6 +252,12 @@ async def task_rows(
                     choices=choices,
                     planned=planned.get(task.id),
                 ),
+                # 做它的那位 AI 队友的席位：没指定时落到频道的那位，和它在消息
+                # 上的署名是同一个 handle。主线上别的队友提到这件任务时，任务
+                # 标签上画它的头像。
+                "teammate": agent_instance_handle(teammates[task.id].instance_id)
+                if task.id in teammates
+                else None,
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
@@ -363,6 +374,19 @@ async def incomplete_tasks(
     return await MemberWaits(db).unresolved_failures({t: [t] for t in task_ids})
 
 
+def _neglect_json(
+    clock: presentation.Neglect | None, now: datetime, *, running: bool
+) -> dict | None:
+    """The row's `neglect`: set once the task is dormant, with when it closes."""
+    if clock is None or running or not clock.dormant(now):
+        return None
+    return {
+        "close_at": clock.close_at.isoformat(),
+        "since": clock.since.isoformat(),
+        "waiting_on_someone": clock.waiting_on_someone,
+    }
+
+
 async def project_task_rows(
     db: AsyncSession,
     me: str,
@@ -462,6 +486,14 @@ async def project_task_rows(
                     shown, last_activity=last_activity, now=now
                 ),
                 "last_activity_at": last_activity.isoformat(),
+                # 很久没人理会、已经进了「搁置」（等人审阅的是催过）的活：什么时候自动
+                # 关闭。None = 不在搁置（会话在跑的也不算）。判据一份，在
+                # `presentation.neglect`，自动关闭的那一拍读的是同一个函数。
+                "neglect": _neglect_json(
+                    presentation.neglect(shown, last_activity=last_activity),
+                    now,
+                    running=is_running(task.id),
+                ),
                 "card": card_row(
                     card,
                     versions.get(task.id),

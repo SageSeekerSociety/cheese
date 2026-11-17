@@ -894,6 +894,8 @@ class RemoteClient:
                 # The task the message is about (`#8` or its id): the room
                 # resolves it and tags the message (`topics_messages`).
                 **({"task": str(args["task"])} if args.get("task") else {}),
+                # Short answers offered under a main-line message.
+                **({"replies": list(args["replies"])} if args.get("replies") else {}),
                 **({"attachments": attachments} if attachments else {}),
             }
         ).encode()

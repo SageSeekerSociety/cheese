@@ -192,6 +192,15 @@ def task_closed_unasked() -> str:
     )
 
 
+def task_closed_neglected(*, days: int) -> str:
+    """Nobody touched the task for ``days`` days and the platform closed it
+    (`task_quiet.neglect`)."""
+    return (
+        f"平台关闭了这件任务：已经 {days} 天没有人理会。它的 PR 和分支都还在，"
+        "有人重新打开它时再接着做。"
+    )
+
+
 def task_reopened(*, by: str, task_id, new_branch: bool) -> str:
     moved = (
         "工作目录换到了一条从项目最新代码切出的新分支：动手之前先执行 "

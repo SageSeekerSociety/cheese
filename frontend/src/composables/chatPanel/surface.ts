@@ -25,6 +25,7 @@ import type { usePanelAuthorship } from './authorship'
 import type { usePanelOutgoing } from './outgoing'
 import type { usePanelPaging } from './paging'
 import type { usePanelPeople } from './people'
+import type { usePanelReceipts } from './receipts'
 import type { usePanelRows } from './rows'
 import type { usePanelSocket } from './socket'
 
@@ -54,6 +55,7 @@ export function usePanelSurface(parts: {
   rowActions: ReturnType<typeof useChatRowActions>
   clicks: ReturnType<typeof useChatMessageClicks>
   reactions: ReturnType<typeof useMessageReactions>
+  receipts: ReturnType<typeof usePanelReceipts>
   scroll: ReturnType<typeof useChatScroll>
   rowBatch: ReturnType<typeof useRowBatch>
   checklist: ReturnType<typeof useOwnChecklist>
@@ -115,6 +117,7 @@ export function usePanelSurface(parts: {
     showReplyCue: parts.outgoing.showReplyCue,
     fmtTime: parts.authorship.fmtTime,
     isMine: parts.authorship.isMine,
+    receiptFor: parts.receipts.receiptFor,
     displayName: parts.people.roster.displayName,
     authorTitle: parts.people.roster.authorTitle,
     nameOfHandle: parts.people.roster.nameOfHandle,

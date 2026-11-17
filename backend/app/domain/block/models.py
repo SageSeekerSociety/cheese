@@ -23,6 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import INT8MULTIRANGE, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -381,8 +382,8 @@ class BlockReaction(UuidPk, Base):
     """An emoji reaction on a block — Slack semantics (协作平台的消息表情).
 
     One row per (block, emoji, author); reacting again with the same emoji
-    removes the row (toggle). Both humans and 芝士 react through this table —
-    e.g. the platform's deterministic 👀 receipt on a summoning message."""
+    removes the row (toggle). People and AI teammates react through this table
+    alike; the platform itself puts no reaction on anything."""
 
     __tablename__ = "block_reactions"
     __table_args__ = (
@@ -396,5 +397,41 @@ class BlockReaction(UuidPk, Base):
     # Free-form author handle, same convention as Block.author ("cheese" = AI).
     author: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class MessageRead(Base):
+    """What one reader has read of one conversation: the stretches of its block
+    numbers (`Block.seq`) they have seen, as one multirange.
+
+    A person has read a message once it was on their screen while the page was
+    in the foreground; an AI teammate, once it was part of what one of its turns
+    was given (`block.message_reads`). Opening a conversation reads nothing by
+    itself — that is the unread cursor's rule (`TopicReadState`), not this one.
+
+    One row per (conversation, reader), never one per message: a reader who has
+    read a conversation from end to end is one range, however long it is. A
+    stretch covers the blocks between two messages too (steps, notices, the
+    reader's own words) once nothing anybody else said lies between them, so
+    reading on never leaves a gap behind (`block.message_reads.record`).
+    """
+
+    __tablename__ = "message_reads"
+
+    # A room's main line, a task's or a 支线's conversation.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_message_reads_conversation_id_conversations",
+        ),
+        primary_key=True,
+    )
+    # A person's handle, or the seat handle an AI teammate speaks under here —
+    # the same handle that signs its messages.
+    reader: Mapped[str] = mapped_column(String(64), primary_key=True)
+    seqs: Mapped[list[Range[int]]] = mapped_column(INT8MULTIRANGE)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

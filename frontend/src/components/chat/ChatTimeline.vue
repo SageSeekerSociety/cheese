@@ -18,6 +18,7 @@ import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { Receipt } from '../../lib/readReceipts'
 import type { RefNames } from '../../lib/refChip'
 import type { ChapterRow } from '../../types/chapters'
 
@@ -131,6 +132,8 @@ const props = defineProps<{
   /* Renderers that belong to the room, not to a row: names, avatars, times. */
   isAgentBlock: (b: Block) => boolean
   isMine: (m: Block) => boolean
+  /** 自己那条消息谁读了谁没读（chatPanel/receipts）；不给就不画那一圈。 */
+  receiptOf?: (m: Block) => Receipt | null
   isExternal: (handle: string) => boolean
   /** handle → 头像 URL（没挑过、名册里没这个人就是 null）。这一层不画头像，只把
       它转发给下面的 RoomMessage / ThreadLine，由它们的 UserAvatar 决定画脸还是画
@@ -766,6 +769,7 @@ const rowLabels = computed(() =>
               :run-start="runEdges[i] !== 'cont'"
               :regroup="runEdges[i] === 'regroup'"
               :mine="isMine(m)"
+              :receipt="receiptOf?.(m) ?? null"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
               :author-title="authorTitle?.(m) ?? null"

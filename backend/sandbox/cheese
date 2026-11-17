@@ -765,6 +765,15 @@ PLATFORM_TOOLS = ToolTable(
                 "task": _text(
                     '这条消息涉及的任务，写编号，如 "#15"；只能是这个频道里的任务'
                 ),
+                "replies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 3,
+                    "description": (
+                        "频道主线专用：消息下方给成员的快捷回答，最多 3 个，每个不超过 40 字；"
+                        "成员点一个，就以他自己的名义回复这条消息"
+                    ),
+                },
             },
         ),
         _tool(
@@ -1120,17 +1129,29 @@ PLATFORM_TOOLS = ToolTable(
                 ),
                 "look": _verb(
                     "在频道主线查看这个频道的一件任务的事实。summary 为概要；diff 为改动，"
-                    "commands 为任务里执行过的命令，chat 为任务里的对话和你与它之间的往来。",
+                    "commands 为任务里执行过的命令，chat 为任务里的对话和你与它之间的往来，"
+                    "file 为任务分支上已提交的一个文件的内容。",
                     {
                         "task": _TASK_REF,
                         "view": {
                             "type": "string",
-                            "enum": ["summary", "diff", "commands", "chat"],
+                            "enum": ["summary", "diff", "commands", "chat", "file"],
                             "description": "查看的视图，默认 summary",
                         },
-                        "path": _text("diff：只看这个文件的改动"),
-                        "q": _text("diff、commands：按关键词筛选"),
+                        "path": _text(
+                            "diff：只看这个文件的改动；file：必填，要看的文件在仓库里的路径"
+                        ),
+                        "q": _text(
+                            "diff、commands：按关键词筛选；file：只看含关键词的行及其前后几行"
+                        ),
                     },
+                    ["task"],
+                ),
+                "accept": _verb(
+                    "在频道主线代审阅人采纳这件任务等待审阅的交付，记为你代他采纳。"
+                    "只在审阅人本人在这一轮的消息里明确说要采纳或合并时使用；"
+                    "采纳的是平台记录的那一版交付。",
+                    {"task": _TASK_REF},
                     ["task"],
                 ),
                 "report": _verb(
@@ -1171,13 +1192,23 @@ PLATFORM_TOOLS = ToolTable(
                 "close": _verb(
                     "在频道主线时，task 写这个频道里你开的那件任务，按成员的要求关闭；"
                     "等待审阅的任务不能关闭。在任务里时，不写 task："
-                    "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
-                    "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），"
-                    "写明结论关闭；最后一步的交付采纳后，平台会让你写一次总结，写完用它关闭"
-                    "任务、结论写一句结果。" + DELIVERY_IS_DECIDED_IN_THE_UI,
+                    "任务做完了，或者负责人说结束、放弃时，写明结论关闭。交付合并后任务不会自己关，"
+                    "平台叫你对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：做完了"
+                    "就更新实况文档、发一条总结，再用它关闭，结论写一句结果。"
+                    "方案、原型、demo、调研摆出来后不关，报「等你看」，负责人要改或接着做就在同一个任务里做。"
+                    "关闭要有依据，两样之一，否则平台拒绝：最后一次交付已合并、且步骤清单全部"
+                    "勾完（不做的项用 unchecked_reason 写理由，理由写进结论）；或者负责人在任务里"
+                    "说过结束，用 owner_message 带上他那条消息的 id。项目要等部署时，关闭后任务"
+                    "先等这次合并上线，上线后平台再叫你写总结关闭。" + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "task": _TASK_REF,
                         "conclusion": _text("关闭原因或最终说明"),
+                        "owner_message": _text(
+                            "负责人在这条任务里说结束的那条消息的 id；按他的话关闭时必填"
+                        ),
+                        "unchecked_reason": _text(
+                            "步骤清单里没勾完的项为什么不做，一两句；会写进结论"
+                        ),
                         "reported_by": _text("需求提出者的 handle"),
                         "contributor": _CONTRIBUTOR,
                     },
@@ -1196,13 +1227,12 @@ PLATFORM_TOOLS = ToolTable(
                 "request": _verb(
                     "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
                     "递卡交的是要并进主干的改动，或产物清单上一项的新一版；界面原型、demo 或一次性文件"
-                    "不进主干也不上产物清单，用 cheese show 摆出预览后等反馈（cheese_ask）或用 "
-                    "cheese_task 的 close 结束，不提交进 git、不递卡。交合并时任务分支上要有改动了文件的提交，"
+                    "不进主干也不上产物清单，用 cheese show 摆出预览后报「等你看」、等负责人回话，"
+                    "不提交进 git、不递卡，也不关任务。交合并时任务分支上要有改动了文件的提交，"
                     "空提交会被打回；交独立文件（deliver）或地址（deliver_url）且没有仓库改动时直接留快照或记指针，不开 PR。"
-                    "任务可以分几步交付：completes_task 说这次是不是最后一步。递之前对照实况文档，"
-                    "任务目标还有没做完的就不是最后一步。最后一步采纳后，平台让你更新实况文档、"
-                    "发一条总结，再用 cheese_task 的 close 关闭任务；不是最后一步，采纳后任务还开着，"
-                    "平台会叫你从最新代码接着做下一步。"
+                    "任务可以分几步交付，每一步做完就递；采纳合并后任务不会自己关，平台叫你"
+                    "对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：没完就从最新代码"
+                    "接着做下一步，做完了写总结、用 cheese_task 的 close 关闭。"
                     "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
                     "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
                     "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
@@ -1236,10 +1266,6 @@ PLATFORM_TOOLS = ToolTable(
                         ),
                         "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                         "deliver_url": _text("交出去的地址"),
-                        "completes_task": {
-                            "type": "boolean",
-                            "description": "这次交付后任务目标全部达成填 true；还有没做完的填 false，并在 body 里写下一步做什么",
-                        },
                         "comment_outcomes": {
                             "type": "array",
                             "description": (
@@ -1258,7 +1284,7 @@ PLATFORM_TOOLS = ToolTable(
                             },
                         },
                     },
-                    ["subject", "completes_task"],
+                    ["subject"],
                 ),
                 "describe": _verb(
                     "修改当前任务尚未采纳的验收卡及 PR 的标题、正文或审阅重点，至少给一样；"
@@ -1774,6 +1800,17 @@ PLATFORM_TOOLS = ToolTable(
                     ["skill", "reason"],
                 ),
             },
+        ),
+        _tool(
+            "cheese_find",
+            "按关键词搜这个项目里你能读到的内容：各频道、支线和任务里的消息，文档段落、"
+            "周报、任务、资料库文件和产物，多久以前的都在内。在别的频道、别的任务里说过"
+            "或很久以前定过的事用它找；只找当前对话或当前频道里的原话用 "
+            "cheese_chat(action=search)。每个词都要命中，没找到就换个说法或少几个词。"
+            "消息和文档段落用 cheese_chat(action=get) 加结果里的 message_id 和 topic "
+            "读全文，资料库文件用 Bash 跑 `cheese library get <名字>` 取。",
+            {"query": _text("关键词，空格分开")},
+            ["query"],
         ),
         _tool(
             "platform_request",
@@ -2588,6 +2625,9 @@ DELEGATED_TOOLS = ToolTable(
 #: 文档检索不在其中：个人芝士没有话题，只读谁都能读的那些页。
 _TOPIC_FREE = {
     "cheese_web",
+    # 房间里的搜的是它这条对话所在的项目，后端从凭据里读出是哪条对话；个人芝士的同名
+    # 工具没有话题。
+    "cheese_find",
     "platform_request",
     "cheese_help",
     # 文档自己有编号（CHEESE_DOCUMENT）；只有话题时，从话题查出它的文档。
@@ -2933,7 +2973,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "request_id": str(uuid.UUID(args["request_id"]))
             if args.get("request_id")
             else str(uuid.uuid4()),
-            **_given(args, "reply_to", "task"),
+            **_given(args, "reply_to", "task", "replies"),
         }
         return {"method": "POST", "path": here + "/messages", "body": body}
     if tool == "chat_react":
@@ -2992,6 +3032,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": here + "/tasks/" + _task_ref(args) + "/tell",
             "body": {"content": args["content"], **_given(args, "asker")},
         }
+    if tool == "cheese_task.accept":
+        return {
+            "method": "POST",
+            "path": here + "/tasks/" + _task_ref(args) + "/accept",
+        }
     if tool == "cheese_task.report":
         return {
             "method": "POST",
@@ -3021,6 +3066,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "conclusion": args.get("conclusion") or "",
                 **_given(
                     args,
+                    "owner_message:owner_message_id",
+                    "unchecked_reason",
                     "reported_by:reporter_handle",
                     "contributor:contributor_handles",
                 ),
@@ -3042,7 +3089,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     "about",
                     "deliver",
                     "deliver_url",
-                    "completes_task",
                     "comment_outcomes",
                 ),
             },
@@ -3816,7 +3862,64 @@ def _task_look(args: dict, host) -> str:
         if len(lines) > 400:
             return "\n".join(lines[:400]) + f"\n……（共 {len(lines)} 行，用 path 或 q 缩小范围）"
         return text
-    raise PlatformToolError("view 取 summary、diff、commands、chat 之一")
+    if view == "file":
+        return _task_file(looked, args, q, host)
+    raise PlatformToolError("view 取 summary、diff、commands、chat、file 之一")
+
+
+#: A file the main line looks at in a task: at most this many lines come
+#: back, and with `q`, this many lines around each match.
+LOOK_FILE_LINES = 400
+LOOK_FILE_CONTEXT = 3
+
+
+def _task_file(looked: dict, args: dict, q: str, host) -> str:
+    """`look(view=file)`: a file as the task's branch has it committed — the
+    same read the 文件 panel makes (`/projects/{p}/file`, `source=committed`)
+    — numbered; with `q`, only the lines around its matches."""
+    path = str(args.get("path") or "").strip()
+    if not path:
+        raise PlatformToolError("view=file 要写 path：文件在仓库里的路径")
+    project = host.environ.get("CHEESE_PROJECT", "")
+    query = urllib.parse.urlencode(
+        {"task": looked["id"], "path": path, "source": "committed"}
+    )
+    data = host.request(
+        {"method": "GET", "path": f"/projects/{project}/file?{query}"}
+    )["data"]
+    if data.get("too_large"):
+        return f"{path} 太大，无法整份读出；用 view=diff 加 path 看它的改动。"
+    if data.get("binary") or data.get("content") is None:
+        return f"{path} 不是文本文件。"
+    lines = str(data["content"]).splitlines()
+    numbered = [f"{n:>5}  {line}" for n, line in enumerate(lines, 1)]
+    if q:
+        hits = [i for i, line in enumerate(lines) if q.lower() in line.lower()]
+        if not hits:
+            return f"{path} 中没有包含「{q}」的行。"
+        keep = sorted(
+            {
+                j
+                for i in hits
+                for j in range(
+                    max(0, i - LOOK_FILE_CONTEXT),
+                    min(len(lines), i + LOOK_FILE_CONTEXT + 1),
+                )
+            }
+        )
+        shown, last = [], None
+        for j in keep:
+            if last is not None and j != last + 1:
+                shown.append("  ……")
+            shown.append(numbered[j])
+            last = j
+        numbered = shown
+    if len(numbered) > LOOK_FILE_LINES:
+        return (
+            "\n".join(numbered[:LOOK_FILE_LINES])
+            + f"\n……（只显示了前 {LOOK_FILE_LINES} 行，共 {len(numbered)} 行；用 q 缩小范围）"
+        )
+    return "\n".join(numbered) if numbered else f"{path} 是空文件。"
 
 
 def _chat_page(tool: str):
@@ -4441,8 +4544,9 @@ def _accept_request(args: dict, host) -> str:
         "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
         "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，这一步不要再递一张卡。"
     )
-    if args.get("completes_task") is False:
-        lines.append("这不是最后一步：采纳后任务还开着，平台会叫你接着做下一步。")
+    lines.append(
+        "采纳合并后任务不会自己关：平台会叫你判断做没做完，没完就接着做下一步。"
+    )
     return "\n".join(lines)
 
 
@@ -5911,6 +6015,12 @@ _SAY = {
         f"已转给任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」。"
     ),
     "cheese_task.report": lambda a, d, e: "已报告给频道主线。",
+    "cheese_task.accept": lambda a, d, e: (
+        f"已代审阅人采纳任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付。"
+        if (d or {}).get("status") == "accepted"
+        else f"任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付合并时有冲突，"
+        "没有采纳成；任务会先解决冲突，解决后要审阅人再采纳一次。"
+    ),
     "chat_send": _say_chat_send,
     "chat_react": lambda a, d, e: "已回应。",
     "cheese_chat.edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
@@ -5918,7 +6028,10 @@ _SAY = {
     "cheese_task.open": _say_task,
     "cheese_task.reopen": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
     "cheese_task.close": lambda a, d, e: (
-        f"「{(d or {}).get('title')}」收了。"
+        f"「{(d or {}).get('title')}」做完了，最后一次合并还没上线，任务先开着等部署；"
+        "上线后平台会叫你更新实况文档、发总结、再关闭，现在不用写。"
+        if (d or {}).get("deploying")
+        else f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
     "cheese_task.state": lambda a, d, e: (

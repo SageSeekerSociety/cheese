@@ -596,9 +596,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     agent_first_output_timeout_s: float = 300.0
     # 一轮读多少：这个座位上次读过之后的新消息。The count bounds the query and
     # the characters bound the prompt. A seat that has been away longer than one
-    # window reads the newest part of the conversation; what it skipped stays
-    # behind its cursor and is not handed over later (a room is not a mail
-    # queue, and replaying a day of chatter into one turn helps nobody).
+    # window reads the newest part of the conversation; what it skipped is not
+    # handed over later (replaying a day of chatter into one turn helps nobody),
+    # but the turn says how many, whose and where to read them (`left_unread`).
     agent_input_window_messages: int = 40
     agent_input_window_chars: int = 12000
     # The wall-clock mark past which a turn is recorded as long. A metric, not
@@ -853,6 +853,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     handover_timeout_s: float = Field(default=20.0, ge=0)
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
+    # Close a task nobody has touched for long enough (`room_task.presentation.neglect`:
+    # waiting on someone 7 days, otherwise 14). The kill switch if it ever closes the
+    # wrong ones: off, the sweep only reminds.
+    task_neglect_auto_close: bool = True
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
     # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.

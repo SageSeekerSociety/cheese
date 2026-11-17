@@ -843,6 +843,19 @@ _WAITING_ON_SOMEONE = frozenset(
 )
 
 
+#: 交付链路上平台自己在动的几格：跑闸门、等检查、修检查、解冲突、换基、等部署。
+_PLATFORM_IS_MOVING = frozenset(
+    {
+        Delivering.gate_running.value,
+        Delivering.awaiting_checks.value,
+        Delivering.fixing_checks.value,
+        Delivering.resolving_conflict.value,
+        Delivering.updating_branch.value,
+        Delivering.deploying.value,
+    }
+)
+
+
 def quiet_since(shown: Presentation, *, last_activity: datetime) -> datetime | None:
     """这件事从什么时候起没有动静。None = 不算：已经结束、在等别人。
 
@@ -860,6 +873,61 @@ def is_stalled(shown: Presentation, *, last_activity: datetime, now: datetime) -
     """已停滞：`STALLED_AFTER` 这么久没有动静。"""
     since = quiet_since(shown, last_activity=last_activity)
     return since is not None and now - since >= STALLED_AFTER
+
+
+# —— 无人理会 ——————————————————————————————————————————————————
+#
+# 「好几天没人动」之后的第二层：在等别人审阅、等人回答的活，和别的活走不同的钟。
+# 球在别人手上的活 3 天催一次，满 7 天没人动就自动关闭；别的活 7 天转「搁置」，满
+# 14 天自动关闭（和上面 `STALLED_AFTER` 同一个数）。关的是任务，不是它的 PR，关了
+# 随时可以重开。蔡松洋 2026-11-17 定的前一档；后一档沿用已停滞的 14 天。
+
+#: 在等别人：多久没动静催一次。
+WAITING_NUDGE_AFTER = timedelta(days=3)
+#: 在等别人：多久没动静自动关闭。
+WAITING_CLOSE_AFTER = timedelta(days=7)
+#: 别的活：多久没动静转「搁置」。
+DORMANT_AFTER = timedelta(days=7)
+#: 别的活：多久没动静自动关闭。
+NEGLECT_CLOSE_AFTER = STALLED_AFTER
+
+
+@dataclass(frozen=True)
+class Neglect:
+    """一件没人理的活走到了哪一步。``since`` 是最后一次有动静的时刻，``dormant_at``
+    是转「搁置」（在等别人的活是第一次催）的时刻，``close_at`` 是自动关闭的时刻。"""
+
+    since: datetime
+    dormant_at: datetime
+    close_at: datetime
+    waiting_on_someone: bool
+
+    def dormant(self, now: datetime) -> bool:
+        return now >= self.dormant_at
+
+    def due(self, now: datetime) -> bool:
+        return now >= self.close_at
+
+
+def neglect(shown: Presentation, *, last_activity: datetime) -> Neglect | None:
+    """这件活的无人理会时间表。None = 不适用：已经结束，或者在等一张已经交出去、
+    正由平台跑的检查（交付链路上平台自己在动，不算没人理）。
+
+    `last_activity` 和 `quiet_since` 一样，是最后一次有人或芝士在任务里说话的时刻；
+    队友说它在做不算动静。"""
+    if shown.column in (Column.done, Column.archived):
+        return None
+    if shown.phrase in _PLATFORM_IS_MOVING:
+        return None
+    waiting = shown.phrase in _WAITING_ON_SOMEONE
+    dormant = WAITING_NUDGE_AFTER if waiting else DORMANT_AFTER
+    close = WAITING_CLOSE_AFTER if waiting else NEGLECT_CLOSE_AFTER
+    return Neglect(
+        since=last_activity,
+        dormant_at=last_activity + dormant,
+        close_at=last_activity + close,
+        waiting_on_someone=waiting,
+    )
 
 
 # —— 一个房间 ——————————————————————————————————————————————————

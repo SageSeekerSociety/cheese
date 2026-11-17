@@ -50,7 +50,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code import stuck
+from app.domain.agent.harness.claude_code import compaction, stuck
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.processes import (
     end,
@@ -98,10 +98,6 @@ SETTLE_S = 0.5
 RELEASE_GRACE_S = 5.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
-#: How long the runner waits for a compaction it asked the build for to report
-#: its `result`. Summarising a full window takes minutes; this is the outer
-#: bound on believing it will come at all, not an expected duration.
-COMPACT_TIMEOUT_S = 1800.0
 # How long a new turn waits to see the project's context as it is now before it
 # starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
@@ -765,7 +761,7 @@ class Runner(runner.Runner[Journal]):
         self.last_frame_monotonic: float | None = None
         self.last_frame_work: str | None = None
 
-    capabilities = (runner.LONG_POLL, runner.LIVE)
+    capabilities = (runner.LONG_POLL, runner.LIVE, runner.COMPACT_IF_COLD)
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -1394,6 +1390,8 @@ class Runner(runner.Runner[Journal]):
             else None
         )
         main = not from_file and record.get("parent_tool_use_id") is None
+        if main:
+            compaction.note(self, record)
         if kind == "system" and record.get("subtype") == "init":
             self.proven = True
             self.ready = {
@@ -1636,7 +1634,7 @@ class Runner(runner.Runner[Journal]):
             self.reply_settled()
         if self.compact_when_idle and not self.closing:
             self.compact_when_idle = False
-            self.helpers.append(runner.watched(self._compact_now()))
+            self.helpers.append(runner.watched(compaction.now(self)))
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -2066,6 +2064,7 @@ class Runner(runner.Runner[Journal]):
         work_id: str | None = None,
         steering: bool = False,
         owes_reply: bool = False,
+        compact_if_cold: dict | None = None,
     ) -> dict:
         """A user message, or words said to a session that is working.
 
@@ -2073,13 +2072,18 @@ class Runner(runner.Runner[Journal]):
         mid-turn at the next tool boundary. They differ only in whose turn a
         message opens when the session happens to be idle by the time it reads
         it — ``steering`` says it was addressed to a turn already running.
+        A new turn on a cold conversation is compacted first
+        (``compaction.when_cold``), and then says ``compact_if_cold['text']``.
         """
         how = "steer" if steering else "send"
 
         async def submit() -> dict:
+            said = text
             if not steering and not self.working:
                 await self._catch_up()
-            await self._put(identifier, work_id, text, images or [], how)
+                if await compaction.when_cold(self, compact_if_cold):
+                    said = compact_if_cold["text"]  # type: ignore[index]
+            await self._put(identifier, work_id, said, images or [], how)
             return {"input_id": identifier}
 
         return await self.accept(
@@ -2165,42 +2169,7 @@ class Runner(runner.Runner[Journal]):
         }
 
     def request_compact(self) -> dict:
-        """The session asked to compact its own context: `/compact`, written
-        once the turn it asked in has ended.
-
-        Written then, and not mid-turn: a tool call in flight is answered at a
-        tool boundary, and the build takes what comes in on stdin at those
-        boundaries, so a slash command written from inside a tool call arrives
-        as part of that turn — where the pinned build's contract says nothing
-        about what a slash command does. A tool call is always inside a turn,
-        so the request always defers.
-
-        Once a turn is the whole rate limit: a request still waiting and one
-        that has already run look the same to the agent that asked, and a
-        second `/compact` would only summarise the first one's output.
-        """
-        if self.compact_when_idle:
-            return {"already": True}
-        self.compact_when_idle = True
-        # A tool call is answered inside a turn, so `_end` is where this
-        # normally goes. A session already idle has no turn coming.
-        if not self.working and not self.closing:
-            self.compact_when_idle = False
-            self.helpers.append(runner.watched(self._compact_now()))
-        return {"requested": True, "already": False}
-
-    async def _compact_now(self) -> None:
-        """Write `/compact` the way `/reload-skills` is written, and wait for
-        the command's `result` in the background.
-
-        Not through `dispatch`: the tool call that asked has been answered
-        already, and a compaction of a full window takes minutes to report.
-        What the room shows meanwhile comes from the build's own
-        `system/status` records (`events._compacting`)."""
-        try:
-            await self.command("/compact", COMPACT_TIMEOUT_S)
-        except Exception as error:  # the session goes on without it
-            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
+        return compaction.request(self)
 
     # --- the socket ----------------------------------------------------------
 
@@ -2313,6 +2282,7 @@ class Runner(runner.Runner[Journal]):
                 work_id=params.get("work_id"),
                 steering=method == "steer",
                 owes_reply=bool(params.get("owes_reply")),
+                compact_if_cold=params.get("compact_if_cold"),
             )
         if method == "interrupt":
             self.interrupting = self.working

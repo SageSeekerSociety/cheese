@@ -319,6 +319,7 @@ export interface RoomTask {
   created_by_assistant?: boolean // created_by 自己的芝士替他建的
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
+  teammate?: string | null // 实际做它的那位 AI 队友的席位（agent_handle 空时落到频道的那位），和它在消息上的署名相同
   document_id?: string | null // 实况文档；第一次打开任务时才建
   conclusion?: string | null
   // 做它的 AI 队友最后一次报的状态（后端 `room_task/progress.py`）：看板那一格已经按它
@@ -339,6 +340,7 @@ export interface RoomTask {
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
+  closed_reason?: string | null // 平台替人关掉它的原因：'neglect' = 很久没人理会；人或队友关的是 null
   /** 最后一步已合并、在等部署上线（后端 `review/deploy_wait.py`）；没在等是 null。 */
   deploying_since?: string | null
   /** 等部署时挡住它的那次主干 CI 红（run 链接）；主干没红是 null。 */
@@ -354,6 +356,9 @@ export interface RoomTask {
   awaits_me?: boolean // 有事需要本人关注，包括提需求人等结果；侧栏提醒读它
   needs_my_action?: boolean // 当前显示的下一步是否需要本人执行；“待你回答/审阅”等称谓读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
+  // 很久没人理会、已进「搁置」的活：什么时候自动关闭（项目级列表才带；会话在跑的、没到搁置的是 null）。
+  // 判据在后端 `presentation.neglect`：等人审阅/回答 3 天搁置、7 天关；别的 7 天搁置、14 天关。
+  neglect?: { close_at: string; since: string; waiting_on_someone: boolean } | null
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`
   // 的 `unresolved_failures`）：一条活停下来报错、五分钟还没人接手，画红灯
@@ -440,8 +445,10 @@ export interface TopicProgress {
 // backend also sends `live` frames, what it is writing meanwhile (live_frames.py).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
-  // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
+  // A block's reactions changed (someone toggled a reaction).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
+  // 已读：这位读的人新读到的几段编号（`[first, last]`），并进已有的那几段。
+  | { type: 'reads'; conversation_id: string; reader: string; ranges: [number, number][] }
   // A 分身's checklist, on its card's channel (the room's own list is a message).
   | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string; id?: string; project_ids?: string[] }

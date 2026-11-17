@@ -17,6 +17,7 @@ import type { ChatPanelEmit } from '../chatPanelContract'
 import type { useMessageReactions } from '../useMessageReactions'
 import type { useRoomResync } from '../useRoomResync'
 import type { useTimelineTasks } from '../useTimelineTasks'
+import type { usePanelReceipts } from './receipts'
 
 import { onScopeDispose, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
@@ -49,6 +50,8 @@ export function usePanelSocket(deps: {
   runRecords: ReturnType<typeof useRunRecords>
   turns: ReturnType<typeof useRoomTurns>
   reactions: ReturnType<typeof useMessageReactions>
+  /** 已读（chatPanel/receipts）：它要的滚动区比这条连接晚建，晚一步拿。 */
+  receipts: () => ReturnType<typeof usePanelReceipts>
   errorMsg: Ref<string | null>
   awaitingReply: Ref<boolean>
   atBottom: Ref<boolean>
@@ -101,6 +104,7 @@ export function usePanelSocket(deps: {
       // gone, so a re-connect (not the first open) treats each as changed once —
       // except what the snapshot just brought, which is as of now.
       if (reconnect) {
+        deps.receipts().refresh()
         const brought: ReadonlySet<string> = room ? SNAPSHOT_RESOURCES : new Set()
         for (const resource of ANNOUNCED) if (!brought.has(resource)) announce(resource)
         if (here) void checklistMissed(here.id)
@@ -217,9 +221,13 @@ export function usePanelSocket(deps: {
         deps.autoScroll()
         break
       case 'reaction':
-        // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
-        // row in place (the frame carries the block's full fresh aggregate).
+        // Someone toggled an emoji — update the chip row in place (the frame
+        // carries the block's full fresh aggregate).
         deps.reactions.applyReactions(frame.block_id, frame.reactions)
+        break
+      case 'reads':
+        // 有人（或哪位 AI 队友）又读到了几条：自己那几条消息旁的圈跟着变。
+        deps.receipts().applyFrame(frame)
         break
       case 'todo':
         if (deps.place()) checklistPushed(deps.place()!.id, frame.items)

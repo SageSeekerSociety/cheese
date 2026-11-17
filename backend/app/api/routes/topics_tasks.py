@@ -29,6 +29,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
 
+from app.api.accept_service import accept_service
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
@@ -69,7 +70,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import checkout_sweep
-from app.domain.agent.announce import announce
+from app.domain.agent.announce import announce, open_turn_of, word_that_started
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.opening import opening_content
@@ -98,11 +99,13 @@ from app.domain.project.address import Numbered, things_by_ref
 from app.domain.project_permissions import Permission
 from app.domain.prompts import piece, task_opening_prompt
 from app.domain.review.archive import OPEN_CARD_STATUSES, close_cards_for_closed_task
-from app.domain.review.services import AcceptService
+from app.domain.review.close_grounds import grounds_to_close
+from app.domain.review.services import AcceptService, deliverable_revision
 from app.domain.review.task_landing import (
     main_line_opener,
     task_named,
     tell_origin_ended,
+    wait_for_deploy,
 )
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
@@ -256,15 +259,18 @@ async def conclude_task(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """关闭任务：someone who works it — its owner or a contributor — or its
-    own session says it is over. With a conclusion it is done — the work did
-    not end in a merge (research, a decision); without one it was put down.
-    Delivered work closes by itself when its change is accepted.
+    own session says it is over. With a conclusion it is done; without one it
+    was put down. A merge does not close a task (`review.task_landing`): its
+    teammate judges it done and closes it here.
 
     Closing is not undone by reopening (its open cards are voided, its pull
     request closed), so it is kept to the people whose word the task's
     teammate acts on (`TaskService.takes_part`); reopening is wider. Its own
     session may not close it while a delivery on it waits on a person: that
-    close would void the delivery, which is the person's decision.
+    close would void the delivery, which is the person's decision. Nor
+    without grounds the platform can check (`review.close_grounds`). In a
+    project that waits for its deploy, its own session's close after a merge
+    leaves it open, waiting for that merge to go live (``deploying: true``).
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     # Before anything else is locked: the task lock order (`lock_order`); the
@@ -280,20 +286,47 @@ async def conclude_task(
             raise ConflictError(say("taskCloseWhileDeliveryWaits"))
     elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
+    grounds = (
+        await grounds_to_close(
+            db,
+            task,
+            owner_message=body.owner_message_id,
+            unchecked_reason=body.unchecked_reason,
+        )
+        if actor.via == "cheese"
+        else None
+    )
     return ok(
         await _close(
-            db, place, actor, task, body, chat, own_session=actor.via == "cheese"
+            db,
+            place,
+            actor,
+            task,
+            body,
+            chat,
+            own_session=actor.via == "cheese",
+            unchecked=grounds.unchecked if grounds is not None else None,
         )
     )
 
 
 async def _close(
-    db, place, actor, task, body: ConclusionIn, chat: ChatService, *, own_session: bool
+    db,
+    place,
+    actor,
+    task,
+    body: ConclusionIn,
+    chat: ChatService,
+    *,
+    own_session: bool,
+    unchecked: str | None = None,
 ) -> dict:
     """Close ``task`` once who may has been settled: by a person who works it,
     by its own session (``own_session``: the turn that would be stopped ends
     by itself, and it read how it ended in the tool's reply), or by the AI
-    teammate that opened it from the channel's main line."""
+    teammate that opened it from the channel's main line. ``unchecked``: the
+    checklist items its own session left undone, with its reason, appended to
+    the conclusion (`review.close_grounds`)."""
     tasks = TaskService(db)
     credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
     # Who reported it and who works it is the owner's to change (`update_task`);
@@ -328,6 +361,20 @@ async def _close(
                 else task.contributor_handles
             ),
         )
+    if unchecked:
+        conclusion = "\n\n".join(part for part in (conclusion, unchecked) if part)
+    # Its teammate judged it done, but in a project that waits for its deploy
+    # the task stays open until its last merge is live, and is written up then
+    # (`task_landing.wait_for_deploy`).
+    if own_session and await wait_for_deploy(db, task):
+        out = await task_out(
+            db,
+            task,
+            (await AcceptService(db).latest_by_task([task.id])).get(task.id),
+            me=actor.handle or "",
+        )
+        await db.commit()
+        return {**out, "deploying": True}
     # Its own session closing it is the turn that would be stopped, and it
     # ends by itself.
     task = await close_task(
@@ -859,6 +906,13 @@ class TaskNamed(BaseModel):
     title: str
 
 
+class TaskAccepted(TaskNamed):
+    #: Where the delivery stands after the adoption: `accepted` when it
+    #: landed, `conflict` when the merge met a conflict the task is now
+    #: resolving.
+    status: str
+
+
 class ExchangeLine(BaseModel):
     at: str
     kind: str | None
@@ -968,6 +1022,7 @@ async def tell_coordinated_task(
         ),
         event_type=TASK_TOLD,
         asker=asker,
+        exchanged=(at.actor.handle, body.content.strip()),
     )
     await db.commit()
     await dispatch(chat)
@@ -1012,6 +1067,59 @@ async def reopen_coordinated_task(
     return ok(await _reopen(db, place, at.actor, task))
 
 
+@router.post("/{topic_id}/tasks/{ref}/accept", **typed_response(TaskAccepted))
+async def accept_coordinated_task(
+    ref: str,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    db: DbSession,
+) -> dict:
+    """The main line adopts a task's delivery on its reviewer's word: the
+    reviewer said so in the message that started this turn, and the AI
+    teammate adopts for them, recorded as such (`decided_by_assistant`).
+
+    Only then. The delivery is the one waiting on that very person, handed in
+    before they spoke, and what is adopted is what the platform holds for it
+    (the head on the card, the deliverable's current version) — the caller
+    names no version. The ordinary acceptance service does the rest, so its
+    gates, merge, PR and what follows are the ones a click goes through."""
+    task = await _coordinated(db, at, ref)
+    service = accept_service(db)
+    card = await service.waiting_card(task.id)
+    if card is None:
+        raise ConflictError(say("coordinateAcceptNothingWaiting"))
+    reviewers = (await service.reviewer_handles_for_cards([card.id])).get(card.id, [])
+    roster = await room_roster(db, at.place.project_id, at.place.room)
+    names = {m["handle"]: m["name"] for m in roster}
+    waiting_on = "、".join(member(handle, names) for handle in reviewers)
+    turn = await open_turn_of(
+        db, at.place.project_id, at.place.conversation_id, at.actor.handle
+    )
+    reviewer = turn.author if turn is not None else None
+    if reviewer is None or reviewer not in reviewers:
+        raise ForbiddenError(
+            say("coordinateAcceptReviewerWordOnly", reviewer=waiting_on)
+        )
+    assert turn is not None
+    said = await word_that_started(db, turn)
+    if said is None or card.created_at > said.created_at:
+        raise ConflictError(say("coordinateAcceptNewerDelivery", reviewer=waiting_on))
+    decided = await service.accept(
+        card_id=card.id,
+        decided_by=reviewer,
+        head_sha=card.pr_head_sha,
+        deliverable_revision=deliverable_revision(task.project_id, card),
+        by_assistant=True,
+    )
+    return ok(
+        {
+            "id": str(task.id),
+            "number": task.number,
+            "title": task.title,
+            "status": decided.status.value,
+        }
+    )
+
+
 @router.post("/{topic_id}/report", **typed_response(ReportOut))
 async def report_to_main_line(
     body: ReportIn,
@@ -1034,6 +1142,8 @@ async def report_to_main_line(
         task,
         seat=opener,
         kind=body.kind,
+        sender=at.actor.handle,
+        said=body.content.strip(),
         content=piece(
             f"main_line/report_{body.kind}",
             task=task_named(task),

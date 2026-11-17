@@ -27,6 +27,7 @@ ROOM_TOOLS = frozenset(
         "chat_react",
         "todo_write",
         "cheese_chat",
+        "cheese_find",
         "cheese_doc",
         "cheese_app",
         "cheese_canvas",
@@ -60,15 +61,18 @@ ROOM_TOOLS = frozenset(
 #: the work — that is a task's. It reads files and looks things up (`Read`,
 #: `Bash`) to write a clear task, and writes only its memory (`Write`, `Edit`,
 #: held to `~/.cheese/memory/` by the platform). `cheese_doc` reads and edits
-#: the project's goals, which its opening shows.
+#: the project's goals, which its opening shows. `cheese_find` finds what was
+#: said weeks ago or in another channel, which a session living for weeks needs.
 MAIN_LINE_TOOLS = frozenset(
     {
         "chat_send",
         "chat_react",
         "cheese_chat",
+        "cheese_find",
         "cheese_task.open",
         "cheese_task.tell",
         "cheese_task.look",
+        "cheese_task.accept",
         "cheese_task.close",
         "cheese_task.reopen",
         "cheese_doc.get",
@@ -249,7 +253,9 @@ MAIN_LINE_OPENING = frozenset(
 )
 
 
-def _room(kind: Kind, skills: tuple[str, ...], memory: str) -> Profile:
+def _room(
+    kind: Kind, skills: tuple[str, ...], memory: str, *, cold: bool = True
+) -> Profile:
     return Profile(
         kind=kind,
         system=_room_system(memory),
@@ -258,6 +264,7 @@ def _room(kind: Kind, skills: tuple[str, ...], memory: str) -> Profile:
         opening=ROOM_OPENING,
         notice="notices/publication",
         reminders=_ROOM_REMINDERS,
+        compacts_when_cold=cold,
     )
 
 
@@ -279,8 +286,9 @@ PROFILES: dict[Kind, Profile] = {
         # 1: the main line coordinates tasks instead of doing the work (#5287);
         # a main line started before that copies its own earlier turns.
         generation=1,
+        compacts_when_cold=True,
     ),
-    Kind.task: _room(Kind.task, ("chat", CARRIED), "memory/multi_person"),
+    Kind.task: _room(Kind.task, ("chat", CARRIED), "memory/multi_person", cold=False),
     Kind.thread: _room(Kind.thread, ("chat", CARRIED), "memory/multi_person"),
     # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，private-chat
     # 只补私聊独有的那几条。

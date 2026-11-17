@@ -151,15 +151,23 @@ def test_its_session_is_told_there_is_no_checkout(client, stub_hooks):
 
 
 def test_it_ends_with_a_conclusion(client, stub_hooks):
+    """Research ends in a conclusion, once its owner says it is over: a
+    teammate closing it on its own word is refused (`review.close_grounds`)."""
     project, room = _project(client)
     task = _opened_by_a_person(client, project, room)
+    teammate = _teammate(client, project, task, room)
+    conclusion = {"conclusion": "三家竞品都不支持离线，结论写进了任务文档"}
+
+    refused = _as(client, teammate, "POST", f"/topics/{task}/close", conclusion)
+    assert refused.status_code == 409, refused.text
+    said = post_message(client, task, "alice", {"content": "调研够了，结束吧"})
 
     closed = _as(
         client,
-        _teammate(client, project, task, room),
+        teammate,
         "POST",
         f"/topics/{task}/close",
-        {"conclusion": "三家竞品都不支持离线，结论写进了任务文档"},
+        {**conclusion, "owner_message_id": said["id"]},
     )
 
     assert closed.status_code == 200, closed.text

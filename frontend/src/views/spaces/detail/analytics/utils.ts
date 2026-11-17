@@ -26,8 +26,6 @@ export interface SpaceAnalyticsQueryState {
   participationApproved?: AnalyticsApproveFilter
   completionStatus?: AnalyticsCompletionStatus
   realName: AnalyticsRealNameFilter
-  /** 学习那一格独有: 成员的 handle。 */
-  student?: string
   /** 学习那一格独有: 知识点（今天就是课程分类的 id）。 */
   knowledgePoint?: number
 }
@@ -125,7 +123,6 @@ export const normalizeAnalyticsQuery = (query: RawQuery, now = Date.now()): Spac
     participationApproved: asEnum(query.participationApproved, APPROVE_VALUES),
     completionStatus: asEnum(query.completionStatus, COMPLETION_VALUES),
     realName: asEnum(query.realName, REAL_NAME_VALUES) ?? defaults.realName,
-    student: typeof query.student === 'string' && query.student ? query.student : undefined,
     knowledgePoint: toNumber(query.knowledgePoint),
   }
 }
@@ -143,7 +140,6 @@ const withScopeParams = (filters: SpaceAnalyticsQueryState): AnalyticsApiParams 
 export const buildLearningQueueParams = (filters: SpaceAnalyticsQueryState): AnalyticsApiParams => ({
   from: startOfUtcDayTimestamp(filters.from),
   to: endOfUtcDayTimestamp(filters.to),
-  ...(filters.student ? { student: filters.student } : {}),
 })
 
 export const buildAnalyticsApiParams = (
@@ -234,7 +230,6 @@ export const serializeAnalyticsQuery = (filters: Partial<SpaceAnalyticsQueryStat
   if (filters.participationApproved) query.participationApproved = filters.participationApproved
   if (filters.completionStatus) query.completionStatus = filters.completionStatus
   if (filters.realName && filters.realName !== 'all') query.realName = filters.realName
-  if (filters.student) query.student = filters.student
   if (filters.knowledgePoint != null) query.knowledgePoint = String(filters.knowledgePoint)
 
   return query

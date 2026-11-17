@@ -18,6 +18,10 @@ closes it; reading the write-up instruction closes nothing. Without that, the
 deadline closes it once its teammate's session is not at work on something
 else, and nothing holds it past the last deadline: the work is stopped, and the
 room hears what was not delivered.
+
+A merge no longer opens the write-up window by itself: the teammate judges the
+task done and, in a project that waits for its deploy, the deploy going live
+opens it (`task_landing.deploy_landed`). `_accepted_and_live` plays both.
 """
 
 import uuid
@@ -66,7 +70,6 @@ def _last_step_up(client, app_world, pr: int = 7) -> tuple[str, str, dict]:
         json={
             "change_subject": "perf(pages): measure how long pages take to open",
             "reviewer_handle": "alice",
-            "completes_task": True,
         },
     )
     assert r.status_code == 200, r.text
@@ -182,6 +185,35 @@ def _task(client, task_id: str) -> dict:
     return client.get(f"/topics/{task_id}/task").json()["data"]
 
 
+def _accepted_and_live(client, card: str, task_id: str):
+    """The card is accepted, its teammate judged the task done, and the deploy
+    of its merge went live: the task is in its write-up window, unless its
+    teammate was asked for more since the card went up."""
+    from app.domain.agent_instance.adapters import task_teammate
+    from app.domain.delivery.agent import record_task_instruction
+    from app.domain.review.task_landing import deploy_landed
+    from app.domain.room_task.lock_order import lock_task_for_change
+
+    r = _accept(client, card)
+    assert r.status_code == 200, r.text
+
+    async def live():
+        async with client.test_factory() as session:
+            task = await lock_task_for_change(session, uuid.UUID(str(task_id)))
+            assert task is not None
+            task.deploying_since = datetime.now(UTC)
+            await deploy_landed(
+                session,
+                task,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
+            )
+            await session.commit()
+
+    client.portal.call(live)
+    return r
+
+
 def _goes_on(client, task_id: str, before: dict) -> None:
     task = _task(client, task_id)
     assert task["status"] == "open"
@@ -231,7 +263,7 @@ def test_the_work_that_delivered_does_not_keep_the_task_open(client, app_world):
     )
     _session(client, task_id, "running")
 
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
@@ -248,7 +280,7 @@ def test_the_work_that_delivered_does_not_keep_the_task_open(client, app_world):
 
 def test_work_begun_while_the_task_is_written_up_keeps_it_open(client, app_world):
     task_id, card, before = _last_step_up(client, app_world)
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
@@ -273,7 +305,7 @@ def test_the_task_closes_when_its_teammate_closes_it_after_the_write_up(
     client, app_world
 ):
     task_id, card, _ = _last_step_up(client, app_world)
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
 
     written_up(client, task_id)
@@ -287,7 +319,7 @@ def test_reading_the_write_up_does_not_close_the_task(client, app_world):
     tell from that whether it wrote the task up, so the task stays open until
     its teammate closes it, or the deadline does."""
     task_id, card, _ = _last_step_up(client, app_world)
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
 
     write_up_read(client, task_id)
@@ -309,7 +341,7 @@ def test_a_session_at_work_on_the_write_up_does_not_hold_the_deadline(
     """Once the session has read the write-up, its being at work is the
     write-up, which the deadline does not wait for."""
     task_id, card, _ = _last_step_up(client, app_world)
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
 
     write_up_read(client, task_id)
@@ -338,12 +370,11 @@ def test_work_the_platform_asked_for_is_not_more_work(client, app_world, seat, w
         seat=seat,
     )
 
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
 
     task = _task(client, task_id)
     assert task["presentation"]["phrase"] == "accepted", why
-    assert task["branch_name"] == before["branch_name"]
     assert any(i.payload.get(CLOSES_TASK) for i in _instructions(client, task_id))
     watch(client)
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
@@ -365,7 +396,7 @@ def test_a_message_answered_before_the_write_up_is_not_more_work(client, app_wor
     _message(client, _task(client, task_id), read=True)
     _session(client, task_id, "idle")
 
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
     write_up_read(client, task_id)
     _session(client, task_id, "running")
@@ -383,7 +414,7 @@ def test_another_seats_work_holds_the_deadline_after_the_teammate_wrote_up(
     at work. That seat's work is not the write-up: the deadline waits for it,
     and past the last deadline stops it with the room told."""
     task_id, card, _ = _last_step_up(client, app_world)
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
     write_up_read(client, task_id)
     _session(client, task_id, "running", seat="dispatcher")
@@ -406,7 +437,7 @@ def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
     write-up being read must not close the task before the message is
     answered: the task goes on instead."""
     task_id, card, before = _last_step_up(client, app_world)
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
@@ -433,7 +464,7 @@ def test_work_that_never_ends_is_stopped_at_the_last_deadline(client, app_world)
         content="把慢的几处都改掉",
     )
     _session(client, task_id, "running")
-    r = _accept(client, card)
+    r = _accepted_and_live(client, card, task_id)
     assert r.status_code == 200, r.text
     task = _task(client, task_id)
 
@@ -487,7 +518,7 @@ def test_a_task_the_forge_cannot_take_on_does_not_hold_up_the_rest(
     stuck_id, stuck_card, _ = _last_step_up(client, app_world)
     task_id, card, before = _last_step_up(client, app_world, pr=8)
     for each, its_card in ((stuck_id, stuck_card), (task_id, card)):
-        r = _accept(client, its_card)
+        r = _accepted_and_live(client, its_card, each)
         assert r.status_code == 200, r.text
         _session(client, each, "running")
         _message(client, _task(client, each), read=True)

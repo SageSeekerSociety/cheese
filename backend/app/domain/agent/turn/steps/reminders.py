@@ -129,7 +129,6 @@ async def _asked(
                 read_at,
                 NativeInput.block_ids,
                 NativeInput.held_block_ids,
-                NativeInput.seen_block_ids,
             )
             .where(
                 NativeInput.conversation_id == conversation,

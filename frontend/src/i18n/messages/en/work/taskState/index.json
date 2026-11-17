@@ -32,5 +32,12 @@
     "updated": "Last update: {time} ago",
     "staleHint": "Open it to see what's happening, or ask it in the conversation",
     "offlineHint": "It will carry on by itself once it reconnects"
+  },
+  "neglect": {
+    "title": "Dormant, will close automatically",
+    "quiet": "Nobody has touched it for {time}",
+    "waiting": "Waiting on someone, untouched for {time}",
+    "closeIn": "Closes automatically in {days} days",
+    "hint": "Say something in the task to restart the clock; a closed task can be reopened and its PR is left open"
   }
 }

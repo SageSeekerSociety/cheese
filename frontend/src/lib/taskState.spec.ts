@@ -354,3 +354,43 @@ describe('在做：进度很久没变 / 可能已断线', () => {
     expect(s.stale).toBe(false)
   })
 })
+
+describe('搁置：很久没人理会', () => {
+  const neglected = (over: Partial<RoomTask> = {}) =>
+    task('running', {
+      progress_state: 'working',
+      neglect: {
+        close_at: new Date(NOW + 2 * 86_400_000).toISOString(),
+        since: minutesAgo(7 * 24 * 60),
+        waiting_on_someone: false,
+      },
+      ...over,
+    })
+
+  it('进了搁置：图标换成月亮，状态词不变，说清几天后关闭', () => {
+    const s = taskState(neglected(), ctx)
+    expect(s.icon).toBe('mdi-power-sleep')
+    expect(s.label).toBe('进行中')
+    expect(s.line).toContain('2 天后自动关闭')
+    expect(s.tip).toContain('搁置，将自动关闭')
+  })
+
+  it('等人处理的活：提示里说的是在等人，不是没人理', () => {
+    const s = taskState(
+      neglected({
+        neglect: {
+          close_at: new Date(NOW + 86_400_000).toISOString(),
+          since: minutesAgo(6 * 24 * 60),
+          waiting_on_someone: true,
+        },
+      }),
+      ctx
+    )
+    expect(s.tip).toContain('在等人处理')
+  })
+
+  it('没带 neglect 的行、已关闭的行：不画月亮', () => {
+    expect(taskState(task('running'), ctx).icon).not.toBe('mdi-power-sleep')
+    expect(taskState(task('closed', { neglect: neglected().neglect }), ctx).icon).not.toBe('mdi-power-sleep')
+  })
+})
