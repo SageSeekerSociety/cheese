@@ -321,7 +321,8 @@ async def test_what_a_private_channel_learns_stays_out_of_the_shared_memory(
 ):
     """Only the people in a private channel may read what is said there, and
     everyone in the project reads the shared memory (#3830): an edit to `team/`
-    made in that channel never reaches the platform."""
+    made in that channel never reaches the platform, and the agent that made it
+    hears that it was not kept."""
     monkeypatch.setenv("HOME", str(tmp_path))
     factory = business_db_factory
     project_id, _, _ = await _setup(factory)
@@ -346,6 +347,7 @@ async def test_what_a_private_channel_learns_stays_out_of_the_shared_memory(
     await ledger.sync(_seat(project_id, private))
 
     assert await _index(factory, project_id) == (_INDEX, 1)
+    assert prompt_path(f"team/{INDEX_NAME}") in await _told(factory, private)
 
 
 async def _two_people(factory, project_id: uuid.UUID, index: str = "") -> None:
@@ -464,7 +466,7 @@ async def test_a_private_memory_written_before_the_seat_turns_to_someone_else_re
     )
     await ledger.sync(seat)
 
-    assert (hers / INDEX_NAME).read_text(encoding="utf-8") == edited
+    assert "(alice-new.md)" in (hers / INDEX_NAME).read_text(encoding="utf-8")
     assert (hers / "alice-new.md").read_text(encoding="utf-8") == note
 
 

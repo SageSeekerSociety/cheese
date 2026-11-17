@@ -121,7 +121,7 @@ async def test_a_channel_turn_gets_only_how_to_talk_to_the_person_it_answers(
     }
     assert laid == {
         "private/alice/reply-short.md": SHORT,
-        f"private/alice/{INDEX_NAME}": "- [回复简短](reply-short.md) — 先说结论\n",
+        f"private/alice/{INDEX_NAME}": "- [reply-short](reply-short.md) — 给她的回复简短，先说结论\n",
     }
 
 
@@ -202,6 +202,37 @@ async def test_a_private_note_of_another_kind_from_a_channel_is_refused_and_told
     for refused in ("bob-weak.md", "about-u.md", "reply-short.md"):
         assert f"private/alice/{refused}" in told
     assert "communication" in told
+
+
+async def test_a_channel_cannot_overwrite_or_index_past_what_was_laid_down(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """A new note in a channel that takes the name of one of her notes not laid
+    down there does not replace or shadow it, and an index line that names
+    another member is not kept even when its note is; both are told."""
+    factory = business_db_factory
+    project_id, room, ledger, seat, tree, stored = await _channel_turn_for_alice(
+        factory, tmp_path, monkeypatch
+    )
+    hers = tree / "private" / "alice"
+    (hers / "review-twice.md").write_text(
+        _note("review-twice", "communication", "回复简短"), encoding="utf-8"
+    )
+    fine = _note("no-at", "communication", "不必 @ 她")
+    (hers / "no-at.md").write_text(fine, encoding="utf-8")
+    (hers / INDEX_NAME).write_text(
+        (hers / INDEX_NAME).read_text(encoding="utf-8")
+        + "- [短](review-twice.md) — 回复简短\n"
+        + "- [不必 @](no-at.md) — 和 u 不一样，不必 @ 她\n",
+        encoding="utf-8",
+    )
+
+    await ledger.sync(seat)
+
+    assert await _alices(factory, project_id) == {**stored, "no-at.md": fine}
+    told = await _told(factory, room)
+    assert "private/alice/review-twice.md" in told
+    assert f"private/alice/{INDEX_NAME}" in told
 
 
 async def test_a_write_outside_what_was_laid_down_is_told(

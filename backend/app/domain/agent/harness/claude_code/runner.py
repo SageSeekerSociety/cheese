@@ -356,8 +356,8 @@ def memory_root() -> Path:
 
     不放在房间的家里：一间房的几个座位共用那个家，而两个座位可以同时在替两个人
     干活，一棵共用的树上就会同时躺着两个人的 private，各自的会话都读得到对方的。
-    一个座位同一时刻只替一个人干活，换人时上一位的那一棵交回平台
-    （`tree.withdrawn_prefixes`）。
+    一个座位的树上只有它这一轮点了名的那几位的 private，换了答复的人，上一轮的
+    那几棵交回平台（`tree.withdrawn_prefixes`）。
     """
     config = os.environ.get("CHEESE_EXECUTION_CONFIG") or ""
     if not config:

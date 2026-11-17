@@ -475,9 +475,8 @@ def _owner_of(prefix: str) -> str | None:
     return parts[1]
 
 
-def _names_others(note: MemoryFile, owner: str, people: dict[str, str]) -> str | None:
-    """这条记录点了哪一位别的成员（handle 或名字）；没有点名是 None。"""
-    text = f"{note.description}\n{note.body}"
+def names_another(text: str, owner: str, people: dict[str, str]) -> str | None:
+    """``text`` 点了本人（``owner``）以外哪一位成员（handle 或名字）；没有是 None。"""
     for handle, name in sorted(people.items()):
         if handle == owner:
             continue
@@ -536,7 +535,9 @@ def policy_breach(
             f"communication 记录的正文 {len(note.body)} 字，上限 {TALK_BODY_MAX} 字："
             "只写他要你怎么跟他说话，一两句就够"
         )
-    if (named := _names_others(note, owner, people or {})) is not None:
+    if (
+        named := names_another(f"{note.description}\n{note.body}", owner, people or {})
+    ) is not None:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         return (
             f"这条 communication 记录提到了另一位成员（{named}）。要你区别对待别人的"
@@ -547,44 +548,45 @@ def policy_breach(
 
 def talk_view(files: dict[str, str]) -> dict[str, str]:
     """一个人的 private 树（文件名 → 正文）在多人地方铺下的那一份：只有他的
-    communication 记录，和只指向它们的索引。
+    communication 记录，和一份只指向它们的索引。
 
-    索引取他自己那份 `MEMORY.md` 里指向这几条的行，原样、原序；有记录而索引里
-    没有指向它的，按 frontmatter 补一行（`MemoryFile.index_line`），好让每一条都
-    读得到。别的行一行都不放：索引的一行就是一条记忆。
+    索引按每一条的 frontmatter 现拼（`MemoryFile.index_line`），不抄他自己那份
+    `MEMORY.md` 里的行：那里的钩子是在别处写下的，没有过这一类的收件规矩，而
+    索引的一行本身就是一条记忆。
     """
     eligible = {
         name: content
-        for name, content in files.items()
+        for name, content in sorted(files.items())
         if name != INDEX_NAME and is_talk_note(content)
     }
-    lines = [
-        line
-        for line in (files.get(INDEX_NAME) or "").splitlines()
-        if (entries := parse_index(line)) and entries[0].path in eligible
-    ]
-    pointed = {parse_index(line)[0].path for line in lines}
-    lines += [
-        parse_memory_file(eligible[name]).index_line(name)
-        for name in sorted(eligible)
-        if name not in pointed
-    ]
     view = dict(eligible)
-    if lines:
-        view[INDEX_NAME] = "\n".join(lines) + "\n"
+    if eligible:
+        view[INDEX_NAME] = (
+            "\n".join(
+                parse_memory_file(content).index_line(name)
+                for name, content in eligible.items()
+            )
+            + "\n"
+        )
     return view
 
 
 def merge_view_index(
-    laid: str, written: str, real: str, kept: set[str]
+    laid: str,
+    written: str,
+    real: str,
+    new: set[str],
+    *,
+    owner: str,
+    people: dict[str, str] | None = None,
 ) -> tuple[str, list[str]]:
     """多人地方里改过的那份索引（``written``，铺下去时是 ``laid``），合回他真正
     的那份索引 ``real``。
 
-    只收**新加的、指向 ``kept`` 里一条记录**的行（``kept`` 是这一棵在这一次之后
-    有的 communication 记录），接在 ``real`` 后面；删掉的、改掉的行和指向别处的
-    新行都不收——已有的记录在这里只读，而索引的一行本身就是一条记忆。返回合好的
-    索引和没收的那几行。
+    只收**新加的、指向这一次新记下的一条记录（``new``）、不点别的成员名字**的
+    行，接在 ``real`` 后面；删掉的、改掉的行，指向已有记录或别处的新行都不收——
+    已有的记录在这里只读，而索引的一行本身就是一条记忆。返回合好的索引和没收的
+    那几行。
     """
     old = set(laid.splitlines())
     present = set(real.splitlines())
@@ -594,7 +596,11 @@ def merge_view_index(
         if line in old or not line.strip():
             continue
         entries = parse_index(line)
-        if entries and entries[0].path in kept:
+        if (
+            entries
+            and entries[0].path in new
+            and names_another(line, owner, people or {}) is None
+        ):
             if line not in present and line not in taken:
                 taken.append(line)
         else:

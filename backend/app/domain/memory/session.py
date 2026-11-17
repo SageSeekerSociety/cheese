@@ -12,8 +12,8 @@ agent 用自己手里的 Write/Edit 改会话目录里的 `.md`，平台这一�
 一个没说话的人的偏好当成 agent 删掉的东西从数据库里抹掉。点名过的作用域才是这一
 次对账的范围。
 
-**没点名、会话却交回来的 private，替它的主人收。** 一个座位的树一次只放一个人
-的 private（`runner.memory_root`）；这个座位换了一位说话的人，上一位的 private
+**没点名、会话却交回来的 private，替它的主人收。** 一个座位的树只放这一轮点了
+名的那几位的 private（`runner.memory_root`）；这个座位换了答复的人，上一位的 private
 这一次没点名，会话把它连同基线原样交回来、从树上拿走（`tree.withdrawn_prefixes`）。它里面可能有那一位的会话还没对过账的改动，所以这
 里拿数据库现在那一份跟它按同一条三方规矩合一次，合出来的就是那个人的
 （`apply_withdrawn`）。
@@ -80,6 +80,9 @@ class StoredTree:
     #: 那几棵里索引的路径 → 他真正的那份索引（没有就是空串）。`contents` 里是铺下
     #: 去的那一份，`versions` 里是真正那一份的版本号。
     real_index: dict[str, str] = field(default_factory=dict)
+    #: 那几棵里没铺下去的记录（路径）：他别的类型的记录。会话新记一条同名的，
+    #: 不能把它当新建。
+    hidden: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -181,6 +184,7 @@ async def read_tree(
     contents: dict[str, str] = {}
     versions: dict[str, int] = {}
     real_index: dict[str, str] = {}
+    hidden: set[str] = set()
     laid_views: set[str] = set()
     for scope, owner in scopes:
         prefix = prefix_of_scope(scope, owner)
@@ -190,7 +194,9 @@ async def read_tree(
         if scope is MemoryFileScope.private and prefix in views:
             laid_views.add(prefix)
             real_index[f"{prefix}/{INDEX_NAME}"] = files.get(INDEX_NAME, "")
-            files = talk_view(files)
+            view = talk_view(files)
+            hidden |= {f"{prefix}/{name}" for name in files if name not in view}
+            files = view
             versions = {
                 path: version
                 for path, version in versions.items()
@@ -206,6 +212,7 @@ async def read_tree(
         versions=versions,
         views=frozenset(laid_views),
         real_index=real_index,
+        hidden=frozenset(hidden),
     )
 
 
@@ -224,6 +231,9 @@ async def talk_owners(
             owners.append(handle)
     return owners
 
+
+#: 多人地方里新记的一条，和这个人一条没铺下去的记录同名。
+_HIDDEN_NAME = "这位成员已有一条同名的记录，它不在这里；新记的这一条换一个文件名再写"
 
 #: 私聊和私密频道里写进 team 的改动不收（#3830）。
 _TEAM_READ_ONLY = (
@@ -335,7 +345,9 @@ async def apply_tree(
                 stored_content or "",
                 content,
                 real,
-                _kept_talk(prefix, stored, files) - _names(prefix, dropped),
+                _names(prefix, written),
+                owner=owner or "",
+                people=people,
             )
             if refused_lines:
                 dropped[path] = _view_index_reason(refused_lines)
@@ -346,6 +358,9 @@ async def apply_tree(
             content = _without_dropped(content, stored_content, prefix, dropped)
             if content == stored_content:
                 continue
+        elif path in stored.hidden:
+            dropped[path] = _HIDDEN_NAME
+            continue
         elif breach := policy_breach(
             path,
             content,
@@ -400,26 +415,6 @@ async def apply_tree(
         unindexed=unindexed,
         diffs=_diffs(before, written),
     )
-
-
-def _kept_talk(prefix: str, stored: StoredTree, files: dict) -> set[str]:
-    """一棵多人地方的 private 在这一次之后有的 communication 记录（文件名）：铺下
-    去的那几条，加这一次新记、平台收得下的那几条。"""
-    kept = {
-        path[len(prefix) + 1 :]
-        for path in stored.contents
-        if path.startswith(f"{prefix}/") and not path.endswith(f"/{INDEX_NAME}")
-    }
-    for path, content in files.items():
-        if (
-            isinstance(content, str)
-            and path.startswith(f"{prefix}/")
-            and path not in stored.contents
-            and not path.endswith(f"/{INDEX_NAME}")
-            and policy_breach(path, content, None, view=True) is None
-        ):
-            kept.add(path[len(prefix) + 1 :])
-    return kept
 
 
 def _names(prefix: str, paths) -> set[str]:
