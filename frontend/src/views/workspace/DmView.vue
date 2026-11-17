@@ -55,10 +55,15 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 // The teammate's own name, once the room is open — a project may have several
 // and 「芝士」 for all of them would make the header a lie.
-const agentRow = ref<{ display_name: string; name_source?: string } | null>(null)
-const agentName = computed(() =>
-  agentRow.value ? teammateName(agentRow.value.display_name, agentRow.value.name_source) || null : null
-)
+const agentRow = ref<{ display_name: string; name_source?: string; seat_handle?: string } | null>(null)
+const agentName = computed(() => {
+  if (!agentRow.value) return null
+  // 队友的个人备注按当前查看者回，挂在名册那一行上；公开名只作兜底。
+  const seat = store.members.find(
+    (m) => m.user_handle === agentRow.value?.seat_handle || m.instance_handle === agentHandle.value
+  )
+  return memberName(seat) || teammateName(agentRow.value.display_name, agentRow.value.name_source) || null
+})
 
 // Header label: the peer's name for a person DM, else this teammate's.
 const title = computed<string>(() => {
@@ -169,9 +174,18 @@ const topicId = computed(() => topic.value?.id ?? null)
 const files = useConversationFiles(topicId)
 const viewing = ref<string | null>(null)
 watch(topicId, () => (viewing.value = null))
-const fileNames = computed(() =>
-  Object.fromEntries(store.members.filter((m) => m.name).map((m) => [m.user_handle, m.name as string]))
-)
+// 署名和别处同一套：一个人的每个 handle（队友的座位和它自己的）都指到同一行，
+// 用同一条姓名解析——有个人备注用备注，否则原名。
+const fileNames = computed(() => {
+  const out: Record<string, string> = {}
+  for (const m of store.members) {
+    const name = memberName(m)
+    if (!name) continue
+    out[m.user_handle] = name
+    if (m.instance_handle) out[m.instance_handle] = name
+  }
+  return out
+})
 const keepFailed = ref<string | null>(null)
 const asking = ref<ConversationFile | null>(null)
 const { people, projectPeople } = useKeepAudience(

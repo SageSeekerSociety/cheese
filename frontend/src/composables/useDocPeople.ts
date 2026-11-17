@@ -24,6 +24,8 @@ export function useDocPeople(source: {
       .map((m) => ({
         handle: m.user_handle,
         label: memberName(m) || m.user_handle,
+        // 设了备注时原名还要能搜到：有人记住的是原名，不是备注。
+        originalName: m.remark ? memberOriginalName(m) || null : null,
         agent: false,
         external: isExternalMember(m),
         // 名册这一行就带着他挑过的头像；没挑过是 null，交给首字母。

@@ -3,7 +3,7 @@ import type { PaletteSource } from '@/commands/palette/sources'
 
 import { copyText } from '@/commands/copy'
 import { t } from '@/i18n'
-import { memberName } from '@/lib/agentNames'
+import { memberName, memberOriginalName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -21,7 +21,9 @@ const source: PaletteSource = {
       title: memberName(member) || member.user_handle,
       subtitle: member.user_handle,
       icon: member.agent ? 'mdi-robot-outline' : 'mdi-account-outline',
-      keywords: [member.user_handle],
+      keywords: member.remark
+        ? [member.user_handle, memberName(member) || '', memberOriginalName(member) || '']
+        : [member.user_handle],
       to: { name: 'member', params: { projectId: ctx.projectId!, handle: member.user_handle } },
       actions: () => [
         // 自己不给自己发私信。

@@ -16,6 +16,7 @@ import { computed, watch } from 'vue'
 import { useActivityLines } from '../../components/room/composables/useActivityLines'
 import { useLiveSteps } from '../../components/room/composables/useLiveSteps'
 import { useRoomActivity } from '../../components/room/composables/useRoomActivity'
+import { memberName } from '../../lib/agentNames'
 import { isAgentHandle } from '../../lib/authorship'
 
 /** 房间里此刻的动静。 */
@@ -45,7 +46,7 @@ export function usePanelActivity(deps: {
       deps.roster.agentNameOf(handle) ??
       (isAgentHandle(handle)
         ? deps.roster.agentDisplayName(handle)
-        : deps.roster.memberByHandle.value.get(handle)?.name || handle),
+        : memberName(deps.roster.memberByHandle.value.get(handle)) || handle),
     (handle) => deps.turns.faces.value[handle]?.status
   )
   // 在干活的、在排队的、等自动重试的：面板自己画的和递给页面的是这同一份。

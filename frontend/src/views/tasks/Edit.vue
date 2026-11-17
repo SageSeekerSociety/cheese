@@ -49,6 +49,7 @@ import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import TaskStageChangeConfirm from '@/components/tasks/TaskStageChangeConfirm.vue'
 import TaskStarterPicker from '@/components/tasks/TaskStarterPicker.vue'
+import { userName } from '@/lib/agentNames'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { mentorOptions } from '@/lib/taskMentors'
@@ -160,7 +161,7 @@ const starter = useStarterUpload<string>({
 const mentorChoices = computed(() =>
   mentorOptions(
     taskData.value?.space?.admins,
-    taskData.value?.creator ? { handle: taskData.value.creator.username, name: taskData.value.creator.nickname } : null
+    taskData.value?.creator ? { handle: taskData.value.creator.username, name: userName(taskData.value.creator) } : null
   )
 )
 

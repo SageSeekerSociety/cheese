@@ -560,3 +560,51 @@ describe('inviting someone by name', () => {
     expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
   })
 })
+
+describe('个人备注', () => {
+  const remarked = {
+    user: { id: 9, nickname: 'qinmo', username: 'qinmo', remark: '秦老师' },
+    role: 'MEMBER',
+  }
+
+  it('成员行显示备注，原名与账号仍认得出这个人', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [remarked] } as never)
+    mount({ role: 'ADMIN' })
+
+    expect(await screen.findByText('秦老师')).toBeTruthy()
+    expect(screen.getByText('(qinmo) · qinmo')).toBeTruthy()
+  })
+
+  it('没设备注的人仍显示昵称', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({
+      members: [{ user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER' }],
+    } as never)
+    mount({ role: 'ADMIN' })
+
+    expect(await screen.findByText('qinmo')).toBeTruthy()
+    expect(screen.queryByText('(qinmo) · qinmo')).toBeNull()
+  })
+
+  it('加入申请里的申请人显示备注与原名', async () => {
+    vi.mocked(TeamsApi.listTeamJoinRequests).mockResolvedValue({
+      applications: [{ id: 31, status: 'PENDING', createdAt: Date.now(), user: remarked.user }],
+    } as never)
+    route.query = { tab: 'requests' }
+    mount({ role: 'OWNER' })
+
+    await screen.findByRole('button', { name: /批准/ })
+    expect(screen.getAllByText('秦老师').length).toBeGreaterThan(0)
+    expect(screen.getByText('(qinmo) · qinmo')).toBeTruthy()
+  })
+
+  it('已发送邀请里的受邀人显示备注', async () => {
+    vi.mocked(TeamsApi.listTeamInvitations).mockResolvedValue({
+      invitations: [{ id: 41, status: 'PENDING', createdAt: Date.now(), user: remarked.user }],
+    } as never)
+    route.query = { tab: 'invitations' }
+    mount({ role: 'OWNER' })
+
+    await screen.findByRole('button', { name: '撤回' })
+    expect(screen.getAllByText('秦老师').length).toBeGreaterThan(0)
+  })
+})

@@ -110,8 +110,11 @@ async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> di
         return {"latest": latest, "items": []}
     locale = (await languages_by_ids(db, [user_id])).get(user_id)
     rows = await repo.pushable_after(user_id, PUSHABLE, after, NOTICES_AT_ONCE)
-    # A push names people by name, not by the room's <@handle> token.
-    names = await names_for(db, *(row.metadata_payload for row in rows))
+    # A push names people by name, not by the room's <@handle> token. It goes to
+    # one reader, so that reader's own remarks name people, as the roster does.
+    names = await names_for(
+        db, *(row.metadata_payload for row in rows), viewer_id=user_id
+    )
     items = []
     for row in rows:
         payload = with_names(row.metadata_payload or {}, names)
