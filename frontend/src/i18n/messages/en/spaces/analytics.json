@@ -197,7 +197,6 @@
         "stuckRatio": "Hard: stuck rate ≥ {pct}",
         "note": "Stuck means the AI judged it shaky or weak; the rate is over everyone the point involves. Click a row for misconceptions and teaching advice.",
         "chartX": "People who asked ({n} members)",
-        "chartY": "Stuck rate",
         "empty": "The list has no knowledge points yet"
       },
       "detail": {

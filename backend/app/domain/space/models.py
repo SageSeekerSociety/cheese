@@ -1200,10 +1200,6 @@ class SpaceLearningWeek(Base):
     )
 
 
-#: 学情报告能导出的格式。
-LEARNING_EXPORT_FORMATS = ("pdf", "xlsx", "docx")
-
-
 class SpaceLearningExport(Base):
     """谁在什么时候导出了一份学情报告（只追加）。
 
