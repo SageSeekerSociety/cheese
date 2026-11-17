@@ -1772,5 +1772,35 @@
       "name": "Card states",
       "note": "Waiting, started, cancelled, gave up after 14 days, a repeating one that is on, one paused for credits. Ended cards are grey and have no button."
     }
+  },
+  "learningAnalysisView": {
+    "about": "Space settings 'Learning analysis': the switch, the notice-card preview, the knowledge point list, and the privacy rules. Reads and writes live in the container `LearningAnalysis.vue`; this only draws and emits.",
+    "s1": {
+      "name": "On, two points in the list",
+      "note": "Default: the switch is on, the notice section offers a 'Preview', the knowledge point list shows two rows with rename / delete at the end, and three read-only privacy rules sit at the bottom."
+    },
+    "s2": {
+      "name": "A plain member sees this page",
+      "note": "No manage rights: the switch shows but cannot be moved, and the list offers no 'New knowledge point' — a button that can only fail (403) is worse than none."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "The config could not be read: the whole block becomes an error with a retry, not 'off' — that would report a board that is on as off."
+    }
+  },
+  "knowledgePointField": {
+    "about": "'Knowledge points involved': shared by the publish and edit pages. Adopted points are chips outside, with a 'Add from the list' beside them that unfolds the whole list; the AI's suggestions from the problem text go below, and only 'Adopt' takes effect.",
+    "s1": {
+      "name": "One adopted, two suggestions",
+      "note": "Default: the adopted 'Correlated subquery' is a chip; below are two suggestions — one already in the list ('Adopt' puts it on), one marked 'not in the list' ('Add to the list and adopt')."
+    },
+    "s2": {
+      "name": "Nothing adopted yet",
+      "note": "No knowledge point adopted: that row says 'Nothing adopted yet' and offers only 'Add from the list'; without permission to read the problem text no AI button shows."
+    },
+    "s3": {
+      "name": "The list could not load",
+      "note": "The list could not be read: it says so and offers no candidates, but never drops the ids already on the task — one failed request must not lose them."
+    }
   }
 }

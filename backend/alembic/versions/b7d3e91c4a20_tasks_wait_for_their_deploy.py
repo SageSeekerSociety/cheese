@@ -1,7 +1,7 @@
 """tasks wait for their deploy
 
 Revision ID: b7d3e91c4a20
-Revises: c4e8a2f61d93
+Revises: b3f7c1d94a20
 Create Date: 2026-11-16
 
 A task whose last delivery merged in a project whose deploy reports back waits,
@@ -21,7 +21,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "b7d3e91c4a20"
-down_revision: str | Sequence[str] | None = "c4e8a2f61d93"
+down_revision: str | Sequence[str] | None = "b3f7c1d94a20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
