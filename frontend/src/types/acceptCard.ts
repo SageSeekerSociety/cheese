@@ -125,7 +125,7 @@ export interface AcceptCard {
     url: string | null
     revision?: string | null
   } | null
-  completes_task?: boolean // 这次交付是不是任务的最后一步；不是的话采纳后任务接着做下一步
+  completes_task?: boolean // 只在旧卡上有意义；新卡一律 false，界面不读它
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
