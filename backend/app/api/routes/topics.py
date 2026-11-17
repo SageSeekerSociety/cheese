@@ -1279,6 +1279,38 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
+@router.post("/{topic_id}/questions/{block_id}/confirm")
+async def confirm_typed_answer(
+    block_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],
+    db: DbSession,
+) -> dict:
+    """The asking agent confirms that what a person typed back is the answer.
+
+    A typed reply that is not one of the options leaves the question open (it
+    may only be asking what it means); the agent reads it and, when it is the
+    answer, calls this to settle the question. Only the question's author may,
+    and only a question of this conversation."""
+    from app.domain.agent.ask import confirm_answer_by_asker
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.block.schemas import BlockOut
+    from app.domain.conversation.numbering import lock_conversations
+
+    place, actor = at.place, at.actor
+    question = await BlockRepository(db).get(block_id)
+    if question is None or question.conversation_id != place.conversation_id:
+        raise NotFoundError(say("cursorMessageNotFound"))
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
+    await confirm_answer_by_asker(db, block=question, handle=actor.handle)
+    payload = BlockOut.model_validate(question).model_dump(mode="json")
+    await db.commit()
+    await get_broker().publish(
+        str(question.conversation_id), {"type": "block_updated", "block": payload}
+    )
+    return ok(payload)
+
+
 @router.post("/{topic_id}/summon")
 async def summon_agent(
     at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],

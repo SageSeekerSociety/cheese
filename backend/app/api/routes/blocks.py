@@ -23,7 +23,6 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent.announce import finish_answering
 from app.domain.agent.ask import (
-    confirm_answer_by_asker,
     publish_answered,
     skip,
     withdraw,
@@ -297,51 +296,6 @@ async def withdraw_own_question(
     await withdraw_question_by_asker(
         db, block=question, room_id=room_id, handle=actor.handle
     )
-    payload = BlockOut.model_validate(question).model_dump(mode="json")
-    payload["reactions"] = await repo.reactions_for_block(block_id)
-    await db.commit()
-    await broker.publish(
-        str(question.conversation_id), {"type": "block_updated", "block": payload}
-    )
-    return ok(payload)
-
-
-@router.post(
-    "/{block_id}/question/confirm",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(WithdrawnAnswer),
-)
-async def confirm_typed_answer(
-    block_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    broker: Annotated[InProcessBroker, Depends(get_broker)],
-) -> dict:
-    """The asking agent confirms that what a person typed back is the answer.
-
-    A typed reply that is not one of the options leaves the question open (it
-    may only be asking what it means); the agent reads it and, when it is the
-    answer, calls this to settle the question. Only the question's author may."""
-    repo = BlockRepository(db)
-    question = await repo.get(block_id)
-    if question is None:
-        raise NotFoundError(say("cursorMessageNotFound"))
-    actor = await resolver.resolve(
-        topic_id=question.conversation_id, project_id=question.project_id
-    )
-    place = await place_or_404(db, question.conversation_id)
-    await resolver.authorize_topic(
-        actor,
-        project_id=question.project_id,
-        topic_id=place.room_id,
-        room=place.room,
-        enforce=True,
-    )
-    if not actor.authenticated:
-        raise AuthenticationRequiredError(say("signInRequired"))
-    await lock_conversations(db, [question.conversation_id])
-    await db.refresh(question)
-    await confirm_answer_by_asker(db, block=question, handle=actor.handle)
     payload = BlockOut.model_validate(question).model_dump(mode="json")
     payload["reactions"] = await repo.reactions_for_block(block_id)
     await db.commit()

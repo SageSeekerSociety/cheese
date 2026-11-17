@@ -202,7 +202,7 @@ def test_the_asker_confirming_a_typed_reply_settles_the_question(
 
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
         response = client.post(
-            f"/blocks/{question['id']}/question/confirm", headers=headers
+            f"/topics/{room}/questions/{question['id']}/confirm", headers=headers
         )
     assert response.status_code == 200, response.text
     (answer,) = _block(client, room, question["id"])["meta"]["answer_log"]
