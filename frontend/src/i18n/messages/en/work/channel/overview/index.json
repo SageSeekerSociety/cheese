@@ -19,5 +19,6 @@
   "running": "Open tasks ({count})",
   "save": "Save",
   "waiting": "Waiting on you",
-  "writeProject": "Write project goals"
+  "writeProject": "Write project goals",
+  "closedByNeglect": "Closed automatically: nobody attended to it"
 }

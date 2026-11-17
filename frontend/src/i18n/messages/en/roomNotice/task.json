@@ -1,6 +1,8 @@
 {
   "taskClosed": "The task “{title}” was closed",
   "taskCompleted": "The task “{title}” was completed: {conclusion}",
+  "taskNeglectClosed": "The task \"{title}\" had no attention for {days} days and was closed automatically; you can reopen it",
+  "taskNeglectNudge": "The task \"{title}\" has had no attention for {days} days and will close automatically in {left} days",
   "taskQuiet": "No progress on the task \"{title}\" for {days} days",
   "taskReopened": "{actor} reopened the task “{title}”",
   "taskUntitled": "New task",
