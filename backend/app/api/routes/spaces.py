@@ -15,6 +15,7 @@ from app.api.space_deps import (
     require_reviewed_space,
 )
 from app.api.space_payloads import (
+    SpaceAdminRelationRow,
     TeachingRequest,
     _admin_to_api_model,
     _build_full_space_payload,
@@ -260,7 +261,7 @@ async def get_spaces(
     # The admins of the whole page are read and hydrated in one pass, not one
     # space at a time: a remark is another query per page, and paying it inside
     # this loop is the N+1 this endpoint was rewritten to avoid (`_hydrate_people`).
-    admins_by_space: dict[int, list] = {
+    admins_by_space: dict[int, Sequence[SpaceAdminRelationRow]] = {
         s.id: await service.list_admins(s.id) for s in spaces
     }
     everyone = [rel.user_id for rels in admins_by_space.values() for rel in rels]
