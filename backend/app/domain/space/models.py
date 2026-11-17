@@ -29,6 +29,7 @@ space_domain_group_seq = Sequence("space_domain_group_seq")
 space_domain_group_domain_seq = Sequence("space_domain_group_domain_seq")
 space_member_seq = Sequence("space_member_seq")
 space_material_seq = Sequence("space_material_seq")
+space_knowledge_point_seq = Sequence("space_knowledge_point_seq")
 
 
 class Space(Base):
@@ -97,6 +98,25 @@ class Space(Base):
     # that predates the key.
     teaching: Mapped[dict] = mapped_column(
         JSON, nullable=False, default=dict, server_default="{}"
+    )
+    # 学情分析 (§ learning analysis): whether this board runs it. Off until a
+    # manager turns it on in the settings page, and then on for every member —
+    # the people already in it and the ones who join later. Who turned it on and
+    # when are kept beside it, so the page can say so rather than guess. These
+    # three are the whole of the switch: no per-member opt-in and no per-member
+    # opt-out, which is why there is no row anywhere that says who is in.
+    learning_analysis_enabled: Mapped[bool] = mapped_column(
+        "learning_analysis_enabled",
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    learning_analysis_enabled_by: Mapped[int | None] = mapped_column(
+        "learning_analysis_enabled_by", BigInteger, nullable=True
+    )
+    learning_analysis_enabled_at: Mapped[datetime | None] = mapped_column(
+        "learning_analysis_enabled_at", DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -563,5 +583,118 @@ class SpaceAnnouncement(Base):
     #: Moves when what it says changes (title, body, expiry) and not when it is
     #: pinned: 已编辑 is a claim about the text.
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceKnowledgePoint(Base):
+    """一条知识点，挂在一块题目板上 (§ learning analysis).
+
+    One board writes its own list and every 题目 on the board files under it —
+    a point is a property of the course, not of one exercise, so it is a row of
+    the board rather than a column on each 题目. A 题目 links to these rows
+    (``task_knowledge_point``), which is what makes the same point comparable
+    across the whole board later.
+
+    Deleting is **soft**: the row keeps its name and order and drops out of the
+    list, because a 题目 that already files under it still has to render the
+    name, and a hard delete would either break that 题目 or leave its link
+    dangling. The partial unique index keeps one LIVE name per board, so the
+    same point cannot be added twice and a removed one can be added back.
+    """
+
+    __tablename__ = "space_knowledge_point"
+    __table_args__ = (
+        # One live name per board. Partial because a soft-deleted row is the
+        # record of a removal, and re-adding that same name later is a new life
+        # rather than a conflict.
+        Index(
+            "uq_space_knowledge_point_live_name",
+            "space_id",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # 「这块板上有哪些知识点」按 space_id 找，删掉的行也要读得到（一块板列过的
+        # 全部名字）。
+        Index("ix_space_knowledge_point_space_id", "space_id"),
+        CheckConstraint(
+            "length(btrim(name)) > 0", name="ck_space_knowledge_point_name"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, space_knowledge_point_seq, primary_key=True
+    )
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_knowledge_point_space_id_space",
+        ),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: 清单里的顺序，小的在前。不重排已存在的行也就不会撞号。
+    display_order: Mapped[int] = mapped_column(
+        "display_order", Integer, nullable=False, default=0
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceLearningNotice(Base):
+    """A member's record of confirming the 告知卡, one row per (board, person).
+
+    A board whose 学情分析 is on shows each member a card the first time they
+    enter it; the one button says 「我已阅读并知悉」, and what this row keeps is
+    that they clicked it. A person who never clicked has no row, and the card
+    is what they see next time — which is also what shows it to someone who was
+    already in the board when a manager turned the analysis on.
+
+    **Append-only.** ``acknowledged_at`` is written once and never updated, as
+    ``app.domain.legal.models.UserConsent`` is, and kept in a table of its own
+    rather than folded into that one: this is a product notice the board tells
+    its own members, not a legal document the platform asks everyone to accept,
+    and the two have different readers and different lifetimes.
+    """
+
+    __tablename__ = "space_learning_notice"
+    __table_args__ = (
+        # One row per (board, person). The unique index holds it even when two
+        # clicks race, so a double-tap is a no-op and never a second record.
+        Index(
+            "uq_space_learning_notice_space_user",
+            "space_id",
+            "user_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_notice_space_id_space",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: 点「我已阅读并知悉」的那一刻。这一列只写一次，永不更新。
+    acknowledged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

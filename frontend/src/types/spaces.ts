@@ -87,6 +87,58 @@ export type SpaceTeaching = {
   skills?: string[]
 }
 
+// ---- 学情分析（§ learning analysis, step 1）--------------------------------------
+//
+// 一块题目板的学情分析底座：开关、知识点清单、加入时的告知卡。代码与文案都不叫「课程」——
+// 这是板级功能。契约见 `SpacesApi` 那五条 `learning-analysis` 方法；服务端在
+// `app/api/routes/spaces_learning_analysis.py` 与 `app/domain/space/learning_analysis_*`。
+
+/** 一条知识点：这块板的清单里的一行，所有题目共用。 */
+export type SpaceKnowledgePoint = {
+  id: number
+  name: string
+  displayOrder: number
+}
+
+/** 开关读回来的三格。`enabled` 是判据；后两格只用于展示（谁开的、什么时候开的）。 */
+export type SpaceLearningAnalysisSwitch = {
+  enabled: boolean
+  /** 打开它的那个人的 user id；从没开过是 null。 */
+  enabledBy: number | null
+  /** 打开它的那一刻，epoch 毫秒；从没开过是 null。 */
+  enabledAt: number | null
+}
+
+/** `GET /spaces/{spaceId}/learning-analysis` 的载荷：开关 + 清单 + 我能不能改。 */
+export type SpaceLearningAnalysis = {
+  learningAnalysis: SpaceLearningAnalysisSwitch
+  knowledgePoints: SpaceKnowledgePoint[]
+  /** 我在这块板能不能改设置（`edit_settings`）。摆不摆管理入口用它。 */
+  canManage: boolean
+}
+
+/** AI 建议里「把握」那一格：模型只给这两档，别的值由服务端归到 `medium`。 */
+export type SpaceKnowledgeConfidence = 'high' | 'medium'
+
+/** AI 读题面给出的一条知识点建议（`POST .../knowledge-points/suggestions`）。 */
+export type SpaceKnowledgeSuggestion = {
+  name: string
+  /** 为什么建议它。 */
+  why: string
+  /** 判断的把握，高 / 中。 */
+  confidence: SpaceKnowledgeConfidence
+  /** 清单里没有这个名字：采用它要连清单一起加（「加入清单并采用」）。 */
+  isNew: boolean
+}
+
+/** 进这块板时那张告知卡的状态（`GET .../notice`）：要不要弹。 */
+export type SpaceLearningNoticeState = {
+  enabled: boolean
+  /** `enabled && !acknowledged` 才为真 —— 据此决定弹不弹。 */
+  needsAcknowledge: boolean
+  acknowledged: boolean
+}
+
 /** One person the space is visible to — see `SpacesApi.listMembers`. */
 export type SpaceMember = {
   userId: number

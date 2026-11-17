@@ -138,6 +138,9 @@ export function useTaskForm(
             .min(1, t('tasks.form.validation.rankRequired'))
             .max(3),
           topics: z.array(z.number()).optional(),
+          // 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。不必填：
+          // 没标就是还没归类，和「话题」同一档。
+          knowledgePointIds: z.array(z.number()).optional(),
           categoryId: z
             .number({ error: t('tasks.form.validation.categoryRequired') })
             .int()
@@ -194,6 +197,7 @@ export function useTaskForm(
   const [defaultDeadline, defaultDeadlineProps] = defineField('defaultDeadline', vuetifyConfig)
   const [startMode] = defineField('startMode', vuetifyConfig)
   const [topics] = defineField('topics', vuetifyConfig)
+  const [knowledgePointIds] = defineField('knowledgePointIds', vuetifyConfig)
   const [minTeamSize, minTeamSizeProps] = defineField('minTeamSize', vuetifyConfig)
   const [maxTeamSize, maxTeamSizeProps] = defineField('maxTeamSize', vuetifyConfig)
   const [categoryId, categoryIdProps] = defineField('categoryId', vuetifyConfig)
@@ -365,6 +369,7 @@ export function useTaskForm(
       defaultDeadline: defaultDeadline.value,
       startMode: startMode.value,
       topics: topics.value ?? [],
+      knowledgePointIds: knowledgePointIds.value ?? [],
       categoryId: categoryId.value,
       minTeamSize: minTeamSize.value,
       maxTeamSize: maxTeamSize.value,
@@ -394,6 +399,7 @@ export function useTaskForm(
     if ('defaultDeadline' in fields) defaultDeadline.value = fields.defaultDeadline as number
     if (fields.startMode) startMode.value = fields.startMode
     if ('topics' in fields) topics.value = fields.topics ?? []
+    if ('knowledgePointIds' in fields) knowledgePointIds.value = fields.knowledgePointIds ?? []
     if ('categoryId' in fields) categoryId.value = fields.categoryId as number
     if ('minTeamSize' in fields) minTeamSize.value = fields.minTeamSize
     if ('maxTeamSize' in fields) maxTeamSize.value = fields.maxTeamSize
@@ -453,6 +459,7 @@ export function useTaskForm(
     defaultDeadlineProps,
     startMode,
     topics,
+    knowledgePointIds,
     minTeamSize,
     minTeamSizeProps,
     maxTeamSize,

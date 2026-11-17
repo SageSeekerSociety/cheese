@@ -16,6 +16,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.task_deps import get_task_service
 from app.api.task_serialization import (
+    _enrich_task_knowledge_points,
     _enrich_task_models,
     _enrich_task_submission_schema,
     _enrich_task_topics,
@@ -66,6 +67,7 @@ async def _task_models(db, tasks) -> list[dict]:
     for space_id, group in by_space.items():
         await _enrich_task_models(db, group, space_id=space_id)
     await _enrich_task_topics(db, items)
+    await _enrich_task_knowledge_points(db, items)
     await _enrich_task_submission_schema(db, items)
     return items
 

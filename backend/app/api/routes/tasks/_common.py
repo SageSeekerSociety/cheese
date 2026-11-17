@@ -22,6 +22,7 @@ from app.core.errors import (
     ForbiddenError,
 )
 from app.domain.space import permissions as space_seats
+from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
@@ -73,6 +74,12 @@ class CreateTaskRequest(BaseModel):
     category_id: int | None = Field(default=None, alias="categoryId")
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
     topics: list[int] = Field(default_factory=list)
+    # 这道题涉及的知识点（§ learning analysis, step 1）：这块板知识点清单里的 id。
+    # 与 ``topics`` 同一形状；不属于本板（或不在了）的 id 会被丢掉，见
+    # ``SpaceLearningAnalysisService.valid_point_ids``。
+    knowledge_point_ids: list[int] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
     submission_schema: list[dict] = Field(
         default_factory=list, alias="submissionSchema"
     )
@@ -181,6 +188,11 @@ class PatchTaskRequest(BaseModel):
     # 测试点：给了就整份替换，省略不动。
     test_suite: list[dict] | None = Field(default=None, alias="testSuite")
     topics: list[int] | None = None
+    # 这道题涉及的知识点（§ learning analysis, step 1）：给了就整份替换，省略不动，
+    # 与 ``topics`` 同一语义。
+    knowledge_point_ids: list[int] | None = Field(
+        default=None, alias="knowledgePointIds"
+    )
     access_control_enabled: bool | None = Field(
         default=None, alias="accessControlEnabled"
     )
@@ -258,6 +270,7 @@ async def _create_task_entity(
         category_id = payload.category_id
         team_locking_policy = payload.team_locking_policy
         topics = payload.topics
+        knowledge_point_ids = payload.knowledge_point_ids
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
         submission_schema = payload.submission_schema or []
@@ -347,6 +360,15 @@ async def _create_task_entity(
             for topic in topics_raw:
                 try:
                     topics.append(int(topic))
+                except (TypeError, ValueError):
+                    continue
+
+        knowledge_point_ids_raw = payload.get("knowledgePointIds") or []
+        knowledge_point_ids = []
+        if isinstance(knowledge_point_ids_raw, list):
+            for point_id in knowledge_point_ids_raw:
+                try:
+                    knowledge_point_ids.append(int(point_id))
                 except (TypeError, ValueError):
                     continue
 
@@ -509,6 +531,17 @@ async def _create_task_entity(
     # 简单设置话题关联：先不做复杂校验，仅插入关系行。
     if topics:
         await task_service.add_topic_relations(task_id=task.id, topic_ids=topics)
+
+    # 知识点关联（§ learning analysis, step 1）：与话题同一形状，但会先挑一遍 ——
+    # 题目只能归在自己板上的知识点下，给来的别处 id 当它不存在（见 service）。
+    if knowledge_point_ids:
+        valid_points = await SpaceLearningAnalysisService.of(db).valid_point_ids(
+            space_id=space_id, point_ids=knowledge_point_ids
+        )
+        if valid_points:
+            await task_service.add_knowledge_point_relations(
+                task_id=task.id, knowledge_point_ids=valid_points
+            )
 
     # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
     # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。

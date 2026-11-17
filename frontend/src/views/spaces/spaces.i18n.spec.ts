@@ -44,6 +44,13 @@ vi.mock('@/api/spaces', () => ({
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
     listMaterials: vi.fn().mockResolvedValue({ materials: [], canManage: false }),
+    // 学情分析：进这块板时读一次开关与知识点清单（默认关着）。
+    readLearningAnalysis: vi.fn().mockResolvedValue({
+      learningAnalysis: { enabled: false },
+      knowledgePoints: [],
+      canManage: false,
+    }),
+    readLearningNotice: vi.fn().mockResolvedValue({ enabled: false, needsAcknowledge: false, acknowledged: false }),
   },
 }))
 

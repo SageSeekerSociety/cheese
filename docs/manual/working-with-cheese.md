@@ -87,7 +87,7 @@ parts:
   - kind: head
     room: 综合
     title: 组会报名说明
-    status: 在做
+    status: 进行中
     owner: 你 负责
     at: 1
   - kind: tabs
@@ -105,7 +105,7 @@ parts:
   - kind: task
     title: 组会报名说明
     owner: 你 负责
-    status: 在做
+    status: 进行中
     replies: 1 条回复
     until: 1
   - kind: line
@@ -170,7 +170,7 @@ parts:
   - kind: head
     room: 综合
     title: 组会报名说明
-    status: 已采纳
+    status: 已完成
     at: 3
   - kind: tabs
     items: 概览 | 现场 | 改动 | 预览
@@ -201,7 +201,7 @@ parts:
     press: 3
     until: 3
   - kind: composer
-    placeholder: 任务已关闭，可以继续讨论
+    placeholder: 任务已结束，可以继续讨论
     at: 3
 ```
 :::

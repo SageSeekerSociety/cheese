@@ -130,13 +130,13 @@ async def inform(session: AsyncSession, task: Task, said: str) -> None:
 #: Where a returned or voided card leaves the task: back in its teammate's
 #: hands (`progress.back_to_work`), able to report again.
 BACK_TO_WORK = (
-    "看板上这件任务回到了「在做」，cheese_task(action=state) 又能报了"
+    "看板上这件任务回到了「进行中」，cheese_task(action=state) 又能报了"
     "（你递卡之前报的那一条在递卡时已经清掉）。"
 )
 
 #: The closed-task ending of an instruction: the line still goes out, but there
 #: is nothing left to work on.
-TASK_CLOSED = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+TASK_CLOSED = "原任务已结束或不存在；如需继续修改，请由新任务承接。"
 
 
 def card_voided(
@@ -158,7 +158,7 @@ def card_voided(
 
 def reviewer_changed(*, by: str | None, reviewer: str) -> str:
     who = f"@{by} 把" if by else "平台把"
-    return f"{who}这件任务的验收卡改由 @{reviewer} 审阅，卡照旧在等审阅。"
+    return f"{who}这件任务的验收卡改由 @{reviewer} 审阅，卡照旧待审阅。"
 
 
 def accept_revoked(*, by: str, pr: int | None) -> str:

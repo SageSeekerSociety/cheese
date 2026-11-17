@@ -85,7 +85,8 @@ describe('任务卡', () => {
       '芝士'
     )
     expect(line.state.kind).toBe('closed')
-    expect(line.state.label).toContain('46')
+    expect(line.state.label).toBe('已完成')
+    expect(line.state.line).toContain('46')
     expect(line.accepted).toBeNull()
   })
 

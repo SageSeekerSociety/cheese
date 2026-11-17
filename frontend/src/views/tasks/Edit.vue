@@ -6,7 +6,7 @@
 // 才落到题目上，学生在那之前看到的是原来的题目。只打开、没改一格时没有这份草稿：第一次
 // 改动或第一次问芝士才建。芝士停在右边，接着的是题目页「问芝士」
 // 的那段对话；它改的也是这份草稿，表单跟着动（`useDraftAgent`）。
-import type { SpaceTeaching, TaskDraftFields, TaskFormSubmitData, TaskStage } from '@/types'
+import type { SpaceKnowledgeSuggestion, SpaceTeaching, TaskDraftFields, TaskFormSubmitData, TaskStage } from '@/types'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -19,6 +19,7 @@ import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
+import { useSpaceLearningAnalysis } from '@/composables/useSpaceLearningAnalysis'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
@@ -26,6 +27,7 @@ import { useTaskDraft } from '@/composables/useTaskDraft'
 import { useStageChangeCheck } from './composables/useStageChangeCheck'
 import { useTaskData } from './composables'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { ApiError } from '@/api/http'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
@@ -82,6 +84,52 @@ const editCategories = computed(() =>
 )
 
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
+
+/** 学情分析：开关（摆不摆「涉及的知识点」那一栏）、知识点清单、能不能让 AI 读题面。 */
+const {
+  enabled: learningEnabled,
+  knowledgePoints,
+  canManage: learningCanManage,
+  state: learningState,
+  addKnowledgePoint,
+  suggest: suggestKnowledge,
+} = useSpaceLearningAnalysis(spaceId)
+
+/** AI 读题面回来的建议：还没处理的摆在那一栏下面，采用一条就少一条。 */
+const knowledgeSuggestions = ref<SpaceKnowledgeSuggestion[]>([])
+const knowledgeSuggesting = ref(false)
+const knowledgeSuggestFailed = ref(false)
+
+/** 这一栏上改了挂的知识点：填回表单（表单那一格是唯一的一份），随之照常存进草稿。 */
+function applyKnowledgePoints(ids: number[]) {
+  void form.value?.apply({ knowledgePointIds: ids })
+}
+
+async function runKnowledgeSuggestion() {
+  if (knowledgeSuggesting.value) return
+  knowledgeSuggesting.value = true
+  knowledgeSuggestFailed.value = false
+  try {
+    const name = live.value.name ?? ''
+    const description = live.value.descriptionMarkdown ?? live.value.description ?? ''
+    knowledgeSuggestions.value = await suggestKnowledge(name, description)
+  } catch (error) {
+    knowledgeSuggestFailed.value = true
+    void errorHandler.handle(error as Error, { showToast: false })
+  } finally {
+    knowledgeSuggesting.value = false
+  }
+}
+
+/** 采用一条清单里还没有的建议：先把它加进清单，拿到编号再挂到这道题上。 */
+async function adoptNewKnowledge(name: string) {
+  try {
+    const point = await addKnowledgePoint(name)
+    if (point) void form.value?.apply({ knowledgePointIds: [...(live.value.knowledgePointIds ?? []), point.id] })
+  } catch (error) {
+    toast.error(axiosErrorMessage(error, t('spaces.learningAnalysis.field.suggestFailed')))
+  }
+}
 const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 
@@ -187,12 +235,16 @@ watch(form, (f) =>
 /** 表单上现在显示的项目集：「默认队友」沿用的是它设的那一位。从表单挂好那一刻起就读它
  *  （它的起点可能是题目本身，也可能是打开的修改草稿），之后人改的、芝士写的都经 `change`。 */
 const formCategoryId = ref<number | undefined>(undefined)
+/** 表单现在的样子（人改的、芝士写的都算）：那一栏的 chip 照它画。 */
+const live = ref<TaskDraftFields>({})
 function onFormReady(fields: TaskDraftFields) {
   formCategoryId.value = fields.categoryId
+  live.value = { ...fields }
   draft.baseline(fields)
 }
 function onFormChange(fields: TaskDraftFields) {
   if ('categoryId' in fields) formCategoryId.value = fields.categoryId
+  live.value = { ...live.value, ...fields }
   draft.changed(fields)
 }
 const inheritedRole = computed(() => {
@@ -209,6 +261,7 @@ const terms = () => ({
   mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
   materials: materials.value.map(({ id, name }) => ({ id, name })),
   teammates: agentTypes.value.map(({ name, title }) => ({ name, title })),
+  knowledgePoints: knowledgePoints.value.map(({ id, name }) => ({ id, name })),
   teaching: teaching.value,
 })
 
@@ -476,7 +529,18 @@ onBeforeUnmount(() => void draft.flush())
             :library-to="spaceLibraryPath(spaceId)"
             :skill-catalog="skillCatalog"
             :skill-catalog-failed="skillCatalogFailed"
+            :knowledge-enabled="learningEnabled === true"
+            :knowledge-points="live.knowledgePointIds ?? []"
+            :knowledge-point-list="knowledgePoints"
+            :knowledge-point-state="learningState"
+            :knowledge-suggestions="knowledgeSuggestions"
+            :knowledge-suggesting="knowledgeSuggesting"
+            :knowledge-suggest-failed="knowledgeSuggestFailed"
+            :knowledge-can-suggest="learningCanManage"
             @update:model-value="setTeaching"
+            @update:knowledge-points="applyKnowledgePoints"
+            @suggest-knowledge="runKnowledgeSuggestion"
+            @adopt-new-knowledge="adoptNewKnowledge"
           />
         </div>
       </template>

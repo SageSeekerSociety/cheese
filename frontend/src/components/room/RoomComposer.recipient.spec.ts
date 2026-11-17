@@ -288,7 +288,7 @@ describe('打字时任务关了', () => {
 
     expect(onSend).not.toHaveBeenCalled()
     expect(draft.value).toBe('再加一个导出接口')
-    expect(screen.getByText('任务已关闭，这条不会再自动交给芝士')).toBeTruthy()
+    expect(screen.getByText('任务已结束，这条不会再自动交给芝士')).toBeTruthy()
   })
 
   it('选「仅发布讨论」：原话照发，不再说要交给队友', async () => {
@@ -337,7 +337,7 @@ describe('打字时任务关了', () => {
     await enter(box())
 
     expect(onSend).not.toHaveBeenCalled()
-    expect(screen.getByText('任务已关闭，这条不会再自动交给芝士')).toBeTruthy()
+    expect(screen.getByText('任务已结束，这条不会再自动交给芝士')).toBeTruthy()
   })
 
   it('任务还开着时发出去，说的是「我要交给队友」：送到时不交给了，后端会退回来', async () => {

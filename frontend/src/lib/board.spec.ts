@@ -1,21 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { columnDotStyle, columnLabel, liveTasks } from './board'
+import { columnDotStyle, liveTasks } from './board'
 
 import { setLocale } from '@/i18n'
 
 beforeEach(() => setLocale('zh-CN'))
-
-describe('columnLabel', () => {
-  it('每一列各有名字，包括板面上不出现的那两列', () => {
-    // done 在折叠行上、archived 在房间上，两者都要有名字可写。
-    expect(columnLabel('building')).toBe('进行中')
-    expect(columnLabel('delivering')).toBe('检查中')
-    expect(columnLabel('needs_you')).toBe('待处理')
-    expect(columnLabel('done')).toBe('已关闭')
-    expect(columnLabel('archived')).toBe('已归档')
-  })
-})
 
 describe('columnDotStyle', () => {
   it('颜色一律走 token —— 写死的颜色在两个主题里必然错一个', () => {

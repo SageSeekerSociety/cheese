@@ -9,7 +9,7 @@
   "loadFailed": "无法加载频道",
   "members": "{count} 位成员",
   "noMatch": "暂无匹配的频道",
-  "openTasks": "{count} 个进行中的任务",
+  "openTasks": "{count} 个未结束的任务",
   "private": "私密频道",
   "search": "搜索频道"
 }

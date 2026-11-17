@@ -66,6 +66,9 @@ ROLES: dict[str, Role] = {
     "environment_diagnosis_model": Role(
         "environment_diagnosis_model", keys=("environment-diagnosis",)
     ),
+    "learning_analysis_model": Role(
+        "learning_analysis_model", keys=("learning-analysis",)
+    ),
     "voice_asr_model": Role("voice_asr_model", keys=("voice-asr",)),
     "voice_polish_model": Role("voice_polish_model", keys=("voice-polish",)),
     "memory_migration_model": Role(

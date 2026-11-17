@@ -298,6 +298,12 @@ export default {
           component: () => import('@/views/spaces/detail/settings/SpaceGuidance.vue'),
         },
         {
+          // 学情分析：开关 + 知识点清单 + 告知卡预览 + 平台那三条隐私规则。
+          path: 'learning-analysis',
+          name: 'SpacesDetailSettingsLearningAnalysis',
+          component: () => import('@/views/spaces/detail/settings/LearningAnalysis.vue'),
+        },
+        {
           // 资料库原来是设置里的一栏，现在是侧栏的一页；旧链接接着能打开。
           path: 'materials',
           name: 'SpacesDetailSettingsMaterials',

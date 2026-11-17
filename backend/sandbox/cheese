@@ -1045,18 +1045,18 @@ PLATFORM_TOOLS = ToolTable(
                 "state": _verb(
                     "在任务里说你的活此刻在哪一步。看板上这件任务显示你说的这一句，你停下了"
                     "也照旧，直到你再说一次；Claude Code 的会话停下后又被叫醒时，看板先显示"
-                    "在做。被叫醒后还在等、还卡着，就再说一次。"
+                    "进行中。被叫醒后还在等、还需要协助，就再说一次。"
                     "开工时设 working；起了构建、CI、长命令在等结果时设 waiting；"
-                    "没有人帮忙走不下去时设 blocked（负责人会看到要他处理），要人回答的"
+                    "没有人帮忙走不下去时设 blocked（看板显示待协助，负责人会看到要他处理），要人回答的"
                     "问题照样用 cheese_ask 问。做完交给人审阅不用设：递卡"
-                    "（cheese_card 的 request）之后看板显示等审，卡在等审阅的时候这里报不了；"
-                    "卡被退回或作废，任务回到在做，你再接着报。"
+                    "（cheese_card 的 request）之后看板显示待审阅，待审阅的时候这里报不了；"
+                    "卡被退回或作废，任务回到进行中，你再接着报。"
                     "情况变了就再设一次。note 用一句话说在做什么、在等什么或卡在哪。",
                     {
                         "state": {
                             "type": "string",
                             "enum": list(TASK_PROGRESS_STATES),
-                            "description": "working 在做；waiting 在等结果；blocked 卡住了",
+                            "description": "working 在做；waiting 在等结果；blocked 需要人协助",
                         },
                         "note": _text(
                             f"一句话，{TASK_PROGRESS_NOTE_CHARS} 字以内；可以不填"
@@ -1853,6 +1853,11 @@ TASK_WRITE_FIELDS = {
     "days_to_submit": {"type": "integer"},
     "category": _text("分类名称"),
     "tags": {"type": "array", "items": {"type": "string"}},
+    "knowledge_points": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "这个空间知识点清单里的名称",
+    },
     "real_name": {"type": "boolean"},
     "registration_start": _text("YYYY-MM-DD HH:MM，用户时区；空字符串是立即开始"),
     "team_locking": {
@@ -4208,9 +4213,9 @@ def _accept_request(args: dict, host) -> str:
     # 递卡改了任务在看板上的样子，而这是它自己做的事：平台不会再另外告诉它，
     # 所以就在这里说（`room_task.heard`）。
     lines.append(
-        "看板上这件任务现在显示「等审」；你之前用 cheese_task 的 state 报的状态和说明"
-        "已经清掉。卡在等审阅的时候 state 报不了；卡被退回或作废，"
-        "平台会叫你，任务回到「在做」，那时再接着报。"
+        "看板上这件任务现在显示「待审阅」；你之前用 cheese_task 的 state 报的状态和说明"
+        "已经清掉。待审阅的时候 state 报不了；卡被退回或作废，"
+        "平台会叫你，任务回到「进行中」，那时再接着报。"
     )
     # 新建的那一次把 id 说出来：往后交付这一项就用它，而这里是它第一次存在的地方。
     if args.get("new_artifact") and art.get("id"):
@@ -5696,7 +5701,7 @@ _SAY = {
     ),
     "cheese_task.state": lambda a, d, e: (
         "看板上这件任务现在显示你说的状态，直到你再设一次；Claude Code 的会话停下后"
-        "又被叫醒时，它先显示在做。"
+        "又被叫醒时，它先显示进行中。"
     ),
     "cheese_card.describe": lambda a, d, e: (
         "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
