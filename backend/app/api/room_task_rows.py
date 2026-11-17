@@ -42,6 +42,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWaits
 from app.domain.identity.actor import Actor
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_and_counts_by_task
@@ -247,6 +248,12 @@ async def task_rows(
                     choices=choices,
                     planned=planned.get(task.id),
                 ),
+                # 做它的那位 AI 队友的席位：没指定时落到频道的那位，和它在消息
+                # 上的署名是同一个 handle。主线上别的队友提到这件任务时，任务
+                # 标签上画它的头像。
+                "teammate": agent_instance_handle(teammates[task.id].instance_id)
+                if task.id in teammates
+                else None,
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。

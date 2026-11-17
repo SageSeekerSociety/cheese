@@ -95,11 +95,13 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import listing, say, size_text
-from app.domain.agent.announce import announce
+from app.domain.agent.announce import announce, who_started_the_open_turn
+from app.domain.agent.ask import DEFAULT_QUESTION_LIFETIME
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.mentions import mentioned_outside, unasked
+from app.domain.agent.mentions import _MENTION_RE, mentioned_outside, unasked
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.intake.human import preview_addressing
+from app.domain.agent.turn.intake.rooms import room_roster
 from app.domain.agent.turn.store.human import AddressingChanged, HumanHandoff
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import (
@@ -109,10 +111,12 @@ from app.domain.block.message_input import (
     ChatAttachmentIn,
     ChatMessageIn,
 )
+from app.domain.block.questions import quick_replies_meta
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.note import send_note
 from app.domain.library import service as library
+from app.domain.mentions import expand_mention_names
 from app.domain.notice_meta import (
     EVENT_MENTION_FUSED,
     SEVERITY_WARN,
@@ -412,6 +416,11 @@ async def _publish_as_agent(
             raise ValidationError("reply_to must belong to this conversation")
         reply_parent = parent
     tagged = await _tagged_task(db, place, body.task) if body.task else None
+    quick = (
+        await _quick_replies(db, place, author, content, body.replies)
+        if body.replies
+        else {}
+    )
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     prepared = (
         await asyncio.to_thread(_read_agent_attachments, body.attachments)
@@ -488,6 +497,7 @@ async def _publish_as_agent(
                 else {}
             ),
             **({TASK_TAG: str(tagged)} if tagged is not None else {}),
+            **quick,
         }
         or None,
     )
@@ -506,6 +516,33 @@ async def _publish_as_agent(
             naming.nudge(place.conversation_id, "message")
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
+
+
+async def _quick_replies(db, place, seat: str, content: str, replies) -> dict:
+    """What makes a main-line message offer ``replies`` under it
+    (`quick_replies_meta`). It asks the people it @-mentions; naming nobody,
+    whoever started the turn it answers; started by the platform, nobody in
+    particular. Only the main line offers them: in a task or a 支线 a question
+    is asked with `cheese_ask`."""
+    if place.inner_id is not None:
+        raise ValidationError(say("chatRepliesMainLineOnly"))
+    roster = await room_roster(db, place.project_id, place.room)
+    people = {row["handle"] for row in roster if not row.get("agent")}
+    named = [
+        handle
+        for handle in _MENTION_RE.findall(expand_mention_names(content, roster))
+        if handle in people
+    ]
+    if not named:
+        starter = await who_started_the_open_turn(
+            db, place.project_id, place.conversation_id, seat
+        )
+        named = [starter] if starter else []
+    return quick_replies_meta(
+        replies,
+        asked=tuple(dict.fromkeys(named)),
+        deadline=datetime.now(UTC) + DEFAULT_QUESTION_LIFETIME,
+    )
 
 
 async def _tagged_task(db, place, ref: str) -> uuid.UUID:

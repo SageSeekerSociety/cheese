@@ -319,6 +319,7 @@ export interface RoomTask {
   created_by_assistant?: boolean // created_by 自己的芝士替他建的
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
+  teammate?: string | null // 实际做它的那位 AI 队友的席位（agent_handle 空时落到频道的那位），和它在消息上的署名相同
   document_id?: string | null // 实况文档；第一次打开任务时才建
   conclusion?: string | null
   // 做它的 AI 队友最后一次报的状态（后端 `room_task/progress.py`）：看板那一格已经按它
