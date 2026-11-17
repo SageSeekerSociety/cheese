@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.review import deploy_wait
+from tests.integration.conftest import session_auth_headers, task_agent_headers
 from tests.integration.test_a_task_delivers_in_steps import (
     _accepted_step,
     _told,
@@ -28,7 +29,6 @@ from tests.integration.test_a_task_delivers_in_steps import (
     app_world as _app_world_fixture,
 )
 from tests.integration.test_accept_pr import REPO
-from tests.integration.conftest import session_auth_headers, task_agent_headers
 from tests.landing import teammate_seat, written_up
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]

@@ -316,7 +316,9 @@ async def conclude_task(
             ),
         )
     if grounds is not None and grounds.unchecked:
-        conclusion = "\n\n".join(part for part in (conclusion, grounds.unchecked) if part)
+        conclusion = "\n\n".join(
+            part for part in (conclusion, grounds.unchecked) if part
+        )
     # Its teammate judged it done, but in a project that waits for its deploy
     # the task stays open until its last merge is live, and is written up then
     # (`task_landing.wait_for_deploy`).

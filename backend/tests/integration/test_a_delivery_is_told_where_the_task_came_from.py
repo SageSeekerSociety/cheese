@@ -259,9 +259,7 @@ def test_a_written_up_task_ends_in_the_main_line_once(client, app_world):
     assert ending["author_type"] == "participant"
 
 
-def test_a_merge_its_teammate_never_follows_up_leaves_the_task_open(
-    client, app_world
-):
+def test_a_merge_its_teammate_never_follows_up_leaves_the_task_open(client, app_world):
     """No merge closes a task: an hour on, with its teammate silent, it is
     still open, and the main line has heard only that the step landed."""
     room, task_id = _accepted_last_step(client, app_world)

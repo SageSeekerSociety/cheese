@@ -697,7 +697,8 @@ def task_step_landed_while_working_prompt(
         "手上这件做完后，用 cheese_card(action=request) 把它作为下一步递交。"
     )
     return (
-        start + "新做的东西不需要交付的，做完后照常判断任务做没做完。"
+        start
+        + "新做的东西不需要交付的，做完后照常判断任务做没做完。"
         + _judge(deploys=False)
     )
 
