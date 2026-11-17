@@ -17,5 +17,7 @@
   "running": "{agent} is working",
   "started": "Not started",
   "updating_branch": "Updating the branch",
-  "waiting": "Waiting on a result"
+  "waiting": "Waiting on a result",
+  "deploying": "Merged, waiting for CI and deploy",
+  "deploy_blocked": "Main CI failed, the deploy is held back"
 }

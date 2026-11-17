@@ -258,6 +258,7 @@ async def poll_uncarded_task_prs(
             # task's earlier steps landed on PRs it no longer holds.
             or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
             Task.closing_since.is_(None),
+            Task.deploying_since.is_(None),
             Topic.status != TopicStatus.archived,
             # A card that is still waiting for its reviewer keeps the task in
             # this poll: its checks turning green is news to the line too.
@@ -389,6 +390,7 @@ async def poll_uncarded_task_prs(
                         or task.project_id != project
                         or (task.status != TaskStatus.open and task.delivered_head)
                         or task.closing_since is not None
+                        or task.deploying_since is not None
                     ):
                         return checked, merged, None
                     if await session.scalar(
@@ -588,7 +590,11 @@ async def _wake_when_checks_pass(
         task = await lock_task_for_change(session, task_id)
         if task is None or task.project_id != project_id or task.pr_number != number:
             return
-        if task.status is not TaskStatus.open or task.closing_since is not None:
+        if (
+            task.status is not TaskStatus.open
+            or task.closing_since is not None
+            or task.deploying_since is not None
+        ):
             if task is not None:
                 _set_checks(task, head, state)
                 await session.commit()
