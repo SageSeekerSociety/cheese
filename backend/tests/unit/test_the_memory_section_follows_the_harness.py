@@ -11,7 +11,7 @@
 
 from app.domain.agent.room.system_prompt import session_system_prompt
 from app.domain.memory.files_store import IndexSection, MemoryIndex
-from app.domain.prompts import Kind, piece, render_opening
+from app.domain.prompts import Facts, Kind, piece, render_opening, render_system
 
 INDEX = MemoryIndex(
     sections=[IndexSection(label="项目", prefix="team", text="- [甲](a.md) — 记忆甲")],
@@ -40,14 +40,14 @@ def test_a_harness_that_keeps_no_memory_is_not_told_about_it():
     写不回去的地方。"""
     system, sections = _told(INDEX, harness="codex")
 
-    assert piece("memory/team") not in system
+    assert piece("memory/multi_person") not in system
     assert "memory" not in sections
 
 
 def test_a_harness_that_keeps_memory_is_told_how_it_works():
     system, sections = _told(INDEX, harness="claude-code")
 
-    assert piece("memory/team") in system
+    assert piece("memory/multi_person") in system
     assert "记忆甲" in sections["memory"]
 
 
@@ -56,7 +56,7 @@ def test_the_rules_do_not_need_an_index_to_be_there():
     ——第一条记忆该写成什么样，只有它说了。"""
     system, sections = _told(None, harness="claude-code")
 
-    assert piece("memory/team") in system
+    assert piece("memory/multi_person") in system
     assert "memory" not in sections
 
 
@@ -65,5 +65,18 @@ def test_an_empty_index_is_not_a_section():
         MemoryIndex(sections=[], warnings=[]), harness="claude-code"
     )
 
-    assert piece("memory/team") in system
+    assert piece("memory/multi_person") in system
     assert "memory" not in sections
+
+
+def test_each_kind_of_place_reads_the_memory_rules_of_its_own():
+    """私聊读带整份 private 的那套规矩；频道主线、任务、支线读多人那套：在那里
+    private 只有这一轮答复的成员的 communication 一类。两套不混着读。"""
+    facts = Facts(memory_synced=True)
+    private = render_system(Kind.private, facts, skill=lambda _name: "")
+    assert piece("memory/private_chat") in private
+    assert piece("memory/multi_person") not in private
+    for kind in (Kind.main_line, Kind.task, Kind.thread):
+        system = render_system(kind, facts, skill=lambda _name: "")
+        assert piece("memory/multi_person") in system
+        assert piece("memory/private_chat") not in system

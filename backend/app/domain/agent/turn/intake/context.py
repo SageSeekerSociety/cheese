@@ -191,6 +191,10 @@ class TurnContext:
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
     # `prompts/pieces/memory/`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
+    # 多人的地方里，这一轮答的人中有 communication 记录的那几位（handle、名字）：
+    # 这一轮先读他们的记录（`prompts.talk_pointer`）。私聊里是空的——那里的整棵
+    # private 在 `memory` 里指着。
+    talk_for: list[dict]
     prior_progress: list[dict]
     #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
     #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：
@@ -264,7 +268,7 @@ class _MemoryBooks(Protocol):
         seat: tuple[uuid.UUID, str],
         *,
         acting: str,
-        speaker: str | None,
+        speakers: tuple[str, ...],
         pointed: bool = False,
     ) -> None: ...
 

@@ -160,7 +160,8 @@ def _working_directory(facts: Facts) -> bool:
 # 规矩进系统提示词，现状进开场：系统提示词在一个会话里一字不变，前缀缓存才接得上。
 def _room_system(memory: str) -> tuple[Include, ...]:
     """The rules of a session in a room, with ``memory`` the memory rules it
-    reads: a private chat's name both scopes, a shared place's only the team's."""
+    reads: a private chat's has its person's whole private memory, a multi-person
+    place's only the communication notes of the people a turn answers."""
     return (
         Include("system/own_name", needs=("name",)),
         Include(BASE),
@@ -224,7 +225,7 @@ MAIN_LINE_SYSTEM = (
     Include("main_line/teammates"),
     Include("main_line/speaking"),
     Include("writing", slots={"speaking": "说话"}),
-    Include("memory/team", when=_memory_synced),
+    Include("memory/multi_person", when=_memory_synced),
     Include(SKILLS),
     Include("system/role", needs=("role",)),
 )
@@ -279,12 +280,12 @@ PROFILES: dict[Kind, Profile] = {
         # a main line started before that copies its own earlier turns.
         generation=1,
     ),
-    Kind.task: _room(Kind.task, ("chat", CARRIED), "memory/team"),
-    Kind.thread: _room(Kind.thread, ("chat", CARRIED), "memory/team"),
+    Kind.task: _room(Kind.task, ("chat", CARRIED), "memory/multi_person"),
+    Kind.thread: _room(Kind.thread, ("chat", CARRIED), "memory/multi_person"),
     # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，private-chat
     # 只补私聊独有的那几条。
     Kind.private: _room(
-        Kind.private, ("chat", CARRIED, "private-chat"), "memory/instructions"
+        Kind.private, ("chat", CARRIED, "private-chat"), "memory/private_chat"
     ),
     Kind.document: Profile(
         kind=Kind.document,
