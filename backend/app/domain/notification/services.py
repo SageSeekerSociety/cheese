@@ -26,8 +26,8 @@ from app.domain.notification.models import (
     NotificationType,
 )
 from app.domain.notification.names import (
-    names_for,
-    snapshot_swaps_for,
+    names_and_referents,
+    snapshot_id_swaps,
     with_names,
     with_snapshot_names,
 )
@@ -287,6 +287,7 @@ class NotificationQueryService:
         resolved_entities: dict[str, ResolvedEntityInfoDTO | None] | None = None,
         names: Mapping[str, str] | None = None,
         viewer_id: int | None = None,
+        referents: Mapping[int, str] | None = None,
     ) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata.
 
@@ -297,18 +298,15 @@ class NotificationQueryService:
         metadata_map = _metadata_map_of(notification)
         # A row names people by name, not by the room's <@handle> token
         # (`names.py`). ``names`` is the page's, read once for every row.
-        if names is None and self._session is not None:
-            names = await names_for(self._session, metadata_map, viewer_id=viewer_id)
+        if self._session is not None and (names is None or referents is None):
+            names, referents = await names_and_referents(
+                self._session, metadata_map, viewer_id=viewer_id
+            )
         if names:
             metadata_map = with_names(metadata_map, names)
-            if self._session is not None:
-                metadata_map = with_snapshot_names(
-                    metadata_map,
-                    names,
-                    await snapshot_swaps_for(self._session, names, metadata_map),
-                )
-            else:
-                metadata_map = with_snapshot_names(metadata_map, names)
+            metadata_map = with_snapshot_names(
+                metadata_map, names, snapshot_id_swaps(names, referents or {})
+            )
 
         if resolved_entities is None:
             entities = (
@@ -337,18 +335,23 @@ class NotificationQueryService:
         if not notifications:
             return []
         resolved_pages = await self.resolve_entities_for_notifications(notifications)
-        names = (
-            await names_for(
+        # Names and referenced people are read once for the whole page: a row
+        # that names someone only through an entity reference must get their
+        # remark too, and doing that per row would be a query per row.
+        if self._session is not None:
+            names, referents = await names_and_referents(
                 self._session,
                 *map(_metadata_map_of, notifications),
                 viewer_id=viewer_id,
             )
-            if self._session is not None
-            else {}
-        )
+        else:
+            names, referents = {}, {}
         return [
             await self.build_notification_dto(
-                notification, resolved_entities=resolved_entities, names=names
+                notification,
+                resolved_entities=resolved_entities,
+                names=names,
+                referents=referents,
             )
             for notification, resolved_entities in zip(
                 notifications, resolved_pages, strict=True

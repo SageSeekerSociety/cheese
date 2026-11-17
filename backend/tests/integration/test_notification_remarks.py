@@ -6,6 +6,7 @@ replaces the public nickname in what they read — the same rule the roster
 follows — while another person's request for the same row keeps the public name.
 """
 
+import json
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -199,3 +200,55 @@ def test_a_reference_snapshot_is_swapped_by_the_persons_id_not_their_name(
     said = " ".join(item["title"] + " " + item["body"] for item in frame["items"])
     assert REMARK not in said, said
     assert "Twin" in said, said
+
+
+def test_the_inbox_row_itself_renames_a_reference_only_person(
+    user_client: UserCreator, api_client: TestClient, db_session, _portal
+):
+    """No ``<@handle>`` token anywhere: the reference's id alone must find the remark."""
+    reader = user_client.create_user(nickname="ref-only-reader")
+    reader.token = user_client.login(api_client, reader.username, reader.password)
+    requester = user_client.create_user(
+        username="ref-only-alice", nickname="ref-only-alice"
+    )
+
+    saved = api_client.put(
+        f"/users/{requester.username}/remark",
+        json={"remark": REMARK},
+        headers={"Authorization": f"Bearer {reader.token}"},
+    )
+    assert saved.status_code == 200, saved.text
+
+    async def seed() -> int:
+        row = Notification(
+            receiver_id=reader.user_id,
+            type=NotificationType.TEAM_JOIN_REQUEST,
+            read=False,
+            finalized=True,
+            recipient_handle=reader.username,
+            metadata_payload={
+                "requester": {"type": "user", "id": str(requester.user_id)},
+                "requesterName": requester.username,
+                "teamName": "一个团队",
+            },
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db_session.add(row)
+        await db_session.commit()
+        return row.id
+
+    row_id = _portal.call(seed)
+
+    r = api_client.get(
+        f"/notifications/{row_id}", headers={"Authorization": f"Bearer {reader.token}"}
+    )
+    assert r.status_code == 200, r.text
+    meta = r.json()["data"]["notification"]["contextMetadata"]
+    who = (
+        meta.get("message", {}).get("params", {}).get("requester")
+        if isinstance(meta.get("message"), dict)
+        else None
+    )
+    assert REMARK in json.dumps(meta, ensure_ascii=False), meta
+    assert who in (None, REMARK), who

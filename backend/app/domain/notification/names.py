@@ -172,18 +172,50 @@ async def names_for(
     )
 
 
-async def snapshot_swaps_for(
-    session: AsyncSession,
-    names: Mapping[str, str],
-    *values: Any,
-) -> dict[str, str]:
-    """The id-keyed swap map for whoever the person references in ``values`` name."""
-    ids: set[int] = set()
+def referenced_ids_in(*values: Any) -> set[int]:
+    """Every user id the entity references inside ``values`` name."""
+    found: set[int] = set()
     for value in values:
-        ids |= user_ids_in(value)
-    if not ids:
-        return {}
-    return snapshot_id_swaps(names, await usernames_by_ids(session, ids))
+        found |= user_ids_in(value)
+    return found
+
+
+async def names_and_referents(
+    session: AsyncSession,
+    *values: Any,
+    viewer_id: int | None = None,
+    viewer_handle: str | None = None,
+) -> tuple[dict[str, str], dict[int, str]]:
+    """Names for the tokens **and** the entity references inside ``values``.
+
+    A payload may name a person only through a reference (``requester`` beside
+    ``requesterName``), with no ``<@handle>`` token anywhere. Their handle has to
+    be resolved from the id, or the reader's remark for them never reaches the
+    snapshot and the inbox disagrees with the push.
+
+    Returns ``(names, referents)`` — the second is ``id -> handle`` and is what
+    ``snapshot_id_swaps`` keys on. Both are read once for however many values
+    are handed in, so a page pays one query per kind, not one per row.
+    """
+    handles: set[str] = set()
+    for value in values:
+        handles |= handles_in(value)
+    ids = referenced_ids_in(*values)
+    referents = await usernames_by_ids(session, ids) if ids else {}
+    handles |= set(referents.values())
+    if not handles:
+        return {}, referents
+    public_names = await names_by_handles(session, sorted(handles))
+    return (
+        await names_for_reader(
+            session,
+            sorted(handles),
+            public_names,
+            viewer_id=viewer_id,
+            viewer_handle=viewer_handle,
+        ),
+        referents,
+    )
 
 
 async def names_for_reader(

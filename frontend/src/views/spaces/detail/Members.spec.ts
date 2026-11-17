@@ -339,6 +339,22 @@ describe('空间成员页', () => {
     expect(rows().some((r) => r.includes('小林'))).toBe(true)
   })
 
+  it('昵称就是账号且没备注时，副行不重复写同一个名字', async () => {
+    listMembers.mockResolvedValue({
+      members: [
+        { userId: 3, joinedAt: 0, user: { id: 3, username: 'ada', nickname: 'ada' } },
+        { userId: 4, joinedAt: 0, user: { id: 4, username: 'lin', nickname: '成员丙' } },
+      ],
+    })
+    await mount(OWNER.id)
+    await waitFor(() => expect(rows().length).toBe(4))
+    const twins = rowOf('ada')
+    // 名字一行写着 ada；副行不该再写一遍。
+    expect(twins.textContent!.split('ada').length - 1).toBe(1)
+    // 昵称与账号不同时，账号照写在副行。
+    expect(rowOf('成员丙').textContent).toContain('lin')
+  })
+
   it('加入申请的申请人显示备注与原名', async () => {
     listJoinRequests.mockResolvedValue({
       requests: [
