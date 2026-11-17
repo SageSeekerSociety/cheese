@@ -50,14 +50,17 @@ export function usePanelReceipts(deps: {
     reads.set(reader, mergeStretches([...(reads.get(reader) ?? []), ...ranges]))
   }
 
+  /** 这段对话自己的一块：支线带着的那条主线消息编号是主线的，不归这里。 */
+  const ownSeq = (b: Block): number | null => (b.seq != null && b.conversation_id === deps.place()?.id ? b.seq : null)
+
   // ---- 读：这一页拿着的编号之间谁读过 ----
   const span = computed<[number, number] | null>(() => {
     let first = Infinity
     let last = -Infinity
     for (const b of deps.messages.value) {
-      if (b.seq == null) continue
-      first = Math.min(first, b.seq)
-      last = Math.max(last, b.seq)
+      if (ownSeq(b) == null) continue
+      first = Math.min(first, b.seq!)
+      last = Math.max(last, b.seq!)
     }
     return Number.isFinite(first) ? [first, last] : null
   })
@@ -121,8 +124,9 @@ export function usePanelReceipts(deps: {
 
   /** 自己那条消息的已读情况；别人说的、还没落库的、没有别人能读的，都是 null。 */
   function receiptFor(block: Block): Receipt | null {
-    if (block.seq == null || !deps.isMine(block)) return null
-    return receiptOf(block.seq, block.author, people.value, reads)
+    const seq = ownSeq(block)
+    if (seq == null || !deps.isMine(block)) return null
+    return receiptOf(seq, block.author, people.value, reads)
   }
 
   // ---- 报：屏幕上露了面、停够了的那几条 ----
@@ -153,8 +157,9 @@ export function usePanelReceipts(deps: {
   const showing = new Set<string>()
   const dwell = new Map<string, ReturnType<typeof setTimeout>>()
 
-  function seqOf(id: string): number | undefined {
-    return deps.messages.value.find((b) => b.id === id)?.seq
+  function seqOf(id: string): number | null {
+    const block = deps.messages.value.find((b) => b.id === id)
+    return block ? ownSeq(block) : null
   }
   function startDwell(id: string) {
     if (dwell.has(id) || !foreground()) return
@@ -211,9 +216,28 @@ export function usePanelReceipts(deps: {
       io.observe(el)
     }
   }
+  // 行是分批挂上去的（useRowBatch），往上翻时也是先插在前面：看着这一栏的子树，挂上一行就看一行。
+  let mutations: MutationObserver | null = null
   watch(
-    [() => deps.messages.value.length, () => deps.messages.value.at(-1)?.id, deps.contentRef, deps.scrollRef],
-    () => observeRows(),
+    [deps.contentRef, deps.scrollRef],
+    ([content]) => {
+      mutations?.disconnect()
+      mutations = null
+      observeRows()
+      if (content && typeof MutationObserver !== 'undefined') {
+        // A message streaming in changes the subtree many times a second: look once per frame.
+        let queued = false
+        mutations = new MutationObserver(() => {
+          if (queued) return
+          queued = true
+          requestAnimationFrame(() => {
+            queued = false
+            observeRows()
+          })
+        })
+        mutations.observe(content, { childList: true, subtree: true })
+      }
+    },
     { flush: 'post', immediate: true }
   )
 
@@ -233,8 +257,14 @@ export function usePanelReceipts(deps: {
   onScopeDispose(() => {
     void flush()
     observer?.disconnect()
+    mutations?.disconnect()
     for (const id of [...dwell.keys()]) stopDwell(id)
   })
 
-  return { receiptFor, applyFrame }
+  /** 重新连上：断线那段时间里的 `reads` 帧没收到，整页重问一次。 */
+  function refresh() {
+    void fetchReads()
+  }
+
+  return { receiptFor, applyFrame, refresh }
 }

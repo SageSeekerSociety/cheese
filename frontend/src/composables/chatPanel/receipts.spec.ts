@@ -111,9 +111,8 @@ afterEach(() => {
 })
 
 function reported(): number[] {
-  return api.reportMessageReads.mock.calls.flatMap(([, ranges]: [string, [number, number][]]) =>
-    ranges.flatMap(([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i))
-  )
+  const calls = api.reportMessageReads.mock.calls as [string, [number, number][]][]
+  return calls.flatMap(([, ranges]) => ranges.flatMap(([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i)))
 }
 
 describe('usePanelReceipts', () => {

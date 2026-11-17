@@ -192,6 +192,7 @@ async def test_an_ai_teammate_has_read_what_its_turn_was_given(
     from app.domain.block.models import Block
     from app.domain.block.repositories import BlockRepository
     from app.domain.event_author import AuthorType
+    from app.domain.topic.models import TopicMembership
     from app.domain.topic.services import TopicService
 
     async with factory() as session:
@@ -231,9 +232,35 @@ async def test_an_ai_teammate_has_read_what_its_turn_was_given(
             row["reader"]: row["ranges"]
             for row in await message_reads.reads_between(session, topic_id, 1, 10_000)
         }
+        # The page names a reader by the room's roster: the AI teammate's
+        # reads are under the handle it sits there with.
+        seated = set(
+            await session.scalars(
+                select(TopicMembership.member_handle).where(
+                    TopicMembership.topic_id == topic_id
+                )
+            )
+        )
     early, earlier_window, summons = said[0], said[1], said[-1]
     ai = [reader for reader in reads if reader != "u"]
     assert len(ai) == 1, reads
+    assert ai[0] in seated, (ai, seated)
     assert _covers(reads[ai[0]], summons.seq)
     assert _covers(reads[ai[0]], earlier_window.seq)
     assert not _covers(reads[ai[0]], early.seq)
+
+
+def test_an_ai_teammate_cannot_report_reads_for_itself(client):
+    """What an AI teammate has read is what its turns were given, recorded by
+    the platform: its own credential reports nothing."""
+    from tests.integration.conftest import room_agent_headers
+
+    topic_id = _channel(client)
+    seq = _say(client, topic_id, "alice")
+    r = client.post(
+        f"/topics/{topic_id}/reads",
+        json={"ranges": [[seq, seq]]},
+        headers=room_agent_headers(client, topic_id),
+    )
+    assert r.status_code in (401, 403)
+    assert _reads(client, topic_id, "alice") == {}

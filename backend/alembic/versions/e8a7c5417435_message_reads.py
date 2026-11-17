@@ -14,8 +14,10 @@ It also takes the first of two steps out of ``native_inputs.seen_block_ids`` /
 ``seen_by``. They recorded which message an AI teammate's input carried so the
 platform could put a 👀 on it; that reaction is gone (#5287), and what an AI
 teammate has read is now a row here. The code no longer maps either column, so
-``seen_block_ids`` — NOT NULL without a default — must take NULL before the
-release that stops writing it runs. Dropping both columns is the second step,
+``seen_block_ids`` — NOT NULL without a default — must take a row the new
+release inserts without it. It gets ``[]`` as its default rather than only
+NULL: the previous release, still serving while this runs, reads the column
+as a list on rows the new one writes. Dropping both columns is the second step,
 in a release after this one is deployed (`.claude/rules/migrations.md` rule 4).
 """
 
@@ -56,6 +58,7 @@ def upgrade() -> None:
         "seen_block_ids",
         existing_type=postgresql.JSONB(),
         nullable=True,
+        server_default=sa.text("'[]'::jsonb"),
     )
 
 
@@ -68,5 +71,6 @@ def downgrade() -> None:
         "seen_block_ids",
         existing_type=postgresql.JSONB(),
         nullable=False,
+        server_default=None,
     )
     op.drop_table("message_reads")

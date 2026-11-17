@@ -104,6 +104,7 @@ export function usePanelSocket(deps: {
       // gone, so a re-connect (not the first open) treats each as changed once —
       // except what the snapshot just brought, which is as of now.
       if (reconnect) {
+        deps.receipts().refresh()
         const brought: ReadonlySet<string> = room ? SNAPSHOT_RESOURCES : new Set()
         for (const resource of ANNOUNCED) if (!brought.has(resource)) announce(resource)
         if (here) void checklistMissed(here.id)
