@@ -31,10 +31,10 @@ from app.domain.notification.preferences import (
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.push import push_text
 from app.domain.user.services import (
-    handles_by_ids_present,
     languages_by_ids,
     names_by_handles,
     timezones_by_ids,
+    usernames_by_ids,
 )
 
 LEASE_SECONDS = 120
@@ -103,7 +103,7 @@ class ChannelIntentHandler:
             found = handles_per_recipient[recipient_id]
             for payload in payloads:
                 found |= handles_in(payload)
-        referents = await handles_by_ids_present(self.session, referenced_ids)
+        referents = await usernames_by_ids(self.session, referenced_ids)
         referent_handles = set(referents.values())
         for found in handles_per_recipient.values():
             found |= referent_handles
@@ -145,7 +145,11 @@ class ChannelIntentHandler:
                 named = names_by_recipient.get(delivery.recipient_id, {})
                 title, body = push_text(
                     delivery.type,
-                    with_snapshot_names(with_names(delivery.payload, named), named),
+                    with_snapshot_names(
+                        with_names(delivery.payload, named),
+                        named,
+                        swaps_by_recipient.get(delivery.recipient_id, {}),
+                    ),
                     languages.get(delivery.recipient_id),
                 )
                 channels.append(

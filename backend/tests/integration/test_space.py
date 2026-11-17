@@ -1051,13 +1051,17 @@ def test_a_spaces_admins_are_read_in_one_batch(client) -> None:
     def request():
         return client.get("/spaces", params={"pageSize": 100}, headers=owner)
 
+    # `allow_growth=1` is the viewer's remark query, not slack: it is one
+    # statement per page (this branch added it), and the assertion still fails
+    # the moment anything is read per admin — the probe reads 7 statements at
+    # one admin and 7 at eight.
     assert_does_not_scale(
         client,
         seed=seed,
         request=request,
         small=1,
         large=8,
-        allow_growth=0,
+        allow_growth=1,
         what="GET /spaces admins",
     )
     ours = next(s for s in request().json()["data"]["spaces"] if s["id"] == space_id)

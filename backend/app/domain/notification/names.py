@@ -16,9 +16,9 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.user.services import (
-    handles_by_ids_present,
     names_by_handles,
     remarks_by_handles,
+    usernames_by_ids,
 )
 
 _TOKEN = re.compile(r"<@([\w-]+)>")
@@ -90,17 +90,24 @@ def snapshot_swaps(
 
     A written payload keeps a name as it was at the time (``authorName`` beside
     ``author``), because the email and the push are rendered without a database.
-    On the page the reader's own remark has to win over that snapshot instead,
-    and the snapshot sometimes sits beside an entity reference rather than a
-    handle (``requesterName`` beside ``requester``), so the only way back to who
-    it names is the public name itself. This is that map; names the reader has
-    no remark for are absent.
+    On the page the reader's own remark has to win over that snapshot instead.
+    Where the snapshot sits beside the person's own handle, ``names`` relabels it
+    directly; this map is for the case where the sibling is a user entity
+    reference (``requesterName`` beside ``requester``), and the only way back to
+    who it names is the public name itself. Names the reader has no remark for
+    are absent.
     """
     return {
         public: names[handle]
         for handle, public in public_names.items()
         if handle in names and names[handle] != public
     }
+
+
+def _names_a_user_reference(holder: Mapping[str, Any], key: str) -> bool:
+    """Whether ``key``'s sibling (``<key>Name`` -> ``<key>``) is a user reference."""
+    ref = holder.get(key[: -len(_NAME_SUFFIX)])
+    return isinstance(ref, Mapping) and ref.get("type") == "user"
 
 
 def with_snapshot_names(
@@ -111,10 +118,11 @@ def with_snapshot_names(
     """Also relabel the ``<key>Name`` snapshot written beside a person.
 
     ``names`` relabels a snapshot whose sibling is the person's own handle.
-    ``swaps`` (``snapshot_swaps``) covers the case where the sibling is an
-    entity reference instead: the snapshot's own public name is looked up and
-    replaced by the reader's remark. Anything matching neither — a team's name,
-    say — is left alone.
+    ``swaps`` (``snapshot_swaps``) covers the case where the sibling is a user
+    entity reference instead, and is applied **only** to such a sibling: display
+    names are not unique across people, teams and agents, so matching the string
+    alone would rename whoever happens to share it. Anything else — a team's
+    name, say — is left alone.
     """
     swaps = swaps or {}
     if isinstance(value, Mapping):
@@ -127,7 +135,7 @@ def with_snapshot_names(
                     if isinstance(source, str) and source in names:
                         renamed[key] = names[source]
                         continue
-                    if snapshot in swaps:
+                    if snapshot in swaps and _names_a_user_reference(value, key):
                         renamed[key] = swaps[snapshot]
                         continue
             renamed[key] = with_snapshot_names(nested, names, swaps)
@@ -196,7 +204,7 @@ async def handle_of_id(session: AsyncSession, user_id: int | None) -> str | None
     """The account handle behind a user id, or None when there is no such user."""
     if user_id is None:
         return None
-    return (await handles_by_ids_present(session, [user_id])).get(user_id)
+    return (await usernames_by_ids(session, [user_id])).get(user_id)
 
 
 async def handles_of_ids(
@@ -208,4 +216,4 @@ async def handles_of_ids(
     their own remarks: resolving the reader id to a handle once per delivery
     turned a per-recipient lookup into a query per person.
     """
-    return await handles_by_ids_present(session, user_ids)
+    return await usernames_by_ids(session, user_ids)

@@ -38,8 +38,8 @@ from app.domain.notification.names import (
 from app.domain.notification.push import PUSHABLE, away_text, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.user.services import (
-    handles_by_ids_present,
     languages_by_ids,
+    usernames_by_ids,
 )
 
 #: At most this many are handed over at once: back from a night asleep, the
@@ -131,7 +131,7 @@ async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> di
         user_ids |= user_ids_in(payload)
     # A person may be named by an entity reference rather than a token
     # (`requester` in a join request); their handle is what carries the remark.
-    referents = await handles_by_ids_present(db, user_ids)
+    referents = await usernames_by_ids(db, user_ids)
     handles |= set(referents.values())
     public_names = await names_by_handles(db, sorted(handles)) if handles else {}
     names = await names_for_reader(db, sorted(handles), public_names, viewer_id=user_id)

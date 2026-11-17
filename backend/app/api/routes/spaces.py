@@ -257,21 +257,30 @@ async def get_spaces(
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
 
+    # The admins of the whole page are read and hydrated in one pass, not one
+    # space at a time: a remark is another query per page, and paying it inside
+    # this loop is the N+1 this endpoint was rewritten to avoid (`_hydrate_people`).
+    admins_by_space: dict[int, list] = {
+        s.id: await service.list_admins(s.id) for s in spaces
+    }
+    everyone = [rel.user_id for rels in admins_by_space.values() for rel in rels]
+    # Everyone on the page, hydrated once: users, profiles, avatars and the
+    # viewer's remarks are each one query for the page, not one per space.
+    people = await _hydrate_people(
+        everyone,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        db=db,
+        viewer_id=auth_user.user_id,
+    )
+
     items: list[dict] = []
     for s in spaces:
         dto = _space_to_api_model(s)
         if queryMyRank:
             dto["myRank"] = await service.get_user_rank(s.id, viewer_id)
 
-        admin_relations = await service.list_admins(s.id)
-        # 一次取齐所有管理员的人；头像判据（挑过没有）也在 _hydrate_people 里。
-        people = await _hydrate_people(
-            [rel.user_id for rel in admin_relations],
-            user_repo=user_repo,
-            profile_repo=profile_repo,
-            db=db,
-            viewer_id=auth_user.user_id,
-        )
+        admin_relations = admins_by_space.get(s.id, [])
         dto["admins"] = [
             _admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations
         ]

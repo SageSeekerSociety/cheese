@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { userName, userOriginalName } from './agentNames'
+import { secondaryIdentity, userName, userOriginalName } from './agentNames'
 
 describe('personal names on user-shaped rows', () => {
   it('uses only this row’s private remark and leaves public identity intact', () => {
@@ -18,5 +18,24 @@ describe('personal names on user-shaped rows', () => {
     expect(userName({ username: 'reader', nickname: '', remark: null })).toBe('reader')
     expect(userName(null)).toBe('')
     expect(userOriginalName(undefined)).toBe('')
+  })
+})
+
+describe('the secondary identity under a name', () => {
+  it('writes the original name and the account when a remark is set', () => {
+    expect(secondaryIdentity({ nickname: 'Ada', username: 'ada', remark: 'My colleague' })).toBe('(Ada) · ada')
+  })
+
+  it('writes it once when the nickname is the account', () => {
+    expect(secondaryIdentity({ nickname: 'ada', username: 'ada', remark: 'My colleague' })).toBe('ada')
+  })
+
+  it('writes nothing when there is no remark: the row already carries the name', () => {
+    expect(secondaryIdentity({ nickname: 'Ada', username: 'ada' })).toBe('')
+    expect(secondaryIdentity(null)).toBe('')
+  })
+
+  it('falls back to the account when there is no nickname', () => {
+    expect(secondaryIdentity({ username: 'ada', remark: 'My colleague' })).toBe('ada')
   })
 })
