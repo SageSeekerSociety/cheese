@@ -202,6 +202,31 @@ class Access:
     owner: Owner | None = None
 
 
+#: The context a conversation gone cold has to hold for compacting it first to
+#: pay. Cold, its next call re-reads the whole context at full price anyway, so
+#: compacting adds only the summary the model writes (some 10–20K tokens) and
+#: takes every later call down to the system prompt, tools and that summary
+#: (some 30K for a channel's main line). Below about three times that there is
+#: little to save, and on a model whose cache lasts minutes nearly every turn
+#: starts cold, so a lower bar would compact a conversation over and over. It
+#: is also the lowest window Claude Code compacts at on its own
+#: (``session_launch._COMPACT_RANGE``): nothing smaller than the harness itself
+#: would ever compact is compacted early.
+COLD_COMPACT_ABOVE_TOKENS = 100_000
+
+
+@dataclass(frozen=True)
+class ColdCompaction:
+    """Compact the conversation before a new turn's input when it has been idle
+    ``idle_s`` (its model's cache lifetime) and its context holds at least
+    ``above_tokens``. Only the runner knows both of the session's own facts —
+    when it last called the model, and how large its context was then — so it
+    is the one that decides (Claude Code's ``compaction.when_cold``)."""
+
+    idle_s: float
+    above_tokens: int = COLD_COMPACT_ABOVE_TOKENS
+
+
 @dataclass(frozen=True)
 class Prompt:
     """One thing said to a session."""
@@ -220,6 +245,11 @@ class Prompt:
     #: A person said it, and the session answers them before doing anything
     #: else (`driven/runner.py`).
     owes_reply: bool = False
+    #: Compact first if the conversation has gone cold, and then say
+    #: ``cold_text`` instead of ``text``: what a compacted session is told
+    #: again (the whole opening, where ``text`` has only what changed).
+    cold: ColdCompaction | None = None
+    cold_text: str = ""
 
 
 @dataclass(frozen=True)

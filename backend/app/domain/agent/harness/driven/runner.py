@@ -88,6 +88,10 @@ READ_BATCH_S = 0.05
 #: cannot. The backend reads them from ``ping`` when it greets the runner.
 LONG_POLL = "long_poll"
 LIVE = "live"
+#: A new turn's input may carry ``compact_if_cold``: the runner compacts a
+#: conversation gone cold before it reads the input (Claude Code's
+#: ``compaction.when_cold``).
+COMPACT_IF_COLD = "compact_if_cold"
 
 
 def current_loop() -> asyncio.AbstractEventLoop | None:

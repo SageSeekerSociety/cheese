@@ -1475,6 +1475,75 @@ def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract
     assert ended["record"]["compact_result"] == "success"
 
 
+def _cold_send(screen, text, cold_text, *, idle_s, work_id) -> str:
+    identifier = str(uuid.uuid4())
+    screen.call(
+        "send",
+        {
+            "input_id": identifier,
+            "work_id": work_id,
+            "text": text,
+            "compact_if_cold": {"idle_s": idle_s, "above_tokens": 1, "text": cold_text},
+        },
+        timeout=300,
+    )
+    return identifier
+
+
+def _said(screen, text):
+    """The echo of the user message the build read, by its text."""
+    return lambda r: (
+        r.get("type") == "user"
+        and r.get("isReplay")
+        and (
+            r["message"]["content"] == text
+            if isinstance(r["message"]["content"], str)
+            else any(block.get("text") == text for block in _blocks(r))
+        )
+    )
+
+
+def test_a_turn_on_a_cold_conversation_is_compacted_before_it_reads(screen, contract):
+    """A conversation idle past its model's cache lifetime re-reads its whole
+    context at full price on its next turn, so it is compacted first, and the
+    turn's input is read after the compaction: the one a compacted session is
+    handed, not the one for a conversation that remembers."""
+    first = str(uuid.uuid4())
+    screen.send("hello", work_id=first)
+    screen.wait_event(_status("idle", first))
+
+    work = str(uuid.uuid4())
+    _cold_send(screen, "only what changed", "the whole state", idle_s=0, work_id=work)
+    screen.wait_event(_status("idle", work))
+
+    compacted = screen.wait(lambda r: r.get("compact_result") is not None)
+    assert compacted["record"]["compact_result"] == "success"
+    read = screen.wait(_said(screen, "the whole state"))
+    assert read["sequence"] > compacted["sequence"], "读到输入时已经压缩完了"
+    assert not any(
+        _said(screen, "only what changed")(e["record"]) for e in screen.records()
+    )
+
+
+def test_a_turn_inside_the_cache_lifetime_is_not_compacted(screen, contract):
+    """Still warm, the context is cheap to read again: nothing is compacted
+    and the turn reads its input as it was."""
+    first = str(uuid.uuid4())
+    screen.send("hello", work_id=first)
+    screen.wait_event(_status("idle", first))
+
+    work = str(uuid.uuid4())
+    _cold_send(
+        screen, "only what changed", "the whole state", idle_s=3600, work_id=work
+    )
+    screen.wait_event(_status("idle", work))
+
+    screen.wait(_said(screen, "only what changed"))
+    assert not any(
+        e["record"].get("compact_result") is not None for e in screen.records()
+    )
+
+
 @pytest.mark.anyio
 async def test_a_bash_call_says_how_much_of_its_wait_was_the_command(
     monkeypatch, tmp_path

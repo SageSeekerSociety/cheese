@@ -49,7 +49,8 @@ _SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE, WEB_SEARC
 # row carries it (`catalogue_info`). Not ``CACHE_TTL``, which is what one
 # upstream is asked for and is not the same number (an upstream may keep a
 # cache for less than it was asked, and one that is asked nothing keeps its
-# own). The platform compacts a session idle past it (`room.cold`).
+# own). A session idle past it is compacted before its next turn
+# (`session_host.contract.ColdCompaction`).
 CACHE_LIFETIME = "cheese_cache_lifetime_s"
 
 

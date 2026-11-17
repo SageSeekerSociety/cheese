@@ -304,6 +304,7 @@ async def send_prepared(
             retired_token=prepared.retired_session_id,
             session_opening=opening.text,
             opening_changes=opening_changes(opening, told),
+            cold=prepared.cold,
             model=model_kwargs.get("model"),
             env=model_kwargs.get("env"),
             acting=acting_agent,
