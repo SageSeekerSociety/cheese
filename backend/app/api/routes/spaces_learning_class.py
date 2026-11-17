@@ -440,7 +440,7 @@ async def export_learning_class_report(
     db=Depends(get_db),
 ) -> Response:
     """一份只含全班整体的报告文件。导出前记一笔：谁、什么时候、什么格式、哪几部分。"""
-    sections = list(dict.fromkeys(payload.sections))
+    sections: list[str] = [str(s) for s in dict.fromkeys(payload.sections)]
     if not sections:
         raise BadRequestError(say("learningExportEmpty"))
     report = await service.report(

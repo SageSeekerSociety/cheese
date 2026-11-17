@@ -286,7 +286,9 @@ class LearningClassReads:
         )
         return {str(k): (int(n), int(p)) for k, n, p in rows.all()}
 
-    async def heat(self, space_id: int, zone: str) -> list[tuple[int, int, int, int]]:
+    async def heat(
+        self, space_id: int, zone: str
+    ) -> list[tuple[int, int, int, list[int]]]:
         """(星期 1–7, 小时, 条数, 人数)，按 ``zone`` 的钟点。"""
         q = SpaceLearningQuestion
         local = func.timezone(zone, q.asked_at)
@@ -298,7 +300,7 @@ class LearningClassReads:
             .group_by(dow, hour)
         )
         return [
-            (int(d), int(h), int(n), uids)  # type: ignore[misc]
+            (int(d), int(h), int(n), [int(u) for u in uids or []])
             for d, h, n, uids in rows.all()
         ]
 

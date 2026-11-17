@@ -658,12 +658,16 @@ class SpaceLearningClassService:
         people: dict[str, set[str]] = {}
         before: Counter[str] = Counter()
         shown_as: dict[str, Counter[str]] = {}
+        lefts: dict[str, set[str]] = {}
+        rights: dict[str, set[str]] = {}
         error_people: dict[str, set[str]] = {}
         error_count: Counter[str] = Counter()
         for said in spoken:
             text = _drop_pasted(masker.mask(said.content), pasted)
             fresh = said.created_at >= week_ago
-            for key, surface in _tokens(text):
+            for key, surface, left, right in _tokens(text):
+                lefts.setdefault(key, set()).add(left)
+                rights.setdefault(key, set()).add(right)
                 if fresh:
                     this_week.setdefault(key, Counter())[said.author] += 1
                     people.setdefault(key, set()).add(said.author)
@@ -677,10 +681,9 @@ class SpaceLearningClassService:
         counted = {
             key: sum(c.values())
             for key, c in this_week.items()
-            if len(people[key]) >= MIN_PEOPLE
+            if len(people[key]) >= MIN_PEOPLE and _is_word(lefts[key], rights[key])
         }
-        kept = _absorb_substrings(counted)
-        ranked = sorted(kept, key=lambda k: (-len(people[k]), -counted[k], k))[
+        ranked = sorted(counted, key=lambda k: (-len(people[k]), -counted[k], k))[
             :WORD_LIMIT
         ]
         words = [
@@ -1139,46 +1142,55 @@ _CJK_RUN = re.compile(r"[一-鿿]+")
 _ASCII_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,30}")
 
 
-def _tokens(text: str) -> list[tuple[str, str]]:
-    """(计数用的键, 显示用的写法)：英文按整词，中文串在虚字处断开后取 2–4 字的片段。"""
+#: 中文片段取几个字到几个字。
+_GRAM_MIN, _GRAM_MAX = 2, 6
+_EDGE = "|"
+
+
+def _tokens(text: str) -> list[tuple[str, str, str, str]]:
+    """(计数用的键, 显示用的写法, 左邻, 右邻)。
+
+    英文按整词（左右邻记作边界）。中文串先在虚字处断开，再取 2–6 字的片段，记下每
+    次出现时紧挨着它的左右两个字（在串的头尾就是边界）：一个片段只有左右都「换过
+    邻居」或挨着边界，才是一个词（``_is_word``）—— 「子查」后面永远跟着「询」，就不
+    是词；「相关子查询」前后什么都有，就是。这是不靠词典的分词里最常用的那条判据
+    （左右邻接的多样性），够数一份高频词表用，不必为此加一个分词库。
+    """
     text = _MARKS.sub(" ", text)
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str, str]] = []
     for word in _ASCII_WORD.findall(text):
         key = word.casefold()
         if key not in _ASCII_STOP and not key.isdigit():
-            out.append((key, word))
+            out.append((key, word, _EDGE, _EDGE))
     for run in _CJK_RUN.findall(text):
         segment = ""
         for ch in run + "的":
             if ch in _BREAK_CHARS:
-                if len(segment) >= 2:
-                    seen = set()
-                    for n in range(2, min(4, len(segment)) + 1):
-                        for i in range(len(segment) - n + 1):
-                            gram = segment[i : i + n]
-                            if gram not in seen and gram not in _STOP_WORDS:
-                                seen.add(gram)
-                                out.append((gram, gram))
+                out.extend(_grams(segment))
                 segment = ""
             else:
                 segment += ch
     return out
 
 
-def _absorb_substrings(counted: dict[str, int]) -> list[str]:
-    """一个片段几乎总是作为更长片段的一部分出现时（次数不超过长的那个的 1.2 倍），
-    只留长的：「子查」「查询」被「子查询」吸收。"""
-    keys = sorted(counted, key=len, reverse=True)
-    kept: list[str] = []
-    for key in keys:
-        if any(
-            key in longer and counted[key] <= counted[longer] * 1.2
-            for longer in kept
-            if len(longer) > len(key)
-        ):
-            continue
-        kept.append(key)
-    return kept
+def _grams(segment: str) -> list[tuple[str, str, str, str]]:
+    if len(segment) < _GRAM_MIN:
+        return []
+    out = []
+    for n in range(_GRAM_MIN, min(_GRAM_MAX, len(segment)) + 1):
+        for i in range(len(segment) - n + 1):
+            gram = segment[i : i + n]
+            if gram in _STOP_WORDS:
+                continue
+            left = segment[i - 1] if i > 0 else _EDGE
+            right = segment[i + n] if i + n < len(segment) else _EDGE
+            out.append((gram, gram, left, right))
+    return out
+
+
+def _is_word(left: set[str], right: set[str]) -> bool:
+    """左右两边各自要么只挨着边界，要么换过不止一个邻居。"""
+    return (left == {_EDGE} or len(left) >= 2) and (right == {_EDGE} or len(right) >= 2)
 
 
 def _plain_text(description: str) -> str:
