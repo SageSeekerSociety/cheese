@@ -14,7 +14,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.domain.notification.models import ChannelDelivery
-from app.domain.notification.names import names_for, with_names
+from app.domain.notification.names import names_for, with_names, with_snapshot_names
 from app.domain.notification.preferences import (
     default_preferences,
     local_time,
@@ -67,11 +67,21 @@ class ChannelIntentHandler:
             if self.push_enabled and intents[d.delivery_key].push
         ]
         languages = await languages_by_ids(self.session, pushed)
-        # A push names people by name, not by the room's <@handle> token.
-        names = await names_for(
-            self.session,
-            *(d.payload for d in deliveries if d.recipient_id in pushed),
-        )
+        # A push names people by name, not by the room's <@handle> token, and
+        # each recipient reads their own names: a personal remark is private to
+        # whoever set it, so one map for the whole batch would either leak it to
+        # the others or lose it for its owner. One query per recipient, not per
+        # delivery: a batch usually holds one delivery per person.
+        payloads_by_recipient: dict[int, list[dict]] = {}
+        for d in deliveries:
+            if d.recipient_id in pushed:
+                payloads_by_recipient.setdefault(d.recipient_id, []).append(d.payload)
+        names_by_recipient = {
+            recipient_id: await names_for(
+                self.session, *payloads, viewer_id=recipient_id
+            )
+            for recipient_id, payloads in payloads_by_recipient.items()
+        }
         for delivery in deliveries:
             intent = intents[delivery.delivery_key]
             common = {
@@ -87,9 +97,12 @@ class ChannelIntentHandler:
             if intent.digest:
                 channels.append(("digest", common))
             if self.push_enabled and intent.push:
+                # This push goes to one person, so their own remarks name people
+                # in it — the same rule the inbox row follows.
+                named = names_by_recipient.get(delivery.recipient_id, {})
                 title, body = push_text(
                     delivery.type,
-                    with_names(delivery.payload, names),
+                    with_snapshot_names(with_names(delivery.payload, named), named),
                     languages.get(delivery.recipient_id),
                 )
                 channels.append(
