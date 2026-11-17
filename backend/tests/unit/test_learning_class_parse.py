@@ -10,7 +10,11 @@ from app.domain.space.learning_class_analysis import parse_clustering
 
 POINTS = [SimpleNamespace(id=1, name="相关子查询"), SimpleNamespace(id=2, name="索引")]
 CLUSTERS = [(10, "怎么引用外层的列？", 1)]
-ASKED = [(100, "怎么引用外层", 1), (101, "建了索引还是慢", 2), (102, "幻读是什么", None)]
+ASKED = [
+    (100, "怎么引用外层", 1),
+    (101, "建了索引还是慢", 2),
+    (102, "幻读是什么", None),
+]
 
 
 def test_every_question_ends_up_in_exactly_one_group():

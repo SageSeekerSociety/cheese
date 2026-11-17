@@ -331,9 +331,7 @@ async def test_queues_report_the_review_flag_signal_as_absent(monkeypatch):
     session = FakeSession()
     svc = _service(monkeypatch, session, project_ids=[])
 
-    data = await svc.queues(
-        space_id=7, handle="teacher", from_ts=None, to_ts=None
-    )
+    data = await svc.queues(space_id=7, handle="teacher", from_ts=None, to_ts=None)
 
     assert data["reviewFlag"]["available"] is False
     assert data["reviewFlag"]["reason"] == REVIEW_FLAG_MISSING
@@ -374,9 +372,7 @@ async def test_queues_count_students_not_questions(monkeypatch):
     )
     svc = _service(monkeypatch, session)
 
-    data = await svc.queues(
-        space_id=7, handle="teacher", from_ts=None, to_ts=None
-    )
+    data = await svc.queues(space_id=7, handle="teacher", from_ts=None, to_ts=None)
 
     top = data["stuckPoints"][0]
     assert top["knowledgePoint"] == "递归"
@@ -405,9 +401,7 @@ async def test_queues_every_row_can_point_back_at_a_real_message(monkeypatch):
     )
     svc = _service(monkeypatch, session)
 
-    data = await svc.queues(
-        space_id=7, handle="teacher", from_ts=None, to_ts=None
-    )
+    data = await svc.queues(space_id=7, handle="teacher", from_ts=None, to_ts=None)
 
     point = data["stuckPoints"][0]
     assert point["latestAt"] == int(LATER.timestamp() * 1000)
@@ -426,9 +420,7 @@ async def test_queues_keep_questions_that_belong_to_no_knowledge_point(monkeypat
     )
     svc = _service(monkeypatch, session)
 
-    data = await svc.queues(
-        space_id=7, handle="teacher", from_ts=None, to_ts=None
-    )
+    data = await svc.queues(space_id=7, handle="teacher", from_ts=None, to_ts=None)
 
     assert len(data["stuckPoints"]) == 1
     assert data["stuckPoints"][0]["knowledgePoint"] is None
@@ -440,9 +432,7 @@ async def test_queues_are_empty_rather_than_broken_when_nothing_was_said(monkeyp
     alice = project("Alice 的作业", "alice", 1)
     svc = _service(monkeypatch, FakeSession(projects=[alice]))
 
-    data = await svc.queues(
-        space_id=7, handle="teacher", from_ts=None, to_ts=None
-    )
+    data = await svc.queues(space_id=7, handle="teacher", from_ts=None, to_ts=None)
 
     assert data["stuckPoints"] == []
 

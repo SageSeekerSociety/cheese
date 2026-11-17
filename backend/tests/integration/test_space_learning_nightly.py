@@ -563,7 +563,11 @@ async def test_a_night_names_misconceptions_groups_questions_and_counts_the_week
     # 聚类：前两条归成一类，第三条模型没提 —— 它自己成一类。
     gateway.answers.append(
         json.dumps(
-            {"new": [{"label": "怎么引用外层的列？", "point": POINT, "q": ["q1", "q2"]}]}
+            {
+                "new": [
+                    {"label": "怎么引用外层的列？", "point": POINT, "q": ["q1", "q2"]}
+                ]
+            }
         )
     )
     gateway.answers.append(json.dumps({"advice": "用一张逐行扫描的示意图讲五分钟。"}))

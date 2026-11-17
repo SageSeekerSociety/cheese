@@ -286,13 +286,9 @@ class TestFewerThanThreeAreNotAnalysed:
         small = _cluster(_portal, db_session, board, "能不能不用子查询？")
         people = [_member(user_client, api_client, board) for _ in range(5)]
         for person in people[:3]:
-            _seed(
-                _portal, db_session, board, person, misconception=common, cluster=big
-            )
+            _seed(_portal, db_session, board, person, misconception=common, cluster=big)
         for person in people[3:]:
-            _seed(
-                _portal, db_session, board, person, misconception=rare, cluster=small
-            )
+            _seed(_portal, db_session, board, person, misconception=rare, cluster=small)
 
         detail = _get(api_client, board, f"points/{board['points'][0]}")
         assert detail["analysed"] is True
@@ -466,7 +462,9 @@ class TestExport:
         board, people = self._setup(user_client, api_client, _portal, db_session)
         sections = ["tasks", "points", "advice", "excerpts"]
 
-        book = load_workbook(io.BytesIO(self._export(api_client, board, "xlsx", sections)))
+        book = load_workbook(
+            io.BytesIO(self._export(api_client, board, "xlsx", sections))
+        )
         cells = " ".join(
             str(c.value)
             for sheet in book.worksheets
