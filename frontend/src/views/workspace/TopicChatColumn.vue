@@ -114,7 +114,7 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   /** 主线上交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
-  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' }): void
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   // AI 队友一条回复上的「查看过程」：右半边换成那一轮的现场。
   (e: 'open-process', turnId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。

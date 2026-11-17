@@ -125,5 +125,6 @@
   "deployedTo": "Deployed to {environment}",
   "deployFailedTo": "Deploying to {environment} failed",
   "taskFiledForReview": "\"{title}\" was submitted for review",
-  "taskReturned": "{who} returned \"{title}\""
+  "taskReturned": "{who} returned \"{title}\"",
+  "taskAdopted": "{who} accepted “{title}”"
 }

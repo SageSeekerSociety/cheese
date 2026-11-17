@@ -155,8 +155,16 @@ describe('等人审阅的交付', () => {
 
   it('采纳交给卡上的每一位审阅人，标签只写在等谁', () => {
     const line = taskLine(task({ card: pending, branch_name: 'task/t1' }), 'chenmo', nameOf, '芝士')
-    expect(line.delivery).toEqual({ reviewers: ['linxiao', 'chenmo'], code: true })
+    expect(line.delivery).toEqual({ reviewers: ['linxiao', 'chenmo'], code: true, preview: false })
     expect(line.state.waits).toBe('等林晓')
+  })
+
+  it('队友在任务里摆出过一份东西，这一版才有预览可看', () => {
+    const line = (has_preview?: boolean) =>
+      taskLine(task({ card: pending, has_preview }), 'chenmo', nameOf, '芝士').delivery?.preview
+    expect(line(true)).toBe(true)
+    expect(line(false)).toBe(false)
+    expect(line(undefined)).toBe(false)
   })
 
   it('没有分支的任务交来的不是代码改动', () => {

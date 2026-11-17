@@ -310,10 +310,13 @@ def test_a_task_its_session_wrote_up_is_told_with_its_conclusion(client, app_wor
     assert len(_told_opener(client, room)) == 2
     assert "交付已采纳" in ended
     assert "做完了" in ended
-    # Recorded where it came from in each reader's language, under nobody's name.
+    # Recorded where it came from in each reader's language, under nobody's name,
+    # as who adopted it; what it concluded is the opener's to say.
     [line] = _endings(client, room, task_id)
     assert _happened(line)
-    assert line["meta"]["i18n"]["content"]["key"] == "taskCompleted"
+    sentence = line["meta"]["i18n"]["content"]
+    assert sentence["key"] == "taskAdopted"
+    assert sentence["params"]["who"] == "<@alice>"
 
 
 def test_a_task_whose_write_up_never_comes_is_told_once(client, app_world):

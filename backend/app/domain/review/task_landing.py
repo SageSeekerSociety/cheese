@@ -256,7 +256,7 @@ async def tell_origin_ended(
     the AI teammate that opened the task from the channel's main line is told
     the same facts and says the result in its own words (`wake_opener`), and a
     line under its name would say it twice."""
-    line, facts = _how_it_ended(task)
+    line, facts = _how_it_ended(task, await _adopted_by(session, task))
     await record_at_origin(session, task, EVENT_TASK_ENDED, line, announce=announce)
     names = await names_by_handles(session, _askers(task))
     closed_at = task.closed_at.astimezone(UTC).isoformat() if task.closed_at else ""
@@ -272,16 +272,64 @@ async def tell_origin_ended(
     )
 
 
-def _how_it_ended(task: Task) -> tuple[str, str]:
+async def _adopted_by(session: AsyncSession, task: Task) -> object | None:
+    """Who adopted ``task``'s last delivery, as a room line names them: the
+    person (``<@handle>``), or, when the AI teammate adopted it on their word
+    from the main line (`decided_by_assistant`), 「<that teammate>代 <person>」.
+    The teammate is the one the main line answers through about the task: its
+    opener, else the teammate whose main-line messages carry the task's tag,
+    else the one that works it. None when nothing of it was adopted."""
+    if task.accepted_at is None or task.accepted_by is None:
+        return None
+    person = f"<@{task.accepted_by}>"
+    card = await session.scalar(
+        select(AcceptCard)
+        .where(
+            AcceptCard.task_id == task.id, AcceptCard.status == AcceptStatus.accepted
+        )
+        .order_by(AcceptCard.decided_at.desc())
+        .limit(1)
+    )
+    if card is None or not card.decided_by_assistant:
+        return person
+    seat = (
+        await main_line_opener(session, task)
+        or await session.scalar(
+            select(Block.author)
+            .where(
+                Block.conversation_id == task.room_id,
+                Block.author.startswith(AGENT_HANDLE_PREFIX),
+                Block.meta["task_tag"].as_string() == str(task.id),
+            )
+            .order_by(Block.created_at.desc())
+            .limit(1)
+        )
+        or task.agent_handle
+    )
+    if seat is None or not seat.startswith(AGENT_HANDLE_PREFIX):
+        return person
+    return say("actedByTeammate", agent=f"<@{seat}>", person=person)
+
+
+def _how_it_ended(task: Task, adopted_by: object | None = None) -> tuple[str, str]:
     """How ``task`` ended: the line its origin records, and the same facts as
     its opener is told them. One reading of the task's row for both, so the
-    two never say different things."""
+    two never say different things. A task whose delivery was adopted is
+    recorded as who adopted it (``adopted_by``, `_adopted_by`); what it
+    concluded is the opener's to say in its own words."""
     accepted = (
         f"交付已采纳（PR #{task.pr_number}）"
         if task.pr_number is not None
         else "交付已采纳"
     )
-    if task.conclusion:
+    if task.accepted_at is not None and adopted_by is not None:
+        line = say("taskAdopted", who=adopted_by, title=said_title(task))
+        facts = (
+            f"{accepted}，结论是「{task.conclusion}」"
+            if task.conclusion
+            else f"{accepted}，任务总结没有写成"
+        )
+    elif task.conclusion:
         line = say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
         facts = (
             f"{accepted}，结论是「{task.conclusion}」"
@@ -289,11 +337,9 @@ def _how_it_ended(task: Task) -> tuple[str, str]:
             else f"没有哪一版交付被采纳，关闭时的结论是「{task.conclusion}」"
         )
     elif task.accepted_at is not None:
-        line = (
-            say("taskLanded", title=said_title(task), pr=task.pr_number)
-            if task.pr_number is not None
-            else say("taskLandedNoPr", title=said_title(task))
-        )
+        # Adopted with nobody named (merged on its own): the line says that it
+        # was, without a PR number in the sentence.
+        line = say("taskLandedNoPr", title=said_title(task))
         facts = f"{accepted}，任务总结没有写成"
     else:
         line = say("taskClosed", title=said_title(task))

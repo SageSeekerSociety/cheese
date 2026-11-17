@@ -10,7 +10,7 @@
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
-import type { TaskLine } from '../../lib/channelTasks'
+import type { DeliveryView, TaskLine } from '../../lib/channelTasks'
 import type { Receipt } from '../../lib/readReceipts'
 import type { RefNames } from '../../lib/refChip'
 
@@ -45,6 +45,7 @@ import UserAvatar from '../common/UserAvatar.vue'
 import TaskStateMark from '../task/TaskStateMark.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
+import DeliveryActions from './DeliveryActions.vue'
 import FileBlockMenu from './FileBlockMenu.vue'
 import MessageAppCard from './MessageAppCard.vue'
 import MessageEditor from './MessageEditor.vue'
@@ -69,6 +70,8 @@ const props = defineProps<{
   taskTag?: TaskLine | null
   /** 这是关于这件任务的最新一条：标签上再写状态词和在等谁。 */
   taskTagFull?: boolean
+  /** 这件任务交了一版在等人审阅，这一条是主线上关于它的最新一条：下面挂处理这一版的按钮。 */
+  deliveryHere?: boolean
   /** 这条下面那颗「采纳」按下去了，还在等结果。 */
   adopting?: boolean
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
@@ -181,7 +184,7 @@ const emit = defineEmits<{
   /** 这道题不回答，跳过。 */
   (e: 'ask-skip', block: Block): void
   /** 交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
-  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' }): void
+  (e: 'delivery', act: { taskId: string; view: DeliveryView }): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -207,10 +210,6 @@ const tagDoer = computed(() => {
   const doer = props.taskTag?.teammate
   return doer && doer !== props.block.author ? doer : null
 })
-// 交了一版在等人审阅时，关于这件任务的最新一条话下面挂着看它、采纳它的按钮：谁都能看，
-// 只有这一版的审阅人能采纳。
-const delivery = computed(() => (props.taskTagFull && props.taskTag?.delivery) || null)
-const canAdopt = computed(() => !!delivery.value?.reviewers.includes(props.viewer))
 // 新手浮窗「预览」一站圈的是芝士摆出来的那份；人自己发的附件不算。
 const previewAnchor = computed(() => (props.block.kind === 'artifact' ? 'preview-card' : ''))
 const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
@@ -577,34 +576,13 @@ const quickOffered = computed(() => {
           {{ option.text }}
         </BaseButton>
       </div>
-      <div
-        v-if="delivery && taskTag"
-        class="im-quick"
-        role="group"
-        :aria-label="t('work.room.message.delivery.label', { title: taskTag.title })"
-      >
-        <BaseButton
-          v-if="delivery.code"
-          kind="secondary"
-          size="sm"
-          @click="emit('delivery', { taskId: taskTag.id, view: 'changes' })"
-        >
-          {{ t('work.room.message.delivery.changes') }}
-        </BaseButton>
-        <BaseButton kind="secondary" size="sm" @click="emit('delivery', { taskId: taskTag.id, view: 'preview' })">
-          {{ t('work.room.message.delivery.preview') }}
-        </BaseButton>
-        <BaseButton
-          v-if="canAdopt"
-          kind="primary"
-          size="sm"
-          :loading="adopting"
-          :disabled="adopting"
-          @click="emit('delivery', { taskId: taskTag.id, view: 'adopt' })"
-        >
-          {{ t('work.room.message.delivery.adopt') }}
-        </BaseButton>
-      </div>
+      <DeliveryActions
+        v-if="deliveryHere && taskTag"
+        :task="taskTag"
+        :viewer="viewer"
+        :adopting="adopting"
+        @delivery="emit('delivery', $event)"
+      />
       <MessageQuote
         v-if="block.meta?.quoted_context && block.meta.quoted_context.kind !== 'viewing'"
         :quote="block.meta.quoted_context"

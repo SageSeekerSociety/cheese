@@ -8,6 +8,7 @@
     "label": "审阅「{title}」这一版",
     "changes": "查看改动",
     "preview": "预览",
+    "return": "退回",
     "adopt": "采纳"
   },
   "downloadFile": "下载 {name}",

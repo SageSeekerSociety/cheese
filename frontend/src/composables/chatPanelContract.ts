@@ -75,7 +75,7 @@ export interface ChatPanelEmit {
   // A task in this room (dispatched marker, upgraded message, <#task> chip): opens its card here.
   (e: 'open-card', taskId: string): void
   /** 主线上交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
-  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' }): void
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   // A clicked @mention chip (resolved by the parent: person → member page,
   // topic/doc → open that topic).
   (e: 'mention-click', name: string): void

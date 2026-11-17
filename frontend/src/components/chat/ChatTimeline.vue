@@ -39,6 +39,7 @@ import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import DeliveryActions from '../room/DeliveryActions.vue'
 import DeliveryCard from '../room/DeliveryCard.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
@@ -171,6 +172,9 @@ const props = defineProps<{
   taskLinksUnder?: (blockId: string) => TaskLine[]
   /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
   adoptingTask?: string | null
+  /** 这是频道的主线：交上来的一版记成一行「已提交审阅」，处理它的按钮挂在主线上关于这件
+   *  任务的最新那一条下面。别处（任务自己的对话、支线）照旧画交付卡。 */
+  mainLine?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -184,7 +188,7 @@ const emit = defineEmits<{
   (e: 'toggle-picker', blockId: string): void
   (e: 'open-file', path: string): void
   (e: 'open-card', taskId: string): void
-  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' }): void
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
@@ -283,8 +287,20 @@ function tagOf(m: Block): TaskLine | null {
   const id = taggedTask(m)
   return id ? props.taskOf?.(id) ?? null : null
 }
-// 交了一版去审阅的那一行（lib/deliveryLine）：画成一张交付卡。
+// 交了一版去审阅的那一行（lib/deliveryLine）：主线上它就是平台记的那一行，别处画成一张交付卡。
 const deliveries = computed(() => props.rows.map((row) => (row.notice ? deliveryOf(row.block) : null)))
+// 主线上一件任务在等人审阅时，处理这一版的按钮挂在哪一行：交上来之后关于它的最新那一条——
+// 通常是队友说这件任务的话；交了之后队友没说话，就是「已提交审阅」那一行自己。
+const deliveryAnchors = computed(() => {
+  const at = new Map<string, string>()
+  if (!props.mainLine) return at
+  props.rows.forEach(({ block }, i) => {
+    const filed = deliveries.value[i]
+    const id = filed ? filed.taskId : taggedTask(block)
+    if (id && props.taskOf?.(id)?.delivery) at.set(id, block.id)
+  })
+  return new Set(at.values())
+})
 // 同一个人接连新建的几件，归在同一个名字下面：断开的条件和消息一样。
 const createdCont = computed(() =>
   createdTasks.value.map((task, i) => {
@@ -662,7 +678,7 @@ const rowLabels = computed(() =>
             <!-- A task handed a version in for review: the platform's record of it, one card
                  under nobody's name. -->
             <div
-              v-else-if="deliveries[i]"
+              v-else-if="deliveries[i] && !mainLine"
               class="tl-delivery"
               :class="{ 'tl-arrive': arrived.has(m.id) }"
               :data-row-id="m.id"
@@ -769,6 +785,7 @@ const rowLabels = computed(() =>
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
               :task-tag="tagOf(m)"
               :task-tag-full="latestTagged.has(m.id)"
+              :delivery-here="deliveryAnchors.has(m.id)"
               :adopting="!!adoptingTask && tagOf(m)?.id === adoptingTask"
               :run-start="runEdges[i] !== 'cont'"
               :regroup="runEdges[i] === 'regroup'"
@@ -817,6 +834,20 @@ const rowLabels = computed(() =>
               @pin="emit('pin', $event)"
               @unpin="emit('unpin', $event)"
             />
+            <!-- The main line's 「已提交审阅」 line, when the teammate said nothing about the
+                 task after it: the buttons that settle this version hang here. -->
+            <div
+              v-if="notice && deliveries[i] && deliveryAnchors.has(m.id) && taskOf?.(deliveries[i]!.taskId)"
+              class="tl-thread tl-delivery-acts"
+              :data-feed-of="m.id"
+            >
+              <DeliveryActions
+                :task="taskOf!(deliveries[i]!.taskId)!"
+                :viewer="viewer"
+                :adopting="adoptingTask === deliveries[i]!.taskId"
+                @delivery="emit('delivery', $event)"
+              />
+            </div>
             <!-- 例行任务的一次执行：哪条规则、跑得怎么样、结果文件在哪，去看这次执行的支线。 -->
             <RoutineRunLine
               v-if="!notice && m.routine_run"
@@ -1006,6 +1037,15 @@ const rowLabels = computed(() =>
 /* 交了一版去审阅的那张卡：平台记下的事，不挂头像和名字，和消息正文同一条竖线。 */
 .tl-delivery {
   margin: 8px 16px 8px 54px;
+}
+/* 主线上「已提交审阅」那一行下面的按钮：和那一行一样居中。 */
+.tl-delivery-acts {
+  margin: 0 16px 8px;
+  width: auto;
+}
+.tl-delivery-acts :deep(.delivery-acts) {
+  justify-content: center;
+  margin-top: 4px;
 }
 /* 消息下面那一块：支线和任务长在一起，同一个底色。支线那几行在上，转成任务时顶上多
    一行任务名；拆出去的任务一件一行，排在下面。 */

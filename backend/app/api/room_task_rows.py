@@ -219,6 +219,9 @@ async def task_rows(
     }
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
+    # 哪几件任务有东西可预览（队友在任务里摆出过一份）：主线上交付那一条下面的
+    # 「预览」只在这时候给。
+    previews = await BlockRepository(db).with_preview(thread_ids)
     in_place = await from_threads(
         db, [t.id for t, _ in threads if t.upgraded_from_block_id is not None]
     )
@@ -266,6 +269,7 @@ async def task_rows(
                     task, card, shown, asked.get(task.id), actor.handle, reviewers
                 ),
                 "from_thread": task.id in in_place,
+                "has_preview": task.id in previews,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
                 "blocks": [

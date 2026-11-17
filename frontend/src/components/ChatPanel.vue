@@ -560,6 +560,7 @@ useComposerShortcut({
             :chapters="chapters"
             :task-of="taskOf"
             :adopting-task="adoptingTask ?? null"
+            :main-line="mainLine"
             :tasks-under="tasksUnder"
             :task-links-under="taskLinksUnder"
             :name-of="nameOf"

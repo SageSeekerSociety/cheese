@@ -8,6 +8,7 @@
     "label": "Review this version of “{title}”",
     "changes": "View changes",
     "preview": "Preview",
+    "return": "Send back",
     "adopt": "Accept"
   },
   "downloadFile": "Download {name}",

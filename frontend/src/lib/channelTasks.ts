@@ -40,9 +40,15 @@ export interface TaskLine {
   /** 这件任务里最后说的一句，折成一行：状态下面没有话要说时，主线上那张卡的第二行
    *  写它，说它此刻在做什么。 */
   latest?: string | null
-  /** 交了一版在等人审阅：谁能采纳（卡上的审阅人），有没有代码改动可看。没在等审阅是 null。 */
-  delivery?: { reviewers: string[]; code: boolean } | null
+  /** 交了一版在等人审阅：谁能采纳（卡上的审阅人），有没有代码改动、有没有预览可看。没在等审阅
+   *  是 null。 */
+  delivery?: { reviewers: string[]; code: boolean; preview: boolean } | null
 }
+
+/** 主线上处理一版交付的那几颗按钮：去看改动、去看预览、就地采纳、退回。 */
+export type DeliveryView = 'changes' | 'preview' | 'adopt' | 'return'
+/** 按了哪一颗、是哪件任务的：页面照着去做。 */
+export type DeliveryAct = { taskId: string; view: DeliveryView }
 
 /** 最后一步采纳了的任务，状态词下面那一行接着写合进去的是哪个 PR。 */
 function acceptedPr(task: ChannelTask): string | null {
@@ -89,6 +95,7 @@ function awaitingReview(task: ChannelTask): TaskLine['delivery'] {
   return {
     reviewers: (card.reviewer ?? '').split('、').filter(Boolean),
     code: !!task.branch_name,
+    preview: !!task.has_preview,
   }
 }
 

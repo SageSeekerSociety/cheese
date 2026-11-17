@@ -15,7 +15,10 @@ import uuid
 from datetime import UTC, datetime
 
 from app.domain.agent.models import AgentTurn
+from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
+from app.domain.room_task.models import Task
 from tests.integration.conftest import (
     join_project_team,
     mint_scoped_token,
@@ -24,6 +27,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.landing import written_up
 
 
 def _channel(client) -> tuple[str, str, str]:
@@ -166,3 +170,49 @@ def test_a_version_handed_in_after_the_word_is_not_adopted(client, stub_project_
     assert refused.status_code == 409, refused.text
     assert refused.json()["error"]["i18n"]["key"] == "coordinateAcceptNewerDelivery"
     assert _card(client, task["card"]).status == AcceptStatus.pending
+
+
+def test_where_it_came_from_says_the_teammate_adopted_it_for_the_reviewer(
+    client, stub_project_forge
+):
+    """Once the task is written up, the main line's record of its end names the
+    reviewer and the teammate that adopted it for them, by the teammate's own
+    name in the project."""
+    project, room, seat = _channel(client)
+    task = _task_with_delivery(client, project, room, seat)
+    asked = post_message(client, room, "alice", {"content": "首页加个报名表"})
+
+    async def hang_under_the_request():
+        async with client.test_factory() as db:
+            row = await db.get(Task, uuid.UUID(task["id"]))
+            row.upgraded_from_block_id = row.source_block_id = uuid.UUID(asked["id"])
+            await db.commit()
+
+    client.portal.call(hang_under_the_request)
+
+    async def teammate_reports():
+        async with client.test_factory() as db:
+            await BlockRepository(db).add(
+                project_id=uuid.UUID(project),
+                conversation_id=uuid.UUID(room),
+                author=seat,
+                author_type=AuthorType.participant,
+                content="报名表做好了",
+                meta={"task_tag": task["id"]},
+                own_output=True,
+            )
+            await db.commit()
+
+    client.portal.call(teammate_reports)
+    _say_then_wake(client, room, seat, "alice", "可以了 合并吧")
+    assert _accept(client, project, room, seat, task).status_code == 200
+
+    written_up(client, task["id"])
+
+    lines = client.get(
+        f"/topics/{room}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    [ended] = [
+        b for b in lines if (b.get("meta") or {}).get("event_type") == "task_ended"
+    ]
+    assert ended["content"] == f"<@{seat}>代 <@alice> 采纳了「{task['title']}」"

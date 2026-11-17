@@ -138,8 +138,7 @@ const props = withDefaults(
     activity?: MemberActivityLine[]
     // 「支线」那一格里有我没读过的回复：页签上挂一个点。
     threadsNew?: boolean
-    // 在频道里审阅一件任务交上来的那一版（`taskId` 是它）：只有「改动」「预览」两格，开在
-    // 「改动」上。采纳卡是这一栏自己的一份（页面上那一份是频道的），页头、「改动」页顶部和
+    // 在频道里打开的一件任务（`taskId` 是它）：它的对话、改动、预览三格，开在对话上。采纳卡是这一栏自己的一份（页面上那一份是频道的），页头、「改动」页顶部和
     // 底部那一条读的都是它；这一版决定过了，「改动」只读。页签不进地址，也不进命令面板：
     // 频道页上那一栏工作面板还在，地址和命令是它的。
     review?: boolean
@@ -148,6 +147,9 @@ const props = withDefaults(
     reviewHead?: { heading: string; version: number | null; state?: TaskState | null } | null
     // 审阅的那件任务又交了一版（页面在频道里看到了那一行）：变一下，这一栏的卡重读。
     reviewReload?: number
+    // 主线上按了「退回」：每按一次是一个新的记号，这一栏打开写退回理由的那一块（和页头上的
+    // 「退回」同一处）。没按是 null。
+    askReturn?: string | null
     // 频道里正在审阅的那一件交付：固定区右边多一格能关的页签，写着任务名，内容由页面从
     // `#delivery` 插槽递进来。同一时间只有一格（`id` 认它是哪一件）；`dot` 是它到了、还没人点开过。
     delivery?: { id: string; title: string; dot?: boolean } | null
@@ -175,6 +177,7 @@ const props = withDefaults(
     review: false,
     reviewHead: null,
     reviewReload: 0,
+    askReturn: null,
     delivery: null,
   }
 )
@@ -195,6 +198,17 @@ const reviewCard = props.review
 watch(
   () => props.reviewReload,
   () => void reviewCard?.reload()
+)
+// 主线上按了「退回」：卡读回来、还在等人审阅时，打开写退回理由的那一块。按一次开一次。
+let returnAsked: string | null = null
+watch(
+  [() => props.askReturn, () => reviewCard?.loaded.value],
+  ([asked, loaded]) => {
+    if (!reviewCard || !loaded || !asked || asked === returnAsked) return
+    returnAsked = asked
+    if (reviewCard.pendingCard.value) reviewCard.showRejectInput.value = true
+  },
+  { immediate: true }
 )
 // 「改动」只读：任务页上由页面说（不是负责人、任务关了）；审阅时这一版决定过了也只读。
 const changesReadOnly = computed(

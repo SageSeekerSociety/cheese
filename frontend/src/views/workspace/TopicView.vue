@@ -328,16 +328,24 @@ const deliveryTabBinding = computed(() =>
 // 打开的这件任务看哪一种（对话 / 改动 / 预览）：主线上「查看改动」「预览」点名，人在
 // 那一栏里换了就跟着换。点标签打开一件任务从它的对话看起。
 const reviewView = ref<string | null>(null)
+// 主线上按了「退回」：这件任务的页签开出写理由的那一块。每按一次一个新记号，别的打开方式清掉它。
+const returnAsk = ref<string | null>(null)
+let returnAsks = 0
 function openTaskChat(taskId: string) {
   reviewView.value = null
+  returnAsk.value = null
   return openTask(taskId)
 }
-// 主线上交付那几颗按钮：去看改动、预览，或就地采纳（topicView/adoptInPlace.ts）。
+// 主线上交付那几颗按钮：去看改动、预览，就地采纳，或退回（topicView/adoptInPlace.ts）。
 const adoptInPlace = useAdoptInPlace({
   me: () => myHandle(),
   agentName: () => store.agentName,
   openTask: (taskId) => openTask(taskId),
-  showView: (view) => (reviewView.value = view),
+  showView: (view) => {
+    reviewView.value = view
+    returnAsk.value = null
+  },
+  askReturn: (taskId) => (returnAsk.value = `${taskId}:${++returnAsks}`),
   reportError: (e, fallback) => store.reportError(e, fallback),
   notice: (message) => (store.error = message),
 })
@@ -358,6 +366,7 @@ function reviewPanel(taskId: string) {
     memberNames: memberNames.value,
     topicList: store.topics,
     tab: reviewView.value ?? undefined,
+    askReturn: returnAsk.value,
   }
 }
 // 支线左上角的返回：回到「支线」那一格的列表。
