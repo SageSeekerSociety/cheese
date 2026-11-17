@@ -172,14 +172,6 @@ async def names_for(
     )
 
 
-def referenced_ids_in(*values: Any) -> set[int]:
-    """Every user id the entity references inside ``values`` name."""
-    found: set[int] = set()
-    for value in values:
-        found |= user_ids_in(value)
-    return found
-
-
 async def names_and_referents(
     session: AsyncSession,
     *values: Any,
@@ -197,10 +189,12 @@ async def names_and_referents(
     ``snapshot_id_swaps`` keys on. Both are read once for however many values
     are handed in, so a page pays one query per kind, not one per row.
     """
+    # One descent over ``values`` for both the tokens and the references.
     handles: set[str] = set()
+    ids: set[int] = set()
     for value in values:
         handles |= handles_in(value)
-    ids = referenced_ids_in(*values)
+        ids |= user_ids_in(value)
     referents = await usernames_by_ids(session, ids) if ids else {}
     handles |= set(referents.values())
     if not handles:

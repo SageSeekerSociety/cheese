@@ -297,11 +297,16 @@ class NotificationQueryService:
         """
         metadata_map = _metadata_map_of(notification)
         # A row names people by name, not by the room's <@handle> token
-        # (`names.py`). ``names`` is the page's, read once for every row.
+        # (`names.py`). ``names`` is the page's, read once for every row: when a
+        # caller supplies it, only a missing ``referents`` is read here, so a
+        # page that passes names alone does not silently fall back to per-row
+        # lookups.
         if self._session is not None and (names is None or referents is None):
-            names, referents = await names_and_referents(
+            fresh_names, fresh_referents = await names_and_referents(
                 self._session, metadata_map, viewer_id=viewer_id
             )
+            names = names if names is not None else fresh_names
+            referents = referents if referents is not None else fresh_referents
         if names:
             metadata_map = with_names(metadata_map, names)
             metadata_map = with_snapshot_names(
