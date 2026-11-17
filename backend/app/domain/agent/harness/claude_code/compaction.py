@@ -135,15 +135,18 @@ async def when_cold(runner, asked: dict | None) -> bool:
     the wait; the input goes in as it was."""
     if not cold(runner, asked):
         return False
+    # The input being held owes a person a reply, but nothing the compaction
+    # does is that reply, and its own ending must not hold it to one: nothing
+    # is owed while it runs, and the reply is owed again once it is done.
     owed = runner.owed
+    if owed is not None:
+        runner.reply_settled()
     try:
         answer = await runner.command("/compact", COMPACT_TIMEOUT_S)
     except Exception as error:  # the turn goes on uncompacted
         print(f"cold compaction failed: {error!r}", file=sys.stderr, flush=True)
         return False
     finally:
-        # The command's own work ended, and with it the reply the input
-        # being held owes: it is still owed.
-        if owed is not None and runner.owed is None:
+        if owed is not None:
             runner.owe_reply(owed)
     return not answer.get("is_error")

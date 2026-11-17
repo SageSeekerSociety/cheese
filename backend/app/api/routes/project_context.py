@@ -634,30 +634,36 @@ async def _search_from(
     )
     numbers: dict[str, int | None] = {}
 
-    async def task_named(task_id: str, title: str | None = None) -> str:
+    async def task_number(task_id: str) -> int | None:
         if task_id not in numbers:
             found = await address.thing_by_id(
                 db, address.Numbered.task, uuid.UUID(task_id)
             )
             numbers[task_id] = found.number if found else None
-        number = numbers[task_id]
-        named = f"任务 #{number}" if number is not None else "任务"
-        return f"{named}「{title}」" if title else named
+        return numbers[task_id]
 
     lines: list[str] = []
     for room in hits.get("rooms", []):
         lines.append(f"- 频道「{room['room_title']}」（topic: {room['room_id']}）")
     for task in hits.get("tasks", []):
         state = "未结束" if task["status"] == "open" else "已结束"
+        number = await task_number(task["id"])
+        named = f"任务 #{number}" if number is not None else "任务"
         lines.append(
-            f"- {await task_named(task['id'], task['title'])}，{state}"
+            f"- {named}「{task['title']}」，{state}"
             f"（topic: {task['id']}）：{task['snippet']}"
         )
     for record in hits.get("records", []):
+        channel = f"频道「{record['room_title']}」"
+        # A conversation inside the channel is a task or one of its 支线.
+        inner = record.get("task_id")
+        number = await task_number(inner) if inner else None
         where = (
-            await task_named(record["task_id"])
-            if record.get("task_id")
-            else f"频道「{record['room_title']}」"
+            channel
+            if not inner
+            else f"任务 #{number}"
+            if number is not None
+            else f"{channel}的一条支线"
         )
         kind = _RECORD_NAMES.get(record["kind"], "文档段落")
         name, handle = record.get("author_name"), record["author"]

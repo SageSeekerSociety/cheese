@@ -1545,6 +1545,53 @@ def test_a_turn_inside_the_cache_lifetime_is_not_compacted(screen, contract):
 
 
 @pytest.mark.anyio
+async def test_a_conversation_gone_cold_while_its_runner_was_away_is_compacted(
+    machine, monkeypatch
+):
+    """Idle past its cache lifetime, a session has usually been let go too: the
+    runner started again on the same conversation still knows when it last
+    called the model and how large it was, compacts it, and then reads the
+    input meant for a compacted conversation."""
+    runner = await _started(machine, monkeypatch, idle_exit_s=0.5)
+    try:
+        await runner.send(
+            str(uuid.uuid4()), "The password is PINEAPPLE.", work_id=str(uuid.uuid4())
+        )
+        await _results(runner, 1)
+        assert runner.process is not None
+        await asyncio.wait_for(runner.process.wait(), 60)
+    finally:
+        await runner.close()
+
+    again = await _started(machine, monkeypatch)
+    try:
+        await again.send(
+            str(uuid.uuid4()),
+            "only what changed",
+            work_id=str(uuid.uuid4()),
+            compact_if_cold={"idle_s": 0, "above_tokens": 1, "text": "the whole state"},
+        )
+        # The compaction's own result, then the turn's.
+        await _results(again, 3)
+        records = [e["record"] for e in again.journal.read(0)]
+    finally:
+        await again.close()
+    boundary = next(
+        i for i, r in enumerate(records) if r.get("subtype") == "compact_boundary"
+    )
+    read = next(
+        i
+        for i, r in enumerate(records)
+        if r.get("type") == "user"
+        and r.get("isReplay")
+        and "the whole state" in json.dumps(r.get("message"))
+    )
+    assert boundary < read
+    asked = json.dumps(machine.server.state["requests"][-1]["messages"])
+    assert "only what changed" not in asked
+
+
+@pytest.mark.anyio
 async def test_a_bash_call_says_how_much_of_its_wait_was_the_command(
     monkeypatch, tmp_path
 ):

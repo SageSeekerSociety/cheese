@@ -5,6 +5,7 @@ private channel is not handed to a channel whose people cannot read it."""
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import seed_user
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_message,
     post_project,
@@ -82,3 +83,16 @@ def test_what_a_private_channel_said_stays_out_of_a_wider_channel(client):
     assert said in _find(client, p["id"], secret, "预算表"), (
         "机密频道自己的队友照样搜得到"
     )
+
+
+def test_what_was_said_in_a_thread_is_found_as_the_channels_thread(client):
+    p = _project(client)
+    ops = _channel(client, p["id"], "运维", private=False)
+    thread = in_thread(client, ops, "alice")
+    said = _said(client, thread, "回滚步骤写在交接文档第二节")
+
+    found = _find(client, p["id"], p["root_topic_id"], "回滚步骤")
+
+    line = next(line for line in found.splitlines() if said in line)
+    assert "支线" in line and "任务" not in line, line
+    assert thread in line, "带着读它要用的那条支线"
