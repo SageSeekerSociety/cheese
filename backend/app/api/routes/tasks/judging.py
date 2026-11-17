@@ -27,7 +27,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field
 
 from app.api.response import ok, typed_response
@@ -239,6 +239,71 @@ async def get_task_judge_case(
     if case is None:
         raise NotFoundError.for_resource("test_case", case_id)
     return ok({"case": await test_suite.case_to_api(db, case)})
+
+
+class TaskJudgeSummary(BaseModel):
+    """一版提交最近一次评测的摘要：参与者列表那一列「测试点」读它。"""
+
+    submissionId: int
+    state: str
+    passedCases: int
+    caseCount: int
+    passedPoints: int
+    totalPoints: int
+
+
+class TaskJudgeSummariesOut(BaseModel):
+    summaries: list[TaskJudgeSummary]
+
+
+#: 一次最多问几版提交：参与者列表一页最多 200 人。
+MAX_SUMMARY_IDS = 200
+
+
+@router.get(
+    "/{taskId}/judge/summaries",
+    summary="Judge Summaries of Submissions",
+    **typed_response(TaskJudgeSummariesOut),
+    dependencies=[Can(TaskPermission.teach)],
+)
+async def get_task_judge_summaries(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    submission_ids: Annotated[str, Query(alias="submissionIds", max_length=4000)] = "",
+    db=Depends(get_db),
+) -> dict:
+    """几版提交各自最近一次评测的摘要（方案 §参与者列表「测试点」一列）。
+
+    只给能批改的人（``Can(teach)``），和参与者列表同一拨人。``submissionIds`` 是逗号
+    分隔的提交 id，最多 ``MAX_SUMMARY_IDS`` 个；不属于这道题的、没评测过的不在结果里。
+    还没跑完的那一次只有状态，通过数是 0。
+    """
+    ids: list[int] = []
+    for part in submission_ids.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit():
+            raise BadRequestError(say("judgeSummaryBadIds"))
+        ids.append(int(part))
+    if len(ids) > MAX_SUMMARY_IDS:
+        raise BadRequestError(say("judgeSummaryTooMany", max=MAX_SUMMARY_IDS))
+    runs = await judge_queue.latest_runs(db, ids)
+    out: list[dict] = []
+    for submission_id, run in runs.items():
+        if run.task_id != task_id:
+            continue
+        shown = judge_queue.run_to_api(run, teacher=True) or {}
+        out.append(
+            {
+                "submissionId": submission_id,
+                "state": run.state,
+                "passedCases": int(shown.get("passedCases") or 0),
+                "caseCount": int(shown.get("caseCount") or 0),
+                "passedPoints": int(shown.get("passedPoints") or 0),
+                "totalPoints": int(shown.get("totalPoints") or 0),
+            }
+        )
+    return ok({"summaries": out})
 
 
 class TaskTestTrialFile(BaseModel):

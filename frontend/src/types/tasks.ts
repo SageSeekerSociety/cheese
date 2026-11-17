@@ -1,3 +1,4 @@
+import type { TaskTestSuite } from './taskJudge'
 import type {
   Material,
   Space,
@@ -72,8 +73,9 @@ export interface TaskSubmissionSchemaEntry {
 }
 
 /** 评分要点的一行由谁给分（`app/domain/task/rubric.py` 的 `LINE_KINDS`）：老师评审时
- *  手填，或平台按这份领题用掉的额度自动算分。老题的行都没有这一项，读作 `manual`。 */
-export type TaskRubricLineKind = 'manual' | 'usage'
+ *  手填、平台按这份领题用掉的额度自动算分，或按这个阶段的测试点自动算分。老题的行都
+ *  没有这一项，读作 `manual`。 */
+export type TaskRubricLineKind = 'manual' | 'usage' | 'tests'
 
 /** 自动算分那一行的设置（`rubric._usage_config`）：按阈值，或按全班排名。按阈值时
  *  `full` 是不超过多少额度得满分、`zero` 是达到多少额度得 0 分（`zero > full`）。 */
@@ -149,6 +151,8 @@ export interface Task {
   /** 评分要点。批改的人总能读到；学生只在 `rubricPublic` 时读到，否则是空的。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 各阶段挂的测试点（每个阶段至多一套）。学生读到的隐藏用例没有输入输出。 */
+  testSuite?: TaskTestSuite[]
   /** 阶段；不分阶段是空的。详情与改题的响应才带。 */
   stages?: TaskStage[]
   participants: {
@@ -217,15 +221,33 @@ export interface TaskSubmissionAutoScores {
   manual: number
   /** 自动那部分的分定下了没有：按排名给分的题在截止前是 false（总分显示「暂定」）。 */
   final: boolean
-  lines: {
-    index: number
-    kind: string
-    points: number
-    score: number
-    /** 这份领题当时用掉的额度。 */
-    credits: number
-    mode: string
-  }[]
+  lines: (TaskUsageScoreLine | TaskTestsScoreLine)[]
+}
+
+/** 合成账里额度那一行。 */
+export interface TaskUsageScoreLine {
+  index: number
+  kind: 'usage'
+  points: number
+  score: number
+  /** 这份领题当时用掉的额度。 */
+  credits: number
+  mode: string
+}
+
+/** 合成账里测试点那一行（`auto_score.compose_review`）：这一版评测通过的用例分、折算的
+ *  分，老师改过时 `adjusted` 和原因；还没出结果或评测失败时 `pending`，分记 0。 */
+export interface TaskTestsScoreLine {
+  index: number
+  kind: 'tests'
+  points: number
+  score: number
+  passedPoints: number
+  totalPoints: number
+  runId?: number | null
+  adjusted?: boolean
+  reason?: string | null
+  pending?: boolean
 }
 
 export interface TaskSubmissionReview {
@@ -386,5 +408,7 @@ export type TaskFormSubmitData = {
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 各阶段挂的测试点（每个阶段至多一套）。学生读到的隐藏用例没有输入输出。 */
+  testSuite?: TaskTestSuite[]
   stages?: TaskStage[]
 }

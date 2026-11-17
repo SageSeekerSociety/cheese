@@ -9,6 +9,7 @@ import type {
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
+  TaskTestSuite,
 } from '@/types'
 
 // 添加参与者身份类型
@@ -63,6 +64,7 @@ export type PostTaskRequestData = {
   knowledgePointIds?: number[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  testSuite?: TaskTestSuite[]
   stages?: TaskStage[]
 }
 
@@ -93,6 +95,7 @@ export type PatchTaskRequestData = {
   /** 评分要点：整份替换；省掉它 = 不动。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  testSuite?: TaskTestSuite[]
   /** 阶段：整份替换；省掉它 = 不动。 */
   stages?: TaskStage[]
   endedAt?: number | null
@@ -129,6 +132,8 @@ export type PostTaskSubmissionReviewRequestData = {
   accepted: boolean
   score: number
   comment: string
+  /** 老师改测试点那一行的分：改成几分、为什么（原因必填，学生看得到）。`null` 是恢复按测试点算。 */
+  testsOverride?: { score: number; reason: string } | null
 }
 
 export type PatchTaskSubmissionReviewRequestData = Partial<PostTaskSubmissionReviewRequestData>

@@ -9,6 +9,7 @@ import type {
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
 } from './tasks'
+import type { TaskTestSuite } from './taskJudge'
 
 /** 草稿里存的那张表单，和 `POST /tasks` 收的形状一样；`descriptionMarkdown`、
  *  `teachingOwn`、`attachmentFiles` 和 `starterFile` 只属于页面（芝士读写详情用
@@ -39,6 +40,7 @@ export interface TaskDraftFields {
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  testSuite?: TaskTestSuite[]
   stages?: TaskStage[]
   attachmentIds?: number[]
   /** 附件的名字和大小，页面列附件用；发布时不带。 */
@@ -104,6 +106,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'submissionSchema',
   'rubric',
   'rubricPublic',
+  'testSuite',
   'stages',
   'attachmentIds',
   'attachmentFiles',

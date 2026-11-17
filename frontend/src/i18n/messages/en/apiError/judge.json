@@ -15,5 +15,7 @@
   "judgeTrialTooManyFiles": "The reference code can have at most {max} files",
   "judgeTrialUploadTooLarge": "The reference code can be at most {mb} MB",
   "judgeUnavailable": "Judging is unavailable: the platform has no judge hosts yet; the teacher can score the tests by hand",
-  "judgeUnpriced": "Judging is unavailable: the platform hasn't set a price for judging; the teacher can score the tests by hand"
+  "judgeUnpriced": "Judging is unavailable: the platform hasn't set a price for judging; the teacher can score the tests by hand",
+  "judgeSummaryBadIds": "The submission ids to summarize are malformed",
+  "judgeSummaryTooMany": "Ask for at most {max} submissions' judge summaries at a time"
 }
