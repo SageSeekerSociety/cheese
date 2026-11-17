@@ -24,8 +24,6 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, exists, func, literal_column, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import BadRequestError
-from app.core.sentences import say
 from app.domain.project.models import Project
 from app.domain.task.models import (
     Task,
@@ -221,55 +219,6 @@ async def usage_of_claims(
                 )
         out[mid] = view
     return out
-
-
-async def compose_review(
-    session: AsyncSession,
-    *,
-    task: Task,
-    membership: TaskMembership,
-    submission_id: int,
-    accepted: bool,
-    score: int,
-) -> tuple[int, dict | None]:
-    """一条评审要记下的分。
-
-    题目在这一版的阶段上有 ``usage`` 行、而且判的是通过时，老师填的 ``score`` 是
-    手动几项的分（0 到这一阶段手动项的分值之和），总分 = 它 + 这一刻 ``usage`` 行
-    的分，怎么来的记进 ``auto_scores``。其余情况 ``score`` 原样就是总分。
-    """
-    line = await usage_line(session, task.id)
-    if line is None or not accepted:
-        return score, None
-    stage = await session.scalar(
-        select(TaskSubmission.stage).where(TaskSubmission.id == submission_id)
-    )
-    if (stage or 0) != line.stage:
-        return score, None
-    stage_total = await session.scalar(
-        select(func.coalesce(func.sum(TaskRubricItem.points), 0)).where(
-            TaskRubricItem.task_id == task.id, TaskRubricItem.stage == line.stage
-        )
-    )
-    cap = int(stage_total or 0) - line.points
-    if not 0 <= score <= cap:
-        raise BadRequestError(say("reviewManualScoreRange", max=cap))
-    view = (await usage_of_claims(session, task, [membership.id]))[membership.id]
-    auto = int(view.get("score") or 0)
-    return score + auto, {
-        "manual": score,
-        "final": bool(view["final"]),
-        "lines": [
-            {
-                "index": line.index,
-                "kind": USAGE,
-                "points": line.points,
-                "score": auto,
-                "credits": view["credits"],
-                "mode": view["line"]["mode"],
-            }
-        ],
-    }
 
 
 async def finalize_ranked_reviews(session: AsyncSession) -> int:
