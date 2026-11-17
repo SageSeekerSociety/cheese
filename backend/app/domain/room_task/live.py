@@ -3,7 +3,7 @@
 A task is on two pages at once: its own, which listens on the task's
 conversation, and its channel's, where its card hangs under a message and in
 the 支线 pane. Telling them used to be each writer's job, and each told the page
-it thought of: the summary turn closing the task after 「采纳并完成任务」 was
+it thought of: the summary turn closing the task after the last delivery was
 heard in the channel and not on the task's page, which kept its input box until
 a reload; a question asked in a new task was heard by neither, so its card in
 the channel said 讨论中 while the task said 待回答.

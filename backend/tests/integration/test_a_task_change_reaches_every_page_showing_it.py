@@ -77,8 +77,8 @@ def _task_read(client, task: str) -> dict:
 
 
 def test_the_task_page_hears_the_task_close_once_its_summary_is_done(client):
-    """「采纳并完成任务」: the task closes after its teammate writes it up. The
-    task's own page is told then, so its input gives way to 「任务已关闭」 without
+    """The last delivery accepted: the task closes after its teammate writes it
+    up. The task's own page is told then, so its input gives way to 「任务已关闭」 without
     a reload."""
     project = new_project(client, owner="alice")
     room = project["root_topic_id"]
