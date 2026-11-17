@@ -19,5 +19,6 @@
   "running": "未结束的任务（{count}）",
   "save": "保存",
   "waiting": "等你处理",
-  "writeProject": "写项目目标"
+  "writeProject": "写项目目标",
+  "closedByNeglect": "因无人理会自动关闭"
 }

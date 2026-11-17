@@ -312,6 +312,7 @@ class SpaceLearningJudgmentRepository:
         summary: str,
         evidence: list[uuid.UUID],
         now: datetime,
+        misconception_id: int | None = None,
     ) -> None:
         """The point's judgment becomes this one; a dispute on it is cleared,
         because this IS the re-check the dispute asked for."""
@@ -322,6 +323,7 @@ class SpaceLearningJudgmentRepository:
             level=level,
             summary=summary,
             evidence_block_ids=evidence,
+            misconception_id=misconception_id,
             disputed_at=None,
             analyzed_at=now,
             created_at=now,
@@ -334,6 +336,7 @@ class SpaceLearningJudgmentRepository:
                     "level": stmt.excluded.level,
                     "summary": stmt.excluded.summary,
                     "evidence_block_ids": stmt.excluded.evidence_block_ids,
+                    "misconception_id": stmt.excluded.misconception_id,
                     "disputed_at": None,
                     "analyzed_at": stmt.excluded.analyzed_at,
                     "updated_at": stmt.excluded.updated_at,

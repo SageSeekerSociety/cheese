@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -36,10 +37,13 @@ from app.domain.space.models import (
     Space,
     SpaceCategory,
     SpaceKnowledgePoint,
+    SpaceLearningAdvice,
     SpaceLearningCursor,
     SpaceLearningJudgment,
+    SpaceLearningMisconception,
     SpaceLearningQuestion,
     SpaceLearningRun,
+    SpaceLearningWeek,
     SpaceMember,
 )
 from app.domain.task.models import Task
@@ -509,3 +513,139 @@ async def test_a_disputed_judgment_is_rechecked_and_the_mark_is_cleared(
     assert judgment.disputed_at is None
     assert judgment.evidence_block_ids[0] == new
     assert old in judgment.evidence_block_ids
+
+
+# --- 老师那一侧（step 3）：误解、聚类、讲课建议、按周快照 -----------------------
+
+WRONG = "内层不知道怎样引用外层"
+
+
+async def _three_ask(factory) -> dict:
+    async with factory() as session:
+        world = await _board(session, ["ann", "bob", "cat"])
+        for offset, name in enumerate(("ann", "bob", "cat")):
+            _say(
+                session,
+                world["people"][name],
+                f"{name}：子查询里怎么引用外层那一行？",
+                SAID_AT + timedelta(minutes=offset),
+            )
+        await session.commit()
+    return world
+
+
+def _stuck_answer() -> str:
+    return json.dumps(
+        {
+            "judgments": [
+                {
+                    "point": POINT,
+                    "level": "weak",
+                    "summary": "你还不清楚内层怎样引用外层。",
+                    "evidence": ["m1"],
+                    "misconception": WRONG,
+                }
+            ],
+            "questions": [
+                {"ref": "m1", "point": POINT, "kind": "concept", "gist": "怎么引用外层"}
+            ],
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_a_night_names_misconceptions_groups_questions_and_counts_the_week(
+    business_db_factory, gateway
+):
+    factory = business_db_factory
+    world = await _three_ask(factory)
+    gateway.answers.extend([_stuck_answer()] * 3)
+    # 聚类：前两条归成一类，第三条模型没提 —— 它自己成一类。
+    gateway.answers.append(
+        json.dumps(
+            {
+                "new": [
+                    {"label": "怎么引用外层的列？", "point": POINT, "q": ["q1", "q2"]}
+                ]
+            }
+        )
+    )
+    gateway.answers.append(json.dumps({"advice": "用一张逐行扫描的示意图讲五分钟。"}))
+
+    counts = await _night(factory, gateway)
+    assert counts["calls"] == 5
+    # 第二个成员的那一问里，模型已经看到第一个人那里归纳出的误解，可以照抄。
+    assert WRONG in gateway.asked[1]
+
+    judgments = await _rows(factory, SpaceLearningJudgment, space_id=world["space_id"])
+    assert len(judgments) == 3
+    assert len({j.misconception_id for j in judgments}) == 1
+    assert judgments[0].misconception_id is not None
+    (wrong,) = await _rows(
+        factory, SpaceLearningMisconception, space_id=world["space_id"]
+    )
+    assert wrong.label == WRONG
+
+    questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
+    assert all(q.cluster_id is not None for q in questions)
+    assert sorted(Counter(q.cluster_id for q in questions).values()) == [1, 2]
+
+    (advice,) = await _rows(factory, SpaceLearningAdvice, space_id=world["space_id"])
+    assert advice.stuck_count == 3
+    assert advice.misconception_ids == [wrong.id]
+
+    (week,) = await _rows(factory, SpaceLearningWeek, space_id=world["space_id"])
+    assert (week.stuck_count, week.involved_count) == (3, 3)
+    assert week.week_start.weekday() == 0
+    (run,) = await _rows(factory, SpaceLearningRun, space_id=world["space_id"])
+    assert run.finished_at is not None and run.calls == 5
+
+
+@pytest.mark.anyio
+async def test_a_failed_grouping_call_leaves_the_questions_for_the_next_tick(
+    business_db_factory, gateway
+):
+    factory = business_db_factory
+    world = await _three_ask(factory)
+    gateway.answers.extend([_stuck_answer()] * 3)
+    gateway.answers.append(500)
+
+    counts = await _night(factory, gateway)
+    assert counts["failed"] == 1
+    questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
+    assert len(questions) == 3 and all(q.cluster_id is None for q in questions)
+    (run,) = await _rows(factory, SpaceLearningRun, space_id=world["space_id"])
+    assert run.finished_at is None
+    # 按周快照不调模型，照样记下。
+    (week,) = await _rows(factory, SpaceLearningWeek, space_id=world["space_id"])
+    assert week.stuck_count == 3
+    assert await _rows(factory, SpaceLearningAdvice, space_id=world["space_id"]) == []
+
+    # 同一晚稍后再醒：只剩聚类和建议要做。
+    gateway.answers.append(
+        json.dumps({"new": [{"label": "怎么引用外层", "q": ["q1", "q2", "q3"]}]})
+    )
+    gateway.answers.append(json.dumps({"advice": "先讲相关子查询的执行顺序。"}))
+    await _night(factory, gateway, NIGHT + timedelta(hours=1))
+    questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
+    assert len({q.cluster_id for q in questions}) == 1
+    assert None not in {q.cluster_id for q in questions}
+
+
+@pytest.mark.anyio
+async def test_questions_of_fewer_than_three_people_are_not_grouped(
+    business_db_factory, gateway
+):
+    """整块板问过的人不到 3 个：任何一类都到不了 3 人，不花这笔钱。"""
+    factory = business_db_factory
+    async with factory() as session:
+        world = await _board(session, ["ann", "bob"])
+        for name in ("ann", "bob"):
+            _say(session, world["people"][name], f"{name} 的问题", SAID_AT)
+        await session.commit()
+    gateway.answers.extend([_stuck_answer()] * 2)
+
+    counts = await _night(factory, gateway)
+    assert counts["calls"] == 2
+    questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
+    assert all(q.cluster_id is None for q in questions)

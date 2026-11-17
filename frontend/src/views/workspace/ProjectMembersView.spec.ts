@@ -568,6 +568,40 @@ describe('成员页：邀请', () => {
     expect(container.textContent).toContain('前端组件-李工')
   })
 
+  it.each(['loaded', 'pending'] as const)(
+    'shows and searches the AI remark when the agent metadata is %s',
+    async (metadata) => {
+      members = members.map((m) =>
+        m.user_handle === 'cheese-x'
+          ? { ...m, name: 'Public Agent', remark: 'My research teammate', instance_handle: 'cheese' }
+          : m
+      )
+      if (metadata === 'pending') listProjectAgents.mockReturnValue(new Promise(() => {}))
+      else
+        listProjectAgents.mockResolvedValue({
+          data: [
+            {
+              handle: 'cheese',
+              seat_handle: 'cheese-x',
+              display_name: 'Public Agent',
+              name_source: 'human',
+              is_default: true,
+              is_active: true,
+            },
+          ],
+        })
+      const { container, findByText } = mount()
+      await findByText('My research teammate')
+      expect(container.textContent).toContain('Public Agent')
+      const search = container.querySelector('.v-text-field input') as HTMLInputElement
+      for (const q of ['research teammate', 'Public Agent', 'cheese']) {
+        await fireEvent.update(search, q)
+        expect(container.textContent).toContain('My research teammate')
+        expect(container.textContent).not.toContain('朵拉')
+      }
+    }
+  )
+
   it('名册已到货时立即放开显示闸并展示成员与队友，不等 /agents 和 /invitations 返回', () => {
     listProjectAgents.mockReturnValue(new Promise(() => {}))
     listProjectInvitations.mockReturnValue(new Promise(() => {}))

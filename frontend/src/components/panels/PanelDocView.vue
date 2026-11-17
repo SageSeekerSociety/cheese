@@ -69,6 +69,8 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 账号 → 名字：正文和评论里的 `<@账号>` 标签上写的字。 */
     mentionNames?: Record<string, string>
+    /** 导出专用的公开名字；缺项保留账号，不回退个人展示名。 */
+    printMentionNames?: Record<string, string>
     /** 正文里打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
     /** 这份文档 @ 到并通知过的人（只有他们的 `<@handle>` 画成 @chip）。 */
@@ -171,6 +173,7 @@ const props = withDefaults(
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     mentionNames: undefined,
+    printMentionNames: undefined,
     mentionPeople: () => [],
     notifiedMentions: () => [],
     fetchNotifiedMentions: undefined,
@@ -445,7 +448,7 @@ async function exportPdf() {
     const html = await documentPrintHtml({
       title: docTitle.value || 'document',
       markdown: exportMarkdown(props.session.doc),
-      names: { mentionNames: props.mentionNames ?? {}, topicTitles: {} },
+      names: { mentionNames: props.printMentionNames ?? {}, topicTitles: {} },
       image: props.imageData,
     })
     await props.savePdf(html, `${fileName(docTitle.value || 'document')}.pdf`)

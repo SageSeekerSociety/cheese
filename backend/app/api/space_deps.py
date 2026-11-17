@@ -13,6 +13,7 @@ from app.domain.materials.services import MaterialService
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
+from app.domain.space.learning_class_service import SpaceLearningClassService
 from app.domain.space.learning_insight_service import SpaceLearningInsightService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.review_service import SpaceReviewService
@@ -109,3 +110,10 @@ async def get_space_learning_insight_service(
 ) -> SpaceLearningInsightService:
     """「我的学习洞察」：一个成员读自己在这块板的学情分析结果、标记一条判断不准。"""
     return SpaceLearningInsightService.of(db)
+
+
+async def get_space_learning_class_service(
+    db=Depends(get_db),
+) -> SpaceLearningClassService:
+    """「数据 › 学情分析」：老师看全班整体的七个页签、知识点详情、摘录与导出。"""
+    return SpaceLearningClassService.of(db)

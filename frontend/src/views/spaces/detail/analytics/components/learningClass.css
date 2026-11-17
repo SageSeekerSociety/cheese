@@ -1,0 +1,126 @@
+/* 学情分析（全班整体）各页签共用的写法：一张紧凑的表、一个能点的名字、一枚状态签、
+   一行次要文字。每个页签组件用 <style scoped src="./learningClass.css"> 引进来。 */
+
+.lc-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  font-variant-numeric: tabular-nums;
+}
+
+.lc-table th,
+.lc-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.lc-table th {
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.lc-link {
+  color: var(--ink);
+  font-weight: 500;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 3px;
+}
+
+.lc-link:hover {
+  text-decoration-color: var(--muted);
+}
+
+.lc-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.lc-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+}
+
+.lc-chip--danger {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+
+.lc-chip--warn {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
+}
+
+.lc-chip--ok {
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+}
+
+.lc-chip--accent {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.lc-muted {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
+}
+
+.lc-gap {
+  margin-top: 8px;
+}
+
+.lc-quote {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--line-2);
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  overflow-wrap: anywhere;
+}
+
+.lc-code {
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.lc-row {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.lc-item + .lc-item {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lc-item__title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  overflow-wrap: anywhere;
+}

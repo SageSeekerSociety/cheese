@@ -86,6 +86,7 @@ def task_row_json(task: Task) -> dict:
         "accepted_by": task.accepted_by,
         "accepted_at": _iso(task.accepted_at),
         "closed_at": _iso(task.closed_at),
+        "closed_reason": task.closed_reason,
         "deploying_since": _iso(task.deploying_since),
         "deploy_blocked_url": task.deploy_blocked_url,
         "upgraded_from_block_id": _text(task.upgraded_from_block_id),
