@@ -49,6 +49,7 @@ export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   days_to_submit: ['defaultDeadline'],
   category: ['categoryId'],
   tags: ['topics'],
+  knowledge_points: ['knowledgePointIds'],
   access: ['accessControlEnabled', 'accessDomainGroupIds'],
   real_name: ['requireRealName'],
   ai_teammate: ['defaultRole'],
@@ -95,6 +96,8 @@ export interface DraftTerms {
   materials?: { id: number; name: string }[]
   /** 能当默认队友的预设：标题和类型名。 */
   teammates?: { name: string; title: string }[]
+  /** 空间的知识点清单（芝士写的知识点按名字对上它们，§ learning analysis）。 */
+  knowledgePoints?: { id: number; name: string }[]
   /** 草稿里这道题现在的 AI 设置：只改几格时，其余照它。 */
   teaching?: SpaceTeaching
 }
@@ -256,6 +259,12 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
   if (Array.isArray(given.tags)) {
     fields.topics = given.tags
       .map((tag) => terms.topics.find((topic) => topic.name === tag)?.id)
+      .filter((id): id is number => id !== undefined)
+  }
+  if (Array.isArray(given.knowledge_points) && terms.knowledgePoints) {
+    const points = terms.knowledgePoints
+    fields.knowledgePointIds = given.knowledge_points
+      .map((name) => points.find((point) => point.name === name)?.id)
       .filter((id): id is number => id !== undefined)
   }
   if (Array.isArray(given.stages)) {

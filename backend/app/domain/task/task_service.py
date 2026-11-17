@@ -245,6 +245,20 @@ class TaskService:
             task_id
         )
 
+    async def replace_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        await self._repo.replace_knowledge_point_relations(
+            task_id=task_id, knowledge_point_ids=knowledge_point_ids
+        )
+
+    async def add_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        await self._repo.add_knowledge_point_relations(
+            task_id=task_id, knowledge_point_ids=knowledge_point_ids
+        )
+
     async def list_submission_schema(
         self, task_id: int
     ) -> Sequence[TaskSubmissionSchemaEntry]:
