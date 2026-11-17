@@ -184,6 +184,14 @@ export default {
       meta: { titleKey: 'spaces.materials.title' },
     },
     {
+      // 我的学习洞察（学情分析第 2 步）：只有本人看得到。侧栏只在这块板开着学情分析时
+      // 摆这一格；直接打开地址时页面自己说「没开启」。
+      path: 'learning-insight',
+      name: 'SpacesMyLearningInsight',
+      component: () => import('@/views/spaces/detail/MyLearningInsight.vue'),
+      meta: { titleKey: 'spaces.learningAnalysis.insight.title' },
+    },
+    {
       // 我在这个空间的草稿：新题目和对已发布题目的修改（侧栏「我的草稿」）。
       path: 'drafts',
       name: 'SpacesDetailDrafts',

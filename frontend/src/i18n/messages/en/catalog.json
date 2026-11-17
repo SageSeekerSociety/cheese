@@ -1788,6 +1788,25 @@
       "note": "The config could not be read: the whole block becomes an error with a retry, not 'off' — that would report a board that is on as off."
     }
   },
+  "myLearningInsightView": {
+    "about": "“My learning insight”: the page only its owner can see. On the left, the one knowledge point most worth working on (summary, evidence, mark inaccurate) and every knowledge point on a three-step bar; on the right, where the page comes from and what the member asks most. The container `MyLearningInsight.vue` fetches; this view only draws and emits.",
+    "s1": {
+      "name": "With results",
+      "note": "Default: the focus is “Correlated subqueries · Weak” with one piece of evidence and “mark it inaccurate”; one point mastered and one not touched yet; the side column lists the two tasks read and two kinds of frequent questions."
+    },
+    "s2": {
+      "name": "No analysis yet",
+      "note": "The analysis is on but tonight's pass has not read this member yet: an empty state on the left saying how it reads, the side column still saying what is read and who sees what."
+    },
+    "s3": {
+      "name": "Analysis off in this space",
+      "note": "The space has not turned learning analysis on (the sidebar hides the entry; only a direct link lands here): says so and draws nothing else."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "Not read: the whole block becomes an error with a retry, not “no results yet”."
+    }
+  },
   "knowledgePointField": {
     "about": "'Knowledge points involved': shared by the publish and edit pages. Adopted points are chips outside, with a 'Add from the list' beside them that unfolds the whole list; the AI's suggestions from the problem text go below, and only 'Adopt' takes effect.",
     "s1": {

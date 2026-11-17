@@ -15,5 +15,7 @@
   "learningPointNameTaken": "\"{name}\" is already on the list",
   "learningPointLimit": "At most {max} knowledge points",
   "learningPointNotFound": "That knowledge point does not exist or was removed",
-  "learningAnalysisNoModel": "Learning analysis is unavailable right now; try again later"
+  "learningAnalysisNoModel": "Learning analysis is unavailable right now; try again later",
+  "learningAnalysisDisabled": "Learning analysis is not on in this space",
+  "learningJudgmentNotFound": "That judgment does not exist; it may have been updated"
 }
