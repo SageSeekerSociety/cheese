@@ -351,6 +351,14 @@ class LearningEvidenceOut(BaseModel):
     created_at: int | None = Field(alias="createdAt")
 
 
+class LearningJudgmentPracticeOut(BaseModel):
+    """最近一组巩固题的作答（§ step 4）：做完一组会改档位，它就是那次的依据。"""
+
+    correct: int
+    total: int
+    at: int | None
+
+
 class LearningJudgmentOut(BaseModel):
     """AI 对这个知识点的当前判断。``disputed``：本人标过「不准」。"""
 
@@ -362,6 +370,7 @@ class LearningJudgmentOut(BaseModel):
     disputed: bool
     analyzed_at: int | None = Field(alias="analyzedAt")
     evidence: list[LearningEvidenceOut]
+    practice: LearningJudgmentPracticeOut | None
 
 
 class LearningInsightPointOut(BaseModel):

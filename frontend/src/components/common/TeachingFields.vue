@@ -31,7 +31,7 @@ import { useI18n } from 'vue-i18n'
 import KnowledgePointField from './KnowledgePointField.vue'
 import TeachingMaterialPicker from './TeachingMaterialPicker.vue'
 
-import { buildTeaching, draftFromConfig, emptyTeachingDraft, TEACHING_MODES } from '@/lib/teaching'
+import { buildTeaching, draftFromConfig, emptyTeachingDraft, pickTeachingMode, TEACHING_MODES } from '@/lib/teaching'
 
 const props = defineProps<{
   modelValue?: SpaceTeaching | null
@@ -149,12 +149,34 @@ const labelId = `teaching-mode-${useId()}`
           class="teaching-fields__mode"
           :class="{ 'teaching-fields__mode--on': draft.mode === mode.value }"
           :aria-checked="draft.mode === mode.value"
-          @click="draft.mode = mode.value"
+          @click="pickTeachingMode(draft, mode.value)"
         >
           <span class="teaching-fields__mode-name">{{ mode.label }}</span>
           <span class="teaching-fields__mode-hint">{{ mode.hint }}</span>
         </button>
       </div>
+    </div>
+
+    <!-- 「引导为主」时的两项保护：只在这一层选了引导为主时出现；新选上时默认打开。 -->
+    <div v-if="draft.mode === 'guide'" class="teaching-fields__guards" data-testid="teaching-guards">
+      <span class="teaching-fields__guards-title">{{ t('spaces.teaching.guards.title') }}</span>
+      <v-checkbox
+        v-model="draft.hintLadder"
+        density="compact"
+        hide-details
+        color="primary"
+        data-testid="teaching-hint-ladder"
+        :label="t('spaces.teaching.guards.hintLadder')"
+      />
+      <v-checkbox
+        v-model="draft.outputCheck"
+        density="compact"
+        hide-details
+        color="primary"
+        data-testid="teaching-output-check"
+        :label="t('spaces.teaching.guards.outputCheck')"
+      />
+      <p class="teaching-fields__guards-note">{{ t('spaces.teaching.guards.note') }}</p>
     </div>
 
     <v-textarea
@@ -311,6 +333,28 @@ const labelId = `teaching-mode-${useId()}`
 }
 
 .teaching-fields__mode-hint {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.teaching-fields__guards {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--canvas);
+}
+
+.teaching-fields__guards-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.teaching-fields__guards-note {
+  margin: 2px 0 0;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);

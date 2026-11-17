@@ -128,7 +128,9 @@ from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
 from app.domain.room_task.place import place_or_404
+from app.domain.task import guide
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import user_by_handle
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -422,6 +424,9 @@ async def _publish_as_agent(
         else {}
     )
     content = await project_refs_text(db, place.project_id, place.room_id, content)
+    # 引导为主的题：提示阶梯的标记去掉、长代码换成提示；别的回复原样过（`guide`）。
+    screened = await guide.screen_reply(db, project_id=place.project_id, text=content)
+    content = screened.text
     prepared = (
         await asyncio.to_thread(_read_agent_attachments, body.attachments)
         if body.attachments
@@ -512,10 +517,29 @@ async def _publish_as_agent(
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     if payload is not None:
+        if screened.changed:
+            await _record_guide(db, place, payload, author, screened)
         if place.task is not None:
             naming.nudge(place.conversation_id, "message")
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
+
+
+async def _record_guide(db, place, payload: dict, author: str, screened) -> None:
+    """What the guide-mode guards did to this reply, under the person whose
+    turn it answers (none when the platform started it)."""
+    starter = await who_started_the_open_turn(
+        db, place.project_id, place.conversation_id, author
+    )
+    person = await user_by_handle(db, starter) if starter else None
+    await guide.record(
+        db,
+        screened=screened,
+        project_id=place.project_id,
+        block_id=uuid.UUID(str(payload["id"])),
+        user_id=person.id if person is not None else None,
+    )
+    await db.commit()
 
 
 async def _quick_replies(db, place, seat: str, content: str, replies) -> dict:

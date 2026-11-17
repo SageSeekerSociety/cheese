@@ -91,6 +91,30 @@ describe('学情分析的画面', () => {
     await fireEvent.click(detail.getByRole('button', { name: t('spaces.analytics.learning.class.detail.exportPoint') }))
     expect(detail.emitted().export).toEqual([[2]])
   })
+
+  it('推送巩固题：交出的只有这个知识点；回来的只说人数，不足 3 人只说不足', async () => {
+    const detail = mount({
+      pointId: 2,
+      pointDetail: { ...LEARNING_CLASS_POINT, practice: { practiced: 9, improved: 5 } },
+    })
+    expect(detail.getByTestId('lc-practice-line').textContent).toContain('做过巩固题的 9 人里，5 人升了一档')
+    await fireEvent.click(detail.getByTestId('lc-push-button'))
+    expect(detail.emitted().push).toEqual([[2]])
+
+    await detail.rerender({ pushResult: { pushed: true, recipients: 22, minPeople: 3 } })
+    expect(detail.getByTestId('lc-push-result').textContent).toBe('已推送给 22 人')
+    await detail.rerender({ pushResult: { pushed: true, recipients: null, minPeople: 3 } })
+    expect(detail.getByTestId('lc-push-result').textContent).toContain('不足 3 人')
+    await detail.rerender({ pushResult: { pushed: false, recipients: null, minPeople: 3 } })
+    expect(detail.getByTestId('lc-push-result').textContent).toContain('没有推送')
+  })
+
+  it('做过巩固题的不足 3 人：不报升档人数', () => {
+    const detail = mount({ pointId: 2, pointDetail: { ...LEARNING_CLASS_POINT, practice: null } })
+    expect(detail.getByTestId('lc-practice-line').textContent).toBe(
+      t('spaces.analytics.learning.class.detail.practiceFew')
+    )
+  })
 })
 
 const Host = (component: unknown, props: Record<string, unknown>) =>

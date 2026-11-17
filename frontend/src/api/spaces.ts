@@ -1,7 +1,12 @@
 import type { AxiosProgressEvent } from 'axios'
 import type {
   DomainGroup,
+  LearningExplanation,
+  LearningPracticeAnswer,
+  LearningPracticeResult,
+  LearningPracticeSet,
   MyLearningInsight,
+  MyLearningPractice,
   Space,
   SpaceAnnouncement,
   SpaceCategory,
@@ -199,6 +204,44 @@ export const SpacesApi = {
   disputeLearningJudgment: (spaceId: number, judgmentId: number) =>
     axiosRequest<{ judgmentId: number; disputed: true }>(
       { url: `/spaces/${spaceId}/learning-analysis/me/judgments/${judgmentId}/dispute`, method: 'POST' },
+      true
+    ),
+  // ---- 巩固练习、复习提醒、讲解（step 4）：只有本人 ---------------------------------
+  // `app/api/routes/spaces_learning_practice.py`。要问模型的几条可能答 429 / 503（今天
+  // 的次数用完、网关不可用），按普通 apiError 处理。
+  /** 我没做完的几组、复习提醒、今天还能要几次。 */
+  readMyLearningPractice: (spaceId: number) =>
+    axiosRequest<MyLearningPractice>({ url: `/spaces/${spaceId}/learning-analysis/me/practice`, method: 'GET' }, true),
+  /** 「生成 3 道巩固题」（`fresh` 为换一组，`source: 'review'` 为复习时再做一组）。 */
+  startLearningPractice: (
+    spaceId: number,
+    data: { knowledgePointId: number; source?: 'self' | 'review'; fresh?: boolean }
+  ) =>
+    axiosRequest<LearningPracticeSet>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice`, method: 'POST', data },
+      true
+    ),
+  readLearningPractice: (spaceId: number, practiceId: number) =>
+    axiosRequest<LearningPracticeSet>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice/${practiceId}`, method: 'GET' },
+      true
+    ),
+  /** 答一道：第一次选的定下来，当场交回对错和讲解。 */
+  answerLearningPractice: (spaceId: number, practiceId: number, data: { question: number; choice: number }) =>
+    axiosRequest<LearningPracticeAnswer>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice/${practiceId}/answers`, method: 'POST', data },
+      true
+    ),
+  /** 「做完了」：并进这个知识点的判断，排下一次复习。 */
+  completeLearningPractice: (spaceId: number, practiceId: number) =>
+    axiosRequest<LearningPracticeResult>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice/${practiceId}/complete`, method: 'POST' },
+      true
+    ),
+  /** 「先看一段讲解」：判断没变时读缓存。 */
+  explainLearningPoint: (spaceId: number, data: { knowledgePointId: number }) =>
+    axiosRequest<LearningExplanation>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/explanation`, method: 'POST', data },
       true
     ),
   /** 只对成员开放，或开放给一组邮箱后缀。扩大范围要等平台审核，回来的空间带着那条申请。 */

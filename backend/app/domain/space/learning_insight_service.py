@@ -165,6 +165,16 @@ def _judgment_to_api(row: SpaceLearningJudgment, excerpts: dict) -> dict:
         "disputed": row.disputed_at is not None,
         "analyzedAt": _ms(row.analyzed_at),
         "evidence": evidence,
+        # 最近一组巩固题的作答（§ step 4）：做完一组改了档位时，它就是那次的依据。
+        "practice": (
+            {
+                "correct": row.practice_correct or 0,
+                "total": row.practice_total or 0,
+                "at": _ms(row.practiced_at),
+            }
+            if row.practiced_at is not None
+            else None
+        ),
     }
 
 
