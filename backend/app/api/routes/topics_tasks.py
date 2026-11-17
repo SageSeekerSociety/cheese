@@ -1109,6 +1109,7 @@ async def accept_coordinated_task(
         head_sha=card.pr_head_sha,
         deliverable_revision=deliverable_revision(task.project_id, card),
         by_assistant=True,
+        by_seat=at.actor.handle,
     )
     return ok(
         {

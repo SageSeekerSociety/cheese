@@ -49,11 +49,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say, with_keys
-from app.domain.block.indexed_rows import LAST_SAID_ROWS
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.event_author import AuthorType
+from app.domain.identity.actor import acted_by
 from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_handle
 from app.domain.notice_meta import (
     EVENT_TASK_ENDED,
@@ -314,12 +314,12 @@ async def tell_origin_ended(
 async def _adopted_by(
     session: AsyncSession, task: Task, by: str | None
 ) -> object | None:
-    """How a room line names ``by``, who adopted ``task``'s delivery: the
-    person (``<@handle>``), or, when the AI teammate adopted it on their word
-    from the main line (the card's `decided_by_assistant`), 「<that teammate>代
-    <person>」. The teammate is the one the main line answers through about the
-    task: its opener, else the teammate whose main-line messages carry the
-    task's tag, else the one that works it. None when nobody adopted it."""
+    """How a room line names ``by``, who adopted ``task``'s delivery, from what
+    the card recorded: the person (``<@handle>``); 「<teammate>代 <person>」
+    when a project AI teammate adopted it on their word (`decided_by_seat`);
+    the existing 「芝士代 <person>」 (`acted_by`) when their own personal
+    assistant did, and on cards from before the seat was kept. None when
+    nobody adopted it."""
     if by is None:
         return None
     person = f"<@{by}>"
@@ -329,27 +329,11 @@ async def _adopted_by(
         .order_by(AcceptCard.created_at.desc())
         .limit(1)
     )
-    if card is None:
+    if card is None or not card.decided_by_assistant:
         return person
-    if not card.decided_by_assistant:
-        return person
-    seat = (
-        await main_line_opener(session, task)
-        or await session.scalar(
-            select(Block.author)
-            .where(
-                Block.conversation_id == task.room_id,
-                LAST_SAID_ROWS,
-                Block.meta["task_tag"].as_string() == str(task.id),
-            )
-            .order_by(Block.created_at.desc())
-            .limit(1)
-        )
-        or task.agent_handle
-    )
-    if seat is None or not seat.startswith(AGENT_HANDLE_PREFIX):
-        return person
-    return say("actedByTeammate", agent=f"<@{seat}>", person=person)
+    if card.decided_by_seat is not None:
+        return say("actedByTeammate", agent=f"<@{card.decided_by_seat}>", person=person)
+    return acted_by(by, by_assistant=True)
 
 
 def _how_it_ended(task: Task) -> tuple[str, str]:

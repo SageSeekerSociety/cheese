@@ -17,7 +17,9 @@ from datetime import UTC, datetime
 from app.domain.agent.models import AgentTurn
 from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
+from app.domain.identity.actor import acted_by
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
+from app.domain.review.task_landing import _adopted_by
 from app.domain.room_task.models import Task
 from tests.integration.conftest import (
     join_project_team,
@@ -213,3 +215,25 @@ def test_where_it_came_from_says_the_teammate_adopted_it_for_the_reviewer(
         b for b in lines if (b.get("meta") or {}).get("event_type") == "task_landed"
     ]
     assert landed["content"] == f"<@{seat}>代 <@alice> 采纳了「{task['title']}」"
+
+
+def test_a_card_that_kept_no_seat_names_no_teammate(client, stub_project_forge):
+    """A card adopted for its reviewer by their own personal assistant, or
+    before the adopting seat was kept, names no project teammate: the line
+    says it the way such a decision was always said."""
+    project, room, seat = _channel(client)
+    task = _task_with_delivery(client, project, room, seat)
+
+    async def adopted_without_a_seat():
+        async with client.test_factory() as db:
+            card = await db.get(AcceptCard, task["card"])
+            card.status = AcceptStatus.accepted
+            card.decided_by = "alice"
+            card.decided_by_assistant = True
+            await db.commit()
+            row = await db.get(Task, uuid.UUID(task["id"]))
+            return str(await _adopted_by(db, row, "alice"))
+
+    said = client.portal.call(adopted_without_a_seat)
+    assert said == str(acted_by("alice", by_assistant=True))
+    assert seat not in said
