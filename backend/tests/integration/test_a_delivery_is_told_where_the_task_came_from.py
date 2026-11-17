@@ -267,5 +267,5 @@ def test_a_task_whose_write_up_never_comes_still_ends_in_the_main_line(
 
     *_, ending = _told(client, room, task_id)
     assert len(_told(client, room, task_id)) == 2
-    assert "已采纳" in ending["content"]
+    assert ending["content"] == "<@alice> 采纳了「Test delivery」"
     assert _happened(ending)

@@ -257,7 +257,11 @@ async def tell_origin_ended(
     the AI teammate that opened the task from the channel's main line is told
     the same facts and says the result in its own words (`wake_opener`), and a
     line under its name would say it twice."""
-    line, facts = _how_it_ended(task, await _adopted_by(session, task))
+    line, facts = _how_it_ended(
+        task,
+        await _adopted_by(session, task),
+        opener_says=await main_line_opener(session, task) is not None,
+    )
     await record_at_origin(session, task, EVENT_TASK_ENDED, line, announce=announce)
     names = await names_by_handles(session, _askers(task))
     closed_at = task.closed_at.astimezone(UTC).isoformat() if task.closed_at else ""
@@ -312,19 +316,32 @@ async def _adopted_by(session: AsyncSession, task: Task) -> object | None:
     return say("actedByTeammate", agent=f"<@{seat}>", person=person)
 
 
-def _how_it_ended(task: Task, adopted_by: object | None = None) -> tuple[str, str]:
+def _how_it_ended(
+    task: Task, adopted_by: object | None = None, *, opener_says: bool = False
+) -> tuple[str, str]:
     """How ``task`` ended: the line its origin records, and the same facts as
     its opener is told them. One reading of the task's row for both, so the
     two never say different things. A task whose delivery was adopted is
-    recorded as who adopted it (``adopted_by``, `_adopted_by`); what it
-    concluded is the opener's to say in its own words."""
+    recorded as who adopted it (``adopted_by``, `_adopted_by`). What it
+    concluded is the opener's to say in its own words when the main line has
+    one (``opener_says``); otherwise nobody else will say it, so the line
+    carries it."""
     accepted = (
         f"交付已采纳（PR #{task.pr_number}）"
         if task.pr_number is not None
         else "交付已采纳"
     )
     if task.accepted_at is not None and adopted_by is not None:
-        line = say("taskAdopted", who=adopted_by, title=said_title(task))
+        line = (
+            say(
+                "taskAdoptedConcluded",
+                who=adopted_by,
+                title=said_title(task),
+                conclusion=task.conclusion,
+            )
+            if task.conclusion and not opener_says
+            else say("taskAdopted", who=adopted_by, title=said_title(task))
+        )
         facts = (
             f"{accepted}，结论是「{task.conclusion}」"
             if task.conclusion
