@@ -227,26 +227,20 @@ async def names_and_referents(
     are handed in, so a page pays one query per kind, not one per row.
     """
     # One descent over ``values`` for both the tokens and the references.
-    handles: set[str] = set()
     ids: set[int] = set()
     for value in values:
-        handles |= handles_in(value)
         ids |= user_ids_in(value)
     referents = await usernames_by_ids(session, ids) if ids else {}
-    handles |= set(referents.values())
-    if not handles:
-        return {}, referents
-    public_names = await names_by_handles(session, sorted(handles))
-    return (
-        await names_for_reader(
-            session,
-            sorted(handles),
-            public_names,
-            viewer_id=viewer_id,
-            viewer_handle=viewer_handle,
-        ),
+    # Delegated, so "a referenced person's handle belongs in ``names``" is
+    # written in one place and the two callers cannot drift apart.
+    names = await names_with_referents(
+        session,
         referents,
+        *values,
+        viewer_id=viewer_id,
+        viewer_handle=viewer_handle,
     )
+    return names, referents
 
 
 async def names_for_reader(

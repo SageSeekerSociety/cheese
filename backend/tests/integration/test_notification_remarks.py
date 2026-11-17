@@ -255,7 +255,7 @@ def test_the_inbox_row_itself_renames_a_reference_only_person(
 
 
 def test_a_page_that_supplies_referents_still_renames_their_snapshots(
-    client, user_client, api_client, db_session, _portal
+    user_client, api_client, db_session, _portal
 ):
     """The page's id->handle map must reach ``names``, or the snapshot stays public."""
     from app.domain.notification.models import Notification as _N
