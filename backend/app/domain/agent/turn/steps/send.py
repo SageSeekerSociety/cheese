@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.sentences import exception_text, say
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import SessionOpening, opening_changes
 from app.domain.agent.nonce import new_nonce
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
@@ -24,6 +23,7 @@ from app.domain.agent.turn.store.intervals import note_turn_context
 from app.domain.agent.turn.store.session_inputs import (
     DeliveryStamp,
     commit_delivery,
+    record_read,
     remember_opening,
 )
 from app.domain.delivery.input_identity import (
@@ -39,6 +39,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.prompts import SessionOpening, opening_changes
 
 logger = logging.getLogger(__name__)
 _SESSION_ROUTES_KEPT = 512
@@ -273,13 +274,9 @@ async def send_prepared(
     _delivery_step("note_context")
     summoned = user_block_id is not None and not is_resume and not platform_turn
     input_effects = InputEffects(
-        held_block_ids=tuple(consumed_ids),
         # Initial prompt consumption remains tied to the clean turn ending;
-        # native echo settles the delivery and its summoning read marker.
-        seen_block_ids=(user_block_id,)
-        if user_block_id is not None and summoned
-        else (),
-        seen_by=acting_agent if summoned else None,
+        # native echo settles the delivery.
+        held_block_ids=tuple(consumed_ids),
         delivery_id=delivery_id,
         attempt_id=turn_id if delivery_id is not None else None,
     )
@@ -301,8 +298,10 @@ async def send_prepared(
             prompt_text,
             system_prompt=system_prompt,
             resume_token=resume_session_id,
+            retired_token=prepared.retired_session_id,
             session_opening=opening.text,
             opening_changes=opening_changes(opening, told),
+            cold=prepared.cold,
             model=model_kwargs.get("model"),
             env=model_kwargs.get("env"),
             acting=acting_agent,
@@ -315,7 +314,8 @@ async def send_prepared(
                 input_effects,
                 fence_delivery=delivery_id is not None,
             ),
-            owes_reply=summoned,
+            owes_reply=summoned
+            or (platform_turn and not is_resume and prepared.answers_the_platform),
         )
         _delivery_step("send")
         # 这一轮把现状说到了：下一轮只补在这之后变了的。
@@ -396,6 +396,10 @@ async def send_prepared(
     # own stamp on the frame below is a no-op second write.
     await commit_delivery(sessions, stamp=effects.stamp_delivery, turn_id=turn_id)
     _delivery_step("stamp_delivered")
+    # Delivered is in the seat's context: everything the prompt carried is
+    # what it has read (已读), and nothing the window left out.
+    await record_read(sessions, reader=acting_agent, block_ids=prepared.read_ids)
+    _delivery_step("record_read")
     logger.info(
         "chat_delivery_timing topic=%s turn=%s elapsed_ms=%.1f phases_ms=%s",
         topic_id,

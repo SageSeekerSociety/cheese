@@ -439,10 +439,48 @@ def test_the_image_version_names_what_a_host_is_made_of():
         )
 
     current = version()
-    assert len(current) == enrollment.IMAGE_VERSION_CHARS
+    assert len(current) == 2 * enrollment.IMAGE_VERSION_CHARS
     assert version() == current
     assert version(template="debian14") != current
     assert version(cores=8) != current
+    # A new template or size is a new machine; the script alone is not.
+    assert not enrollment.same_machine(version(template="debian14"), current)
+    assert not enrollment.same_machine(version(cores=8), current)
+    assert enrollment.same_machine(current, current)
+
+
+def test_a_host_whose_script_alone_changed_is_the_same_machine(monkeypatch):
+    """Only the script half moves when the enrollment script does, so such a
+    host can be brought up to date where it is; a version from before the two
+    halves, or none, says nothing either way."""
+    offering = {"id": 1, "templateName": "debian13", "dataDiskGb": 64}
+    before = enrollment.host_image_version(
+        offering, cores=4, memory_mb=8192, disk_gb=64
+    )
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swappiness", 33)
+    after = enrollment.host_image_version(offering, cores=4, memory_mb=8192, disk_gb=64)
+    assert before != after
+    assert enrollment.same_machine(before, after)
+    assert not enrollment.same_machine(before[:16], after)
+    assert not enrollment.same_machine(None, after)
+
+
+def test_a_script_run_in_place_keeps_the_machines_identity():
+    """Run again where it is, the script leaves the config — the machine's
+    token and device — as it was."""
+    fresh = enrollment.bootstrap_script(
+        origin="https://example.test", token="t0k", device_id="d1", sandbox_disk=True
+    )
+    again = enrollment.bootstrap_script(
+        origin="https://example.test",
+        token="t0k",
+        device_id="d1",
+        sandbox_disk=True,
+        identity=False,
+    )
+    assert "config.json" in fresh and "t0k" in fresh
+    assert "config.json" not in again and "t0k" not in again
+    assert "systemctl --user restart cheese" in again
 
 
 def test_the_tools_are_checked_after_cheesehost_placed_them():
@@ -1015,6 +1053,7 @@ def _zswap_parameters(tmp_path):
     parameters.mkdir()
     (parameters / "enabled").write_text("N\n")
     (parameters / "zpool").write_text("zbud\n")
+    (parameters / "shrinker_enabled").write_text("N\n")
     return parameters
 
 
@@ -1029,6 +1068,7 @@ def test_a_kernel_with_zswap_has_it_turned_on_now_and_at_boot(tmp_path):
     conf = (tmp_path / "zswap.conf").read_text().splitlines()
     assert f"w {parameters}/compressor - - - - zstd" in conf
     assert f"w {parameters}/zpool - - - - zsmalloc" in conf
+    assert f"w {parameters}/shrinker_enabled - - - - Y" in conf
     assert f"w {parameters}/max_pool_percent - - - - 20" in conf
     assert f"w {parameters}/enabled - - - - Y" in conf
     assert "systemd-tmpfiles --create /etc/tmpfiles.d/90-cheese-zswap.conf" in calls

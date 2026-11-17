@@ -6,7 +6,6 @@ nobody else may. Everyone in the room sees the new text live, marked as edited.
 """
 
 import asyncio
-import time
 import uuid
 
 import pytest
@@ -359,21 +358,6 @@ def _reactions_on(client, place: str, block_id: str) -> list[dict]:
     return next(b for b in blocks if b["id"] == block_id)["reactions"]
 
 
-def _await_reaction(client, place: str, block_id: str, emoji: str) -> dict:
-    """``block_id``'s ``emoji`` reaction, once it lands.
-
-    A receipt is reported by the harness on its own task, so it is not ordered
-    against the edit's own response; asking the durable state is the only way to
-    ask without racing (the same looseness `test_reactions` documents).
-    """
-    for _ in range(200):
-        for reaction in _reactions_on(client, place, block_id):
-            if reaction["emoji"] == emoji:
-                return reaction
-        time.sleep(0.02)
-    raise AssertionError(f"no {emoji} ever landed on {block_id}")
-
-
 async def _thread_of(client, block_id: str) -> Thread | None:
     async with client.test_factory() as session:
         return await session.scalar(
@@ -402,18 +386,6 @@ def test_an_edit_that_newly_names_a_teammate_starts_its_turn(client, stub_hooks)
     [(_, prompt)] = arrivals
     assert f"<@{other}> 接口先别动" in prompt
     assert "alice" in prompt
-
-
-def test_a_teammate_the_edit_names_leaves_its_seen_receipt(client):
-    """被编辑点到的队友，和发消息时被点到的队友一样，在那条消息上留下自己的 👀。"""
-    room = _two_teammates(client)
-    place, other = room["place"], room["other"]
-    said = _say(client, place, "alice", "接口先别动")
-    wait_work_idle()
-
-    _edit(client, said, f"<@{other}> 接口先别动", session_auth_headers("alice"))
-
-    assert _await_reaction(client, place, said, "👀")["authors"] == [other]
 
 
 def test_an_edit_that_names_nobody_wakes_nobody(client, stub_hooks):

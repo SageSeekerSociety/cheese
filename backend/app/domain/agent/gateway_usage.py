@@ -46,7 +46,13 @@ from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationEr
 from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, charge_new_spend, settle
-from app.domain.agent.model_catalog import catalog, subagent_default
+from app.domain.agent.model_catalog import (
+    Scene,
+    catalog,
+    chosen_model,
+    pick,
+    scene_of,
+)
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.queries import _model_policy_call, _Proposed, task_credit_context
 from app.domain.agent.room.sessions import RoomSessions
@@ -59,7 +65,6 @@ from app.domain.conversation.models import Conversation
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.budgets import CreditBudgets
@@ -214,16 +219,21 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     return agents
 
 
-def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
+def launch_env(
+    configuration: dict,
+    efforts: list[str] | tuple[str, ...],
+    default_effort: str | None = None,
+) -> dict:
     """The environment that carries a teammate's thinking effort and compaction
     share into its session.
 
     ``efforts`` are the ones the turn's model honours. An effort it does not is
     left out rather than sent: the harness would pass it to a model that either
-    ignores it or refuses the request.
+    ignores it or refuses the request. ``default_effort`` is the kind of
+    session's own (`prompts.Profile.effort`), used when the teammate set none.
     """
     env: dict[str, str] = {}
-    effort = configuration.get("effort")
+    effort = configuration.get("effort") or default_effort
     if isinstance(effort, str) and effort in efforts:
         env[EFFORT_ENV] = effort
     percent = configuration.get("compact_percent")
@@ -286,12 +296,15 @@ async def _model_kwargs(
     *,
     agent: ResolvedAgent | None = None,
     acting_agent: str | None = None,
+    task_id: uuid.UUID | None = None,
+    default_effort: str | None = None,
 ) -> tuple[dict, str]:
     """Resolve a turn's model, model environment and usage route.
 
-    Which model comes from the binding of the work this turn belongs to —
-    and a room's main thread is not a piece of work, so it always gets the
-    project default (`room_task/binding.py`).
+    Which model comes from `model_catalog.pick`: a turn in a task's own
+    conversation (``task_id``) runs in the task scene, any other in the
+    conversation scene, and the session's subagents default to the subagent
+    scene's pick for the same teammate.
 
     Machine providers assemble their own scoped credentials. Other providers
     retain their gateway/profile transport, carrying that resolved model.
@@ -333,16 +346,16 @@ async def _model_kwargs(
                 raise ValidationError(reason)
     if owned is not None:
         return _own_model_kwargs(agent, acting_agent, environment), OWN_ROUTE
-    # A saved teammate may override the project main model.
+    scene = scene_of(task_id)
     choices = catalog(project.settings)
-    bound = binding.resolve(
-        None,
+    bound = pick(
+        scene,
         choices,
-        agent_model=agent.configuration.get("model"),
-        default_model=(project.settings or {}).get("default_model"),
-    )
+        project_settings=project.settings,
+        teammate=agent.configuration,
+    ).binding
     # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
-    # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
+    # `model_catalog.pick`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
     # 题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
     #
     # 一条房间主线在组装那一步就过过闸门了（那里是这一轮占用任何东西之前）；
@@ -357,7 +370,7 @@ async def _model_kwargs(
         proposed = await service._pass_policy_gate(
             session,
             topic_id,
-            _model_policy_call(project, agent),
+            _model_policy_call(project, agent, scene=scene),
             policy,
             actor=acting_agent or agent.handle,
         )
@@ -366,15 +379,26 @@ async def _model_kwargs(
             raise gate.OverTier(proposed.proposal.content)
     supply = bound.supply
     model = bound.wire_model
-    child_choices = catalog(project.settings)
-    child_default = subagent_default(project.settings, child_choices, policy)
-    # An unused invalid child default must not block a valid main override.
-    # Preserve it for the child request's admission refusal, never replace it.
-    child_model = child_default
-    if not child_default or child_default in child_choices:
-        child_model = binding.resolve(
-            None, child_choices, default_model=child_default
-        ).wire_model
+    # A subagent nobody names a model for runs on the subagent scene's pick for
+    # this same teammate; admission binds it the same way. A chosen child model
+    # the catalogue cannot serve must not block a valid main model: it is kept
+    # by name for the child request's admission refusal, never replaced.
+    try:
+        child_model = pick(
+            Scene.subagent,
+            choices,
+            project_settings=project.settings,
+            teammate=agent.configuration,
+        ).binding.wire_model
+    except ValidationError:
+        child_model = (
+            chosen_model(
+                Scene.subagent,
+                project_settings=project.settings,
+                teammate=agent.configuration,
+            )
+            or ""
+        )
     capabilities = model_capabilities(model, child_model)
     window = window_env(model)
     agent_types = model_agents(project.settings)
@@ -400,9 +424,7 @@ async def _model_kwargs(
                     "git_author": acting_agent,
                     "model": model,
                     "supply": supply,
-                    "subagent_model": (project.settings or {}).get(
-                        "default_subagent_model"
-                    ),
+                    "subagent_model": child_model,
                     "capabilities": capabilities,
                     "window": window,
                     "model_agents": agent_types,
@@ -431,7 +453,9 @@ async def _model_kwargs(
             # restarts the session at the next task boundary, which is when
             # Claude Code reads its environment.
             **launch_env(
-                agent.configuration, choices.get(bound.model, {}).get("efforts", [])
+                agent.configuration,
+                choices.get(bound.model, {}).get("efforts", []),
+                default_effort,
             ),
         },
         # Which conversation the turn belongs to, and so which session's

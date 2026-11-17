@@ -184,6 +184,14 @@ export default {
       meta: { titleKey: 'spaces.materials.title' },
     },
     {
+      // 我的学习洞察（学情分析第 2 步）：只有本人看得到。侧栏只在这块板开着学情分析时
+      // 摆这一格；直接打开地址时页面自己说「没开启」。
+      path: 'learning-insight',
+      name: 'SpacesMyLearningInsight',
+      component: () => import('@/views/spaces/detail/MyLearningInsight.vue'),
+      meta: { titleKey: 'spaces.learningAnalysis.insight.title' },
+    },
+    {
       // 我在这个空间的草稿：新题目和对已发布题目的修改（侧栏「我的草稿」）。
       path: 'drafts',
       name: 'SpacesDetailDrafts',
@@ -296,6 +304,12 @@ export default {
           path: 'guidance',
           name: 'SpacesDetailSettingsGuidance',
           component: () => import('@/views/spaces/detail/settings/SpaceGuidance.vue'),
+        },
+        {
+          // 学情分析：开关 + 知识点清单 + 告知卡预览 + 平台那三条隐私规则。
+          path: 'learning-analysis',
+          name: 'SpacesDetailSettingsLearningAnalysis',
+          component: () => import('@/views/spaces/detail/settings/LearningAnalysis.vue'),
         },
         {
           // 资料库原来是设置里的一栏，现在是侧栏的一页；旧链接接着能打开。

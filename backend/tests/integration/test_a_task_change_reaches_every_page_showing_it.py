@@ -14,7 +14,10 @@ from app.domain.agent import runner_reports, session_state
 from app.domain.agent.announce import announce
 from app.domain.agent.reads import Report, SessionExited
 from app.domain.agent_instance.adapters import task_teammate
-from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.agent import (
+    record_seat_instruction,
+    record_task_instruction,
+)
 from app.domain.review.pr_poll import sweep_closings
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import Building, NeedsYou
@@ -74,8 +77,8 @@ def _task_read(client, task: str) -> dict:
 
 
 def test_the_task_page_hears_the_task_close_once_its_summary_is_done(client):
-    """「采纳并完成任务」: the task closes after its teammate writes it up. The
-    task's own page is told then, so its input gives way to 「任务已关闭」 without
+    """The last delivery accepted: the task closes after its teammate writes it
+    up. The task's own page is told then, so its input gives way to 「任务已关闭」 without
     a reload."""
     project = new_project(client, owner="alice")
     room = project["root_topic_id"]
@@ -101,6 +104,8 @@ def test_the_task_page_hears_the_task_close_once_its_summary_is_done(client):
                 chat,
                 announce,
                 record_instruction=record_task_instruction,
+                record_seat=record_seat_instruction,
+                dispatch_pending=_dispatch_nothing,
                 task_teammate=task_teammate,
             )
         )
@@ -215,3 +220,7 @@ def test_the_task_session_ending_is_heard_in_its_channel(client):
         assert _told(task_page, room)
         assert _told(channel, room)
     assert _task_read(client, task)["agent_left_at"] is not None
+
+
+async def _dispatch_nothing() -> None:
+    """What a sweep hands on to an AI teammate is not this test's business."""

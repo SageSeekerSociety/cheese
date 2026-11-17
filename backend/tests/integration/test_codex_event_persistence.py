@@ -39,28 +39,30 @@ async def test_same_agent_resumes_each_harness_history_independently(client):
                 agent_handle="teammate",
                 resume_token="claude-thread",
                 harness="claude-code",
+                generation=0,
             )
             assert (
-                await sessions.resume_token(topic_id, "teammate", harness="codex")
-                is None
-            )
+                await sessions.conversation(topic_id, "teammate", harness="codex")
+                or (None,)
+            )[0] is None
             await sessions.remember(
                 conversation_id=topic_id,
                 agent_handle="teammate",
                 resume_token="codex-thread",
                 harness="codex",
+                generation=0,
             )
             await session.commit()
         async with client.test_request_factory() as session:
             sessions = AgentSessionService(session)
             assert (
-                await sessions.resume_token(topic_id, "teammate", harness="claude-code")
-                == "claude-thread"
-            )
+                await sessions.conversation(topic_id, "teammate", harness="claude-code")
+                or (None,)
+            )[0] == "claude-thread"
             assert (
-                await sessions.resume_token(topic_id, "teammate", harness="codex")
-                == "codex-thread"
-            )
+                await sessions.conversation(topic_id, "teammate", harness="codex")
+                or (None,)
+            )[0] == "codex-thread"
 
     client.portal.call(exercise)
 
@@ -131,21 +133,21 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
     async with client.test_factory() as session:
         sessions = AgentSessionService(session)
         assert (
-            await sessions.resume_token(
+            await sessions.conversation(
                 topic_id,
                 "original-teammate",
                 harness="codex",
             )
-            == "old-thread"
-        )
+            or (None,)
+        )[0] == "old-thread"
         assert (
-            await sessions.resume_token(
+            await sessions.conversation(
                 topic_id,
                 "original-teammate",
                 harness="claude-code",
             )
-            is None
-        )
+            or (None,)
+        )[0] is None
 
 
 @pytest.mark.anyio

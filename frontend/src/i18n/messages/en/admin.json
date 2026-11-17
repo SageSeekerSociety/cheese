@@ -159,6 +159,7 @@
       "idle": "Idle for {for}",
       "vm": "Whole VM for {project}",
       "draining": "Rolling rebuild started {for} ago; released and replaced once empty",
+      "refreshing": "Updating in place for {for}; its enrollment runs again on the same machine once only parked sandboxes are left, and its disk keeps everything",
       "parked": "{n} parked, {size} GB"
     },
     "when": {

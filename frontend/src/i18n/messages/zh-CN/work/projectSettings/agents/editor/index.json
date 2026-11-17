@@ -32,5 +32,8 @@
   "save": "保存",
   "saveFailed": "保存失败",
   "titleEdit": "修改 AI 队友",
-  "titleNew": "新建 AI 队友"
+  "titleNew": "新建 AI 队友",
+  "taskModel": "任务里使用",
+  "subagentModel": "分身使用",
+  "sameAsModel": "同上"
 }

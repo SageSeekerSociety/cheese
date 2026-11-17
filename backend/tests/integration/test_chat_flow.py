@@ -98,22 +98,18 @@ def test_blocks_empty_then_populated_after_chat(client):
     # session has claimed the lifecycle (`session_lifecycle` → `session_owned`),
     # and here the session claims it first.
     #
-    # `reaction` (芝士's 👀) is filtered out rather than placed: it rides the
-    # harness's prompt receipt, which is reported on its own task, so it has no
-    # fixed position among these. test_reactions.py is where it is asserted.
-    # `activity` (the agent working, then done) is the same: it follows the
-    # turn's lifecycle frames, and test_member_activity.py asserts it.
-    types = [f["type"] for f in frames if f["type"] not in ("reaction", "activity")]
+    # `activity` (the agent working, then done) follows the turn's lifecycle
+    # frames, and test_member_activity.py asserts it.
+    # So is `reads` (the teammate has read what its turn was given), a
+    # standalone fact asserted in test_message_reads.py.
+    types = [f["type"] for f in frames if f["type"] not in ("activity", "reads")]
     assert types == [
         "user_block",
         "turn_started",
         "done",
     ]
 
-    ack = next(f for f in frames if f["type"] == "reaction")
     agent = room_agent_seat(client, topic_id)
-    assert ack["reactions"] == [{"emoji": "👀", "count": 1, "authors": [agent]}]
-
     output = records(client, topic_id, owner="user-1")
     assert assistant_texts(output) == ["Hello world"]
     assert {item["agent_handle"] for item in output} == {"cheese"}

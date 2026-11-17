@@ -4,6 +4,13 @@
   "copy": "Copy",
   "copyLink": "Copy link",
   "copySelection": "Copy selected text",
+  "delivery": {
+    "label": "Review this version of “{title}”",
+    "changes": "View changes",
+    "preview": "Preview",
+    "return": "Send back",
+    "adopt": "Accept"
+  },
   "downloadFile": "Download {name}",
   "edit": "Edit",
   "edited": "Edited",
@@ -11,6 +18,7 @@
   "openFile": "Open {name}",
   "openInPanel": "Open in the side panel",
   "process": "View steps",
+  "quickReplies": "Quick replies",
   "react": "Add reaction",
   "reply": "Quote reply",
   "replyInThread": "Reply in thread",

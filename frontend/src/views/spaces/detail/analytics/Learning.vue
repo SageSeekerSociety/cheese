@@ -1,20 +1,60 @@
 <template>
-  <LearningView
-    v-model:student="studentModel"
-    v-model:knowledge-point="knowledgePointModel"
-    :loading="loading"
-    :outline-loading="outlineLoading"
-    :learning-filters="learningFilters"
-    :queues="queues"
-    :questions="questions"
-    :outline="outline"
-    :failed="failed"
-    :error-detail="errorDetail"
-    :selected="selected"
-    @load="load"
-    @set-selected="setSelected"
-    @clear-selection="clearSelection"
-    @build-outline="buildOutline"
+  <LearningAnalysisView
+    v-model:sub="learning.sub.value"
+    :point-id="learning.pointId.value"
+    :enabled="learning.enabled.value"
+    :loading="learning.loading.value"
+    :failed="learning.failed.value"
+    :error-detail="learning.errorDetail.value"
+    :overview="learning.pages.value.overview"
+    :points="learning.pages.value.points"
+    :point-detail="learning.pointDetail.value"
+    :pushing="learning.pushing.value"
+    :push-result="learning.pushResult.value"
+    :questions="learning.pages.value.questions"
+    :words="learning.pages.value.words"
+    :tasks="learning.pages.value.tasks"
+    :behavior="learning.pages.value.behavior"
+    :trend="learning.pages.value.trend"
+    @open-point="learning.openPoint"
+    @close-point="learning.closePoint"
+    @push="learning.push"
+    @open-excerpts="learning.openExcerpts"
+    @export="learning.openExport"
+    @ratios="learning.setRatios"
+    @retry="learning.retry"
+  >
+    <template #legacy>
+      <LearningView
+        v-model:knowledge-point="knowledgePointModel"
+        :loading="loading"
+        :outline-loading="outlineLoading"
+        :learning-filters="learningFilters"
+        :queues="queues"
+        :questions="questions"
+        :outline="outline"
+        :failed="failed"
+        :error-detail="errorDetail"
+        :selected="selected"
+        @load="load"
+        @set-selected="setSelected"
+        @clear-selection="clearSelection"
+        @build-outline="buildOutline"
+      />
+    </template>
+  </LearningAnalysisView>
+  <LearningExcerptDialog
+    v-model:open="learning.excerptsOpen.value"
+    :data="learning.excerpts.value"
+    :loading="learning.excerptsLoading.value"
+    :failed="learning.excerptsFailed.value"
+    @open-source="learning.openSource"
+  />
+  <LearningExportDialog
+    v-model:open="learning.exportOpen.value"
+    :point="learning.exportPoint.value"
+    :exporting="learning.exporting.value"
+    @export="learning.doExport"
   />
 </template>
 
@@ -29,8 +69,12 @@ import type {
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import LearningExcerptDialog from './components/LearningExcerptDialog.vue'
+import LearningExportDialog from './components/LearningExportDialog.vue'
+import { useLearningClass } from './composables/useLearningClass'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 import { dedupeBlockIds } from './helpers'
+import LearningAnalysisView from './LearningAnalysisView.vue'
 import LearningView from './LearningView.vue'
 import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
@@ -39,6 +83,8 @@ import { toast } from '@/lib/toast'
 
 const { t } = useI18n()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
+/** 学情分析（全班整体）那一半：七个子页签、知识点详情、摘录、导出。上面是原有的发言与队列。 */
+const learning = useLearningClass(spaceId)
 
 const loading = ref(false)
 const outlineLoading = ref(false)
@@ -54,17 +100,14 @@ const errorDetail = ref<string | null>(null)
 //: 勾中的发言。顺序就是提纲里的讲次顺序，所以只往后加、不重排。
 const selected = ref<string[]>([])
 
-const studentModel = ref<string | null>(filters.value.student ?? null)
 const knowledgePointModel = ref<number | null>(filters.value.knowledgePoint ?? null)
 
 watch(filters, (value) => {
-  studentModel.value = value.student ?? null
   knowledgePointModel.value = value.knowledgePoint ?? null
 })
 
-watch([studentModel, knowledgePointModel], async () => {
+watch(knowledgePointModel, async () => {
   await replaceFilters({
-    student: studentModel.value ?? undefined,
     knowledgePoint: knowledgePointModel.value ?? undefined,
   })
 })

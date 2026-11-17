@@ -23,8 +23,10 @@ from app.domain.agent.harness.claude_code.remote_execution.shell_prefix import (
     FORWARDED_ENV,
     bind_working_directory,
 )
-from app.domain.agent.harness.prompt import WORKING_DIRECTORY as TOLD
 from app.domain.agent.room.system_prompt import session_system_prompt
+from app.domain.prompts import Kind, piece
+
+TOLD = piece("system/working_directory")
 
 
 def _pinned(directory):
@@ -50,8 +52,7 @@ def _session(directory, workspace="/unavailable-project"):
 def _room_prompt(harness):
     return session_system_prompt(
         "base",
-        "",
-        needs_place=True,
+        kind=Kind.task,
         has_doc=False,
         role=None,
         harness=harness,
@@ -139,9 +140,9 @@ def test_a_path_with_spaces_and_quotes_is_bound_whole():
 
 
 def test_the_line_is_told_the_name_only_on_the_harness_that_has_it():
-    """The room's own entry point, not `build_system_prompt` directly: the
-    harness gate lives in `session_system_prompt`, and a test that skipped it
-    would stay green with the gate removed."""
+    """The room's own entry point, not the renderer directly: the harness
+    gate is decided from what `session_system_prompt` passes, and a test that
+    skipped it would stay green with the gate removed."""
     assert "$T" in TOLD
     assert TOLD in _room_prompt(CLAUDE_CODE)
     # codex and pi are not given the variable, so they are not told about it.

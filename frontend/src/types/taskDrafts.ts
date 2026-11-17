@@ -29,6 +29,9 @@ export interface TaskDraftFields {
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   categoryId?: number
   topics?: number[]
+  /** 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）；字段名与后端
+   *  `drafts.FORM_FIELDS` 一致。整份替换。 */
+  knowledgePointIds?: number[]
   requireRealName?: boolean
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
@@ -93,6 +96,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'teamLockingPolicy',
   'categoryId',
   'topics',
+  'knowledgePointIds',
   'requireRealName',
   'accessControlEnabled',
   'accessDomainGroupIds',

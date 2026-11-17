@@ -324,9 +324,14 @@ async def refuse_call(
     的：那位的投递不重复记。无名可指的消息（只有附件、没有正文）到不了这里。
     """
     topic = place.room
-    seat = next(
-        (h for h in prepared.agent_handles if f"<@{h}>" in prepared.content), None
-    )
+    # The first teammate the message names, by where it stands in the text: a
+    # message that names several wakes them in that order (`record_mentions`).
+    named = [
+        h
+        for h in mentioned_handles(prepared.content)
+        if h in set(prepared.agent_handles)
+    ]
+    seat = named[0] if named else None
     if seat is None and reply_author is not None:
         # 名册是现问的：`person_mentions` 只在正文里有 `@` 时才填这两个名单，
         # 而这条路一句 `@` 都没有。
@@ -376,6 +381,9 @@ async def record_human_effects(
             by_agent=False,
             occurred_at=datetime.now(UTC),
             skip=frozenset({addressed} if addressed else ()),
+            # In a channel's main line the others take their turn one after
+            # another, each seeing what the one before said.
+            after=addressed if place.inner_id is None else None,
         )
     return answered
 

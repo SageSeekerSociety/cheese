@@ -1,0 +1,1 @@
+- 这里已经有 ⟦slot:count⟧ 条聊天消息，这个会话一条都没读过。动手之前先用 ⟦tool:cheese_chat.list⟧ 读最近的记录；要找某句原话或某个决定，用 ⟦tool:cheese_chat.search⟧。

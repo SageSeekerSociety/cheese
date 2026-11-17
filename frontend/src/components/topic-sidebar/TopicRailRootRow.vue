@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 频道分组里的第一行：项目自带的频道「综合」。它和别的频道同一个分组、同一种行，
-// 只是固定排在第一位、不能归档；挂在它下面的任务由父级填进 slot。
+// 只是固定排在第一位、不能归档；挂在它下面的任务由父级填进 slot。项目里只有这一个频道时
+// 没有频道这一组，这一行写「对话」，新建频道的 ＋ 和 ⋯ 在同一处：悬停或键盘聚焦时浮出，触屏上常驻。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Topic } from '@/cx_types'
 import type { RowLight } from '@/lib/roomLight'
@@ -37,6 +38,10 @@ const props = defineProps<{
   taskCount?: number
   /** 收起来的那一块该画的灯；不亮是 null。 */
   taskLight?: RowLight | null
+  /** 项目里只有这一个频道：这一行写「对话」，不写频道名，新建频道的 ＋ 挂在这一行上。 */
+  single?: boolean
+  /** 我能新建频道。 */
+  canCreate?: boolean
 }>()
 
 /** 这一行自己的灯。父级还没读到「综合」这个话题时（`rootTopic` 为空）这一行不画，
@@ -60,7 +65,15 @@ const emit = defineEmits<{
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
   (e: 'toggle-tasks'): void
+  (e: 'new-channel'): void
 }>()
+
+/** 只有一个频道时它就是这个项目的对话，不再叫它的频道名。 */
+const label = computed(() =>
+  props.rootTopic && !props.single ? topicTitle(props.rootTopic) : t('work.sidebar.conversation')
+)
+/** 新建频道的 ＋：只有一个频道时挂在这一行上，和 ⋯ 同一处浮出（悬停或键盘聚焦这一行时）。 */
+const addChannel = computed(() => props.single === true && props.canCreate === true)
 </script>
 
 <template>
@@ -109,12 +122,32 @@ const emit = defineEmits<{
         :class="{
           'title-unread': unreadOf(rootTopic.id) > 0 || freshOf?.(rootTopic.id),
         }"
-        >{{ topicTitle(rootTopic) }}</v-list-item-title
+        >{{ label }}</v-list-item-title
       >
       <template #append>
         <TopicRailLight v-if="rootLight" :light="rootLight" />
-        <div v-if="rootActions?.length" class="row-actions" @click.stop>
-          <AdaptiveMenu v-bind="rowMenu.bind('root')" :actions="rootActions" :title="topicTitle(rootTopic)">
+        <div v-if="rootActions?.length || addChannel" class="row-actions" @click.stop>
+          <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
+          <v-btn
+            v-if="addChannel"
+            :tabindex="rootTopic.id === selectedTopicId ? 0 : -1"
+            icon="mdi-plus"
+            size="small"
+            variant="text"
+            color="on-surface-variant"
+            density="comfortable"
+            data-testid="new-channel-entry"
+            :title="t('work.projectSettings.channels.create')"
+            :aria-label="t('work.projectSettings.channels.create')"
+            class="row-actions__btn"
+            @click="emit('new-channel')"
+          />
+          <AdaptiveMenu
+            v-if="rootActions?.length"
+            v-bind="rowMenu.bind('root')"
+            :actions="rootActions"
+            :title="topicTitle(rootTopic)"
+          >
             <template #activator="{ props: menuProps }">
               <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
               <v-btn

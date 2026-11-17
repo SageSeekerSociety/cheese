@@ -200,3 +200,43 @@ describe('面板收着：进任务不自动把面板拉开', () => {
     await waitFor(() => expect(emitted()['update:tab']).toContainEqual(['site']))
   })
 })
+
+// 频道里打开的任务：固定的那几格不动，右边一件一格、写着任务名、能关的页签。关掉正看着的
+// 那一格去旁边那一格；一格都不剩时回到打开它之前那一格。
+describe('任务页签', () => {
+  const K1 = { id: 'k1', title: '报名表改短' }
+  const K2 = { id: 'k2', title: '更新 README' }
+
+  it('固定的几格都还在，几件任务各一格排在它们右边', async () => {
+    const { findAllByRole } = mount({ deliveries: [K1, K2] })
+    const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
+    expect(labels).toEqual(['概览', '支线', '文件', '例行事务', '报名表改短', '更新 README'])
+  })
+
+  it('从「支线」打开一件任务，关掉它回到「支线」', async () => {
+    const { container, emitted, getByTestId, rerender } = mount({ tab: 'threads', deliveries: [K1] })
+    await waitFor(() => expect(selected(container)).toBe('支线'))
+    await rerender({ tab: 'delivery:k1', deliveries: [K1] })
+    await waitFor(() => expect(selected(container)).toBe('报名表改短'))
+    getByTestId('panel-tab-close').click()
+    await waitFor(() => expect(emitted()['close-delivery']).toEqual([['k1']]))
+    expect(emitted()['update:tab']).toContainEqual(['threads'])
+  })
+
+  it('关掉正看着的那一格，去旁边那一格', async () => {
+    const { container, emitted, getAllByTestId, rerender } = mount({ tab: 'threads', deliveries: [K1, K2] })
+    await rerender({ tab: 'delivery:k1', deliveries: [K1, K2] })
+    await waitFor(() => expect(selected(container)).toBe('报名表改短'))
+    getAllByTestId('panel-tab-close')[0]!.click()
+    await waitFor(() => expect(emitted()['close-delivery']).toEqual([['k1']]))
+    expect(emitted()['update:tab']).toContainEqual(['delivery:k2'])
+  })
+
+  it('没被选中时关掉它，人留在原来那一格', async () => {
+    const { container, emitted, getByTestId } = mount({ tab: 'files', deliveries: [{ ...K1, dot: true }] })
+    await waitFor(() => expect(selected(container)).toBe('文件'))
+    getByTestId('panel-tab-close').click()
+    await waitFor(() => expect(emitted()['close-delivery']).toEqual([['k1']]))
+    expect(selected(container)).toBe('文件')
+  })
+})

@@ -17,7 +17,9 @@ from app.domain.agent.turn.state.live import LiveWork
 from app.domain.notice_meta import (
     EVENT_API_RETRY,
     EVENT_CONTEXT_COMPACT,
+    EVENT_CONVERSATION_ABANDONED,
     EVENT_DEVICE_WAITING,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_PLATFORM,
     notice,
@@ -26,6 +28,46 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.run_record import service as run_records
 
 logger = logging.getLogger(__name__)
+
+
+async def _note_given_up(
+    sessions: async_sessionmaker,
+    conversation_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    seat: str | None,
+    inner_id: uuid.UUID | None,
+    channel: str,
+) -> None:
+    """One 现场 line: the platform gave up on this conversation and opened a
+    new one.
+
+    A run record, not a room line: this is the platform's own running, and the
+    switch is already said in the conversation by the failure that caused it
+    (`turnFailedContextFull`) — said twice, the second reads as a second
+    failure. What only 现场 can answer is why the conversation a reader has
+    been following stops being resumed, and what did not carry over: the part
+    of it that never reached a file, a task doc or a conclusion.
+
+    A one-shot line, so a plain record rather than a status series: there is
+    nothing here to restate, and the next turn is a different conversation
+    anyway. Best-effort — it is a status line, and the give-up itself is
+    already committed by the time this runs."""
+    await record_now(
+        sessions,
+        conversation_id=inner_id or conversation_id,
+        content=say("conversationAbandoned"),
+        meta={
+            **notice(
+                EVENT_CONVERSATION_ABANDONED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+            ),
+            "at": datetime.now(UTC).isoformat(),
+        },
+        turn_id=turn_id,
+        # The teammate whose conversation was given up; 现场 files it under
+        # whoever it was about, the same way its compaction line is filed.
+        seat=seat,
+        channel=channel,
+    )
 
 
 async def _note_retry(

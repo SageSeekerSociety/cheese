@@ -256,6 +256,18 @@ class CloudHost(UuidPk, Timestamps, Base):
     draining_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Whether that host is brought up to date where it is rather than
+    # rebuilt: only its enrollment script changed, so once no sandbox but the
+    # parked ones is on it, the script runs again on the machine and its
+    # homes, stores and parked sandboxes stay (`host_refresh`). False while it
+    # is rebuilt, and on a host that is not draining.
+    refresh_in_place: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # When that run began on the machine; NULL before it has.
+    refresh_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # A whole cloud VM for one session, not a host of sandboxes: created for
     # that session from ``microcloud_vm_offering_id``, its executor runs with
     # the whole machine (``host`` visibility, sudo), it takes no other session

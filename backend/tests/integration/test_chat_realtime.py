@@ -30,6 +30,7 @@ from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import project_service, registered, second_person
 from tests.support.hang import HANG_S
+from tests.support.prompt_lines import without_id
 from tests.support.quoted_context import prompt_quote, slide_quote
 from tests.support.run_records import records_of
 from tests.support.session_records import assistant_texts
@@ -1203,7 +1204,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     # Pre-fix this blocked until the active run finished.
     frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), HANG_S)
     assert all(frame["type"] != "done" for frame in frames)
-    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
+    assert [without_id(p.split("\n\n", 1)[0]) for p in provider.delivered] == [
         "[user-2]: 等一下，先别跑"
     ]
     # Injected, not queued: still exactly one active run.
@@ -1379,7 +1380,7 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
         assert await assert_unknown_input() == original_rows
         assert len(provider.sessions) == 1
         assert provider.runs == 1
-        assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
+        assert [without_id(p.split("\n\n", 1)[0]) for p in provider.delivered] == [
             "[user-2]: 第二件事"
         ]
         async with factory() as session:

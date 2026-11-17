@@ -16,7 +16,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -35,7 +35,9 @@ from app.domain.agent.queries import (
     _say_handed_back,
     _say_memory_change,
 )
+from app.domain.agent_instance.adapters import project_team
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
+from app.domain.membership.roster import roster_rows
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import (
     PRIVATE_DREAM_SYSTEM,
@@ -55,6 +57,7 @@ from app.domain.memory.session import (
 )
 from app.domain.memory.writers import MemoryWriter
 from app.domain.project.repositories import ProjectRepository
+from app.domain.topic.models import is_private_chat
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.models import ResourceUsage
 
@@ -119,9 +122,10 @@ class _Turn:
 
     room_id: uuid.UUID
     acting: str
-    #: 这一轮带谁的 private（`turn_speakers.private_memory_for`：只有私聊里的那个
-    #: 人）；None 时这一轮只有 team。
-    speaker: str | None
+    #: 这一轮带谁的 private：私聊里是那个人的整棵（`turn_speakers.private_memory_for`），
+    #: 多人的地方是这一轮答的那几位的 communication 那一份
+    #: （`turn_speakers.talk_notes_for`）；空时这一轮只有 team。
+    speakers: tuple[str, ...]
     #: 这一轮的注入里有没有那一位的 private 索引在哪
     #: （`instructions.private_index_pointer`）：有，这一轮就该先读它。
     pointed: bool = False
@@ -156,7 +160,7 @@ class MemoryLedger:
         seat: tuple[uuid.UUID, str],
         *,
         acting: str,
-        speaker: str | None,
+        speakers: tuple[str, ...],
         pointed: bool = False,
     ) -> None:
         """记下一个座位（对话, agent）这一轮的记忆账：署谁的名、算谁的 private。
@@ -166,35 +170,34 @@ class MemoryLedger:
         读过的那一位，所以「注入里看得见的」和「铺到会话目录里的」是同一份。
         """
         self._turns.pop(seat, None)
-        self._turns[seat] = _Turn(room_id, acting, speaker, pointed)
+        self._turns[seat] = _Turn(room_id, acting, speakers, pointed)
         while len(self._turns) > MEMORY_TURNS_KEPT:
             del self._turns[next(iter(self._turns))]
 
     def _scopes(
         self, seat: tuple[uuid.UUID, str]
     ) -> list[tuple[MemoryFileScope, str | None]]:
-        """这一次对账要点名的那几棵树：team 一份，加这个座位这一轮带的那一位的
-        private（`turn_speakers.private_memory_for`：只有私聊里的那个人）。
+        """这一次对账要点名的那几棵树：team 一份，加这个座位这一轮带的那几位的
+        private（私聊里是那个人的整棵，多人的地方是 `files.talk_view` 那一份）。
 
         点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
         没点到的 private 不铺下去；会话目录里先前铺下的哪一棵这一次没点名，会话
         交回来、从树上拿走，平台替那个人收下（`tree.withdrawn_prefixes`）。
         """
         turn = self._turns.get(seat)
-        speaker = turn.speaker if turn is not None else None
+        speakers = turn.speakers if turn is not None else ()
         return [
             (MemoryFileScope.team, None),
-            *([(MemoryFileScope.private, speaker)] if speaker else []),
+            *((MemoryFileScope.private, speaker) for speaker in speakers),
         ]
 
     def _writer_of(self, room_id: uuid.UUID, prefix: str) -> str:
         """这间房里最近一轮答的是 ``prefix`` 那个人的座位，署的是谁的名；不知道
         就是 system。"""
         for turn in reversed(self._turns.values()):
-            if (
-                turn.room_id == room_id
-                and turn.speaker
-                and prefix_of_scope(MemoryFileScope.private, turn.speaker) == prefix
+            if turn.room_id == room_id and any(
+                prefix_of_scope(MemoryFileScope.private, speaker) == prefix
+                for speaker in turn.speakers
             ):
                 return turn.acting or "system"
         return "system"
@@ -230,16 +233,28 @@ class MemoryLedger:
             if topic is None:
                 return
             project_id = topic.project_id
-            stored = await read_tree(db, project_id, scopes)
+            # A person's whole private memory is laid only in their private chat;
+            # anywhere else, only their `communication` notes (`files.talk_view`).
+            views = not is_private_chat(topic)
+            stored = await read_tree(
+                db,
+                project_id,
+                scopes,
+                views=frozenset(
+                    prefix_of_scope(scope, owner)
+                    for scope, owner in scopes
+                    if scope is MemoryFileScope.private and views
+                ),
+            )
+            people = await _people(db, project_id)
         # What is said in a private chat or private channel stays with the people
         # in it (#3830): its session reads the project's shared memory but does
         # not write it.
-        collected = (
-            [s for s in scopes if s[0] is not MemoryFileScope.team]
-            if seats_only(topic)
-            else scopes
+        read_only = frozenset({"team"}) if seats_only(topic) else frozenset()
+        answer = await self._compute.memory(
+            session,
+            {"scopes": stored.scopes, "views": sorted(stored.views), "people": people},
         )
-        answer = await self._compute.memory(session, {"scopes": stored.scopes})
         if answer is None:
             # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
             # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
@@ -247,16 +262,17 @@ class MemoryLedger:
         if (
             turn is not None
             and turn.pointed
+            and turn.speakers
             and answer.get("worked")
-            and turn.speaker not in (answer.get("indexes_read") or ())
+            and turn.speakers[0] not in (answer.get("indexes_read") or ())
         ):
             # 这一轮替他干了活，却没读他的 private 索引（规矩说每一轮先读，
-            # `instructions.MEMORY_INSTRUCTIONS`）。记一行，好在生产上数跳过了多少。
+            # `prompts/pieces/memory/scopes_private.md`）。记一行，好在生产上数跳过了多少。
             logger.info(
                 "memory_private_index_unread room=%s agent=%s speaker=%s",
                 topic_id,
                 session.agent_handle,
-                turn.speaker,
+                turn.speakers[0],
             )
         async with self._sessions() as db:
             change = await apply_tree(
@@ -264,9 +280,11 @@ class MemoryLedger:
                 project_id,
                 stored,
                 answer,
-                scopes=collected,
+                scopes=scopes,
                 updated_by=updated_by,
                 writer=MemoryWriter.turn,
+                read_only=read_only,
+                people=people,
             )
             # 上一轮那一位的 private，这一次没点名、会话交了回来：替那个人收下
             # （`memory.session.apply_withdrawn`），只说给他本人
@@ -297,7 +315,16 @@ class MemoryLedger:
                     project_id,
                     {prefix: given},
                     updated_by=self._writer_of(topic_id, prefix),
+                    views=views,
+                    people=people,
                 )
+                if handed.dropped:
+                    # 没收的写入说给写它的 agent：它在这间房里，不在本人的私聊里。
+                    change = replace(
+                        change, dropped={**change.dropped, **handed.dropped}
+                    )
+                    handed = replace(handed, dropped={})
+                    said = True
                 if _said(handed) or kept:
                     said = True
                     await _say_handed_back(db, project_id, handed, owners, kept)
@@ -307,7 +334,7 @@ class MemoryLedger:
                     db,
                     project_id,
                     change,
-                    collected,
+                    scopes,
                     writer_room=session.conversation_id,
                 )
             # 一次对账大部分时候什么都没变：那就什么都不说，也没有可提交的。这条
@@ -544,6 +571,14 @@ class MemoryLedger:
                 exc,
             )
             return _ScopeDream(scope, failure=str(exc))
+        if dream.talk_widened(before, answer.tree):
+            logger.warning(
+                "memory dream not applied project=%s scope=%s: it widened the "
+                "communication notes",
+                project_id,
+                scope.value,
+            )
+            return _ScopeDream(scope, failure="talk_widened")
         files = {f"{prefix}/{name}": content for name, content in answer.tree.items()}
         if refused := dream.refused_scopes(stored.contents, files):
             return _ScopeDream(
@@ -643,6 +678,18 @@ def _alert_refused(
     )
 
 
+async def _people(db: AsyncSession, project_id: uuid.UUID) -> dict[str, str]:
+    """项目里的人（handle → 名字）：一条 communication 记录点了本人以外哪一位的
+    名，平台不收（`files.policy_breach`）。"""
+    return {
+        row["handle"]: row.get("name") or ""
+        for row in await roster_rows(db, project_id, team=project_team)
+        if not row.get("agent")
+    }
+
+
 def _said(change: MemoryChange) -> bool:
     """这一份改动有没有要说的：改了什么，或者有被盖回去、没收下的。"""
-    return not change.is_empty() or bool(change.refused or change.rejected)
+    return not change.is_empty() or bool(
+        change.refused or change.rejected or change.dropped
+    )

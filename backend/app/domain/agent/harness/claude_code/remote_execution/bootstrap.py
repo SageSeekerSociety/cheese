@@ -1240,7 +1240,10 @@ def prepared(
     package_env = {
         "UV_CACHE_DIR": str(store / "uv-cache"),
         "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),
+        # pnpm 11 and later read only `pnpm_config_*`, older pnpm only
+        # `npm_config_*`: both, so either version shares the one store.
         "npm_config_store_dir": str(store / "pnpm-store"),
+        "pnpm_config_store_dir": str(store / "pnpm-store"),
         "npm_config_cache": str(store / "npm-cache"),
         "PIP_CACHE_DIR": str(store / "pip-cache"),
     }
@@ -1248,6 +1251,7 @@ def prepared(
         # No hard link crosses mounts or quotas; a reflink does on XFS, else both copy.
         package_env["UV_LINK_MODE"] = "clone"
         package_env["npm_config_package_import_method"] = "clone-or-copy"
+        package_env["pnpm_config_package_import_method"] = "clone-or-copy"
     variables = (payload.get("environment") or {}).get("variables", {})
     package_env.update({key: variables[key] for key in package_env if key in variables})
     work = home / CHECKOUT_DIR

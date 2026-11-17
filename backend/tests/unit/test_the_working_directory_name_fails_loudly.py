@@ -10,7 +10,9 @@ instead.
 import os
 import subprocess
 
-from app.domain.agent.harness.prompt import WORKING_DIRECTORY as TOLD
+from app.domain.prompts import piece
+
+TOLD = piece("system/working_directory")
 
 CD = 'cd "${T:?T is not set}" && pwd -P'
 

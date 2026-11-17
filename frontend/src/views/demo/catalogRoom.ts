@@ -302,7 +302,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '递了卡，等人审阅',
-        note: '卡说在哪一步；队友递卡前报的状态和原话作废，页头不再写。对验收人本人这一句是「待你审阅」。',
+        note: '卡说在哪一步；队友递卡前报的状态和原话作废，页头不再写。对审阅人本人，下面那一行是「等你」。',
         props: {
           ...TASK_HEADER_PROPS,
           task: {
@@ -320,11 +320,11 @@ const TASK_ENTRIES: CatalogEntry[] = [
           ...TASK_HEADER_PROPS,
           task: { ...TASK_HEADER_PROPS.task, presentation: { column: 'delivering', phrase: 'gate_running' } },
         },
-        expect: '平台在跑检查',
+        expect: '检查运行中',
       },
       {
-        name: '卡被退回，回到在做',
-        note: '验收人退回（或卡被作废）后，平台把任务放回「在做」；没有原话，等队友自己再报。',
+        name: '卡被退回，回到进行中',
+        note: '验收人退回（或卡被作废）后，平台把任务放回「进行中」；没有原话，等队友自己再报。',
         props: {
           ...TASK_HEADER_PROPS,
           task: {
@@ -335,7 +335,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
             progress_set_at: '2026-10-05T02:00:00Z',
           },
         },
-        expect: '在做',
+        expect: '进行中',
       },
       {
         name: '报完之后会话结束了',
@@ -510,13 +510,13 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '桌面那一栏',
-        note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
-        props: { heading: '登录要不要加手机验证码？', closable: true },
+        note: '左边返回支线列表，写挂着的那条消息说的事，右边「转为任务」。',
+        props: { heading: '登录要不要加手机验证码？', back: true },
         expect: '登录要不要加手机验证码',
       },
       {
         name: '在手机顶栏里',
-        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
+        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边。',
         props: { heading: '登录要不要加手机验证码？', bar: true },
         expect: '登录要不要加手机验证码',
       },

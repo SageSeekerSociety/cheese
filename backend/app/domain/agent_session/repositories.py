@@ -47,6 +47,15 @@ class PlacedRow:
         return place_of(self.runtime_location, self.work_lease)
 
 
+@dataclass(frozen=True)
+class Continuation:
+    """What a start continues (``resume``) and the conversation it must not
+    take up again (``retired``); at most one is set."""
+
+    resume: str | None
+    retired: str | None
+
+
 class AgentSessionRepository:
     """Keyed by the conversation — a room or a task — a session is in.
 
@@ -76,18 +85,90 @@ class AgentSessionRepository:
             query = query.with_for_update().execution_options(populate_existing=True)
         return await self._session.scalar(query)
 
-    async def resume_token(
+    async def conversation(
         self, conversation_id: uuid.UUID, agent_handle: str, harness: str
-    ) -> str | None:
-        """What this agent resumes its conversation in this place by."""
+    ) -> tuple[str, int] | None:
+        """This agent's conversation in this place and the generation of rules
+        it was started under; None when there is none to go on with — never
+        started, or given up on (`abandoned_at`, ``forget_conversation``)."""
+        token, abandoned, generation = await self._pointer(
+            conversation_id, agent_handle, harness
+        )
+        if token is None or abandoned:
+            return None
+        return token, generation
+
+    async def continuation(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        *,
+        generation: int,
+    ) -> Continuation:
+        """What this agent's next start here continues, and what it must not.
+
+        A conversation is retired when it was given up on (`abandoned_at`) or
+        started under another generation of its kind's rules
+        (``Profile.generation``): its own earlier turns would teach the session
+        the old role. Retired, it is named so the start does not take it up
+        from the machine's own record of it either (`SessionStart.retired`);
+        the first token a new conversation records clears it (``save``)."""
+        token, abandoned, started_under = await self._pointer(
+            conversation_id, agent_handle, harness
+        )
+        if token is None:
+            return Continuation(None, None)
+        if abandoned or started_under != generation:
+            return Continuation(None, token)
+        return Continuation(token, None)
+
+    async def retire_older(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        *,
+        generation: int,
+    ) -> bool:
+        """Give up on this agent's conversation here if it was started under
+        another generation of its kind's rules, as ``forget_conversation``
+        gives one up: what it was told goes with it, so the new conversation
+        is told the whole state. Once: the new conversation's first token
+        records the current generation (``save``). True when it retired one."""
         result = await self._session.execute(
-            select(AgentSession.resume_token).where(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+                AgentSession.resume_token.is_not(None),
+                AgentSession.abandoned_at.is_(None),
+                AgentSession.generation != generation,
+            )
+            .values(
+                abandoned_at=datetime.now(UTC), told=None, updated_at=datetime.now(UTC)
+            )
+        )
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    async def _pointer(
+        self, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> tuple[str | None, bool, int]:
+        result = await self._session.execute(
+            select(
+                AgentSession.resume_token,
+                AgentSession.abandoned_at,
+                AgentSession.generation,
+            ).where(
                 AgentSession.conversation_id == conversation_id,
                 AgentSession.agent_handle == agent_handle,
                 AgentSession.harness == harness,
             )
         )
-        return result.scalar_one_or_none()
+        token, abandoned, generation = result.one_or_none() or (None, None, 0)
+        return token, abandoned is not None, generation
 
     async def save(
         self,
@@ -96,18 +177,40 @@ class AgentSessionRepository:
         agent_handle: str,
         resume_token: str,
         harness: str,
+        generation: int,
     ) -> None:
-        """Record where this agent's conversation got to (upsert).
+        """Record where this agent's conversation got to (upsert), and, for a
+        conversation it has not recorded before, the generation of rules it
+        was started under.
 
         ON CONFLICT rather than get-then-insert: two turns can reach here at once
         (a resumed turn and the sweep's own resume are the pair that actually
         does), and losing that race must overwrite, not raise.
         """
+        # The marker is cleared only by a start that records a DIFFERENT
+        # conversation. A resumed start reports the id it resumed under, and
+        # one launched just before the give-up committed reports the old one
+        # too; either would otherwise wipe the marker while `resume_token` still
+        # names the conversation that cannot fit, and the loop comes back.
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+                AgentSession.resume_token.is_distinct_from(resume_token),
+            )
+            # The generation is the new conversation's, written by the same
+            # rule: a resumed one reports the token it already has and keeps
+            # the generation it was started under.
+            .values(abandoned_at=None, generation=generation)
+        )
         await self._upsert(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             values={"resume_token": resume_token},
+            inserted={"generation": generation},
         )
 
     async def save_told(
@@ -169,6 +272,40 @@ class AgentSessionRepository:
             )
             .values(told=None, updated_at=datetime.now(UTC))
         )
+
+    async def forget_conversation(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> bool:
+        """Give up on the conversation's native session, and on what it was told.
+        True when it had one here.
+
+        The next turn opens a new one (`abandoned_at` set, which `resume_token`
+        answers as no session) and, with ``told`` cleared, tells it the whole of
+        the project state. Used when the conversation cannot go on: a
+        compaction that could not be made means the next turn re-sends a
+        history that will not fit, and every turn after that repeats it.
+
+        ``resume_token`` is left where it is. Clearing it would say "this place
+        has never run" (`has_any`), and a room that has been worked in for
+        hours has not stopped having run because its conversation was given up
+        on.
+
+        The answer is what the give-up is worth saying out loud: no row is
+        nothing resumed and nothing given up, and a line claiming otherwise
+        would be the platform narrating a switch it did not make."""
+        result = await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(
+                abandoned_at=datetime.now(UTC), told=None, updated_at=datetime.now(UTC)
+            )
+        )
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return bool(result.rowcount)  # type: ignore[attr-defined]
 
     async def save_place(
         self,
@@ -286,7 +423,9 @@ class AgentSessionRepository:
         agent_handle: str,
         harness: str,
         values: dict,
+        inserted: dict | None = None,
     ) -> None:
+        """``inserted``: columns written only when the row is new."""
         # `updated_at` is stamped here by hand: ON CONFLICT DO UPDATE writes
         # exactly the columns named in `set_`, so the mapper's `onupdate` never
         # fires and the row would go on saying it was last touched when it was
@@ -297,6 +436,7 @@ class AgentSessionRepository:
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
+            **(inserted or {}),
             **values,
         )
         await self._session.execute(

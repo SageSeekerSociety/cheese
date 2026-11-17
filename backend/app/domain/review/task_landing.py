@@ -1,31 +1,43 @@
 """What a task's delivery landing does to the task.
 
-A task may deliver several times. The card says whether this delivery is the
-last step (``AcceptCard.completes_task``). Any step but the last leaves the
-task open and moves it onto a branch cut from the project's latest code, for
-its AI teammate to carry on from. The last one has the AI teammate write the
-task up and close it (`room_task.closing`). Either
-way the discussion the task came from hears what landed. Nothing is watched
-after the merge: the repository's CI and deploy on its default branch are
-its own.
+A task may deliver several times, and no delivery says by itself that it is
+the last: a card does not carry it (the old ``AcceptCard.completes_task`` is
+kept on old rows and read by nothing), and a person accepting one only says
+this step is good. So every merge that lands leaves the task open and moves it
+onto a branch cut from the project's latest code, and its AI teammate is told
+to judge whether the task is done — against the task's goal, what the task
+document still has open, its checklist, and what the owner said — and either
+carry on or write the task up and close it (`task_landed_prompt`). Whether
+that close is allowed is the close route's to check
+(`close_grounds`): the platform does not read the task document, it checks
+facts. Either way the discussion the task came from hears what landed.
 
-A last step lands as a step after all when the task's own AI teammate's
-session is at work on a message it read that was sent after the delivery was
-handed over, or a message to it there is still waiting to be read — someone
-asked for more after the card went up, and accepted it anyway. What it is doing is not in the
-delivery, and closing the task would stop it half done and leave it with
-nowhere to be delivered. So the task stays open on the next step's branch,
-and the AI teammate delivers that work as the next step. The same holds for a
-task already being written up when such work starts in it
-(`go_on_while_working`). Only the task's own teammate's work counts, and only
-what a person or the teammate itself asked for: an instruction the platform
-gave — another seat woken in the task, a conflict or CI fix — is not more work
-asked of it (`room_task.closing.unfinished`).
+A merge nobody filed a card for — a PR merged on the forge by hand — leaves
+the task open as well; its AI teammate is not woken, and the owner is told in
+the task that it goes on (`pr_poll`).
+
+In a project whose deploy reports back (`deploy_scope`), the teammate's close
+after its last merge waits, open, until a deploy containing that merge is live
+(`Task.deploying_since`, `deploy_wait.ship`), and only then is the task written
+up (`deploy_landed`). Steps before it do not wait. Nothing else is watched
+after the merge: the repository's CI and deploy on its default branch are its
+own.
+
+When the task's own AI teammate's session is at work on a message it read
+that was sent after the delivery was handed over, or a message to it there is
+still waiting to be read — someone asked for more after the card went up, and
+accepted it anyway — it is told the merge landed while it works
+(`task_step_landed_while_working_prompt`), not asked to judge the task done in
+the middle of that work. The same holds for a task already being written up
+when such work starts in it (`go_on_while_working`). Only the task's own
+teammate's work counts, and only what a person or the teammate itself asked
+for: an instruction the platform gave — another seat woken in the task, a
+conflict or CI fix — is not more work asked of it
+(`room_task.closing.unfinished`).
 
 Every path that sees a delivery merge comes through here — an accept click,
-the merge queue, the poller, a PR merged by hand — so none of them can keep
-closing a task the card said goes on, and none of them can land one merge on
-a task twice.
+the merge queue, the poller, a PR merged by hand — so none of them can close a
+task on a merge, and none of them can land one merge on a task twice.
 """
 
 import logging
@@ -39,18 +51,35 @@ from app.core.live_frames import show_once_committed
 from app.core.sentences import say, with_keys
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery_events import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.event_author import AuthorType
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.actor import acted_by
+from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_handle
+from app.domain.notice_meta import (
+    EVENT_TASK_ENDED,
+    EVENT_TASK_FILED,
+    EVENT_TASK_LANDED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
+from app.domain.prompts import piece
+from app.domain.review.deploy_scope import waits_for_deploy
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.review.ports import RecordInstruction, TaskTeammate
+from app.domain.review.ports import (
+    Announce,
+    RecordInstruction,
+    RecordSeatInstruction,
+    TaskTeammate,
+)
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.thread.services import open_thread, thread_of
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.user.services import names_by_handles
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +103,19 @@ async def delivery_landed(
     by: str | None,
     head: str | None,
     pr_number: int | None,
-    completes: bool,
     handed_over: datetime | None,
     record_instruction: RecordInstruction | None,
     task_teammate: TaskTeammate | None,
+    announce: Announce | None = None,
 ) -> bool:
-    """``task``'s delivery merged. ``completes``: it was the task's last step.
-    ``handed_over``: when its card went up; None for a merge no card asked
-    for, where any turn running in the task is work that merge does not hold.
+    """``task``'s delivery merged. ``handed_over``: when its card went up; None
+    for a merge no card asked for, which wakes nobody (module docstring).
+
+    A delivery someone adopted is recorded where the task came from as one
+    platform line naming who adopted it (`_step_landed`, ``announce``), not
+    said by the teammate: the reviewer's decision is something that happened,
+    not anyone's words. A door that hands in no ``announce``, and a merge
+    nobody adopted, have the teammate say that it landed (`tell_origin`).
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
@@ -92,76 +126,329 @@ async def delivery_landed(
     task.accepted_by = by or task.accepted_by
     if head:
         task.delivered_head = head[:64]
-    still_working = (
-        completes
-        and task.status == TaskStatus.open
-        and bool(
-            await _asked_for_more(
-                session, task, since=handed_over, task_teammate=task_teammate
-            )
-        )
+    # A task being written up, or waiting for its deploy, already had its
+    # teammate's word that it is done; a merge landing on it now (one merged
+    # by hand, say) is recorded and moves nothing — the deploy it waits for
+    # is read off `accepted_at`, which this merge just moved.
+    goes_on = (
+        task.status == TaskStatus.open
+        and task.closing_since is None
+        and task.deploying_since is None
     )
-    goes_on = task.status == TaskStatus.open and (not completes or still_working)
-    if still_working:
+    if goes_on and handed_over is None:
+        await TaskService(session).next_step(task)
+    elif goes_on and await _asked_for_more(
+        session, task, since=handed_over, task_teammate=task_teammate
+    ):
         await _go_on(session, task, record_instruction=record_instruction)
     elif goes_on:
         await TaskService(session).next_step(task)
         await tell_agent(
             session,
             task,
-            task_next_step_prompt(title=task.title, task_id=task.id),
+            task_landed_prompt(
+                title=task.title,
+                task_id=task.id,
+                has_checkout=task.branch_name is not None,
+                waits_for_deploy=(
+                    head is not None
+                    and pr_number is not None
+                    and await waits_for_deploy(session, task.project_id)
+                ),
+            ),
             record_instruction=record_instruction,
-        )
-    elif task.status == TaskStatus.open and task.closing_since is None:
-        task.closing_since = now
-        await tell_agent(
-            session,
-            task,
-            task_summary_prompt(title=task.title),
-            record_instruction=record_instruction,
-            closes=True,
         )
     await session.flush()
-    # The last step says nothing at the origin now: the task's ending is said
-    # there once, when it closes (`tell_origin_ended`), whichever way it does.
     if goes_on:
-        await tell_origin(
-            session,
-            task,
-            _step_landed(task, pr_number),
-            task_teammate=task_teammate,
-        )
+        adopted_by = by if handed_over is not None else None
+        line = await _step_landed(session, task, adopted_by)
+        if announce is not None and adopted_by is not None:
+            await record_at_origin(
+                session, task, EVENT_TASK_LANDED, line, announce=announce
+            )
+        else:
+            # Said by the teammate, it names nobody: a name in its words would
+            # be an @ that notifies.
+            await tell_origin(
+                session,
+                task,
+                await _step_landed(session, task, None),
+                task_teammate=task_teammate,
+            )
     return True
 
 
-def _step_landed(task: Task, pr_number: int | None) -> str:
-    """The origin's line for a step that landed with the task going on."""
-    if pr_number is not None:
-        return say("taskStepLanded", title=said_title(task), pr=pr_number)
+async def wait_for_deploy(session: AsyncSession, task: Task) -> bool:
+    """``task``'s AI teammate closes it as done: in a project whose deploy
+    reports back, whose last delivery was a merge, the task waits open for a
+    deploy containing that merge and is written up then (`deploy_landed`).
+    Says whether it waits: one already waiting goes on waiting, and closing it
+    again does not skip its deploy. A task being written up already waited, or
+    never had to; one with no merge delivered has nothing to deploy."""
+    if task.status == TaskStatus.open and task.deploying_since is not None:
+        return True
+    if (
+        task.status != TaskStatus.open
+        or task.closing_since is not None
+        or task.delivered_head is None
+        or not await waits_for_deploy(session, task.project_id)
+    ):
+        return False
+    task.deploying_since = datetime.now(UTC)
+    task.deploy_blocked_url = None
+    await session.flush()
+    return True
+
+
+async def _write_up(
+    session: AsyncSession,
+    task: Task,
+    *,
+    record_instruction: RecordInstruction | None,
+    deployed: bool = False,
+) -> None:
+    """``task`` is done and, where it waits for its deploy, live: its AI
+    teammate writes it up and closes it (`room_task.closing`)."""
+    task.closing_since = datetime.now(UTC)
+    await tell_agent(
+        session,
+        task,
+        task_summary_prompt(
+            title=task.title,
+            has_checkout=task.branch_name is not None,
+            deployed=deployed,
+        ),
+        record_instruction=record_instruction,
+        closes=True,
+    )
+
+
+async def deploy_landed(
+    session: AsyncSession,
+    task: Task,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+) -> bool:
+    """A deploy containing the merge ``task`` waits for is live: the task
+    stops waiting, and its AI teammate — who already judged it done
+    (`wait_for_deploy`) — writes it up and closes it. Unless it was asked for
+    more while it waited: then that work goes on as the next step, as it does
+    for a merge that lands while such work runs (module docstring).
+
+    Says whether the task was waiting; one that is not is left alone, so a
+    second report of the same deploy changes nothing. The caller holds the
+    task's row (`room_task.lock_order`)."""
+    if task.deploying_since is None:
+        return False
+    task.deploying_since = None
+    task.deploy_blocked_url = None
+    if task.status != TaskStatus.open:
+        await session.flush()
+        return True
+    if await _asked_for_more(
+        session,
+        task,
+        since=await _handed_over(session, task),
+        task_teammate=task_teammate,
+    ):
+        await _go_on(session, task, record_instruction=record_instruction)
+        await tell_origin(
+            session,
+            task,
+            await _step_landed(session, task, None),
+            task_teammate=task_teammate,
+        )
+    else:
+        await _write_up(
+            session, task, record_instruction=record_instruction, deployed=True
+        )
+    await session.flush()
+    return True
+
+
+async def _step_landed(session: AsyncSession, task: Task, by: str | None) -> str:
+    """The origin's line for a step that landed with the task going on: who
+    adopted it (``by``, named by `_adopted_by`), as one line with no PR number
+    in it. With nobody to name — a PR merged on the forge by hand, or a line
+    the teammate says itself — it says only that it landed."""
+    who = await _adopted_by(session, task, by)
+    if who is not None:
+        return say("taskAdopted", who=who, title=said_title(task))
     return say("taskStepLandedNoPr", title=said_title(task))
 
 
 async def tell_origin_ended(
-    session: AsyncSession, task: Task, *, task_teammate: TaskTeammate | None
+    session: AsyncSession,
+    task: Task,
+    *,
+    announce: Announce,
+    record_seat: RecordSeatInstruction | None,
 ) -> None:
-    """Say at ``task``'s origin how it ended, once it is closed: its write-up
-    when it has one; that it was accepted, when its last delivery landed and
-    nobody wrote it up (the write-up was given up on, or ran out of time);
-    otherwise that it was closed. Every path that closes a task calls this, so
-    the conversation the task came from always hears the end."""
+    """Record at ``task``'s origin how it ended, once it is closed: its
+    write-up when it has one; that it was accepted, when its last delivery
+    landed and nobody wrote it up (the write-up was given up on, or ran out of
+    time); otherwise that it was closed. Every path that closes a task calls
+    this, so the conversation the task came from always hears the end.
+
+    It is the platform's line (`record_at_origin`), not the teammate's words:
+    the AI teammate that opened the task from the channel's main line is told
+    the same facts and says the result in its own words (`wake_opener`), and a
+    line under its name would say it twice."""
+    line, facts = _how_it_ended(task)
+    await record_at_origin(session, task, EVENT_TASK_ENDED, line, announce=announce)
+    names = await names_by_handles(session, _askers(task))
+    closed_at = task.closed_at.astimezone(UTC).isoformat() if task.closed_at else ""
+    await wake_opener(
+        session,
+        task,
+        # A task reopened and closed again ends again: its close time tells
+        # the two ends apart, and the same end reported twice is told once.
+        key=f"{EVENT_TASK_ENDED}:{task.id}:{closed_at}",
+        event_type=EVENT_TASK_ENDED,
+        content=task_ended_opener_prompt(task, facts=facts, names=names),
+        record_seat=record_seat,
+    )
+
+
+async def _adopted_by(
+    session: AsyncSession, task: Task, by: str | None
+) -> object | None:
+    """How a room line names ``by``, who adopted ``task``'s delivery, from what
+    the card recorded: the person (``<@handle>``); 「<teammate>代 <person>」
+    when a project AI teammate adopted it on their word (`decided_by_seat`);
+    the existing 「芝士代 <person>」 (`acted_by`) when their own personal
+    assistant did, and on cards from before the seat was kept. None when
+    nobody adopted it."""
+    if by is None:
+        return None
+    person = f"<@{by}>"
+    card = await session.scalar(
+        select(AcceptCard)
+        .where(AcceptCard.task_id == task.id, AcceptCard.decided_by == by)
+        .order_by(AcceptCard.created_at.desc())
+        .limit(1)
+    )
+    if card is None or not card.decided_by_assistant:
+        return person
+    if card.decided_by_seat is not None:
+        return say("actedByTeammate", agent=f"<@{card.decided_by_seat}>", person=person)
+    return acted_by(by, by_assistant=True)
+
+
+def _how_it_ended(task: Task) -> tuple[str, str]:
+    """How ``task`` ended: the line its origin records, and the same facts as
+    its opener is told them. One reading of the task's row for both, so the
+    two never say different things. Who adopted what landed was said when it
+    landed (`_step_landed`); the end says how the task ended, with no PR
+    number in the sentence."""
+    accepted = (
+        f"交付已采纳（PR #{task.pr_number}）"
+        if task.pr_number is not None
+        else "交付已采纳"
+    )
     if task.conclusion:
-        content = say(
-            "taskCompleted", title=said_title(task), conclusion=task.conclusion
+        line = say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
+        facts = (
+            f"{accepted}，结论是「{task.conclusion}」"
+            if task.accepted_at is not None
+            else f"没有哪一版交付被采纳，关闭时的结论是「{task.conclusion}」"
         )
     elif task.accepted_at is not None:
-        content = (
-            say("taskLanded", title=said_title(task), pr=task.pr_number)
-            if task.pr_number is not None
-            else say("taskLandedNoPr", title=said_title(task))
-        )
+        line = say("taskLandedNoPr", title=said_title(task))
+        facts = f"{accepted}，任务总结没有写成"
     else:
-        content = say("taskClosed", title=said_title(task))
-    await tell_origin(session, task, content, task_teammate=task_teammate)
+        line = say("taskClosed", title=said_title(task))
+        facts = "没有哪一版交付被采纳，关闭时也没有写结论"
+    return line, facts
+
+
+async def tell_opener_filed(
+    session: AsyncSession,
+    task: Task,
+    card: AcceptCard,
+    *,
+    version: int,
+    reviewers: list[str],
+    record_seat: RecordSeatInstruction | None,
+) -> None:
+    """``task`` handed ``card`` in as its ``version``-th version: the AI
+    teammate that opened it from the channel's main line is told what was
+    handed in and who reviews it, so it can say so there (`wake_opener`).
+    Each card is one version, so each is told once."""
+    names = await names_by_handles(session, [*reviewers, *_askers(task)])
+    await wake_opener(
+        session,
+        task,
+        key=f"{EVENT_TASK_FILED}:{card.id}",
+        event_type=EVENT_TASK_FILED,
+        content=task_filed_opener_prompt(
+            task,
+            version=version,
+            reviewers=reviewers,
+            names=names,
+            subject=card.change_subject,
+            body=card.change_body,
+            focus=card.focus,
+        ),
+        record_seat=record_seat,
+    )
+
+
+async def wake_opener(
+    session: AsyncSession,
+    task: Task,
+    *,
+    key: str,
+    event_type: str,
+    content: str,
+    record_seat: RecordSeatInstruction | None,
+) -> None:
+    """Tell ``content`` to the AI teammate that opened ``task`` from something
+    said in its channel's main line, in that main line, as a platform
+    instruction it reads on its next turn (or in the work it is doing).
+
+    Only that one: a task a person made, or turned from a message, wakes
+    nobody, and nor does one that came from a 支线 or from nowhere — the
+    origin's line records what happened there either way. The opener is
+    ``created_by``, which a teammate's own `cheese_task(action=open)` writes as
+    its seat; a seat this project no longer has is told nothing.
+
+    ``key`` names the happening; the instruction's identity is derived from
+    it, so the same happening is told once however often it is reported.
+
+    Best effort, as `record_at_origin`: telling never undoes what it tells.
+    ``record_seat`` missing where someone is to be told is a door that did not
+    hand it in (`review.ports.RecordSeatInstruction`), and fails loudly."""
+    opener = await main_line_opener(session, task)
+    if opener is None:
+        return
+    if record_seat is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("record_seat was not handed in")
+    try:
+        async with session.begin_nested():
+            await record_seat(
+                session,
+                DeliveryEvent(
+                    id=event_id_for(NotificationType.ROOM_NOTICE, key),
+                    type=NotificationType.ROOM_NOTICE,
+                    payload={
+                        "projectId": str(task.project_id),
+                        "topicId": str(task.room_id),
+                        "taskId": str(task.id),
+                        "eventType": event_type,
+                        "severity": SEVERITY_INFO,
+                    },
+                    occurred_at=datetime.now(UTC),
+                ),
+                project_id=task.project_id,
+                conversation_id=task.room_id,
+                seat=opener,
+                content=content,
+            )
+    except Exception:  # telling never undoes what it tells
+        logger.warning("could not tell task %s's opener", task.id, exc_info=True)
 
 
 async def go_on_while_working(
@@ -222,7 +509,11 @@ async def _go_on_if_asked(
             task_teammate=task_teammate,
         ):
             return False
-        base = await default_branch(task.project_id, session)
+        base = (
+            await default_branch(task.project_id, session)
+            if task.branch_name is not None
+            else None
+        )
         await session.commit()
     async with sessions() as session:
         task = await session.scalar(
@@ -243,7 +534,7 @@ async def _go_on_if_asked(
         await tell_origin(
             session,
             task,
-            _step_landed(task, task.pr_number),
+            await _step_landed(session, task, None),
             task_teammate=task_teammate,
         )
         await session.commit()
@@ -304,7 +595,11 @@ async def _go_on(
     await tell_agent(
         session,
         task,
-        task_step_landed_while_working_prompt(title=task.title, task_id=task.id),
+        task_step_landed_while_working_prompt(
+            title=task.title,
+            task_id=task.id,
+            has_checkout=task.branch_name is not None,
+        ),
         record_instruction=record_instruction,
     )
 
@@ -333,7 +628,6 @@ async def tell_origin(
     content: str,
     *,
     task_teammate: TaskTeammate | None,
-    refers: dict | None = None,
 ) -> None:
     """Say ``content`` in the conversation ``task`` was opened from. It is said
     by the task's AI teammate: whoever took part in the discussion hears it.
@@ -346,31 +640,104 @@ async def tell_origin(
     that is a 支线 turned into the task in place: the discussion is the task's
     own conversation, which the landing already speaks in.
 
-    ``refers`` is what else the line points at, besides the task, kept on it
-    as it was said: a delivery line names the card and the version it filed.
+    What happens to the task on the way — a version handed in, a version
+    returned — and how it ended are the platform's record, not the
+    teammate's words (`record_at_origin`).
 
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
     try:
         async with session.begin_nested():
-            await _tell_origin(
-                session, task, content, task_teammate=task_teammate, refers=refers
-            )
+            await _tell_origin(session, task, content, task_teammate=task_teammate)
     except Exception:  # a courtesy line never undoes a landing
         logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
 
 
-async def _tell_origin(
+async def record_at_origin(
     session: AsyncSession,
     task: Task,
+    event_type: str,
     content: str,
     *,
-    task_teammate: TaskTeammate | None,
-    refers: dict | None,
+    announce: Announce,
+    refers: dict | None = None,
 ) -> None:
+    """Record in the conversation ``task`` was opened from that something
+    happened to it: a version handed in for review, a version returned, the
+    task ended.
 
+    It is the platform's record, not anyone's words: a platform line
+    (`kind=event`) under nobody's name that wakes nobody (``who`` is the
+    platform's), in the same place `tell_origin` speaks. Whoever waits on the
+    task is told by the task's own lines (`room_notices._announce_filed`).
+    ``refers`` is what else the line points at, besides the task: a hand-in
+    names the card and the version it filed.
+
+    Best effort, as `tell_origin`."""
+    try:
+        async with session.begin_nested():
+            told_in = await _origin_conversation(session, task)
+            if told_in is None:
+                return
+            await announce(
+                session,
+                place_id=task.room_id,
+                task_id=None if told_in == task.room_id else told_in,
+                content=content,
+                meta={
+                    **notice(event_type, severity=SEVERITY_INFO, who=WHO_PLATFORM),
+                    "task_id": str(task.id),
+                    **(refers or {}),
+                },
+            )
+            if told_in != task.room_id:
+                show_once_committed(
+                    session, task.room_id, {"type": "state", "resource": "threads"}
+                )
+    except Exception:  # a record never undoes what it records
+        logger.warning("could not record at task %s's origin", task.id, exc_info=True)
+
+
+async def _origin_conversation(session: AsyncSession, task: Task) -> uuid.UUID | None:
+    """The conversation ``task`` was opened from, where it is told how it goes:
+    the channel's main line, or the 支线 under the message it hangs under
+    (opened if nobody has replied there yet). None when it has nowhere to be
+    told (`tell_origin`)."""
+    origin = await _origin(session, task)
+    if origin is None:
+        return None
+    block, in_main_line = origin
+    if in_main_line:
+        return task.room_id
+    return (
+        await open_thread(session, block.id, by=task.owner_handle or block.author)
+    ).id
+
+
+async def main_line_opener(session: AsyncSession, task: Task) -> str | None:
+    """The seat of the AI teammate that opened ``task`` from something said in
+    its channel's main line, which it reports to and is told of it; None for a
+    task a person made, or one from a 支线 or from nowhere. ``created_by`` is
+    what a teammate's own `cheese_task(action=open)` writes as its seat."""
+    opener = task.created_by
+    if (
+        opener is None
+        or task.created_by_assistant
+        or not opener.startswith(AGENT_HANDLE_PREFIX)
+    ):
+        return None
+    origin = await _origin(session, task)
+    if origin is None or not origin[1]:
+        return None
+    return opener
+
+
+async def _origin(session: AsyncSession, task: Task) -> tuple[Block, bool] | None:
+    """The main-line message ``task`` hangs under, and whether what it came
+    from was said in the main line itself rather than in that message's 支线.
+    None when it has nowhere to be told (`tell_origin`). Opens nothing."""
     if task.upgraded_from_block_id is None:
-        return
+        return None
     origin = await session.get(Block, task.upgraded_from_block_id)
     room = await session.get(Topic, task.room_id)
     project = await session.get(Project, task.project_id)
@@ -382,6 +749,26 @@ async def _tell_origin(
         or room.status == TopicStatus.archived
         or project is None
     ):
+        return None
+    if await thread_of(session, task.id) is not None:
+        return None
+    source = (
+        await session.get(Block, task.source_block_id)
+        if task.source_block_id is not None
+        else None
+    )
+    return origin, source is not None and source.conversation_id == task.room_id
+
+
+async def _tell_origin(
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    task_teammate: TaskTeammate | None,
+) -> None:
+
+    if task.upgraded_from_block_id is None:
         return
     teammate = await handed_in(task_teammate)(
         session, task.project_id, task.room_id, task.agent_handle
@@ -389,21 +776,10 @@ async def _tell_origin(
     if teammate is None:
         return
     instance_id, _handle = teammate
-    if await thread_of(session, task.id) is not None:
+    told_in = await _origin_conversation(session, task)
+    if told_in is None:
         return
-    source = (
-        await session.get(Block, task.source_block_id)
-        if task.source_block_id is not None
-        else None
-    )
-    in_main_line = source is not None and source.conversation_id == task.room_id
-    told_in = (
-        task.room_id
-        if in_main_line
-        else (
-            await open_thread(session, origin.id, by=task.owner_handle or origin.author)
-        ).id
-    )
+    in_main_line = told_in == task.room_id
     said = Block(
         id=uuid.uuid4(),
         project_id=task.project_id,
@@ -414,9 +790,7 @@ async def _tell_origin(
         content=str(content),
         # The sentence's key goes with it, so each reader sees it in their own
         # language (`with_keys`).
-        meta=with_keys(
-            {"task_result": str(task.id), **(refers or {})}, content=content
-        ),
+        meta=with_keys({"task_result": str(task.id)}, content=content),
     )
     session.add(said)
     await session.flush()
@@ -472,53 +846,186 @@ async def tell_agent(
     )
 
 
-# 下面这三段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
-# 和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，可那个包里没有一处
+# 下面这几段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
+# 和 `agent` 的其它提示词放在一起，可那里没有一处
 # 用它们 —— 说它们的只有这里，`delivery_landed` 和 `_go_on`。第 9 步把 review 够
 # 不着 `agent` 的那几条调用收进端口时，纯字符串没有理由走端口，就搬回说它的地方。
 
 
-def task_next_step_prompt(*, title: str, task_id) -> str:
-    """What a task's agent is told when one of its deliveries lands and the
-    task goes on."""
+def _judge(*, deploys: bool) -> str:
+    """How a task's AI teammate tells whether the task is done, and what it
+    does either way, once a merge has landed."""
+    done = (
+        "都做完了：步骤清单全部标成 completed，有不做的项就在关闭时用 unchecked_reason 写明理由；"
+        "直接用 cheese_task(action=close) 关闭，结论写一句结果。"
+        "这个项目要等部署：平台会先等这次交付上线，上线后再叫你更新实况文档、发总结，"
+        "现在不用写。"
+        if deploys
+        else "都做完了：步骤清单全部标成 completed，有不做的项就在关闭时用 unchecked_reason 写明理由；"
+        "用 cheese_doc(action=edit) 把实况文档改成任务完成时的样子，用 chat_send 在任务里发一条总结，"
+        "再用 cheese_task(action=close) 关闭，结论写一句结果。"
+    )
     return (
-        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
-        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
-        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
-        "对照实况文档接着做下一步，做完再用 cheese_card(action=request) 递一次交付；"
-        "这一步做完任务目标就全部达成时 completes_task 填 true，"
-        "还有没做完的就填 false，并在交付说明里写下一步做什么。"
+        "由你判断任务做没做完：对照任务目标、实况文档里还没做完的、步骤清单，"
+        "和负责人在任务里说过的话（他说过还要接着做的，就没做完）。\n"
+        "- 还有没做完的：在步骤清单里勾掉刚采纳的这一步，接着做下一步，"
+        "做完再用 cheese_card(action=request) 递一次交付。\n"
+        f"- {done}\n"
+        "拿不准就用 cheese_ask 问负责人，等他回话，不要先关。"
+        "关闭要有依据：最后一次交付已采纳且清单勾完（或写明不做的理由），"
+        "或者负责人在任务里说过结束（关闭时用 owner_message 带上那条消息的 id）；"
+        "两样都没有，平台会拒绝。"
     )
 
 
-def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
-    """What a task's agent is told when the delivery it called the last lands
-    while it is working on something begun after that delivery went up: the
-    delivery counts as a step, and the work goes on as the next one."""
-    return (
-        f"任务「{title}」你标成最后一步的那次交付已经采纳并合并，"
-        "但交付之后你又开始了新的工作，它不在这次合并里，所以任务没有关闭，接着开着。"
+def task_landed_prompt(
+    *, title: str, task_id, has_checkout: bool, waits_for_deploy: bool = False
+) -> str:
+    """What a task's agent is told when one of its deliveries lands: the task
+    is still open, and whether it is done is the agent's to judge."""
+    # 没有工作目录的任务（项目没有仓库）交的是文件或地址：没有合并，也没有新分支。
+    start = (
+        f"任务「{title}」的这次交付已经采纳并合并，任务还开着。"
+        f'要接着改文件，先执行 cd "$(cheese worktree {task_id})"：'
+        "工作目录会换到一条从项目最新代码切出的新分支上，没合并的提交和改动会一起带过去。"
+        if has_checkout
+        else f"任务「{title}」的这次交付已经采纳，任务还开着。"
+    )
+    return start + _judge(deploys=waits_for_deploy)
+
+
+def task_step_landed_while_working_prompt(
+    *, title: str, task_id, has_checkout: bool
+) -> str:
+    """What a task's agent is told when one of its deliveries lands while it
+    is working on something begun after that delivery went up: that work is
+    not in the merge, and the task goes on."""
+    start = (
+        f"任务「{title}」的这次交付已经采纳并合并，"
+        "但交付之后你又开始了新的工作，它不在这次合并里，任务没有关闭，接着开着。"
         f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
-        "再用 cheese_card(action=request) 把它作为下一步递交，"
-        "做完任务目标就全部达成时 completes_task 填 true。"
-        "新做的东西如果不需要交付，就用 cheese_task(action=close) 关闭任务，结论里写明。"
+        "再用 cheese_card(action=request) 把它作为下一步递交。"
+        if has_checkout
+        else f"任务「{title}」的这次交付已经采纳，"
+        "但交付之后你又开始了新的工作，任务没有关闭，接着开着。"
+        "手上这件做完后，用 cheese_card(action=request) 把它作为下一步递交。"
+    )
+    return (
+        start
+        + "新做的东西不需要交付的，做完后照常判断任务做没做完。"
+        + _judge(deploys=False)
     )
 
 
-def task_summary_prompt(*, title: str) -> str:
-    """What a task's agent is told when its last delivery lands: write the task
-    up, then close it."""
+def task_summary_prompt(
+    *, title: str, has_checkout: bool, deployed: bool = False
+) -> str:
+    """What a task's agent is told once a task it judged done is live, in a
+    project that waits for its deploy (`deploy_landed`): write the task up,
+    then close it."""
+    landed = "已经采纳" + ("并合并" if has_checkout else "")
+    if deployed:
+        landed += "，部署也已上线"
     return (
-        f"任务「{title}」的最后一次交付已经采纳并合并，写完总结就关闭任务。"
+        f"任务「{title}」的最后一次交付{landed}，写完总结就关闭任务。"
         "只做三件事：\n"
         "1. 用 cheese_doc(action=get) 读实况文档，用 cheese_doc(action=edit) 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
         "没有就不写；过程中被推翻的计划删掉。\n"
         "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
-        "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
-        "写明是什么、没有交付。"
-        "没什么可补的，只写一句结果。\n"
+        "没有处理的发现逐条列出；"
+        + (
+            "工作目录里还有这次交付之外的提交或改动的，写明是什么、没有交付。"
+            if has_checkout
+            else ""
+        )
+        + "没什么可补的，只写一句结果。\n"
         "3. 用 cheese_task(action=close) 关闭任务，结论写一句结果。\n"
         "不要改动文件，不要提交审阅。"
     )
+
+
+# 下面这几段是平台报给频道主线上开这个任务的那位 AI 队友的事实（`wake_opener`）：它
+# 看不到任务里的东西，所以这件事的事实都写在话里；拿到后怎么做，写在主线的规矩里
+# （`prompts/pieces/main_line/rules.md` 的「任务的报告」）。
+
+
+def _member(handle: str, names: dict[str, str]) -> str:
+    return f"{names.get(handle) or handle}（handle: {handle}）"
+
+
+def task_named(task: Task) -> str:
+    """A task as a report names it: its number and title."""
+    title = f"「{said_title(task)}」"
+    return f"#{task.number}{title}" if task.number is not None else title
+
+
+def _askers(task: Task) -> list[str]:
+    """Everyone who asked for what the task does: who proposed it, then each
+    member a request was passed on for (`cheese_task(action=tell)`'s asker)."""
+    first = task.reporter_handle or task.owner_handle
+    return list(dict.fromkeys([h for h in (first, *(task.asker_handles or ())) if h]))
+
+
+def task_filed_opener_prompt(
+    task: Task,
+    *,
+    version: int,
+    reviewers: list[str],
+    names: dict[str, str],
+    subject: str | None,
+    body: str | None,
+    focus: str | None,
+) -> str:
+    """What the AI teammate that opened a task from the channel's main line is
+    told when the task hands a version in for review: which version, whom it
+    waits on, the card's change title and description, what the reviewer is
+    asked to look at, and everyone who asked for it (``names``: handle to
+    roster name). A sentence with nothing to say is left out."""
+    waiting = (
+        piece(
+            "context/state_review",
+            who="、".join(_member(h, names) for h in reviewers),
+        )
+        if reviewers
+        else "待审阅"
+    )
+    lines = [
+        piece(
+            "main_line/report_filed",
+            task=task_named(task),
+            version=version,
+            waiting=waiting,
+        )
+    ]
+    said = "\n".join(part.strip() for part in (subject, body) if part and part.strip())
+    if said:
+        lines.append(piece("main_line/report_said", text=said))
+    if focus and focus.strip():
+        lines.append(piece("main_line/report_focus", text=focus.strip()))
+    askers = _askers(task)
+    if askers:
+        lines.append(
+            piece(
+                "main_line/report_askers",
+                names="、".join(_member(h, names) for h in askers),
+            )
+        )
+    return "\n".join(lines)
+
+
+def task_ended_opener_prompt(task: Task, *, facts: str, names: dict[str, str]) -> str:
+    """What the AI teammate that opened a task from the channel's main line is
+    told when the task closes: how it ended (`_how_it_ended`) and everyone who
+    asked for it."""
+    lines = [piece("main_line/report_ended", task=task_named(task), facts=facts)]
+    askers = _askers(task)
+    if askers:
+        lines.append(
+            piece(
+                "main_line/report_askers",
+                names="、".join(_member(h, names) for h in askers),
+            )
+        )
+    return "\n".join(lines)

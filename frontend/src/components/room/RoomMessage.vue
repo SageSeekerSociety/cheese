@@ -10,6 +10,8 @@
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { DeliveryView, TaskLine } from '../../lib/channelTasks'
+import type { Receipt } from '../../lib/readReceipts'
 import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
@@ -21,6 +23,8 @@ import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
   artifactName,
+  askAnswers,
+  askClosedByAsker,
   askOptions,
   isImageBlock,
   isVideoBlock,
@@ -38,13 +42,16 @@ import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 import MarkdownView from '../common/MarkdownView.vue'
 import UserAvatar from '../common/UserAvatar.vue'
+import TaskStateMark from '../task/TaskStateMark.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
+import DeliveryActions from './DeliveryActions.vue'
 import FileBlockMenu from './FileBlockMenu.vue'
 import MessageAppCard from './MessageAppCard.vue'
 import MessageEditor from './MessageEditor.vue'
 import MessageFileCard from './MessageFileCard.vue'
 import MessageQuote from './MessageQuote.vue'
+import ReadReceipt from './ReadReceipt.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -59,6 +66,14 @@ const props = defineProps<{
   /** 被回复的那一条；不在当前页时是随页带来的一行预览；没有就是 null。 */
   parent: Block | ReplyPreview | null
   parentName: string | null
+  /** 这条消息说它是关于哪件任务的：消息头上挂这件任务的标签，点开是那件任务。 */
+  taskTag?: TaskLine | null
+  /** 这是关于这件任务的最新一条：标签上再写状态词和在等谁。 */
+  taskTagFull?: boolean
+  /** 这件任务交了一版在等人审阅，这一条是主线上关于它的最新一条：下面挂处理这一版的按钮。 */
+  deliveryHere?: boolean
+  /** 这条下面那颗「采纳」按下去了，还在等结果。 */
+  adopting?: boolean
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
   runStart: boolean
   /** 同一个人隔了一阵又开口：重新带上名字和时间，但只空一小档。 */
@@ -120,6 +135,8 @@ const props = defineProps<{
    * 占满一栏。频道主线和私聊不给，那里只收队友的回复。
    */
   foldPlain?: boolean
+  /** 自己这条谁读了谁没读（`lib/readReceipts`）；不是自己的、或没有别人能读时是 null。 */
+  receipt?: Receipt | null
 }>()
 
 // 他自己的芝士替他写的这条：署名照旧是他，名字旁边标出来（docs/agent-principles.md 一、四）。
@@ -166,6 +183,8 @@ const emit = defineEmits<{
   (e: 'ask-withdraw', block: Block): void
   /** 这道题不回答，跳过。 */
   (e: 'ask-skip', block: Block): void
+  /** 交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: DeliveryView }): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -183,6 +202,14 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
+// 标签上「在等谁」只在任务等人审阅或回答时写，只写等谁（「等你」「等林老师」）：交付的
+// 题目、第几版、什么时候交的在任务的页签上，挤进标签会把任务名挤没。
+const tagWaits = computed(() => props.taskTag?.state.waits || '')
+// 说这件任务的不是做它的那位 AI 队友时，标签上画做它的那位的头像。
+const tagDoer = computed(() => {
+  const doer = props.taskTag?.teammate
+  return doer && doer !== props.block.author ? doer : null
+})
 // 新手浮窗「预览」一站圈的是芝士摆出来的那份；人自己发的附件不算。
 const previewAnchor = computed(() => (props.block.kind === 'artifact' ? 'preview-card' : ''))
 const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
@@ -250,6 +277,16 @@ const said = computed(() => (props.block.meta?.task_result ? noticeText(props.bl
 // 画——我正要作答。判据在 `lib/askGroups`，和谁答得上这道题是同一条。
 const askForOthers = computed(() => !!askOptions(props.block) && !askAsksViewer(props.block, props.viewer))
 const askOpen = ref(false)
+// 主线消息下的快捷回答（`chat_send` 的 replies）：消息照常画，下面一排按钮只给它问
+// 的人。点一个就是以他自己的名义回复这条消息，和提问卡的选项走同一条路；有人答过、
+// 收回或过期之后就不再给。
+const quickReplies = computed(() => !!props.block.meta?.quick_replies && !!askOptions(props.block))
+const quickOffered = computed(() => {
+  if (!quickReplies.value || props.askClosed || askClosedByAsker(props.block)) return []
+  if (askAnswers(props.block).some((answer) => !answer.skipped)) return []
+  if (!askAsksViewer(props.block, props.viewer)) return []
+  return askOptions(props.block) ?? []
+})
 </script>
 
 <template>
@@ -320,12 +357,37 @@ const askOpen = ref(false)
           <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"
             >mdi-pin</v-icon
           >
+          <ReadReceipt v-if="receipt" class="im-receipt" :receipt="receipt" />
         </template>
       </div>
+      <!-- A continued line has no name row: its ring sits at the row's right edge, level with its first line. -->
+      <ReadReceipt v-if="receipt && !runStart" class="im-receipt im-receipt--cont" :receipt="receipt" />
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
         {{ t('work.room.composer.replyTo', { name: parentName, text: replySnippet(parent, refs) }) }}
+      </button>
+      <!-- 关于哪件任务：和上面的回复那一行同一个样子，点开是那件任务。 -->
+      <button
+        v-if="taskTag"
+        type="button"
+        class="im-task-tag"
+        :aria-label="t('work.room.taskTag.open', { title: taskTag.title })"
+        @click="emit('open-card', taskTag.id)"
+      >
+        <TaskStateMark :state="taskTag.state" :size="14" icon-only />
+        <span class="im-task-tag__title">{{ taskTag.title }}</span>
+        <CheeseAvatar
+          v-if="tagDoer"
+          class="im-task-tag__doer"
+          :size="14"
+          :name="nameOfHandle?.(tagDoer)"
+          :handle="tagDoer"
+        />
+        <template v-if="taskTagFull">
+          <span class="im-task-tag__state">{{ taskTag.state.label }}</span>
+          <span v-if="tagWaits" class="im-task-tag__wait">{{ tagWaits }}</span>
+        </template>
       </button>
       <!-- 一份文件：发来的附件（图片直接画成图），或芝士摆出来的东西。旁边一颗 ⋯ 收着
            这一份能做的事；置顶了的带一个小图钉。 -->
@@ -449,7 +511,7 @@ const askOpen = ref(false)
 
            问到别人的题收成一行（`AskFoldLine`）：整张卡占满一栏，而频道里大部分题不是
            问看的人的。点开才长出下面那句题目和整张卡；问到我自己的照整张卡画。 -->
-      <template v-else-if="askOptions(block)">
+      <template v-else-if="askOptions(block) && !quickReplies">
         <AskFoldLine
           v-if="askForOthers"
           :blocks="[block]"
@@ -502,6 +564,25 @@ const askOpen = ref(false)
         </button>
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
+      <div v-if="quickOffered.length" class="im-quick" role="group" :aria-label="t('work.room.message.quickReplies')">
+        <BaseButton
+          v-for="option in quickOffered"
+          :key="option.text"
+          kind="secondary"
+          size="sm"
+          :disabled="askAnswering"
+          @click="emit('ask-reply', block, option.text)"
+        >
+          {{ option.text }}
+        </BaseButton>
+      </div>
+      <DeliveryActions
+        v-if="deliveryHere && taskTag"
+        :task="taskTag"
+        :viewer="viewer"
+        :adopting="adopting"
+        @delivery="emit('delivery', $event)"
+      />
       <MessageQuote
         v-if="block.meta?.quoted_context && block.meta.quoted_context.kind !== 'viewing'"
         :quote="block.meta.quoted_context"
@@ -516,7 +597,7 @@ const askOpen = ref(false)
         </button>
       </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-         highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
+         highlighted; click toggles. -->
       <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
         <button
           v-for="r in block.reactions"
@@ -565,6 +646,48 @@ const askOpen = ref(false)
 .im-replied:hover {
   color: var(--ink);
 }
+/* 关于哪件任务：和回复那一行同一种淡底小字条。 */
+.im-task-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-bottom: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.im-task-tag:hover {
+  color: var(--ink);
+}
+.im-task-tag__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.im-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.im-task-tag__doer {
+  flex: none;
+  margin-left: 2px;
+}
+.im-task-tag__state {
+  flex: none;
+  margin-left: 4px;
+}
+.im-task-tag__wait {
+  flex: none;
+  margin-left: 2px;
+}
 .im-pending-state {
   position: absolute;
   top: 4px;
@@ -572,6 +695,17 @@ const askOpen = ref(false)
   font-size: 12px;
   line-height: var(--lh-14-loose);
   color: var(--faint);
+}
+/* 已读那一圈：在名字那一行的最右端；续话没有那一行，挂在这一行右上角、和第一行字齐平。 */
+.im-receipt {
+  margin-left: auto;
+  align-self: center;
+}
+.im-receipt--cont {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 16px;
 }
 /* 发件箱: 慢请求、断网或正在输入预览时淡一档，正常快发不闪灰。 */
 .im-row--dim .im-text,

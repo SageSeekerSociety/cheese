@@ -249,7 +249,7 @@ export function register(on) {
           answered = owed.id;
           // And where the runner reads it, to know the turn may end (`insist`).
           await $.fs.write(owed.answered, owed.id);
-        } else if (!owed.reads.includes(key)) {
+        } else if (owed.held !== false && !owed.reads.includes(key)) {
           return { deny: owed.reason };
         }
       }
@@ -312,6 +312,12 @@ export function register(on) {
       return next({ ...e, skill: skillEntry(args.skill) });
     }
     if (native.has(tool)) {
+      // A session that writes only its memory (the channel's main line,
+      // CHEESE_WRITES=memory) changes no project file: that is a task's work.
+      if (tool !== "Read" && (await $.env.get("CHEESE_WRITES")) === "memory"
+          && !["file_path", "notebook_path"].some((field) => memoryPath(args[field]))) {
+        return { deny: "频道主线只写记忆：Write 和 Edit 只能用于 ~/.cheese/memory/ 下的文件。要改项目文件，开成任务。" };
+      }
       for (const field of ["file_path", "notebook_path"]) {
         const local = memoryPath(args[field]);
         if (local) return next({ ...e, [field]: local });

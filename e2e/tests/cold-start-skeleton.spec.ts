@@ -38,11 +38,11 @@ test('慢网首帧，登录的人看到应用外框，侧栏是他留下的宽�
   const skeleton = page.locator('#sx-boot-skeleton');
   await expect(skeleton).toBeVisible();
   await expect(skeleton.locator('.sx-landing')).toBeHidden();
-  // 正文从左栏加上那 320px 之后开始，和真页面一样（侧栏和它的分隔线一起占这么宽）。
-  const rail = await skeleton.locator('.sx-rail').boundingBox();
+  // 左边那一列方块栏拿掉了（2026-11-16），侧栏从窗口左缘开始：正文从那 320px 之后开始，
+  // 和真页面一样（侧栏和它的分隔线一起占这么宽）。
+  await expect(skeleton.locator('.sx-rail')).toBeHidden();
   const main = await skeleton.locator('.sx-main').boundingBox();
-  expect(rail?.width).toBeGreaterThan(0);
-  expect(main?.x).toBe((rail?.x ?? 0) + (rail?.width ?? 0) + 320);
+  expect(main?.x).toBe(320);
 });
 
 test('应用一挂载，骨架节点立刻消失', async ({ page }) => {

@@ -129,7 +129,7 @@ PRESETS: dict[str, Preset] = {
         "原文、说明问题。不提风格偏好。没有问题就说没有。",
     ),
     # 只对还空着的项目总览（route 那一头挡着别的文档）。总览的定义在
-    # `project/overview.py` 和每段对话开头那一节（`harness/opening.py`）：三件事、
+    # `project/overview.py` 和每段对话开头那一节（`prompts/opening.py`）：三件事、
     # 1500 字以内；这里照它写，不另起一套。
     "draft": Preset("edit", "document", _DRAFT_OVERVIEW),
     "structure": Preset(

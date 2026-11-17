@@ -28,13 +28,16 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.block.asked import (
     EXPIRED,
+    PENDING,
     SKIPPED,
     WITHDRAWN,
     answered,
     closed_by_the_asker,
     may_answer,
+    pending_replies,
     skipped_by,
     skipped_by_all,
+    withdrawn_by_the_asker,
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -183,6 +186,37 @@ async def post_questions(
     return rows
 
 
+#: A main-line message's quick replies (`chat_send`'s ``replies``): at most
+#: this many, each a short answer the person would otherwise type.
+MAX_QUICK_REPLIES = 3
+QUICK_REPLY_CHARS = 40
+#: The key that says a question is a message with quick replies under it, not
+#: a question card (`cheese_ask`): the timeline draws the message as said, and
+#: a row of buttons under it for whoever it asks.
+QUICK_REPLIES = "quick_replies"
+
+
+def quick_replies_meta(
+    replies: list[str], *, asked: tuple[str, ...], deadline: datetime | None
+) -> dict:
+    """What makes an AI teammate's message offer ``replies`` under it.
+
+    Such a message is a question like `post_questions` writes — its options
+    are the replies, it asks ``asked`` (empty: nobody in particular) — so a
+    click is an ordinary message replying to it, recorded on it
+    (`agent.announce.answer_questions`), and once answered or past
+    ``deadline`` its replies are no longer offered. Only how it is drawn
+    differs (`QUICK_REPLIES`)."""
+    return {
+        "options": [{"text": text} for text in replies],
+        "asked": list(asked),
+        "asked_all": False,
+        "answer_log": [],
+        QUICK_REPLIES: True,
+        **({"deadline": deadline.isoformat()} if deadline is not None else {}),
+    }
+
+
 def skip_question(question: Block, *, by: str) -> bool:
     """``by`` 跳过这道题：他不回答它。返回这一下是不是让题了结了（它点名的每个人
     都跳过了，`block.asked.skipped_by_all`）—— 了结了，提问的那位才该知道。
@@ -301,6 +335,35 @@ async def withdraw_question(session, *, question: Block, by: str) -> Block:
         "answer_log": [
             *(meta.get("answer_log") or []),
             _closed_entry(WITHDRAWN, by=by),
+        ],
+    }
+    await session.flush()
+    return question
+
+
+async def confirm_pending(session, *, question: Block, by: str) -> Block:
+    """提问的那位确认：人打字回的那几句就是答案，题就此结掉。
+
+    打字回复先以 ``kind=pending`` 记在题上（`announce.answer_questions`），题仍在
+    等回答、黄灯不灭；那句话是答案还是追问、岔话，只有提问的那位读得懂。它判定是
+    答案，就走这一步，把待确认的条目改成 ``kind=note``，题因此 `answered`。判定不是
+    答案时什么都不用做，题保持打开。
+
+    只有题块作者可以确认，没有待确认的回复就拒掉，已经了结的题也不再收。flush，不
+    commit；通知由调用方结。
+    """
+    meta = dict(question.meta or {})
+    if question.author != by:
+        raise ForbiddenError(say("askWithdrawNotYours"))
+    if answered(meta) or withdrawn_by_the_asker(meta):
+        raise ConflictError(say("askAlreadyAnswered"))
+    if not pending_replies(meta):
+        raise UnprocessableEntityError(say("askNothingPending"))
+    question.meta = {
+        **meta,
+        "answer_log": [
+            {**entry, "kind": "note"} if (entry or {}).get("kind") == PENDING else entry
+            for entry in (meta.get("answer_log") or [])
         ],
     }
     await session.flush()

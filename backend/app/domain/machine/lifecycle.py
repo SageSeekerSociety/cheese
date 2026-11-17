@@ -474,7 +474,11 @@ class SandboxLifecycle:
         now = datetime.now(UTC)
         for host in hosts:
             assert host.device_id is not None
-            if settings.cloud_sandbox_freeze:
+            if host.refresh_in_place and settings.cloud_sandbox_park:
+                # Brought up to date where it is (`host_refresh`): its frozen
+                # sandboxes are parked rather than destroyed, and stay.
+                await self._park_frozen_on(host.id, host.device_id)
+            elif settings.cloud_sandbox_freeze:
                 gone += await self.destroy_frozen_on(host.device_id, host_id=host.id)
             assert host.draining_since is not None
             if now - host.draining_since < timedelta(
@@ -506,6 +510,27 @@ class SandboxLifecycle:
                 ):
                     gone += 1
         return gone
+
+    async def _park_frozen_on(self, host_id: uuid.UUID, device_id: str) -> None:
+        """Park the frozen sandboxes of a host being brought up to date in
+        place: its run waits for nothing but parked ones to be on it."""
+        rows = list(
+            await self._session.scalars(
+                select(SandboxHome).where(
+                    SandboxHome.host_id == host_id,
+                    SandboxHome.frozen_at.is_not(None),
+                    SandboxHome.parked_at.is_(None),
+                    SandboxHome.stopped_at.is_(None),
+                )
+            )
+        )
+        await self._session.commit()
+        for home in rows:
+            await self._park(
+                home.id,
+                home.topic_id if home.session_id is not None else None,
+                device_id,
+            )
 
     async def destroy_idle(self) -> int:
         """Destroy every idle sandbox, and finish every removal left

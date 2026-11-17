@@ -2,15 +2,18 @@
 
 The rules, as a person would state them:
 
-- When a version is handed in for review, the channel the task came from gets
-  one line saying so, with the card it filed: what was handed in, and which
-  version. The line never says how the review stands; it records that the
-  version went in. It starts no turn of the channel's AI teammate.
-- When a version is returned, the channel gets one line saying who returned
-  it. Handed in again, it is the next version.
-- Once the task is over, the channel hears how it ended exactly once: the
-  write-up when the task's teammate writes one, or that it was accepted when
-  the write-up never comes.
+- When a version is handed in for review, the conversation the task came
+  from (the channel's main line, or the 支线 it came from) records it, with
+  the card it filed and which version. The record never says how the review
+  stands; it records that the version went in.
+- When a version is returned, the same conversation records who returned it.
+  Handed in again, it is the next version.
+- Those two are things that happened, recorded by the platform: they are not
+  words of the task's AI teammate, appear under nobody's name, and start no
+  turn of the channel's AI teammate.
+- Once the task is over, the channel records how it ended exactly once, as
+  something that happened: the write-up when one is written, or that it was
+  accepted when the write-up never comes.
 """
 
 import uuid
@@ -22,6 +25,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.room_task.models import Task
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     post_message,
     session_auth_headers,
@@ -57,27 +61,44 @@ def _opened_in_the_main_line(client, room: str) -> uuid.UUID:
     return task.id
 
 
-def _file(client, room: str, *, completes_task: bool = True) -> str:
+def _file(client, room: str) -> str:
     r = client.post(
         f"/topics/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
             "change_subject": _SUBJECT,
             "reviewer_handle": "alice",
-            "completes_task": completes_task,
         },
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
 
-def _told(client, room: str, task_id: uuid.UUID) -> list[dict]:
+def _told(client, conversation: str, task_id: uuid.UUID) -> list[dict]:
+    """What ``conversation`` holds about ``task_id``: what happened to it, and
+    what its teammate said there."""
     blocks = client.get(
-        f"/topics/{room}/blocks", headers=session_auth_headers("alice")
+        f"/topics/{conversation}/blocks", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
     return [
-        b for b in blocks if (b.get("meta") or {}).get("task_result") == str(task_id)
+        b
+        for b in blocks
+        if str(task_id)
+        in (
+            (b.get("meta") or {}).get("task_id"),
+            (b.get("meta") or {}).get("task_result"),
+        )
     ]
+
+
+def _happened(line: dict) -> bool:
+    """A line the platform recorded, drawn as something that happened: under
+    nobody's name."""
+    return (
+        line["kind"] == "event"
+        and line["author_type"] == "platform"
+        and line["shown_as"] == "happening"
+    )
 
 
 def _turns(client, room: str) -> int:
@@ -113,15 +134,61 @@ def test_handing_in_and_returning_are_told_in_the_main_line(client, app_world):
         "taskReturned",
         "taskFiledForReview",
     ]
+    assert all(_happened(line) for line in lines)
     assert [line["meta"].get("delivery") for line in lines] == [
-        {"card_id": first, "subject": _SUBJECT, "version": 1},
+        {"card_id": first, "version": 1},
         None,
-        {"card_id": second, "subject": _SUBJECT, "version": 2},
+        {"card_id": second, "version": 2},
     ]
     assert "已提交审阅" in lines[0]["content"]
-    assert "退回" in lines[1]["content"]
+    assert "<@alice>" in lines[1]["content"]
     assert "再短一点" not in lines[1]["content"]
     assert _turns(client, room) == turns
+
+
+def test_a_task_from_a_thread_is_recorded_in_that_thread(client, app_world):
+    room = _make_topic(client, _make_project(client))
+    thread = in_thread(client, room, "alice")
+    task = delivery_task(client, room)
+
+    async def hang():
+        from app.domain.block.repositories import BlockRepository
+        from app.domain.event_author import AuthorType
+        from app.domain.thread.models import Thread
+
+        async with client.test_factory() as session:
+            reply = await BlockRepository(session).add(
+                project_id=task.project_id,
+                conversation_id=uuid.UUID(thread),
+                author="alice",
+                author_type=AuthorType.participant,
+                content="把报名表做短",
+            )
+            root = (await session.get(Thread, uuid.UUID(thread))).root_block_id
+            await session.commit()
+        async with client.test_factory() as session:
+            row = await session.get(Task, task.id)
+            row.upgraded_from_block_id = root
+            row.source_block_id = reply.id
+            await session.commit()
+
+    client.portal.call(hang)
+    card = _file(client, room)
+    returned = client.post(
+        f"/accept-cards/{card}/reject",
+        json={"note": "", "decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert returned.status_code == 200, returned.text
+
+    lines = _told(client, thread, task.id)
+    assert [line["meta"]["i18n"]["content"]["key"] for line in lines] == [
+        "taskFiledForReview",
+        "taskReturned",
+    ]
+    assert all(_happened(line) for line in lines)
+    assert lines[0]["meta"]["delivery"] == {"card_id": card, "version": 1}
+    assert _told(client, room, task.id) == []
 
 
 def _card_on_rows(client, room: str, task_id: uuid.UUID, viewer: str) -> list[dict]:
@@ -177,25 +244,29 @@ def _accepted_last_step(client, app_world) -> tuple[str, uuid.UUID]:
 
 def test_a_written_up_task_ends_in_the_main_line_once(client, app_world):
     room, task_id = _accepted_last_step(client, app_world)
-    # Accepted, and being written up: nothing is said past the hand-in yet.
-    [handed_in] = _told(client, room, task_id)
+    # Accepted: the hand-in and the step that landed, and no ending yet.
+    handed_in, landed = _told(client, room, task_id)
     assert handed_in["meta"].get("delivery") is not None
+    assert landed["content"] == "<@alice> 采纳了「Test delivery」"
 
     written_up(client, str(task_id))
 
     *_, ending = _told(client, room, task_id)
-    assert len(_told(client, room, task_id)) == 2
+    assert len(_told(client, room, task_id)) == 3
     assert "做完了" in ending["content"]
+    assert _happened(ending)
 
 
-def test_a_task_whose_write_up_never_comes_still_ends_in_the_main_line(
-    client, app_world
-):
+def test_a_merge_its_teammate_never_follows_up_leaves_the_task_open(client, app_world):
+    """No merge closes a task: an hour on, with its teammate silent, it is
+    still open, and the main line has heard only that the step landed."""
     room, task_id = _accepted_last_step(client, app_world)
 
     time_passes(client, str(task_id), minutes=60)
     watch(client)
 
-    *_, ending = _told(client, room, task_id)
+    *_, landed = _told(client, room, task_id)
     assert len(_told(client, room, task_id)) == 2
-    assert "已采纳" in ending["content"]
+    assert landed["content"] == "<@alice> 采纳了「Test delivery」"
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"

@@ -30,16 +30,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.addressing import Event, address
-from app.domain.agent.model_catalog import catalog
+from app.domain.agent.model_catalog import Scene, catalog, shown_model
 from app.domain.agent.opening import opening_state
 from app.domain.agent.session_state import running_conversations
 from app.domain.agent.teammate_runs import teammate_runs
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.message_input import TASK_TAG
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWaits
 from app.domain.identity.actor import Actor
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_and_counts_by_task
@@ -104,6 +107,10 @@ async def task_out(db, task, card: Any = _CARD_UNSET, *, me: str) -> dict:
         task.upgraded_from_block_id is not None
         and task.id in await from_threads(db, [task.id])
     )
+    # 做它的那位 AI 队友的席位：拿这一行换掉列表里那一行时，任务标签上的头像不跟着
+    # 丢。交给了某位队友的任务写的就是它；没交给谁的不再多查一趟（列表那一行查过，
+    # `task_rows`），落空时标签上不画头像。
+    out["teammate"] = task.agent_handle
     return out
 
 
@@ -111,7 +118,8 @@ def card_row(card, version: int | None, reviewers: Sequence[str]) -> dict | None
     """The card a task row carries: where it rides (PR) and, for a card in
     review, what the row's second line says — whom it waits on (``reviewers``,
     the card's own set from `accept_card_reviewer`), 「第 N 版」 (``version``,
-    how many cards the task has filed), what was handed in, and since when.
+    how many cards the task has filed), what was handed in, and since when;
+    for a settled card, who accepted or returned it.
     ``card`` is the `AcceptCard` row or the `RailCard` value; both carry these
     fields."""
     if card is None:
@@ -124,6 +132,8 @@ def card_row(card, version: int | None, reviewers: Sequence[str]) -> dict | None
         "version": version,
         # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
         "reviewer": "、".join(reviewers) or None,
+        # 谁采纳或退回了这张卡：任务状态下面那一行写「林老师已采纳」「林老师已退回」。
+        "decided_by": card.decided_by,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
     }
@@ -194,8 +204,24 @@ async def task_rows(
     # 构造几百遍。
     project = await ProjectRepository(db).get(project_id)
     choices = catalog(project.settings if project else None)
+    # 没花过钱的卡写它下一轮会用的模型：这件任务的队友在任务里用什么。
+    teammates = await AgentInstanceService(db).for_tasks(
+        project_id, {task.id: (task.room_id, task.agent_handle) for task, _ in threads}
+    )
+    planned = {
+        task_id: shown_model(
+            Scene.task,
+            choices,
+            project_settings=project.settings if project else None,
+            teammate=teammate.configuration,
+        )
+        for task_id, teammate in teammates.items()
+    }
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
+    # 哪几件任务有东西可预览（队友在任务里摆出过一份）：主线上交付那一条下面的
+    # 「预览」只在这时候给。
+    previews = await BlockRepository(db).with_preview(thread_ids)
     in_place = await from_threads(
         db, [t.id for t, _ in threads if t.upgraded_from_block_id is not None]
     )
@@ -224,8 +250,17 @@ async def task_rows(
                 **task_row_json(task),
                 # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
                 "model": presentation.card_model(
-                    task, spent=spent.get(task.id), choices=choices
+                    task,
+                    spent=spent.get(task.id),
+                    choices=choices,
+                    planned=planned.get(task.id),
                 ),
+                # 做它的那位 AI 队友的席位：没指定时落到频道的那位，和它在消息
+                # 上的署名是同一个 handle。主线上别的队友提到这件任务时，任务
+                # 标签上画它的头像。
+                "teammate": agent_instance_handle(teammates[task.id].instance_id)
+                if task.id in teammates
+                else None,
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
@@ -234,6 +269,7 @@ async def task_rows(
                     task, card, shown, asked.get(task.id), actor.handle, reviewers
                 ),
                 "from_thread": task.id in in_place,
+                "has_preview": task.id in previews,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
                 "blocks": [
@@ -266,6 +302,17 @@ def named_task(block: Block) -> uuid.UUID | None:
         return None
 
 
+def tagged_task(block: Block) -> uuid.UUID | None:
+    """The task a message says it is about (`TASK_TAG`), if it says one."""
+    raw = (block.meta or {}).get(TASK_TAG)
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
 async def tasks_under_blocks(
     db: AsyncSession,
     actor: Actor,
@@ -278,14 +325,16 @@ async def tasks_under_blocks(
     message, under that message — in the main line the message a task hangs
     under, in a 支线 the reply it was made from, except the task the 支线
     itself became — and the task a room-line row says began, on that row.
-    Blocks that carry none are left out."""
+    A message about a task (`TASK_TAG`) carries that task too, so its tag can
+    say how the task stands. Blocks that carry none are left out."""
     named = {block.id: task_id for block in blocks if (task_id := named_task(block))}
+    tagged = {block.id: task_id for block in blocks if (task_id := tagged_task(block))}
     if not blocks:
         return {}
     threads = await TaskService(db).threads_for_room(
         room_id,
         limit=0,
-        ids=set(named.values()),
+        ids=set(named.values()) | set(tagged.values()),
         origins=[block.id for block in blocks],
     )
     rows = dict(
@@ -303,8 +352,8 @@ async def tasks_under_blocks(
             carried.setdefault(hung, []).append(rows[task.id])
         elif said is not None and said in said_in and said_in[said] != task.id:
             carried.setdefault(said, []).append(rows[task.id])
-    for block_id, task_id in named.items():
-        if task_id in rows:
+    for block_id, task_id in [*named.items(), *tagged.items()]:
+        if task_id in rows and rows[task_id] not in carried.get(block_id, []):
             carried.setdefault(block_id, []).append(rows[task_id])
     return carried
 
@@ -327,6 +376,19 @@ async def incomplete_tasks(
     if not task_ids:
         return {}
     return await MemberWaits(db).unresolved_failures({t: [t] for t in task_ids})
+
+
+def _neglect_json(
+    clock: presentation.Neglect | None, now: datetime, *, running: bool
+) -> dict | None:
+    """The row's `neglect`: set once the task is dormant, with when it closes."""
+    if clock is None or running or not clock.dormant(now):
+        return None
+    return {
+        "close_at": clock.close_at.isoformat(),
+        "since": clock.since.isoformat(),
+        "waiting_on_someone": clock.waiting_on_someone,
+    }
 
 
 async def project_task_rows(
@@ -428,6 +490,14 @@ async def project_task_rows(
                     shown, last_activity=last_activity, now=now
                 ),
                 "last_activity_at": last_activity.isoformat(),
+                # 很久没人理会、已经进了「搁置」（等人审阅的是催过）的活：什么时候自动
+                # 关闭。None = 不在搁置（会话在跑的也不算）。判据一份，在
+                # `presentation.neglect`，自动关闭的那一拍读的是同一个函数。
+                "neglect": _neglect_json(
+                    presentation.neglect(shown, last_activity=last_activity),
+                    now,
+                    running=is_running(task.id),
+                ),
                 "card": card_row(
                     card,
                     versions.get(task.id),
@@ -596,10 +666,22 @@ async def task_page_row(db: AsyncSession, place, task, *, me: str) -> dict:
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)
+    choices = catalog(project.settings if project else None)
+    teammate = (
+        await AgentInstanceService(db).for_tasks(
+            place.project_id, {task.id: (task.room_id, task.agent_handle)}
+        )
+    )[task.id]
     out["model"] = presentation.card_model(
         task,
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
-        choices=catalog(project.settings if project else None),
+        choices=choices,
+        planned=shown_model(
+            Scene.task,
+            choices,
+            project_settings=project.settings if project else None,
+            teammate=teammate.configuration,
+        ),
     )
     card = cards.get(task.id)
     out["card"] = card_row(

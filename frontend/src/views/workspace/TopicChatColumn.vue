@@ -16,17 +16,17 @@ import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
-import ReviewWaitingBar from '@/components/room/ReviewWaitingBar.vue'
+import AgentNowStrip from '@/components/room/AgentNowStrip.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 import { artifactName } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
-import { taskTitle, topicTitle } from '@/lib/topicState'
+import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { openRoomTasksQuery, roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
+import { roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
 import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -74,6 +74,8 @@ const props = defineProps<{
   acceptElsewhere?: boolean
   /** 手机上：采纳那一条只放「审阅」，决定在「改动」页底部。 */
   acceptReviewButton?: boolean
+  /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
+  adoptingTask?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -96,6 +98,8 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
+  // 页面开着时主线上实时来了一行交付（打开时已经在的不算）：页面决定要不要打开它。
+  (e: 'delivery-arrived', taskId: string): void
   // 消息的 ⋯ 里钉成章节/取消章节，或书签条里取消：这一页拿着这段对话的地址，由它去改。
   (e: 'chapter', block: Block): void
   (e: 'unchapter', target: Block | string): void
@@ -110,6 +114,8 @@ const emit = defineEmits<{
   (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
+  /** 主线上交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   // AI 队友一条回复上的「查看过程」：右半边换成那一轮的现场。
   (e: 'open-process', turnId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -182,22 +188,6 @@ const madeHere = computed(() => {
     )
     .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
-// 频道主线上「待你审阅」那一条：这个频道里交了一版、等我审阅的任务，最早交上来的在前。
-// 读的是频道概览和侧栏那一份开着的任务清单，不另问。
-const mainLine = computed(() => !props.taskId && !props.threadId && !props.beside)
-const openTasks = useQuery(
-  computed(() => ({ ...openRoomTasksQuery(props.topic.id), enabled: mainLine.value })),
-  queryClient
-)
-const waitingForMe = computed(() => {
-  if (!mainLine.value) return []
-  const me = myHandle()
-  return (openTasks.data.value?.data ?? [])
-    .filter((row) => row.card?.status === 'pending' && (row.card.reviewer ?? '').split('、').includes(me))
-    .sort((a, b) => (a.card?.since ?? '').localeCompare(b.card?.since ?? ''))
-    .map((row) => ({ taskId: row.id, title: taskTitle(row) }))
-})
-
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
   mentionNames: props.memberNames ?? {},
@@ -238,6 +228,12 @@ async function join() {
 const linkDown = computed(() => !!chatRef.value?.linkDown)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
+const agentLines = ref<MemberActivityLine[]>([])
+function onActivity(lines: MemberActivityLine[]) {
+  agentLines.value = lines
+  emit('activity', lines)
+}
+
 defineExpose({
   linkDown,
   reloadFeedback: () => feedbackRef.value?.reload(),
@@ -250,6 +246,8 @@ defineExpose({
 
 <template>
   <div class="chat-col">
+    <!-- 进频道或支线页就能看到：每位 AI 此刻在干什么（和输入框上方那一行同一份数据）。 -->
+    <AgentNowStrip :lines="agentLines" />
     <ChatPanel
       ref="chatRef"
       :topic="topic"
@@ -260,6 +258,7 @@ defineExpose({
       :ask-closed="askClosed"
       :always-summon="alwaysSummon"
       :place-state="task?.status ?? null"
+      :adopting-task="adoptingTask ?? null"
       :in-thread="beside"
       hide-header
       :show-composer="!rejecting"
@@ -278,9 +277,10 @@ defineExpose({
       @agent-control="emit('agent-control', $event)"
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
-      @activity="emit('activity', $event)"
+      @activity="onActivity"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
+      @delivery-arrived="emit('delivery-arrived', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path) => emit('open-file', path)"
       @open-resource="
@@ -291,12 +291,12 @@ defineExpose({
       @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
+      @delivery="emit('delivery', $event)"
       @open-process="emit('open-process', $event)"
     >
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
            见，但平时只占一行，不把对话挤到只剩几行。 -->
       <template #above-composer>
-        <ReviewWaitingBar v-if="mainLine && !rejecting" :items="waitingForMe" @open="emit('open-card', $event)" />
         <TopicAcceptCard
           v-if="!acceptElsewhere && !threadId"
           class="chat-dock"

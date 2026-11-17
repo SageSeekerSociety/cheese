@@ -467,7 +467,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     id: 'topic-rail-more-tasks-row',
     title: 'TopicRailMoreTasksRow',
     about:
-      '频道下面任务那几行的最后一行：侧栏先只挂和我有关的几条，这一行就地展开这个频道其余进行中的任务，再点一下收回。它不换页。',
+      '频道下面任务那几行的最后一行：侧栏先只挂和我有关的几条，这一行就地展开这个频道其余未结束的任务，再点一下收回。它不换页。',
     file: 'src/components/topic-sidebar/TopicRailMoreTasksRow.vue',
     component: TopicRailMoreTasksRow,
     // 那个箭头是 v-icon，所以要 Vuetify；字由调用方递进来，不读词表。

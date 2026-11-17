@@ -372,6 +372,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 ),
                 "draining": host.draining_since is not None,
                 "draining_since": _iso(host.draining_since),
+                "refresh_in_place": host.refresh_in_place,
                 "enroll_attempts": host.enroll_attempts,
                 "enroll_error": host.enroll_error or None,
                 "usage": usage.get(host.id),

@@ -87,7 +87,7 @@ class TeachingRequest(BaseModel):
     #: 读写上（`teaching_to_api(include_private=True)`）。
     private_prompt: str | None = Field(default=None, alias="privatePrompt")
     #: 本节学习目标。写上它这份指导就按教育性走：`systemPrompt` 留空时带上
-    #: 平台的默认教学要求（`harness.opening.DEFAULT_TEACHING_PROMPT`）。
+    #: 平台的默认教学要求（`prompts/pieces/opening/default_teaching.md`）。
     learning_goals: list[str] = Field(default_factory=list, alias="learningGoals")
     #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
     #: 存指向它们的 id。
@@ -106,6 +106,10 @@ class TeachingRequest(BaseModel):
     skills: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
         default_factory=list
     )
+    #: 「引导为主」时的两项保护：提示阶梯、输出检查（`Teaching.hint_ladder` /
+    #: `Teaching.output_check`）。只在 `mode` 是 ``guide`` 时生效；缺省关着。
+    hint_ladder: bool = Field(default=False, alias="hintLadder")
+    output_check: bool = Field(default=False, alias="outputCheck")
 
 
 def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
@@ -129,6 +133,8 @@ def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dic
         "materialIds": list(teaching.material_ids),
         "documentIds": list(teaching.document_ids),
         "skills": list(teaching.skills),
+        "hintLadder": teaching.hint_ladder,
+        "outputCheck": teaching.output_check,
     }
     if include_private:
         data["privatePrompt"] = teaching.private_prompt

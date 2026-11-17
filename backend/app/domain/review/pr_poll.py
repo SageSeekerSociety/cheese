@@ -20,6 +20,7 @@ import httpx
 from sqlalchemy import or_, select
 
 from app.core.sentences import say
+from app.domain.addressing import Event
 from app.domain.delivery_events import DeliveryEvent, NotificationType, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
@@ -50,6 +51,7 @@ from app.domain.review.ports import (
     Chat,
     DispatchPending,
     RecordInstruction,
+    RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
 )
@@ -258,6 +260,7 @@ async def poll_uncarded_task_prs(
             # task's earlier steps landed on PRs it no longer holds.
             or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
             Task.closing_since.is_(None),
+            Task.deploying_since.is_(None),
             Topic.status != TopicStatus.archived,
             # A card that is still waiting for its reviewer keeps the task in
             # this poll: its checks turning green is news to the line too.
@@ -389,6 +392,7 @@ async def poll_uncarded_task_prs(
                         or task.project_id != project
                         or (task.status != TaskStatus.open and task.delivered_head)
                         or task.closing_since is not None
+                        or task.deploying_since is not None
                     ):
                         return checked, merged, None
                     if await session.scalar(
@@ -403,30 +407,44 @@ async def poll_uncarded_task_prs(
                     topic = await session.get(Topic, task.room_id)
                     if topic is None or topic.status == TopicStatus.archived:
                         return checked, merged, None
-                    # Merged on the forge without a delivery: nothing said it was
-                    # a step, so the task is done.
+                    # Merged on the forge without a delivery: nobody said the
+                    # task is done, so it goes on, and its owner hears so in
+                    # the task — whether it is over is theirs to say
+                    # (`task_landing`).
                     await delivery_landed(
                         session,
                         task,
                         by=await _merged_by_name(session, status),
                         head=status.head_sha,
                         pr_number=number,
-                        completes=True,
                         handed_over=None,
                         record_instruction=record_instruction,
                         task_teammate=task_teammate,
                     )
+                    # A task closed by hand before its PR merged stays closed:
+                    # there is nothing for its owner to decide.
+                    goes_on = task.status == TaskStatus.open
+                    owner = task.owner_handle if goes_on else None
                     await announce(
                         session,
                         place_id=task.room_id,
                         task_id=task.id,
-                        content=say("prMergedDelivered", pr=number),
+                        content=(
+                            say("prMergedDelivered", pr=number)
+                            if not goes_on
+                            else say(
+                                "prMergedTaskGoesOn", pr=number, owner=f"<@{owner}>"
+                            )
+                            if owner
+                            else say("prMergedTaskGoesOnNoOwner", pr=number)
+                        ),
                         meta=notice(
                             EVENT_ACCEPT_DONE,
                             severity=SEVERITY_INFO,
                             who=WHO_PLATFORM,
                             detail=task.pr_url or "",
                         ),
+                        points_at=Event(mentioned=(owner,) if owner else ()),
                     )
                     await session.commit()
                     merged = True
@@ -588,7 +606,11 @@ async def _wake_when_checks_pass(
         task = await lock_task_for_change(session, task_id)
         if task is None or task.project_id != project_id or task.pr_number != number:
             return
-        if task.status is not TaskStatus.open or task.closing_since is not None:
+        if (
+            task.status is not TaskStatus.open
+            or task.closing_since is not None
+            or task.deploying_since is not None
+        ):
             if task is not None:
                 _set_checks(task, head, state)
                 await session.commit()
@@ -669,6 +691,8 @@ async def sweep_closings(
     announce: Announce,
     *,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
 ) -> dict:
@@ -676,7 +700,9 @@ async def sweep_closings(
     goes on to its next step (`task_landing.go_on_while_working`), and one
     past its write-up deadline is closed and its room told what was left
     undone (`room_task.closing.close_overdue`). ``machines`` removes a closed
-    task's checkouts on the machines holding it."""
+    task's checkouts on the machines holding it. What a close tells the AI
+    teammate that opened the task (`task_landing.tell_origin_ended`) is sent
+    once the closes are committed."""
     sessions = chat.session_factory
     gone_on = await go_on_while_working(
         sessions,
@@ -687,8 +713,12 @@ async def sweep_closings(
         closed = await close_overdue(session, chat, machines=machines)
         for overdue in closed:
             await tell_room_undelivered(session, overdue, announce=announce)
-            await tell_origin_ended(session, overdue.task, task_teammate=task_teammate)
+            await tell_origin_ended(
+                session, overdue.task, announce=announce, record_seat=record_seat
+            )
         await session.commit()
+    if closed:
+        await dispatch_pending()
     return {"gone_on": len(gone_on), "closed": len(closed)}
 
 

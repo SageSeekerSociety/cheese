@@ -8,7 +8,7 @@ import type { TaskState } from './taskState'
 
 import { isAgentHandle } from './authorship'
 import { replySnippet } from './blockDisplay'
-import { taskState } from './taskState'
+import { joined, taskState } from './taskState'
 
 import { t } from '@/i18n'
 
@@ -33,14 +33,25 @@ export interface TaskLine {
   mine: boolean
   /** 还开着、已经采纳过几步的任务：「已采纳 2 次」。 */
   accepted: string | null
+  /** 做它的那位 AI 队友的席位：别的队友在主线说到这件任务时，任务标签上画它的头像。 */
+  teammate?: string | null
   /** 卡上一次变化的时间。 */
   at: string
   /** 这件任务里最后说的一句，折成一行：状态下面没有话要说时，主线上那张卡的第二行
    *  写它，说它此刻在做什么。 */
   latest?: string | null
+  /** 交了一版在等人审阅：谁能采纳（卡上的审阅人），有没有代码改动、有没有预览可看。没在等审阅
+   *  是 null。 */
+  delivery?: { reviewers: string[]; code: boolean; preview: boolean } | null
 }
 
-function acceptedLabel(task: ChannelTask): string | null {
+/** 主线上处理一版交付的那几颗按钮：去看改动、去看预览、就地采纳、退回。 */
+export type DeliveryView = 'changes' | 'preview' | 'adopt' | 'return'
+/** 按了哪一颗、是哪件任务的：页面照着去做。 */
+export type DeliveryAct = { taskId: string; view: DeliveryView }
+
+/** 最后一步采纳了的任务，状态词下面那一行接着写合进去的是哪个 PR。 */
+function acceptedPr(task: ChannelTask): string | null {
   if (task.presentation.phrase !== 'accepted' || !task.last_accepted_pr) return null
   const n = task.accepted_count ?? 1
   return n > 1
@@ -60,17 +71,31 @@ export function taskLine(
   const open = task.status !== 'closed'
   const n = task.accepted_count ?? 0
   const state = taskState(task, { viewer, nameOf, agentName })
-  const label = acceptedLabel(task)
+  const pr = acceptedPr(task)
   return {
     id: task.id,
     title: task.title,
     owner: task.owner_handle ?? null,
     creator: task.created_by ?? task.owner_handle ?? null,
-    state: label ? { ...state, label } : state,
+    teammate: task.teammate ?? null,
+    state: pr ? { ...state, line: joined([state.line, pr]) } : state,
     mine,
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
     at: task.last_message?.created_at ?? task.updated_at,
     latest: task.last_message ? replySnippet(task.last_message, NO_NAMES, 120) || null : null,
+    delivery: awaitingReview(task),
+  }
+}
+
+/** 交了一版、卡在等人审阅时，谁能采纳它。审阅人可能有几位，卡上用「、」连着写。 */
+function awaitingReview(task: ChannelTask): TaskLine['delivery'] {
+  const card = task.card
+  if (task.status === 'closed' || card?.status !== 'pending' || task.presentation.phrase !== 'awaiting_review')
+    return null
+  return {
+    reviewers: (card.reviewer ?? '').split('、').filter(Boolean),
+    code: !!task.branch_name,
+    preview: !!task.has_preview,
   }
 }
 

@@ -48,6 +48,7 @@ from app.domain.assistant.models import (
     AssistantProposal,
     AssistantRules,
 )
+from app.domain.block import message_reads
 from app.domain.device.models import DeviceRow
 from app.domain.integration.models import Integration
 from app.domain.local_fs.models import LocalDirectoryGrantRow
@@ -282,6 +283,7 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     await session.execute(
         delete(TopicReadState).where(TopicReadState.user_handle == handle)
     )
+    await message_reads.forget_reader(session, handle)
     await session.execute(delete(PlatformAdmin).where(PlatformAdmin.handle == handle))
     await session.flush()
     return Closed(user_id=user_id, handle=handle)

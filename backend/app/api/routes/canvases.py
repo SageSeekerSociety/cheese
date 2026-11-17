@@ -101,7 +101,7 @@ async def _columns(
 ) -> dict[uuid.UUID, dict[str, str]]:
     """Where each task stands on a person's board: the column and the phrase
     the task list shows, from the same facts — and the teammate working it,
-    whom some of those phrases name (「{agent}在做」)."""
+    which the card names beside the status word."""
     if not task_ids:
         return {}
     cards = await latest_cards_by_task(db, task_ids)

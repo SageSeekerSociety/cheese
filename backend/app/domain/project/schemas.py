@@ -93,7 +93,6 @@ class CommitCreditUpdate(BaseModel):
 
 
 class ProjectDefaultModelUpdate(BaseModel):
-    """Omitted fields remain unchanged; null clears the corresponding override."""
+    """The project main model; null clears it (「自动」)."""
 
     model: str | None = None
-    subagent_model: str | None = None

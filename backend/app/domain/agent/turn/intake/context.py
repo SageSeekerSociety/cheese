@@ -17,13 +17,13 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import TOPIC_DOC_CHAR_BUDGET, fit_doc_to_budget
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.contract import Image
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.scopes import MemoryScope
+from app.domain.prompts import TOPIC_DOC_CHAR_BUDGET, Kind, fit_doc_to_budget
 from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.place import Place, doc_text_of
 from app.domain.task.claims import StageProgress
@@ -113,6 +113,8 @@ class Launch:
     runtime: RoomSessions
     system_prompt: str
     resume_token: str | None
+    #: The conversation it must not take up again (`Continuation.retired`).
+    retired_token: str | None
     model: str | None
     env: dict[str, str] | None
     needs_place: bool
@@ -135,6 +137,9 @@ class TurnContext:
     # theirs.
     room_id: uuid.UUID
     inner_id: uuid.UUID | None
+    # The task, when the conversation is a task's own: its turns run in the
+    # task scene (`model_catalog.pick`).
+    task_id: uuid.UUID | None
     acting_agent: str
     agent: ResolvedAgent
     agent_pool: tuple[MemoryScope, str] | None
@@ -164,6 +169,10 @@ class TurnContext:
     # not be read again — but kept separate up to that point, because every
     # other question asked of `pending_ids` is about who spoke.
     notice_ids: list[uuid.UUID]
+    # Every block the prompt carries — whoever said it and whoever it was for —
+    # which is what the seat has read once the prompt reaches its session
+    # (`block.message_reads`). What the window left out is not among them.
+    read_ids: list[uuid.UUID]
     # Where this seat's reading stands once this turn finishes cleanly: the
     # timeline position of the newest block the prompt carried. None when it
     # carried none. A turn that fails leaves it alone, exactly as it leaves
@@ -172,6 +181,9 @@ class TurnContext:
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
+    # The conversation this seat's session must not take up again
+    # (`Continuation.retired`).
+    retired_session_id: str | None
 
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
@@ -181,8 +193,12 @@ class TurnContext:
     overview_doc_id: uuid.UUID | None
     # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
-    # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
+    # `prompts/pieces/memory/`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
+    # 多人的地方里，这一轮答的人中有 communication 记录的那几位（handle、名字）：
+    # 这一轮先读他们的记录（`prompts.talk_pointer`）。私聊里是空的——那里的整棵
+    # private 在 `memory` 里指着。
+    talk_for: list[dict]
     prior_progress: list[dict]
     #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
     #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：
@@ -213,6 +229,9 @@ class TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
+    # Which kind of session this is (`room.system_prompt.session_kind`): what
+    # it reads and which tools it holds follow from it (`prompts.PROFILES`).
+    kind: Kind
     # A channel's main line and its 支线 keep no work: the session may read,
     # run and try things on its own machine, and nothing it does there reaches
     # the project. What changes the project is done in a task.
@@ -253,7 +272,7 @@ class _MemoryBooks(Protocol):
         seat: tuple[uuid.UUID, str],
         *,
         acting: str,
-        speaker: str | None,
+        speakers: tuple[str, ...],
         pointed: bool = False,
     ) -> None: ...
 
@@ -267,6 +286,8 @@ class ModelOptions(Protocol):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
+        task_id: uuid.UUID | None = None,
+        default_effort: str | None = None,
     ) -> tuple[dict, str]: ...
 
 

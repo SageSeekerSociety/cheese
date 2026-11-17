@@ -13,12 +13,16 @@ import { apiLogin, openFirstProject } from './helpers';
 // 这些差别**只在真浏览器里有**（宽度是算出来的布局，不是布尔 prop），所以守在这里：
 // vitest 用的是 happy-dom 的固定宽度，量不到「同一份 DOM 在两个窗口宽下不一样」。
 //
-// 为什么先开到 1280、进屋、再缩到 1024：话题列表长在二级侧栏里，而那一档默认收着，
+// 左边那一列 64px 方块栏 2026-11-16 拿掉了，主区就是窗口减去常驻侧栏：平板横放收起侧栏
+// 时主区等于窗口宽。所以「并排、默认收着」那几条落在 980（主区 980，不到 1000）；1024
+// 的主区已经够 1000，面板默认开着。
+//
+// 为什么先开到 1280、进屋、再缩到平板宽：话题列表长在二级侧栏里，而那一档默认收着，
 // `openFirstProject` 要等的行在收起状态里不可见。先在宽档进屋（侧栏常驻、行可见），
 // 再缩窗口——这也正是一条真路径：人横过来/缩窗口那一刻布局就换档。
 
 test.describe('平板横放（960–1180）', () => {
-  test('1024：侧栏默认收起；面板默认收着，「概览」把它并排打开并记住', async ({ page }) => {
+  test('980：侧栏默认收起；面板默认收着，「概览」把它并排打开并记住', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
@@ -29,7 +33,7 @@ test.describe('平板横放（960–1180）', () => {
     await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(0);
 
     // 落到平板横放那一档。
-    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.setViewportSize({ width: 980, height: 900 });
 
     // 侧栏默认收起：rail 顶上那颗开关在，aria-expanded=false，抽屉不是 active。
     const sidebarToggle = page.locator('[data-sidebar-toggle]');
@@ -93,7 +97,9 @@ test.describe('平板横放（960–1180）', () => {
   });
 
   test('主区放不下两栏时面板浮在对话上：Esc 收起，焦点回到「概览」', async ({ page }) => {
-    // 1181 起侧栏常驻，主区只剩 840 不到。
+    // 1181 起侧栏常驻。默认 280 宽的侧栏留下 901，够并排；人把侧栏拖到 360，主区只剩
+    // 821，放不下两栏。侧栏宽度记在本机（useSidebarWidth.ts），开页之前写进去。
+    await page.addInitScript(() => localStorage.setItem('cheesex.sidebarWidth', '360'));
     await page.setViewportSize({ width: 1181, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
@@ -119,7 +125,7 @@ test.describe('平板横放（960–1180）', () => {
     await expect(panelToggle).toBeFocused();
   });
 
-  test('1024：地址里点名的 tab 仍然把面板拉起来', async ({ page }) => {
+  test('980：地址里点名的 tab 仍然把面板拉起来', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
@@ -128,7 +134,7 @@ test.describe('平板横放（960–1180）', () => {
     const topicUrl = page.url().split('?')[0];
 
     // 落到平板横放：地址里没有 ?tab=，面板收着。
-    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.setViewportSize({ width: 980, height: 900 });
     await expect(page.locator('#topic-panel')).toBeHidden();
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'false');
 

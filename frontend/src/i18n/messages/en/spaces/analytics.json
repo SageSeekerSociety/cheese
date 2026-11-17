@@ -82,7 +82,6 @@
   },
   "learning": {
     "allKnowledgePoints": "All",
-    "allStudents": "All",
     "buildOutline": "Build lecture outline",
     "clear": "Clear",
     "knowledgePoint": "Topic",
@@ -110,7 +109,7 @@
       "unavailable": "Nothing to show"
     },
     "quote": {
-      "pick": "Select this message from {name}",
+      "pick": "Select this message from member {code}",
       "source": "View original"
     },
     "selected": "{n} messages selected",
@@ -119,13 +118,244 @@
       "latest": "Latest {time}",
       "pick": "Select sticking point {label}"
     },
-    "student": "Member",
-    "summary": "{projects} member projects · {students} members · {questions} messages · {stuck} shared sticking points",
+    "summary": "{projects} member projects · {questions} messages · {stuck} shared sticking points",
     "toast": {
       "filtersFailed": "Couldn't load learning filters",
       "outlineFailed": "Couldn't build the outline"
     },
-    "unclassified": "Unclassified"
+    "unclassified": "Unclassified",
+    "class": {
+      "sub": {
+        "overview": "Overview",
+        "points": "Hard points",
+        "questions": "Frequent questions",
+        "words": "Frequent words",
+        "tasks": "Problem difficulty",
+        "behavior": "How they ask",
+        "trend": "Trend"
+      },
+      "subsLabel": "Learning analysis tabs",
+      "export": "Export report",
+      "off": {
+        "title": "Learning analysis is off in this space",
+        "desc": "Once an admin turns it on in Settings › Learning analysis, this tab shows how the class is doing per knowledge point. The existing messages and queues are below."
+      },
+      "loadFailed": "Couldn't load the learning analysis",
+      "notAnalysed": "Fewer than 3 people, not analysed",
+      "memberCode": "Member {code}",
+      "lede": {
+        "overview": "Only the class as a whole, never a person; updated every night. A group of fewer than 3 people is not analysed.",
+        "points": "A focus point is one many people ask about; a hard point is one where many of the people involved are stuck. Adjust both lines below; they only change how this page sorts.",
+        "questions": "AI groups questions that mean the same thing and ranks them by how many people asked. One person asking ten times counts once.",
+        "words": "Words from this week's messages, without filler words or pasted problem text. Only words at least 3 people used are listed.",
+        "tasks": "Each problem's difficulty from several angles: completion (claims and submissions), conversation turns and stuck rate (from the analysis), and signs of answer-seeking.",
+        "behavior": "AI tags each question with a kind; times are when members asked (Beijing time).",
+        "trend": "How many are stuck on each knowledge point, week by week. After teaching one, check here whether fewer people are stuck."
+      },
+      "overview": {
+        "completionRate": "Problem completion",
+        "completionHint": "Submitted / expected",
+        "members": "Members analysed",
+        "membersHint": "Every member of the space",
+        "messages": "Messages to AI this week",
+        "messagesHint": "messages",
+        "weak": "Weak knowledge points",
+        "weakHint": "Focus and hard",
+        "tasksTitle": "Problem completion",
+        "tasksHint": "Per problem, {n} members",
+        "tasksEmpty": "No problems yet",
+        "status": {
+          "notStarted": "Not claimed",
+          "inProgress": "In progress",
+          "submitted": "Submitted",
+          "passed": "Passed"
+        },
+        "focusTitle": "Worth teaching next",
+        "focusStuck": "{stuck} of {involved} stuck",
+        "focusLink": "See misconceptions and teaching advice",
+        "focusEmpty": "Not enough analysis yet",
+        "updated": "Last updated {time}",
+        "notYet": "No analysis yet; members' new messages are read every night",
+        "legacyTitle": "Existing messages and queues"
+      },
+      "points": {
+        "tableTitle": "Per knowledge point",
+        "col": {
+          "name": "Knowledge point",
+          "asked": "Asked",
+          "stuck": "Stuck",
+          "rate": "Stuck rate",
+          "quadrant": "Kind"
+        },
+        "quadrant": {
+          "both": "Focus and hard",
+          "hard": "Hard",
+          "focus": "Focus",
+          "normal": "Ordinary"
+        },
+        "askedRatio": "Focus: asked by ≥ {pct} of members ({n} people)",
+        "stuckRatio": "Hard: stuck rate ≥ {pct}",
+        "note": "Stuck means the AI judged it shaky or weak; the rate is over everyone the point involves. Click a row for misconceptions and teaching advice.",
+        "chartX": "People who asked ({n} members)",
+        "empty": "The list has no knowledge points yet"
+      },
+      "detail": {
+        "back": "Back to learning analysis",
+        "stuckLine": "{stuck} of {involved} stuck",
+        "tasksLine": "In {tasks}",
+        "newLine": "{n} new in the last 7 days",
+        "misTitle": "Common misconceptions",
+        "misPeople": "{n} people",
+        "misHidden": "{n} more misconceptions held by fewer than 3 people are not listed",
+        "misEmpty": "No common misconceptions yet",
+        "viewExcerpts": "See anonymous conversations",
+        "masteryTitle": "Mastery",
+        "levels": {
+          "mastered": "Mastered",
+          "shaky": "Shaky",
+          "weak": "Weak",
+          "untouched": "Not touched"
+        },
+        "levelCount": "{level} {n}",
+        "noList": "The {n} people who are stuck are not listed.",
+        "adviceTitle": "Teaching advice",
+        "adviceEmpty": "When enough people are stuck, teaching advice is written every night for the points most are stuck on.",
+        "exportPoint": "Export this knowledge point",
+        "whoTitle": "Who sees what",
+        "whoBody": "Teachers see only the class as a whole: counts, misconceptions and anonymous excerpts, never who is stuck. Excerpts drop names and student numbers and show only a code fixed per space. A group of fewer than 3 people is not analysed.",
+        "pushButton": "Send practice to the members stuck here",
+        "pushHint": "Each member gets a set made from where they are stuck, in their own learning insight. You will not see who received one.",
+        "pushed": "Sent to {n} people",
+        "pushedFew": "Sent (fewer than 3 people, so no count is shown)",
+        "pushTooFew": "Fewer than 3 people are stuck, so nothing was sent",
+        "lastPush": "Last sent: {time}, {who}",
+        "lastPushFew": "fewer than 3 people",
+        "lastPushPeople": "{n} people",
+        "practiceLine": "Of the {practiced} people who did practice, {improved} moved up a level",
+        "practiceFew": "Fewer than 3 people have done practice; no figures yet",
+        "pushFailed": "Could not send; try again later"
+      },
+      "questions": {
+        "title": "Frequent questions",
+        "summary": "{questions} questions in {clusters} groups, {shown} shown",
+        "hidden": "{n} more groups asked by fewer than 3 people are not listed",
+        "meta": "asked by {people} · {asks} times",
+        "trend": {
+          "up": "Up this week",
+          "down": "Down",
+          "new": "New this week"
+        },
+        "viewExcerpts": "See anonymous conversations",
+        "empty": "No question asked by 3 or more people yet",
+        "noPoint": "No knowledge point"
+      },
+      "words": {
+        "cloudTitle": "Word cloud · this week",
+        "rankTitle": "Ranking",
+        "col": {
+          "word": "Word",
+          "count": "Times",
+          "people": "People"
+        },
+        "newMark": "new",
+        "rising": "up",
+        "errorsTitle": "Frequent errors",
+        "errorsHint": "Errors members pasted to the AI, by how many people pasted them.",
+        "errCol": {
+          "line": "Error",
+          "count": "Times",
+          "people": "People"
+        },
+        "empty": "No word used by 3 or more people this week",
+        "errorsEmpty": "No error pasted by 3 or more people this week"
+      },
+      "tasks": {
+        "col": {
+          "name": "Problem",
+          "claims": "Claims",
+          "completion": "Completion",
+          "turns": "Avg turns",
+          "hours": "Avg time",
+          "stuck": "Stuck rate",
+          "seekers": "Answer-seeking"
+        },
+        "hours": "{n} h",
+        "people": "{n}",
+        "seekersHint": "Answer-seeking: people who asked at least twice in the problem with more than half asking for the answer outright. Time runs from claiming to the first submission.",
+        "empty": "No problems yet"
+      },
+      "behavior": {
+        "kindsTitle": "Question kinds",
+        "kinds": {
+          "concept": "Concepts",
+          "error": "Debugging errors",
+          "answer": "Asking for the answer",
+          "verify": "Checking own idea",
+          "other": "Other"
+        },
+        "kindShare": "{kind} {pct}",
+        "heatTitle": "When they ask",
+        "days": {
+          "1": "Mon",
+          "2": "Tue",
+          "3": "Wed",
+          "4": "Thu",
+          "5": "Fri",
+          "6": "Sat",
+          "7": "Sun"
+        },
+        "heatHint": "Darker means more questions; slots with fewer than 3 people stay blank.",
+        "heatCell": "{day} {slot}: {n} questions",
+        "depTitle": "Reliance on AI",
+        "depHint": "Each person's share of questions asking for the answer outright",
+        "dep": {
+          "low": "Under 10%",
+          "mid": "10% – 30%",
+          "high": "30% or more"
+        },
+        "people": "{n} people",
+        "depNote": "Counts only, never names",
+        "empty": "Fewer than 3 people have asked; not analysed"
+      },
+      "trend": {
+        "title": "People stuck · per week",
+        "empty": "No weekly records yet",
+        "gap": "Empty points: fewer than 3 people that week, or no record yet."
+      },
+      "excerpt": {
+        "title": "Anonymous conversation excerpts",
+        "hint": "Only a code fixed per space, never a real name; names, student numbers and phone numbers in the conversation are masked.",
+        "agent": "Cheese",
+        "source": "View original",
+        "close": "Close",
+        "empty": "No conversation to excerpt",
+        "failed": "Couldn't load the excerpts; try again later"
+      },
+      "exportDialog": {
+        "title": "Export report",
+        "hint": "The report holds only the class as a whole, with no member's name or personal results; excerpts show only codes.",
+        "scope": "Scope",
+        "scopeAll": "All knowledge points",
+        "scopeOne": "Only “{name}”",
+        "content": "Content",
+        "sections": {
+          "tasks": "Problem completion (per problem)",
+          "points": "People stuck per knowledge point and common misconceptions",
+          "advice": "Teaching advice",
+          "excerpts": "Anonymous conversation excerpts (no names, at most 3 per misconception)"
+        },
+        "format": "Format",
+        "formats": {
+          "pdf": "PDF",
+          "xlsx": "Excel",
+          "docx": "Word"
+        },
+        "cancel": "Cancel",
+        "submit": "Export",
+        "failed": "Export failed; try again later",
+        "fileName": "learning-report"
+      }
+    }
   },
   "overview": {
     "alerts": "Needs attention",
@@ -254,7 +484,7 @@
   },
   "tabs": {
     "alerts": "Alerts",
-    "learning": "Learning",
+    "learning": "Learning analysis",
     "overview": "Overview",
     "participants": "Participants",
     "publishers": "Publishers",

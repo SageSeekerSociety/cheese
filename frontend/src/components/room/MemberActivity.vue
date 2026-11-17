@@ -16,7 +16,9 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { lineStale } from '@/lib/memberActivity'
 import { formatSpan } from '@/lib/siteLog'
+import { STALE_AFTER_MS } from '@/lib/taskState'
 
 const props = defineProps<{ lines: MemberActivityLine[] }>()
 
@@ -45,6 +47,23 @@ watch(
   { immediate: true }
 )
 onBeforeUnmount(() => clearInterval(ticker))
+
+function isStale(line: MemberActivityLine): boolean {
+  return lineStale(line, now.value, STALE_AFTER_MS)
+}
+
+/** 悬停详情：谁、此刻哪一步、会话连着、多久没动。 */
+function workingTitle(line: MemberActivityLine): string {
+  const step = (fromAnEarlierTurn(line) ? null : line.step) ?? line.detail ?? ''
+  if (isStale(line)) {
+    return [t('work.taskState.detail.staleTitle'), step, t('work.taskState.detail.sessionLive')]
+      .filter(Boolean)
+      .join('\n')
+  }
+  return [t('work.room.activity.working', { name: line.name }), step, t('work.taskState.detail.sessionLive')]
+    .filter(Boolean)
+    .join('\n')
+}
 
 const separator = computed(() => t('work.room.activity.separator'))
 
@@ -92,10 +111,22 @@ const workingAria = computed(() =>
   <div v-if="lines.length > 0" class="member-activity" data-testid="member-activity" aria-live="polite">
     <div v-for="line in working" :key="line.handle" class="member-activity__line" :data-kind="line.kind">
       <span
-        class="status-dot member-activity__dot"
-        :class="line.kind === 'retrying' ? 'status-dot--warn' : 'status-dot--ok'"
+        v-if="line.kind === 'retrying'"
+        class="status-dot member-activity__dot status-dot--warn"
         aria-hidden="true"
       />
+      <!-- 和任务行同一套图标：在跑＝绿色旋转圈；很久没变＝不转的空心环 + 橙点（`taskState.ts`）。 -->
+      <span
+        v-else
+        class="member-activity__mark"
+        :class="{ 'member-activity__mark--stale': isStale(line) }"
+        :title="workingTitle(line)"
+        data-testid="member-activity-mark"
+        aria-hidden="true"
+      >
+        <i class="mdi member-activity__glyph" :class="isStale(line) ? 'mdi-circle-outline' : 'mdi-timelapse'" />
+        <span v-if="isStale(line)" class="member-activity__stale" />
+      </span>
       <!-- The step and the elapsed seconds churn on their own; keep both out of the live region. -->
       <span class="member-activity__text" aria-hidden="true">{{ workingHead(line) }}</span>
       <span v-if="workingTotal(line)" class="member-activity__meta" aria-hidden="true"
@@ -136,6 +167,36 @@ const workingAria = computed(() =>
 }
 .member-activity__dot {
   flex: none;
+}
+.member-activity__mark {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  color: var(--ok);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .member-activity__mark:not(.member-activity__mark--stale) .member-activity__glyph {
+    animation: activity-turn 2.4s linear infinite;
+  }
+}
+@keyframes activity-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.member-activity__glyph {
+  font-size: 14px;
+  line-height: 1;
+}
+.member-activity__stale {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 1.5px var(--surface);
 }
 /* 当前一步可能很长：截断在它自己身上，右边的「无新输出」才不会被挤下去。 */
 .member-activity__text {

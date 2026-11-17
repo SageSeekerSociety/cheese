@@ -80,7 +80,7 @@ from app.domain.agent.room.sessions.records import Live as Live
 from app.domain.agent.room.sessions.records import Outdated
 from app.domain.agent.room.sessions.records import _home as _home
 from app.domain.agent.service import AgentResult
-from app.domain.agent.session_host.contract import Image, Prompt
+from app.domain.agent.session_host.contract import ColdCompaction, Image, Prompt
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.delivery.input_identity import (
     InputIdentity,
@@ -390,6 +390,7 @@ class RoomSessions:
         *,
         system_prompt: str,
         resume_token: str | None = None,
+        retired_token: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -402,6 +403,7 @@ class RoomSessions:
             session,
             system_prompt=system_prompt,
             resume_token=resume_token,
+            retired_token=retired_token,
             model=model,
             env=env,
             acting=acting,
@@ -420,6 +422,7 @@ class RoomSessions:
         on_mark: Callable[[uuid.UUID], None],
         register_input: InputRegistrar,
         resume_token: str | None = None,
+        retired_token: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -429,6 +432,7 @@ class RoomSessions:
         owes_reply: bool = False,
         session_opening: str = "",
         opening_changes: str = "",
+        cold: ColdCompaction | None = None,
     ) -> bool:
         return await _speaking.send(
             self,
@@ -439,6 +443,7 @@ class RoomSessions:
             on_mark=on_mark,
             register_input=register_input,
             resume_token=resume_token,
+            retired_token=retired_token,
             model=model,
             env=env,
             acting=acting,
@@ -448,6 +453,7 @@ class RoomSessions:
             owes_reply=owes_reply,
             session_opening=session_opening,
             opening_changes=opening_changes,
+            cold=cold,
         )
 
     def _with_project_state(

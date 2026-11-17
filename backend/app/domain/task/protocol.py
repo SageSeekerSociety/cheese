@@ -127,7 +127,7 @@ class Teaching:
     #: 本节学习目标 — what the student should be able to do by the end. Its
     #: presence is also what makes a 教学安排 EDUCATIONAL: a config with goals
     #: and no `system_prompt` gets the default teaching template (Socratic +
-    #: 形态纪律, see `harness.opening`), because "学习目标" is the teacher saying
+    #: 形态纪律, see `prompts.opening`), because "学习目标" is the teacher saying
     #: "this one is here to learn" — and a blank prompt then means "use your
     #: teaching manners", not "have no manners".
     learning_goals: list[str] = field(default_factory=list)
@@ -154,6 +154,23 @@ class Teaching:
     #: was built carries them too, and a 题目 that changes its list is heard on
     #: the next turn rather than only by projects built after the change.
     skills: list[str] = field(default_factory=list)
+    #: 「引导为主」时的两项保护（§ learning analysis, step 4）。它们跟着 `mode` 走：
+    #: 说了方式的那一层说了算（`combine`），而且只在最后的方式是 ``guide`` 时生效
+    #: （`ladder` / `checks_output`）。没写就是关着 —— 已有的空间不会自己打开。
+    #: 提示阶梯：问思路 → 给方向 → 给伪代码 → 给片段，逐级给，每条回复标出第几级。
+    hint_ladder: bool = False
+    #: 输出检查：回复里出现大段代码时改成提示（`app.domain.task.guide`）。
+    output_check: bool = False
+
+    @property
+    def ladder(self) -> bool:
+        """The hint ladder is in force: guide mode, and the switch on."""
+        return self.mode == "guide" and self.hint_ladder
+
+    @property
+    def checks_output(self) -> bool:
+        """The output check is in force: guide mode, and the switch on."""
+        return self.mode == "guide" and self.output_check
 
     @property
     def is_empty(self) -> bool:
@@ -198,8 +215,14 @@ class Teaching:
             return replace(
                 self, skills=list(dict.fromkeys([*self.skills, *task.skills]))
             )
+        # The two guards ride with the way of helping: the level that says the
+        # mode says them too, so a 题目 that keeps its space's 引导为主 keeps
+        # the space's guards, and one that picks its own brings its own.
+        guards = task if task.mode else self
         return Teaching(
             mode=task.mode or self.mode,
+            hint_ladder=guards.hint_ladder,
+            output_check=guards.output_check,
             system_prompt=task.system_prompt,
             space_prompt=self.system_prompt,
             # 学习目标与出题人私有指导是**题目**那一层说的：空间是「这块板上的课
@@ -231,6 +254,9 @@ class Teaching:
             material_ids=_ids(raw.get("material_ids")),
             document_ids=_uuids(raw.get("document_ids")),
             skills=_texts(raw.get("skills")),
+            # Only a literal true turns a guard on: a stray string is not a switch.
+            hint_ladder=raw.get("hint_ladder") is True,
+            output_check=raw.get("output_check") is True,
         )
 
 
@@ -285,10 +311,12 @@ class Protocol:
 
     @property
     def model(self) -> str | None:
-        """The model a project opened from this pack runs on by default
-        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``).
-        It becomes the project's ``default_model`` only when the project has
-        not chosen one; None leaves the deployment's default."""
+        """The model the pack's credits do the work on
+        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``):
+        a project opened from it runs its tasks on it unless the teammate
+        chose another — it becomes the default teammate's ``task_model`` when
+        that is unset. None leaves tasks to the teammate's and the project's
+        own choice."""
         return _text(self.resource_pack.get("model"))
 
     @property

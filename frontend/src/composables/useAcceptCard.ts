@@ -153,7 +153,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     forceMergeVisible,
     phase,
     loaded,
-    // 台面上的那几张卡
+    // 台面上的那几张卡；`acceptCards` 是这件任务递过的每一张（决定过的也在）
+    acceptCards: cards.acceptCards,
     pendingCard,
     acceptedCard,
     deliveringCard,

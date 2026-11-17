@@ -147,6 +147,8 @@ function hostNote(h: MachineHost): string {
 }
 function hostState(h: MachineHost): string {
   if (h.phase === 'failed') return t('admin.machines.note.failed', { at: stamp(h.failed_at) })
+  if (h.draining && h.draining_since && h.refresh_in_place)
+    return t('admin.machines.note.refreshing', { for: since(h.draining_since) })
   if (h.draining && h.draining_since) return t('admin.machines.note.draining', { for: since(h.draining_since) })
   if (h.phase === 'releasing') return t('admin.machines.note.releasing', { at: stamp(h.released_at) })
   if (h.phase === 'enroll_failing')

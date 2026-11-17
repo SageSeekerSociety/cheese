@@ -293,6 +293,7 @@ export const CRV_MACHINES: MachinesOverview = {
       image_outdated: false,
       draining: false,
       draining_since: null,
+      refresh_in_place: false,
       enroll_attempts: 1,
       enroll_error: null,
       usage: {
@@ -389,6 +390,7 @@ export const CRV_MACHINES: MachinesOverview = {
       image_outdated: false,
       draining: false,
       draining_since: null,
+      refresh_in_place: false,
       enroll_attempts: 1,
       enroll_error: null,
       usage: {
@@ -442,6 +444,7 @@ export const CRV_MACHINES: MachinesOverview = {
       image_outdated: null,
       draining: false,
       draining_since: null,
+      refresh_in_place: false,
       enroll_attempts: 0,
       enroll_error: null,
       usage: null,

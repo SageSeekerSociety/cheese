@@ -236,6 +236,7 @@ async def _add(service: pkg.GatewayModelsService, name: str, data: dict) -> dict
         capabilities=capabilities,
         tier=data.get("tier"),
         overseas=data.get("overseas"),
+        cache_lifetime_s=data.get("cache_lifetime_s"),
         order=data.get("order") or _FIRST_ORDER,
         free=free or None,
         upstream_headers=data.get("upstream_headers") or None,
@@ -318,7 +319,7 @@ async def _update(service: pkg.GatewayModelsService, name: str, data: dict) -> d
             }
 
     model_kwargs: dict[str, Any] = {}
-    for field in ("label", "selectable", "tier", "overseas"):
+    for field in ("label", "selectable", "tier", "overseas", "cache_lifetime_s"):
         if field in data:
             model_kwargs[field] = data[field]
     if data.get("capabilities") is not None:

@@ -114,6 +114,8 @@ export interface MachineHost {
   /** 正在滚动重建：不再接新沙箱，等它空了就释放、换一台新的。 */
   draining: boolean
   draining_since: string | null
+  /** 只改了接入脚本：在原机上重跑接入，不换机器，盘上的东西都留着。 */
+  refresh_in_place: boolean
   enroll_attempts: number
   enroll_error: string | null
   /** 还没读到过（没注册、不在线、刚起来）时为 null。 */

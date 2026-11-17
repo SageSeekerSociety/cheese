@@ -56,7 +56,7 @@ function task(book: Book, projectId: string, slug: string, id: string, room: str
   book.rememberThing({ project_id: projectId, slug, kind: 'tasks', id, room_id: room, number })
 }
 
-type SentBody = { project_id: string; topic_id?: string; errors: { message: string }[] }
+type SentBody = { project_id?: string; topic_id?: string; errors: { message: string }[] }
 
 function bodyOf(call: number): SentBody {
   return JSON.parse(String((sent.mock.calls[call][1] as RequestInit).body)) as SentBody
@@ -77,13 +77,39 @@ describe('前端报错上报', () => {
     expect(body.errors[0].message).toContain('Cannot read properties')
   })
 
-  it('项目外面（没有项目段）不上报', async () => {
+  // 首页和 /teams 这些页面不在任何项目里，而「新建空间」「创建团队」就在那儿。从前
+  // 这类失败因为归不进项目而整条丢掉，平台对最难查的两个入口一无所知。
+  it('项目外面（没有项目段）照样上报，只是不带归属', async () => {
     const { reportError } = await open('/home')
 
     reportError('boom')
     await vi.advanceTimersByTimeAsync(20_000)
 
-    expect(sent).not.toHaveBeenCalled()
+    expect(sent).toHaveBeenCalledTimes(1)
+    const body = bodyOf(0)
+    expect(body.project_id).toBeUndefined()
+    expect(body.topic_id).toBeUndefined()
+    expect(body.errors[0].message).toBe('boom')
+  })
+
+  // 不在项目里的那几条和项目里的那几条不是一批：一条运行记录只写一个归属，混在一批
+  // 里出去会把这批整个记到某个项目名下。
+  it('项目里和项目外的一起等着时，分两批发', async () => {
+    const { book, reportError } = await open(ROOM)
+    channel(book, PROJECT, 'helper', TOPIC, 7)
+    reportError('inside', 'at TopicView.vue:12')
+
+    vi.stubGlobal('location', { pathname: '/home', search: '' })
+    reportError('outside')
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(sent).toHaveBeenCalledTimes(2)
+    const bodies = sent.mock.calls.map((_, i) => bodyOf(i))
+    const withProject = bodies.find((b) => b.project_id !== undefined)
+    const withoutProject = bodies.find((b) => b.project_id === undefined)
+    expect(withProject?.project_id).toBe(PROJECT)
+    expect(withProject?.errors[0].message).toBe('inside')
+    expect(withoutProject?.errors[0].message).toBe('outside')
   })
 
   it('短名还没换算出 UUID 时不上报，不拿短名冒充 UUID', async () => {

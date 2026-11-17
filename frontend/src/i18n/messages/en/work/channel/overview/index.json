@@ -10,13 +10,15 @@
   "moreRunning": "{count} more in all tasks",
   "noDescription": "No description",
   "noProject": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
-  "noRunning": "No tasks in progress",
+  "noRunning": "No open tasks",
   "owner": "{name} owns it · {when}",
   "project": "Project goals",
   "projectNote": "{name} reads this in every conversation",
   "quietRunning": "Nothing moved in the last 7 days; {count} in all tasks",
   "recentDone": "Recently closed",
-  "running": "Tasks in progress · {count}",
+  "running": "Open tasks ({count})",
   "save": "Save",
-  "writeProject": "Write project goals"
+  "waiting": "Waiting on you",
+  "writeProject": "Write project goals",
+  "closedByNeglect": "Closed automatically: nobody attended to it"
 }

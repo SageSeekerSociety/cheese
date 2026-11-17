@@ -29,6 +29,7 @@ covers:
 | 排队、断线后接回记录、输入已登记在核对、转入队列 | `turn_queued`、`delivery_checking`、`delivery_fallback` | 现场；还没开始的一轮在输入框上方写「排队中」 |
 | 工具通道接回、同一批消息重投 | `tools_recovered`、`prompt_replayed` | 现场 |
 | AI 服务重试、整理上下文、等机器 | `api_retry`、`context_compact`、`device_waiting` | 现场；在跑的一轮的状态行读它们 |
+| 一场对话压不下去、平台换新会话接着做 | `conversation_abandoned` | 现场；一条对话最多一条，说清换过这一次（`agent/turn/intake/hooks.py`） |
 | 环境的准备、就绪、空闲释放 | `cloud_startup`、`cloud_provisioning`、`sandbox_asleep` | 现场 |
 | 记忆改动、整理 | `memory_changed` | 现场，见[记忆 · 改动记在哪](/dev/memory#events) |
 | 有人改了房间里 agent 读过的一条消息 | `message_edited` | 现场；agent 读的是同一句旁边那条隐藏提示（`block/editing.py`） |

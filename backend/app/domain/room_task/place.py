@@ -496,7 +496,7 @@ async def doc_text_of(
 
     A conversation that works on a machine and whose document is still empty
     answers `""`, not None: the prompt then tells the teammate to write the
-    first version (`build_system_prompt`). Only a task has such a document.
+    first version (`prompts` `system/doc_section`). Only a task has such a document.
     """
     if place.task is None:
         return None

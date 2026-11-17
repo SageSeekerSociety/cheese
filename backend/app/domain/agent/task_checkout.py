@@ -77,6 +77,13 @@ def checkout_steps(stdout: str) -> dict[str, float]:
     return {}
 
 
+#: What `cheese worktree` says when the place has no checkout to start in, and
+#: that is no failure: a room (``workTaskNotInProject``), or a task whose
+#: project has no repository or no default branch to cut its branch from. The
+#: session works where it starts; the CLI names the same keys (`NO_CHECKOUT`).
+NO_CHECKOUT = ("workTaskNotInProject", "taskWithoutRepository", "forgeNoDefaultBranch")
+
+
 def names_a_directory(value):
     """Whether `value` is a directory name rather than a notice.
 
@@ -92,15 +99,16 @@ def names_a_directory(value):
 class TaskCheckoutFailed(RuntimeError):
     """The machine could not be asked, or answered something else than a path.
 
-    Not a room: a room is answered ``workTaskNotInProject`` and is no failure
-    at all. A caller that gets this one has not learned where the checkout is,
+    Not a room, nor a task without a checkout: those are answered with one of
+    `NO_CHECKOUT` and are no failure at all. A caller that gets this one has not learned where the checkout is,
     and must not remember it as if it had."""
 
 
 def task_checkout(client, topic, *, notice=True):
     """``topic``'s task checkout on the machine, opened if it is not there.
 
-    None when this session works in a room, and the checkout's path otherwise.
+    None when this session works in a room or in a task without a checkout
+    (`NO_CHECKOUT`), and the checkout's path otherwise.
     Raises ``TaskCheckoutFailed`` for anything else — the machine out of reach,
     a lease still preparing, a command that ended without saying where the
     checkout is. ``notice``: say that on stderr. A launch says it; a command
@@ -142,7 +150,7 @@ def task_checkout(client, topic, *, notice=True):
         if names_a_directory(last):
             return last
         failed = True
-    if "workTaskNotInProject" in said:  # a room is not a failure
+    if any(key in said for key in NO_CHECKOUT):
         return None
     if notice:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog

@@ -1,10 +1,12 @@
-"""A task whose last delivery landed closes once its AI teammate has written it up.
+"""A task being written up closes once its AI teammate has written it up.
 
-Accepting the last step does not close the task on the spot. The task stays
-open, with `closing_since` set, while its AI teammate is told to bring the task
-document up to date, say what came of the task, and close it with the close a
-task's own session has (`cheese_task(action=close)`); to everyone looking it already
-reads 已采纳 (`presentation`). It closes when that close is called — the one
+A merge never closes a task: its AI teammate judges it done and closes it
+(`review.task_landing`, `review.close_grounds`). In a project that waits for
+its deploy, that close leaves the task open until the merge is live, and then
+the task stays open, with `closing_since` set, while its AI teammate is told to
+bring the task document up to date, say what came of the task, and close it
+with the close a task's own session has (`cheese_task(action=close)`); to
+everyone looking it already reads 已采纳 (`presentation`). It closes when that close is called — the one
 fact here that says the write-up was done — or, without it, when the instruction
 for it was given up on (`delivery.timer.give_up_stale`), or, whatever
 happened to it, `CLOSE_AT_THE_LATEST` after it landed.
@@ -362,6 +364,9 @@ async def close_task(
     # read there as 已采纳 while the task is open — the one state that is
     # listed in neither 「未完成」 nor 「已关闭」.
     task.closing_since = None
+    # Nor for its deploy: closed by hand while it waited, it is over.
+    task.deploying_since = None
+    task.deploy_blocked_url = None
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)

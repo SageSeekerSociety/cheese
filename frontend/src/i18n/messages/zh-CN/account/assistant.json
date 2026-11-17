@@ -98,7 +98,8 @@
       "whenLabel": "什么时候",
       "goalRequired": "「目标」要填：芝士照它开工。",
       "weekdaysRequired": "每周至少选一天。"
-    }
+    },
+    "runNow": "立即执行一次"
   },
   "recent": {
     "title": "最近的操作",
