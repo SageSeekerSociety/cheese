@@ -77,6 +77,9 @@ EVENT_TASK_RETURNED: Final = "task_returned"
 #: 一件任务关闭了，同样记在它出自的那段对话里：句子说它怎么结束的（写成的结论、
 #: 采纳了没写总结、或者直接关掉）。
 EVENT_TASK_ENDED: Final = "task_ended"
+#: 一件任务交上来的一版被人采纳、合了进去，同样记在它出自的那段对话里：谁采纳的
+#: （AI 队友凭审阅人一句话代采纳的，写它代谁）。任务照旧开着，由它的队友判断做完没有。
+EVENT_TASK_LANDED: Final = "task_landed"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 
@@ -238,6 +241,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_TASK_FILED,
         EVENT_TASK_RETURNED,
         EVENT_TASK_ENDED,
+        EVENT_TASK_LANDED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_BLOCK_UPGRADED,
         EVENT_ENVIRONMENT_FAILED,
@@ -400,6 +404,7 @@ _SHOWN_AS: Final[dict[str, str]] = {
     EVENT_TASK_FILED: SHOWN_HAPPENING,
     EVENT_TASK_RETURNED: SHOWN_HAPPENING,
     EVENT_TASK_ENDED: SHOWN_HAPPENING,
+    EVENT_TASK_LANDED: SHOWN_HAPPENING,
     # AI 队友交出来、等人读过再定的东西。
     EVENT_SKILL_PROPOSED: SHOWN_CARD,
     EVENT_ROUTINE_PROPOSED: SHOWN_CARD,

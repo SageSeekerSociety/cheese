@@ -58,6 +58,7 @@ from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_hand
 from app.domain.notice_meta import (
     EVENT_TASK_ENDED,
     EVENT_TASK_FILED,
+    EVENT_TASK_LANDED,
     SEVERITY_INFO,
     WHO_PLATFORM,
     notice,
@@ -105,9 +106,16 @@ async def delivery_landed(
     handed_over: datetime | None,
     record_instruction: RecordInstruction | None,
     task_teammate: TaskTeammate | None,
+    announce: Announce | None = None,
 ) -> bool:
     """``task``'s delivery merged. ``handed_over``: when its card went up; None
     for a merge no card asked for, which wakes nobody (module docstring).
+
+    A delivery someone adopted is recorded where the task came from as one
+    platform line naming who adopted it (`_step_landed`, ``announce``), not
+    said by the teammate: the reviewer's decision is something that happened,
+    not anyone's words. A door that hands in no ``announce``, and a merge
+    nobody adopted, have the teammate say that it landed (`tell_origin`).
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
@@ -152,12 +160,14 @@ async def delivery_landed(
         )
     await session.flush()
     if goes_on:
-        await tell_origin(
-            session,
-            task,
-            await _step_landed(session, task, by if handed_over is not None else None),
-            task_teammate=task_teammate,
-        )
+        adopted_by = by if handed_over is not None else None
+        line = await _step_landed(session, task, adopted_by)
+        if announce is not None and adopted_by is not None:
+            await record_at_origin(
+                session, task, EVENT_TASK_LANDED, line, announce=announce
+            )
+        else:
+            await tell_origin(session, task, line, task_teammate=task_teammate)
     return True
 
 

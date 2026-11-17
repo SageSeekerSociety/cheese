@@ -210,6 +210,6 @@ def test_where_it_came_from_says_the_teammate_adopted_it_for_the_reviewer(
         f"/topics/{room}/blocks", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
     [landed] = [
-        b for b in lines if (b.get("meta") or {}).get("task_result") == task["id"]
+        b for b in lines if (b.get("meta") or {}).get("event_type") == "task_landed"
     ]
     assert landed["content"] == f"<@{seat}>代 <@alice> 采纳了「{task['title']}」"
