@@ -100,7 +100,9 @@ def test_blocks_empty_then_populated_after_chat(client):
     #
     # `activity` (the agent working, then done) follows the turn's lifecycle
     # frames, and test_member_activity.py asserts it.
-    types = [f["type"] for f in frames if f["type"] != "activity"]
+    # So is `reads` (the teammate has read what its turn was given), a
+    # standalone fact asserted in test_message_reads.py.
+    types = [f["type"] for f in frames if f["type"] not in ("activity", "reads")]
     assert types == [
         "user_block",
         "turn_started",
