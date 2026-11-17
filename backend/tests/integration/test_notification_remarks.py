@@ -18,9 +18,7 @@ ALICE_HANDLE = "bob-remark-test"
 REMARK = "Alice from the lab"
 
 
-async def _seed_mention(
-    db_session, *, receiver_id: int, actor_id: int
-) -> int:
+async def _seed_mention(db_session, *, receiver_id: int, actor_id: int) -> int:
     """One mention row naming the two people, stored the way the platform writes it."""
     now = datetime.now(UTC)
     row = Notification(
@@ -52,7 +50,9 @@ def test_a_remark_renames_people_only_in_the_inbox_of_the_person_who_set_it(
     actor = user_client.create_user(username=ALICE_HANDLE, nickname=ALICE_HANDLE)
     user_client.create_user(username=MENTIONED_PUBLIC, nickname=MENTIONED_PUBLIC)
     bystander = user_client.create_user(nickname="bystander")
-    bystander.token = user_client.login(api_client, bystander.username, bystander.password)
+    bystander.token = user_client.login(
+        api_client, bystander.username, bystander.password
+    )
 
     async def seed() -> tuple[int, int]:
         return (

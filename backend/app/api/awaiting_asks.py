@@ -176,9 +176,7 @@ async def membership_asks(
 
     # 这一份清单只给 `handle` 本人看：他给谁设过备注，这里就用那个称呼，
     # 和成员页、名册是同一条规矩。
-    remarks = await remarks_by_handles(
-        db, handle, [p for p in people if p != handle]
-    )
+    remarks = await remarks_by_handles(db, handle, [p for p in people if p != handle])
 
     def person(person_handle: str) -> Face:
         nickname, avatar_id = people.get(person_handle, (None, None))
