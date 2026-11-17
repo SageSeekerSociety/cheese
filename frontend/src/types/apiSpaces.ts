@@ -459,6 +459,17 @@ export type LearningClassPointDetail = {
   misconceptions: LearningClassMisconception[]
   hiddenMisconceptions: number
   advice: { text: string; generatedAt: number | null } | null
+  /** 做过巩固题的人里几人升了档（第 4 步）；不足 3 人为空。 */
+  practice?: { practiced: number; improved: number } | null
+  /** 最近一次「推送巩固题」：什么时候、排上几人（不足 3 人时人数为空）。 */
+  lastPush?: { at: number | null; recipients: number | null } | null
+}
+
+/** 「推送巩固题给卡住的成员」的回答：推了没有、几人（不足 3 人只说不足）。不带名单。 */
+export type LearningPushResult = {
+  pushed: boolean
+  recipients: number | null
+  minPeople: number
 }
 
 export type LearningClassCluster = {

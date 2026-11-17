@@ -12,7 +12,9 @@
  */
 import type { SettingsGroup } from '@/components/common/SettingsOverlay.vue'
 import type {
+  LearningPracticeSet,
   MyLearningInsight,
+  MyLearningPractice,
   Space,
   SpaceCategory,
   SpaceKnowledgePoint,
@@ -609,4 +611,71 @@ export const MY_LEARNING_INSIGHT: MyLearningInsight = {
       { taskId: 4, name: '第 4 题', messagesRead: 22 },
     ],
   },
+}
+
+/** 「我的学习洞察」第 4 步：一组老师推送、还在出题的，一条到期的复习，今天用了 2 次。 */
+export const MY_LEARNING_PRACTICE: MyLearningPractice = {
+  enabled: true,
+  dailyLimit: 8,
+  usedToday: 2,
+  open: [
+    {
+      id: 71,
+      knowledgePointId: 91,
+      knowledgePointName: '相关子查询',
+      source: 'pushed',
+      ready: false,
+      answered: 0,
+      total: 3,
+      createdAt: Date.UTC(2026, 10, 16, 8, 0),
+    },
+  ],
+  due: [{ knowledgePointId: 92, knowledgePointName: '红黑树的旋转', dueOn: '2026-11-16', streak: 1 }],
+  upcoming: null,
+}
+
+/** 一组巩固题：第 1 道答对、第 2 道答错（带讲解），第 3 道还没答。 */
+export const LEARNING_PRACTICE_SET: LearningPracticeSet = {
+  id: 70,
+  knowledgePointId: 91,
+  knowledgePointName: '相关子查询',
+  source: 'self',
+  ready: true,
+  done: false,
+  questions: [
+    {
+      stem: '「找出工资高于本部门平均工资的员工」，内层子查询怎样拿到外层当前那一行的部门？',
+      options: ['直接写外层表的别名，如 e.dept', '在内层再 JOIN 一次员工表', '把条件写进 HAVING', '内层拿不到外层的列'],
+      chosen: 0,
+      correct: true,
+      answer: 0,
+      explanation: '相关子查询里，内层可以直接引用外层表的别名；外层每扫一行，内层就按这一行的值重算一次。',
+    },
+    {
+      stem: '下面哪种写法会让子查询对外层的每一行都重新计算？',
+      options: [
+        'WHERE salary > (SELECT AVG(salary) FROM emp)',
+        'WHERE salary > (SELECT AVG(salary) FROM emp i WHERE i.dept = e.dept)',
+        'GROUP BY dept HAVING AVG(salary) > 0',
+        'SELECT DISTINCT dept FROM emp',
+      ],
+      chosen: 0,
+      correct: false,
+      answer: 1,
+      explanation: '只有内层引用了外层的列（i.dept = e.dept），它才和外层这一行相关；第一种写法整个只算一次。',
+    },
+    {
+      stem: '用派生表改写同一道题，先要算出的是什么？',
+      options: ['每个员工的工资排名', '每个部门的平均工资', '全公司的平均工资', '每个部门的人数'],
+      chosen: null,
+      correct: null,
+      answer: null,
+      explanation: null,
+    },
+  ],
+  correct: null,
+  levelBefore: null,
+  levelAfter: null,
+  createdAt: Date.UTC(2026, 10, 16, 8, 0),
+  completedAt: null,
 }

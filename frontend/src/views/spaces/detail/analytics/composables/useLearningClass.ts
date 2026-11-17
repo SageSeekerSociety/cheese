@@ -15,6 +15,7 @@ import type {
   LearningClassWords,
   LearningExcerpt,
   LearningExportRequest,
+  LearningPushResult,
 } from '@/types/apiSpaces'
 import type { LearningSub } from '../learningSubs'
 
@@ -25,8 +26,10 @@ import { useNavigation } from '@/composables/useNavigation'
 
 import { buildSourceLink } from '../helpers'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { SpacesApi } from '@/api/spaces'
 import { announceDownload, announceDownloadFailure, saveBlob } from '@/lib/download'
+import { toast } from '@/lib/toast'
 
 type Pages = {
   overview: LearningClassOverview | null
@@ -131,12 +134,32 @@ export function useLearningClass(spaceId: Readonly<Ref<number>>) {
   const openPoint = (id: number) => {
     pointId.value = id
     pointDetail.value = null
+    pushResult.value = null
     loadPoint().catch(() => undefined)
   }
 
   const closePoint = () => {
     pointId.value = null
     pointDetail.value = null
+    pushResult.value = null
+  }
+
+  // --- 推送巩固题（第 4 步）：只回人数，推完重读详情（「上次推送」那一句跟着变）。 ----
+  const pushing = ref(false)
+  const pushResult = shallowRef<LearningPushResult | null>(null)
+
+  const push = async (id: number) => {
+    if (pushing.value) return
+    pushing.value = true
+    try {
+      const result = await SpacesApi.pushLearningPractice(spaceId.value, id)
+      if (pointId.value !== id) return
+      pushResult.value = result
+    } catch (failure) {
+      toast.error(axiosErrorMessage(failure, t('spaces.analytics.learning.class.detail.pushFailed')))
+    } finally {
+      pushing.value = false
+    }
   }
 
   const setRatios = (asked: number, stuck: number) => {
@@ -205,6 +228,9 @@ export function useLearningClass(spaceId: Readonly<Ref<number>>) {
     retry,
     openPoint,
     closePoint,
+    pushing,
+    pushResult,
+    push,
     setRatios,
     excerptsOpen,
     excerptsLoading,
