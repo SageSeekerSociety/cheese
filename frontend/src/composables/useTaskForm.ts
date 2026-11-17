@@ -18,6 +18,7 @@ import type {
   TaskRubricLine,
   TaskStage,
   TaskSubmissionSchemaEntry,
+  TaskTestSuite,
   Topic,
 } from '@/types'
 
@@ -30,6 +31,7 @@ import { truncateString, vuetifyConfig } from '@/utils/form'
 
 import { EMPTY_DOC, jsonContent, markdownContent } from '@/components/common/Editor/richText'
 import { settledStage } from '@/lib/taskStages'
+import { incompleteSuite, suitesAfterStageChange, suitesToSend } from '@/lib/taskTestSuite'
 import { toTypedSchema } from '@/lib/zodTypedSchema'
 
 /** 容器那份 props 的形状。`TaskForm.vue` 里仍写着同一份，靠结构对上。 */
@@ -240,6 +242,11 @@ export function useTaskForm(
   )
   const rubric = ref<TaskRubricLine[]>((props.initialData?.rubric ?? []).map((line) => ({ ...line })))
   const rubricPublic = ref(props.initialData?.rubricPublic ?? true)
+  /** 各阶段挂的测试点（`lib/taskTestSuite.ts`）。 */
+  const testSuite = ref<TaskTestSuite[]>((props.initialData?.testSuite ?? []).map((suite) => ({ ...suite })))
+  /** 点过发布后，有测试点那一行、而那一套没写运行命令或没有用例。 */
+  const testSuiteIncomplete = ref(false)
+  watch(testSuite, () => (testSuiteIncomplete.value = false), { deep: true })
   /** 点过发布后，有写了标准却没写名称的那一行。 */
   const rubricMissingName = ref(false)
   /** 点过发布后，有自动算分行、而那个阶段合计不是 100 分。 */
@@ -259,11 +266,22 @@ export function useTaskForm(
   /** 点过发布后，有没写名称的阶段。 */
   const stageMissingName = ref(false)
   watch(stages, () => (stageMissingName.value = false), { deep: true })
+  // 加、删阶段时评分要点由阶段那一块跟着挪（`lib/taskStages.ts`），测试点在这里按同一套
+  // 规矩跟着挪。
+  watch(
+    () => stages.value.map((stage) => stage.id ?? ''),
+    (newIds, oldIds) => {
+      if (newIds.join() === oldIds.join()) return
+      testSuite.value = suitesAfterStageChange(testSuite.value, oldIds, newIds)
+    }
+  )
 
   /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。评分要点合计不对
    *  也算一项：它不在 zod 表里，但一样是发不出去的。 */
   const invalidCount = computed(() =>
-    submitCount.value > 0 ? Object.keys(errors.value).length + (rubricBadTotal.value ? 1 : 0) : 0
+    submitCount.value > 0
+      ? Object.keys(errors.value).length + (rubricBadTotal.value ? 1 : 0) + (testSuiteIncomplete.value ? 1 : 0)
+      : 0
   )
   watch(invalidCount, (count) => emit('invalid', count), { immediate: true })
 
@@ -294,6 +312,11 @@ export function useTaskForm(
     // 有自动算分行的阶段合计必须是 100（后端也会 400，这里先拦住、指出来）。
     if (badAutoTotal(lines, stages.value) !== null) {
       rubricBadTotal.value = true
+      return
+    }
+    // 测试点那一行的那一套要有运行命令和至少一个用例（后端也会 400）。
+    if (incompleteSuite(testSuite.value, lines, stages.value) !== undefined) {
+      testSuiteIncomplete.value = true
       return
     }
     const written = submissionSchema.value
@@ -347,6 +370,7 @@ export function useTaskForm(
         }
       }),
       rubricPublic: rubricPublic.value,
+      testSuite: suitesToSend(testSuite.value, lines, stages.value),
       stages: stages.value.map((stage) => ({
         name: stage.name.trim(),
         description: stage.description.trim(),
@@ -383,6 +407,7 @@ export function useTaskForm(
       submissionSchema: submissionSchema.value,
       rubric: rubric.value,
       rubricPublic: rubricPublic.value,
+      testSuite: testSuite.value,
       stages: stages.value,
     }
   }
@@ -418,6 +443,7 @@ export function useTaskForm(
     if ('submissionSchema' in fields) submissionSchema.value = (fields.submissionSchema ?? []).map((e) => ({ ...e }))
     if ('rubric' in fields) rubric.value = (fields.rubric ?? []).map((line) => ({ ...line }))
     if ('rubricPublic' in fields) rubricPublic.value = fields.rubricPublic ?? true
+    if ('testSuite' in fields) testSuite.value = (fields.testSuite ?? []).map((suite) => ({ ...suite }))
     if ('stages' in fields) stages.value = (fields.stages ?? []).map((stage) => ({ ...stage }))
   }
 
@@ -481,6 +507,8 @@ export function useTaskForm(
     rubricPublic,
     rubricMissingName,
     rubricBadTotal,
+    testSuite,
+    testSuiteIncomplete,
     stages,
     stageMissingName,
     isSubmitting,

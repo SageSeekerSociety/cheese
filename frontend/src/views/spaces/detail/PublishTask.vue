@@ -52,6 +52,7 @@ import errorHandler from '@/services/ErrorHandler'
 import { agentDocked, agentOpen, askAgent, attachToAgent, openAgent, useAgentContext } from '@/stores/agent'
 import { useSpaceStore } from '@/stores/space'
 import { draftFieldsOf } from '@/types'
+import { provideTestTrial } from '@/views/tasks/composables/useTaskJudge'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,6 +66,8 @@ const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 
 const spaceId = computed(() => Number(route.params.spaceId))
+// 表单里「用参考答案试跑」测试点：算力记在这个空间的所有者头上。
+provideTestTrial(() => spaceId.value)
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
 const draftParam = computed(() => {
   const id = Number(route.query.draft)

@@ -2,8 +2,8 @@
 // 组件不取数（`.claude/rules/architecture.md`），所以真正去排队、去读结果的那一半由页面
 // 用 `provideTestTrial`（`views/tasks/composables/useTaskJudge.ts`）放进来；没有放的地方
 // （组件预览站、一次发好几道）表单就不显示「试跑」。
-import type { TaskTestSuite, TaskTestTrial, TaskTestTrialFile } from '@/types'
 import type { InjectionKey, Ref } from 'vue'
+import type { TaskTestSuite, TaskTestTrial, TaskTestTrialFile } from '@/types'
 
 export interface TestTrialRunner {
   trial: Ref<TaskTestTrial | null>

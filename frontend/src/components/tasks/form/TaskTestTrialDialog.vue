@@ -114,6 +114,7 @@ function start() {
         </div>
         <BaseField :label="t('tasks.judge.trial.content')">
           <v-textarea
+            autocomplete="off"
             :model-value="file.content"
             rows="6"
             auto-grow

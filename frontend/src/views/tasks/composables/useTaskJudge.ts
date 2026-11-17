@@ -17,6 +17,7 @@ import type {
 import { onScopeDispose, provide, ref } from 'vue'
 
 import { TaskJudgeApi } from '@/api/taskJudge'
+import { editable } from '@/lib/taskTestSuite'
 import { TEST_TRIAL } from '@/lib/testTrial'
 
 /** 还没跑完的状态：再读一次。 */
@@ -133,8 +134,7 @@ export function useTestTrial() {
     starting.value = true
     try {
       // 试跑不挂在哪个阶段上：阶段 id 不发过去。
-      const { stage: _stage, revision: _revision, caseCount: _count, totalPoints: _total, ...sent } = suite
-      trial.value = (await TaskJudgeApi.createTrial(spaceId, sent, files)).trial
+      trial.value = (await TaskJudgeApi.createTrial(spaceId, editable(suite), files)).trial
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
       return

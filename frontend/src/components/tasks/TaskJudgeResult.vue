@@ -150,7 +150,11 @@ const margin = computed(() =>
               @click="toggle(index)"
             />
             <span v-else class="tjr__spacer" aria-hidden="true" />
-            <span class="tjr__dot" :class="entry.status === 'ok' ? 'tjr__dot--ok' : 'tjr__dot--bad'" aria-hidden="true" />
+            <span
+              class="tjr__dot"
+              :class="entry.status === 'ok' ? 'tjr__dot--ok' : 'tjr__dot--bad'"
+              aria-hidden="true"
+            />
             <span class="tjr__name" data-user-content>
               {{ entry.name }}
               <span v-if="entry.visibility === 'HIDDEN'" class="tjr__hidden t-meta-read">{{

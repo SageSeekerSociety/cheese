@@ -140,6 +140,8 @@ const {
   rubricPublic,
   rubricMissingName,
   rubricBadTotal,
+  testSuite,
+  testSuiteIncomplete,
   stages,
   stageMissingName,
   isSubmitting,
@@ -212,8 +214,10 @@ defineExpose({
         v-model:submission-schema="submissionSchema"
         v-model:rubric="rubric"
         v-model:rubric-public="rubricPublic"
+        v-model:test-suite="testSuite"
         :stages="stages"
         :missing-name="rubricMissingName"
+        :incomplete-suite="testSuiteIncomplete"
       />
     </TaskFormPart>
 

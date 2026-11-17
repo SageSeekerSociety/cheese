@@ -117,6 +117,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
         @update:model-value="emit('update:line', { item: String($event ?? '') })"
       />
       <v-text-field
+        autocomplete="off"
         :model-value="line.points"
         :aria-label="t('tasks.judge.form.linePoints')"
         type="number"
@@ -146,6 +147,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
     <div class="tfts__grid">
       <BaseField :label="t('tasks.judge.form.runtime')">
         <v-select
+          autocomplete="off"
           :model-value="suite.runtime"
           :items="runtimeItems"
           item-title="title"
@@ -196,6 +198,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
       </BaseField>
       <BaseField :label="t('tasks.judge.form.timeLimit')" :hint="t('tasks.judge.form.timeLimitHint')">
         <v-text-field
+          autocomplete="off"
           :model-value="suite.timeLimitMs"
           type="number"
           min="500"
@@ -210,6 +213,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
       </BaseField>
       <BaseField :label="t('tasks.judge.form.memory')">
         <v-text-field
+          autocomplete="off"
           :model-value="suite.memoryMb"
           type="number"
           min="64"
@@ -223,6 +227,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
       </BaseField>
       <BaseField :label="t('tasks.judge.form.compare')">
         <v-select
+          autocomplete="off"
           :model-value="suite.compare"
           :items="compareItems"
           item-title="title"
@@ -235,6 +240,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
       </BaseField>
       <BaseField v-if="suite.compare === 'NUMERIC'" :label="t('tasks.judge.form.tolerance')">
         <v-text-field
+          autocomplete="off"
           :model-value="suite.tolerance"
           type="number"
           min="0"
@@ -284,6 +290,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
             @update:model-value="setCase(index, { visibility: $event as TaskTestVisibility })"
           />
           <v-text-field
+            autocomplete="off"
             :model-value="entry.points"
             :aria-label="t('tasks.judge.form.casePoints', { n: index + 1 })"
             type="number"
@@ -309,6 +316,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
         <div v-if="open.has(index)" class="tfts__io">
           <BaseField :label="t('tasks.judge.form.input')">
             <v-textarea
+              autocomplete="off"
               :model-value="entry.input ?? ''"
               rows="3"
               auto-grow
@@ -322,6 +330,7 @@ const canTrial = inject(TEST_TRIAL, null) !== null
           </BaseField>
           <BaseField :label="t('tasks.judge.form.expected')">
             <v-textarea
+              autocomplete="off"
               :model-value="entry.expected ?? ''"
               rows="3"
               auto-grow
