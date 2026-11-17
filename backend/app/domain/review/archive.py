@@ -97,6 +97,7 @@ async def _converge_card(
     if card.decided_by is None and by is not None:
         card.decided_by = by
         card.decided_by_assistant = False
+        card.decided_by_seat = None
     if card.decided_at is None:
         card.decided_at = now
     # 卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱里说着「等你」。

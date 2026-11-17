@@ -31,7 +31,7 @@ export const ACCEPT_BAR_ENTRIES: CatalogEntry[] = [
           taskId: ACCEPT_CARD?.task_id,
           viewer: ACCEPT_CARD?.reviewer_handle,
         },
-        expect: '采纳并完成任务',
+        expect: '采纳',
       },
     ],
   },

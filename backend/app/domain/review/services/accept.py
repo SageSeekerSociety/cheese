@@ -76,8 +76,11 @@ async def accept(
     head_sha: str | None = None,
     deliverable_revision: str | None = None,
     by_assistant: bool = False,
+    by_seat: str | None = None,
 ) -> AcceptCard:
-    """``by_assistant``: the reviewer's own 芝士 accepts for them; the card
+    """``by_seat``: the project AI teammate's seat that accepts for the
+    reviewer (a channel's main line on their word), kept on the card so the
+    line recording it names that teammate. ``by_assistant``: the reviewer's own 芝士 accepts for them; the card
     and the lines announcing it say so (``AcceptCard.decided_by_assistant``)."""
     card = await self._card_or_404(card_id)
     # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
@@ -142,6 +145,7 @@ async def accept(
     # Everything below that records the decision records ``decided_by``'s: this
     # is whose hand it was.
     card.decided_by_assistant = by_assistant
+    card.decided_by_seat = by_seat if by_assistant else None
     if (
         card.pr_number is None
         and not card.delivered_task_ids

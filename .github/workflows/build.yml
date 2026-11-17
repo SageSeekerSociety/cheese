@@ -40,6 +40,7 @@ jobs:
       metering_proxy: ${{ steps.plan.outputs.metering_proxy }}
       private_executor: ${{ steps.plan.outputs.private_executor }}
       collab: ${{ steps.plan.outputs.collab }}
+      judge: ${{ steps.plan.outputs.judge }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -94,7 +95,8 @@ jobs:
           steps.plan.outputs.gateway == 'false' ||
           steps.plan.outputs.metering_proxy == 'false' ||
           steps.plan.outputs.private_executor == 'false' ||
-          steps.plan.outputs.collab == 'false'
+          steps.plan.outputs.collab == 'false' ||
+          steps.plan.outputs.judge == 'false'
         env:
           BUILD_BACKEND: ${{ steps.plan.outputs.backend }}
           BUILD_FRONTEND: ${{ steps.plan.outputs.frontend }}
@@ -104,6 +106,7 @@ jobs:
           BUILD_METERING_PROXY: ${{ steps.plan.outputs.metering_proxy }}
           BUILD_PRIVATE_EXECUTOR: ${{ steps.plan.outputs.private_executor }}
           BUILD_COLLAB: ${{ steps.plan.outputs.collab }}
+          BUILD_JUDGE: ${{ steps.plan.outputs.judge }}
           BASE_SHA: ${{ steps.plan.outputs.base_sha }}
           CURRENT_SHA: ${{ github.sha }}
           BASE_TAG: ${{ steps.plan.outputs.base_tag }}
@@ -144,6 +147,12 @@ jobs:
           [ "$BUILD_METERING_PROXY" = true ] || promote metering-proxy "$BASE_SHA" "$CURRENT_SHA"
           [ "$BUILD_PRIVATE_EXECUTOR" = true ] || promote private-executor
           [ "$BUILD_COLLAB" = true ] || promote collab
+          # One job builds the judge's image for each runtime.
+          if [ "$BUILD_JUDGE" != true ]; then
+            for runtime in python cpp java node go; do
+              promote "judge-$runtime"
+            done
+          fi
 
       - name: Remove registry credentials
         if: always()
@@ -600,6 +609,65 @@ jobs:
           cache-from: type=gha,version=2,scope=private-executor
           cache-to: type=gha,version=2,scope=private-executor,mode=max
 
+
+
+  # The judge's runtime images (backend/sandbox/judge/): what a student's code
+  # runs in on a judge host (app/domain/judge/runtimes.py), one per runtime.
+  build-judge:
+    needs: plan
+    if: needs.plan.outputs.judge == 'true'
+    runs-on: ubuntu-24.04
+    # A pinned official base plus one apt package.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [python, cpp, java, node, go]
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/judge-${{ matrix.runtime }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Build and push judge image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./backend/sandbox/judge
+          file: ./backend/sandbox/judge/Dockerfile.${{ matrix.runtime }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,version=2,scope=judge-${{ matrix.runtime }}
+          cache-to: type=gha,version=2,scope=judge-${{ matrix.runtime }},mode=max
 
   build-collab:
     needs: plan

@@ -278,6 +278,22 @@ class MachineSettings(BaseModel):
     # memory, e.g. `{"4c8g": 30}` (usage.compute.vm_spec). A size not named
     # here cannot be started.
     cloud_vm_credits_per_hour: dict[str, float] = Field(default_factory=dict)
+    # --- Judge hosts: where a 题目's test points run (app/domain/judge) ---
+    # The devices that judge students' code, by device id, as a JSON list in
+    # env, e.g. '["d-abc", "d-def"]'. Each is a machine the platform keeps for
+    # nothing else, with docker and the connector and none of the platform's
+    # secrets (docs/manual/dev/judge.md). Empty: no judging runs, and every run
+    # queued is failed saying judging is unavailable.
+    judge_device_ids: list[str] = Field(default_factory=list)
+    # How many judgings one judge host runs at once. Each container has one
+    # core, so this is about the host's cores less one for itself.
+    judge_slots_per_device: int = Field(default=2, ge=1, le=64)
+    # Credits per minute of judging, charged to the owner of the space the
+    # 题目 is in, by whole minutes rounded up (usage/compute.py). Unset on
+    # purpose, like the cloud prices above: with none set no judging runs.
+    judge_credits_per_minute: float | None = Field(default=None, ge=0)
+    # The largest code archive one judging takes from a student's repository.
+    judge_code_max_bytes: int = Field(default=8 * 1024 * 1024, ge=1024)
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud by the sweep. Never would let a machine destroyed upstream sit
     # here as `running` forever (which happened, and also consumed the

@@ -1805,6 +1805,10 @@
     "s4": {
       "name": "Could not load",
       "note": "Not read: the whole block becomes an error with a retry, not “no results yet”."
+    },
+    "s5": {
+      "name": "Practice and review reminders",
+      "note": "Under the point to work on: “Make 3 practice questions” and “Read a short explanation first”; a set a teacher sent that is still being prepared is under “Practice to do”; the review reminders on the right list one that is due, with another set to do."
     }
   },
   "knowledgePointField": {
@@ -1863,6 +1867,17 @@
     "s10": {
       "name": "Load failed",
       "note": "The analysis did not load: the reason and a retry, with the existing content still shown."
+    }
+  },
+  "learningPracticeDialog": {
+    "about": "The practice dialog: three AI-made multiple-choice questions aimed at where the member is stuck; each answer shows right or wrong and an explanation at once, and finishing folds the result into the judgment on that point. Only the member sees it.",
+    "s1": {
+      "name": "Halfway",
+      "note": "Question 1 right, question 2 wrong with its explanation, question 3 not answered; “Done” needs every question answered."
+    },
+    "s2": {
+      "name": "Finished",
+      "note": "2 of 3 correct, the level unchanged, and the date of the next review."
     }
   }
 }

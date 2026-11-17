@@ -166,6 +166,12 @@ class AcceptCard(UuidPk, Timestamps, Base):
     decided_by_assistant: Mapped[bool] = mapped_column(
         default=False, server_default="false"
     )
+    # The project AI teammate's seat that decided it for ``decided_by``: a
+    # channel's main line adopting on its reviewer's word
+    # (`accept_coordinated_task`). NULL when a person decided, when their own
+    # personal assistant did, and on cards decided before it was kept. The
+    # line recording the adoption names this teammate (`task_landing`).
+    decided_by_seat: Mapped[str | None] = mapped_column(String(64), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

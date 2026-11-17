@@ -242,24 +242,29 @@ class TaskJudgeRun(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, task_judge_run_seq, primary_key=True)
-    task_id: Mapped[int] = mapped_column(
+    #: 哪道题、哪一套测试。出题人在表单里试跑（``purpose = 'TRIAL'``）时题目还没发布，
+    #: 这两格为空，跑什么写在 ``trial_spec`` 里。
+    task_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey(
             "task.id", ondelete="CASCADE", name="fk_task_judge_run_task_id_task"
         ),
-        nullable=False,
+        nullable=True,
         index=True,
     )
-    suite_id: Mapped[int] = mapped_column(
+    suite_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey(
             "task_test_suite.id",
             ondelete="CASCADE",
             name="fk_task_judge_run_suite_id_task_test_suite",
         ),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    #: 算力记在哪个空间头上（试跑那一行用；提交的那一行从题目读）。不是外键，同
+    #: ``project_id``。
+    space_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: 跑的是测试套的第几版（``TaskTestSuite.revision``）。
     suite_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     #: 哪一版提交；试跑与自测为空。
@@ -276,7 +281,8 @@ class TaskJudgeRun(Base):
     purpose: Mapped[str] = mapped_column(
         String(16), nullable=False, default="SUBMISSION", server_default="SUBMISSION"
     )
-    #: 试跑/自测要跑什么：``{branch, codeSha, requestedBy}``。等提交跑的那条为空。
+    #: 试跑要跑什么：测试套的设置、用例和参考代码在私有存储里的位置
+    #: （``app.domain.judge.trials``）。等提交跑的那条为空。
     trial_spec: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     #: 代码从哪个项目取（学生项目的 id）。不是外键：项目删了，这份结果照旧是记录。
     project_id: Mapped[uuid.UUID | None] = mapped_column(

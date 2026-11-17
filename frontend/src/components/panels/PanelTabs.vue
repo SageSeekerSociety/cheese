@@ -42,10 +42,10 @@ const props = withDefaults(
     panelId?: string
     /** 并排时右边那一格：页签下面一道虚线，看得出它也在屏幕上。 */
     side?: string | null
-    /** 固定区右边那一格能关的页签（频道里正在审阅的那一件交付）：同一时间只有一格。 */
-    closable?: PanelTab | null
+    /** 固定区右边那几格能关的页签（频道里打开的任务，一件一格）。 */
+    closables?: PanelTab[]
   }>(),
-  { files: () => [], phone: false, panelId: undefined, side: null, closable: null }
+  { files: () => [], phone: false, panelId: undefined, side: null, closables: () => [] }
 )
 
 const emit = defineEmits<{
@@ -133,7 +133,7 @@ function placeInk() {
   if (!inkMoves.value) requestAnimationFrame(() => (inkMoves.value = true))
 }
 watch(
-  [() => props.active, () => props.files.length, () => props.closable?.key, tabbarRef],
+  [() => props.active, () => props.files.length, () => props.closables.length, tabbarRef],
   () =>
     void nextTick(() => {
       placeInk()
@@ -207,9 +207,10 @@ const inkStyle = computed(() =>
             >{{ tab.signal.count }}</span
           >
         </button>
-        <!-- The one closable tab right of the fixed ones (a delivery under review). Its
-             close button is a sibling, for the same reason as the free zone's below. -->
-        <div v-if="closable" class="tabbar__file">
+        <!-- The closable tabs right of the fixed ones, one per task opened in the channel.
+             Each close button is a sibling, for the same reason as the free zone's below. -->
+        <span v-if="closables.length" class="tabbar__sep" aria-hidden="true" />
+        <div v-for="closable in closables" :key="closable.key" class="tabbar__file">
           <button
             type="button"
             role="tab"

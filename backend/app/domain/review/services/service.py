@@ -406,6 +406,7 @@ class AcceptService:
         head_sha: str | None = None,
         deliverable_revision: str | None = None,
         by_assistant: bool = False,
+        by_seat: str | None = None,
     ) -> AcceptCard:
         return await _accept.accept(
             self,
@@ -414,6 +415,7 @@ class AcceptService:
             head_sha=head_sha,
             deliverable_revision=deliverable_revision,
             by_assistant=by_assistant,
+            by_seat=by_seat,
         )
 
     async def _accept_github(

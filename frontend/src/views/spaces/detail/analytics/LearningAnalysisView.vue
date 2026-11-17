@@ -42,6 +42,9 @@
         <LearningClassPointDetail
           v-if="pointDetail && !failed"
           :detail="pointDetail"
+          :pushing="pushing"
+          :push-result="pushResult"
+          @push="(id) => emit('push', id)"
           @back="emit('closePoint')"
           @open-excerpts="(group) => emit('openExcerpts', group)"
           @export="(id) => emit('export', id)"
@@ -92,6 +95,7 @@ import type {
   LearningClassTasks as Tasks,
   LearningClassTrend as Trend,
   LearningClassWords as Words,
+  LearningPushResult,
 } from '@/types/apiSpaces'
 import type { LearningSub } from './learningSubs'
 
@@ -124,6 +128,9 @@ const props = withDefaults(
     overview?: Overview | null
     points?: Points | null
     pointDetail?: PointDetail | null
+    /** 知识点详情里「推送巩固题」：正在推、刚推回来的结果。 */
+    pushing?: boolean
+    pushResult?: LearningPushResult | null
     questions?: Questions | null
     words?: Words | null
     tasks?: Tasks | null
@@ -138,6 +145,8 @@ const props = withDefaults(
     overview: null,
     points: null,
     pointDetail: null,
+    pushing: false,
+    pushResult: null,
     questions: null,
     words: null,
     tasks: null,
@@ -154,6 +163,7 @@ const emit = defineEmits<{
   /** 导出报告；从知识点详情点进来时带上那个知识点。 */
   export: [pointId: number | null]
   ratios: [asked: number, stuck: number]
+  push: [pointId: number]
   retry: []
 }>()
 

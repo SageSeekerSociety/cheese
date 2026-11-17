@@ -14,6 +14,7 @@ import type {
   LearningClassTrend,
   LearningClassWords,
   LearningExportRequest,
+  LearningPushResult,
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
@@ -127,6 +128,12 @@ export const spaceAnalytics = {
   getLearningClassPoint: (spaceId: number, pointId: number) =>
     axiosRequest<LearningClassPointDetail>(
       { url: `/spaces/${spaceId}/learning-analysis/class/points/${pointId}`, method: 'GET' },
+      true
+    ),
+  /** 推送巩固题给卡在这个知识点上的成员：系统自己找人，只回人数（第 4 步）。 */
+  pushLearningPractice: (spaceId: number, pointId: number) =>
+    axiosRequest<LearningPushResult>(
+      { url: `/spaces/${spaceId}/learning-analysis/class/points/${pointId}/push`, method: 'POST' },
       true
     ),
   getLearningClassQuestions: (spaceId: number) =>

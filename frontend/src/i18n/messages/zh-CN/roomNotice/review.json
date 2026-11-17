@@ -128,5 +128,6 @@
   "deployedTo": "已部署到 {environment}",
   "deployFailedTo": "部署到 {environment} 失败",
   "taskFiledForReview": "「{title}」已提交审阅",
-  "taskReturned": "{who} 退回了「{title}」"
+  "taskReturned": "{who} 退回了「{title}」",
+  "taskAdopted": "{who} 采纳了「{title}」"
 }

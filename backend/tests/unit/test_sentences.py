@@ -371,6 +371,8 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "subagentStart",
         "subagentStopEmpty",
         "titleAutoRenamed",
+        "taskLanded",
+        "taskStepLanded",
         "computeAnyDevice",
         "computeCloud",
         "computeCloudVm",
