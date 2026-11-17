@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.sentences import exception_text, say
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import SessionOpening, opening_changes
 from app.domain.agent.nonce import new_nonce
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
@@ -39,6 +38,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.prompts import SessionOpening, opening_changes
 
 logger = logging.getLogger(__name__)
 _SESSION_ROUTES_KEPT = 512
@@ -315,7 +315,8 @@ async def send_prepared(
                 input_effects,
                 fence_delivery=delivery_id is not None,
             ),
-            owes_reply=summoned,
+            owes_reply=summoned
+            or (platform_turn and not is_resume and prepared.answers_the_platform),
         )
         _delivery_step("send")
         # 这一轮把现状说到了：下一轮只补在这之后变了的。

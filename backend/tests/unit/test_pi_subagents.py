@@ -30,13 +30,6 @@ from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
 from app.domain.agent.harness.pi.subscription import Subscription
-from app.domain.agent.harness.prompt import (
-    PLATFORM_NOTICE,
-    REPEATED_FAILURE,
-    SHARED_CHECKOUT,
-    STEP_TITLES,
-    SUBAGENT_TODO_WRITE,
-)
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -44,6 +37,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.session_host import pi as pi_host
 from app.domain.agent.session_host.contract import Access, SessionRef, SessionSpec
+from app.domain.prompts import NoticeType, notice_template, piece
 from tests.pinned_claude import pi_binary
 from tests.support.completions_fixture import Completions
 from tests.support.room_machine import room_machine
@@ -236,7 +230,7 @@ async def pi(tmp_path: Path, route, *, default: str = "child-default"):
                 args=arguments(PARENT),
                 target=target,
                 extension=extension(),
-                notice=PLATFORM_NOTICE,
+                notice=notice_template(NoticeType.harness),
                 subagent_rules=config.get("subagent_rules", ""),
             )
             yield Session(runner, model, admission)
@@ -352,10 +346,10 @@ async def test_a_subagent_is_told_the_rules_every_agent_of_the_session_keeps(
         (first, *_) = session.requests("child-default")
         request = json.dumps(first, ensure_ascii=False)
         for rule in (
-            SUBAGENT_TODO_WRITE,
-            SHARED_CHECKOUT,
-            STEP_TITLES,
-            REPEATED_FAILURE,
+            piece("system/subagent_todo_write"),
+            piece("system/shared_checkout"),
+            piece("system/step_titles"),
+            piece("system/repeated_failure"),
         ):
             assert json.dumps(rule, ensure_ascii=False)[1:-1] in request, rule
 

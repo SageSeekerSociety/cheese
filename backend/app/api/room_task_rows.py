@@ -35,6 +35,7 @@ from app.domain.agent.opening import opening_state
 from app.domain.agent.session_state import running_conversations
 from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.message_input import TASK_TAG
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -286,6 +287,17 @@ def named_task(block: Block) -> uuid.UUID | None:
         return None
 
 
+def tagged_task(block: Block) -> uuid.UUID | None:
+    """The task a message says it is about (`TASK_TAG`), if it says one."""
+    raw = (block.meta or {}).get(TASK_TAG)
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
 async def tasks_under_blocks(
     db: AsyncSession,
     actor: Actor,
@@ -298,14 +310,16 @@ async def tasks_under_blocks(
     message, under that message — in the main line the message a task hangs
     under, in a 支线 the reply it was made from, except the task the 支线
     itself became — and the task a room-line row says began, on that row.
-    Blocks that carry none are left out."""
+    A message about a task (`TASK_TAG`) carries that task too, so its tag can
+    say how the task stands. Blocks that carry none are left out."""
     named = {block.id: task_id for block in blocks if (task_id := named_task(block))}
+    tagged = {block.id: task_id for block in blocks if (task_id := tagged_task(block))}
     if not blocks:
         return {}
     threads = await TaskService(db).threads_for_room(
         room_id,
         limit=0,
-        ids=set(named.values()),
+        ids=set(named.values()) | set(tagged.values()),
         origins=[block.id for block in blocks],
     )
     rows = dict(
@@ -323,8 +337,8 @@ async def tasks_under_blocks(
             carried.setdefault(hung, []).append(rows[task.id])
         elif said is not None and said in said_in and said_in[said] != task.id:
             carried.setdefault(said, []).append(rows[task.id])
-    for block_id, task_id in named.items():
-        if task_id in rows:
+    for block_id, task_id in [*named.items(), *tagged.items()]:
+        if task_id in rows and rows[task_id] not in carried.get(block_id, []):
             carried.setdefault(block_id, []).append(rows[task_id])
     return carried
 

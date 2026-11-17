@@ -209,6 +209,12 @@ class Task(UuidPk, Timestamps, Base):
     contributor_handles: Mapped[list[str]] = mapped_column(
         JSON, default=list, server_default="[]", nullable=False
     )
+    # The members a request was passed on to this task for, besides whoever
+    # proposed it (`cheese_task(action=tell)`'s asker): each is told when the
+    # task is handed in or ends.
+    asker_handles: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # ``created_by``'s own 芝士 opened it for them (`Actor.by_assistant`): the
     # task is theirs, and its page says their 芝士 made it.

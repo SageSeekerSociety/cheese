@@ -22,6 +22,7 @@ from sqlalchemy import select, update
 
 from app.api.deps import get_chat_service
 from app.domain.agent import turn_resume
+from app.domain.agent.announce import announce
 from app.domain.agent.models import TurnResume
 from app.domain.delivery.agent import instance_for_seat
 from app.domain.delivery.models import Delivery
@@ -77,7 +78,9 @@ def test_two_tasks_whose_write_up_never_started_both_close(client, stub_hooks):
     client.portal.call(waiting_for_a_write_up_that_never_started)
     chat = client.app.dependency_overrides[get_chat_service]()
 
-    given_up = client.portal.call(lambda: give_up_stale(client.test_factory, chat=chat))
+    given_up = client.portal.call(
+        lambda: give_up_stale(client.test_factory, chat=chat, announce=announce)
+    )
 
     async def read_back():
         async with client.test_factory() as db:

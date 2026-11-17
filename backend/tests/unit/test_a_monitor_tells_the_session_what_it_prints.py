@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
+from app.domain.prompts import NoticeType, platform_prompt
 from tests.unit.test_a_person_is_answered_before_anything_else import (
     codex,
     monitor,
@@ -51,7 +51,10 @@ async def test_a_line_printed_after_the_turn_wakes_the_session(tmp_path, harness
         say("watching it"),
     ]
     async with harness(tmp_path, steps) as session:
-        await session.send(f"{PLATFORM_NOTICE}\nwatch the deploy", owes_reply=False)
+        await session.send(
+            platform_prompt("watch the deploy", NoticeType.instruction),
+            owes_reply=False,
+        )
         await session.finished(len(steps))
         # The call came back at once, with the id to stop it by.
         assert "Monitor started (task monitor-" in session.told(1)
@@ -74,7 +77,9 @@ async def test_a_monitor_never_started_by_a_denied_command(tmp_path, harness):
         settings = session.machine / ".claude" / "settings.json"
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text('{"permissions": {"deny": ["Bash(touch *)"]}}')
-        await session.send(f"{PLATFORM_NOTICE}\nwatch it", owes_reply=False)
+        await session.send(
+            platform_prompt("watch it", NoticeType.instruction), owes_reply=False
+        )
         await session.finished(len(steps))
         await asyncio.sleep(1)
 

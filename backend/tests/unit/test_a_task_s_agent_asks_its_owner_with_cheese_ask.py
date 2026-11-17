@@ -10,7 +10,7 @@ message where a question belonged.
 
 import pytest
 
-from app.domain.agent.harness.prompt import task_opening_prompt
+from app.domain.prompts import task_opening_prompt
 
 
 @pytest.mark.parametrize(

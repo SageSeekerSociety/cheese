@@ -74,7 +74,6 @@ class TurnPreparation:
         compute: _Machines,
         memory: _MemoryBooks,
         base_prompt: str,
-        skills: str,
         model_options: ModelOptions,
         refuse: Callable[[str], BaseError],
         live: LiveWork,
@@ -84,7 +83,6 @@ class TurnPreparation:
         self.compute = compute
         self.memory = memory
         self.base_prompt = base_prompt
-        self.skills = skills
         self.model_options = model_options
         self.refuse = refuse
         self.live = live
