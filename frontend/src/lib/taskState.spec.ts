@@ -285,11 +285,11 @@ describe('其余几种', () => {
 })
 
 describe('等部署', () => {
-  it('最后一步合并后在等部署：状态词仍是七个里的待审阅，记号换成火箭，悬停说在等 CI 与部署', () => {
+  it('最后一步合并后在等部署：状态词是第八个「待部署」，记号是火箭，悬停说在等 CI 与部署', () => {
     const state = taskState(task('deploying', { status: 'open', deploying_since: minutesAgo(5) }), ctx)
     expect(state.kind).toBe('deploying')
-    expect(state.status).toBe('in_review')
-    expect(state.label).toBe('待审阅')
+    expect(state.status).toBe('awaiting_deploy')
+    expect(state.label).toBe('待部署')
     expect(state.icon).not.toBe(taskState(task('running', { session_running: true }), ctx).icon)
     expect(state.icon).not.toBe(taskState(task('awaiting_review'), ctx).icon)
     expect(state.tip).toBe('已合并，等待 CI 与部署')

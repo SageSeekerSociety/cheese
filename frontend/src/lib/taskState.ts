@@ -1,21 +1,22 @@
-// 一件任务的状态长什么样：七个状态词中的哪一个、哪个图标、哪种颜色、动不动，以及状态词
+// 一件任务的状态长什么样：八个状态词中的哪一个、哪个图标、哪种颜色、动不动，以及状态词
 // 下面那一行说什么。频道里的任务卡、全部任务、待处理清单、任务页头和侧栏的任务行都从这一处
 // 取，同一件任务在五处是同一个样子。
 //
 // 状态不在这里算：后端 `presentation.phrase` 已经说了它在哪一格（`room_task/presentation.py`），
-// 这里只把那个码归到七个状态词之一（`STATUS`），再挑图标和颜色。
+// 这里只把那个码归到八个状态词之一（`STATUS`），再挑图标和颜色。
 //
 //   未开始 not_started      刚建，还没人动手（started）
 //   进行中 in_progress      在做、在等结果、被退回后修改中（running / waiting / bounced）
 //   待回答 awaiting_answer  芝士提了问题在等人答
 //   待协助 needs_help       队友说没人帮忙走不下去（blocked）
-//   待审阅 in_review        已提交，在审阅链路上：跑检查、修检查、解冲突、等人审阅；
-//                          最后一步已合并、在等主干 CI 与部署上线（deploying / deploy_blocked）
+//   待审阅 in_review        已提交，在审阅链路上：跑检查、修检查、解冲突、等人审阅
+//   待部署 awaiting_deploy  最后一步已合并，在等主干 CI 与部署上线（deploying / deploy_blocked）；
+//                          合并了不等于上线了，所以不归已完成（蔡松洋 2026-11-17 定的第八个词）
 //   已完成 done             最后一步已采纳，或以结论结束
 //   已关闭 closed           没做成就结束了
 //
-// 图标和颜色比状态词细一层（`kind`）：同是进行中，在跑的转、退回的是危险色；同是待审阅，
-// 等部署的是火箭，主干 CI 红挡住部署时换警示色。
+// 图标和颜色比状态词细一层（`kind`）：同是进行中，在跑的转、退回的是危险色；同是待部署，
+// 主干 CI 红挡住部署时火箭换警示色。
 // 状态词只说状态；谁、为什么、多久写在下面那一行，那一行不再重复状态词。
 
 import type { BoardPhrase, RoomTask } from '@/cx_types'
@@ -37,13 +38,14 @@ export type TaskStateKind =
   | 'open'
   | 'closed'
 
-/** 一件任务此刻的状态：全产品只用这七个词（`work.taskState.label.*`）。 */
+/** 一件任务此刻的状态：全产品只用这八个词（`work.taskState.label.*`）。 */
 export type TaskStatus =
   | 'not_started'
   | 'in_progress'
   | 'awaiting_answer'
   | 'needs_help'
   | 'in_review'
+  | 'awaiting_deploy'
   | 'done'
   | 'closed'
 
@@ -52,7 +54,7 @@ export type TaskStateTone = 'ok' | 'okMark' | 'neutral' | 'warn' | 'ink' | 'dang
 
 export interface TaskState {
   kind: TaskStateKind
-  /** 七个状态词中的哪一个。 */
+  /** 八个状态词中的哪一个。 */
   status: TaskStatus
   icon: string
   tone: TaskStateTone
@@ -111,8 +113,8 @@ const STATUS: Record<BoardPhrase, TaskStatus> = {
   fixing_checks: 'in_review',
   resolving_conflict: 'in_review',
   updating_branch: 'in_review',
-  deploying: 'in_review',
-  deploy_blocked: 'in_review',
+  deploying: 'awaiting_deploy',
+  deploy_blocked: 'awaiting_deploy',
   checks_failed: 'in_review',
   awaiting_review: 'in_review',
   accepted: 'done',
@@ -121,7 +123,7 @@ const STATUS: Record<BoardPhrase, TaskStatus> = {
   archived: 'closed',
 }
 
-/** 后端码归到七个状态词中的哪一个。不认识的码当作未开始。 */
+/** 后端码归到八个状态词中的哪一个。不认识的码当作未开始。 */
 export function taskStatus(phrase: BoardPhrase): TaskStatus {
   return STATUS[phrase] ?? 'not_started'
 }
@@ -136,6 +138,7 @@ export const STATUS_ORDER: readonly TaskStatus[] = [
   'needs_help',
   'awaiting_answer',
   'in_review',
+  'awaiting_deploy',
   'in_progress',
   'not_started',
   'done',

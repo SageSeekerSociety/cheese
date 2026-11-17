@@ -128,15 +128,15 @@ const CASES: Case[] = [
     title: '作业 3 的参考答案',
   },
   {
-    name: '待审阅（等部署）',
-    note: '同是待审阅，换成火箭、中性灰：最后一步已合并，在等主干 CI 跑完、部署上线，之后才写总结关闭。悬停在记号上说的也是这一句。',
+    name: '待部署',
+    note: '火箭、中性灰：最后一步已合并，在等主干 CI 跑完、部署上线，之后才写总结关闭。悬停在记号上说的也是这一句。',
     column: 'delivering',
     phrase: 'deploying',
     over: { deploying_since: ago(9 * MIN), accepted_at: ago(9 * MIN) },
     title: '侧栏并进项目切换器',
   },
   {
-    name: '待审阅（部署被挡住）',
+    name: '待部署（被挡住）',
     note: '火箭换警示色：合并之后主干 CI 红了，部署停住。任务页头多一个链接，点开是红的那次 CI。',
     column: 'delivering',
     phrase: 'deploy_blocked',

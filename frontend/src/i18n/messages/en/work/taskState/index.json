@@ -8,6 +8,7 @@
     "awaiting_answer": "Awaiting answer",
     "needs_help": "Needs help",
     "in_review": "In review",
+    "awaiting_deploy": "Awaiting deploy",
     "done": "Done",
     "closed": "Closed"
   },
