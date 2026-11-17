@@ -1279,3 +1279,174 @@ class TestTeamIntegration:
             None,
         )
         assert owner_data["role"] == "OWNER"
+
+    def test_team_people_remarks_are_private_and_do_not_rename_users(
+        self, api_client: TestClient, team_setup: dict
+    ) -> None:
+        owner = team_setup["creator"]
+        viewer = team_setup["admin"]
+        other = team_setup["member"]
+
+        def auth(person):
+            return {"Authorization": f"Bearer {person.token}"}
+
+        created = api_client.post(
+            "/teams", json={"name": team_setup["team_name"]}, headers=auth(owner)
+        )
+        assert created.status_code == 201, created.text
+        team_id = created.json()["data"]["team"]["id"]
+        for person in (viewer, other):
+            added = api_client.post(
+                f"/teams/{team_id}/members",
+                json={
+                    "userId": person.user_id,
+                    "role": "ADMIN" if person == viewer else "MEMBER",
+                },
+                headers=auth(owner),
+            )
+            assert added.status_code == 201, added.text
+        baseline = api_client.get(f"/teams/{team_id}", headers=auth(viewer)).json()[
+            "data"
+        ]["team"]["owner"]
+        saved = api_client.put(
+            f"/users/{owner.username}/remark",
+            json={"remark": "Private owner label"},
+            headers=auth(viewer),
+        )
+        assert saved.status_code == 200, saved.text
+        saved_member = api_client.put(
+            f"/users/{other.username}/remark",
+            json={"remark": "Private member label"},
+            headers=auth(viewer),
+        )
+        assert saved_member.status_code == 200, saved_member.text
+        saved_admin = api_client.put(
+            f"/users/{viewer.username}/remark",
+            json={"remark": "Private admin label"},
+            headers=auth(owner),
+        )
+        assert saved_admin.status_code == 200, saved_admin.text
+        for person in (viewer, owner, other):
+            expected = "Private owner label" if person == viewer else None
+            team = api_client.get(f"/teams/{team_id}", headers=auth(person)).json()[
+                "data"
+            ]["team"]
+            assert team["owner"]["remark"] == expected
+            assert team["owner"]["nickname"] == baseline["nickname"]
+            assert team["owner"]["username"] == owner.username
+            assert team["admins"]["examples"][0]["remark"] == (
+                "Private admin label" if person == owner else None
+            )
+            assert team["members"]["examples"][0]["remark"] == (
+                "Private member label" if person == viewer else None
+            )
+            listed = api_client.get(
+                "/teams",
+                params={"query": team_setup["team_name"]},
+                headers=auth(person),
+            )
+            assert listed.status_code == 200, listed.text
+            listed_team = next(
+                item for item in listed.json()["data"]["teams"] if item["id"] == team_id
+            )
+            assert listed_team["owner"]["remark"] == expected
+            roster = api_client.get(
+                f"/teams/{team_id}/members", headers=auth(person)
+            ).json()["data"]["members"]
+            shown = next(
+                row["user"] for row in roster if row["userId"] == owner.user_id
+            )
+            assert shown["remark"] == expected
+            assert shown["nickname"] == baseline["nickname"]
+        assert api_client.get(f"/teams/{team_id}/members").status_code == 401
+        cleared = api_client.put(
+            f"/users/{owner.username}/remark", json={"remark": ""}, headers=auth(viewer)
+        )
+        assert cleared.status_code == 200
+        shown = api_client.get(f"/teams/{team_id}", headers=auth(viewer)).json()[
+            "data"
+        ]["team"]["owner"]
+        assert shown["remark"] is None
+        assert shown["nickname"] == baseline["nickname"]
+
+    def test_team_applications_keep_each_readers_remarks_private(
+        self, api_client: TestClient, team_setup: dict
+    ) -> None:
+        owner = team_setup["creator"]
+        applicant = team_setup["member"]
+        invited = team_setup["another_user"]
+
+        def auth(person):
+            return {"Authorization": f"Bearer {person.token}"}
+
+        created = api_client.post(
+            "/teams", json={"name": team_setup["team_name"]}, headers=auth(owner)
+        )
+        assert created.status_code == 201, created.text
+        team_id = created.json()["data"]["team"]["id"]
+        for viewer, target, label in [
+            (owner, applicant, "Applicant label"),
+            (owner, invited, "Invited label"),
+            (invited, owner, "Inviter label"),
+            (applicant, owner, "Reviewer label"),
+        ]:
+            saved = api_client.put(
+                f"/users/{target.username}/remark",
+                json={"remark": label},
+                headers=auth(viewer),
+            )
+            assert saved.status_code == 200, saved.text
+        request_id = ask_to_join(
+            api_client, team_id, applicant.token, "Please admit me"
+        )
+        waiting = api_client.get(
+            f"/teams/{team_id}/join-requests", headers=auth(owner)
+        ).json()["data"]["applications"]
+        row = next(item for item in waiting if item["id"] == request_id)
+        assert row["user"]["remark"] == "Applicant label"
+        assert row["initiator"]["remark"] == "Applicant label"
+        mine = api_client.get(
+            "/users/me/team-requests", headers=auth(applicant)
+        ).json()["data"]["requests"]
+        assert (
+            next(item for item in mine if item["id"] == request_id)["user"]["remark"]
+            is None
+        )
+        approved = api_client.post(
+            f"/teams/{team_id}/join-requests/{request_id}/approve", headers=auth(owner)
+        )
+        assert approved.status_code == 204, approved.text
+        mine = api_client.get(
+            "/users/me/team-requests", headers=auth(applicant)
+        ).json()["data"]["requests"]
+        assert (
+            next(item for item in mine if item["id"] == request_id)["processedBy"][
+                "remark"
+            ]
+            == "Reviewer label"
+        )
+        invitation = api_client.post(
+            f"/teams/{team_id}/invitations",
+            json={"userId": invited.user_id},
+            headers=auth(owner),
+        )
+        assert invitation.status_code == 201, invitation.text
+        row = invitation.json()["data"]["invitation"]
+        assert row["user"]["remark"] == "Invited label"
+        assert row["initiator"]["remark"] is None
+        sent = api_client.get(
+            f"/teams/{team_id}/invitations", headers=auth(owner)
+        ).json()["data"]["invitations"]
+        assert (
+            next(item for item in sent if item["id"] == row["id"])["user"]["remark"]
+            == "Invited label"
+        )
+        received = api_client.get(
+            "/users/me/team-invitations", headers=auth(invited)
+        ).json()["data"]["invitations"]
+        received_row = next(item for item in received if item["id"] == row["id"])
+        assert received_row["user"]["remark"] is None
+        assert received_row["initiator"]["remark"] == "Inviter label"
+        assert api_client.get(
+            f"/teams/{team_id}/invitations", headers=auth(invited)
+        ).status_code in (403, 404)

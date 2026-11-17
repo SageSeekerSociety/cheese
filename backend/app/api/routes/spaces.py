@@ -156,6 +156,8 @@ async def _hydrate_members(
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
+    db,
+    viewer_id: int | None,
 ) -> list[dict]:
     """Roster rows, with the people batched into one lookup: a per-row lookup
     makes rendering a board cost grow with the class."""
@@ -163,6 +165,8 @@ async def _hydrate_members(
         [member.user_id for member in members],
         user_repo=user_repo,
         profile_repo=profile_repo,
+        db=db,
+        viewer_id=viewer_id,
     )
     return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
@@ -265,6 +269,8 @@ async def get_spaces(
             [rel.user_id for rel in admin_relations],
             user_repo=user_repo,
             profile_repo=profile_repo,
+            db=db,
+            viewer_id=auth_user.user_id,
         )
         dto["admins"] = [
             _admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations
@@ -433,6 +439,8 @@ async def list_space_members(
         members,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
+        db=db,
+        viewer_id=auth_user.user_id,
     )
     return ok({"members": items})
 
@@ -472,6 +480,8 @@ async def add_space_member(
         [member],
         user_repo=user_repo,
         profile_repo=UserProfileRepository(session=db),
+        db=db,
+        viewer_id=auth_user.user_id,
     )
     return ok({"member": items[0]})
 
