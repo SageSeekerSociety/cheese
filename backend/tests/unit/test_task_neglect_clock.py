@@ -93,7 +93,11 @@ async def test_the_kill_switch_stops_the_close_before_anything_is_read(monkeypat
     monkeypatch.setattr(settings, "task_neglect_auto_close", False)
     sessions = Mock(side_effect=AssertionError("the sweep opened a session"))
     closed = await neglect.close_neglected(
-        sessions, chat=Mock(), settle_card=None, task_teammate=None
+        sessions,
+        chat=Mock(),
+        settle_card=None,
+        announce_to_origin=Mock(),
+        record_seat=Mock(),
     )
     assert closed == 0
 

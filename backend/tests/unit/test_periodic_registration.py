@@ -37,6 +37,7 @@ _EXPECTED_PORTS = {
     "task_teammate": task_teammate,
     "machines": checkout_sweep.sweep,
     "chat": ANY,
+    "announce_to_origin": announce,
 }
 
 #: 接线时从设置里现读的口子：只有草稿扫描的窗口是这种。写成模块级常量会让它与
@@ -61,7 +62,13 @@ _KEYWORD_PORTS = {
         "machines",
     ),
     "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
-    "neglected task close": ("chat", "settle_card", "task_teammate", "machines"),
+    "neglected task close": (
+        "chat",
+        "settle_card",
+        "announce_to_origin",
+        "record_seat",
+        "machines",
+    ),
 }
 
 

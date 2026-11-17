@@ -222,7 +222,8 @@ def periodic_jobs(
         sessions=sessions,
         chat=chat,
         settle_card=settle_card,
-        task_teammate=task_teammate,
+        announce=announce,
+        record_seat=record_seat_instruction,
         machines=checkout_sweep.sweep,
     )
     task_notices_periodic.register_periodic_jobs(jobs, sessions=sessions)

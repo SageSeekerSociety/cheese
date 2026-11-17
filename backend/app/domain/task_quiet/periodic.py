@@ -3,7 +3,7 @@
 from app.core.background import PeriodicJobs
 from app.core.db import SessionFactory
 from app.domain.delivery_events import SettleCard
-from app.domain.review.ports import TaskTeammate
+from app.domain.review.ports import Announce, RecordSeatInstruction
 from app.domain.room_task.closing import StopsWork
 from app.domain.room_task.ports import SweepCheckouts
 from app.domain.task_quiet import neglect, sweep
@@ -15,7 +15,8 @@ def register_periodic_jobs(
     sessions: SessionFactory,
     chat: StopsWork,
     settle_card: SettleCard | None,
-    task_teammate: TaskTeammate | None,
+    announce: Announce,
+    record_seat: RecordSeatInstruction,
     machines: SweepCheckouts | None = None,
 ) -> None:
     jobs.register(
@@ -31,7 +32,8 @@ def register_periodic_jobs(
             sessions,
             chat=chat,
             settle_card=settle_card,
-            task_teammate=task_teammate,
+            announce_to_origin=announce,
+            record_seat=record_seat,
             machines=machines,
         ),
     )

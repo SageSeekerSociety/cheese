@@ -37,7 +37,7 @@ from app.domain.delivery.ledger import deliver
 from app.domain.delivery_events import DeliveryEvent, SettleCard
 from app.domain.notification.models import NotificationType
 from app.domain.review.archive import close_cards_for_closed_task
-from app.domain.review.ports import TaskTeammate
+from app.domain.review.ports import Announce, RecordSeatInstruction
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.task_landing import tell_origin_ended
 from app.domain.room_task import heard, presentation
@@ -150,7 +150,8 @@ async def close_neglected(
     *,
     chat: StopsWork,
     settle_card: SettleCard | None,
-    task_teammate: TaskTeammate | None,
+    announce_to_origin: Announce,
+    record_seat: RecordSeatInstruction,
     machines: SweepCheckouts | None = None,
     now: datetime | None = None,
 ) -> int:
@@ -189,7 +190,9 @@ async def close_neglected(
                     "task_id": str(task.id),
                 },
             )
-            await tell_origin_ended(session, task, task_teammate=task_teammate)
+            await tell_origin_ended(
+                session, task, announce=announce_to_origin, record_seat=record_seat
+            )
             closed.append(task)
         await session.commit()
     if closed:
