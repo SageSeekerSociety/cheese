@@ -536,6 +536,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("feishu authorization renewal", 3600),
         ("task deadline sweep", 116),
         ("starter code pushes", 10),
+        ("judge runs", 5),
         ("memory dream", 117),
         ("memory history retention", 3600),
         ("platform model roles refresh", 121),
