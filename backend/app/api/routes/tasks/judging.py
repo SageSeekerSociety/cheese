@@ -20,7 +20,7 @@
   显示待批改。
 * ``GET .../judge/cases/{caseId}`` —— 一个用例的输入与期望输出，给能批改的人在批改窗
   口里展开隐藏用例看。只给能批改的人（``Can(teach)``）。
-* ``POST /tasks/test-trials`` 与 ``GET /tasks/test-trials/{runId}`` —— 出题人用参考
+* ``POST /spaces/{spaceId}/test-trials`` 与 ``GET /tasks/test-trials/{runId}`` —— 出题人用参考
   答案试跑一套测试点（题目不必已经发布），只有能在那个空间出题的人能排，只有发起的人
   能读（``app.domain.judge.trials``）。
 """
@@ -31,6 +31,7 @@ from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, Field
 
 from app.api.response import ok, typed_response
+from app.api.space_payloads import SpaceRow
 from app.api.task_claims import project_of_claim
 from app.api.task_deps import (
     get_task_membership_service,
@@ -43,11 +44,11 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.task_roles import ClaimPermission
 from app.auth.task_roles import Permission as TaskPermission
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.judge import trials
-from app.domain.space import permissions as space_seats
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.task import code_version, judge_queue, test_suite
 from app.domain.task.access import bind_review_path
 from app.domain.task.services import (
@@ -56,6 +57,8 @@ from app.domain.task.services import (
 )
 
 router = APIRouter(prefix="/tasks")
+#: 试跑是空间里的事：谁能排看的是空间，所以它挂在空间下面。
+space_router = APIRouter(prefix="/spaces")
 
 
 class TaskCodeVersion(BaseModel):
@@ -246,14 +249,13 @@ class TaskTestTrialFile(BaseModel):
 
 
 class TaskTestTrialRequest(BaseModel):
-    """用参考答案试跑一套测试点（方案 §出题人：配测试点）。
+    """用参考答案试跑一套测试点（方案 §出题人：配测试点），空间在路径里。
 
     ``testSuite`` 和出题表单里 ``testSuite`` 的一项同形（``kind``、``runtime``、
     ``runCmd``、``cases`` ……），题目不必已经发布。参考代码二选一：``files`` 几份文本
     文件，或 ``zip`` 一个小 zip 的 base64（最多 2 MB）。
     """
 
-    spaceId: int = Field(ge=1)
     testSuite: dict
     files: list[TaskTestTrialFile] | None = None
     zip: str | None = None
@@ -272,13 +274,13 @@ class TaskTestTrialOut(BaseModel):
     trial: TaskTestTrial
 
 
-@router.post(
-    "/test-trials",
+@space_router.post(
+    "/{spaceId}/test-trials",
     summary="Try a Test Suite With Reference Code",
     **typed_response(TaskTestTrialOut),
-    dependencies=[ROUTE_DECIDES],
 )
 async def post_task_test_trial(
+    space: Annotated[SpaceRow, Can(SpacePermission.publish)],
     payload: TaskTestTrialRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
@@ -290,13 +292,6 @@ async def post_task_test_trial(
     价格没设时，这一次很快以「评测暂不可用」标失败，不扣钱。返回刚排上的这一次（还在
     排队），之后用 ``GET /tasks/test-trials/{runId}`` 读结果。
     """
-    space = await space_seats.SPACE.load(db, payload.spaceId)
-    if space is None or not await space_seats.SPACE.sees(db, space, auth_user.user_id):
-        raise NotFoundError.for_resource("space", payload.spaceId)
-    if not await space_seats.SPACE.may(
-        db, space, auth_user.user_id, space_seats.Permission.publish
-    ):
-        raise ForbiddenError(say("judgeTrialNotPublisher"))
     lines = test_suite.suite_lines([payload.testSuite])
     if not lines:
         raise BadRequestError(say("judgeTrialNeedsSuite"))

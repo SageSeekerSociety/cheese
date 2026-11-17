@@ -12,7 +12,6 @@
   "judgeTrialBadZip": "参考代码的压缩包打不开，或者里面有链接",
   "judgeTrialNeedsSuite": "试跑要带上一套测试点",
   "judgeTrialNoCode": "还没有参考代码，先放上要试跑的文件",
-  "judgeTrialNotPublisher": "只有能在这个空间出题的人可以试跑",
   "judgeTrialTooManyFiles": "参考代码最多 {max} 个文件",
   "judgeTrialUploadTooLarge": "参考代码最多 {mb} MB",
   "judgeUnavailable": "评测暂不可用：平台还没有接入评测主机，老师可以手动给测试分",

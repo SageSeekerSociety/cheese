@@ -12,7 +12,6 @@
   "judgeTrialBadZip": "The reference code archive can't be opened, or it contains links",
   "judgeTrialNeedsSuite": "A trial run needs a set of tests",
   "judgeTrialNoCode": "There is no reference code yet; add the files to try",
-  "judgeTrialNotPublisher": "Only people who can publish tasks in this space can run a trial",
   "judgeTrialTooManyFiles": "The reference code can have at most {max} files",
   "judgeTrialUploadTooLarge": "The reference code can be at most {mb} MB",
   "judgeUnavailable": "Judging is unavailable: the platform has no judge hosts yet; the teacher can score the tests by hand",

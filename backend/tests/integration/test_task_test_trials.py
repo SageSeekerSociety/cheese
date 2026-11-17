@@ -35,8 +35,8 @@ FILES = [{"path": "main.py", "content": "print(sum(map(int, input().split())))\n
 
 def _trial(api_client: TestClient, token: str, space_id: int, **body):
     return api_client.post(
-        "/tasks/test-trials",
-        json={"spaceId": space_id, "testSuite": SUITE[0], **body},
+        f"/spaces/{space_id}/test-trials",
+        json={"testSuite": SUITE[0], **body},
         headers=_auth(token),
     )
 
