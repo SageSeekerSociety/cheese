@@ -1170,6 +1170,25 @@ def test_structured_chat_publishes_literal_content_without_executor(central_tran
     assert not (work / "forbidden").exists()
 
 
+def test_a_message_about_a_task_reaches_the_room_naming_that_task(central_transport):
+    """A main-line message sent with `task` by its number reaches the room
+    saying which task it is about, so the room can tag it."""
+    process, _, _, _ = central_transport
+    process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "content": "首页的报名表做好了",
+                "task": "#8",
+                "id": "tagged-publication",
+                "session_id": "fixture",
+            },
+        },
+    )
+    assert process.publications[-1]["task"] == "#8"
+
+
 def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid
