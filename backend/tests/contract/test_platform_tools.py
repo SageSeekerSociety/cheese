@@ -152,6 +152,7 @@ CALLS = {
     ),
     "cheese_web.search": ({"action": "search", "query": "芝士"}, "GET", "/web-search"),
     "cheese_help": ({"query": "验收"}, "POST", "/docs/agent/search"),
+    "cheese_find": ({"query": "预算"}, "POST", "/assistant/agent/search"),
     "cheese_help.page": ({"page": "accept"}, "POST", "/docs/agent/read"),
     "cheese_room.members": ({"action": "members"}, "GET", f"/topics/{TOPIC}/members"),
     "cheese_session.status": ({"action": "status"}, "GET", f"/topics/{TOPIC}/status"),

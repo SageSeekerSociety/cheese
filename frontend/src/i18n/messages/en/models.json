@@ -134,6 +134,8 @@
       "name": "Model",
       "nameHint": "1–64 characters: letters, digits, dot, underscore and hyphen",
       "label": "Label",
+      "cacheMinutes": "Cache lifetime (minutes)",
+      "cacheMinutesHint": "Once a conversation has been idle this long, the upstream cache has expired, and a long conversation is compacted before its next turn. Leave empty to never compact by idle time.",
       "upstreamModel": "Upstream model",
       "upstreamModelHint": "For example anthropic/glm-4.7",
       "apiBase": "Upstream host",

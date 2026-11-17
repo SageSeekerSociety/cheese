@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness.driven.journal import PAGE
+from app.domain.agent.harness.driven.runner import COMPACT_IF_COLD
 from app.domain.agent.harness.pi.events import thread_of
 from app.domain.agent.session_host.contract import (
     InputUnconfirmed,
@@ -28,6 +29,13 @@ from app.domain.agent.session_host.sessions import _Running
 
 if TYPE_CHECKING:
     from app.domain.agent.session_host import SessionHost
+
+
+#: How long a send that may compact first waits for the runner's answer: the
+#: runner answers once the input is in, after a compaction that can take as
+#: long as its own bound (``claude_code.compaction.COMPACT_TIMEOUT_S``), on
+#: top of the ordinary wait for a call.
+COLD_SEND_TIMEOUT_S = 1800.0 + 660.0
 
 
 class _NotThere(Exception):
@@ -126,13 +134,28 @@ async def _say(
         params["owes_reply"] = True
     if prompt.acting is not None:
         params["platform_token"] = prompt.acting
+    waits: dict[str, Any] = {}
+    # Only a runner that said it can: another would take the input and leave
+    # the conversation as it is, which is what a harness without the
+    # operation (pi) does anyway.
+    if (
+        prompt.cold is not None
+        and method == "send"
+        and COMPACT_IF_COLD in running.launched.capabilities
+    ):
+        params["compact_if_cold"] = {
+            "idle_s": prompt.cold.idle_s,
+            "above_tokens": prompt.cold.above_tokens,
+            "text": prompt.cold_text or text,
+        }
+        waits["timeout"] = COLD_SEND_TIMEOUT_S
     running.owed = True
     if running.launched.epoch:
         # Recorded before it leaves: an exit of the process it was handed to
         # before must not be read as this one's (`delivery.receipts.hand_to`).
         await svc._handing(ref, running, prompt.id)
     try:
-        await svc._call(running, ref, method, params)
+        await svc._call(running, ref, method, params, **waits)
     except (DeviceOffline, DeviceCallError) as exc:
         # Nothing on the host took it: the host is not connected, or the
         # runner is not there to answer.

@@ -120,6 +120,22 @@ async def inputs_after(
     )
 
 
+async def left_behind(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    after: tuple[datetime, uuid.UUID],
+    before: tuple[datetime, uuid.UUID],
+    seat: str,
+    excluding: Iterable[uuid.UUID] = (),
+) -> list[tuple[str, int, datetime, datetime]]:
+    """What a seat has not read and its window did not take, per author
+    (`BlockRepository.left_behind`)."""
+    return await BlockRepository(session).left_behind(
+        conversation_id, after=after, before=before, seat=seat, excluding=excluding
+    )
+
+
 async def notices_after(
     session: AsyncSession,
     conversation_id: uuid.UUID,

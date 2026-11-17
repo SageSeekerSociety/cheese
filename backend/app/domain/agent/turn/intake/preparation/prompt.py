@@ -12,6 +12,8 @@ The body, with its reasoning, moved here verbatim from `preparation`.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from app.domain.agent.harness.lines import prompt_line
@@ -19,7 +21,7 @@ from app.domain.agent.prompt import _platform_preamble, _replay_notice
 from app.domain.agent.queries import require_pinned_seat
 from app.domain.block.output_effects import count_prompt_attempt
 from app.domain.block.queries import message_reply_target
-from app.domain.prompts import NoticeType, platform_prompt
+from app.domain.prompts import NoticeType, left_unread, platform_prompt
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +29,31 @@ if TYPE_CHECKING:
     from app.domain.agent.room.sessions import RoomSessions
     from app.domain.block.models import Block
     from app.domain.room_task.place import Place
+
+
+@dataclass(frozen=True)
+class LeftUnread:
+    """Messages this seat has not read that the turn's window does not take
+    (`assembly._left_unread`): how many, the first and last of them, who said
+    them (handle, name), and the oldest message the window does hand over."""
+
+    count: int
+    since: datetime
+    until: datetime
+    authors: tuple[tuple[str, str | None], ...]
+    before: uuid.UUID
+
+    def notice(self) -> str:
+        def who(handle: str, name: str | None) -> str:
+            return f"{name}（handle: {handle}）" if name and name != handle else handle
+
+        return left_unread(
+            count=self.count,
+            since=f"{self.since:%Y-%m-%d %H:%M}",
+            until=f"{self.until:%Y-%m-%d %H:%M}",
+            people="、".join(who(handle, name) for handle, name in self.authors),
+            before=str(self.before),
+        )
 
 
 async def build_turn_prompt(
@@ -45,6 +72,7 @@ async def build_turn_prompt(
     gone_files: set[uuid.UUID],
     undecodable_files: set[uuid.UUID],
     credits_note: str | None = None,
+    left: LeftUnread | None = None,
 ) -> tuple[str, str | None]:
     """The prompt text this turn is sent, and the line saying how many times
     this same batch has been attempted. Commits the attempt counter before it
@@ -95,6 +123,12 @@ async def build_turn_prompt(
     # institutional authority, and repeating it per line spends that.
     if preamble := _platform_preamble(notices):
         prompt_text = f"{preamble}\n\n{prompt_text}"
+    # 比这一轮读入的更早、还没读过的消息：不交给它，也得让它知道在那里、
+    # 怎么读——这一轮之后已读位置就越过了它们，没有下一次机会再说。
+    if left is not None:
+        prompt_text = (
+            f"{platform_prompt(left.notice(), NoticeType.turn)}\n\n{prompt_text}"
+        )
     # 额度快用完了（`usage.alerts`）：只有这一轮会读到，不落到频道里。它不是
     # 项目设置的解释，是平台自己核得上的事实和它的后果。
     if credits_note:
