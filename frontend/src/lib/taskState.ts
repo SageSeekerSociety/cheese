@@ -1,19 +1,22 @@
-// 一件任务的状态长什么样：七个状态词中的哪一个、哪个图标、哪种颜色、动不动，以及状态词
+// 一件任务的状态长什么样：八个状态词中的哪一个、哪个图标、哪种颜色、动不动，以及状态词
 // 下面那一行说什么。频道里的任务卡、全部任务、待处理清单、任务页头和侧栏的任务行都从这一处
 // 取，同一件任务在五处是同一个样子。
 //
 // 状态不在这里算：后端 `presentation.phrase` 已经说了它在哪一格（`room_task/presentation.py`），
-// 这里只把那个码归到七个状态词之一（`STATUS`），再挑图标和颜色。
+// 这里只把那个码归到八个状态词之一（`STATUS`），再挑图标和颜色。
 //
 //   未开始 not_started      刚建，还没人动手（started）
 //   进行中 in_progress      在做、在等结果、被退回后修改中（running / waiting / bounced）
 //   待回答 awaiting_answer  芝士提了问题在等人答
 //   待协助 needs_help       队友说没人帮忙走不下去（blocked）
 //   待审阅 in_review        已提交，在审阅链路上：跑检查、修检查、解冲突、等人审阅
+//   待部署 awaiting_deploy  最后一步已合并，在等主干 CI 与部署上线（deploying / deploy_blocked）；
+//                          合并了不等于上线了，所以不归已完成（蔡松洋 2026-11-17 定的第八个词）
 //   已完成 done             最后一步已采纳，或以结论结束
 //   已关闭 closed           没做成就结束了
 //
-// 图标和颜色比状态词细一层（`kind`）：同是进行中，在跑的转、退回的是危险色。
+// 图标和颜色比状态词细一层（`kind`）：同是进行中，在跑的转、退回的是危险色；同是待部署，
+// 主干 CI 红挡住部署时火箭换警示色。
 // 状态词只说状态；谁、为什么、多久写在下面那一行，那一行不再重复状态词。
 
 import type { BoardPhrase, RoomTask } from '@/cx_types'
@@ -24,15 +27,25 @@ import { waitedFor } from './replyWait'
 
 import { t } from '@/i18n'
 
-export type TaskStateKind = 'running' | 'waiting' | 'blocked' | 'asking' | 'review' | 'bounced' | 'open' | 'closed'
+export type TaskStateKind =
+  | 'running'
+  | 'waiting'
+  | 'blocked'
+  | 'asking'
+  | 'review'
+  | 'deploying'
+  | 'bounced'
+  | 'open'
+  | 'closed'
 
-/** 一件任务此刻的状态：全产品只用这七个词（`work.taskState.label.*`）。 */
+/** 一件任务此刻的状态：全产品只用这八个词（`work.taskState.label.*`）。 */
 export type TaskStatus =
   | 'not_started'
   | 'in_progress'
   | 'awaiting_answer'
   | 'needs_help'
   | 'in_review'
+  | 'awaiting_deploy'
   | 'done'
   | 'closed'
 
@@ -41,7 +54,11 @@ export type TaskStateTone = 'ok' | 'okMark' | 'neutral' | 'warn' | 'ink' | 'dang
 
 export interface TaskState {
   kind: TaskStateKind
-  /** 七个状态词中的哪一个。 */
+  /** 在跑、但队友报的那一句话超过 `STALE_AFTER_MS` 没变：图标右上角叠一个橙点。 */
+  stale: boolean
+  /** 会话不在跑、一阵子没回来或已离开：图标换成断开的云，状态词不变。 */
+  offline: boolean
+  /** 八个状态词中的哪一个。 */
   status: TaskStatus
   icon: string
   tone: TaskStateTone
@@ -53,7 +70,17 @@ export interface TaskState {
   attention: string | null
   /** 标签下面那一行；没有就空串。 */
   line: string
+  /** 悬停在记号上说的那一句；没有就空串。 */
+  tip: string
 }
+
+/** 会话在跑，那一句话超过这么久没变，就算「进度很久没变」。 */
+export const STALE_AFTER_MS = 30 * 60_000
+/** 标着在做、会话却没在跑，超过这么久没回来，就算「可能已断线」。 */
+export const OFFLINE_AFTER_MS = 15 * 60_000
+const OFFLINE_ICON = 'mdi-cloud-off-outline'
+/** 进度很久没变：空心环（不转）+ 右上角橙点，转着会让人以为还在往前走。 */
+const STALE_ICON = 'mdi-circle-outline'
 
 const KIND: Record<BoardPhrase, TaskStateKind> = {
   running: 'running',
@@ -65,6 +92,8 @@ const KIND: Record<BoardPhrase, TaskStateKind> = {
   fixing_checks: 'review',
   resolving_conflict: 'review',
   updating_branch: 'review',
+  deploying: 'deploying',
+  deploy_blocked: 'deploying',
   awaiting_review: 'review',
   checks_failed: 'review',
   bounced: 'bounced',
@@ -96,6 +125,8 @@ const STATUS: Record<BoardPhrase, TaskStatus> = {
   fixing_checks: 'in_review',
   resolving_conflict: 'in_review',
   updating_branch: 'in_review',
+  deploying: 'awaiting_deploy',
+  deploy_blocked: 'awaiting_deploy',
   checks_failed: 'in_review',
   awaiting_review: 'in_review',
   accepted: 'done',
@@ -104,7 +135,7 @@ const STATUS: Record<BoardPhrase, TaskStatus> = {
   archived: 'closed',
 }
 
-/** 后端码归到七个状态词中的哪一个。不认识的码当作未开始。 */
+/** 后端码归到八个状态词中的哪一个。不认识的码当作未开始。 */
 export function taskStatus(phrase: BoardPhrase): TaskStatus {
   return STATUS[phrase] ?? 'not_started'
 }
@@ -119,6 +150,7 @@ export const STATUS_ORDER: readonly TaskStatus[] = [
   'needs_help',
   'awaiting_answer',
   'in_review',
+  'awaiting_deploy',
   'in_progress',
   'not_started',
   'done',
@@ -131,6 +163,7 @@ const LOOK: Record<TaskStateKind, { icon: string; tone: TaskStateTone }> = {
   blocked: { icon: 'mdi-alert-circle', tone: 'warn' },
   asking: { icon: 'mdi-help-circle', tone: 'warn' },
   review: { icon: 'mdi-file-eye-outline', tone: 'ink' },
+  deploying: { icon: 'mdi-rocket-launch-outline', tone: 'neutral' },
   bounced: { icon: 'mdi-undo-variant', tone: 'danger' },
   open: { icon: 'mdi-circle-outline', tone: 'faint' },
   closed: { icon: 'mdi-minus-circle-outline', tone: 'faint' },
@@ -159,6 +192,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'progress_state'
       | 'progress_note'
       | 'progress_set_at'
+      | 'agent_left_at'
       | 'session_running'
       | 'moving'
       | 'waiting_on'
@@ -229,9 +263,25 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   let tone = look.tone
   const label = statusLabel(status)
   let line = ''
+  let tip = ''
+  let stale = false
+  let offline = false
   switch (kind) {
     case 'running': {
       if (!live) icon = RUNNING_IDLE_ICON
+      // 标着在做：会话在跑但那一句话很久没变，或会话已走了、一阵子没回来 —— 图标要说出来。
+      if (row.progress_state === 'working') {
+        const age = row.progress_set_at ? now - Date.parse(row.progress_set_at) : NaN
+        if (live && age >= STALE_AFTER_MS) {
+          stale = true
+          icon = STALE_ICON
+        }
+        if (!live && (!!row.agent_left_at || age >= OFFLINE_AFTER_MS)) {
+          offline = true
+          icon = OFFLINE_ICON
+          tone = 'danger'
+        }
+      }
       // 卡被退回，平台把任务放回进行中、队友还没说自己在改什么：写谁退回的，修改中。
       if (!note && row.card?.status === 'rejected') {
         line = joined([returnedBy(row.card, nameOf), t('work.taskState.revising')])
@@ -280,6 +330,13 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       ])
       break
     }
+    case 'deploying':
+      // 合并了不等于上线了：主干 CI 跑完、部署上 dev 之后才写总结关闭。主干红了挡住
+      // 部署时换成警示色，那一句说卡在哪；红的那次 run 的链接在任务页头。
+      if (phrase === 'deploy_blocked') tone = 'warn'
+      tip = phraseLabel(phrase, ctx.agentName)
+      line = tip
+      break
     case 'bounced':
       // 退回或检查没过之后没人在改：只写发生了什么，不写修改中。
       line = returnedBy(row.card, nameOf) ?? ''
@@ -295,8 +352,11 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     default:
       break
   }
+  if (phrase === 'running') tip = detailOf({ row, label, note, line, live, stale, offline, now })
   return {
     kind,
+    stale,
+    offline,
     status,
     icon,
     tone,
@@ -304,5 +364,33 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     live,
     attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
     line,
+    tip,
   }
+}
+
+/** 悬停详情：一行一项（标题、在做什么、会话、最近更新、能做什么）。没有的项不写。 */
+function detailOf(a: {
+  row: StateRow
+  label: string
+  note: string
+  line: string
+  live: boolean
+  stale: boolean
+  offline: boolean
+  now: number
+}): string {
+  const { row, note, live, stale, offline, now } = a
+  const title = stale
+    ? t('work.taskState.detail.staleTitle')
+    : offline
+      ? t('work.taskState.detail.offlineTitle')
+      : a.label
+  const lines = [title, note || a.line]
+  if (offline) lines.push(t('work.taskState.detail.sessionGone'))
+  else lines.push(live ? t('work.taskState.detail.sessionLive') : t('work.taskState.detail.sessionIdle'))
+  const ago = waitedFor(row.progress_set_at, now)
+  if (ago) lines.push(t('work.taskState.detail.updated', { time: ago }))
+  if (stale) lines.push(t('work.taskState.detail.staleHint'))
+  if (offline) lines.push(t('work.taskState.detail.offlineHint'))
+  return lines.filter(Boolean).join('\n')
 }

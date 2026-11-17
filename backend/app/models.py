@@ -64,6 +64,7 @@ from app.domain.session_record import models as session_record  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
+from app.domain.task import judging_models as task_judging  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
 from app.domain.team import models as team  # noqa: F401
 from app.domain.thread import models as thread  # noqa: F401

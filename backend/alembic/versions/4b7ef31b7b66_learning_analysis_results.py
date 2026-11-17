@@ -1,7 +1,7 @@
 """学情分析：每晚分析的结果、读到哪里、提问的归类、每天的调用次数
 
 Revision ID: 4b7ef31b7b66
-Revises: b3f7c1d94a20
+Revises: 9c1f4e7b2a35
 Create Date: 2026-11-17
 
 第二步（§ learning analysis, step 2）：每晚读成员在本空间题目项目里的发言，按知识点
@@ -28,7 +28,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "4b7ef31b7b66"
-down_revision: str | Sequence[str] | None = "b3f7c1d94a20"
+down_revision: str | Sequence[str] | None = "9c1f4e7b2a35"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
