@@ -151,6 +151,20 @@ class AdviceOut(BaseModel):
     generated_at: int | None = Field(alias="generatedAt")
 
 
+class PracticeOutcomeOut(BaseModel):
+    """做过巩固题的人里几人升了档（§ step 4）；不足 3 人时整格为空。"""
+
+    practiced: int
+    improved: int
+
+
+class LastPushOut(BaseModel):
+    """最近一次「推送巩固题」：什么时候、排上几人（不足 3 人时人数为空）。"""
+
+    at: int | None
+    recipients: int | None
+
+
 class LearningClassPointDetailOut(BaseModel):
     model_config = _C
     enabled: bool
@@ -166,6 +180,8 @@ class LearningClassPointDetailOut(BaseModel):
     misconceptions: list[MisconceptionOut]
     hidden_misconceptions: int = Field(alias="hiddenMisconceptions")
     advice: AdviceOut | None
+    practice: PracticeOutcomeOut | None
+    last_push: LastPushOut | None = Field(alias="lastPush")
 
 
 class ClusterOut(BaseModel):
