@@ -7,7 +7,7 @@ import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { useQuery } from '@tanstack/vue-query'
+import { useQueries, useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChapters } from '@/composables/useChapters'
@@ -297,13 +297,13 @@ const delivery = useDeliveryTab({
   },
 })
 const {
-  tab: deliveryTab,
+  tabs: deliveryTabs,
   shownTab,
   select: onWorkPanelTab,
   close: closeDelivery,
   arrived: onDeliveryArrived,
 } = delivery
-const deliveryTaskId = computed(() => props.reviewTaskId ?? deliveryTab.value?.taskId ?? null)
+const deliveryTaskId = computed(() => props.reviewTaskId ?? null)
 const reviewRead = useQuery(
   computed(() => ({ ...roomTaskQuery(deliveryTaskId.value ?? ''), enabled: !!deliveryTaskId.value })),
   queryClient
@@ -311,19 +311,36 @@ const reviewRead = useQuery(
 const reviewTask = computed<RoomTask | null>(() => (deliveryTaskId.value ? reviewRead.data.value ?? null : null))
 const reviewHead = computed(() => ({ heading: reviewTask.value ? taskTitle(reviewTask.value) : '' }))
 // 页头上的状态词和在等谁：和主线标签、侧栏任务行同一份算法（`lib/taskState`）。
-const reviewState = computed(() =>
-  reviewTask.value
-    ? taskState(reviewTask.value, {
+function stateOf(task: RoomTask | null) {
+  return task
+    ? taskState(task, {
         viewer: myHandle(),
         nameOf: (handle: string) => memberNames.value[handle] || handle,
         agentName: store.agentName,
       })
     : null
+}
+const reviewState = computed(() => stateOf(reviewTask.value))
+// 右栏里开着的每一格任务各读各的（页签上的名字、它那一栏的页头和只读与否）。
+const tabReads = useQueries(
+  { queries: computed(() => deliveryTabs.value.map((tab) => roomTaskQuery(tab.taskId))) },
+  queryClient
 )
-const deliveryTabBinding = computed(() =>
-  mdAndUp.value && deliveryTab.value
-    ? { id: deliveryTab.value.taskId, title: reviewHead.value.heading, dot: deliveryTab.value.dot }
-    : null
+function tabTask(taskId: string): RoomTask | null {
+  const at = deliveryTabs.value.findIndex((tab) => tab.taskId === taskId)
+  return (at >= 0 ? (tabReads.value[at]?.data as RoomTask | undefined) : undefined) ?? null
+}
+/** 这件任务读回来的那一行：在它的地址上是 `reviewTask`，别的开着的页签各读各的。 */
+function taskFor(taskId: string): RoomTask | null {
+  return taskId === deliveryTaskId.value ? reviewTask.value : tabTask(taskId)
+}
+const deliveryTabsBinding = computed(() =>
+  mdAndUp.value
+    ? deliveryTabs.value.map((tab) => {
+        const task = taskFor(tab.taskId)
+        return { id: tab.taskId, title: task ? taskTitle(task) : '', dot: tab.dot }
+      })
+    : []
 )
 // 打开的这件任务看哪一种（对话 / 改动 / 预览）：主线上「查看改动」「预览」点名，人在
 // 那一栏里换了就跟着换。记着是哪件任务的：换一件任务从它的对话看起。
@@ -356,11 +373,11 @@ function reviewPanel(taskId: string) {
     reviewReload: reviewReload.value,
     topic: selectedTopic.value,
     taskId,
-    taskReadOnly: !reviewTask.value || reviewTask.value.status !== 'open',
-    taskHasBranch: reviewTask.value?.branch_name !== null,
+    taskReadOnly: !taskFor(taskId) || taskFor(taskId)?.status !== 'open',
+    taskHasBranch: taskFor(taskId)?.branch_name !== null,
     activityTick: activityTick.value,
     agentName: store.agentName,
-    agentHandle: reviewTask.value?.agent_handle ?? store.agentHandle,
+    agentHandle: taskFor(taskId)?.agent_handle ?? store.agentHandle,
     members: store.members,
     memberNames: memberNames.value,
     topicList: store.topics,
@@ -664,7 +681,7 @@ void openPlace()
             :site-turns="siteTurns"
             :topic-list="store.topics"
             :tab="shownTab"
-            :delivery="deliveryTabBinding"
+            :deliveries="deliveryTabsBinding"
             :routine-id="panelRoutineId"
             :card-phase="cardPhase"
             :with-chat="!mdAndUp"
@@ -761,21 +778,21 @@ void openPlace()
               />
             </template>
             <!-- Desktop: the delivery under review, in its own closable tab. -->
-            <template v-if="deliveryTab && mdAndUp" #delivery>
+            <template v-if="mdAndUp" #delivery="{ id }">
               <WorkPanel
-                :key="deliveryTab.taskId"
+                :key="id"
                 class="tab-fill"
-                v-bind="reviewPanel(deliveryTab.taskId)"
+                v-bind="reviewPanel(id)"
                 :review-head="{
-                  heading: reviewHead.heading,
-                  version: reviewTask?.card?.version ?? null,
-                  state: reviewState,
+                  heading: taskFor(id) ? taskTitle(taskFor(id)!) : '',
+                  version: taskFor(id)?.card?.version ?? null,
+                  state: stateOf(taskFor(id)),
                 }"
                 @open-topic="openTopic"
                 @open-card="openTaskPage"
                 @mention-click="handleMentionClick"
                 @navigate="router.push($event)"
-                @update:tab="(key: string) => (reviewView = { taskId: deliveryTab!.taskId, view: key })"
+                @update:tab="(key: string) => (reviewView = { taskId: id, view: key })"
                 @return-asked="returnAsk = null"
               >
                 <!-- The task is a thread: its own conversation, the request it came from on top. The
@@ -786,13 +803,13 @@ void openPlace()
                     beside
                     accept-elsewhere
                     :topic="selectedTopic"
-                    :task-id="deliveryTab.taskId"
-                    :task-agent-handle="reviewTask?.agent_handle ?? null"
+                    :task-id="id"
+                    :task-agent-handle="taskFor(id)?.agent_handle ?? null"
                     :members="store.members"
                     :topic-list="store.topics"
                     :member-names="memberNames"
                     :composer-closed="composerClosed"
-                    :ask-closed="askClosed || reviewTask?.status === 'closed'"
+                    :ask-closed="askClosed || taskFor(id)?.status === 'closed'"
                     @open-file="(path: string) => panelRef?.openFile?.(path)"
                     @open-topic="openTopic"
                     @open-card="openTask"

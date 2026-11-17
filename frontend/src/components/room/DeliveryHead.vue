@@ -53,12 +53,16 @@ const emit = defineEmits<{
 
 <template>
   <header class="delivery-head" :class="{ 'delivery-head--bar': bar }">
-    <h2 class="delivery-head__title t-title" :title="heading">{{ heading }}</h2>
-    <TaskStateMark v-if="state" class="delivery-head__state t-meta" :state="state" :size="14" />
-    <span v-if="state?.waits" class="delivery-head__waits t-meta">{{ state.waits }}</span>
-    <span v-if="version" class="delivery-head__version t-meta">{{
-      t('work.room.delivery.version', { n: version })
-    }}</span>
+    <div class="delivery-head__text">
+      <h2 class="delivery-head__title t-title" :title="heading">{{ heading }}</h2>
+      <span class="delivery-head__meta">
+        <TaskStateMark v-if="state" class="delivery-head__state t-meta" :state="state" :size="14" />
+        <span v-if="state?.waits" class="delivery-head__waits t-meta">{{ state.waits }}</span>
+        <span v-if="version" class="delivery-head__version t-meta">{{
+          t('work.room.delivery.version', { n: version })
+        }}</span>
+      </span>
+    </div>
     <span class="delivery-head__gap" />
     <span v-if="decided" class="delivery-head__decided t-meta" data-testid="delivery-decided">
       <v-icon v-if="decided === 'accepted'" size="16" class="delivery-head__ok" aria-hidden="true"
@@ -111,6 +115,30 @@ const emit = defineEmits<{
   min-height: 0;
   padding: 0 4px 0 0;
   border-bottom: 0;
+}
+.delivery-head__text,
+.delivery-head__meta {
+  display: contents;
+}
+/* 手机顶栏里两行（同任务页的顶栏）：任务名独占第一行、整行宽；状态、在等谁和第几版退到
+   第二行。 */
+.delivery-head--bar .delivery-head__text {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.delivery-head--bar .delivery-head__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.delivery-head--bar .delivery-head__gap {
+  display: none;
 }
 .delivery-head__title {
   flex: 0 1 auto;

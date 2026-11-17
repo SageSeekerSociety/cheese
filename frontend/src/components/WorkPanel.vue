@@ -150,9 +150,9 @@ const props = withDefaults(
     // 主线上按了「退回」：每按一次是一个新的记号，这一栏打开写退回理由的那一块（和页头上的
     // 「退回」同一处）。没按是 null。
     askReturn?: string | null
-    // 频道里正在审阅的那一件交付：固定区右边多一格能关的页签，写着任务名，内容由页面从
-    // `#delivery` 插槽递进来。同一时间只有一格（`id` 认它是哪一件）；`dot` 是它到了、还没人点开过。
-    delivery?: { id: string; title: string; dot?: boolean } | null
+    // 频道里打开的几件任务：固定区右边一件一格能关的页签，写着任务名，内容由页面从
+    // `#delivery` 插槽（带着 `id`）递进来；`dot` 是它的交付到了、还没人点开过。
+    deliveries?: { id: string; title: string; dot?: boolean }[]
   }>(),
   {
     taskId: null,
@@ -178,7 +178,7 @@ const props = withDefaults(
     reviewHead: null,
     reviewReload: 0,
     askReturn: null,
-    delivery: null,
+    deliveries: () => [],
   }
 )
 // 审阅时这一栏的采纳卡（见 `review`）。一栏一份，换一件任务就换一栏（页面按任务给 key）。
@@ -226,8 +226,8 @@ const emit = defineEmits<{
   (e: 'locate', payload: PreviewLocate): void
   // 自由区里的文档被挪到别处：去它的新地址（地址是页面的事，见 `tab`）。
   (e: 'navigate', to: NavTarget): void
-  // 交付那一格的 ×：页面把它拿掉。正看着它时，这一栏自己回到打开它之前那一格。
-  (e: 'close-delivery'): void
+  // 一格任务页签的 ×：页面把那件任务拿掉。正看着它时，这一栏自己去旁边那一格或来处。
+  (e: 'close-delivery', taskId: string): void
   // 主线上要的那次「退回」已经在这一栏开出来了。
   (e: 'return-asked'): void
 }>()
@@ -281,7 +281,9 @@ function noteFileOrigin() {
 // ---- 交付那一格 ----
 // 固定区右边那一格能关的页签（见 `delivery`）。关掉时回到打开它之前那一格，和自由区关掉
 // 最后一份回到来处是同一个道理；直接从链接打开、没有来处时回到兜底那一格。
-const DELIVERY_TAB = 'delivery'
+const DELIVERY_PREFIX = 'delivery:'
+const deliveryKey = (id: string) => DELIVERY_PREFIX + id
+const isDelivery = (key: string | undefined) => !!key?.startsWith(DELIVERY_PREFIX)
 const deliveryOrigin = ref<string | null>(null)
 
 const active = ref<string>(defaultTab.value)
@@ -289,7 +291,7 @@ const active = ref<string>(defaultTab.value)
 function tabFromUrl(): string | null {
   const asked = props.tab
   if (!asked) return null
-  if (asked === DELIVERY_TAB) return props.delivery ? asked : null
+  if (isDelivery(asked)) return props.deliveries.some((d) => deliveryKey(d.id) === asked) ? asked : null
   if (asked.startsWith(FILE_TAB) && asked.length > FILE_TAB.length) return asked
   if (tabs.value.some((t) => t.key === asked)) return asked as TabKey
   return TAB_ALIASES[asked] ?? null
@@ -397,7 +399,7 @@ function show(k: string) {
 }
 watch(active, show)
 watch(active, (now, before) => {
-  if (now === DELIVERY_TAB && before !== DELIVERY_TAB) deliveryOrigin.value = before
+  if (isDelivery(now) && !isDelivery(before)) deliveryOrigin.value = before
 })
 
 // ---- 手机上换页签时内容从哪边进来 ----
@@ -406,7 +408,7 @@ watch(active, (now, before) => {
 // 位置、键盘弹起时的贴底都在里面），不为了演一下重建。桌面上两栏并排，不演。
 const tabOrder = computed(() => [
   ...tabs.value.map((tab) => tab.key as string),
-  ...(props.delivery ? [DELIVERY_TAB] : []),
+  ...props.deliveries.map((d) => deliveryKey(d.id)),
   ...openFiles.value.map((f) => fileKey(f.path)),
 ])
 const entering = ref<{ key: string; from: 'left' | 'right' } | null>(null)
@@ -590,7 +592,7 @@ const tabBodyRef = ref<HTMLElement | null>(null)
 const { width: bodyWidth } = useElementSize(tabBodyRef)
 const keyExists = (key: string) =>
   tabs.value.some((tab) => tab.key === key) ||
-  (key === DELIVERY_TAB && !!props.delivery) ||
+  (isDelivery(key) && props.deliveries.some((d) => deliveryKey(d.id) === key)) ||
   openFiles.value.some((f) => fileKey(f.path) === key)
 const {
   split,
@@ -601,51 +603,52 @@ const {
   drop: dropSplit,
 } = usePanelSplit(active, { width: bodyWidth, phone: computed(() => props.withChat), exists: keyExists })
 const activeTabLabel = computed(() => {
-  if (active.value === DELIVERY_TAB) return props.delivery?.title
+  if (isDelivery(active.value)) return props.deliveries.find((d) => deliveryKey(d.id) === active.value)?.title
   return active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
     : panelTabs.value.find((tab) => tab.key === active.value)?.label
 })
 
-/** 交给 `PanelTabs` 的那一格能关的页签。 */
-const deliveryTab = computed<PanelTab | null>(() =>
-  props.delivery
-    ? {
-        key: DELIVERY_TAB,
-        label: props.delivery.title || t('work.room.delivery.title'),
-        icon: 'mdi-file-eye-outline',
-        signal: props.delivery.dot ? { kind: 'dot' } : undefined,
-      }
-    : null
+/** 交给 `PanelTabs` 的那几格能关的页签，一件任务一格。 */
+const deliveryTabs = computed<PanelTab[]>(() =>
+  props.deliveries.map((d) => ({
+    key: deliveryKey(d.id),
+    label: d.title || t('work.room.delivery.title'),
+    icon: 'mdi-file-eye-outline',
+    signal: d.dot ? { kind: 'dot' } : undefined,
+  }))
 )
 
-// 交付那一格的 ×：页面拿掉它；正看着它就回到来处（来处已经不在、或者没有来处时回到兜底那一格）。
-async function closeDelivery() {
-  dropSplit(DELIVERY_TAB)
-  const wasActive = active.value === DELIVERY_TAB
+// 一格任务页签的 ×：页面拿掉它；正看着它就去旁边那一格（右边，没有就左边），一格都不剩时
+// 回到来处（来处已经不在、或者没有来处时回到兜底那一格）。
+async function closeDelivery(key: string) {
+  dropSplit(key)
+  const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
-  emit('close-delivery')
+  const list = props.deliveries.map((d) => deliveryKey(d.id))
+  const at = list.indexOf(key)
+  const neighbour = list[at + 1] ?? list[at - 1] ?? null
+  emit('close-delivery', key.slice(DELIVERY_PREFIX.length))
   if (!wasActive) return
+  if (neighbour) return void (await setTab(neighbour, { guard: false }))
   const origin = deliveryOrigin.value
-  await setTab(origin && origin !== DELIVERY_TAB && keyExists(origin) ? origin : defaultTab.value, { guard: false })
+  await setTab(origin && !isDelivery(origin) && keyExists(origin) ? origin : defaultTab.value, { guard: false })
 }
-// 这一格和别的页签一样，第一次选中时才挂上（没被选中的那一格不在后台读改动）。页面拿掉
-// 它、或者换成了另一件交付而它没开着时，卸掉；拿掉时它正开着，回到来处。
-function unmountDelivery() {
-  if (!mounted.value.has(DELIVERY_TAB)) return
-  const next = new Set(mounted.value)
-  next.delete(DELIVERY_TAB)
-  mounted.value = next
-}
+// 每一格和别的页签一样，第一次选中时才挂上（没被选中的那几格不在后台读改动）。页面拿掉了
+// 的那几格卸掉；拿掉时它正开着，回到来处。
 watch(
-  () => props.delivery?.id ?? null,
-  (id, before) => {
-    if (id === before) return
-    if (!id && active.value === DELIVERY_TAB) {
+  () => props.deliveries.map((d) => deliveryKey(d.id)).join(' '),
+  () => {
+    const open = new Set(props.deliveries.map((d) => deliveryKey(d.id)))
+    if (isDelivery(active.value) && !open.has(active.value)) {
       const origin = deliveryOrigin.value
-      active.value = origin && origin !== DELIVERY_TAB && keyExists(origin) ? origin : defaultTab.value
+      active.value = origin && !isDelivery(origin) && keyExists(origin) ? origin : defaultTab.value
     }
-    if (active.value !== DELIVERY_TAB) unmountDelivery()
+    const gone = [...mounted.value].filter((key) => isDelivery(key) && !open.has(key))
+    if (!gone.length) return
+    const next = new Set(mounted.value)
+    for (const key of gone) next.delete(key)
+    mounted.value = next
   }
 )
 
@@ -962,7 +965,7 @@ defineExpose({
         :phone="withChat"
         :panel-id="tabBodyRef ? tabPanelId : undefined"
         :side="split"
-        :closable="deliveryTab"
+        :closables="deliveryTabs"
         @select="selectTab"
         @close-tab="closeDelivery"
         @close-file="closeFile"
@@ -1010,14 +1013,16 @@ defineExpose({
           >
             <slot name="threads" />
           </div>
-          <div
-            v-if="delivery && mounted.has(DELIVERY_TAB)"
-            v-show="shown(DELIVERY_TAB)"
-            class="tabpane-slot"
-            :class="[enterClass(DELIVERY_TAB), sideClass(DELIVERY_TAB)]"
-          >
-            <slot name="delivery" />
-          </div>
+          <template v-for="d in deliveries" :key="d.id">
+            <div
+              v-if="mounted.has(deliveryKey(d.id))"
+              v-show="shown(deliveryKey(d.id))"
+              class="tabpane-slot"
+              :class="[enterClass(deliveryKey(d.id)), sideClass(deliveryKey(d.id))]"
+            >
+              <slot :id="d.id" name="delivery" />
+            </div>
+          </template>
           <PanelSiteHost
             v-if="mounted.has('site')"
             v-show="shown('site')"
