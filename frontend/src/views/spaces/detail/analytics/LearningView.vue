@@ -4,16 +4,6 @@
 
     <div class="an-bar">
       <v-select
-        v-model="studentModel"
-        autocomplete="off"
-        :items="studentItems"
-        :prefix="t('spaces.analytics.learning.student')"
-        :aria-label="t('spaces.analytics.learning.student')"
-        density="compact"
-        hide-details
-        variant="outlined"
-      />
-      <v-select
         v-model="knowledgePointModel"
         autocomplete="off"
         :items="knowledgePointItems"
@@ -152,7 +142,6 @@ const props = defineProps<{
   errorDetail: string | null
   selected: string[]
 }>()
-const studentModel = defineModel<string | null>('student', { required: true })
 const knowledgePointModel = defineModel<number | null>('knowledgePoint', { required: true })
 const emit = defineEmits<{
   load: []
@@ -162,11 +151,6 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n({ useScope: 'global' })
 const isSelected = (blockId: string) => props.selected.includes(blockId)
-
-const studentItems = computed(() => [
-  { title: t('spaces.analytics.learning.allStudents'), value: null },
-  ...(props.learningFilters?.students ?? []).map((student) => ({ title: student.name, value: student.handle })),
-])
 
 const knowledgePointItems = computed(() => [
   { title: t('spaces.analytics.learning.allKnowledgePoints'), value: null },
@@ -178,7 +162,6 @@ const summary = computed(() => {
 
   return t('spaces.analytics.learning.summary', {
     projects: formatCount(props.learningFilters.projectCount),
-    students: formatCount(props.learningFilters.students.length),
     questions: formatCount(props.questions.length),
     stuck: formatCount(props.queues?.stuckPoints.length ?? 0),
   })

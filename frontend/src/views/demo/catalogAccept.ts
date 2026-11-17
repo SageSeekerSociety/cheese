@@ -149,8 +149,8 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
       {
         name: '轮到人决定',
         note: '球在人手上（后端算的 who 是 human）才放两颗按钮。交的是什么、检查怎样都在「改动」页顶部，这里只说状态。',
-        props: { ...BAR_PENDING, decide: true, acceptLabel: '采纳并完成任务' },
-        expect: '采纳并完成任务',
+        props: { ...BAR_PENDING, decide: true, acceptLabel: '采纳' },
+        expect: '采纳',
       },
       {
         name: '检查还在跑',
@@ -164,7 +164,7 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
         props: {
           ...BAR_PENDING,
           decide: true,
-          acceptLabel: '采纳并完成任务',
+          acceptLabel: '采纳',
           blockedTitle: '现在采纳不会合并：还需要 1 人批准',
         },
         expect: '退回',

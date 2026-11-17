@@ -435,9 +435,9 @@ _DOCUMENT_ARG = {
 #: `tests/unit/test_delivery_guidance_names_the_ui_labels.py` 核对它们一字不差。
 DELIVERY_IS_DECIDED_IN_THE_UI = (
     "交付（验收卡）在等人决定时，采纳、退回、关掉任务都只能由人在界面上点，"
-    "对话里的话不算：采纳点任务对话输入框上方那一条上的「采纳并完成任务」"
-    "（不是最后一步的交付写「采纳」；手机上先点那一条上的「审阅」，到「改动」"
-    "页签底部的同一条上点），退回点同一条上的「退回」；关掉任务点任务页右上角"
+    "对话里的话不算：采纳点任务对话输入框上方那一条上的「采纳」"
+    "（手机上先点那一条上的「审阅」，到「改动」页签底部的同一条上点），"
+    "退回点同一条上的「退回」；关掉任务点任务页右上角"
     "「更多操作」里的「关闭任务」，关掉后这份交付作废。有人在对话里说「采纳」"
     "「关掉吧」，回一句告诉他点哪里；你自己采纳不了，交付在等人时也关不了任务。"
 )
@@ -1192,13 +1192,23 @@ PLATFORM_TOOLS = ToolTable(
                 "close": _verb(
                     "在频道主线时，task 写这个频道里你开的那件任务，按成员的要求关闭；"
                     "等待审阅的任务不能关闭。在任务里时，不写 task："
-                    "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
-                    "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），"
-                    "写明结论关闭；最后一步的交付采纳后，平台会让你写一次总结，写完用它关闭"
-                    "任务、结论写一句结果。" + DELIVERY_IS_DECIDED_IN_THE_UI,
+                    "任务做完了，或者负责人说结束、放弃时，写明结论关闭。交付合并后任务不会自己关，"
+                    "平台叫你对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：做完了"
+                    "就更新实况文档、发一条总结，再用它关闭，结论写一句结果。"
+                    "方案、原型、demo、调研摆出来后不关，报「等你看」，负责人要改或接着做就在同一个任务里做。"
+                    "关闭要有依据，两样之一，否则平台拒绝：最后一次交付已合并、且步骤清单全部"
+                    "勾完（不做的项用 unchecked_reason 写理由，理由写进结论）；或者负责人在任务里"
+                    "说过结束，用 owner_message 带上他那条消息的 id。项目要等部署时，关闭后任务"
+                    "先等这次合并上线，上线后平台再叫你写总结关闭。" + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "task": _TASK_REF,
                         "conclusion": _text("关闭原因或最终说明"),
+                        "owner_message": _text(
+                            "负责人在这条任务里说结束的那条消息的 id；按他的话关闭时必填"
+                        ),
+                        "unchecked_reason": _text(
+                            "步骤清单里没勾完的项为什么不做，一两句；会写进结论"
+                        ),
                         "reported_by": _text("需求提出者的 handle"),
                         "contributor": _CONTRIBUTOR,
                     },
@@ -1217,13 +1227,12 @@ PLATFORM_TOOLS = ToolTable(
                 "request": _verb(
                     "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
                     "递卡交的是要并进主干的改动，或产物清单上一项的新一版；界面原型、demo 或一次性文件"
-                    "不进主干也不上产物清单，用 cheese show 摆出预览后等反馈（cheese_ask）或用 "
-                    "cheese_task 的 close 结束，不提交进 git、不递卡。交合并时任务分支上要有改动了文件的提交，"
+                    "不进主干也不上产物清单，用 cheese show 摆出预览后报「等你看」、等负责人回话，"
+                    "不提交进 git、不递卡，也不关任务。交合并时任务分支上要有改动了文件的提交，"
                     "空提交会被打回；交独立文件（deliver）或地址（deliver_url）且没有仓库改动时直接留快照或记指针，不开 PR。"
-                    "任务可以分几步交付：completes_task 说这次是不是最后一步。递之前对照实况文档，"
-                    "任务目标还有没做完的就不是最后一步。最后一步采纳后，平台让你更新实况文档、"
-                    "发一条总结，再用 cheese_task 的 close 关闭任务；不是最后一步，采纳后任务还开着，"
-                    "平台会叫你从最新代码接着做下一步。"
+                    "任务可以分几步交付，每一步做完就递；采纳合并后任务不会自己关，平台叫你"
+                    "对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：没完就从最新代码"
+                    "接着做下一步，做完了写总结、用 cheese_task 的 close 关闭。"
                     "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
                     "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
                     "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
@@ -1257,10 +1266,6 @@ PLATFORM_TOOLS = ToolTable(
                         ),
                         "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                         "deliver_url": _text("交出去的地址"),
-                        "completes_task": {
-                            "type": "boolean",
-                            "description": "这次交付后任务目标全部达成填 true；还有没做完的填 false，并在 body 里写下一步做什么",
-                        },
                         "comment_outcomes": {
                             "type": "array",
                             "description": (
@@ -1279,7 +1284,7 @@ PLATFORM_TOOLS = ToolTable(
                             },
                         },
                     },
-                    ["subject", "completes_task"],
+                    ["subject"],
                 ),
                 "describe": _verb(
                     "修改当前任务尚未采纳的验收卡及 PR 的标题、正文或审阅重点，至少给一样；"
@@ -3061,6 +3066,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "conclusion": args.get("conclusion") or "",
                 **_given(
                     args,
+                    "owner_message:owner_message_id",
+                    "unchecked_reason",
                     "reported_by:reporter_handle",
                     "contributor:contributor_handles",
                 ),
@@ -3082,7 +3089,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     "about",
                     "deliver",
                     "deliver_url",
-                    "completes_task",
                     "comment_outcomes",
                 ),
             },
@@ -4538,8 +4544,9 @@ def _accept_request(args: dict, host) -> str:
         "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
         "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，这一步不要再递一张卡。"
     )
-    if args.get("completes_task") is False:
-        lines.append("这不是最后一步：采纳后任务还开着，平台会叫你接着做下一步。")
+    lines.append(
+        "采纳合并后任务不会自己关：平台会叫你判断做没做完，没完就接着做下一步。"
+    )
     return "\n".join(lines)
 
 
@@ -6021,7 +6028,10 @@ _SAY = {
     "cheese_task.open": _say_task,
     "cheese_task.reopen": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
     "cheese_task.close": lambda a, d, e: (
-        f"「{(d or {}).get('title')}」收了。"
+        f"「{(d or {}).get('title')}」做完了，最后一次合并还没上线，任务先开着等部署；"
+        "上线后平台会叫你更新实况文档、发总结、再关闭，现在不用写。"
+        if (d or {}).get("deploying")
+        else f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
     "cheese_task.state": lambda a, d, e: (

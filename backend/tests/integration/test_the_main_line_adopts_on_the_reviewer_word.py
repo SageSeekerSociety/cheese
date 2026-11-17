@@ -27,7 +27,6 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
-from tests.landing import written_up
 
 
 def _channel(client) -> tuple[str, str, str]:
@@ -175,9 +174,9 @@ def test_a_version_handed_in_after_the_word_is_not_adopted(client, stub_project_
 def test_where_it_came_from_says_the_teammate_adopted_it_for_the_reviewer(
     client, stub_project_forge
 ):
-    """Once the task is written up, the main line's record of its end names the
+    """When what it adopted lands, the main line's line about it names the
     reviewer and the teammate that adopted it for them, by the teammate's own
-    name in the project, and what it concluded."""
+    name in the project, with no PR number in it."""
     project, room, seat = _channel(client)
     task = _task_with_delivery(client, project, room, seat)
     asked = post_message(client, room, "alice", {"content": "首页加个报名表"})
@@ -207,13 +206,10 @@ def test_where_it_came_from_says_the_teammate_adopted_it_for_the_reviewer(
     _say_then_wake(client, room, seat, "alice", "可以了 合并吧")
     assert _accept(client, project, room, seat, task).status_code == 200
 
-    written_up(client, task["id"])
-
     lines = client.get(
         f"/topics/{room}/blocks", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
-    [ended] = [
-        b for b in lines if (b.get("meta") or {}).get("event_type") == "task_ended"
+    [landed] = [
+        b for b in lines if (b.get("meta") or {}).get("task_result") == task["id"]
     ]
-    # No teammate opened it from the main line, so the line itself says what it concluded.
-    assert ended["content"] == f"<@{seat}>代 <@alice> 采纳了「{task['title']}」：做完了"
+    assert landed["content"] == f"<@{seat}>代 <@alice> 采纳了「{task['title']}」"

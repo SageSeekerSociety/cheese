@@ -6,13 +6,15 @@
       class="quote-item__check"
       density="compact"
       hide-details
-      :aria-label="t('spaces.analytics.learning.quote.pick', { name: excerpt.studentName })"
+      :aria-label="t('spaces.analytics.learning.quote.pick', { code: excerpt.memberCode })"
     />
 
     <div class="quote-item__body">
       <p class="quote-item__quote">{{ excerpt.quote }}</p>
       <div class="quote-item__meta">
-        <span class="quote-item__student">{{ excerpt.studentName }}</span>
+        <span class="quote-item__student">{{
+          t('spaces.analytics.learning.class.memberCode', { code: excerpt.memberCode })
+        }}</span>
         <span v-if="excerpt.knowledgePoint" class="chip-neutral">{{ excerpt.knowledgePoint }}</span>
         <span v-if="excerpt.topicTitle">{{ excerpt.topicTitle }}</span>
         <span class="quote-item__time">{{ formatLearningTime(excerpt.createdAt) }}</span>

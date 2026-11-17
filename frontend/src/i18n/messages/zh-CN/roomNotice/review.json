@@ -106,6 +106,9 @@
   "prConflict": "PR #{pr} 和目标分支冲突了",
   "prMerged": "已合并",
   "prMergedDelivered": "PR #{pr} 已在代码仓库合并，任务已交付",
+  "prMergedTaskGoesOn": "PR #{pr} 在代码仓库直接合并了，没有经过验收卡，任务继续开着。{owner} 这件事做完了就在任务页右上角「更多操作」里点「关闭任务」，还要接着做就在这里说。",
+  "prMergedTaskGoesOnNoOwner": "PR #{pr} 在代码仓库直接合并了，没有经过验收卡，任务继续开着。",
+  "taskClosedUnchecked": "没勾完的步骤：{items}。理由：{reason}",
   "prMergedExternally": "已在 GitHub 上被人工合并（不是平台合的）",
   "prNoLink": "无链接",
   "prReview": "PR #{pr} 上{head}",
@@ -126,6 +129,5 @@
   "deployFailedTo": "部署到 {environment} 失败",
   "taskFiledForReview": "「{title}」已提交审阅",
   "taskReturned": "{who} 退回了「{title}」",
-  "taskAdopted": "{who} 采纳了「{title}」",
-  "taskAdoptedConcluded": "{who} 采纳了「{title}」：{conclusion}"
+  "taskAdopted": "{who} 采纳了「{title}」"
 }

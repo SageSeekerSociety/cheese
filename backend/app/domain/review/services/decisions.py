@@ -713,11 +713,13 @@ async def _override_github_checks(
         f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
     )
     card.pr_merged_at = now
+    # Who merged it is on the card before the task hears it landed (the line
+    # its discussion hears names them, `task_landing._step_landed`).
+    card.decided_by = decided_by
+    card.decided_by_assistant = False
     await self._mark_task_merged(card, delivered_head=seen_head)
     card.pr_head_sha = result.sha
     await self._repo.add_approval(card.id, decided_by)
-    card.decided_by = decided_by
-    card.decided_by_assistant = False
     card.decided_at = now
     await self._finish_pr_accept(card=card, topic=topic, headline=headline)
     logger.warning(

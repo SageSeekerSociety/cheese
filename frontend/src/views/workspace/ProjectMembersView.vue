@@ -52,7 +52,7 @@ import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import MoveProjectDialog from '@/components/MoveProjectDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { t } from '@/i18n'
-import { memberName, memberOriginalName, teammateName } from '@/lib/agentNames'
+import { memberName, memberOriginalName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
 import { mayIn, roleName } from '@/lib/projectPermissions'
@@ -123,15 +123,31 @@ type RosterAgentRow = ProjectMemberRow & {
 type TeammateRow = Pick<
   ProjectAgent,
   'handle' | 'seat_handle' | 'display_name' | 'name_source' | 'is_default' | 'is_active'
->
+> & { name: string; remark?: string | null }
 const teammates = computed<TeammateRow[]>(() => {
-  if (agentsRead.data.value) return agentsRead.data.value.filter((a) => a.is_active)
+  // Public agent metadata does not carry viewer-private names. Join the viewer's
+  // roster by identity, without changing the shared display_name.
+  const remarks = new Map(
+    store.members.flatMap((m) =>
+      [m.user_handle, m.instance_handle].filter((h): h is string => !!h).map((h) => [h, m.remark] as const)
+    )
+  )
+  if (agentsRead.data.value)
+    return agentsRead.data.value
+      .filter((a) => a.is_active)
+      .map((a) => ({
+        ...a,
+        name: a.display_name,
+        remark: remarks.get(a.seat_handle || a.handle) ?? null,
+      }))
   return (store.members as RosterAgentRow[])
     .filter((m) => m.agent && m.active !== false)
     .map((m) => ({
       handle: m.instance_handle || m.user_handle,
       seat_handle: m.user_handle,
       display_name: m.name || m.user_handle,
+      name: m.name || m.user_handle,
+      remark: m.remark ?? null,
       name_source: m.name_source ?? 'human',
       is_default: !!m.project_default,
       is_active: m.active !== false,
@@ -197,7 +213,11 @@ const agents = computed(() =>
   teammates.value.filter((a) => {
     const q = query.value.trim().toLowerCase()
     return (
-      !q || teammateName(a.display_name, a.name_source).toLowerCase().includes(q) || a.handle.toLowerCase().includes(q)
+      !q ||
+      memberName(a).toLowerCase().includes(q) ||
+      memberOriginalName(a).toLowerCase().includes(q) ||
+      a.handle.toLowerCase().includes(q) ||
+      a.seat_handle?.toLowerCase().includes(q)
     )
   })
 )
@@ -687,18 +707,17 @@ useCommands(() => [
             @keydown.enter="openAgentProfile(a)"
             @keydown.space.prevent="openAgentProfile(a)"
           >
-            <CheeseAvatar
-              :name="teammateName(a.display_name, a.name_source) || a.handle"
-              :handle="a.seat_handle"
-              :size="36"
-              class="mr-3"
-            />
+            <CheeseAvatar :name="memberName(a) || a.handle" :handle="a.seat_handle" :size="36" class="mr-3" />
             <div class="min-w-0">
               <div class="t-title text-truncate">
-                {{ teammateName(a.display_name, a.name_source) || a.handle }}
+                {{ memberName(a) || a.handle }}
                 <span v-if="a.is_default" class="chip-neutral">{{ t('work.members.agentDefault') }}</span>
               </div>
-              <div class="t-meta c-muted">{{ a.handle }}</div>
+              <div class="t-meta c-muted">
+                <span v-if="a.remark && memberOriginalName(a) && memberOriginalName(a) !== a.remark"
+                  >({{ memberOriginalName(a) }}) · </span
+                >{{ a.handle }}
+              </div>
             </div>
             <v-spacer />
             <span class="dm-slot">

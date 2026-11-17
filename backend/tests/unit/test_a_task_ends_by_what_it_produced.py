@@ -53,13 +53,13 @@ def test_a_landed_step_of_a_task_without_a_repository_is_not_a_merge():
     """A task without a repository hands over files or addresses: when a step
     of it is accepted, it is not told of a merge or sent to a new branch."""
     from app.domain.review.task_landing import (
-        task_next_step_prompt,
+        task_landed_prompt,
         task_step_landed_while_working_prompt,
         task_summary_prompt,
     )
 
     for said in (
-        task_next_step_prompt(title="T", task_id="t", has_checkout=False),
+        task_landed_prompt(title="T", task_id="t", has_checkout=False),
         task_step_landed_while_working_prompt(
             title="T", task_id="t", has_checkout=False
         ),

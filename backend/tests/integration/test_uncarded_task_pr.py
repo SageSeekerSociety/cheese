@@ -15,7 +15,6 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
-from tests.landing import written_up
 from tests.support.review_ports import task_teammate
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
@@ -54,8 +53,7 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
     second = client.portal.call(poll)
     assert first["tasks_merged"] == 1 and first["errors"] == []
     assert second["tasks_merged"] == 0
-    # The task closes once its AI teammate has written it up.
-    written_up(client, task.id)
+    # Nobody said the task is done: it stays open, and its owner is told.
 
     async def read_result():
         from sqlalchemy import select
@@ -76,9 +74,16 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
             return row, events
 
     row, events = client.portal.call(read_result)
-    assert row.status == TaskStatus.closed
+    # One closed by hand before the merge stays closed.
+    assert row.status == (TaskStatus.closed if manually_closed else TaskStatus.open)
+    assert row.closing_since is None
     assert row.accepted_at is not None
     assert row.accepted_by is None
     assert row.delivered_head == head
     assert len(events) == 1
-    assert events[0].content == f"PR #{number} 已在代码仓库合并，任务已交付"
+    if manually_closed:
+        assert events[0].content == f"PR #{number} 已在代码仓库合并，任务已交付"
+    else:
+        assert events[0].content.startswith(f"PR #{number} 在代码仓库直接合并了")
+        assert "任务继续开着" in events[0].content
+        assert f"<@{row.owner_handle}>" in events[0].content

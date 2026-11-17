@@ -248,8 +248,9 @@ def test_manual_archive_still_archives_and_still_freezes_new_cards(client):
 
 @pytest.mark.parametrize("blocked_status", ["pending", "accepted"])
 def test_one_card_at_a_time_covers_both_live_and_delivered(client, blocked_status):
-    """递卡互斥的两半：一张还活着的卡挡新卡（老行为），一张已交付的卡也挡（新行为）。
-    两条走的是同一个闸门，但拒绝理由必须不一样——出路完全不同。"""
+    """递卡互斥的两半：一张还活着的卡挡新卡（老行为）；一张已交付的卡之后，任务
+    换到了下一步的新分支，上面还没有新东西，同样递不出去。两条拒绝理由必须不一样
+    ——出路完全不同。"""
     pid = _project(client)
     tid = _topic(client, pid)
     cid = _card(client, tid).json()["data"]["id"]
@@ -262,4 +263,4 @@ def test_one_card_at_a_time_covers_both_live_and_delivered(client, blocked_statu
     if blocked_status == "pending":
         assert "cheese_card(action=redeliver)" in message
     else:
-        assert "任务已结束" in message
+        assert "没有可交付的改动" in message
