@@ -598,7 +598,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     # the characters bound the prompt. A seat that has been away longer than one
     # window reads the newest part of the conversation; what it skipped stays
     # behind its cursor and is not handed over later (a room is not a mail
-    # queue, and replaying a day of chatter into one turn helps nobody).
+    # queue, and replaying a day of chatter into one turn helps nobody). The
+    # turn says how many it skipped, whose they are and where to read them
+    # (`prompts.left_unread`), so nobody's question goes unanswered unseen.
     agent_input_window_messages: int = 40
     agent_input_window_chars: int = 12000
     # The wall-clock mark past which a turn is recorded as long. A metric, not

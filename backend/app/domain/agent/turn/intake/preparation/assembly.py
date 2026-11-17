@@ -44,7 +44,10 @@ from app.domain.agent.turn.intake.preparation.gates import (
     check_model_policy,
     no_provider_bail,
 )
-from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
+from app.domain.agent.turn.intake.preparation.prompt import (
+    LeftUnread,
+    build_turn_prompt,
+)
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to
 from app.domain.agent.turn_speakers import (
@@ -60,6 +63,7 @@ from app.domain.block.queries import (
     block_by_id,
     earlier_message_count,
     inputs_after,
+    left_behind,
     notices_after,
 )
 from app.domain.deliverables import artifacts as project_artifacts
@@ -163,7 +167,7 @@ async def prepare(
         cursor = await AgentSessionService(session).read_cursor(
             place.conversation_id, acting_agent
         )
-        pending = await _read_window(
+        pending, window_start = await _read_window(
             session, place, acting_agent, cursor, opening=opening
         )
         phases_ms["history"] = (time.monotonic() - started) * 1000
@@ -458,6 +462,15 @@ async def prepare(
             gone_files=gone_files,
             undecodable_files=undecodable_files,
             credits_note=credits_note,
+            left=await _left_unread(
+                session,
+                place,
+                acting_agent,
+                cursor,
+                window_start,
+                held=held,
+                roster=roster,
+            ),
         )
         phases_ms["committed"] = (time.monotonic() - started) * 1000
     logger.info(
@@ -561,8 +574,9 @@ async def _read_window(
     cursor: tuple[datetime, uuid.UUID] | None,
     *,
     opening: list[Block],
-) -> list[Block]:
-    """What this seat has not read: every participant's messages, oldest first.
+) -> tuple[list[Block], tuple[datetime, uuid.UUID] | None]:
+    """What this seat has not read: every participant's messages, oldest first,
+    and where the window starts when it may have left older ones behind.
 
     Only the seat's own TURN OUTPUT is left out — it is already in its
     transcript, and handing it back is how an agent ends up answering itself.
@@ -579,15 +593,58 @@ async def _read_window(
         after=cursor,
         limit=settings.agent_input_window_messages,
     )
-    pending = [
+    unread = [
         block
         for block in window
         if not (block.author == seat and block.turn_id is not None)
     ]
-    pending = _trim_to_chars(pending, settings.agent_input_window_chars)
+    pending = _trim_to_chars(unread, settings.agent_input_window_chars)
+    # Where the window starts, when it may have left something behind: it was
+    # full, or the characters cut it. A seat that has read nothing here is
+    # told how much history it has not read instead (`earlier_messages`).
+    cut = len(window) == settings.agent_input_window_messages or len(pending) < len(
+        unread
+    )
+    start = (pending or window)[0] if cursor is not None and cut and window else None
     if cursor is None:
         pending = [*opening, *pending]
-    return pending
+    return pending, (start.created_at, start.id) if start is not None else None
+
+
+async def _left_unread(
+    session,
+    place,
+    seat: str,
+    cursor: tuple[datetime, uuid.UUID] | None,
+    start: tuple[datetime, uuid.UUID] | None,
+    *,
+    held: set[uuid.UUID],
+    roster: list[dict],
+) -> LeftUnread | None:
+    """What this seat has not read and this turn's window does not hand it:
+    the messages between its cursor and where the window starts. Its cursor
+    moves past them with this turn, so this turn is the one that has to say
+    they are there."""
+    if cursor is None or start is None:
+        return None
+    rows = await left_behind(
+        session,
+        place.conversation_id,
+        after=cursor,
+        before=start,
+        seat=seat,
+        excluding=held,
+    )
+    if not rows:
+        return None
+    named = {m["handle"]: m.get("name") for m in roster}
+    return LeftUnread(
+        count=sum(count for _, count, _, _ in rows),
+        since=min(first for _, _, first, _ in rows),
+        until=max(last for _, _, _, last in rows),
+        authors=tuple((handle, named.get(handle)) for handle, _, _, _ in rows),
+        before=start[1],
+    )
 
 
 def _trim_to_chars(blocks: list[Block], budget: int) -> list[Block]:
