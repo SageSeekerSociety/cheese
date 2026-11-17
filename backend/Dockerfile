@@ -192,6 +192,8 @@ COPY --chown=cheese:python scripts/purge_task_snapshots.py ./scripts/
 COPY --chown=cheese:python scripts/forge_event_public_key.py ./scripts/
 # The dev deploy runs this after a release to move the feedback it fixes.
 COPY --chown=cheese:python scripts/ship_feedback.py ./scripts/
+# The dev deploy runs this after a release to release the tasks it put live.
+COPY --chown=cheese:python scripts/ship_tasks.py ./scripts/
 # An operator moves one report by hand with this, from a shell on the box.
 COPY --chown=cheese:python scripts/feedback_status.py ./scripts/
 # An operator lists and fetches the files kept before deletion with this.

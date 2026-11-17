@@ -314,8 +314,17 @@ check_dompurify_specs_use_jsdom() {
 # Read in docs/ and deploy/ only, where a line that says `uv run` is a checkout
 # command (the whole source tree is right there) and what is left is what an
 # operator is told to run on a deployed box. The workflows are left out on
-# purpose: there the same spelling runs on the CI runner, in the checkout
-# (test.yml's assert_shards_complete), and means the opposite.
+# purpose for that spelling: there the same text runs on the CI runner, in the
+# checkout (test.yml's assert_shards_complete), and means the opposite.
+#
+# The one workflow spelling that IS about the image is `docker exec … python -m
+# scripts.<name>`: it runs inside the container that deploy just started, so the
+# module has to be in the image exactly as it does for a documented command.
+# Measured 2026-11-17: #5281 added `scripts/ship_tasks.py` and a dev deploy step
+# that runs it through `docker exec`, but never added the COPY; the step failed
+# every single deploy with ModuleNotFoundError, and because it is
+# `continue-on-error` nothing else ever said so. Skipping the workflows wholesale
+# is what let that through.
 check_container_script_is_in_the_image() {
   local dockerfile="$ROOT/backend/Dockerfile"
   [ -f "$dockerfile" ] || return 0
@@ -336,8 +345,16 @@ check_container_script_is_in_the_image() {
     [ -n "$line" ] || continue
     mod="$(printf '%s\n' "$line" | sed -nE 's|.*python3? -m scripts\.([A-Za-z0-9_]+).*|\1|p')"
     printf '%s\n' "$copied" | grep -qx "$mod" || lines+=("$line")
-  done < <(grep -rnE 'python3? -m scripts\.[A-Za-z0-9_]+' "$ROOT/docs" "$ROOT/deploy" 2>/dev/null \
-             | grep -v 'uv run' || true)
+  done < <(
+    {
+      grep -rnE 'python3? -m scripts\.[A-Za-z0-9_]+' "$ROOT/docs" "$ROOT/deploy" 2>/dev/null \
+        | grep -v 'uv run'
+      # Only the container spelling counts in a workflow; a bare `python -m
+      # scripts.x` there is the runner's checkout, not the image.
+      grep -rnE 'docker exec[^|]*python3? -m scripts\.[A-Za-z0-9_]+' \
+        "$ROOT/.github/workflows" 2>/dev/null
+    } || true
+  )
   [ ${#lines[@]} -eq 0 ] && return 0
   echo "FAIL: a script run in the backend container that the image does not carry"
   report "a python -m scripts.<name> meant for the deployed box, naming a module backend/Dockerfile's production stage never COPYs" \
@@ -578,6 +595,23 @@ if [ "$SELF_TEST" = 1 ]; then
   printf 'uv run python -m scripts.beta_two --all\n' > "$tmp/docs/ops.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a uv run command must pass"
   rm "$tmp/docs/ops.md" "$tmp/backend/Dockerfile"
+  # A workflow spelling is read only where it reaches the container. This is the
+  # split #5281 shipped: the deploy step's `docker exec` names a module the image
+  # never copies, and it failed on every deploy without saying so.
+  mkdir -p "$tmp/.github/workflows"
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  printf '      - run: docker exec -i "$backend" python -m scripts.beta_two --sha "$(git rev-parse HEAD)"\n' \
+    > "$tmp/.github/workflows/deploy.yml"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a docker exec in a workflow must be held to the image"
+  printf '      - run: docker exec -i "$backend" python -m scripts.alpha_one --sha "$(git rev-parse HEAD)"\n' \
+    > "$tmp/.github/workflows/deploy.yml"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a docker exec the image carries must pass"
+  # The same text without the container is the runner's checkout, where the whole
+  # source tree is present — the reason the workflows were skipped before.
+  printf '      - run: uv run python -m scripts.beta_two --all\n' > "$tmp/.github/workflows/deploy.yml"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a plain python -m on the runner must pass"
+  rm -rf "$tmp/.github/workflows" "$tmp/backend/Dockerfile"
   # No Dockerfile, nothing to compare against — inert, not red.
   printf 'python -m scripts.beta_two\n' > "$tmp/docs/ops.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a tree without the image must pass"
