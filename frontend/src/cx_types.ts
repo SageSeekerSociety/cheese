@@ -441,8 +441,10 @@ export interface TopicProgress {
 // backend also sends `live` frames, what it is writing meanwhile (live_frames.py).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
-  // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
+  // A block's reactions changed (someone toggled a reaction).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
+  // 已读：这位读的人新读到的几段编号（`[first, last]`），并进已有的那几段。
+  | { type: 'reads'; conversation_id: string; reader: string; ranges: [number, number][] }
   // A 分身's checklist, on its card's channel (the room's own list is a message).
   | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string; id?: string; project_ids?: string[] }

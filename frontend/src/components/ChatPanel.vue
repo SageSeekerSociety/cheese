@@ -333,6 +333,7 @@ const {
   showReplyCue,
   fmtTime,
   isMine,
+  receiptFor,
   displayName,
   authorTitle,
   isExternal,
@@ -582,6 +583,7 @@ useComposerShortcut({
             :content-ref="timelineRefs.contentRef"
             :is-agent-block="isAgentBlock"
             :is-mine="isMine"
+            :receipt-of="receiptFor"
             :is-external="isExternal"
             :avatar-of="avatarSrc"
             :display-name="displayName"
