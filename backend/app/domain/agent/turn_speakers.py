@@ -29,8 +29,7 @@ from app.domain.delivery.models import Delivery
 from app.domain.device.models import DeviceRow
 from app.domain.identity.handles import names_a_person
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
-from app.domain.user.repositories import UserRepository
-from app.domain.user.services import user_by_handle
+from app.domain.user.services import handles_by_ids, user_by_handle
 
 
 async def is_routine_run(session: AsyncSession, delivery_id: uuid.UUID | None) -> bool:
@@ -86,11 +85,7 @@ async def talk_notes_for(
     if owned.device_id is None:
         return []
     machine = await session.get(DeviceRow, owned.device_id)
-    if machine is None:
+    if machine is None or machine.owner_user_id is None:
         return []
-    users = await UserRepository(session).get_by_handles(people)
-    return [
-        handle
-        for handle in people
-        if handle in users and users[handle].id == machine.owner_user_id
-    ]
+    owner = await handles_by_ids(session, [machine.owner_user_id])
+    return [handle for handle in people if handle in owner]
