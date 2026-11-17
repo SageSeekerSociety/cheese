@@ -446,14 +446,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     # no administrator has pointed the role (app.core.model_roles).
     learning_analysis_model: str = "deepseek-flash"
     learning_analysis_timeout_seconds: float = 60.0
-    # 每晚的学情分析（app/domain/space/learning_insight_analysis.py）：一块板一天最多
-    # 调几次模型。一次调用读一个成员在一道题里的一批新发言，所以这是「一块板一晚
-    # 最多读多少批」—— 到了就停，剩下的留到明晚（游标没动）。费用记在开启学情分析
-    # 的那位管理员名下，这个上限是替他踩的刹车。
+    # 每晚学情分析（space/learning_insight_analysis.py）：每块板每天的调用上限（费用记在开启者
+    # 名下，这是刹车）、几点（Asia/Shanghai）开跑、一次调用最多读一个成员的几条发言。
     learning_analysis_daily_calls_per_space: int = 200
-    # 每晚从几点（Asia/Shanghai）开始跑。之后每小时醒一次，接着做当晚还没做完的。
     learning_analysis_run_hour: int = 2
-    # 一次调用最多读一个成员的多少条发言；多出来的同一晚再调一次接着读。
     learning_analysis_batch_messages: int = 40
     # What a conversation's sandboxes may spend a day on models, per budget
     # holder (`gateway_usage.MachineGatewayKey`): their calls go out on a key

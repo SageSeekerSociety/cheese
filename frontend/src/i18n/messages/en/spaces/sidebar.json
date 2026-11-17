@@ -7,5 +7,6 @@
   "members": "Members",
   "settings": "Settings",
   "tasks": "Tasks",
-  "newTasks": "{n} new since you last looked"
+  "newTasks": "{n} new since you last looked",
+  "myInsight": "My learning insight"
 }
