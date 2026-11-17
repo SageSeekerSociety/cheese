@@ -1,6 +1,7 @@
 import type { AxiosProgressEvent } from 'axios'
 import type {
   DomainGroup,
+  MyLearningInsight,
   Space,
   SpaceAnnouncement,
   SpaceCategory,
@@ -191,6 +192,15 @@ export const SpacesApi = {
   /** 点了「我已阅读并知悉」。幂等：再点一次不会出错，也不改第一次的时间。 */
   acknowledgeLearningNotice: (spaceId: number) =>
     axiosRequest<{ acknowledged: true }>({ url: `/spaces/${spaceId}/learning-analysis/notice`, method: 'POST' }, true),
+  /** 我的学习洞察（step 2）：只有本人的那份；板没开时 `enabled` 为假。 */
+  readMyLearningInsight: (spaceId: number) =>
+    axiosRequest<MyLearningInsight>({ url: `/spaces/${spaceId}/learning-analysis/me`, method: 'GET' }, true),
+  /** 把我的一条判断标成「不准」。只能标自己的；再标一次不出错。 */
+  disputeLearningJudgment: (spaceId: number, judgmentId: number) =>
+    axiosRequest<{ judgmentId: number; disputed: true }>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/judgments/${judgmentId}/dispute`, method: 'POST' },
+      true
+    ),
   /** 只对成员开放，或开放给一组邮箱后缀。扩大范围要等平台审核，回来的空间带着那条申请。 */
   setAccess: (spaceId: number, data: PutSpaceAccessRequestData) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}/access`, method: 'PUT', data }, true),

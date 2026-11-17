@@ -259,6 +259,24 @@ function createdTask(row: NoticeRow): TaskLine | null {
   return typeof id === 'string' ? props.taskOf?.(id) ?? null : null
 }
 const createdTasks = computed(() => props.rows.map(createdTask))
+// 一条消息说它是关于哪件任务的（AI 队友发消息时带的 `task`）：消息头上挂这件任务的
+// 标签。同一件任务最新的那一条标签上再写状态词和在等谁，早先的只写任务名。
+function taggedTask(m: Block): string | null {
+  const id = (m.meta as Record<string, unknown> | null | undefined)?.task_tag
+  return typeof id === 'string' ? id : null
+}
+const latestTagged = computed(() => {
+  const latest = new Map<string, string>()
+  for (const { block } of props.rows) {
+    const id = taggedTask(block)
+    if (id) latest.set(id, block.id)
+  }
+  return new Set(latest.values())
+})
+function tagOf(m: Block): TaskLine | null {
+  const id = taggedTask(m)
+  return id ? props.taskOf?.(id) ?? null : null
+}
 // 交了一版去审阅的那一行（lib/deliveryLine）：画成一张交付卡。
 const deliveries = computed(() => props.rows.map((row) => (row.notice ? deliveryOf(row.block) : null)))
 // 同一个人接连新建的几件，归在同一个名字下面：断开的条件和消息一样。
@@ -743,6 +761,8 @@ const rowLabels = computed(() =>
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
+              :task-tag="tagOf(m)"
+              :task-tag-full="latestTagged.has(m.id)"
               :run-start="runEdges[i] !== 'cont'"
               :regroup="runEdges[i] === 'regroup'"
               :mine="isMine(m)"

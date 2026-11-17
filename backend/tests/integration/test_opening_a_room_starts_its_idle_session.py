@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
@@ -24,6 +25,8 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent_instance.models import AgentInstance
+from app.domain.skill_library import native_skill_doc
 from app.main import app
 from tests.integration import test_central_room_sessions as central_sessions
 from tests.integration.conftest import room_socket
@@ -191,3 +194,34 @@ async def test_a_full_session_host_starts_nothing(client, idle_room, monkeypatch
         client.portal.call(asyncio.sleep, 0.5)
     assert hub.closed == closed
     assert [s.sid for s in hub.opened] == [old.sid]
+
+
+@pytest.mark.anyio
+async def test_a_session_started_ahead_of_a_turn_carries_the_teammates_skills(
+    client, idle_room
+):
+    """The session started when someone opens the room is the one the next
+    turn keeps only if its system prompt is the one that turn renders. A
+    teammate that carries a skill reads that skill's guide every turn; a
+    session started without it was replaced by the first turn — the start the
+    room was opened early to save."""
+    (project, topic), _hub, service, _claude = idle_room
+
+    async def carried() -> str:
+        async with client.test_factory() as db:
+            for agent in await db.scalars(
+                select(AgentInstance).where(AgentInstance.project_id == project)
+            ):
+                agent.configuration = {
+                    **(agent.configuration or {}),
+                    "skills": ["wolfram"],
+                }
+            await db.commit()
+        seat = await service._turn_seat_handle(topic)
+        launch = await service.turn_preparation.launch_inputs(topic, seat, acting=seat)
+        assert launch is not None
+        return launch.system_prompt
+
+    guide = native_skill_doc("wolfram")
+    assert guide is not None
+    assert guide[1] in client.portal.call(carried)

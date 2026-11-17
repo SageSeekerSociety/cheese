@@ -43,6 +43,7 @@ from app.domain.task.services import (
     validate_and_get_category_id,
 )
 from app.domain.task.stages import new_stage_key, stage_lines, with_stage_index
+from app.domain.task.test_suite import suite_lines
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -88,6 +89,9 @@ class CreateTaskRequest(BaseModel):
     # 阶段：每个 ``{name, description, dueAt}``，见 app.domain.task.stages。提交项与
     # 评分要点各用 ``stage`` 指它属于第几个；不给就是一个阶段。
     stages: list[dict] = Field(default_factory=list)
+    # 测试点（§数据结构）：一个阶段一套，每套 ``{kind, runtime, ..., cases}``，见
+    # app.domain.task.test_suite。不给就是这道题没有测试点，和现在完全一样。
+    test_suite: list[dict] = Field(default_factory=list, alias="testSuite")
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -181,6 +185,8 @@ class PatchTaskRequest(BaseModel):
     rubric_public: bool | None = Field(default=None, alias="rubricPublic")
     # 阶段：给了就整份替换，省略不动；已有的阶段带回它的 ``id``，提交跟着它走。
     stages: list[dict] | None = None
+    # 测试点：给了就整份替换，省略不动。
+    test_suite: list[dict] | None = Field(default=None, alias="testSuite")
     topics: list[int] | None = None
     # 这道题涉及的知识点（§ learning analysis, step 1）：给了就整份替换，省略不动，
     # 与 ``topics`` 同一语义。
@@ -217,11 +223,15 @@ class PatchTaskRequest(BaseModel):
 
 
 class CreateSubmissionReviewRequest(BaseModel):
+    # ``score`` 是这一阶段**手动**几项的分（挂了自动行的题，总分后面加自动行的分，
+    # 由 ``auto_score.compose_review`` 合成，前端不必自己算）。``testsOverride``
+    # （``{score, reason}``）是老师手动改 tests 行分时的原因，只有挂了测试点的题用。
     model_config = ConfigDict(populate_by_name=True)
 
     accepted: bool
-    score: int
+    score: int | None = None
     comment: str
+    tests_override: dict | None = Field(default=None, alias="testsOverride")
 
 
 class PatchSubmissionReviewRequest(BaseModel):
@@ -230,6 +240,7 @@ class PatchSubmissionReviewRequest(BaseModel):
     accepted: bool | None = None
     score: int | None = None
     comment: str | None = None
+    tests_override: dict | None = Field(default=None, alias="testsOverride")
 
 
 async def _create_task_entity(
@@ -266,6 +277,7 @@ async def _create_task_entity(
         rubric_raw = payload.rubric
         rubric_public = payload.rubric_public
         stages_raw = payload.stages
+        test_suite_raw = payload.test_suite or []
         teaching = coerce_teaching(payload.teaching)
         default_role = payload.default_role
     else:
@@ -375,6 +387,7 @@ async def _create_task_entity(
         rubric_raw = payload.get("rubric") or []
         rubric_public = bool(payload.get("rubricPublic", True))
         stages_raw = payload.get("stages") or []
+        test_suite_raw = payload.get("testSuite") or []
 
     # Every stage gets its id now, so the items and lines sent with it can name
     # it; one naming a stage the task will not have is refused before anything
@@ -389,8 +402,20 @@ async def _create_task_entity(
     ]
     keys = [line.key for line in stages if line.key]
     submission_schema = with_stage_index(submission_schema, keys)
+    # 测试点先定：评分要点里设为「测试点」的那一项要指着有测试点的阶段，
+    # ``rubric_lines`` 据此拒掉落空的项。
+    test_suite = suite_lines(
+        with_stage_index(
+            [e for e in test_suite_raw if isinstance(e, dict)]
+            if isinstance(test_suite_raw, list)
+            else [],
+            keys,
+        )
+    )
+    suite_stage_indexes = [line.stage for line in test_suite]
     rubric = rubric_lines(
-        with_stage_index(rubric_raw if isinstance(rubric_raw, list) else [], keys)
+        with_stage_index(rubric_raw if isinstance(rubric_raw, list) else [], keys),
+        suite_stages=suite_stage_indexes,
     )
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
@@ -526,6 +551,10 @@ async def _create_task_entity(
         await task_service.replace_submission_schema(task.id, submission_schema)
     if rubric:
         await task_service.replace_rubric(task.id, rubric)
+    # 测试点整份写：入参里的每个阶段一套，用例的输入/期望输出写私有存储。写在评分
+    # 要点之后（两者都在同一个事务里，顺序不影响结果）。
+    if test_suite:
+        await task_service.replace_test_suites(task.id, test_suite)
 
     return task
 

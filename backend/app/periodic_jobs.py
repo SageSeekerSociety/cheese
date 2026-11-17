@@ -29,6 +29,7 @@ from app.domain.delivery.agent import (
     dispatch_pending as dispatch_pending_work,
 )
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import deliver, settle_card
@@ -43,6 +44,7 @@ from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
 from app.domain.session_record import periodic as session_record_periodic
+from app.domain.space import periodic as space_periodic
 from app.domain.task import periodic as task_periodic
 from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
@@ -107,6 +109,7 @@ PERIODIC_JOB_NAMES = (
     "relay balance check",
     "credit warnings",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
+    "learning analysis nightly",
 )
 
 
@@ -224,6 +227,7 @@ def periodic_jobs(
         gate_nudge_factory=gate_nudges,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
+        record_seat=record_seat_instruction,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
         machines=checkout_sweep.sweep,
@@ -252,6 +256,7 @@ def periodic_jobs(
         sessions=sessions,
         chat=chat,
         get_runner=get_runner,
+        announce=announce,
         machines=checkout_sweep.sweep,
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
@@ -275,6 +280,7 @@ def periodic_jobs(
     thread_periodic.register_periodic_jobs(
         jobs, sessions=sessions, running=running_conversations
     )
+    space_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
 
 

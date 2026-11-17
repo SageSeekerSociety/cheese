@@ -893,11 +893,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
         # away with it.
         await _until(lambda: chat.merged is not None)
 
-    # Just the message. Delivery into the live session says the write was
-    # taken, not that the session read it, so no mark rides this path any
-    # more: `chat.arm_seen_receipt` names the block here and
-    # `chat.confirm_prompt_receipt` places the 👀 when the harness reports
-    # that the session has the text.
+    # Just the message: delivery into the live session puts no mark on it.
     assert [frame["type"] for frame in frames] == ["user_block"]
     assert chat.merged is not None
     assert chat.merged[2:] == ("<@cheese-seat> 补充一条", "u", None)

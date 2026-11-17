@@ -11,8 +11,8 @@ The rules, as a person would state them:
 - Those two are things that happened, recorded by the platform: they are not
   words of the task's AI teammate, appear under nobody's name, and start no
   turn of the channel's AI teammate.
-- Once the task is over, the channel hears how it ended exactly once, from
-  the task's teammate: the write-up when it writes one, or that it was
+- Once the task is over, the channel records how it ended exactly once, as
+  something that happened: the write-up when one is written, or that it was
   accepted when the write-up never comes.
 """
 
@@ -254,9 +254,7 @@ def test_a_written_up_task_ends_in_the_main_line_once(client, app_world):
     *_, ending = _told(client, room, task_id)
     assert len(_told(client, room, task_id)) == 3
     assert "做完了" in ending["content"]
-    # The ending is the teammate's own words, said under its name.
-    assert ending["kind"] == "message"
-    assert ending["author_type"] == "participant"
+    assert _happened(ending)
 
 
 def test_a_merge_its_teammate_never_follows_up_leaves_the_task_open(client, app_world):

@@ -15,5 +15,7 @@
   "learningPointNameTaken": "已经有「{name}」这条知识点了",
   "learningPointLimit": "知识点最多 {max} 条",
   "learningPointNotFound": "这条知识点不存在或已删除",
-  "learningAnalysisNoModel": "学情分析暂时用不了，稍后再试"
+  "learningAnalysisNoModel": "学情分析暂时用不了，稍后再试",
+  "learningAnalysisDisabled": "这个空间没有开启学情分析",
+  "learningJudgmentNotFound": "这条判断不存在，可能已经更新了"
 }

@@ -8,11 +8,7 @@ no repository is never sent to a checkout, which it does not have.
 
 import pytest
 
-from app.domain.agent.harness.opening import task_section
-from app.domain.agent.harness.prompt import (
-    became_task_prompt,
-    task_opening_prompt,
-)
+from app.domain.prompts import became_task_prompt, task_opening_prompt, task_section
 
 
 def _said_to(has_checkout: bool) -> dict[str, str]:

@@ -60,7 +60,7 @@ covers:
 
 ## 一条任务是一段对话 {#conversation}
 
-任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。项目里的人都能在里面说话，AI 队友里只有这条任务自己的会话能发（`POST /topics/{task}/messages`）。负责人和协作者说的话直接叫醒任务的 AI 队友，别人的话 `@` 了它才叫醒，否则跟着下一轮读到（`agent/turn/intake/human.py` 的 `prepare_human`）；会话开场的「这个任务」一段告诉它谁的话是指令（`harness/prompt.task_section`）。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
+任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。项目里的人都能在里面说话，AI 队友里只有这条任务自己的会话能发（`POST /topics/{task}/messages`）。负责人和协作者说的话直接叫醒任务的 AI 队友，别人的话 `@` 了它才叫醒，否则跟着下一轮读到（`agent/turn/intake/human.py` 的 `prepare_human`）；会话开场的「这个任务」一段告诉它谁的话是指令（`prompts.task_section`）。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
 
 **创建只由人做**，创建的人就是负责人：
 
@@ -77,7 +77,9 @@ covers:
 
 一条消息可以另开好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面。AI 队友在主线上用 `cheese_task(action=open)` 开的任务，记在要做这件事的那条主线消息上，`source_block_id` 也是它；主线把它画成队友那一轮回答的最后一条消息下面的一行（那一轮以那条消息命名，`turn_id`），只有任务名和负责人，不画状态（前端 `lib/channelTasks.teammateTaskLines`）。主线上没有原地转（`here`）。单独新建的任务才在主线上落一行 `task_created`。
 
-任务交付被采纳、或做完关闭时，结果说回开出它的那段对话（`review/task_landing.tell_origin`）：出自主线的（`source_block_id` 在频道主线上）说在主线，出自支线的说在那条支线，支线原地转成的不说。交了一版去审阅、一版被退回，在同一处由平台记成事件行（`record_at_origin`，`event_type` 为 `task_filed` / `task_returned`），不署 AI 队友的名。
+任务的一步交付被采纳、任务接着做时，任务的 AI 队友把这件事说回开出它的那段对话（`review/task_landing.tell_origin`）：出自主线的（`source_block_id` 在频道主线上）说在主线，出自支线的说在那条支线，支线原地转成的不说。交了一版去审阅、一版被退回、任务关闭，在同一处由平台记成事件行（`record_at_origin`，`event_type` 为 `task_filed` / `task_returned` / `task_ended`），不署 AI 队友的名；关闭那一行说它怎么结束的（`_how_it_ended`：写成的结论、采纳了没写总结、或者没有采纳就关了），每条关闭路径都经过 `tell_origin_ended`。
+
+出自主线、由 AI 队友用 `cheese_task(action=open)` 开的任务（`tasks.created_by` 是那位队友的席位，`created_by_assistant` 为假），交一版去审阅和关闭时，平台还给主线上的那位队友留一条平台指令（`task_landing.wake_opener` → `delivery/agent.record_seat_instruction`，投递账本上 `conversation_id` 是频道），叫它用自己的话在主线上说一两句：它看不到任务里的东西，所以指令里写着任务名、第几版、审阅人、交付说明和审阅重点，或者任务怎么结束的。指令的事件 id 由这件事算出来（交一版按卡 id，关闭按任务 id 和 `closed_at`），同一件事只送一次，重开再关会再送一次。退回不送；人建的、转的、出自支线的任务不送；那个席位已经不在这个项目里也不送。主线的队友正在干活时，这条指令在它下一个工具调用的间隙并进去（`chat_live_input.join_running_session`）；没在干活就起一轮。
 
 任务另记它是从哪句话来的（`source_block_id`），可以是支线里的一条回复，也可以是另一个任务里的一条：转为任务的是被转的那一条；`cheese_task(action=open)` 建的是这个 AI 队友在那段对话里最近收到的一句人话，频道主线上只认点了它名字的那句。任务页顶上引这句话，点它回到那段对话并停在这一条上（`?block=`）。这一列加上之前建的任务没有它，退回 `upgraded_from_block_id`；两样都没有的（单独新建的任务）照实说是谁新建的。
 
@@ -152,7 +154,7 @@ covers:
 
 机器上的工作目录在下一次 `cheese worktree` 时跟过去（`_follow_task_branch`）：`delivered_head` 之后的提交变基到最新的默认分支上，没提交的文件原样带过去；和最新代码冲突就留在原分支上不动，报出冲突让芝士先解决。只有这件任务自己早先的分支会被跟过去，芝士自己切出的分支不动。
 
-每次采纳（以及带结论关闭）的结果由任务的 AI 队友回复到它出自的那条支线里（`tell_origin`），没有支线就开一条。角色有 `Permission.tasks` 的人或任务自己的会话（`cheese_task(action=reopen)`）可以重新打开关了的任务（`POST /topics/{task}/reopen`）。比能关闭它的人宽，是有意的不对称：关闭撤不回（开着的卡作废、PR 关掉，重开都不还原），所以只给参加这件活的人；重开能再关回去，房间里也写着谁重开的，所以给项目里做任务的人。别的任务的会话、房间的会话凭证两样都做不了。关闭之后任务对话照样能叫到它的会话，有人要它接着做，它就自己重开；交付过的同样换到新分支上，没交付过的忘掉旧 PR、留在原分支上，草稿 PR 扫描再为这条分支开一个 PR（旧 PR 当初没关掉的话就沿用它）。
+每次采纳后任务接着做的那一步，由任务的 AI 队友回复到它出自的那条支线里（`tell_origin`），任务关闭时平台在那里记一行（`tell_origin_ended`），没有支线就开一条。角色有 `Permission.tasks` 的人或任务自己的会话（`cheese_task(action=reopen)`）可以重新打开关了的任务（`POST /topics/{task}/reopen`）。比能关闭它的人宽，是有意的不对称：关闭撤不回（开着的卡作废、PR 关掉，重开都不还原），所以只给参加这件活的人；重开能再关回去，房间里也写着谁重开的，所以给项目里做任务的人。别的任务的会话、房间的会话凭证两样都做不了。关闭之后任务对话照样能叫到它的会话，有人要它接着做，它就自己重开；交付过的同样换到新分支上，没交付过的忘掉旧 PR、留在原分支上，草稿 PR 扫描再为这条分支开一个 PR（旧 PR 当初没关掉的话就沿用它）。
 
 ## 任务列表与待处理清单是同一份规则 {#awaiting}
 
@@ -219,6 +221,18 @@ covers:
 - 还没有 `main`：按记下的那一行取字节（之后出题人换了压缩包，已经建好项目的人拿到的仍是建项目那一刻的那份；删掉了就是 `starterRemovedBeforePush`），以平台身份（`Cheese <starter@users.invalid>`）、建项目那一刻的时间做出提交，先把提交号记进 `commit_sha`，再不强制地推成 `main`，凭据放在请求头里（同 `forge_migration.push`）。
 
 `done` 只在起始代码那个提交确实在 `main` 上时才记。压缩包本身成不了提交（读到一半坏了、出题人删了）或 `main` 被占，当场记 `failed`，`error` 是那句原因，不再重试；代码仓库服务一时没有回应，过一会儿再试（30 秒起、翻倍、最多 30 分钟），试满 8 次记 `failed`（`starterPushGaveUp`）。`GET /projects/{id}` 的 `starter` 说第几版、`pending` / `done` / `failed` 和原因，项目总览和 agent 的「题目」一段据此说起始代码在放、放好了，还是没放成。放好或没放成时，任务在项目推送上发一帧 `project`（`agent/project_feed.py`，由 `app/periodic_jobs.py` 接上），开着的页面重读项目那一行；推送没到时，页面在 `pending` 期间每 20 秒自己再读一次。没有起始代码的题，建仓库和从前一样由 Forgejo 初始化 `main`。GitHub 仓库的项目不建 Forgejo 仓库，也就没有起始代码。
+
+## 频道主线统筹任务 {#main-line}
+
+> 频道主线上的 AI 队友开任务、转达、查看、关闭，任务向它报告；两者之间的往来不进任何对话。
+
+频道主线上的 AI 队友（主线那一类会话，`prompts/profiles.py` 的 `main_line`）只与成员对话并统筹任务，动手的事开成任务。它对这个频道的任务做四件事，接口都在 `routes/topics_tasks.py`，权限是只给 AI 队友的 `coordinate_tasks`：
+
+- 转达（`POST /topics/{频道}/tasks/{编号}/tell`）：内容作为平台指令交给任务自己的会话。替别的成员转达的小请求带 `asker`，记在 `tasks.asker_handles` 上。
+- 查看（`GET /topics/{频道}/tasks/{编号}`）：平台事实的概要，和主线与这件任务之间的往来；任务里的对话、执行过的命令和改动，CLI 按任务 id 从各自的接口读。
+- 关闭、重新打开（`…/close`、`…/reopen`）：只限它自己开的任务；交付在等人审阅的任务不能关闭。
+
+任务这一侧，主线开的任务用 `POST /topics/{任务}/report` 把要人回答的问题或无法继续的情况报给开它的那位 AI 队友；提交审阅和任务结束由平台报（`review.task_landing.tell_opener_filed`、`tell_origin_ended`），报告里列出提过这件事的每位成员。转达和报告都记在投递账本上（`eventType` 为 `task_told`、`task_report`，`delivery.agent.exchange_of` 读回），双方的现场里看得到各自的那一次调用。
 
 ## 边界与坑 {#traps}
 

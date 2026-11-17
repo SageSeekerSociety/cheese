@@ -25,6 +25,12 @@ export function namedTask(block: Block): string | null {
   return (action === 'task_created' || action === 'split') && typeof id === 'string' ? id : null
 }
 
+/** 一条消息说它是关于哪件任务的（`task_tag`）：消息头上挂那件任务的标签。 */
+export function taggedTask(block: Block): string | null {
+  const id = (block.meta as Record<string, unknown> | null | undefined)?.task_tag
+  return typeof id === 'string' ? id : null
+}
+
 /** 一次重读最多带几块：后端一次只认这么多（`blocks` 的上限）。取最新那几块。 */
 const READ_AT_ONCE = 200
 
@@ -52,11 +58,13 @@ export function useTimelineTasks(opts: {
   })
   function carriedBy(block: Block, rows: RoomTask[]): RoomTask[] {
     const named = namedTask(block)
+    const tagged = taggedTask(block)
     return rows.filter(
       (task) =>
         task.upgraded_from_block_id === block.id ||
         (task.source_block_id === block.id && task.id !== block.conversation_id) ||
-        task.id === named
+        task.id === named ||
+        task.id === tagged
     )
   }
 
@@ -82,9 +90,9 @@ export function useTimelineTasks(opts: {
     return refreshing
   }
 
-  /** 推来的一块说某件任务在这里开始了：它不带那件任务，补上。 */
+  /** 推来的一块说某件任务在这里开始了，或说它关于哪件任务：它不带那件任务，补上。 */
   function landed(block: Block) {
-    if (namedTask(block) && !block.tasks?.length) void readFor([block])
+    if ((namedTask(block) || taggedTask(block)) && !block.tasks?.length) void readFor([block])
   }
 
   // 消息里 `<#id>` 指着的任务，窗口里没有的按 id 问一次（问过的不再问）。

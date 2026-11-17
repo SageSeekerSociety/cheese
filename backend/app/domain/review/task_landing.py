@@ -51,20 +51,33 @@ from app.core.live_frames import show_once_committed
 from app.core.sentences import say, with_keys
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery_events import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.event_author import AuthorType
-from app.domain.identity.handles import agent_instance_handle
-from app.domain.notice_meta import SEVERITY_INFO, WHO_PLATFORM, notice
+from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_handle
+from app.domain.notice_meta import (
+    EVENT_TASK_ENDED,
+    EVENT_TASK_FILED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
+from app.domain.prompts import piece
 from app.domain.review.deploy_scope import waits_for_deploy
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.review.ports import Announce, RecordInstruction, TaskTeammate
+from app.domain.review.ports import (
+    Announce,
+    RecordInstruction,
+    RecordSeatInstruction,
+    TaskTeammate,
+)
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.thread.services import open_thread, thread_of
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.user.services import names_by_handles
 
 logger = logging.getLogger(__name__)
 
@@ -244,26 +257,153 @@ def _step_landed(task: Task, pr_number: int | None) -> str:
 
 
 async def tell_origin_ended(
-    session: AsyncSession, task: Task, *, task_teammate: TaskTeammate | None
+    session: AsyncSession,
+    task: Task,
+    *,
+    announce: Announce,
+    record_seat: RecordSeatInstruction | None,
 ) -> None:
-    """Say at ``task``'s origin how it ended, once it is closed: its write-up
-    when it has one; that it was accepted, when its last delivery landed and
-    nobody wrote it up (the write-up was given up on, or ran out of time);
-    otherwise that it was closed. Every path that closes a task calls this, so
-    the conversation the task came from always hears the end."""
+    """Record at ``task``'s origin how it ended, once it is closed: its
+    write-up when it has one; that it was accepted, when its last delivery
+    landed and nobody wrote it up (the write-up was given up on, or ran out of
+    time); otherwise that it was closed. Every path that closes a task calls
+    this, so the conversation the task came from always hears the end.
+
+    It is the platform's line (`record_at_origin`), not the teammate's words:
+    the AI teammate that opened the task from the channel's main line is told
+    the same facts and says the result in its own words (`wake_opener`), and a
+    line under its name would say it twice."""
+    line, facts = _how_it_ended(task)
+    await record_at_origin(session, task, EVENT_TASK_ENDED, line, announce=announce)
+    names = await names_by_handles(session, _askers(task))
+    closed_at = task.closed_at.astimezone(UTC).isoformat() if task.closed_at else ""
+    await wake_opener(
+        session,
+        task,
+        # A task reopened and closed again ends again: its close time tells
+        # the two ends apart, and the same end reported twice is told once.
+        key=f"{EVENT_TASK_ENDED}:{task.id}:{closed_at}",
+        event_type=EVENT_TASK_ENDED,
+        content=task_ended_opener_prompt(task, facts=facts, names=names),
+        record_seat=record_seat,
+    )
+
+
+def _how_it_ended(task: Task) -> tuple[str, str]:
+    """How ``task`` ended: the line its origin records, and the same facts as
+    its opener is told them. One reading of the task's row for both, so the
+    two never say different things."""
+    accepted = (
+        f"交付已采纳（PR #{task.pr_number}）"
+        if task.pr_number is not None
+        else "交付已采纳"
+    )
     if task.conclusion:
-        content = say(
-            "taskCompleted", title=said_title(task), conclusion=task.conclusion
+        line = say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
+        facts = (
+            f"{accepted}，结论是「{task.conclusion}」"
+            if task.accepted_at is not None
+            else f"没有哪一版交付被采纳，关闭时的结论是「{task.conclusion}」"
         )
     elif task.accepted_at is not None:
-        content = (
+        line = (
             say("taskLanded", title=said_title(task), pr=task.pr_number)
             if task.pr_number is not None
             else say("taskLandedNoPr", title=said_title(task))
         )
+        facts = f"{accepted}，任务总结没有写成"
     else:
-        content = say("taskClosed", title=said_title(task))
-    await tell_origin(session, task, content, task_teammate=task_teammate)
+        line = say("taskClosed", title=said_title(task))
+        facts = "没有哪一版交付被采纳，关闭时也没有写结论"
+    return line, facts
+
+
+async def tell_opener_filed(
+    session: AsyncSession,
+    task: Task,
+    card: AcceptCard,
+    *,
+    version: int,
+    reviewers: list[str],
+    record_seat: RecordSeatInstruction | None,
+) -> None:
+    """``task`` handed ``card`` in as its ``version``-th version: the AI
+    teammate that opened it from the channel's main line is told what was
+    handed in and who reviews it, so it can say so there (`wake_opener`).
+    Each card is one version, so each is told once."""
+    names = await names_by_handles(session, [*reviewers, *_askers(task)])
+    await wake_opener(
+        session,
+        task,
+        key=f"{EVENT_TASK_FILED}:{card.id}",
+        event_type=EVENT_TASK_FILED,
+        content=task_filed_opener_prompt(
+            task,
+            version=version,
+            reviewers=reviewers,
+            names=names,
+            subject=card.change_subject,
+            body=card.change_body,
+            focus=card.focus,
+        ),
+        record_seat=record_seat,
+    )
+
+
+async def wake_opener(
+    session: AsyncSession,
+    task: Task,
+    *,
+    key: str,
+    event_type: str,
+    content: str,
+    record_seat: RecordSeatInstruction | None,
+) -> None:
+    """Tell ``content`` to the AI teammate that opened ``task`` from something
+    said in its channel's main line, in that main line, as a platform
+    instruction it reads on its next turn (or in the work it is doing).
+
+    Only that one: a task a person made, or turned from a message, wakes
+    nobody, and nor does one that came from a 支线 or from nowhere — the
+    origin's line records what happened there either way. The opener is
+    ``created_by``, which a teammate's own `cheese_task(action=open)` writes as
+    its seat; a seat this project no longer has is told nothing.
+
+    ``key`` names the happening; the instruction's identity is derived from
+    it, so the same happening is told once however often it is reported.
+
+    Best effort, as `record_at_origin`: telling never undoes what it tells.
+    ``record_seat`` missing where someone is to be told is a door that did not
+    hand it in (`review.ports.RecordSeatInstruction`), and fails loudly."""
+    opener = await main_line_opener(session, task)
+    if opener is None:
+        return
+    if record_seat is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("record_seat was not handed in")
+    try:
+        async with session.begin_nested():
+            await record_seat(
+                session,
+                DeliveryEvent(
+                    id=event_id_for(NotificationType.ROOM_NOTICE, key),
+                    type=NotificationType.ROOM_NOTICE,
+                    payload={
+                        "projectId": str(task.project_id),
+                        "topicId": str(task.room_id),
+                        "taskId": str(task.id),
+                        "eventType": event_type,
+                        "severity": SEVERITY_INFO,
+                    },
+                    occurred_at=datetime.now(UTC),
+                ),
+                project_id=task.project_id,
+                conversation_id=task.room_id,
+                seat=opener,
+                content=content,
+            )
+    except Exception:  # telling never undoes what it tells
+        logger.warning("could not tell task %s's opener", task.id, exc_info=True)
 
 
 async def go_on_while_working(
@@ -456,8 +596,8 @@ async def tell_origin(
     own conversation, which the landing already speaks in.
 
     What happens to the task on the way — a version handed in, a version
-    returned — is the platform's record, not the teammate's words
-    (`record_at_origin`).
+    returned — and how it ended are the platform's record, not the
+    teammate's words (`record_at_origin`).
 
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
@@ -478,7 +618,8 @@ async def record_at_origin(
     refers: dict | None = None,
 ) -> None:
     """Record in the conversation ``task`` was opened from that something
-    happened to it: a version handed in for review, a version returned.
+    happened to it: a version handed in for review, a version returned, the
+    task ended.
 
     It is the platform's record, not anyone's words: a platform line
     (`kind=event`) under nobody's name that wakes nobody (``who`` is the
@@ -517,6 +658,39 @@ async def _origin_conversation(session: AsyncSession, task: Task) -> uuid.UUID |
     the channel's main line, or the 支线 under the message it hangs under
     (opened if nobody has replied there yet). None when it has nowhere to be
     told (`tell_origin`)."""
+    origin = await _origin(session, task)
+    if origin is None:
+        return None
+    block, in_main_line = origin
+    if in_main_line:
+        return task.room_id
+    return (
+        await open_thread(session, block.id, by=task.owner_handle or block.author)
+    ).id
+
+
+async def main_line_opener(session: AsyncSession, task: Task) -> str | None:
+    """The seat of the AI teammate that opened ``task`` from something said in
+    its channel's main line, which it reports to and is told of it; None for a
+    task a person made, or one from a 支线 or from nowhere. ``created_by`` is
+    what a teammate's own `cheese_task(action=open)` writes as its seat."""
+    opener = task.created_by
+    if (
+        opener is None
+        or task.created_by_assistant
+        or not opener.startswith(AGENT_HANDLE_PREFIX)
+    ):
+        return None
+    origin = await _origin(session, task)
+    if origin is None or not origin[1]:
+        return None
+    return opener
+
+
+async def _origin(session: AsyncSession, task: Task) -> tuple[Block, bool] | None:
+    """The main-line message ``task`` hangs under, and whether what it came
+    from was said in the main line itself rather than in that message's 支线.
+    None when it has nowhere to be told (`tell_origin`). Opens nothing."""
     if task.upgraded_from_block_id is None:
         return None
     origin = await session.get(Block, task.upgraded_from_block_id)
@@ -538,11 +712,7 @@ async def _origin_conversation(session: AsyncSession, task: Task) -> uuid.UUID |
         if task.source_block_id is not None
         else None
     )
-    if source is not None and source.conversation_id == task.room_id:
-        return task.room_id
-    return (
-        await open_thread(session, origin.id, by=task.owner_handle or origin.author)
-    ).id
+    return origin, source is not None and source.conversation_id == task.room_id
 
 
 async def _tell_origin(
@@ -632,7 +802,7 @@ async def tell_agent(
 
 
 # 下面这几段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
-# 和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，可那个包里没有一处
+# 和 `agent` 的其它提示词放在一起，可那里没有一处
 # 用它们 —— 说它们的只有这里，`delivery_landed` 和 `_go_on`。第 9 步把 review 够
 # 不着 `agent` 的那几条调用收进端口时，纯字符串没有理由走端口，就搬回说它的地方。
 
@@ -729,3 +899,88 @@ def task_summary_prompt(
         "3. 用 cheese_task(action=close) 关闭任务，结论写一句结果。\n"
         "不要改动文件，不要提交审阅。"
     )
+
+
+# 下面这几段是平台报给频道主线上开这个任务的那位 AI 队友的事实（`wake_opener`）：它
+# 看不到任务里的东西，所以这件事的事实都写在话里；拿到后怎么做，写在主线的规矩里
+# （`prompts/pieces/main_line/rules.md` 的「任务的报告」）。
+
+
+def _member(handle: str, names: dict[str, str]) -> str:
+    return f"{names.get(handle) or handle}（handle: {handle}）"
+
+
+def task_named(task: Task) -> str:
+    """A task as a report names it: its number and title."""
+    title = f"「{said_title(task)}」"
+    return f"#{task.number}{title}" if task.number is not None else title
+
+
+def _askers(task: Task) -> list[str]:
+    """Everyone who asked for what the task does: who proposed it, then each
+    member a request was passed on for (`cheese_task(action=tell)`'s asker)."""
+    first = task.reporter_handle or task.owner_handle
+    return list(dict.fromkeys([h for h in (first, *(task.asker_handles or ())) if h]))
+
+
+def task_filed_opener_prompt(
+    task: Task,
+    *,
+    version: int,
+    reviewers: list[str],
+    names: dict[str, str],
+    subject: str | None,
+    body: str | None,
+    focus: str | None,
+) -> str:
+    """What the AI teammate that opened a task from the channel's main line is
+    told when the task hands a version in for review: which version, whom it
+    waits on, the card's change title and description, what the reviewer is
+    asked to look at, and everyone who asked for it (``names``: handle to
+    roster name). A sentence with nothing to say is left out."""
+    waiting = (
+        piece(
+            "context/state_review",
+            who="、".join(_member(h, names) for h in reviewers),
+        )
+        if reviewers
+        else "待审阅"
+    )
+    lines = [
+        piece(
+            "main_line/report_filed",
+            task=task_named(task),
+            version=version,
+            waiting=waiting,
+        )
+    ]
+    said = "\n".join(part.strip() for part in (subject, body) if part and part.strip())
+    if said:
+        lines.append(piece("main_line/report_said", text=said))
+    if focus and focus.strip():
+        lines.append(piece("main_line/report_focus", text=focus.strip()))
+    askers = _askers(task)
+    if askers:
+        lines.append(
+            piece(
+                "main_line/report_askers",
+                names="、".join(_member(h, names) for h in askers),
+            )
+        )
+    return "\n".join(lines)
+
+
+def task_ended_opener_prompt(task: Task, *, facts: str, names: dict[str, str]) -> str:
+    """What the AI teammate that opened a task from the channel's main line is
+    told when the task closes: how it ended (`_how_it_ended`) and everyone who
+    asked for it."""
+    lines = [piece("main_line/report_ended", task=task_named(task), facts=facts)]
+    askers = _askers(task)
+    if askers:
+        lines.append(
+            piece(
+                "main_line/report_askers",
+                names="、".join(_member(h, names) for h in askers),
+            )
+        )
+    return "\n".join(lines)

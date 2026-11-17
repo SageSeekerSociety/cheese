@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from pydantic import ValidationError
 
-from app.domain.agent.harness.prompt import live_input_lines, prompt_line
+from app.domain.agent.harness.lines import live_input_lines, prompt_line
 from app.domain.block.message_input import ChatMessageIn
 from app.domain.block.models import BlockKind
 

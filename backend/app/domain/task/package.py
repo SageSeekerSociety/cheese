@@ -68,6 +68,9 @@ DESCRIPTION = "description"
 SUBMISSION = "submission"
 RUBRIC = "rubric"
 STAGES = "stages"
+#: 每一个阶段的测试点（``app.domain.task.test_suite``）：改到它就记一版，读的人
+#: （版本页、项目里的 agent）据此知道这道题判分的用例变过。
+TESTS = "tests"
 FILES = "files"
 STARTER_CHANGE = "starter"
 PUBLISHED = "published"
@@ -77,6 +80,7 @@ _PART_NAMES = {
     STAGES: "阶段",
     SUBMISSION: "提交内容",
     RUBRIC: "评分要点",
+    TESTS: "测试点",
 }
 _FILE_VERBS = {"added": "新增", "replaced": "替换", "removed": "删除"}
 #: 起始代码那一格的值（`changes["starter"]`）就是这三个动词之一。

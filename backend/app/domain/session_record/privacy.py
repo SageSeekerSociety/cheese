@@ -15,7 +15,7 @@ call, and the result that answers it, with the owner (``cheese.private``: call
 id → owner; `claude_code.runner`). The same runner shows the room a call while
 it is being written, before any record of it exists, and puts `hidden_input`
 in place of such a call's arguments there. A person's private index is not in
-any input the session is given (`memory.instructions.private_index_pointer`):
+any input the session is given (`prompts.memory.private_index_pointer`):
 the session reads it, and that read is stamped like any other.
 
 This package is the bottom layer: the runner that stamps the calls imports it,

@@ -87,7 +87,7 @@ class TeachingRequest(BaseModel):
     #: 读写上（`teaching_to_api(include_private=True)`）。
     private_prompt: str | None = Field(default=None, alias="privatePrompt")
     #: 本节学习目标。写上它这份指导就按教育性走：`systemPrompt` 留空时带上
-    #: 平台的默认教学要求（`harness.opening.DEFAULT_TEACHING_PROMPT`）。
+    #: 平台的默认教学要求（`prompts/pieces/opening/default_teaching.md`）。
     learning_goals: list[str] = Field(default_factory=list, alias="learningGoals")
     #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
     #: 存指向它们的 id。
