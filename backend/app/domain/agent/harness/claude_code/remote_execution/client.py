@@ -248,7 +248,7 @@ def cheese_source() -> Path:
 # goes by — is imported from `executor_transport`: the name and the way its value
 # crosses to the executor are one thing to that module, not a second declaration
 # here. The line is told about it in its prompt
-# (`harness.prompt.WORKING_DIRECTORY`), and the shell prefix binds it in the
+# (`prompts` `system/working_directory`), and the shell prefix binds it in the
 # command's own shell (`shell_prefix.bind_working_directory`): it is set on this
 # process so the prefix can read it, and deliberately not exported to the
 # executor, where a native session has no such variable.
@@ -611,6 +611,15 @@ def prepare(
         else:
             refused.append("WebFetch")
         command.extend(["--disallowedTools", ",".join(refused)])
+    # A kind of session that holds fewer tools than the table (`CHEESE_TOOLS`,
+    # the channel's main line) is refused the build's own tools it does not
+    # hold, as the platform's are refused by `sandbox/cheese`.
+    held = os.environ.get("CHEESE_TOOLS")
+    if held:
+        names = set(json.loads(held))
+        narrowed = [tool for tool in NARROWABLE_NATIVE if tool not in names]
+        if narrowed:
+            command.extend(["--disallowedTools", ",".join(narrowed)])
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
@@ -622,6 +631,19 @@ def prepare(
     }
     (directory / "launch.json").write_text(json.dumps(launch))
     return launch
+
+
+#: The build's own tools a narrowed session is refused unless it holds them.
+NARROWABLE_NATIVE = (
+    "Agent",
+    "Task",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "NotebookEdit",
+    "Workflow",
+)
 
 
 def _take_leased_machine(target):

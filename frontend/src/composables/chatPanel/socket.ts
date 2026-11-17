@@ -253,6 +253,8 @@ export function usePanelSocket(deps: {
       case 'assistant_block':
         // One complete 芝士 message (Slack-style) — a turn may land several.
         pushBlock(frame.block)
+        // A message about a task: its tag needs that task.
+        deps.roomTasks().landed(frame.block)
         // Compatibility with an older backend that has no lifecycle markers.
         deps.turns.settleIfIdle()
         deps.autoScroll()

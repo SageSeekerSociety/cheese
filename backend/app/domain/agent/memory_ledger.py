@@ -251,7 +251,7 @@ class MemoryLedger:
             and turn.speaker not in (answer.get("indexes_read") or ())
         ):
             # 这一轮替他干了活，却没读他的 private 索引（规矩说每一轮先读，
-            # `instructions.MEMORY_INSTRUCTIONS`）。记一行，好在生产上数跳过了多少。
+            # `prompts/pieces/memory/instructions.md`）。记一行，好在生产上数跳过了多少。
             logger.info(
                 "memory_private_index_unread room=%s agent=%s speaker=%s",
                 topic_id,

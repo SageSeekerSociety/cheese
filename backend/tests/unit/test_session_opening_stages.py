@@ -5,8 +5,7 @@ told again."""
 
 from datetime import UTC, datetime
 
-from app.domain.agent.harness.opening import opening_changes
-from app.domain.agent.harness.prompt import build_session_opening
+from app.domain.prompts import build_session_opening, opening_changes
 from app.domain.task.claims import StageProgress
 
 

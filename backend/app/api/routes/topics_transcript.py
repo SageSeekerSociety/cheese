@@ -13,11 +13,11 @@ from app.api.session_record_rows import no_platform_reminders, text_of
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
-from app.domain.agent.harness.notices import without_reminders
 from app.domain.agent.run_records import for_site
 from app.domain.agent.turn_times import turn_starts
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.prompts import without_reminders
 from app.domain.room_task.place import place_or_404
 from app.domain.session_record import service
 from app.domain.session_record.history import earlier_turns

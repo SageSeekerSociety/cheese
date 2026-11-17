@@ -7,8 +7,8 @@
 import uuid
 
 from app.domain.agent.chat import _expand_mention_names
-from app.domain.agent.harness.prompt import build_session_opening
 from app.domain.agent.prompt import _topic_ref_lists
+from app.domain.prompts import build_session_opening
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 
 ARCHIVED_ID = uuid.uuid4()

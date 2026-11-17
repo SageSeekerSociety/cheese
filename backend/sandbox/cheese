@@ -360,17 +360,61 @@ def switched_on(environ=None) -> bool:
     return str(env.get(COMPACT_ENV) or "").strip() not in ("", "0", "false", "False")
 
 
+#: The tools a kind of session holds, when it holds fewer than the table
+#: (`prompts.Profile.tools`, written by the launch as a JSON list): a tool by
+#: name holds all its verbs, `<tool>.<verb>` one of them. Unset holds the table.
+#: Like `COMPACT_ENV`, the one place the list and the refusal are decided for
+#: every harness.
+TOOLS_ENV = "CHEESE_TOOLS"
+
+
+def held_tools(environ=None):
+    """The tools this session holds (`TOOLS_ENV`), or None for the whole table."""
+    env = os.environ if environ is None else environ
+    raw = str(env.get(TOOLS_ENV) or "").strip()
+    if not raw:
+        return None
+    return frozenset(str(key) for key in json.loads(raw))
+
+
+def holds(held, key: str) -> bool:
+    """Whether ``held`` takes the call ``key`` (`<tool>` or `<tool>.<verb>`)."""
+    if held is None:
+        return True
+    name, _, verb = key.partition(".")
+    if key in held or name in held:
+        return True
+    return not verb and any(entry.startswith(name + ".") for entry in held)
+
+
 def offered_tools(environ=None) -> list[dict]:
-    """The table's rows this session is offered: everything, minus the tool a
-    deployment has not turned on."""
-    if switched_on(environ):
-        return PLATFORM_TOOLS.schemas()
-    tool, _, verb = COMPACT_TOOL.partition(".")
-    others = [v for v in PLATFORM_TOOLS.actions(tool) or () if v != verb]
-    return [
-        PLATFORM_TOOLS.narrowed(tool, others) if row["name"] == tool else row
-        for row in PLATFORM_TOOLS.schemas()
-    ]
+    """The table's rows this session is offered: everything its kind holds
+    (`TOOLS_ENV`), minus the tool a deployment has not turned on."""
+    held = held_tools(environ)
+    compact_tool, _, compact_verb = COMPACT_TOOL.partition(".")
+    rows = []
+    for row in PLATFORM_TOOLS.schemas():
+        name = row["name"]
+        verbs = PLATFORM_TOOLS.actions(name)
+        if verbs is None:
+            if holds(held, name):
+                rows.append(row)
+            continue
+        kept = [
+            verb
+            for verb in verbs
+            if holds(held, f"{name}.{verb}")
+            and not (
+                name == compact_tool
+                and verb == compact_verb
+                and not switched_on(environ)
+            )
+        ]
+        if len(kept) == len(verbs):
+            rows.append(row)
+        elif kept:
+            rows.append(PLATFORM_TOOLS.narrowed(name, kept))
+    return rows
 
 
 #: Which document: one of the project's own, by id (`cheese_doc(action=list)`). Left
@@ -398,6 +442,10 @@ DELIVERY_IS_DECIDED_IN_THE_UI = (
     "「关掉吧」，回一句告诉他点哪里；你自己采纳不了，交付在等人时也关不了任务。"
 )
 TITLE_WIDTH_NOTE = "宽度不超过 12 个汉字（一个汉字算一个，英文、数字、空格各算半个）"
+
+
+#: A task of this channel, as the main line names it.
+_TASK_REF = {"type": "string", "description": '任务编号，如 "#15"'}
 
 
 def _tool(name: str, description: str, properties=None, required=()) -> dict:
@@ -714,7 +762,19 @@ PLATFORM_TOOLS = ToolTable(
                     "UUID from an uncertain prior result; "
                     "reuse with the same content to retry."
                 ),
+                "task": _text(
+                    '这条消息涉及的任务，写编号，如 "#15"；只能是这个频道里的任务'
+                ),
             },
+        ),
+        _tool(
+            "chat_react",
+            "对一条消息做表情回应，回应署你的名。已有同一个回应时不重复添加。",
+            {
+                "message_id": _text("要回应的消息 id，即消息行开头 [id=…] 里的值"),
+                "emoji": _text("一个表情"),
+            },
+            ["message_id", "emoji"],
         ),
         _tool(
             "todo_write",
@@ -1039,8 +1099,52 @@ PLATFORM_TOOLS = ToolTable(
                             "type": "boolean",
                             "description": "这条支线原地转为任务填 true；另开任务不填",
                         },
+                        "teammate": _text(
+                            "交给哪位 AI 队友做，写它的 handle；只能是成员在这条消息里点名的队友，"
+                            "省略为你自己"
+                        ),
                     },
                     ["title"],
+                ),
+                "tell": _verb(
+                    "在频道主线向这个频道的一件任务转达内容：成员的补充、对任务提问的回答。"
+                    "成员看不到。",
+                    {
+                        "task": _TASK_REF,
+                        "content": _text("转达给该任务的内容"),
+                        "asker": _text(
+                            "替哪位成员转达，写他的 handle；他不是这件任务的提出人时必填"
+                        ),
+                    },
+                    ["task", "content"],
+                ),
+                "look": _verb(
+                    "在频道主线查看这个频道的一件任务的事实。summary 为概要；diff 为改动，"
+                    "commands 为任务里执行过的命令，chat 为任务里的对话和你与它之间的往来。",
+                    {
+                        "task": _TASK_REF,
+                        "view": {
+                            "type": "string",
+                            "enum": ["summary", "diff", "commands", "chat"],
+                            "description": "查看的视图，默认 summary",
+                        },
+                        "path": _text("diff：只看这个文件的改动"),
+                        "q": _text("diff、commands：按关键词筛选"),
+                    },
+                    ["task"],
+                ),
+                "report": _verb(
+                    "在频道主线开的任务里，向开它的频道主线报告：question 是需要人回答的问题，"
+                    "blocked 是无法继续及原因。提交审阅和任务结束平台会告诉主线，不用报。",
+                    {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["question", "blocked"],
+                            "description": "question 要人回答；blocked 无法继续",
+                        },
+                        "content": _text("报告内容"),
+                    },
+                    ["kind", "content"],
                 ),
                 "state": _verb(
                     "在任务里说你的活此刻在哪一步。看板上这件任务显示你说的这一句，你停下了"
@@ -1065,11 +1169,14 @@ PLATFORM_TOOLS = ToolTable(
                     ["state"],
                 ),
                 "close": _verb(
+                    "在频道主线时，task 写这个频道里你开的那件任务，按成员的要求关闭；"
+                    "等待审阅的任务不能关闭。在任务里时，不写 task："
                     "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
                     "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），"
                     "写明结论关闭；最后一步的交付采纳后，平台会让你写一次总结，写完用它关闭"
                     "任务、结论写一句结果。" + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
+                        "task": _TASK_REF,
                         "conclusion": _text("关闭原因或最终说明"),
                         "reported_by": _text("需求提出者的 handle"),
                         "contributor": _CONTRIBUTOR,
@@ -1077,6 +1184,8 @@ PLATFORM_TOOLS = ToolTable(
                 ),
                 "reopen": _verb(
                     "重新打开这件已关闭的任务。有人要接着做这件事时用它，打开后接着做。"
+                    "在频道主线时，task 写这个频道里你开的那件任务。",
+                    {"task": _TASK_REF},
                 ),
             },
         ),
@@ -2773,6 +2882,11 @@ def _say_read(args: dict, data, environ) -> str:
     return (data or {}).get("text") or ""
 
 
+def _task_ref(args: dict) -> str:
+    """A task's number or id as a path segment (`#15` is `15`)."""
+    return urllib.parse.quote(str(args["task"]).strip().lstrip("#"), safe="")
+
+
 def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     """The one backend request a platform tool is, as data.
 
@@ -2819,9 +2933,17 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "request_id": str(uuid.UUID(args["request_id"]))
             if args.get("request_id")
             else str(uuid.uuid4()),
-            **_given(args, "reply_to"),
+            **_given(args, "reply_to", "task"),
         }
         return {"method": "POST", "path": here + "/messages", "body": body}
+    if tool == "chat_react":
+        return {
+            "method": "POST",
+            "path": "/blocks/"
+            + urllib.parse.quote(str(args["message_id"]).strip(), safe="")
+            + "/reactions",
+            "body": {"emoji": str(args["emoji"]).strip(), "add_only": True},
+        }
     if tool == "cheese_chat.edit":
         return {
             "method": "PATCH",
@@ -2861,8 +2983,20 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 "title": args["title"],
                 "summary": args.get("brief") or "",
                 "here": args.get("here") is True,
-                **_given(args, "owner:owner_handle", "source_message_id"),
+                **_given(args, "owner:owner_handle", "source_message_id", "teammate"),
             },
+        }
+    if tool == "cheese_task.tell":
+        return {
+            "method": "POST",
+            "path": here + "/tasks/" + _task_ref(args) + "/tell",
+            "body": {"content": args["content"], **_given(args, "asker")},
+        }
+    if tool == "cheese_task.report":
+        return {
+            "method": "POST",
+            "path": here + "/report",
+            "body": {"kind": args["kind"], "content": args["content"]},
         }
     if tool == "cheese_task.state":
         return {
@@ -2871,11 +3005,18 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "body": {"state": args["state"], **_given(args, "note")},
         }
     if tool == "cheese_task.reopen":
+        if args.get("task"):
+            return {
+                "method": "POST",
+                "path": here + "/tasks/" + _task_ref(args) + "/reopen",
+            }
         return {"method": "POST", "path": here + "/reopen"}
     if tool == "cheese_task.close":
         return {
             "method": "POST",
-            "path": here + "/close",
+            "path": here
+            + ("/tasks/" + _task_ref(args) if args.get("task") else "")
+            + "/close",
             "body": {
                 "conclusion": args.get("conclusion") or "",
                 **_given(
@@ -3354,6 +3495,10 @@ def run_platform_tool(tool: str, args: dict, host, *, delegated: bool = False) -
         key = tool
     else:
         key = f"{tool}.{_checked(tool, actions, args, table)}"
+    if not delegated and not holds(held_tools(getattr(host, "environ", None)), key):
+        name, _, verb = key.partition(".")
+        call = f"{name}(action={verb})" if verb else name
+        raise PlatformToolError(f"这个会话不能用 {call}，可用的工具见工具清单。")
     if delegated:
         effect = table.effect(key)
         if effect is None:
@@ -3606,6 +3751,72 @@ def _chat_record(item: dict) -> dict:
         "kind": "event",
         "content": json.dumps(item["record"], ensure_ascii=False),
     }
+
+
+def _task_look(args: dict, host) -> str:
+    """`cheese_task(action=look)`: the task's facts, then the view asked for,
+    read from the routes that serve it by the task's id."""
+    topic = host.environ.get("CHEESE_TOPIC", "")
+    looked = host.request(
+        {
+            "method": "GET",
+            "path": f"/topics/{urllib.parse.quote(topic, safe='')}/tasks/{_task_ref(args)}",
+        }
+    )["data"]
+    view = args.get("view") or "summary"
+    q = str(args.get("q") or "").strip()
+    if view == "summary":
+        return looked["summary"]
+    if view == "chat":
+        told = [
+            ("你 → 任务" if row["kind"] == "task_told" else "任务 → 你")
+            + f"　{row['at'][:16].replace('T', ' ')}\n{row['content']}"
+            for row in looked["exchange"]
+        ]
+        said = _chat_page("cheese_chat.list")({"topic": looked["id"], "limit": 30}, host)
+        return "\n\n".join(
+            [*(["你与这件任务之间的往来：", *told] if told else []), "任务里的对话：", said]
+        )
+    if view == "commands":
+        rows = host.request(
+            {
+                "method": "GET",
+                "path": f"/topics/{looked['id']}/session-records?lines=true&newest=true&limit=200",
+            }
+        )["data"]
+        commands = [
+            part.get("text") or ""
+            for row in rows.get("items") or []
+            for part in row.get("parts") or []
+            if part.get("kind") == "tool" and part.get("name") == "Bash"
+        ]
+        if q:
+            commands = [c for c in commands if q.lower() in c.lower()]
+        if not commands:
+            return "没有执行过的命令。" if not q else f"执行过的命令中没有包含「{q}」的。"
+        return "\n".join(f"- {c}" for c in commands[-80:])
+    if view == "diff":
+        project = host.environ.get("CHEESE_PROJECT", "")
+        diff = host.request(
+            {
+                "method": "GET",
+                "path": f"/projects/{project}/git/diff?task={looked['id']}&source=committed",
+            }
+        )["data"].get("diff") or ""
+        text = diff if isinstance(diff, str) else json.dumps(diff, ensure_ascii=False)
+        path = str(args.get("path") or "").strip()
+        if path:
+            parts = [p for p in text.split("diff --git ") if path in p.split("\n", 1)[0]]
+            text = "".join("diff --git " + p for p in parts)
+        if q:
+            text = "\n".join(line for line in text.splitlines() if q.lower() in line.lower())
+        if not text.strip():
+            return "没有符合条件的改动。"
+        lines = text.splitlines()
+        if len(lines) > 400:
+            return "\n".join(lines[:400]) + f"\n……（共 {len(lines)} 行，用 path 或 q 缩小范围）"
+        return text
+    raise PlatformToolError("view 取 summary、diff、commands、chat 之一")
 
 
 def _chat_page(tool: str):
@@ -5109,6 +5320,7 @@ _STEPS = {
     "cheese_library.take": _file_to_computer,
     "chat_send": _chat_send,
     "cheese_task.open": _task,
+    "cheese_task.look": _task_look,
     "cheese_chat.get": _chat_get,
     "cheese_chat.list": _chat_page("cheese_chat.list"),
     "cheese_chat.search": _chat_page("cheese_chat.search"),
@@ -5204,7 +5416,12 @@ def _say_task(args, data, env) -> str:
             "还有什么没定。然后，负责人已经说了要做什么就接着做；还没说，回复一两句说明"
             "文档整理了什么，停下来等他的话。"
         )
-    return f"已创建任务「{title}」，负责人 {owner}，由它自己对话里的 AI 队友去做。"
+    number = data.get("number")
+    named = f"#{number}「{title}」" if number is not None else f"「{title}」"
+    return (
+        f"已建任务 {named}，负责人 {owner}。任务内的会话已开始处理，"
+        "提交审阅、结束、需要回答或无法继续时，平台会告诉你。"
+    )
 
 
 def _say_notify(args, data, env) -> str:
@@ -5690,7 +5907,12 @@ def _say_skills_read(args, data, env) -> str:
 
 
 _SAY = {
+    "cheese_task.tell": lambda a, d, e: (
+        f"已转给任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」。"
+    ),
+    "cheese_task.report": lambda a, d, e: "已报告给频道主线。",
     "chat_send": _say_chat_send,
+    "chat_react": lambda a, d, e: "已回应。",
     "cheese_chat.edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
     "todo_write": _say_todo,
     "cheese_task.open": _say_task,

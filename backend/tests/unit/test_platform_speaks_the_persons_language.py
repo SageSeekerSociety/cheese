@@ -17,10 +17,10 @@ import re
 
 import pytest
 
-from app.domain.agent.harness.notices import blocked_report_reminder
-from app.domain.agent.harness.prompt import (
-    PLATFORM_NOTICE,
-    publication_prompt,
+from app.domain.prompts import (
+    Kind,
+    blocked_report_reminder,
+    render_notice,
     silence_reminder,
     stale_checklist_reminder,
     still_working_reminder,
@@ -58,14 +58,9 @@ def _chinese_characters(text: str) -> list[str]:
 
 
 def _said(text: str) -> str:
-    """What the platform says, minus the marker that delimits it.
-
-    `PLATFORM_NOTICE` is a protocol token, not prose: the harness prompt teaches
-    the model to recognize exactly this literal, and human text is neutralized
-    against the same one (`strip_platform_notice`). It is one fixed string in
-    every room, which is why the assertions below look past it.
-    """
-    return text.replace(PLATFORM_NOTICE, "")
+    """What the platform says, minus the tag that delimits it: the tag is a
+    protocol token, not prose, the same in every room."""
+    return re.sub(r"</?platform_notice[^>]*>", "", text)
 
 
 @pytest.mark.parametrize("language", [None, "zh-CN"])
@@ -73,7 +68,7 @@ def test_a_person_reading_chinese_is_spoken_to_in_chinese(
     language: str | None,
 ) -> None:
     said = (
-        _said(publication_prompt("用户问了一件事", language))
+        _said(render_notice(Kind.task, "用户问了一件事", language))
         + _said(silence_reminder(10, language))
         + _said(still_working_reminder(10, language))
         + _said(stale_checklist_reminder(10, language))
@@ -84,7 +79,7 @@ def test_a_person_reading_chinese_is_spoken_to_in_chinese(
 
 
 def test_a_person_reading_english_is_spoken_to_in_english() -> None:
-    contract = _said(publication_prompt("Somebody asked something", "en"))
+    contract = _said(render_notice(Kind.task, "Somebody asked something", "en"))
     reminder = _said(silence_reminder(10, "en")) + _said(
         still_working_reminder(10, "en")
     )

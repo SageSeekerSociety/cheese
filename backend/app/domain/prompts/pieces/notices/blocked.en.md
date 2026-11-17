@@ -1,0 +1,1 @@
+You last reported this task as blocked, waiting for help. Someone has spoken and this turn is open: if you can carry on now, call cheese_task(action=state) again with working or waiting — otherwise, once you stop, the task reads as blocked again and waits on its owner. If you are still stuck, report blocked again with a note saying what you are waiting for.

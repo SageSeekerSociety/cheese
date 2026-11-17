@@ -21,7 +21,6 @@ from app.core.config import settings
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, mint_session_token
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.agent.place import seat_key
 from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Live, _home
@@ -36,6 +35,7 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.project_skill.service import session_skill_files
+from app.domain.prompts import NoticeType, notice_template
 
 
 async def ensure(
@@ -141,7 +141,7 @@ async def ensure(
             skills=session_skill_files(session.project_id),
             # The marker platform instructions carry in this room, so the
             # one a harness raises is not a second convention to learn.
-            notice=PLATFORM_NOTICE,
+            notice=notice_template(NoticeType.harness),
         )
         access = Access(
             prepared.token,
