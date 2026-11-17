@@ -40,6 +40,7 @@ from tests.integration.conftest import (
     session_auth_headers,
     shared_team_of,
 )
+from tests.support.prompt_lines import without_id
 from tests.support.threads import thread_in
 
 
@@ -213,7 +214,7 @@ async def test_a_follow_up_joins_the_turn_running(business_db_factory, tmp_path)
 
     await _until(lambda: len(channel.screen.merged) == 1)
     assert len(channel.screen.prompts) == 1
-    assert [p.split("\n\n", 1)[0] for p in channel.screen.merged] == [
+    assert [without_id(p.split("\n\n", 1)[0]) for p in channel.screen.merged] == [
         "[u]: 直接说你准备怎么改"
     ]
     channel.screen.release.set()

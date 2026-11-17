@@ -22,7 +22,7 @@ from tests.integration.conftest import project_service, registered
 pytestmark = pytest.mark.anyio
 
 #: 开场快照里一段跟踪着的现状（`TRACKED_SECTIONS`），这个项目里它一直没变。
-_SNAPSHOT = "## 这个项目的产物清单"
+_SNAPSHOT = "## 项目成员"
 
 
 class Screen(StubChannel):

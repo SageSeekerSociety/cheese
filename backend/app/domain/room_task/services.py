@@ -474,6 +474,17 @@ class TaskService:
         """
         return await self._repo.list_by_ids(task_ids)
 
+    @staticmethod
+    def is_closed(task: Task) -> bool:
+        return task.status == TaskStatus.closed
+
+    async def add_asker(self, task: Task, handle: str) -> None:
+        """Keep ``handle`` among the members a request was passed on to
+        ``task`` for (`Task.asker_handles`)."""
+        if handle not in (task.asker_handles or []):
+            task.asker_handles = [*(task.asker_handles or []), handle]
+            await self._session.flush()
+
     async def set_credits(
         self,
         task: Task,

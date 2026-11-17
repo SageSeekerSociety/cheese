@@ -36,10 +36,8 @@ from app.domain.agent.reads import (
     SessionIdle,
     SessionRunning,
 )
-from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.run_records import publish
 from app.domain.agent.turn_resume import started_on_receipt, started_record
-from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.input_identity import InputReceipt
 from app.domain.delivery.receipts import (
     drop_input,
@@ -77,7 +75,6 @@ async def apply(chat, report: Report) -> Applied | bool:
     key = _key(report)
     fact = report.fact
     started = None
-    reactions: dict = {}
     freed = False
     async with chat.session_factory() as db:
         claim = await session_state.take(
@@ -110,9 +107,6 @@ async def apply(chat, report: Report) -> Applied | bool:
             # idempotent) and hands back the row it settled, to tell from.
             row = await record_receipt(db, fact.receipt)
             if row is not None and row.settled_at is not None:
-                reactions = await reaction_summaries_for_blocks(
-                    db, [uuid.UUID(block) for block in row.seen_block_ids]
-                )
                 # #4389: a resume instruction the session read is a resume
                 # that started.
                 started = await (started_on_receipt if new else started_record)(
@@ -195,11 +189,6 @@ async def apply(chat, report: Report) -> Applied | bool:
         pending = chat.live.unread_inputs.get(identity.conversation_id)
         if pending is not None:
             pending.pop(identity.input_id, None)
-    for block_id, value in reactions.items():
-        await get_broker().publish(
-            str(report.conversation_id),
-            {"type": "reaction", "block_id": str(block_id), "reactions": value},
-        )
     if freed or isinstance(fact, SessionIdle | SessionExited):
         # The seat may take what was waiting for it.
         nudge_messages(chat, report.conversation_id)

@@ -78,6 +78,7 @@
   ],
   "harness": [
     "backend/app/domain/agent/**",
+    "backend/app/domain/prompts/**",
     "backend/tests/**",
     "backend/scripts/test_harness_contracts.py",
     "backend/scripts/assert_suite_ran.py",

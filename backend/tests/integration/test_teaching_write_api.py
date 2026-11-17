@@ -332,7 +332,7 @@ def test_a_later_edit_reaches_an_existing_project_on_its_next_read(
 ):
     """改一次配置，**已经建好的**那个项目下一次读就是新值。
 
-    这是生效语义的第 2 条（`harness.prompt` 顶上那段）：已有项目的新会话读到此刻
+    这是生效语义的第 2 条（`prompts/render.py` 顶上那段）：已有项目的新会话读到此刻
     的配置。钉的是「`for_project` 每次现取，不往项目那一行记一份」—— 谁要是哪天
     改成建项目时存个快照，这条会红。同一个 `project_id` 全程不动。
 

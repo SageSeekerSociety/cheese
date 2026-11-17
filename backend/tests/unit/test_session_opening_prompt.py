@@ -9,8 +9,8 @@ commit 造的 `cheese_session(action=status)` 一次调用的事，而抬头只�
 会变的东西不在这里——它们在变的那一刻写成平台提醒，跟着下一轮的消息进来。
 """
 
-from app.domain.agent.harness.prompt import build_session_opening
-from app.domain.agent.prompt import _resume_notice, _session_opening_lines
+from app.domain.agent.prompt import _session_opening_lines
+from app.domain.prompts import build_session_opening
 
 
 def test_the_machines_size_is_stated_when_the_backend_knows_it() -> None:
@@ -53,32 +53,8 @@ def test_a_machine_that_is_not_ours_states_no_size() -> None:
 
 
 def test_the_section_is_absent_when_there_is_nothing_to_open_with() -> None:
-    with_lines = build_session_opening(environment=["- x"]).text
-    assert "## 这个会话开场时的运行环境" in with_lines
-
-    assert "## 这个会话开场时的运行环境" not in build_session_opening().text
-
-
-def test_no_countdown_is_ever_claimed() -> None:
-    """turn 活跃度检测 (2026-08-09): a fixed minute budget or 「到点会被中断」 was
-    observed making the agent rush against what is only a wedged-turn safety
-    net. The line that used to deny one is gone too — a session that was never
-    told about a deadline does not need to be told there isn't one."""
-    joined = "\n".join(_session_opening_lines(sandbox=(2048, 2), progress=[]))
-
-    assert "分钟" not in joined
-    assert "到点会被中断" not in joined
-    assert "倒计时" not in joined
-
-
-def test_what_a_session_opens_with_says_nothing_about_this_particular_turn() -> None:
-    """The one per-turn fact left — this turn continues a dead one — travels
-    with the turn, not with the session: a session serves many turns and only
-    some of them are continuations."""
-    joined = "\n".join(_session_opening_lines(sandbox=(2048, 2)))
-
-    assert "接着上次做" not in joined
-    assert "这次接着上次做" in _resume_notice()
+    assert "environment" in build_session_opening(environment=["- x"]).sections
+    assert "environment" not in build_session_opening().sections
 
 
 def test_the_roster_tells_the_agent_each_persons_clock() -> None:

@@ -39,6 +39,7 @@ from app.domain.delivery.agent import instances_for_seats, now, record_agent
 from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import DeliveryEvent, dedup_key
 from app.domain.notification.models import NotificationType
+from app.domain.prompts import piece
 from app.domain.topic_membership.services import TopicMemberService
 
 #: 同一间房一小时里，agent 点名能叫起几轮。人点名不受它限制。
@@ -63,12 +64,13 @@ def mention_prompt(*, author: str, message: str, block_id: uuid.UUID) -> str:
     话，它得先去翻聊天记录才知道自己为什么醒了。后半句是防环的第一道：只回一句「收
     到」还点对方的名，就又叫起对方一轮。
     """
-    return (
-        f"{author} 在房间里点了你的名（消息 id `{block_id}`）：\n\n"
-        f"---\n{message}\n---\n\n"
-        "按这条消息处理，回话用 chat_send。点名会把对方叫起来干活：只是回个话、"
-        "报个结果，不要点对方的名；要对方接着动手时才点。"
-    )
+    return piece("mention", author=author, message=message, block_id=block_id)
+
+
+#: On a delivery a message recorded for a teammate named after another: the
+#: seat whose turn on that message comes first, and that it waits for it.
+AFTER = "after"
+HELD = "held"
 
 
 @dataclass
@@ -136,10 +138,15 @@ async def record_mentions(
     occurred_at: datetime,
     skip: frozenset[str] = frozenset(),
     quoted_context: dict | None = None,
+    after: str | None = None,
 ) -> Summoned:
     """把 ``content`` 里点到的每一位 AI 队友记成一条投递。写调用方的 session，不提交。
 
     ``conversation_id`` 是被点到的队友回答的地方：消息所在的那段对话。
+
+    ``after``：这条消息已经直接叫起的那一位。给了它，点到的几位按点名的先后一个
+    接一个：每一条投递记下前一位（`AFTER`），先压着（`HELD`），前一位这一轮做完才放
+    出去（`agent.pending_messages.release_in_turn`），后一位读得到前一位说了什么。
     """
     named = await named_seats(
         session, room_id=room_id, author=author, content=content, skip=skip
@@ -166,10 +173,15 @@ async def record_mentions(
             )
         ).all()
     )
+    previous = after
     for seat in named:
         instance = instances.get(seat)
         if instance is None:
             continue
+        in_turn = (
+            {AFTER: previous, HELD: True} if after is not None and previous else {}
+        )
+        previous = seat
         if dedup_key(block_id, seat) in already:
             continue
         if budget is not None and budget <= 0:
@@ -186,6 +198,7 @@ async def record_mentions(
                     "eventType": BY_AGENT if by_agent else BY_PERSON,
                     "author": author,
                     "blockId": str(block_id),
+                    **in_turn,
                 },
                 occurred_at=occurred_at,
             ),

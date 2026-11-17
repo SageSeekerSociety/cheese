@@ -67,7 +67,7 @@ paths:
     label: 改文档
   - path: frontend/src/views/MyDevicesView.vue
     label: 改前端组件
-  - path: backend/app/domain/agent/harness/prompt.py
+  - path: backend/app/domain/prompts/pieces/system/platform_rules.md
     label: 改骨架提示词
   - path: deploy/deploy-docker.sh
     label: 改部署脚本
@@ -82,7 +82,7 @@ scenarios:
     paths: frontend/src/views/MyDevicesView.vue
   - key: prompt
     label: 改骨架提示词
-    paths: backend/app/domain/agent/harness/prompt.py
+    paths: backend/app/domain/prompts/pieces/system/platform_rules.md
   - key: deploy
     label: 改部署脚本
     paths: deploy/deploy-docker.sh

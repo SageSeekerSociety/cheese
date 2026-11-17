@@ -32,6 +32,6 @@ def load_skills(names: list[str]) -> str:
     return "\n\n---\n\n".join(chunks)
 
 
-# The room's chat guide is in every turn: nearly every turn speaks, so a guide
-# loaded on demand was loaded on 3% of the turns that sent a message.
-NATIVE_CHAT_GUIDANCE = load_skills(["chat"])
+def load_skill(name: str) -> str:
+    """One skill's body; empty for a name no guide has."""
+    return load_skills([name])

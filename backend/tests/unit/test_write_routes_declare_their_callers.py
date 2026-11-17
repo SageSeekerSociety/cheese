@@ -36,6 +36,10 @@ _AGENTS_ONLY = {
     ("POST", "/topics/{topic_id}/webhook-token", "can mint_webhook_token"),
     ("POST", "/topics/{topic_id}/note", "can note_own_threads"),
     ("POST", "/topics/{topic_id}/session-records", "can record_machine_status"),
+    ("POST", "/topics/{topic_id}/tasks/{ref}/tell", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/tasks/{ref}/close", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/tasks/{ref}/reopen", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/report", "can coordinate_tasks"),
 }
 
 
