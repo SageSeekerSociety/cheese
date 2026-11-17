@@ -1,9 +1,10 @@
 """读一版提交的评测结果，按看的人裁剪（方案 §看结果、§数据结构）。
 
-1a 只读，不写队列：这一步没有任何东西产出评测结果，队列行的写入在 1b 的
-``app.domain.judge.dispatch`` 里（照 ``task/starter_jobs.py`` 那套「表加租约」）。
-这里放的是读法 —— 一旦 1b 开始写 ``task_judge_run``，学生页、老师批改窗口和
-``grading`` 就都从这里读同一份。
+学生交了一版、这一阶段挂着测试点、也记下了代码版本时，这里排一行
+（``enqueue_for_submission``）；领走它、派到评测主机上跑、写回结果的是
+``app.domain.judge.dispatch``（照 ``task/starter_jobs.py`` 那套「表加租约」）——
+题目这一层够不着设备，所以只排队、只读结果。学生页、老师批改窗口和 ``grading`` 都从
+这里读同一份。
 
 裁剪的规矩（方案 §安全、§看结果）：
 
@@ -15,12 +16,15 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.task.judging_models import TaskJudgeRun
+from app.domain.task.test_suite import suite_of_stage
 
 #: 评测记录的状态，和 ``TaskJudgeRun.state`` 的 CHECK 一致。
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
@@ -59,6 +63,66 @@ async def latest_runs(
         if row.submission_id is not None:
             first.setdefault(row.submission_id, row)
     return first
+
+
+async def enqueue_for_submission(
+    session: AsyncSession,
+    *,
+    task_id: int,
+    stage: int,
+    submission_id: int,
+    project_id: uuid.UUID | None,
+    code_sha: str,
+    requested_by: int,
+) -> TaskJudgeRun | None:
+    """Queue the judging of a version just handed in; None when there is
+    nothing to judge — the stage carries no 测试点, or no code version was
+    recorded (a GitHub project, a forge that did not answer).
+
+    The same code judged by the same revision of the same suite has one
+    answer, so a version whose commit was already judged done gets that
+    result again, with no second run and no second charge (方案 §控制用量).
+    """
+    suite = await suite_of_stage(session, task_id, stage)
+    if suite is None or not code_sha or project_id is None:
+        return None
+    now = datetime.now(UTC)
+    run = TaskJudgeRun(
+        task_id=task_id,
+        suite_id=suite.id,
+        suite_revision=suite.revision,
+        submission_id=submission_id,
+        purpose="SUBMISSION",
+        project_id=project_id,
+        code_sha=code_sha,
+        requested_by=requested_by,
+        state=QUEUED,
+        created_at=now,
+    )
+    done = await session.scalar(
+        select(TaskJudgeRun)
+        .where(
+            TaskJudgeRun.suite_id == suite.id,
+            TaskJudgeRun.suite_revision == suite.revision,
+            TaskJudgeRun.code_sha == code_sha,
+            TaskJudgeRun.state == DONE,
+        )
+        .order_by(TaskJudgeRun.finished_at.desc())
+        .limit(1)
+    )
+    if done is not None:
+        run.state = DONE
+        run.started_at = done.started_at
+        run.finished_at = now
+        run.machine_ms = done.machine_ms
+        run.compile_output = done.compile_output
+        run.results = done.results
+        run.passed_points = done.passed_points
+        run.total_points = done.total_points
+        run.device_id = done.device_id
+    session.add(run)
+    await session.flush()
+    return run
 
 
 def _points(run: TaskJudgeRun) -> tuple[int, int]:
@@ -116,15 +180,22 @@ def _case_to_api(entry: object, *, teacher: bool) -> dict | None:
         out["memoryKb"] = int(entry["memoryKb"])
     # 只有能批改的人拿到输入、期望和实际输出；学生拿到的这一格不存在。
     if teacher:
+        if entry.get("caseId") is not None:
+            out["caseId"] = int(entry["caseId"])
         if entry.get("input") is not None:
             out["input"] = str(entry["input"])
         if entry.get("expected") is not None:
             out["expected"] = str(entry["expected"])
         if entry.get("actual") is not None:
             out["actual"] = str(entry["actual"])
-    elif str(entry.get("visibility")) == "SAMPLE" and entry.get("actual") is not None:
-        # 样例（可见）用例的实际输出学生也能看到：输入输出本来就公开。
-        out["actual"] = str(entry["actual"])
+        if entry.get("stderr"):
+            out["stderr"] = str(entry["stderr"])
+    elif str(entry.get("visibility")) == "SAMPLE":
+        # 样例（可见）用例的实际输出和报错学生也能看到：输入输出本来就公开。
+        if entry.get("actual") is not None:
+            out["actual"] = str(entry["actual"])
+        if entry.get("stderr"):
+            out["stderr"] = str(entry["stderr"])
     return out
 
 

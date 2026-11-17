@@ -25,6 +25,12 @@ Which sandboxes and VMs run is the machine domain's to say
 (``machine.metering`` opens and closes their runs). A whole cloud VM runs
 from its creation to its release, priced by its size (``vm_spec``); its
 creation is admitted by ``admit_start(kind=VM, spec=…)``.
+
+Judging a 题目's test points on a judge host (``app.domain.judge``) draws on
+the same credits too, at ``judge_credits_per_minute``, paid by the owner of
+the space the 题目 is in. A judging lasts minutes, so it is not an open run:
+it is admitted by ``admit_start(kind=JUDGE)`` before it starts and charged
+once, in whole minutes, when its result is written (``judge.billing``).
 """
 
 import logging
@@ -46,12 +52,19 @@ logger = logging.getLogger("cheese.usage.compute")
 
 SANDBOX = "sandbox"
 VM = "vm"
+#: Judging a 题目's test points on a judge host (``app.domain.judge``): priced
+#: per minute (``judge_credits_per_minute``), charged by the judging itself
+#: once it has run rather than as an open run, since one lasts minutes.
+JUDGE = "judge"
 #: A running run is charged this often: often enough that a balance is never
 #: far behind, rarely enough that a day's sandbox is a few dozen usage rows.
 SETTLE_EVERY = timedelta(minutes=10)
 _MINUTE = timedelta(minutes=1)
 #: Runs charged per settlement pass.
 SETTLE_BATCH = 200
+
+
+_UNPRICED = {SANDBOX: "cloudComputeUnpriced", JUDGE: "judgeUnpriced"}
 
 
 class ComputeRefused(Exception):
@@ -68,6 +81,9 @@ def hourly_price(kind: str, spec: str) -> float | None:
     """Credits per running hour of ``spec``; None when no price is set."""
     if kind == SANDBOX:
         return settings.cloud_sandbox_credits_per_hour
+    if kind == JUDGE:
+        per_minute = settings.judge_credits_per_minute
+        return None if per_minute is None else per_minute * 60
     return settings.cloud_vm_credits_per_hour.get(spec)
 
 
@@ -84,13 +100,12 @@ async def admit_start(
     if hourly_price(kind, spec) is None:
         logger.error(
             "cloud %s %r has no price: set CLOUD_SANDBOX_CREDITS_PER_HOUR "
-            "(sandbox) or CLOUD_VM_CREDITS_PER_HOUR (vm); refusing to start it",
+            "(sandbox), CLOUD_VM_CREDITS_PER_HOUR (vm) or "
+            "JUDGE_CREDITS_PER_MINUTE (judge); refusing to start it",
             kind,
             spec,
         )
-        raise ComputeRefused(
-            say("cloudComputeUnpriced" if kind == SANDBOX else "cloudVmUnpriced")
-        )
+        raise ComputeRefused(say(_UNPRICED.get(kind, "cloudVmUnpriced")))
     refusal = await Ledger(session).admit(payer)
     if refusal is not None:
         raise ComputeRefused(refusal.message)

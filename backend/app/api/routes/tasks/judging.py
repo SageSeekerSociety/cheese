@@ -1,14 +1,14 @@
 """读一道题的测试点与评测结果（方案 §看结果、§数据结构）。
 
-第 1 步还没有东西产出评测结果 —— 队列、执行器、计费都在 1b。这里做的是**读**：提交页
-那一块「将要评测的代码」、一版提交的评测结果、以及老师展开某一个用例。三条路由各自都
-只读，一条都不写队列。
+评测结果由评测机器产出（``app.domain.judge``：学生交了作业就排队，评测主机跑完写回）。
+这里是读它的那几条：提交页那一块「将要评测的代码」、一版提交的评测结果、老师展开某一
+个用例；外加出题人用参考答案试跑（排一次、读结果）。
 
 裁剪的规矩和 ``judge_queue.run_to_api`` 一致：状态与「通过几个 / 一共几个」谁都能看；
 逐个用例的输入、期望输出和实际输出只给能批改的人（出题人、空间管理员），学生拿到的
 是名称、过没过和时间。隐藏用例的字节从来没有进过学生项目，自然也不进他读取的响应。
 
-三条路由：
+路由：
 
 * ``GET .../participants/{participantId}/code-version`` —— 提交页那块「将要评测的代
   码」：默认分支现在指着的那个 commit，带最后一次提交的说明和推送时间。读得到它的
@@ -20,12 +20,15 @@
   显示待批改。
 * ``GET .../judge/cases/{caseId}`` —— 一个用例的输入与期望输出，给能批改的人在批改窗
   口里展开隐藏用例看。只给能批改的人（``Can(teach)``）。
+* ``POST /tasks/test-trials`` 与 ``GET /tasks/test-trials/{runId}`` —— 出题人用参考
+  答案试跑一套测试点（题目不必已经发布），只有能在那个空间出题的人能排，只有发起的人
+  能读（``app.domain.judge.trials``）。
 """
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.response import ok, typed_response
 from app.api.task_claims import project_of_claim
@@ -33,15 +36,18 @@ from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
 )
-from app.api.write_access import Can
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth import can
 from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.task_roles import ClaimPermission
 from app.auth.task_roles import Permission as TaskPermission
-from app.core.errors import NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.db.session import get_db
+from app.domain.judge import trials
+from app.domain.space import permissions as space_seats
 from app.domain.task import code_version, judge_queue, test_suite
 from app.domain.task.access import bind_review_path
 from app.domain.task.services import (
@@ -82,9 +88,13 @@ class TaskJudgeCase(BaseModel):
     points: int
     ms: int | None = None
     memoryKb: int | None = None
+    #: 这个用例的 id（``GET .../judge/cases/{caseId}`` 读它的全文），只给能批改的人。
+    caseId: int | None = None
     input: str | None = None
     expected: str | None = None
     actual: str | None = None
+    #: 运行出错时程序打到标准错误的前 4 KB；隐藏用例只给能批改的人。
+    stderr: str | None = None
 
 
 class TaskJudgeRun(BaseModel):
@@ -184,7 +194,8 @@ async def get_task_submission_judge(
 
     读者就是这一版提交的读者（``claim.read``）。能批改的人读到每个用例的输入、期望和
     实际输出；学生读到名称、过没过和时间 —— 隐藏用例的字节不进这份响应
-    （``judge_queue.run_to_api``）。第 1 步还没有东西产出评测结果，所以一般是 ``null``。
+    （``judge_queue.run_to_api``）。这一版没排过评测（没挂测试点、没记下代码版本）时
+    是 ``null``。
     """
     task, membership = await bind_review_path(
         session=db,
@@ -225,3 +236,97 @@ async def get_task_judge_case(
     if case is None:
         raise NotFoundError.for_resource("test_case", case_id)
     return ok({"case": await test_suite.case_to_api(db, case)})
+
+
+class TaskTestTrialFile(BaseModel):
+    """参考代码里的一份文件：仓库里的相对路径和它的文本。"""
+
+    path: str = Field(max_length=255)
+    content: str
+
+
+class TaskTestTrialRequest(BaseModel):
+    """用参考答案试跑一套测试点（方案 §出题人：配测试点）。
+
+    ``testSuite`` 和出题表单里 ``testSuite`` 的一项同形（``kind``、``runtime``、
+    ``runCmd``、``cases`` ……），题目不必已经发布。参考代码二选一：``files`` 几份文本
+    文件，或 ``zip`` 一个小 zip 的 base64（最多 2 MB）。
+    """
+
+    spaceId: int = Field(ge=1)
+    testSuite: dict
+    files: list[TaskTestTrialFile] | None = None
+    zip: str | None = None
+
+
+class TaskTestTrial(TaskJudgeRun):
+    """一次试跑：评测结果（出题人看得到每个用例的输入、期望和实际输出），加上最慢的
+    那个用例用了多久、时限是多少，好看出还有多少余量。"""
+
+    runId: int
+    timeLimitMs: int
+    slowestMs: int | None = None
+
+
+class TaskTestTrialOut(BaseModel):
+    trial: TaskTestTrial
+
+
+@router.post(
+    "/test-trials",
+    summary="Try a Test Suite With Reference Code",
+    **typed_response(TaskTestTrialOut),
+    dependencies=[ROUTE_DECIDES],
+)
+async def post_task_test_trial(
+    payload: TaskTestTrialRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """排一次试跑（方案 §出题人：配测试点）。
+
+    能在这个空间出题的人才能试跑（``space`` 的 ``publish``）；看不到这个空间的人 404。
+    试跑和学生提交的评测走同一条队列，算力同样记在空间所有者头上；评测主机没接入、
+    价格没设时，这一次很快以「评测暂不可用」标失败，不扣钱。返回刚排上的这一次（还在
+    排队），之后用 ``GET /tasks/test-trials/{runId}`` 读结果。
+    """
+    space = await space_seats.SPACE.load(db, payload.spaceId)
+    if space is None or not await space_seats.SPACE.sees(db, space, auth_user.user_id):
+        raise NotFoundError.for_resource("space", payload.spaceId)
+    if not await space_seats.SPACE.may(
+        db, space, auth_user.user_id, space_seats.Permission.publish
+    ):
+        raise ForbiddenError(say("judgeTrialNotPublisher"))
+    lines = test_suite.suite_lines([payload.testSuite])
+    if not lines:
+        raise BadRequestError(say("judgeTrialNeedsSuite"))
+    archive = trials.code_archive(
+        [f.model_dump() for f in payload.files or []], payload.zip
+    )
+    run = await trials.create_trial(
+        db,
+        space_id=space.id,
+        line=lines[0],
+        code=archive,
+        user_id=auth_user.user_id,
+    )
+    await db.commit()
+    return ok({"trial": trials.trial_to_api(run)})
+
+
+@router.get(
+    "/test-trials/{runId:int}",
+    summary="A Test Suite Trial",
+    **typed_response(TaskTestTrialOut),
+    dependencies=[ROUTE_DECIDES],
+)
+async def get_task_test_trial(
+    run_id: Annotated[int, Path(ge=1, alias="runId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """一次试跑的结果。只有发起它的人读得到；别人读到的是 404。"""
+    run = await trials.trial_of(db, run_id, auth_user.user_id)
+    if run is None:
+        raise NotFoundError.for_resource("test_trial", run_id)
+    return ok({"trial": trials.trial_to_api(run)})

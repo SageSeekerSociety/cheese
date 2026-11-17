@@ -226,12 +226,26 @@ def test_one_case_is_only_for_who_may_grade(
 def test_a_judge_result_of_another_submission_is_not_shown(
     api_client: TestClient, user_client: UserCreator, db_session, _portal
 ):
-    """别的提交的评测结果不在这一版上：读的是这个问题里这一版的那一次。"""
-    board, task_id, participant, submission_id, token = _setup(api_client, user_client)
-    resp = _judge(api_client, task_id, participant, submission_id, token)
+    """别的提交的评测结果不在这一版上：读的是这一版自己的那一次。"""
+    board, task_id, participant, first, token = _setup(api_client, user_client)
+    _seed_run(db_session, _portal, task_id=task_id, submission_id=first)
+    second = api_client.post(
+        f"/tasks/{task_id}/participants/{participant}/submissions",
+        json=[{"text": "又交了一版"}],
+        headers=_auth(token),
+    )
+    assert second.status_code == 200, second.text
+    resp = _judge(
+        api_client,
+        task_id,
+        participant,
+        second.json()["data"]["submission"]["id"],
+        token,
+    )
     assert resp.status_code == 200, resp.text
-    # 没有评测过：null，而不是别人的。
-    assert resp.json()["data"]["judge"] is None
+    # 这一版自己那一次还在排队（或没排过），不是上一版那份已出的结果。
+    judge = resp.json()["data"]["judge"]
+    assert judge is None or judge["state"] == "queued"
 
 
 def test_a_case_of_another_task_is_not_this_task_s(
