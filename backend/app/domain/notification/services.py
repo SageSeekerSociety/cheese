@@ -27,6 +27,7 @@ from app.domain.notification.models import (
 )
 from app.domain.notification.names import (
     names_and_referents,
+    names_for,
     referents_for,
     snapshot_id_swaps,
     with_names,
@@ -298,18 +299,21 @@ class NotificationQueryService:
         """
         metadata_map = _metadata_map_of(notification)
         # A row names people by name, not by the room's <@handle> token
-        # (`names.py`). ``names`` is the page's, read once for every row: when a
-        # caller supplies it, only a missing ``referents`` is read here, so a
-        # page that passes names alone does not silently fall back to per-row
-        # lookups.
+        # (`names.py`). Both halves may be the page's, read once for every row;
+        # whatever the caller already handed in is kept and only the missing
+        # half is read here, so a page never falls back to per-row lookups
+        # because of which of the two it happened to supply.
         if self._session is not None:
             if names is None:
-                names, referents = await names_and_referents(
-                    self._session, metadata_map, viewer_id=viewer_id
-                )
+                if referents is None:
+                    names, referents = await names_and_referents(
+                        self._session, metadata_map, viewer_id=viewer_id
+                    )
+                else:
+                    names = await names_for(
+                        self._session, metadata_map, viewer_id=viewer_id
+                    )
             elif referents is None:
-                # Only what is missing: reading both would pay the name queries
-                # per row for a page that already handed its map in.
                 referents = await referents_for(self._session, metadata_map)
         if names:
             metadata_map = with_names(metadata_map, names)
