@@ -22,7 +22,7 @@ from app.api.deps import (
 from app.api.doc_access import require_role
 from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
@@ -1277,6 +1277,49 @@ async def write_topic_progress(
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     return ok({"items": items, "message_id": message["id"], "posted": True})
+
+
+class ConfirmedQuestion(BaseModel):
+    """The question after its typed replies were confirmed as the answer: the
+    same shape the ``block_updated`` live frame carries."""
+
+    id: str
+    answer_log: list[dict] = []
+
+
+@router.post(
+    "/{topic_id}/questions/{block_id}/confirm",
+    **typed_response(ConfirmedQuestion),
+)
+async def confirm_typed_answer(
+    block_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],
+    db: DbSession,
+) -> dict:
+    """The asking agent confirms that what a person typed back is the answer.
+
+    A typed reply that is not one of the options leaves the question open (it
+    may only be asking what it means); the agent reads it and, when it is the
+    answer, calls this to settle the question. Only the question's author may,
+    and only a question of this conversation."""
+    from app.domain.agent.ask import confirm_answer_by_asker
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.block.schemas import BlockOut
+    from app.domain.conversation.numbering import lock_conversations
+
+    place, actor = at.place, at.actor
+    question = await BlockRepository(db).get(block_id)
+    if question is None or question.conversation_id != place.conversation_id:
+        raise NotFoundError(say("cursorMessageNotFound"))
+    await lock_conversations(db, [question.conversation_id])
+    await db.refresh(question)
+    await confirm_answer_by_asker(db, block=question, handle=actor.handle)
+    payload = BlockOut.model_validate(question).model_dump(mode="json")
+    await db.commit()
+    await get_broker().publish(
+        str(question.conversation_id), {"type": "block_updated", "block": payload}
+    )
+    return ok(payload)
 
 
 @router.post("/{topic_id}/summon")
