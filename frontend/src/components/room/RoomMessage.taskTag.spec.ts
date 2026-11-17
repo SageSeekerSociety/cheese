@@ -27,6 +27,7 @@ const TASK: TaskLine = {
     live: false,
     attention: null,
     line: '等你',
+    tip: '',
   },
   mine: true,
   accepted: null,
