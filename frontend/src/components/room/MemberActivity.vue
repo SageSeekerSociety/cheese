@@ -16,6 +16,7 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { lineStale } from '@/lib/memberActivity'
 import { formatSpan } from '@/lib/siteLog'
 import { STALE_AFTER_MS } from '@/lib/taskState'
 
@@ -47,11 +48,8 @@ watch(
 )
 onBeforeUnmount(() => clearInterval(ticker))
 
-/** 在干活，但这一轮的最后一帧（没有帧就从开工起）已超过 30 分钟：进度很久没变。 */
 function isStale(line: MemberActivityLine): boolean {
-  if (line.kind !== 'working') return false
-  const last = Math.max(line.lastFrameAt ?? 0, line.since * 1000)
-  return now.value - last >= STALE_AFTER_MS
+  return lineStale(line, now.value, STALE_AFTER_MS)
 }
 
 /** 悬停详情：谁、此刻哪一步、会话连着、多久没动。 */
