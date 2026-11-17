@@ -136,6 +136,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `cheese_tier` | 方案按它限定可用的模型（included / premium / frontier，缺省 included） |
 | `cheese_efforts` | 它接受的思考档（low / medium / high / max），在智能体设置里给出，Claude Code 以 `output_config.effort` 传；缺省用模型自己的默认 |
 | `cheese_auto_compact_window` | 提供方建议比上下文窗口更早压缩时，Claude Code 在这里压缩；缺省按 `max_input_tokens` |
+| `cheese_cache_lifetime_s` | 对话闲置多少秒后提供方的缓存就失效了（实测得来，不是向上游要的档位 `cheese_cache_ttl`）；会话闲置超过它、上下文又够长时，平台在下一轮之前先请会话压缩。模型管理页「缓存有效期（分钟）」改它；缺省不按闲置时长压缩 |
 | `cheese_overseas: true` | 只有平台管理员开通过的团队能用（Claude、GPT、Gemini），别的团队看不到 |
 | `cheese_free: true` | 上游不收钱，输入、输出单价都写明为 0；可选模型唯一合法的零价 |
 | `cheese_upstream_headers`、`cheese_session_header` | 按行（部署）发的请求头，见下面「免费、订阅与中转」 |

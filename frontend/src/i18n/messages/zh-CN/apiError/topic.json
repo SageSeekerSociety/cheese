@@ -69,6 +69,10 @@
   "coordinateTellClosed": "这件任务已结束，不能再转达。要接着做，先重新打开它。",
   "coordinateAlreadyClosed": "这件任务已经关闭。",
   "coordinateCloseWhileReviewWaits": "这件任务的交付在等人审阅，不能关闭：关闭会作废这次交付，这由审阅人决定。",
+  "coordinateAcceptNothingWaiting": "这件任务没有等待审阅的交付。",
+  "coordinateAcceptReviewerWordOnly": "只有审阅人 {reviewer} 本人发消息要求采纳的这一轮里，才能代他采纳。告诉 {reviewer} 这次交付在等他审阅。",
+  "coordinateAcceptNewerDelivery": "这一版交付是在 {reviewer} 发出这条消息之后提交的，他还没有看过。告诉 {reviewer} 新的一版在等他审阅。",
+  "chatRepliesMainLineOnly": "快捷回答只用于频道主线；在任务和支线里要人回答，用提问。",
   "reportFromOwnTask": "只有任务自己的会话能向频道主线报告。",
   "reportNotOpenedByMainLine": "这件任务不是频道主线开的，没有可以报告的对象；要人回答，在任务里直接问。",
   "teammateTaskNotNamed": "只有成员点名的 AI 队友才能接这件任务：{teammate} 没有在这条消息里被点名。"

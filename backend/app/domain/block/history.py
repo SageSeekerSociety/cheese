@@ -1,13 +1,14 @@
 """话题时间线上的定点小读：最近说过什么、某一条之前说过什么。
 
 从 `repositories.py` 拆出来的一块（理由写在那边：文件体积，不是分层）。这一组都按
-「时间线上的一个点或一个窗口」取，结果不超过几打块，没有游标、没有计数，也不走
+「时间线上的一个点或一个窗口」取，结果不超过几打行，不分页，也不走
 `paging.py` 的 `_narrow` / `BlockPage`。
 
 `BlockRepository` 继承这里的 `HistoryQueries`；方法签名与 SQL 逐字未动。
 """
 
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import (
@@ -142,6 +143,46 @@ class HistoryQueries:
         blocks = list((await self._session.scalars(newest)).all())
         blocks.reverse()
         return blocks
+
+    async def left_behind(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        after: tuple[datetime, uuid.UUID],
+        before: tuple[datetime, uuid.UUID],
+        seat: str,
+        excluding: Iterable[uuid.UUID] = (),
+    ) -> list[tuple[str, int, datetime, datetime]]:
+        """What a seat has not read and its window did not take: the
+        participant messages between its cursor and the oldest one it is handed,
+        less its own turn output and ``excluding``. One row per author: who,
+        how many, the first and the last of theirs."""
+        at, block_id = before
+        held = list(excluding)
+        stmt = (
+            select(
+                Block.author,
+                func.count(),
+                func.min(Block.created_at),
+                func.max(Block.created_at),
+            )
+            .where(
+                Block.conversation_id == conversation_id,
+                participant_blocks(),
+                Block.kind.in_((BlockKind.message, BlockKind.attachment)),
+                *_after_cursor(after),
+                (Block.created_at < at)
+                | ((Block.created_at == at) & (Block.id < block_id)),
+                ~((Block.author == seat) & Block.turn_id.is_not(None)),
+                *((Block.id.not_in(held),) if held else ()),
+            )
+            .group_by(Block.author)
+            .order_by(func.min(Block.created_at))
+        )
+        return [
+            (author, count, first, last)
+            for author, count, first, last in await self._session.execute(stmt)
+        ]
 
     async def notices_after(
         self,

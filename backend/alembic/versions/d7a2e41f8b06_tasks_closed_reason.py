@@ -1,7 +1,7 @@
 """tasks.closed_reason: why the platform closed a task
 
 Revision ID: d7a2e41f8b06
-Revises: a3e5c7d9f1b2
+Revises: e8a7c5417435
 Create Date: 2026-11-17
 
 A task nobody touched for long enough is closed by the platform
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d7a2e41f8b06"
-down_revision: str | Sequence[str] | None = "a3e5c7d9f1b2"
+down_revision: str | Sequence[str] | None = "e8a7c5417435"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

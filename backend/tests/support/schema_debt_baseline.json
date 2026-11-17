@@ -233,6 +233,8 @@
     "remove_column assistant_routines.event_cursor",
     "remove_column device.token",
     "remove_column model_credential_hosts.token",
+    "remove_column native_inputs.seen_block_ids",
+    "remove_column native_inputs.seen_by",
     "remove_column space.course_modules",
     "remove_column space_member.invite_code_id",
     "remove_column tasks.transcripts_archived_at",

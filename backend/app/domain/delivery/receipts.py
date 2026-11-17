@@ -62,8 +62,6 @@ async def register_input(
         "event_id": event_id,
         "held_block_ids": [str(block) for block in effects.held_block_ids],
         "block_ids": [str(block) for block in effects.block_ids],
-        "seen_block_ids": [str(block) for block in effects.seen_block_ids],
-        "seen_by": effects.seen_by,
     }
     existing = await session.scalar(
         select(NativeInput)
@@ -114,14 +112,8 @@ async def register_input(
         raise ValidationError("Native input identity was reused for another input")
     if inserted is None:
         return
-    affected = (
-        set(effects.held_block_ids)
-        | set(effects.block_ids)
-        | set(effects.seen_block_ids)
-    )
+    affected = set(effects.held_block_ids) | set(effects.block_ids)
     await _lock_blocks(session, identity, affected)
-    if effects.seen_by is not None and effects.seen_by != identity.recipient_handle:
-        raise ValidationError("Input cannot mark blocks as read by another receiver")
     if effects.held_block_ids:
         held = await held_blocks(
             session,
@@ -579,13 +571,8 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         or delivery.state not in ("sending", "uncertain", "received")
     ):
         return None
-    affected = {
-        uuid.UUID(block)
-        for block in (row.held_block_ids + row.block_ids + row.seen_block_ids)
-    }
+    affected = {uuid.UUID(block) for block in (row.held_block_ids + row.block_ids)}
     await _lock_blocks(session, identity, affected)
-    if row.seen_by is not None and row.seen_by != identity.recipient_handle:
-        raise ValidationError("Input cannot mark blocks as read by another receiver")
     row.echoed_at = row.echoed_at or stamp
     row.execution_work_id = execution_work
     # Read is delivered: the batch the input held is consumed with it, and the

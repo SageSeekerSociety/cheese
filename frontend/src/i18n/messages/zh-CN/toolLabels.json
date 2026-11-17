@@ -112,6 +112,7 @@
   "cheeseTaskTell": "转达给任务",
   "cheeseTaskLook": "查看任务",
   "cheeseTaskReport": "向频道主线报告",
+  "cheeseTaskAccept": "代审阅人采纳",
   "cheeseTemplateList": "查看文档模板",
   "cheeseTemplateNew": "从模板新建文件",
   "cheeseTitle": "设置标题",

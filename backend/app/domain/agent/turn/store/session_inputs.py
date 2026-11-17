@@ -1,6 +1,8 @@
 """Commit the session-opening facts after transport acceptance."""
 
+import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -9,8 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.agent.harness import harness_for
 from app.domain.agent.queries import agent_for_seat
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block import message_reads
 from app.domain.project.services import ProjectService
 from app.domain.room_task.place import PlaceResolver
+
+logger = logging.getLogger(__name__)
 
 
 class DeliveryStamp(Protocol):
@@ -112,3 +117,22 @@ async def commit_delivery(
     async with sessions() as session:
         await stamp(session, turn_id=turn_id, at=datetime.now(UTC))
         await session.commit()
+
+
+async def record_read(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    reader: str,
+    block_ids: Sequence[uuid.UUID],
+) -> None:
+    """``reader`` — an AI teammate's seat — has these blocks in its context now
+    (已读, `block.message_reads`). A receipt that could not be written is
+    logged and left: the input it describes was delivered either way."""
+    if not block_ids:
+        return
+    try:
+        async with sessions() as session:
+            await message_reads.record_blocks(session, reader, block_ids)
+            await session.commit()
+    except Exception:
+        logger.exception("could not record what %s read", reader)

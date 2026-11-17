@@ -177,20 +177,24 @@ def memory_handed_back_notice(kept: dict[str, str]) -> str:
 def memory_rejected_notice(
     *, where: str, reasons: dict[str, str], unindexed: tuple[str, ...] = ()
 ) -> str:
-    """说给 agent 的那句：哪几条因为太长没存下、为什么、它写的那一版在哪。
+    """说给 agent 的那句：哪几条平台没有收下、为什么、它写的那一版在哪。
+
+    原因有好几种（超长、类型不对、多人的地方里已有的记录只读，`files.policy_breach`），
+    所以每一条带它自己的原因。会话机把写下的那一版留在旁边（`runner.sync_memory`）；
+    被拒的是一次删除时没有副本。
 
     `unindexed` 是其中这一轮新加的索引行也被拿掉的那几条：只对它们说「把那一行
     加回去」。别的被拒的文件索引没动过，叫它加回去只会多出一行重复的。
     """
     lines = "\n".join(
         f"- `{prompt_path(path)}`（你写的那一版在 "
-        f"`{prompt_path(rejected_path(path))}`）：{reason}"
+        f"`{prompt_path(rejected_path(path))}`，删除没有副本）：{reason}"
         for path, reason in sorted(reasons.items())
     )
     text = (
-        f"{where}记忆里有几条超出长度上限，没有写入，记忆里还是原来那一版：\n"
+        f"{where}记忆里有几处改动平台没有收下，记忆里还是原来那一版：\n"
         f"{lines}\n"
-        "改短之后重新写入。"
+        "按原因改好再写；原因说这里不该记的，就不要再写。"
     )
     if unindexed:
         names = "、".join(f"`{prompt_path(path)}`" for path in sorted(unindexed))
@@ -199,6 +203,23 @@ def memory_rejected_notice(
             "重新写入之后再把它加回去。"
         )
     return text
+
+
+def memory_dropped_notice(dropped: dict[str, str]) -> str:
+    """说给 agent 的那句：哪几处写入平台没有保存、为什么。
+
+    这些写入不留副本（`MemoryChange.dropped`）：写在了平台不收的地方（根目录、
+    子目录、这一轮没铺下的人的目录、私聊里的 team），或者是多人的地方不收的那一类。
+    只说路径和原因，不带正文：这句话进的是这间房下一轮的输入，在场的人读得到。
+    """
+    lines = "\n".join(
+        f"- `{prompt_path(path)}`：{reason}" for path, reason in sorted(dropped.items())
+    )
+    return (
+        "你上一轮写进记忆的这几处，平台没有保存：\n"
+        f"{lines}\n"
+        "按原因判断：该记的写到对的地方；原因说这里不该记的，就不要再写。"
+    )
 
 
 def memory_conflict_notice(*, where: str, refused: dict[str, str]) -> str:

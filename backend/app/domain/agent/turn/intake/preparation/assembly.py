@@ -44,10 +44,17 @@ from app.domain.agent.turn.intake.preparation.gates import (
     check_model_policy,
     no_provider_bail,
 )
-from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
+from app.domain.agent.turn.intake.preparation.prompt import (
+    LeftUnread,
+    build_turn_prompt,
+)
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to
-from app.domain.agent.turn_speakers import is_routine_run, private_memory_for
+from app.domain.agent.turn_speakers import (
+    is_routine_run,
+    private_memory_for,
+    talk_notes_for,
+)
 from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
@@ -56,16 +63,24 @@ from app.domain.block.queries import (
     block_by_id,
     earlier_message_count,
     inputs_after,
+    left_behind,
     notices_after,
 )
 from app.domain.deliverables import artifacts as project_artifacts
+from app.domain.delivery.models import Delivery
 from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import memory_index
+from app.domain.memory.session import talk_owners
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.prompts import PROFILES, task_section
 from app.domain.room_task import naming
-from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
+from app.domain.room_task.models import (
+    Task,
+    TaskProgress,
+    TaskStatus,
+    TaskTitleSource,
+)
 from app.domain.room_task.place import PlaceResolver
 from app.domain.task import package
 from app.domain.task import teaching as teaching_context
@@ -152,7 +167,7 @@ async def prepare(
         cursor = await AgentSessionService(session).read_cursor(
             place.conversation_id, acting_agent
         )
-        pending = await _read_window(
+        pending, window_start = await _read_window(
             session, place, acting_agent, cursor, opening=opening
         )
         phases_ms["history"] = (time.monotonic() - started) * 1000
@@ -204,10 +219,9 @@ async def prepare(
         acting_agent = pinned_seat or await _acting_handle(session, topic.id, agent)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
         phases_ms["identity"] = (time.monotonic() - started) * 1000
-        # private 只在一个人和芝士的私聊里带，那个人的那一份（`private_memory_for`）；
-        # 别的房间只有 team。这一位同时也是这一轮对账要点名的那一位
-        # （`MemoryLedger.remember_turn`），所以「告诉它去读的」和「铺到会话目录里
-        # 的」是同一份。
+        # 整棵 private 只在一个人和芝士的私聊里带，那个人的那一份
+        # （`private_memory_for`）。多人的地方带的是这一轮答的那几位各自的
+        # communication 记录（`talk_notes_for`），名册读出来之后再定。
         private_for = await private_memory_for(
             session, agent.instance_id, private_owner=private_owner
         )
@@ -216,13 +230,6 @@ async def prepare(
             topic.project_id,
             speaker=private_for,
             shared_read_only=seats_only(topic),
-        )
-        prep.memory.remember_turn(
-            topic.id,
-            (place.conversation_id, agent.handle),
-            acting=acting_agent,
-            speaker=private_for,
-            pointed=any(section.prefix != "team" for section in memory.sections),
         )
         phases_ms["memory"] = (time.monotonic() - started) * 1000
         project = await load_project(session, topic.project_id)
@@ -273,6 +280,31 @@ async def prepare(
         # 回事」在下游是两种情况（见 `HookWorkState.roster`）。问的是这间房
         # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `announce_mentions`。
         roster = await room_roster(session, topic.project_id, topic)
+        # 这一轮答的是谁：私聊里是那个人；多人的地方是这一轮要答的消息的作者，
+        # 平台为一件任务叫醒的那一轮是这件任务要告诉的人（`_answered`）。他们同时
+        # 是这一轮对账要点名的那几位（`MemoryLedger.remember_turn`），所以「告诉它
+        # 去读的」和「铺到会话目录里的」是同一份。
+        if private_owner is not None:
+            speakers = [private_for] if private_for else []
+            talk_for: list[dict] = []
+        else:
+            speakers = await talk_notes_for(
+                session,
+                agent.instance_id,
+                await _answered(session, roster, own_pending, delivery_id),
+            )
+            named = {m["handle"]: m["name"] for m in roster}
+            talk_for = [
+                {"handle": h, "name": named.get(h) or h}
+                for h in await talk_owners(session, topic.project_id, speakers)
+            ]
+        prep.memory.remember_turn(
+            topic.id,
+            (place.conversation_id, agent.handle),
+            acting=acting_agent,
+            speakers=tuple(speakers),
+            pointed=any(section.prefix != "team" for section in memory.sections),
+        )
         # Topic list so 芝士 can cross-reference topics with <#id> tokens.
         # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
         # ——用户自己打 @某个归档话题也必须还能变成链接）；
@@ -430,6 +462,15 @@ async def prepare(
             gone_files=gone_files,
             undecodable_files=undecodable_files,
             credits_note=credits_note,
+            left=await _left_unread(
+                session,
+                place,
+                acting_agent,
+                cursor,
+                window_start,
+                held=held,
+                roster=roster,
+            ),
         )
         phases_ms["committed"] = (time.monotonic() - started) * 1000
     logger.info(
@@ -471,6 +512,7 @@ async def prepare(
         memory=memory,
         pending_ids=pending_ids,
         notice_ids=[b.id for b in notices],
+        read_ids=[b.id for b in [*pending, *notices]],
         read_through=read_through,
         prior_progress=prior_progress,
         earlier_messages=earlier_messages,
@@ -501,7 +543,29 @@ async def prepare(
         ),
         turn_images=turn_images,
         untitled=untitled,
+        talk_for=talk_for,
     )
+
+
+async def _answered(
+    session, roster: list[dict], own_pending: list[Block], delivery_id
+) -> list[str]:
+    """多人的地方里，这一轮答的是谁：要它答的那几条消息的作者里的人；平台为一件
+    任务叫醒的那一轮（任务上报、交回），是这件任务要告诉的人——审阅人、提出它的人
+    和转给它的那几位。"""
+    people = {m["handle"] for m in roster if not m.get("agent")}
+    answered = [b.author for b in own_pending if b.author in people]
+    if delivery_id is not None:
+        row = await session.get(Delivery, delivery_id)
+        task_id = ((row.payload if row is not None else None) or {}).get("taskId")
+        task = await session.get(Task, uuid.UUID(task_id)) if task_id else None
+        if task is not None:
+            answered += [
+                h
+                for h in (task.reviewer_handle, task.created_by, *task.asker_handles)
+                if h in people
+            ]
+    return list(dict.fromkeys(answered))
 
 
 async def _read_window(
@@ -511,8 +575,9 @@ async def _read_window(
     cursor: tuple[datetime, uuid.UUID] | None,
     *,
     opening: list[Block],
-) -> list[Block]:
-    """What this seat has not read: every participant's messages, oldest first.
+) -> tuple[list[Block], tuple[datetime, uuid.UUID] | None]:
+    """What this seat has not read: every participant's messages, oldest first,
+    and where the window starts when it may have left older ones behind.
 
     Only the seat's own TURN OUTPUT is left out — it is already in its
     transcript, and handing it back is how an agent ends up answering itself.
@@ -529,15 +594,58 @@ async def _read_window(
         after=cursor,
         limit=settings.agent_input_window_messages,
     )
-    pending = [
+    unread = [
         block
         for block in window
         if not (block.author == seat and block.turn_id is not None)
     ]
-    pending = _trim_to_chars(pending, settings.agent_input_window_chars)
+    pending = _trim_to_chars(unread, settings.agent_input_window_chars)
+    # Where the window starts, when it may have left something behind: it was
+    # full, or the characters cut it. A seat that has read nothing here is
+    # told how much history it has not read instead (`earlier_messages`).
+    cut = len(window) == settings.agent_input_window_messages or len(pending) < len(
+        unread
+    )
+    start = (pending or window)[0] if cursor is not None and cut and window else None
     if cursor is None:
         pending = [*opening, *pending]
-    return pending
+    return pending, (start.created_at, start.id) if start is not None else None
+
+
+async def _left_unread(
+    session,
+    place,
+    seat: str,
+    cursor: tuple[datetime, uuid.UUID] | None,
+    start: tuple[datetime, uuid.UUID] | None,
+    *,
+    held: set[uuid.UUID],
+    roster: list[dict],
+) -> LeftUnread | None:
+    """What this seat has not read and this turn's window does not hand it:
+    the messages between its cursor and where the window starts. Its cursor
+    moves past them with this turn, so this turn is the one that has to say
+    they are there."""
+    if cursor is None or start is None:
+        return None
+    rows = await left_behind(
+        session,
+        place.conversation_id,
+        after=cursor,
+        before=start,
+        seat=seat,
+        excluding=held,
+    )
+    if not rows:
+        return None
+    named = {m["handle"]: m.get("name") for m in roster}
+    return LeftUnread(
+        count=sum(count for _, count, _, _ in rows),
+        since=min(first for _, _, first, _ in rows),
+        until=max(last for _, _, _, last in rows),
+        authors=tuple((handle, named.get(handle)) for handle, _, _, _ in rows),
+        before=start[1],
+    )
 
 
 def _trim_to_chars(blocks: list[Block], budget: int) -> list[Block]:

@@ -46,6 +46,7 @@ import { usePanelAuthorship } from './chatPanel/authorship'
 import { usePanelOutgoing } from './chatPanel/outgoing'
 import { usePanelPaging } from './chatPanel/paging'
 import { usePanelPeople } from './chatPanel/people'
+import { usePanelReceipts } from './chatPanel/receipts'
 import { usePanelRows } from './chatPanel/rows'
 import { usePanelSocket } from './chatPanel/socket'
 import { usePanelSurface } from './chatPanel/surface'
@@ -174,6 +175,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     runRecords,
     turns,
     reactions,
+    receipts: () => receipts,
     errorMsg,
     awaitingReply: turns.awaitingReply,
     atBottom: scroll.atBottom,
@@ -218,6 +220,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
     naming: people.naming,
     turnAgentHandle: turns.turnAgentHandle,
     connected: socket.connected,
+  })
+
+  // 已读：自己那几条谁读到了，我读到了哪几条 —— 见 chatPanel/receipts。
+  const receipts = usePanelReceipts({
+    place,
+    author: AUTHOR,
+    messages: timeline.messages,
+    isMine: authorship.isMine,
+    roster: people.roster,
+    scrollRef: scroll.scrollRef,
+    contentRef: scroll.contentRef,
   })
 
   // 画得出来的那几行、日期线、未读线，和跟着各块一起来的任务 —— 见 chatPanel/rows。
@@ -397,6 +410,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rowActions,
     clicks,
     reactions,
+    receipts,
     scroll,
     rowBatch,
     checklist,

@@ -26,6 +26,7 @@ from app.domain.agent.prompt import live_inputs, model_images
 from app.domain.agent.room.system_prompt import session_kind
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
+from app.domain.agent.turn.store.session_inputs import record_read
 from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import (
     InputEffects,
@@ -107,7 +108,7 @@ class LiveInput:
         if working is None:
             return None
         # The seat aims the steer; the handle it acts under is who reads the
-        # message (``seen_by``) and whose own earlier message a reply quotes.
+        # message (已读) and whose own earlier message a reply quotes.
         seat_agent, acting = working
         async with self._sessions() as session:
             stored, replied = await live_inputs(session, user_block_ids)
@@ -123,8 +124,6 @@ class LiveInput:
             InputEffects(
                 held_block_ids=tuple(user_block_ids),
                 block_ids=tuple(user_block_ids),
-                seen_block_ids=tuple(user_block_ids),
-                seen_by=acting,
             ),
             probe_unread=True,
         )
@@ -197,6 +196,7 @@ class LiveInput:
             delivered = False
         if not delivered:
             return False
+        await record_read(self._sessions, reader=acting, block_ids=user_block_ids)
         return True
 
     async def notify_running_session(
