@@ -30,6 +30,7 @@ const TASK: TaskLine = {
     live: false,
     attention: null,
     line: '等你',
+    waits: '等你',
     tip: '',
   },
   mine: true,
@@ -99,5 +100,46 @@ describe('消息头上的任务标签', () => {
   it('不关于任何任务的消息没有标签', () => {
     mount({})
     expect(screen.queryByRole('button', { name: t('work.room.taskTag.open', { title: TASK.title }) })).toBeNull()
+  })
+})
+
+/** 交了一版在等人审阅：关于这件任务的最新一条话下面，谁都能去看改动和预览，只有这一版的审阅人
+ * 能就地采纳。 */
+describe('主线上的交付', () => {
+  const DELIVERED: TaskLine = { ...TASK, delivery: { reviewers: ['shirakawa'], code: true } }
+  const group = () =>
+    screen.queryByRole('group', { name: t('work.room.message.delivery.label', { title: TASK.title }) })
+
+  it('审阅人点「采纳」就地采纳这一版', async () => {
+    const view = mount({ taskTag: DELIVERED, taskTagFull: true })
+    await fireEvent.click(within(group()!).getByRole('button', { name: t('work.room.message.delivery.adopt') }))
+    expect(view.emitted().delivery).toEqual([[{ taskId: 'task-15', view: 'adopt' }]])
+  })
+
+  it('不是审阅人的人看得到改动和预览，没有采纳', async () => {
+    const view = mount({ taskTag: DELIVERED, taskTagFull: true, viewer: 'zhou' })
+    const buttons = within(group()!)
+    expect(buttons.queryByRole('button', { name: t('work.room.message.delivery.adopt') })).toBeNull()
+    await fireEvent.click(buttons.getByRole('button', { name: t('work.room.message.delivery.changes') }))
+    await fireEvent.click(buttons.getByRole('button', { name: t('work.room.message.delivery.preview') }))
+    expect(view.emitted().delivery).toEqual([
+      [{ taskId: 'task-15', view: 'changes' }],
+      [{ taskId: 'task-15', view: 'preview' }],
+    ])
+  })
+
+  it('没有代码改动的任务只给预览', () => {
+    mount({ taskTag: { ...DELIVERED, delivery: { reviewers: ['shirakawa'], code: false } }, taskTagFull: true })
+    expect(within(group()!).queryByRole('button', { name: t('work.room.message.delivery.changes') })).toBeNull()
+  })
+
+  it('同一件任务早先的那几条话下面没有按钮', () => {
+    mount({ taskTag: DELIVERED, taskTagFull: false })
+    expect(group()).toBeNull()
+  })
+
+  it('没在等审阅的任务没有按钮', () => {
+    mount({ taskTag: { ...TASK, delivery: null }, taskTagFull: true })
+    expect(group()).toBeNull()
   })
 })

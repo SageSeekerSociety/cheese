@@ -169,6 +169,8 @@ const props = defineProps<{
   tasksUnder?: (blockId: string) => TaskLine[]
   /** AI 队友在主线上开的、画在这条回复下面的任务：一件一行，只有任务名和负责人。 */
   taskLinksUnder?: (blockId: string) => TaskLine[]
+  /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
+  adoptingTask?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -182,6 +184,7 @@ const emit = defineEmits<{
   (e: 'toggle-picker', blockId: string): void
   (e: 'open-file', path: string): void
   (e: 'open-card', taskId: string): void
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' }): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
@@ -766,6 +769,7 @@ const rowLabels = computed(() =>
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
               :task-tag="tagOf(m)"
               :task-tag-full="latestTagged.has(m.id)"
+              :adopting="!!adoptingTask && tagOf(m)?.id === adoptingTask"
               :run-start="runEdges[i] !== 'cont'"
               :regroup="runEdges[i] === 'regroup'"
               :mine="isMine(m)"
@@ -799,6 +803,7 @@ const rowLabels = computed(() =>
               @animationend="settleRow"
               @open-file="emitOpenFile"
               @open-card="emit('open-card', $event)"
+              @delivery="emit('delivery', $event)"
               @react="emitReact"
               @ask-reply="emitAskReply"
               @ask-withdraw="emitAskWithdraw"

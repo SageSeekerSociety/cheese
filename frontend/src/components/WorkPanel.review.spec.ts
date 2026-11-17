@@ -104,7 +104,8 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-function mount() {
+// `tab`：主线上「查看改动」打开这件任务时点名的那一种看法；不点名（点任务标签）时不给。
+function mount(tab: string | null = 'changes') {
   return render(WorkPanel as unknown as Component, {
     props: {
       topic,
@@ -112,11 +113,13 @@ function mount() {
       review: true,
       reviewHead: { heading: '报名表改短', version: 2 },
       activityTick: 0,
+      tab: tab ?? undefined,
     },
     global: {
       plugins: [i18n, createVuetify({ components, directives })],
       stubs: { PanelChangesHost: ChangesProbe, PanelPreviewHost: true },
     },
+    slots: { chat: '<div data-testid="task-chat">任务的对话</div>' },
   })
 }
 
@@ -135,6 +138,27 @@ beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'alice', nickname: 'alice' }))
   getAcceptCards.mockReset()
+})
+
+describe('频道里打开的一件任务', () => {
+  it('点任务标签打开时先看这件任务的对话，改动和预览在旁边两格', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card({})], has_more: false })
+    const { getByTestId, getByRole, queryByTestId } = mount(null)
+    await flush()
+    expect(getByTestId('task-chat').closest('[style*="display: none"]')).toBeNull()
+    expect(queryByTestId('changes')).toBeNull()
+    getByRole('tab', { name: /改动/ }).click()
+    await flush()
+    expect(getByTestId('changes')).toBeTruthy()
+  })
+
+  it('主线上点「查看改动」打开时直接是改动', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card({})], has_more: false })
+    const { getByTestId } = mount('changes')
+    await flush()
+    expect(getByTestId('changes').closest('[style*="display: none"]')).toBeNull()
+    expect(getByTestId('task-chat').closest('[style*="display: none"]')).not.toBeNull()
+  })
 })
 
 describe('频道里审阅的那一版', () => {

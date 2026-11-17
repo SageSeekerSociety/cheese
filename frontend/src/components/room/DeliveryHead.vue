@@ -1,11 +1,14 @@
 <script setup lang="ts">
-// 频道里审阅一件任务时的页头：任务名、第几版、「退回」「采纳」，再是「打开任务」。审阅人
+// 频道里打开一件任务时的页头：任务名、状态词和在等谁、第几版、「退回」「采纳」，再是「打开任务」。审阅人
 // 已经决定了的，按钮的位置写决定的结果（已采纳 / 已退回）。桌面上画在交付那一格顶上；
 // 手机上那是一整页，这一行交给顶栏（TopicView 用 useScreenHeader），只有任务名和「打开
 // 任务」，决定在页面底部那一条上。
+import type { TaskState } from '@/lib/taskState'
+
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 
 defineOptions({ name: 'DeliveryHead' })
@@ -14,6 +17,8 @@ withDefaults(
   defineProps<{
     /** 任务名；还没读回来时是空的。 */
     heading: string
+    /** 这件任务此刻的状态：状态词，等人审阅或回答时再写在等谁。还没读回来时不写。 */
+    state?: TaskState | null
     /** 这一版是第几版；不知道时不写。 */
     version?: number | null
     /** 这一版已经决定了：写结果，不再给按钮。 */
@@ -27,7 +32,16 @@ withDefaults(
     /** 画在手机顶栏里：顶栏自己有高度和底线，这一行不再带。 */
     bar?: boolean
   }>(),
-  { version: null, decided: null, decide: false, acceptLabel: '', blockedTitle: null, busy: false, bar: false }
+  {
+    state: null,
+    version: null,
+    decided: null,
+    decide: false,
+    acceptLabel: '',
+    blockedTitle: null,
+    busy: false,
+    bar: false,
+  }
 )
 
 const emit = defineEmits<{
@@ -40,6 +54,8 @@ const emit = defineEmits<{
 <template>
   <header class="delivery-head" :class="{ 'delivery-head--bar': bar }">
     <h2 class="delivery-head__title t-title" :title="heading">{{ heading }}</h2>
+    <TaskStateMark v-if="state" class="delivery-head__state" :state="state" :size="14" />
+    <span v-if="state?.waits" class="delivery-head__waits t-meta">{{ state.waits }}</span>
     <span v-if="version" class="delivery-head__version t-meta">{{
       t('work.room.delivery.version', { n: version })
     }}</span>
@@ -103,6 +119,13 @@ const emit = defineEmits<{
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.delivery-head__state,
+.delivery-head__waits {
+  flex: none;
+}
+.delivery-head__waits {
+  color: var(--muted);
 }
 .delivery-head__version {
   flex: none;

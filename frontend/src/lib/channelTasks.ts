@@ -40,6 +40,8 @@ export interface TaskLine {
   /** 这件任务里最后说的一句，折成一行：状态下面没有话要说时，主线上那张卡的第二行
    *  写它，说它此刻在做什么。 */
   latest?: string | null
+  /** 交了一版在等人审阅：谁能采纳（卡上的审阅人），有没有代码改动可看。没在等审阅是 null。 */
+  delivery?: { reviewers: string[]; code: boolean } | null
 }
 
 /** 最后一步采纳了的任务，状态词下面那一行接着写合进去的是哪个 PR。 */
@@ -75,6 +77,18 @@ export function taskLine(
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
     at: task.last_message?.created_at ?? task.updated_at,
     latest: task.last_message ? replySnippet(task.last_message, NO_NAMES, 120) || null : null,
+    delivery: awaitingReview(task),
+  }
+}
+
+/** 交了一版、卡在等人审阅时，谁能采纳它。审阅人可能有几位，卡上用「、」连着写。 */
+function awaitingReview(task: ChannelTask): TaskLine['delivery'] {
+  const card = task.card
+  if (task.status === 'closed' || card?.status !== 'pending' || task.presentation.phrase !== 'awaiting_review')
+    return null
+  return {
+    reviewers: (card.reviewer ?? '').split('、').filter(Boolean),
+    code: !!task.branch_name,
   }
 }
 

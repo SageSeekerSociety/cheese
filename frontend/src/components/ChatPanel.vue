@@ -110,6 +110,8 @@ const props = withDefaults(
     chapterIds?: ReadonlySet<string>
     /** 这段对话自己的状态（任务开着还是关了）：变了，输入框重问一次「交给谁」。 */
     placeState?: string | null
+    /** 正在就地采纳的那件任务。 */
+    adoptingTask?: string | null
   }>(),
   {
     alwaysSummon: false,
@@ -265,10 +267,23 @@ const taskLines = computed(
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 const NO_TASKS: TaskLine[] = []
+// 频道主线上 AI 队友说到过的任务：它的话头上挂着这件任务的标签，点开就是它，消息下面不再
+// 另画一张任务卡或一行任务。支线原地转成的那件照旧画在支线那一块顶上。
+const taggedInMainLine = computed(() => {
+  const ids = new Set<string>()
+  if (!mainLine.value) return ids
+  for (const block of panel.timeline.messages.value) {
+    const id = (block.meta as Record<string, unknown> | null | undefined)?.task_tag
+    if (typeof id === 'string') ids.add(id)
+  }
+  return ids
+})
 const tasksByBlock = computed(() => {
   const map = new Map<string, TaskLine[]>()
   for (const [blockId, tasks] of taskOrigins.value) {
-    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    const lines = tasks
+      .filter((task) => task.from_thread || !taggedInMainLine.value.has(task.id))
+      .flatMap((task) => taskLines.value.get(task.id) ?? [])
     if (lines.length) map.set(blockId, lines)
   }
   return map
@@ -284,7 +299,9 @@ const linesByBlock = computed(() => {
   const map = new Map<string, TaskLine[]>()
   if (!mainLine.value) return map
   for (const [blockId, tasks] of teammateTaskLines(knownTasks.value, panel.timeline.messages.value)) {
-    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    const lines = tasks
+      .filter((task) => !taggedInMainLine.value.has(task.id))
+      .flatMap((task) => taskLines.value.get(task.id) ?? [])
     if (lines.length) map.set(blockId, lines)
   }
   return map
@@ -542,6 +559,7 @@ useComposerShortcut({
             :chapter-ids="chapterIds"
             :chapters="chapters"
             :task-of="taskOf"
+            :adopting-task="adoptingTask ?? null"
             :tasks-under="tasksUnder"
             :task-links-under="taskLinksUnder"
             :name-of="nameOf"
@@ -612,6 +630,7 @@ useComposerShortcut({
             @toggle-picker="togglePicker"
             @open-file="(path) => emit('open-file', path)"
             @open-card="emit('open-card', $event)"
+            @delivery="emit('delivery', $event)"
             @open-resource="
               (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
             "

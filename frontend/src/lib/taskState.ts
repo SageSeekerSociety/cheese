@@ -70,6 +70,9 @@ export interface TaskState {
   attention: string | null
   /** 标签下面那一行；没有就空串。 */
   line: string
+  /** 在等谁（「等你」「等林老师」）：只在等人审阅或回答时有。主线上任务标签只写这一句，
+   *  整行留给有地方放的列表。 */
+  waits?: string
   /** 悬停在记号上说的那一句；没有就空串。 */
   tip: string
 }
@@ -263,6 +266,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   let tone = look.tone
   const label = statusLabel(status)
   let line = ''
+  let waits = ''
   let tip = ''
   let stale = false
   let offline = false
@@ -305,6 +309,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     case 'asking': {
       const mine = row.needs_my_action === true
       line = waitsOn(row.waiting_on, mine) ?? ''
+      waits = line
       break
     }
     case 'review': {
@@ -322,6 +327,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
           : REVIEW_STEP[phrase]
             ? phraseLabel(phrase, ctx.agentName)
             : waitsOn(reviewer, mine)
+      if (phrase === 'awaiting_review') waits = waitsOn(reviewer, mine) ?? ''
       line = joined([
         step,
         card?.subject,
@@ -364,6 +370,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     live,
     attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
     line,
+    waits,
     tip,
   }
 }

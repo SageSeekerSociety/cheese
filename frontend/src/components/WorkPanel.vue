@@ -30,6 +30,7 @@ import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 import type { NavTarget } from '../lib/navTarget'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
+import type { TaskState } from '../lib/taskState'
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 import type PanelDocHostComponent from './work/PanelDocHost.vue'
@@ -144,7 +145,7 @@ const props = withDefaults(
     review?: boolean
     // 审阅时页头那一行（桌面）：任务名、第几版、退回 / 采纳、打开任务，决定在页头上做，
     // 底部那一条只在写退回理由时出现。不给（手机，页头在顶栏里）时决定在底部那一条上。
-    reviewHead?: { heading: string; version: number | null } | null
+    reviewHead?: { heading: string; version: number | null; state?: TaskState | null } | null
     // 审阅的那件任务又交了一版（页面在频道里看到了那一行）：变一下，这一栏的卡重读。
     reviewReload?: number
     // 频道里正在审阅的那一件交付：固定区右边多一格能关的页签，写着任务名，内容由页面从
@@ -202,9 +203,12 @@ const changesReadOnly = computed(
     props.taskReadOnly ||
     (!!reviewCard && reviewCard.loaded.value && !reviewCard.pendingCard.value)
 )
-// 审阅时底部那一条：没有页头（手机）时一直在；有页头时只在写退回理由的那一会儿在。
+// 审阅时底部那一条：没有页头（手机）时一直在；有页头时只在写退回理由的那一会儿在。开着
+// 对话那一种看法时不在：对话自己的输入框上面就挂着同一条。
 const reviewDock = computed(
-  () => !!reviewCard && (!props.reviewHead || (!!reviewCard.pendingCard.value && reviewCard.showRejectInput.value))
+  () =>
+    !!reviewCard &&
+    (props.reviewHead ? !!reviewCard.pendingCard.value && reviewCard.showRejectInput.value : active.value !== 'chat')
 )
 
 const emit = defineEmits<{
@@ -227,7 +231,8 @@ const emit = defineEmits<{
 // 同一份表画这条栏，一个名字只有一个出处。
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
 // 的），桌面上对话就在旁边那一栏，所以是总览。
-const defaultTab = computed<TabKey>(() => (props.review ? 'changes' : props.withChat ? 'chat' : 'overview'))
+// 在频道里打开一件任务（审阅那一栏）落在这件任务的对话上：任务是一条支线，先看说了什么。
+const defaultTab = computed<TabKey>(() => (props.review || props.withChat ? 'chat' : 'overview'))
 // 旧地址还带着 ?tab=doc / ?tab=tasks —— 两个 tab 都并进概览了，所以它们指的就是
 // 概览。链接不该因为我们合并了界面而失效。
 const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
@@ -513,9 +518,10 @@ function hasContent(key: TabKey): boolean {
 // 支线、文件和例行事务，其余几格都有。
 const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
 const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
-const REVIEW_TABS: ReadonlySet<string> = new Set(['changes', 'preview'])
+// 在频道里打开的一件任务：它的对话、改动、预览。
+const REVIEW_TABS: ReadonlySet<string> = new Set(['chat', 'changes', 'preview'])
 const tabs = computed(() =>
-  workPanelTabs(props.withChat).filter((tab) =>
+  workPanelTabs(props.withChat || props.review).filter((tab) =>
     props.review ? REVIEW_TABS.has(tab.key) : props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
   )
 )
@@ -926,6 +932,7 @@ defineExpose({
       <DeliveryReviewHead
         v-if="review && reviewHead"
         :heading="reviewHead.heading"
+        :state="reviewHead.state ?? null"
         :version="reviewHead.version"
         @open-task="taskId && emit('open-card', taskId)"
       />
@@ -970,7 +977,7 @@ defineExpose({
         >
           <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
                而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
-          <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
+          <div v-if="withChat || review" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
           <div v-show="shown('overview')" class="tabpane-slot" :class="[enterClass('overview'), sideClass('overview')]">

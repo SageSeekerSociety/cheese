@@ -69,6 +69,8 @@ const props = defineProps<{
   taskTag?: TaskLine | null
   /** 这是关于这件任务的最新一条：标签上再写状态词和在等谁。 */
   taskTagFull?: boolean
+  /** 这条下面那颗「采纳」按下去了，还在等结果。 */
+  adopting?: boolean
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
   runStart: boolean
   /** 同一个人隔了一阵又开口：重新带上名字和时间，但只空一小档。 */
@@ -178,6 +180,8 @@ const emit = defineEmits<{
   (e: 'ask-withdraw', block: Block): void
   /** 这道题不回答，跳过。 */
   (e: 'ask-skip', block: Block): void
+  /** 交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' }): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -195,17 +199,18 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
-// 标签上「在等谁」只在任务等人审阅或回答时写：那一行在别的状态下说的是别的事。
-const tagWaits = computed(
-  () =>
-    !!props.taskTag?.state.line &&
-    (props.taskTag.state.status === 'in_review' || props.taskTag.state.status === 'awaiting_answer')
-)
+// 标签上「在等谁」只在任务等人审阅或回答时写，只写等谁（「等你」「等林老师」）：交付的
+// 题目、第几版、什么时候交的在任务的页签上，挤进标签会把任务名挤没。
+const tagWaits = computed(() => props.taskTag?.state.waits || '')
 // 说这件任务的不是做它的那位 AI 队友时，标签上画做它的那位的头像。
 const tagDoer = computed(() => {
   const doer = props.taskTag?.teammate
   return doer && doer !== props.block.author ? doer : null
 })
+// 交了一版在等人审阅时，关于这件任务的最新一条话下面挂着看它、采纳它的按钮：谁都能看，
+// 只有这一版的审阅人能采纳。
+const delivery = computed(() => (props.taskTagFull && props.taskTag?.delivery) || null)
+const canAdopt = computed(() => !!delivery.value?.reviewers.includes(props.viewer))
 // 新手浮窗「预览」一站圈的是芝士摆出来的那份；人自己发的附件不算。
 const previewAnchor = computed(() => (props.block.kind === 'artifact' ? 'preview-card' : ''))
 const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
@@ -382,7 +387,7 @@ const quickOffered = computed(() => {
         />
         <template v-if="taskTagFull">
           <span class="im-task-tag__state">{{ taskTag.state.label }}</span>
-          <span v-if="tagWaits" class="im-task-tag__wait">{{ taskTag.state.line }}</span>
+          <span v-if="tagWaits" class="im-task-tag__wait">{{ tagWaits }}</span>
         </template>
       </button>
       <!-- 一份文件：发来的附件（图片直接画成图），或芝士摆出来的东西。旁边一颗 ⋯ 收着
@@ -572,6 +577,34 @@ const quickOffered = computed(() => {
           {{ option.text }}
         </BaseButton>
       </div>
+      <div
+        v-if="delivery && taskTag"
+        class="im-quick"
+        role="group"
+        :aria-label="t('work.room.message.delivery.label', { title: taskTag.title })"
+      >
+        <BaseButton
+          v-if="delivery.code"
+          kind="secondary"
+          size="sm"
+          @click="emit('delivery', { taskId: taskTag.id, view: 'changes' })"
+        >
+          {{ t('work.room.message.delivery.changes') }}
+        </BaseButton>
+        <BaseButton kind="secondary" size="sm" @click="emit('delivery', { taskId: taskTag.id, view: 'preview' })">
+          {{ t('work.room.message.delivery.preview') }}
+        </BaseButton>
+        <BaseButton
+          v-if="canAdopt"
+          kind="primary"
+          size="sm"
+          :loading="adopting"
+          :disabled="adopting"
+          @click="emit('delivery', { taskId: taskTag.id, view: 'adopt' })"
+        >
+          {{ t('work.room.message.delivery.adopt') }}
+        </BaseButton>
+      </div>
       <MessageQuote
         v-if="block.meta?.quoted_context && block.meta.quoted_context.kind !== 'viewing'"
         :quote="block.meta.quoted_context"
@@ -676,7 +709,6 @@ const quickOffered = computed(() => {
 .im-task-tag__wait {
   flex: none;
   margin-left: 2px;
-  color: var(--faint);
 }
 .im-pending-state {
   position: absolute;

@@ -149,3 +149,26 @@ describe('任务卡', () => {
     })
   })
 })
+
+describe('等人审阅的交付', () => {
+  const pending = { id: 'c1', status: 'pending', reviewer: 'linxiao、chenmo' }
+
+  it('采纳交给卡上的每一位审阅人，标签只写在等谁', () => {
+    const line = taskLine(task({ card: pending, branch_name: 'task/t1' }), 'chenmo', nameOf, '芝士')
+    expect(line.delivery).toEqual({ reviewers: ['linxiao', 'chenmo'], code: true })
+    expect(line.state.waits).toBe('等林晓')
+  })
+
+  it('没有分支的任务交来的不是代码改动', () => {
+    expect(taskLine(task({ card: pending, branch_name: null }), 'chenmo', nameOf, '芝士').delivery?.code).toBe(false)
+  })
+
+  it('审阅过了、或者任务关了，就不再等人采纳', () => {
+    const decided = task({
+      card: { ...pending, status: 'accepted' },
+      presentation: { column: 'done', phrase: 'accepted' },
+    })
+    expect(taskLine(decided, 'chenmo', nameOf, '芝士').delivery).toBeNull()
+    expect(taskLine(task({ card: pending, status: 'closed' }), 'chenmo', nameOf, '芝士').delivery).toBeNull()
+  })
+})
