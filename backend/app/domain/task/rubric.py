@@ -1,5 +1,5 @@
 """A task's 评分要点 (rubric): a few lines, each naming what is scored, how many
-points it is worth, and what earns them.
+points it is worth, what earns them, and how it is scored.
 
 The publisher writes it with the task; whoever grades the submissions reads it,
 and so do the students unless the task keeps it to the graders
@@ -9,11 +9,14 @@ course may score out of 100, out of 10, or not at all.
 A line is scored by hand (``manual``) unless its ``kind`` says the platform
 scores it. ``usage`` scores the credits a claim spent on the task
 (``app.domain.task.usage_score``), either against two thresholds or by rank
-among the claims that handed work in; its ``config`` says which. The stage
-that holds an automatic line has to total 100 points: the grader then gives
-the manual lines their share and the platform adds the rest, so the review
-still reads 「已通过 N 分」 out of 100. One task has at most one ``usage`` line,
-because a claim spends its credits once, not per stage.
+among the claims that handed work in; its ``config`` says which. ``tests``
+scores the stage's 测试点: the share of the stage's latest judge run's points
+that passed (``app.domain.task.grading``). The stage that holds an automatic
+line has to total 100 points: the grader then gives the manual lines their
+share and the platform adds the rest, so the review still reads 「已通过 N 分」
+out of 100. One task has at most one ``usage`` line (a claim spends its credits
+once); one stage has at most one ``tests`` line, and it needs that stage to
+carry 测试点.
 """
 
 from collections.abc import Mapping, Sequence
@@ -32,9 +35,11 @@ MAX_POINTS = 1000
 
 MANUAL = "manual"
 USAGE = "usage"
-#: Who may score a line: the grader, or the platform from the claim's credits.
-LINE_KINDS = (MANUAL, USAGE)
-AUTOMATIC_KINDS = frozenset({USAGE})
+TESTS = "tests"
+#: Who may score a line: the grader, or the platform from the claim's credits
+#: or the stage's 测试点.
+LINE_KINDS = (MANUAL, USAGE, TESTS)
+AUTOMATIC_KINDS = frozenset({USAGE, TESTS})
 #: What a stage with an automatic line has to total.
 AUTO_TOTAL = 100
 #: How a ``usage`` line scores: between two thresholds, or by rank.
@@ -63,12 +68,19 @@ class RubricLine:
         return self.kind in AUTOMATIC_KINDS
 
 
-def rubric_lines(raw: list[dict]) -> list[RubricLine]:
-    """The lines as sent (``{item, points, criteria, stage}``), checked and
-    trimmed.
+def rubric_lines(
+    raw: list[dict], *, suite_stages: Sequence[int] | None = None
+) -> list[RubricLine]:
+    """The lines as sent (``{item, points, criteria, stage, kind, config}``),
+    checked and trimmed.
 
     A line with neither a name nor criteria is a row the publisher added and
     left empty, so it is dropped instead of refused.
+
+    ``suite_stages`` is the stages that carry 测试点 (``test_suite`` names
+    them); a ``tests`` line on any other stage is refused there. Left out — a
+    writer checking lines before it knows the suites — that rule is not applied,
+    and the lines are only refused when the suites come with them.
     """
     lines: list[RubricLine] = []
     for entry in raw:
@@ -109,8 +121,38 @@ def rubric_lines(raw: list[dict]) -> list[RubricLine]:
         )
     if len(lines) > MAX_LINES:
         raise BadRequestError(say("rubricTooManyLines", max=MAX_LINES))
-    _check_automatic(lines)
+    _check_automatic(lines, suite_stages)
     return lines
+
+
+def _line_of(row) -> RubricLine:
+    """A stored row (or a test double) read as a :class:`RubricLine`."""
+    return RubricLine(
+        item=row.item,
+        points=row.points,
+        criteria=row.criteria,
+        stage=row.stage,
+        kind=getattr(row, "kind", MANUAL) or MANUAL,
+        config=dict(getattr(row, "config", None) or {}),
+    )
+
+
+def tests_line(rows: Sequence[object], stage: int) -> object | None:
+    """The stage's ``tests`` line, or None when nothing on it is scored by
+    测试点 — the case where a run is still worth writing down for the graders
+    and the students, but lands in no score."""
+    for row in rows:
+        if (getattr(row, "kind", MANUAL) or MANUAL) == TESTS and getattr(
+            row, "stage", None
+        ) == stage:
+            return row
+    return None
+
+
+def lines_for_stage(rows: Sequence[object], stage: int) -> list[RubricLine]:
+    """The stage's lines in order (a submission is graded on its own stage,
+    方案 §分阶段的题：每个阶段各自合成)."""
+    return [_line_of(row) for row in rows if getattr(row, "stage", None) == stage]
 
 
 def _number(value: object) -> float:
@@ -140,11 +182,23 @@ def _usage_config(raw: object) -> dict:
     return {"mode": mode, "full": full, "zero": zero}
 
 
-def _check_automatic(lines: Sequence[RubricLine]) -> None:
-    """At most one ``usage`` line, and the stage holding an automatic line
-    totals ``AUTO_TOTAL``."""
+def _check_automatic(
+    lines: Sequence[RubricLine], suite_stages: Sequence[int] | None = None
+) -> None:
+    """The rules an automatic line brings: one ``usage`` line a task, one
+    ``tests`` line a stage (the latter only on a stage that carries 测试点),
+    and every stage holding an automatic line totals ``AUTO_TOTAL``."""
     if sum(1 for line in lines if line.kind == USAGE) > 1:
         raise BadRequestError(say("rubricUsageOnce"))
+    tested: set[int] = set()
+    for line in lines:
+        if line.kind != TESTS:
+            continue
+        if line.stage in tested:
+            raise BadRequestError(say("rubricOneTestsLine"))
+        if suite_stages is not None and line.stage not in suite_stages:
+            raise BadRequestError(say("rubricTestsWithoutSuite"))
+        tested.add(line.stage)
     for stage in {line.stage for line in lines if line.automatic}:
         total = sum(line.points for line in lines if line.stage == stage)
         if total != AUTO_TOTAL:
@@ -181,6 +235,8 @@ def _credits_text(value: float) -> str:
 def automatic_rule(kind: str, config: Mapping) -> str:
     """How an automatic line scores, in a sentence for the task's description
     (``app.domain.task.package``) and the drafting assistant."""
+    if kind == TESTS:
+        return "按测试点自动给分：这一阶段最新一次评测里通过用例的分值占比折算"
     if kind != USAGE:
         return ""
     if config.get("mode") == USAGE_RANK:

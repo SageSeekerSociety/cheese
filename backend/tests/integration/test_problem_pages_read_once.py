@@ -105,7 +105,9 @@ def test_a_claimants_problem_pages_ask_each_fact_once(
 
     statements, r = _fresh_get(api_client, db_session, f"/tasks/{task_id}", token)
     assert r.json()["data"]["task"]["id"] == task_id
-    assert len(statements) <= 20, statements
+    # 21: the page also shows the problem's 测试点 (one read of its suites;
+    # their cases are read only when a suite exists).
+    assert len(statements) <= 21, statements
 
 
 def test_a_member_taken_off_the_board_is_refused_on_the_next_request(

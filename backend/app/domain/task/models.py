@@ -318,9 +318,10 @@ class TaskRubricItem(Base):
         "stage", Integer, nullable=False, default=0, server_default="0"
     )
     # Who scores the line (``app.domain.task.rubric.LINE_KINDS``): the grader by
-    # hand (``manual``, every line written before kinds existed), or the
-    # platform (``usage``: the credits the claim spent). ``config`` holds the
-    # automatic line's own settings and is empty on a manual one.
+    # hand (``manual``, every line written before kinds existed), the platform
+    # from the credits the claim spent (``usage``), or the stage's test points
+    # (``tests``: ``app.domain.task.grading``). ``config`` holds an automatic
+    # line's own settings and is empty on a manual one.
     kind: Mapped[str] = mapped_column(
         "kind", String(16), nullable=False, default="manual", server_default="manual"
     )
@@ -451,6 +452,12 @@ class TaskSubmission(Base):
     #: Which version of the 题目 this was handed in under
     #: (``TaskPackageRevision.number``); None for the ones from before versions.
     package_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 交这一版时学生项目默认分支的代码版本（commit）。空 = 没记下（连着 GitHub 的
+    #: 项目要等另一件任务给只读凭据，历史提交也都没有）。§提交：记下来之后学生再推
+    #: 也不影响这一版评测的是哪一份代码。
+    code_sha: Mapped[str] = mapped_column(
+        "code_sha", String(64), nullable=False, default="", server_default=""
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -543,8 +550,9 @@ class TaskSubmissionReview(Base):
     comment: Mapped[str] = mapped_column(String, nullable=False, default="")
     # On a task whose rubric has an automatic line, how ``score`` was made: the
     # points the grader gave the manual lines and what each automatic line
-    # scored when the review was written (``app.domain.task.usage_score``).
-    # NULL on every other review, whose ``score`` the grader typed whole.
+    # scored when the review was written (``app.domain.task.usage_score`` and
+    # ``app.domain.task.grading``). NULL on every other review, whose ``score``
+    # the grader typed whole.
     auto_scores: Mapped[dict | None] = mapped_column(
         "auto_scores", JSONB, nullable=True
     )

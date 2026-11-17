@@ -20,6 +20,8 @@ const TASK: TaskLine = {
   creator: 'shirakawa',
   state: {
     kind: 'review',
+    stale: false,
+    offline: false,
     status: 'in_review',
     icon: 'mdi-eye-outline',
     tone: 'warn',
