@@ -54,7 +54,7 @@ const emit = defineEmits<{
 <template>
   <header class="delivery-head" :class="{ 'delivery-head--bar': bar }">
     <h2 class="delivery-head__title t-title" :title="heading">{{ heading }}</h2>
-    <TaskStateMark v-if="state" class="delivery-head__state" :state="state" :size="14" />
+    <TaskStateMark v-if="state" class="delivery-head__state t-meta" :state="state" :size="14" />
     <span v-if="state?.waits" class="delivery-head__waits t-meta">{{ state.waits }}</span>
     <span v-if="version" class="delivery-head__version t-meta">{{
       t('work.room.delivery.version', { n: version })
