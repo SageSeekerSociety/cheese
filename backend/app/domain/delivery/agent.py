@@ -220,11 +220,13 @@ async def exchange_of(session, task_id: uuid.UUID) -> list[Delivery]:
 
 
 async def record_task_report(
-    session, task, *, seat: str, kind: str, content: str
+    session, task, *, seat: str, kind: str, content: str, sender: str, said: str
 ) -> None:
     """A task's own session reports to the AI teammate seated as ``seat`` in
     its channel's main line (`TASK_REPORT`): a question, or that it cannot go
-    on."""
+    on. ``sender`` is the task's AI teammate and ``said`` its words as it said
+    them, which the task's 现场 shows; ``content`` is how the main line reads
+    them."""
     await record_seat_instruction(
         session,
         DeliveryEvent(
@@ -236,6 +238,8 @@ async def record_task_report(
                 "taskId": str(task.id),
                 "eventType": TASK_REPORT,
                 "kind": kind,
+                "from": sender,
+                "said": said,
             },
             occurred_at=datetime.now(UTC),
         ),

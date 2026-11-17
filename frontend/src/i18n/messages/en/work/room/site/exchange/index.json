@@ -1,0 +1,5 @@
+{
+  "asked": "{name} asked the main line",
+  "blocked": "{name} told the main line it cannot go on",
+  "told": "{name} passed this on from the main line"
+}

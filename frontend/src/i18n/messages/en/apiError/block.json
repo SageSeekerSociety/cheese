@@ -22,6 +22,7 @@
   "askSkipNotYours": "This question isn't waiting on you, so you can't skip it",
   "askWithdrawNotYours": "Only the teammate that asked this question can take it back",
   "optionsDistinct": "Options can't repeat",
+  "chatRepliesShort": "Each quick reply must be non-empty and at most {limit} characters",
   "quoteNeedsMessage": "A quote needs a message of your own",
   "quoteTooLong": "The message and the quote together can't be longer than {limit} characters",
   "askLifetimeNumber": "The lifetime has to be a number of hours (0 means no deadline)",
