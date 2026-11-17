@@ -107,14 +107,10 @@ async def task_out(db, task, card: Any = _CARD_UNSET, *, me: str) -> dict:
         task.upgraded_from_block_id is not None
         and task.id in await from_threads(db, [task.id])
     )
-    # 做它的那位 AI 队友的席位，和列表（`task_rows`）里同一个：拿这一行换掉列表里
-    # 那一行时，任务标签上的头像不跟着丢。
-    doer = (
-        await AgentInstanceService(db).for_tasks(
-            task.project_id, {task.id: (task.room_id, task.agent_handle)}
-        )
-    ).get(task.id)
-    out["teammate"] = agent_instance_handle(doer.instance_id) if doer else None
+    # 做它的那位 AI 队友的席位：拿这一行换掉列表里那一行时，任务标签上的头像不跟着
+    # 丢。交给了某位队友的任务写的就是它；没交给谁的不再多查一趟（列表那一行查过，
+    # `task_rows`），落空时标签上不画头像。
+    out["teammate"] = task.agent_handle
     return out
 
 
