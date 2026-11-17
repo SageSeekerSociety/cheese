@@ -69,6 +69,7 @@ PERIODIC_JOB_NAMES = (
     "checklist reminder",
     "task state reminder",
     "gate sweep",
+    "deploy blocked marks",
     "cloud host pool sweep",
     "cloud sandbox lifecycle",
     "cloud compute metering",

@@ -164,9 +164,14 @@ async def create_card(
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
     if topic.status == TopicStatus.archived:
         raise ValidationError(say("topicArchivedNoReview"))
-    # A task whose last delivery landed is over, even while its AI teammate is
-    # still writing it up (`room_task.closing`).
-    if task.status != TaskStatus.open or task.closing_since is not None:
+    # A task whose last delivery landed is over, even while it waits for its
+    # deploy (`review.deploy_wait`) or its AI teammate is still writing it up
+    # (`room_task.closing`).
+    if (
+        task.status != TaskStatus.open
+        or task.closing_since is not None
+        or task.deploying_since is not None
+    ):
         raise ValidationError(say("taskEndedOrNoBranch"))
     subject = (change_subject or "").strip()
     if not subject:
@@ -269,7 +274,11 @@ async def create_card(
     # after the forge and machine reads above, so those seconds hold up no one
     # writing in the task; read again under it, the task may have ended since.
     await lock_task_for_change(self._session, task.id)
-    if task.status != TaskStatus.open or task.closing_since is not None:
+    if (
+        task.status != TaskStatus.open
+        or task.closing_since is not None
+        or task.deploying_since is not None
+    ):
         raise ValidationError(say("taskEndedOrNoBranch"))
     card = await self._repo.add(
         topic_id=topic_id,

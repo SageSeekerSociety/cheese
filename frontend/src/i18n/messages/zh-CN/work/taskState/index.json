@@ -8,6 +8,7 @@
     "awaiting_answer": "待回答",
     "needs_help": "待协助",
     "in_review": "待审阅",
+    "awaiting_deploy": "待部署",
     "done": "已完成",
     "closed": "已关闭"
   },
@@ -20,5 +21,6 @@
   "waitedFor": "已等 {time}",
   "waitsOn": "等{name}",
   "waitsOnYou": "等你",
-  "workedFor": "已做 {time}"
+  "workedFor": "已做 {time}",
+  "blockedRun": "看红的那次 CI"
 }

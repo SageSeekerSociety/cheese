@@ -8,6 +8,7 @@
     "awaiting_answer": "Awaiting answer",
     "needs_help": "Needs help",
     "in_review": "In review",
+    "awaiting_deploy": "Awaiting deploy",
     "done": "Done",
     "closed": "Closed"
   },
@@ -20,5 +21,6 @@
   "waitedFor": "{time} so far",
   "waitsOn": "{name}'s turn",
   "waitsOnYou": "Your turn",
-  "workedFor": "{time} so far"
+  "workedFor": "{time} so far",
+  "blockedRun": "See the failed CI run"
 }
