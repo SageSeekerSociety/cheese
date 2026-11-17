@@ -17,6 +17,7 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
   DOMAIN_GROUP,
+  MY_LEARNING_INSIGHT,
   PUBLISH_DRAFTS,
   SPACE_CATEGORY,
   SPACE_KNOWLEDGE_POINTS,
@@ -42,6 +43,7 @@ import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import SpaceLibraryView from '@/views/spaces/detail/library/SpaceLibraryView.vue'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
 import MyDraftsView from '@/views/spaces/detail/MyDraftsView.vue'
+import MyLearningInsightView from '@/views/spaces/detail/MyLearningInsightView.vue'
 import PublishTaskView from '@/views/spaces/detail/PublishTaskView.vue'
 import BasicInfoView from '@/views/spaces/detail/settings/BasicInfoView.vue'
 import IndexView from '@/views/spaces/detail/settings/IndexView.vue'
@@ -424,6 +426,79 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: { failed: true },
         // 读不出来不读成「没开」：整块换成错误加一条重试（§3.10）。
+        expectSelector: '[role="alert"]',
+      },
+    ],
+  },
+  {
+    id: 'my-learning-insight-view',
+    title: 'MyLearningInsightView',
+    get about() {
+      return t('catalog.myLearningInsightView.about')
+    },
+    file: 'src/views/spaces/detail/MyLearningInsightView.vue',
+    component: MyLearningInsightView,
+    needs: UI_T,
+    args: { insight: MY_LEARNING_INSIGHT, loading: false, failed: false, disputing: null },
+    states: [
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s1.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s1.note')
+        },
+        props: {},
+        // 最该补的那一块摆着「相关子查询 · 薄弱」，带依据和「标记不准」。
+        expectSelector: '[data-testid="insight-dispute-focus"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s2.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s2.note')
+        },
+        props: {
+          insight: {
+            ...MY_LEARNING_INSIGHT,
+            updatedAt: null,
+            focusKnowledgePointId: null,
+            knowledgePoints: MY_LEARNING_INSIGHT.knowledgePoints.map((p) => ({ ...p, judgment: null })),
+            frequentQuestions: [],
+            sources: { messagesRead: 0, tasks: [] },
+          },
+        },
+        // 开着但还没有分析结果：空状态，右栏照样说清读什么。
+        expectSelector: '[data-testid="insight-empty"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s3.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s3.note')
+        },
+        props: {
+          insight: {
+            ...MY_LEARNING_INSIGHT,
+            enabled: false,
+            updatedAt: null,
+            knowledgePoints: [],
+            focusKnowledgePointId: null,
+          },
+        },
+        expectSelector: '[data-testid="insight-off"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s4.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s4.note')
+        },
+        props: { insight: null, failed: true },
+        // 读不出来不画成「还没有结果」：整块换成错误加一条重试（§3.10）。
         expectSelector: '[role="alert"]',
       },
     ],

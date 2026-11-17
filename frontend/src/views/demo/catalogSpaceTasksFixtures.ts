@@ -12,6 +12,7 @@
  */
 import type { SettingsGroup } from '@/components/common/SettingsOverlay.vue'
 import type {
+  MyLearningInsight,
   Space,
   SpaceCategory,
   SpaceKnowledgePoint,
@@ -555,4 +556,57 @@ export const PANEL_SPLIT = {
       results: [],
     },
   ],
+}
+
+/** 「我的学习洞察」：一个成员在这块板上的结果 —— 一条薄弱（最该补的）、一条掌握、一条未涉及。 */
+export const MY_LEARNING_INSIGHT: MyLearningInsight = {
+  enabled: true,
+  updatedAt: Date.UTC(2026, 10, 16, 6, 20),
+  focusKnowledgePointId: 91,
+  knowledgePoints: [
+    {
+      id: 91,
+      name: '相关子查询',
+      judgment: {
+        id: 501,
+        level: 'weak',
+        summary: '你知道子查询能嵌套，但还不清楚内层怎样引用外层当前那一行。',
+        disputed: false,
+        analyzedAt: Date.UTC(2026, 10, 16, 6, 20),
+        evidence: [
+          {
+            blockId: 'b-91-1',
+            taskId: 3,
+            taskName: '第 3 题',
+            quote: '子查询里怎么引用外层那一行我一直没搞懂。',
+            createdAt: Date.UTC(2026, 10, 15, 6, 2),
+          },
+        ],
+      },
+    },
+    {
+      id: 92,
+      name: '红黑树的旋转',
+      judgment: {
+        id: 502,
+        level: 'mastered',
+        summary: '你能自己说清左旋和右旋各在什么时候用。',
+        disputed: false,
+        analyzedAt: Date.UTC(2026, 10, 16, 6, 20),
+        evidence: [],
+      },
+    },
+    { id: 93, name: 'GROUP BY 与 HAVING', judgment: null },
+  ],
+  frequentQuestions: [
+    { knowledgePointId: 91, knowledgePointName: '相关子查询', kind: 'concept', count: 4, example: '怎么引用外层的列' },
+    { knowledgePointId: null, knowledgePointName: null, kind: 'error', count: 2, example: 'WHERE 里写 AVG 报错' },
+  ],
+  sources: {
+    messagesRead: 63,
+    tasks: [
+      { taskId: 3, name: '第 3 题', messagesRead: 41 },
+      { taskId: 4, name: '第 4 题', messagesRead: 22 },
+    ],
+  },
 }

@@ -13,6 +13,8 @@
 - ``POST .../knowledge-points/suggestions`` AI 读题面给出建议（下面单独说）。
 - ``GET /spaces/{spaceId}/learning-analysis/notice`` 进这块板时要不要弹告知卡（``view``）。
 - ``POST .../notice`` 点了「我已阅读并知悉」（``view``，无 body）。
+- ``GET .../learning-analysis/me`` 我的学习洞察（``view``）：只读发请求的人自己的那份。
+- ``POST .../me/judgments/{judgmentId}/dispute`` 把自己的一条判断标成「不准」（``view``）。
 
 三条判据全在 ``app.domain.space.learning_analysis_service`` 里，这一层只搬数据、拼
 响应。**写全都 ``edit_settings``**，而路径参数必须叫 ``spaceId``：外层
@@ -38,6 +40,7 @@ from app.api.request_deps import AuthUser
 from app.api.response import ok, typed_response
 from app.api.space_deps import (
     get_space_learning_analysis_service,
+    get_space_learning_insight_service,
     require_reviewed_space,
 )
 from app.api.space_payloads import SpaceRow
@@ -46,6 +49,7 @@ from app.db.session import get_db
 from app.domain.space import knowledge_suggestions
 from app.domain.space import permissions as space_seats
 from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
+from app.domain.space.learning_insight_service import SpaceLearningInsightService
 from app.domain.space.permissions import Permission as SpacePermission
 
 router = APIRouter(
@@ -53,6 +57,7 @@ router = APIRouter(
 )
 
 PointId = Annotated[int, Path(ge=0, alias="pointId")]
+JudgmentId = Annotated[int, Path(ge=0, alias="judgmentId")]
 
 #: 读那几条的落地：能看见这块板就行。成员「从清单添加」靠它。
 SpaceReader = Annotated[SpaceRow, Can(SpacePermission.view)]
@@ -330,5 +335,117 @@ async def acknowledge_space_learning_notice(
 ) -> dict:
     """记下这次点击。幂等：再点一次不会有第二行，也不改第一次的时间。"""
     result = await service.acknowledge(space_id=space.id, user_id=auth_user.user_id)
+    await db.commit()
+    return ok(result)
+
+
+class LearningEvidenceOut(BaseModel):
+    """一条依据：这个成员自己的一条消息的摘录，以及它在哪道题里。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    block_id: str = Field(alias="blockId")
+    task_id: int | None = Field(alias="taskId")
+    task_name: str = Field(alias="taskName")
+    quote: str
+    created_at: int | None = Field(alias="createdAt")
+
+
+class LearningJudgmentOut(BaseModel):
+    """AI 对这个知识点的当前判断。``disputed``：本人标过「不准」。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: int
+    level: Literal["mastered", "shaky", "weak"]
+    summary: str
+    disputed: bool
+    analyzed_at: int | None = Field(alias="analyzedAt")
+    evidence: list[LearningEvidenceOut]
+
+
+class LearningInsightPointOut(BaseModel):
+    """清单里的一个知识点；``judgment`` 为空即「未涉及」。"""
+
+    id: int
+    name: str
+    judgment: LearningJudgmentOut | None
+
+
+class FrequentQuestionOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    knowledge_point_id: int | None = Field(alias="knowledgePointId")
+    knowledge_point_name: str | None = Field(alias="knowledgePointName")
+    kind: Literal["concept", "error", "answer", "verify", "other"]
+    count: int
+    example: str
+
+
+class LearningSourceTaskOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: int = Field(alias="taskId")
+    name: str
+    messages_read: int = Field(alias="messagesRead")
+
+
+class LearningSourcesOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    messages_read: int = Field(alias="messagesRead")
+    tasks: list[LearningSourceTaskOut]
+
+
+class MyLearningInsightOut(BaseModel):
+    """「我的学习洞察」。``enabled`` 为假时这块板没开学情分析，其余都是空的。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool
+    updated_at: int | None = Field(alias="updatedAt")
+    knowledge_points: list[LearningInsightPointOut] = Field(alias="knowledgePoints")
+    focus_knowledge_point_id: int | None = Field(alias="focusKnowledgePointId")
+    frequent_questions: list[FrequentQuestionOut] = Field(alias="frequentQuestions")
+    sources: LearningSourcesOut
+
+
+class LearningDisputeOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    judgment_id: int = Field(alias="judgmentId")
+    disputed: bool
+
+
+@router.get(
+    "/{spaceId}/learning-analysis/me",
+    summary="Read my own learning insight in a space",
+    **typed_response(MyLearningInsightOut),
+)
+async def read_my_learning_insight(
+    space: SpaceReader,
+    auth_user: AuthUser,
+    service: SpaceLearningInsightService = Depends(get_space_learning_insight_service),
+) -> dict:
+    """只有本人：没有「看谁」这个参数，读的永远是发请求的人自己的那份。"""
+    return ok(await service.mine(space=space, user_id=auth_user.user_id))
+
+
+@router.post(
+    "/{spaceId}/learning-analysis/me/judgments/{judgmentId}/dispute",
+    summary="Mark one of my learning judgments as inaccurate",
+    **typed_response(LearningDisputeOut),
+)
+async def dispute_my_learning_judgment(
+    space: SpaceReader,
+    judgment_id: JudgmentId,
+    auth_user: AuthUser,
+    service: SpaceLearningInsightService = Depends(get_space_learning_insight_service),
+    db=Depends(get_db),
+) -> dict:
+    """标记不准：只能标自己的（别人的判断答 404，与不存在同一个样子）。"""
+    result = await service.dispute(
+        space=space, user_id=auth_user.user_id, judgment_id=judgment_id
+    )
     await db.commit()
     return ok(result)

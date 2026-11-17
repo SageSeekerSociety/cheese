@@ -13,7 +13,12 @@
 // 与 `useSpaceMaterials` 同一个口径：**「读不出来」和「没有」分开**。一块刚建好、还没
 // 读到 `enabled` 的板，不能当成「没开学情分析」——那会把那一块整个藏掉，而它可能正开
 // 着。所以 `state` 分 `loading` / `ready` / `error`，用的人据此决定摆什么。
-import type { SpaceKnowledgePoint, SpaceKnowledgeSuggestion, SpaceLearningNoticeState } from '@/types'
+import type {
+  MyLearningInsight,
+  SpaceKnowledgePoint,
+  SpaceKnowledgeSuggestion,
+  SpaceLearningNoticeState,
+} from '@/types'
 
 import { type MaybeRefOrGetter, ref, toValue, watch } from 'vue'
 
@@ -187,4 +192,61 @@ export function useSpaceLearningNotice(spaceId: MaybeRefOrGetter<number | undefi
   )
 
   return { notice, state, load, acknowledge }
+}
+
+/** 「我的学习洞察」（step 2）：读我自己在这块板的结果，标记一条判断不准。
+ *
+ *  与上面几个同一个口径：**「读不出来」和「还没有结果」分开** —— `error` 时页面给重试，
+ *  不能把一次网络失败画成「还没有分析结果」的空状态。标完不准就重读一遍：「最该补的」
+ *  由服务端挑（标过的不参选），本地不另算一份。 */
+export function useMyLearningInsight(spaceId: MaybeRefOrGetter<number | undefined>) {
+  const insight = ref<MyLearningInsight | null>(null)
+  const state = ref<LearningAnalysisState>('loading')
+  /** 正在标「不准」的那条判断。 */
+  const disputing = ref<number | null>(null)
+
+  async function load() {
+    const id = toValue(spaceId)
+    if (!id || !Number.isFinite(id) || id <= 0) {
+      state.value = 'loading'
+      return
+    }
+    state.value = 'loading'
+    try {
+      const res = await SpacesApi.readMyLearningInsight(id)
+      if (toValue(spaceId) !== id) return
+      insight.value = res
+      state.value = 'ready'
+    } catch {
+      if (toValue(spaceId) !== id) return
+      state.value = 'error'
+    }
+  }
+
+  /** 标「不准」。失败抛出去，由页面说服务端那句话。 */
+  async function dispute(judgmentId: number) {
+    const id = toValue(spaceId)
+    if (!id || disputing.value !== null) return
+    disputing.value = judgmentId
+    try {
+      await SpacesApi.disputeLearningJudgment(id, judgmentId)
+      if (toValue(spaceId) !== id) return
+      const res = await SpacesApi.readMyLearningInsight(id)
+      if (toValue(spaceId) !== id) return
+      insight.value = res
+    } finally {
+      disputing.value = null
+    }
+  }
+
+  watch(
+    () => toValue(spaceId),
+    () => {
+      insight.value = null
+      void load()
+    },
+    { immediate: true }
+  )
+
+  return { insight, state, disputing, load, dispute }
 }

@@ -36,7 +36,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
@@ -63,6 +63,40 @@ REVIEW_FLAG_MISSING = (
     "课程规则冲突）时不会写下任何东西，库里既没有 review_flag 这一列，也没有"
     "对应的表。这一格等那个信号落库之后才会有内容，现在不拿别的数据顶替。"
 )
+
+
+def member_words() -> list[ColumnElement[bool]]:
+    """「这是成员自己说的话」—— 数据 › 学习 与每晚的学情分析共用的那一份判据。
+
+    参与者写的消息，不是芝士（或它的分身）说的，也不是这个项目的导师说的 —— 导师是来
+    看的老师，他的话不是学生撞上的问题（#3830）。「是不是人说的」问的是署名而不是档位
+    —— ``AuthorType`` 早就只剩「参与者 / 平台自己」两档，人和 agent 都是 participant
+    （见 ``block/authorship.py``）。所以判据是 ``agent_handle_column`` 的否定，和「这句
+    是不是芝士说的」同一个前缀，改命名规则两边一起改。
+    """
+    return [
+        Block.kind == BlockKind.message,
+        participant_blocks(),
+        ~agent_handle_column(Block.author),
+        # A mentor's own words are not a student's question: the role is known
+        # by its template mark, whatever the project calls it.
+        ~select(ProjectRole.id)
+        .join(ProjectRoleDef, ProjectRoleDef.id == ProjectRole.role_id)
+        .where(
+            ProjectRole.project_id == Block.project_id,
+            ProjectRole.user_handle == Block.author,
+            ProjectRoleDef.template == Template.mentor.value,
+        )
+        .exists(),
+    ]
+
+
+def readable_rooms() -> list[ColumnElement[bool]]:
+    """读得的房间：语句里要已 join 上 ``Topic``（按 ``room_column``）。
+
+    私聊和仅成员可见的频道都不读：说话的人只给在场的人看（issue #945）。
+    """
+    return [not_a_private_chat(), Topic.members_only.is_(False)]
 
 
 class _Question:
@@ -239,36 +273,15 @@ class SpaceLearningService:
         to_dt: datetime | None,
         author: str | None = None,
     ):
-        """成员说的话: 参与者写的、而且不是芝士（或它的分身）说的，也不是导师说的
-        —— 导师是来看的老师，他的话不是学生撞上的问题（#3830）。
-
-        「是不是人说的」问的是署名而不是档位 —— ``AuthorType`` 早就只剩
-        「参与者 / 平台自己」两档，人和 agent 都是 participant（见
-        ``block/authorship.py``）。所以判据是 ``agent_handle_column`` 的否定，
-        和「这句是不是芝士说的」同一个前缀，改命名规则两边一起改。
-        """
+        """成员说的话（``member_words``），在读得的房间里（``readable_rooms``）。"""
         stmt = (
             select(Block)
             .select_from(Block)
             .join(Topic, Topic.id == room_column(Block.conversation_id))
             .where(
                 Block.project_id.in_(project_ids),
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                ~agent_handle_column(Block.author),
-                # A mentor's own words are not a student's question: the role
-                # is known by its template mark, whatever the project calls it.
-                ~select(ProjectRole.id)
-                .join(ProjectRoleDef, ProjectRoleDef.id == ProjectRole.role_id)
-                .where(
-                    ProjectRole.project_id == Block.project_id,
-                    ProjectRole.user_handle == Block.author,
-                    ProjectRoleDef.template == Template.mentor.value,
-                )
-                .exists(),
-                # 私聊和私密频道都不属于管理员看板：说话的人只给在场的人看。
-                not_a_private_chat(),
-                Topic.members_only.is_(False),
+                *member_words(),
+                *readable_rooms(),
             )
             .order_by(Block.created_at.desc())
             .limit(QUESTION_LIMIT)
