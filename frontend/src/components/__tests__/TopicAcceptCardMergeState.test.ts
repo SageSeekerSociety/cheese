@@ -141,7 +141,7 @@ async function mountWith(cards: AcceptCard[]) {
   return utils
 }
 
-/** 横条上的采纳按钮（「采纳」「采纳并完成任务」「重新采纳」「创建 PR」那一颗）；不在就是 undefined。 */
+/** 横条上的采纳按钮（「采纳」「重新采纳」「创建 PR」那一颗）；不在就是 undefined。 */
 function findAccept(container: Element): HTMLButtonElement | undefined {
   const strip = container.querySelector('.accept-bar')
   return Array.from(strip?.querySelectorAll('button') ?? []).find(

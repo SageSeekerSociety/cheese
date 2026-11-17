@@ -38,6 +38,8 @@ EMPTY_TEACHING = {
     "materialIds": [],
     "documentIds": [],
     "skills": [],
+    "hintLadder": False,
+    "outputCheck": False,
 }
 
 
@@ -358,6 +360,8 @@ def test_the_other_teaching_fields_are_untouched(
         "learningGoals": [],
         "skills": [],
         "privatePrompt": None,
+        "hintLadder": False,
+        "outputCheck": False,
     }
 
     task_id = _publish_task(api_client, board, name="这门课的题（其它字段）")

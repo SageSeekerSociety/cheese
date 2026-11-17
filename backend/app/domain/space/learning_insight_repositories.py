@@ -21,9 +21,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from sqlalchemy import and_, func, literal, or_, select, tuple_
+from sqlalchemy import and_, func, literal, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
@@ -507,10 +508,22 @@ class SpaceLearningRunRepository:
         return row
 
     async def count_call(self, run: SpaceLearningRun) -> None:
-        run.calls += 1
-        run.updated_at = datetime.now(UTC)
-        self._session.add(run)
-        await self._session.flush()
+        """One more call, counted in the row itself: a member's practice call
+        (``learning_practice_analysis.ask``) may count on the same row while
+        the night holds it, and a write of the night's stale copy would lose it."""
+        now = datetime.now(UTC)
+        calls = (
+            await self._session.execute(
+                update(SpaceLearningRun)
+                .where(SpaceLearningRun.id == run.id)
+                .values(calls=SpaceLearningRun.calls + 1, updated_at=now)
+                .returning(SpaceLearningRun.calls)
+            )
+        ).scalar_one()
+        # Read back, not written: a later flush of this object must not write
+        # the count again.
+        set_committed_value(run, "calls", calls)
+        set_committed_value(run, "updated_at", now)
 
     async def finish(self, run: SpaceLearningRun, *, capped: bool) -> None:
         now = datetime.now(UTC)

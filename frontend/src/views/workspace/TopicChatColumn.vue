@@ -16,6 +16,7 @@ import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
+import AgentNowStrip from '@/components/room/AgentNowStrip.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
@@ -223,6 +224,12 @@ async function join() {
 const linkDown = computed(() => !!chatRef.value?.linkDown)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
+const agentLines = ref<MemberActivityLine[]>([])
+function onActivity(lines: MemberActivityLine[]) {
+  agentLines.value = lines
+  emit('activity', lines)
+}
+
 defineExpose({
   linkDown,
   reloadFeedback: () => feedbackRef.value?.reload(),
@@ -235,6 +242,8 @@ defineExpose({
 
 <template>
   <div class="chat-col">
+    <!-- 进频道或支线页就能看到：每位 AI 此刻在干什么（和输入框上方那一行同一份数据）。 -->
+    <AgentNowStrip :lines="agentLines" />
     <ChatPanel
       ref="chatRef"
       :topic="topic"
@@ -263,7 +272,7 @@ defineExpose({
       @agent-control="emit('agent-control', $event)"
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
-      @activity="emit('activity', $event)"
+      @activity="onActivity"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
       @delivery-arrived="emit('delivery-arrived', $event)"

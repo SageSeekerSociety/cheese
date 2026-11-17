@@ -32,7 +32,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.models import Project
-from app.domain.space import learning_insight_analysis
+from app.domain.space import learning_insight_analysis, learning_practice_service
 from app.domain.space.models import (
     Space,
     SpaceCategory,
@@ -46,6 +46,7 @@ from app.domain.space.models import (
     SpaceLearningWeek,
     SpaceMember,
 )
+from app.domain.space.practice_models import SpaceLearningPractice
 from app.domain.task.models import Task
 from app.domain.topic.models import new_private_chat
 from app.domain.usage import pricing
@@ -649,3 +650,66 @@ async def test_questions_of_fewer_than_three_people_are_not_grouped(
     assert counts["calls"] == 2
     questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
     assert all(q.cluster_id is None for q in questions)
+
+
+@pytest.mark.anyio
+async def test_the_queue_writes_the_sets_teachers_pushed_on_boards_still_open(
+    business_db_factory, gateway
+):
+    """老师推送的那几组由定时任务出题；关了学情分析的板上排着的不动，也不挡别人。"""
+    factory = business_db_factory
+    sets: dict[str, int] = {}
+    async with factory() as session:
+        for name, open_board in (("open", True), ("closed", False)):
+            world = await _board(session, ["ann"])
+            ann = world["people"]["ann"]
+            said = _say(session, ann, "子查询里怎么引用外层那一行？", SAID_AT)
+            now = datetime.now(UTC)
+            session.add(
+                SpaceLearningJudgment(
+                    space_id=world["space_id"],
+                    user_id=ann["user_id"],
+                    knowledge_point_id=world["point_id"],
+                    level="weak",
+                    summary="你还不清楚内层怎样引用外层那一行。",
+                    evidence_block_ids=[said],
+                    analyzed_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            practice = SpaceLearningPractice(
+                space_id=world["space_id"],
+                user_id=ann["user_id"],
+                knowledge_point_id=world["point_id"],
+                source="pushed",
+                questions=[],
+                created_at=now,
+            )
+            session.add(practice)
+            space = await session.get(Space, world["space_id"])
+            assert space is not None
+            space.learning_analysis_enabled = open_board
+            await session.flush()
+            sets[name] = practice.id
+        await session.commit()
+
+    question = {
+        "stem": "内层怎样引用外层那一行？",
+        "options": ["用别名", "用 GROUP BY", "用 HAVING", "不能"],
+        "answer": 0,
+        "explanation": "用别名。",
+    }
+    gateway.answers.append(json.dumps({"questions": [question] * 3}))
+    counts = await learning_practice_service.run_queued(
+        factory, transport=gateway.transport
+    )
+
+    assert counts["generated"] == 1
+    (written,) = await _rows(factory, SpaceLearningPractice, id=sets["open"])
+    assert len(written.questions) == 3 and written.generated_at is not None
+    assert written.answers == [-1, -1, -1]
+    (waiting,) = await _rows(factory, SpaceLearningPractice, id=sets["closed"])
+    assert waiting.generated_at is None
+    # 模型读到的是这个人卡住的地方和他自己的话。
+    assert "子查询里怎么引用外层那一行？" in gateway.asked[0]

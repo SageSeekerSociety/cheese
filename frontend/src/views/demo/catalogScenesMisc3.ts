@@ -22,10 +22,12 @@ import {
   PENDING_REQUESTS,
   PROJECT_INVITATIONS,
 } from './catalogScenesMisc3Fixtures'
+import { LEARNING_PRACTICE_SET } from './catalogSpaceTasksFixtures'
 
 import { t } from '@/i18n'
 import LearningAnalysisView from '@/views/spaces/detail/analytics/LearningAnalysisView.vue'
 import LearningView from '@/views/spaces/detail/analytics/LearningView.vue'
+import LearningPracticeDialog from '@/views/spaces/detail/LearningPracticeDialog.vue'
 import PendingView from '@/views/teams/PendingView.vue'
 
 const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
@@ -156,6 +158,60 @@ export const SCENES_MISC3_ENTRIES: CatalogEntry[] = [
         props: { loadingMyRequests: true, loadingMyInvitations: true, loadingProjectInvitations: true },
         expect: '光学实验',
         expectSelector: '.v-progress-circular',
+      },
+    ],
+  },
+  {
+    id: 'learning-practice-dialog',
+    title: 'LearningPracticeDialog',
+    get about() {
+      return t('catalog.learningPracticeDialog.about')
+    },
+    file: 'src/views/spaces/detail/LearningPracticeDialog.vue',
+    component: LearningPracticeDialog,
+    needs: UI_T_R,
+    teleport: true,
+    args: { practice: LEARNING_PRACTICE_SET },
+    states: [
+      {
+        get name() {
+          return t('catalog.learningPracticeDialog.s1.name')
+        },
+        get note() {
+          return t('catalog.learningPracticeDialog.s1.note')
+        },
+        props: {},
+        expect: '再看一下：',
+      },
+      {
+        get name() {
+          return t('catalog.learningPracticeDialog.s2.name')
+        },
+        get note() {
+          return t('catalog.learningPracticeDialog.s2.note')
+        },
+        props: {
+          practice: {
+            ...LEARNING_PRACTICE_SET,
+            done: true,
+            questions: LEARNING_PRACTICE_SET.questions.map((q) => ({
+              ...q,
+              chosen: q.chosen ?? 1,
+              correct: q.correct ?? true,
+              answer: q.answer ?? 1,
+              explanation: q.explanation ?? '先按部门分组求平均，再拿每个员工去比。',
+            })),
+          },
+          result: {
+            practiceId: 70,
+            correct: 2,
+            total: 3,
+            levelBefore: 'weak',
+            levelAfter: 'weak',
+            nextReviewOn: '2026-11-17',
+          },
+        },
+        expect: '答对 2 / 3',
       },
     ],
   },

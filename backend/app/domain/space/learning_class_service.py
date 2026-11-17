@@ -48,6 +48,7 @@ from app.domain.space.learning_class_repositories import (
 )
 from app.domain.space.learning_insight_analysis import LOCAL_ZONE
 from app.domain.space.learning_insight_repositories import LearningConversationReads
+from app.domain.space.learning_practice_service import SpaceLearningPracticeService
 from app.domain.space.learning_privacy import Masker, masker_for, member_code
 from app.domain.space.learning_service import _excerpt
 from app.domain.space.models import SpaceKnowledgePoint
@@ -323,9 +324,17 @@ class SpaceLearningClassService:
             "misconceptions": [],
             "hiddenMisconceptions": 0,
             "advice": None,
+            "practice": None,
+            "lastPush": None,
         }
         if not _enabled(space):
             return empty
+        # 巩固题的整体数与最近一次推送（§ step 4）：不足 3 人时 practice 为空。
+        empty.update(
+            await SpaceLearningPracticeService(self._session).point_outcome(
+                space.id, point.id
+            )
+        )
         board = await self._board(space.id)
         tasks = dict(await self._reads.tasks(space.id))
         task_points = await self._reads.task_points(space.id)
@@ -425,6 +434,8 @@ class SpaceLearningClassService:
                 if advice is not None
                 else None
             ),
+            "practice": empty["practice"],
+            "lastPush": empty["lastPush"],
         }
 
     # --- 高频问题 -----------------------------------------------------------

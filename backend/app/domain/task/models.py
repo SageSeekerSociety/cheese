@@ -425,6 +425,54 @@ class TaskKnowledgePoint(Base):
     )
 
 
+class TaskGuideEvent(Base):
+    """一个题目项目里，引导模式的一项保护对 AI 队友的一条回复做了什么。
+
+    只在题目选了「引导为主」并打开了对应开关时写（``app.domain.task.guide``）：
+    ``hint`` 是这条回复处在提示阶梯的第几级（1 问思路、2 给方向、3 给伪代码、4 给片
+    段），``output_check`` 是这条回复里一段长代码被换成了提示（``level`` 为那段代码的
+    行数）。``user_id`` 是这条回复回答的那个人（开这一轮的人），说不出时为空；学情分析
+    拿它看「直接要答案 / 依赖程度」，老师那一侧只读整体。``block_id`` 是那条回复，
+    同 ``SpaceLearningJudgment`` 一样不设外键（``blocks`` 太热）。
+    """
+
+    __tablename__ = "task_guide_event"
+    __table_args__ = (
+        Index("ix_task_guide_event_task_id", "task_id"),
+        Index("ix_task_guide_event_project_id", "project_id"),
+        CheckConstraint(
+            "kind IN ('hint', 'output_check')", name="ck_task_guide_event_kind"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task.id", ondelete="CASCADE", name="fk_task_guide_event_task_id_task"
+        ),
+        nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_task_guide_event_project_id_projects",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    block_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class TaskSubmission(Base):
     """Minimal mapping for task_submission table."""
 

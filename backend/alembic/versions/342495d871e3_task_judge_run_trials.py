@@ -10,7 +10,7 @@
 ``project_id`` 一样：空间删了，这一次试跑照旧是记录。
 
 辨认 ID: 342495d871e3
-Revises: 9c1f4e7b2a35
+Revises: 972eebafc2ef
 Create Date: 2026-11-17
 """
 
@@ -22,7 +22,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "342495d871e3"
-down_revision: str | Sequence[str] | None = "d7a2e41f8b06"
+down_revision: str | Sequence[str] | None = "972eebafc2ef"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -85,6 +85,10 @@ export type SpaceTeaching = {
   documentIds?: string[]
   /** 项目里每个 AI 队友每一轮都带上的技能名。 */
   skills?: string[]
+  /** 「引导为主」时的提示阶梯：问思路 → 给方向 → 给伪代码 → 给片段，逐级给。 */
+  hintLadder?: boolean
+  /** 「引导为主」时的输出检查：AI 回复里的大段代码改成提示。 */
+  outputCheck?: boolean
 }
 
 // ---- 学情分析（§ learning analysis, step 1）--------------------------------------
@@ -170,7 +174,12 @@ export type LearningJudgment = {
   disputed: boolean
   analyzedAt: number | null
   evidence: LearningEvidence[]
+  /** 最近一组巩固题的作答（第 4 步）：做完一组改了档位时，它就是那次的依据。没做过为空。 */
+  practice?: LearningJudgmentPractice | null
 }
+
+/** 判断上记着的最近一组巩固题：答对几道、共几道、什么时候做完（epoch 毫秒）。 */
+export type LearningJudgmentPractice = { correct: number; total: number; at: number | null }
 
 /** 清单里的一个知识点，带上我的判断；`judgment` 为空即「未涉及」。 */
 export type LearningInsightPoint = {
@@ -205,6 +214,99 @@ export type MyLearningInsight = {
     messagesRead: number
     tasks: { taskId: number; name: string; messagesRead: number }[]
   }
+}
+
+// ---- 巩固练习与复习提醒（§ learning analysis, step 4）--------------------------------
+//
+// 只有本人：契约见 `SpacesApi` 里 `me/practice`、`me/explanation` 那几条；服务端在
+// `app/domain/space/learning_practice_service.py`。
+
+/** 一组巩固题从哪来：自己点的、老师推送的、复习提醒里再做的一组。 */
+export type LearningPracticeSource = 'self' | 'pushed' | 'review'
+
+/** 一道选择题。`chosen` 为空即还没答；答过之后才带正确答案与讲解。 */
+export type LearningPracticeQuestion = {
+  stem: string
+  options: string[]
+  chosen: number | null
+  correct: boolean | null
+  answer: number | null
+  explanation: string | null
+}
+
+/** 一组巩固题。`ready` 为假是老师推送、还在出题。 */
+export type LearningPracticeSet = {
+  id: number
+  knowledgePointId: number
+  knowledgePointName: string
+  source: LearningPracticeSource
+  ready: boolean
+  done: boolean
+  questions: LearningPracticeQuestion[]
+  correct: number | null
+  levelBefore: LearningLevel | null
+  levelAfter: LearningLevel | null
+  createdAt: number | null
+  completedAt: number | null
+}
+
+/** 答一道之后当场交回的：对错、正确答案、讲解。第一次选的定下来。 */
+export type LearningPracticeAnswer = {
+  question: number
+  chosen: number
+  correct: boolean
+  answer: number
+  explanation: string
+}
+
+/** 「做完了」之后：答对几道、档位前后、下一次复习的日子（YYYY-MM-DD）。 */
+export type LearningPracticeResult = {
+  practiceId: number
+  correct: number
+  total: number
+  levelBefore: LearningLevel | null
+  levelAfter: LearningLevel | null
+  nextReviewOn: string | null
+}
+
+/** 一条复习提醒：哪个知识点、哪天该复习（平台日历 YYYY-MM-DD）、连对几组。 */
+export type LearningReview = {
+  knowledgePointId: number
+  knowledgePointName: string
+  dueOn: string
+  streak: number
+}
+
+/** 没做完的一组（列在「待做的巩固题」里）。 */
+export type LearningOpenPractice = {
+  id: number
+  knowledgePointId: number
+  knowledgePointName: string
+  source: LearningPracticeSource
+  ready: boolean
+  answered: number
+  total: number
+  createdAt: number | null
+}
+
+/** 本人的巩固练习一览（`GET /spaces/{spaceId}/learning-analysis/me/practice`）。 */
+export type MyLearningPractice = {
+  enabled: boolean
+  /** 每人每天能要几次（出题、换一组、讲解都算），今天用了几次。 */
+  dailyLimit: number
+  usedToday: number
+  open: LearningOpenPractice[]
+  /** 已经到期的复习。 */
+  due: LearningReview[]
+  /** 还没到期的下一次复习。 */
+  upcoming: LearningReview | null
+}
+
+/** 「先看一段讲解」。 */
+export type LearningExplanation = {
+  knowledgePointId: number
+  text: string
+  generatedAt: number | null
 }
 
 /** One person the space is visible to — see `SpacesApi.listMembers`. */
