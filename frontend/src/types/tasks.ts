@@ -1,4 +1,3 @@
-import type { TaskTestSuite } from './taskJudge'
 import type {
   Material,
   Space,
@@ -10,6 +9,7 @@ import type {
   Topic,
   User,
 } from '.'
+import type { TaskTestSuite } from './taskJudge'
 
 export type TaskSubmitterType = 'USER' | 'TEAM'
 

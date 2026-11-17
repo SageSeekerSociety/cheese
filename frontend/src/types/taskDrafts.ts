@@ -1,6 +1,7 @@
 // 题目草稿（`/task-drafts`）：写到一半的新题目，或对一道已发布题目还没保存的修改。
 // 草稿存在服务端：发布页、改题页边写边存进去，芝士答题时也写进同一份。
 import type { SpaceTeaching } from './spaces'
+import type { TaskTestSuite } from './taskJudge'
 import type {
   TaskRubricLine,
   TaskStage,
@@ -9,7 +10,6 @@ import type {
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
 } from './tasks'
-import type { TaskTestSuite } from './taskJudge'
 
 /** 草稿里存的那张表单，和 `POST /tasks` 收的形状一样；`descriptionMarkdown`、
  *  `teachingOwn`、`attachmentFiles` 和 `starterFile` 只属于页面（芝士读写详情用
