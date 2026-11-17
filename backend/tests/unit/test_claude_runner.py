@@ -861,6 +861,35 @@ async def test_the_message_after_an_idle_exit_continues_the_same_conversation(
     assert "What was the password?" in asked
 
 
+def test_a_conversation_the_platform_retired_is_not_taken_up_again(machine, contract):
+    """The platform no longer continues a conversation (given up on, or started
+    under rules its kind has replaced) and says so in the launch: the screen
+    started next begins a new one, though this state directory's own record
+    and the transcript still hold the old."""
+    first = Screen(machine)
+    try:
+        work = str(uuid.uuid4())
+        first.send("The password is PINEAPPLE.", work_id=work)
+        first.wait_event(_status("idle", work))
+        retired = first.call("ping")["session_id"]
+    finally:
+        first.stop()
+
+    # Named in the launch's environment, as the platform's launch names it.
+    again = Screen(machine, env={"CHEESE_RETIRED_SESSION": retired})
+    try:
+        work = str(uuid.uuid4())
+        again.send("What was the password?", work_id=work)
+        again.wait_event(_status("idle", work))
+        started = again.call("ping")["session_id"]
+    finally:
+        again.stop()
+    assert started != retired
+    asked = json.dumps(machine.server.state["requests"][-1]["messages"])
+    assert "What was the password?" in asked
+    assert "PINEAPPLE" not in asked
+
+
 @pytest.mark.anyio
 async def test_a_question_the_build_would_ask_never_reaches_the_driver(
     machine, monkeypatch, contract

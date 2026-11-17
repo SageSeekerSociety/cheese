@@ -275,6 +275,9 @@ PROFILES: dict[Kind, Profile] = {
         narrowed=True,
         writes="memory",
         effort="high",
+        # 1: the main line coordinates tasks instead of doing the work (#5287);
+        # a main line started before that copies its own earlier turns.
+        generation=1,
     ),
     Kind.task: _room(Kind.task, ("chat", CARRIED), "memory/team"),
     Kind.thread: _room(Kind.thread, ("chat", CARRIED), "memory/team"),

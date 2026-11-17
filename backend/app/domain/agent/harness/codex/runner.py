@@ -458,6 +458,9 @@ class Runner(runner.Runner[Journal]):
             ),
         )
         self.errors = (self.state / "app-server.log").open("ab")
+        # The launch's reply rule, read where every harness reads it: a main
+        # line on Codex otherwise answered as a task does, its tools held back.
+        env = self.agent_env(env)
         self.process = await asyncio.create_subprocess_exec(
             binary,
             "app-server",

@@ -99,8 +99,11 @@ async def launch_inputs(
         harness, provider = await prep._backend_for(session, agent, project)
         if provider is None:
             return None
-        resume_token = await AgentSessionService(session).resume_token(
-            place.room_id, agent.handle, harness=harness
+        continuation = await AgentSessionService(session).continuation(
+            place.room_id,
+            agent.handle,
+            harness=harness,
+            generation=PROFILES[kind].generation,
         )
         # The skills the teammate carries, read as the turn reads them
         # (`assembly`): a prewarmed session whose prompt lacked them would be
@@ -132,7 +135,8 @@ async def launch_inputs(
             name=agent.display_name,
             carried=carried,
         ),
-        resume_token=resume_token,
+        resume_token=continuation.resume,
+        retired_token=continuation.retired,
         model=model_kwargs.get("model"),
         env=model_kwargs.get("env"),
         needs_place=needs_place,
