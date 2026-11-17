@@ -30,7 +30,7 @@ function act(view: DeliveryView) {
 
 <template>
   <div
-    v-if="delivery"
+    v-if="delivery && (delivery.code || delivery.preview || decides)"
     class="delivery-acts"
     role="group"
     :aria-label="t('work.room.message.delivery.label', { title: task.title })"

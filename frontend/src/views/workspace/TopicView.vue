@@ -326,10 +326,10 @@ const deliveryTabBinding = computed(() =>
     : null
 )
 // 打开的这件任务看哪一种（对话 / 改动 / 预览）：主线上「查看改动」「预览」点名，人在
-// 那一栏里换了就跟着换。点标签打开一件任务从它的对话看起。
-const reviewView = ref<string | null>(null)
-// 主线上按了「退回」：这件任务的页签开出写理由的那一块。每按一次一个新记号，别的打开方式清掉它。
-const returnAsk = ref<string | null>(null)
+// 那一栏里换了就跟着换。记着是哪件任务的：换一件任务从它的对话看起。
+const reviewView = ref<{ taskId: string; view: string } | null>(null)
+// 主线上按了「退回」：这件任务的页签开出写理由的那一块。每按一次一个新记号，只给那件任务。
+const returnAsk = ref<{ taskId: string; token: string } | null>(null)
 let returnAsks = 0
 function openTaskChat(taskId: string) {
   reviewView.value = null
@@ -339,15 +339,14 @@ function openTaskChat(taskId: string) {
 // 主线上交付那几颗按钮：去看改动、预览，就地采纳，或退回（topicView/adoptInPlace.ts）。
 const adoptInPlace = useAdoptInPlace({
   me: () => myHandle(),
-  agentName: () => store.agentName,
+  store,
+  topicId: () => props.topicId,
   openTask: (taskId) => openTask(taskId),
-  showView: (view) => {
-    reviewView.value = view
+  showView: (taskId, view) => {
+    reviewView.value = { taskId, view }
     returnAsk.value = null
   },
-  askReturn: (taskId) => (returnAsk.value = `${taskId}:${++returnAsks}`),
-  reportError: (e, fallback) => store.reportError(e, fallback),
-  notice: (message) => (store.error = message),
+  askReturn: (taskId) => (returnAsk.value = { taskId, token: `${taskId}:${++returnAsks}` }),
 })
 const adoptingTask = adoptInPlace.adopting
 // 审阅那一栏（工作面板的审阅模式）要的几样：这件任务的对话、改动和预览。
@@ -365,8 +364,8 @@ function reviewPanel(taskId: string) {
     members: store.members,
     memberNames: memberNames.value,
     topicList: store.topics,
-    tab: reviewView.value ?? undefined,
-    askReturn: returnAsk.value,
+    tab: reviewView.value?.taskId === taskId ? reviewView.value.view : undefined,
+    askReturn: returnAsk.value?.taskId === taskId ? returnAsk.value.token : null,
   }
 }
 // 支线左上角的返回：回到「支线」那一格的列表。
@@ -551,7 +550,8 @@ void openPlace()
         @open-card="openTaskPage"
         @mention-click="handleMentionClick"
         @navigate="router.push($event)"
-        @update:tab="reviewView = $event"
+        @update:tab="(key: string) => (reviewView = { taskId: reviewTaskId!, view: key })"
+        @return-asked="returnAsk = null"
       >
         <template #chat>
           <TopicChatColumn
@@ -564,7 +564,7 @@ void openPlace()
             :topic-list="store.topics"
             :member-names="memberNames"
             :composer-closed="composerClosed"
-            :ask-closed="askClosed"
+            :ask-closed="askClosed || reviewTask?.status === 'closed'"
             @open-file="(path: string) => panelRef?.openFile?.(path)"
             @open-topic="openTopic"
             @open-card="openTask"
@@ -775,7 +775,8 @@ void openPlace()
                 @open-card="openTaskPage"
                 @mention-click="handleMentionClick"
                 @navigate="router.push($event)"
-                @update:tab="reviewView = $event"
+                @update:tab="(key: string) => (reviewView = { taskId: deliveryTab!.taskId, view: key })"
+                @return-asked="returnAsk = null"
               >
                 <!-- The task is a thread: its own conversation, the request it came from on top. The
                      decision is in the head above, so the conversation does not carry a second one. -->
@@ -791,7 +792,7 @@ void openPlace()
                     :topic-list="store.topics"
                     :member-names="memberNames"
                     :composer-closed="composerClosed"
-                    :ask-closed="askClosed"
+                    :ask-closed="askClosed || reviewTask?.status === 'closed'"
                     @open-file="(path: string) => panelRef?.openFile?.(path)"
                     @open-topic="openTopic"
                     @open-card="openTask"

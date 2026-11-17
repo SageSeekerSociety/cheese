@@ -199,17 +199,6 @@ watch(
   () => props.reviewReload,
   () => void reviewCard?.reload()
 )
-// 主线上按了「退回」：卡读回来、还在等人审阅时，打开写退回理由的那一块。按一次开一次。
-let returnAsked: string | null = null
-watch(
-  [() => props.askReturn, () => reviewCard?.loaded.value],
-  ([asked, loaded]) => {
-    if (!reviewCard || !loaded || !asked || asked === returnAsked) return
-    returnAsked = asked
-    if (reviewCard.pendingCard.value) reviewCard.showRejectInput.value = true
-  },
-  { immediate: true }
-)
 // 「改动」只读：任务页上由页面说（不是负责人、任务关了）；审阅时这一版决定过了也只读。
 const changesReadOnly = computed(
   () =>
@@ -239,7 +228,23 @@ const emit = defineEmits<{
   (e: 'navigate', to: NavTarget): void
   // 交付那一格的 ×：页面把它拿掉。正看着它时，这一栏自己回到打开它之前那一格。
   (e: 'close-delivery'): void
+  // 主线上要的那次「退回」已经在这一栏开出来了。
+  (e: 'return-asked'): void
 }>()
+
+// 主线上按了「退回」：卡读回来、还在等人审阅时，打开写退回理由的那一块。按一次开一次。
+let returnAsked: string | null = null
+watch(
+  [() => props.askReturn, () => reviewCard?.loaded.value],
+  ([asked, loaded]) => {
+    if (!reviewCard || !loaded || !asked || asked === returnAsked) return
+    returnAsked = asked
+    if (reviewCard.pendingCard.value) reviewCard.showRejectInput.value = true
+    // 用过了：这一栏换掉、重开时不再弹一次。
+    emit('return-asked')
+  },
+  { immediate: true }
+)
 
 // 有哪几格、各叫什么、挂哪个图标在 `panels/panelTabList.ts`：文档里的演示照着
 // 同一份表画这条栏，一个名字只有一个出处。

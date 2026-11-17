@@ -293,7 +293,7 @@ const deliveries = computed(() => props.rows.map((row) => (row.notice ? delivery
 // 通常是队友说这件任务的话；交了之后队友没说话，就是「已提交审阅」那一行自己。
 const deliveryAnchors = computed(() => {
   const at = new Map<string, string>()
-  if (!props.mainLine) return at
+  if (!props.mainLine) return new Set<string>()
   props.rows.forEach(({ block }, i) => {
     const filed = deliveries.value[i]
     const id = filed ? filed.taskId : taggedTask(block)
@@ -675,8 +675,9 @@ const rowLabels = computed(() =>
               :aria-label="rowLabels[i]"
               @open="emit('open-card', $event)"
             />
-            <!-- A task handed a version in for review: the platform's record of it, one card
-                 under nobody's name. -->
+            <!-- Outside the main line, a task handed a version in for review is the platform's
+                 record of it, one card under nobody's name. In the main line it is the one line
+                 below, with what settles it hanging on the latest thing said about the task. -->
             <div
               v-else-if="deliveries[i] && !mainLine"
               class="tl-delivery"

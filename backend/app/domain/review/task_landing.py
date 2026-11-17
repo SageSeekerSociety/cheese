@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say, with_keys
+from app.domain.block.indexed_rows import LAST_SAID_ROWS
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent, event_id_for
@@ -298,7 +299,7 @@ async def _adopted_by(session: AsyncSession, task: Task) -> object | None:
             select(Block.author)
             .where(
                 Block.conversation_id == task.room_id,
-                Block.author.startswith(AGENT_HANDLE_PREFIX),
+                LAST_SAID_ROWS,
                 Block.meta["task_tag"].as_string() == str(task.id),
             )
             .order_by(Block.created_at.desc())

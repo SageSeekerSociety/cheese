@@ -105,7 +105,7 @@ async function flush() {
 }
 
 // `tab`：主线上「查看改动」打开这件任务时点名的那一种看法；不点名（点任务标签）时不给。
-function mount(tab: string | null = 'changes') {
+function mount(tab: string | null = 'changes', askReturn: string | null = null) {
   return render(WorkPanel as unknown as Component, {
     props: {
       topic,
@@ -114,6 +114,7 @@ function mount(tab: string | null = 'changes') {
       reviewHead: { heading: '报名表改短', version: 2 },
       activityTick: 0,
       tab: tab ?? undefined,
+      askReturn,
     },
     global: {
       plugins: [i18n, createVuetify({ components, directives })],
@@ -150,6 +151,20 @@ describe('频道里打开的一件任务', () => {
     getByRole('tab', { name: /改动/ }).click()
     await flush()
     expect(getByTestId('changes')).toBeTruthy()
+  })
+
+  it('主线上点「退回」打开时，写退回理由的那一块已经开着，只开一次', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card({})], has_more: false })
+    const { findByPlaceholderText, emitted } = mount('changes', 'k1:1')
+    expect(await findByPlaceholderText('退回理由（可选）')).toBeTruthy()
+    expect(emitted()['return-asked']).toHaveLength(1)
+  })
+
+  it('没按「退回」打开时不开写理由的那一块', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card({})], has_more: false })
+    const { queryByPlaceholderText } = mount('changes')
+    await flush()
+    expect(queryByPlaceholderText('退回理由（可选）')).toBeNull()
   })
 
   it('主线上点「查看改动」打开时直接是改动', async () => {
