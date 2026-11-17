@@ -50,7 +50,7 @@ watch(
     :data-live="state.live ? '' : undefined"
     :role="iconOnly ? 'img' : undefined"
     :aria-label="iconOnly ? state.label : undefined"
-    :title="iconOnly ? state.label : undefined"
+    :title="iconOnly ? state.tip || state.label : state.tip || undefined"
     data-testid="task-state"
   >
     <v-icon class="task-state__icon" :size="size" aria-hidden="true">{{ state.icon }}</v-icon>
