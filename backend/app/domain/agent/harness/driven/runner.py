@@ -459,9 +459,15 @@ class Runner(Generic[J]):  # noqa: UP046
                 flush=True,
             )
             return None
-        held.add(self.owed)
-        if not answered and not self.reply_held:
+        if not self.reply_held:
+            # A session that holds nothing back (the channel's main line) owes
+            # one visible act, not its last words: once it has sent or reacted,
+            # what it goes on to look at and write is its own.
+            if answered:
+                return None
+            held.add(self.owed)
             return TURN_END_HINT
+        held.add(self.owed)
         if answered:
             # One line per hold: how often it fires, and after what, is what
             # says whether it catches conclusions or repeats replies.

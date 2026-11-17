@@ -49,6 +49,7 @@ def _seed_session(client, place_id: str) -> None:
                 agent_handle=CHEESE_HANDLE,
                 resume_token="sess-" + uuid.uuid4().hex[:8],
                 harness="claude-code",
+                generation=0,
             )
             await s.commit()
 

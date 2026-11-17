@@ -503,6 +503,7 @@ class StubChannel(SeatChannel):
         self.sessions: dict[tuple[uuid.UUID, str], ScriptedSession] = {}
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
+        self.last_retired_session_id: str | None = None
         self.last_prompt: str | None = None
         self.reply = "Hello world"
         self._alive = True
@@ -549,6 +550,7 @@ class StubChannel(SeatChannel):
         """The seat's runner, started the first time the seat starts."""
         self.last_system_prompt = launch.system_prompt
         self.last_resume_session_id = launch.resume_session_id
+        self.last_retired_session_id = launch.retired_session_id
         key = (session.conversation_id, agent)
         runner = self.sessions.get(key)
         if runner is None:

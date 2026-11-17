@@ -128,6 +128,9 @@ LAST_WORDS = 1000
 # up opens with ``ended(launch)``, and a backend waiting on one launch reads
 # only what that launch left.
 LAUNCH = "CHEESE_RUNNER_LAUNCH"
+#: The conversation the platform no longer continues (`SessionStart.retired`):
+#: a start does not take it up, not even from this runner's own record.
+RETIRED_ENV = "CHEESE_RETIRED_SESSION"
 #: The launch whose agent process has not had its ending reported yet: set when
 #: a process starts, cleared once its ``exited`` is in the outbox. Still set
 #: when a runner starts, it names a process that died with its runner.
@@ -658,7 +661,11 @@ class Runner(runner.Runner[Journal]):
         env: dict[str, str],
         resume: str | None,
         agent_handle: str | None,
+        retired: str | None = None,
     ) -> str:
+        """Start Claude Code on ``resume``, else on the conversation this
+        runner last ran, else on a new one. ``retired``: a conversation the
+        platform no longer continues, never taken up again from here."""
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
         self.execution = env.get("CHEESE_EXECUTION_CONFIG")
@@ -668,13 +675,15 @@ class Runner(runner.Runner[Journal]):
             end(sessions_on(self.config_dir, agent_handle))
         self._report_left_exit()
         saved = self.journal.recall("session_id")
+        if saved and saved == retired:
+            saved = None
         failed = self.journal.recall("resume_failed")
         resumed = next(
             (
                 candidate
                 for candidate in (resume, saved)
                 if candidate
-                and candidate != failed
+                and candidate not in (failed, retired)
                 and transcript(self.config_dir, candidate) is not None
             ),
             None,
