@@ -180,6 +180,35 @@ async def referents_for(session: AsyncSession, *values: Any) -> dict[int, str]:
     return await usernames_by_ids(session, ids) if ids else {}
 
 
+async def names_with_referents(
+    session: AsyncSession,
+    referents: Mapping[int, str],
+    *values: Any,
+    viewer_id: int | None = None,
+    viewer_handle: str | None = None,
+) -> dict[str, str]:
+    """``names_for`` with the referenced people's handles added to its set.
+
+    ``names_for`` only sees ``<@handle>`` tokens, and ``snapshot_id_swaps`` can
+    only rename a reference whose handle is a key of ``names`` — so a caller
+    holding the page's ``referents`` must have those handles in the map, or the
+    snapshot of a person named only by reference is left public.
+    """
+    handles: set[str] = set(referents.values())
+    for value in values:
+        handles |= handles_in(value)
+    if not handles:
+        return {}
+    public_names = await names_by_handles(session, sorted(handles))
+    return await names_for_reader(
+        session,
+        sorted(handles),
+        public_names,
+        viewer_id=viewer_id,
+        viewer_handle=viewer_handle,
+    )
+
+
 async def names_and_referents(
     session: AsyncSession,
     *values: Any,

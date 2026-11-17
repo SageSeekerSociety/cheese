@@ -252,3 +252,54 @@ def test_the_inbox_row_itself_renames_a_reference_only_person(
     )
     assert REMARK in json.dumps(meta, ensure_ascii=False), meta
     assert who in (None, REMARK), who
+
+
+def test_a_page_that_supplies_referents_still_renames_their_snapshots(
+    client, user_client, api_client, db_session, _portal
+):
+    """The page's id->handle map must reach ``names``, or the snapshot stays public."""
+    from app.domain.notification.models import Notification as _N
+    from app.domain.notification.services import NotificationQueryService
+
+    reader = user_client.create_user(nickname="page-ref-reader")
+    reader.token = user_client.login(api_client, reader.username, reader.password)
+    requester = user_client.create_user(
+        username="page-ref-alice", nickname="page-ref-alice"
+    )
+
+    saved = api_client.put(
+        f"/users/{requester.username}/remark",
+        json={"remark": REMARK},
+        headers={"Authorization": f"Bearer {reader.token}"},
+    )
+    assert saved.status_code == 200, saved.text
+
+    async def read() -> dict:
+        row = _N(
+            receiver_id=reader.user_id,
+            type=NotificationType.TEAM_JOIN_REQUEST,
+            read=False,
+            finalized=True,
+            recipient_handle=reader.username,
+            metadata_payload={
+                "requester": {"type": "user", "id": str(requester.user_id)},
+                "requesterName": requester.username,
+                "teamName": "一个团队",
+            },
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db_session.add(row)
+        await db_session.commit()
+        service = NotificationQueryService.from_session(db_session)
+        # Exactly what the list endpoint hands in: names skipped, referents known.
+        dto = await service.build_notification_dto(
+            row,
+            names=None,
+            referents={requester.user_id: requester.username},
+            viewer_id=reader.user_id,
+        )
+        return dto.contextMetadata
+
+    meta = _portal.call(read)
+    assert REMARK in json.dumps(meta, ensure_ascii=False), meta

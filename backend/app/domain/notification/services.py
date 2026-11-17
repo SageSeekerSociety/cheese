@@ -27,7 +27,7 @@ from app.domain.notification.models import (
 )
 from app.domain.notification.names import (
     names_and_referents,
-    names_for,
+    names_with_referents,
     referents_for,
     snapshot_id_swaps,
     with_names,
@@ -310,8 +310,11 @@ class NotificationQueryService:
                         self._session, metadata_map, viewer_id=viewer_id
                     )
                 else:
-                    names = await names_for(
-                        self._session, metadata_map, viewer_id=viewer_id
+                    names = await names_with_referents(
+                        self._session,
+                        referents,
+                        metadata_map,
+                        viewer_id=viewer_id,
                     )
             elif referents is None:
                 referents = await referents_for(self._session, metadata_map)
