@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.space.models import (
+    Space,
     SpaceKnowledgePoint,
     SpaceLearningJudgment,
     SpaceLearningMisconception,
@@ -161,12 +162,15 @@ class LearningPracticeRepository:
         return len((await self._session.execute(stmt)).all())
 
     async def queued(self, *, limit: int) -> list[SpaceLearningPractice]:
-        """全平台还排着队（老师推送、还没出题）的组，先排的先出。"""
+        """开着学情分析的板上还排着队（老师推送、还没出题）的组，先排的先出。"""
         rows = await self._session.scalars(
             select(SpaceLearningPractice)
+            # 关了学情分析的板上排着的不算：它们等板重新打开，不占这一批的名额。
+            .join(Space, Space.id == SpaceLearningPractice.space_id)
             .where(
                 SpaceLearningPractice.generated_at.is_(None),
                 SpaceLearningPractice.completed_at.is_(None),
+                Space.learning_analysis_enabled.is_(True),
             )
             .order_by(SpaceLearningPractice.created_at.asc())
             .limit(limit)
