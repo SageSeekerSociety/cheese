@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.session_host.contract import Image
+from app.domain.agent.session_host.contract import ColdCompaction, Image
 from app.domain.delivery.input_identity import InputRegistrar
 from app.domain.memory.scopes import MemoryScope
 
@@ -33,6 +33,7 @@ class SessionSender(Protocol):
         owes_reply: bool = False,
         session_opening: str = "",
         opening_changes: str = "",
+        cold: ColdCompaction | None = None,
     ) -> bool: ...
 
 
@@ -67,3 +68,6 @@ class PreparedSend:
     keeps_nothing: bool
     sender: SessionSender
     activate: Callable[[SessionRef], Awaitable[None]]
+    # Compact a conversation gone cold before this turn's input
+    # (`Profile.compacts_when_cold`, the model's cache lifetime); None: never.
+    cold: ColdCompaction | None = None

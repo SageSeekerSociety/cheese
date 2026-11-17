@@ -116,6 +116,14 @@ class Profile:
     #: resumed, and the place starts a new one (`agent_sessions.generation`).
     #: A session recorded before generations were counted is generation 0.
     generation: int = 0
+    #: A conversation of this kind that has sat idle past its model's cache
+    #: lifetime is compacted before the next turn's input, when it is large
+    #: enough to pay (`session_host.contract.ColdCompaction`): it re-reads its
+    #: whole context at full price then anyway. For the conversations that
+    #: live for weeks and are read as talk, where a summary keeps what matters;
+    #: not for a task, whose next turn goes on with work in hand and needs the
+    #: exact files and outputs a summary drops, and which ends in days.
+    compacts_when_cold: bool = False
 
 
 class ProfileError(LookupError):

@@ -71,6 +71,7 @@ from app.domain.agent.gateway_admin_types import (
     _PRICE_FIELDS,  # noqa: F401
     _SOURCE_INFO_KEYS,  # noqa: F401
     _UPSTREAM_INFO_KEYS,  # noqa: F401
+    CACHE_LIFETIME,
     EXTRA_HEADERS,
     FREE,  # noqa: F401
     NO_EXPLICIT_CACHE,  # noqa: F401
@@ -318,6 +319,7 @@ class GatewayAdmin:
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
         overseas: bool | None = None,
+        cache_lifetime_s: int | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -336,6 +338,8 @@ class GatewayAdmin:
             info["cheese_tier"] = tier
         if overseas is not None:
             info["cheese_overseas"] = bool(overseas)
+        if cache_lifetime_s:
+            info[CACHE_LIFETIME] = cache_lifetime_s
         return await self._new(
             name,
             upstream_model=upstream_model,
@@ -434,6 +438,7 @@ class GatewayAdmin:
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
         overseas: bool | None = None,
+        cache_lifetime_s: int | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -469,6 +474,10 @@ class GatewayAdmin:
             info["cheese_tier"] = tier
         if overseas is not None:
             info["cheese_overseas"] = bool(overseas)
+        if cache_lifetime_s is not None:
+            # 0 clears it the way ``spend_cap_usd`` does: the merge keeps a key it
+            # is not given, and ``_seconds`` reads 0 as none.
+            info[CACHE_LIFETIME] = cache_lifetime_s
         info.update(_capability_params(capabilities))
         info.update(_source_info(free, session_header))
         if spend_cap_usd is not None:

@@ -134,6 +134,8 @@
       "name": "模型名",
       "nameHint": "1–64 个字符，可用字母、数字、点、下划线和连字符",
       "label": "标签",
+      "cacheMinutes": "缓存有效期（分钟）",
+      "cacheMinutesHint": "对话闲置超过这个时长，上游的缓存就会失效，较长的对话在下一次处理前先压缩。留空则不按闲置时长压缩。",
       "upstreamModel": "上游模型",
       "upstreamModelHint": "例如 anthropic/glm-4.7",
       "apiBase": "上游地址",

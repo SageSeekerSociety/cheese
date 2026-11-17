@@ -38,6 +38,7 @@ from datetime import date, timedelta
 
 import httpx
 
+from app.domain.agent.gateway_admin_types import CACHE_LIFETIME
 from app.domain.day_windows import utc_now
 from app.domain.usage.pricing import declared_free
 
@@ -79,6 +80,12 @@ class GatewayModel:
     # Where the provider recommends compacting, when that is before the window
     # (``cheese_auto_compact_window``). None: no recommendation.
     compact_window: int | None = None
+    # How long, in seconds, a conversation's cached prefix stays warm on this
+    # model's routes once nothing calls it (``cheese_cache_lifetime_s``): a
+    # measured fact about the provider, not what we ask it for
+    # (``cheese_cache_ttl``). A session idle past it re-reads its whole context
+    # at full price on its next call. None: not known.
+    cache_lifetime_s: int | None = None
 
 
 #: The thinking efforts a teammate can ask for, lowest first. Claude Code
@@ -132,7 +139,8 @@ def _model_info(row: dict) -> dict:
 
 
 def _tokens(value: object) -> int | None:
-    """A token count the gateway declares, or None for anything that is not one."""
+    """A positive count the gateway declares (tokens, seconds), or None for
+    anything that is not one."""
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
@@ -198,6 +206,8 @@ class LlmGateway:
           - ``cheese_efforts``: the thinking efforts it honours (``EFFORTS``).
           - ``cheese_auto_compact_window``: where its provider recommends that
             Claude Code compact, when that is earlier than the window.
+          - ``cheese_cache_lifetime_s``: how long its cached prefix stays warm
+            once idle, in seconds (``GatewayModel.cache_lifetime_s``).
 
         One LiteLLM key is read as well: ``supports_mid_conversation_system``
         set to ``false`` marks a route that loses mid-conversation system
@@ -264,6 +274,7 @@ class LlmGateway:
                     overseas=info.get("cheese_overseas") is True,
                     context_window=_tokens(info.get("max_input_tokens")),
                     compact_window=_tokens(info.get("cheese_auto_compact_window")),
+                    cache_lifetime_s=_tokens(info.get(CACHE_LIFETIME)),
                 )
             )
         return out

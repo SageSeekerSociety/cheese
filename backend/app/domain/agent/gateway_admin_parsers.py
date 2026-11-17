@@ -19,6 +19,7 @@ from app.domain.agent.gateway_admin_types import (
     _CAPABILITY_FIELDS,
     _PRICE_FIELDS,
     _UPSTREAM_INFO_KEYS,
+    CACHE_LIFETIME,
     EXTRA_HEADERS,
     FREE,
     SESSION_HEADER,
@@ -272,6 +273,13 @@ def _unpriced_note(params: object, info: object) -> str | None:
     )
 
 
+def _seconds(value: object) -> int | None:
+    """A positive whole number of seconds, or None for anything else."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
 def _dict(value: object) -> dict:
     return value if isinstance(value, dict) else {}
 
@@ -357,6 +365,7 @@ def _admin_model(name: str, rows: list[dict]) -> AdminModel:
         priced=unpriced is None,
         tier=tier if isinstance(tier, str) and tier else "included",
         overseas=info.get("cheese_overseas") is True,
+        cache_lifetime_s=_seconds(info.get(CACHE_LIFETIME)),
         upstream_model=upstream if isinstance(upstream, str) else "",
         api_base=api_base if isinstance(api_base, str) and api_base else None,
         provider=provider,
