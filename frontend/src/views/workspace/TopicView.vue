@@ -7,7 +7,7 @@ import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { useQueries, useQuery } from '@tanstack/vue-query'
+import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChapters } from '@/composables/useChapters'
@@ -322,13 +322,23 @@ function stateOf(task: RoomTask | null) {
 }
 const reviewState = computed(() => stateOf(reviewTask.value))
 // 右栏里开着的每一格任务各读各的（页签上的名字、它那一栏的页头和只读与否）。
-const tabReads = useQueries(
-  { queries: computed(() => deliveryTabs.value.map((tab) => roomTaskQuery(tab.taskId))) },
-  queryClient
+// 只在页签打开时读一次（同一份缓存，`roomTaskQuery`）；正看着的那一格读的是上面那份活的。
+const tabTasks = ref<Record<string, RoomTask>>({})
+watch(
+  () => deliveryTabs.value.map((tab) => tab.taskId),
+  (ids) => {
+    for (const id of ids) {
+      if (tabTasks.value[id]) continue
+      void queryClient
+        .fetchQuery(roomTaskQuery(id))
+        .then((task) => (tabTasks.value = { ...tabTasks.value, [id]: task }))
+        .catch(() => undefined)
+    }
+  },
+  { immediate: true }
 )
 function tabTask(taskId: string): RoomTask | null {
-  const at = deliveryTabs.value.findIndex((tab) => tab.taskId === taskId)
-  return (at >= 0 ? (tabReads.value[at]?.data as RoomTask | undefined) : undefined) ?? null
+  return tabTasks.value[taskId] ?? null
 }
 /** 这件任务读回来的那一行：在它的地址上是 `reviewTask`，别的开着的页签各读各的。 */
 function taskFor(taskId: string): RoomTask | null {
