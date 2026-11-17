@@ -1,0 +1,1 @@
+You have not said where this task stands. Call cheese_task(action=state) now: working, waiting (on a build, CI or a long command) or blocked, with a one-line note. When work that needs review is done, file a card: the board then shows it awaiting review.

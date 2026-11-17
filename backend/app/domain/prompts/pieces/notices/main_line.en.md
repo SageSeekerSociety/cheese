@@ -1,0 +1,1 @@
+What you write is not published to the conversation; send messages with ⟦tool:chat_send⟧. Tasks are done by their own sessions, which report their progress and results to you. Once you have replied where a reply is due and opened the tasks that are due, this turn is over.

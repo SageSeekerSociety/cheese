@@ -15,7 +15,7 @@
 它起个名字」，清单于是长成一份改动列表。
 """
 
-from app.domain.agent.harness.prompt import build_session_opening
+from app.domain.prompts import build_session_opening
 
 
 def _prompt(artifacts: list[dict] | None) -> str:

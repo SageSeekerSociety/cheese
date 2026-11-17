@@ -14,11 +14,12 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from app.domain.agent.harness.prompt import platform_prompt, prompt_line
+from app.domain.agent.harness.lines import prompt_line
 from app.domain.agent.prompt import _platform_preamble, _replay_notice
 from app.domain.agent.queries import require_pinned_seat
 from app.domain.block.output_effects import count_prompt_attempt
 from app.domain.block.queries import message_reply_target
+from app.domain.prompts import NoticeType, platform_prompt
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,7 +77,7 @@ async def build_turn_prompt(
     # No pending human block ⇒ nobody spoke: this is a resume nudge
     # or a returned conclusion. Say so, rather than handing
     # 芝士 bare text that looks like a person's message.
-    prompt_text = backlog or platform_prompt(content)
+    prompt_text = backlog or platform_prompt(content, NoticeType.instruction)
     # 平台指令不会被待读消息挤掉。A platform turn EXISTS because of its
     # instruction — raise a worker for this thread, relay this returned
     # card — and nobody re-sends it: the backlog is marked consumed by
@@ -86,7 +87,7 @@ async def build_turn_prompt(
     # 芝士, which is a room's ordinary state (没 @ 不等于没说) rather than
     # a rare race.
     if platform_turn and backlog:
-        prompt_text = f"{backlog}\n\n{platform_prompt(content)}"
+        prompt_text = f"{backlog}\n\n{platform_prompt(content, NoticeType.instruction)}"
     # 先背景，再这一轮要做的事。What moved under the session is the frame
     # the rest of the prompt has to be read in — a request to revise the
     # 验收标准 means something different once you know that section moved
@@ -97,7 +98,9 @@ async def build_turn_prompt(
     # 额度快用完了（`usage.alerts`）：只有这一轮会读到，不落到频道里。它不是
     # 项目设置的解释，是平台自己核得上的事实和它的后果。
     if credits_note:
-        prompt_text = f"{platform_prompt(credits_note)}\n\n{prompt_text}"
+        prompt_text = (
+            f"{platform_prompt(credits_note, NoticeType.turn)}\n\n{prompt_text}"
+        )
     # 重放可见 (#416): count this attempt on the blocks themselves. A
     # batch the session never read is not stamped `consumed_turn`, so the
     # SAME batch is re-sent with the next prompt, and the next — correct (a

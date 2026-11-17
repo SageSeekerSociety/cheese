@@ -59,11 +59,11 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.prompt import became_task_prompt, task_opening_prompt
 from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
 from app.domain.project_permissions import Permission
+from app.domain.prompts import became_task_prompt, task_opening_prompt
 from app.domain.room_task import naming
 from app.domain.room_task.dispatch import (
     refuse_tasks_in_private,

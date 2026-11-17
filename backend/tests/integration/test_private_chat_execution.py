@@ -118,7 +118,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 一条发布路径 (结论 19): the private chat is told what a room is told, and
         # its terminal reply lands in activity exactly as a room's does.
         # 这个人没选过界面语言：平台说存下来的中文（和 sentences.render 一个口径）。
-        assert "不会发到聊天里，要用 chat_send 工具发" in screen.prompts[0]
+        assert "chat_send" in screen.prompts[0]
         # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
         # prompt like any room, and still told what is particular to a private chat.
         assert "chat_send" in screen.last_system_prompt

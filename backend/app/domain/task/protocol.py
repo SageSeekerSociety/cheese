@@ -127,7 +127,7 @@ class Teaching:
     #: 本节学习目标 — what the student should be able to do by the end. Its
     #: presence is also what makes a 教学安排 EDUCATIONAL: a config with goals
     #: and no `system_prompt` gets the default teaching template (Socratic +
-    #: 形态纪律, see `harness.opening`), because "学习目标" is the teacher saying
+    #: 形态纪律, see `prompts.opening`), because "学习目标" is the teacher saying
     #: "this one is here to learn" — and a blank prompt then means "use your
     #: teaching manners", not "have no manners".
     learning_goals: list[str] = field(default_factory=list)

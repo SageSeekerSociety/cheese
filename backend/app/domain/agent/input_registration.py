@@ -1,12 +1,9 @@
 """Persist a native input before I/O and retain its in-process liveness probe."""
 
 import time
-import uuid
 
 from app.core.errors import ValidationError
-from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.turn.state.live import LiveWork
-from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.agent import DeliveryTargetChanged, fence_send
 from app.domain.delivery.input_identity import (
     InputEffects,
@@ -75,12 +72,6 @@ async def confirm_receipt(sessions, live: LiveWork, receipt) -> None:
             # Unknown evidence cannot settle another input. Keep it replayable
             # rather than advancing the journal past a missing registration.
             raise ValidationError("Native receipt identity is unknown or conflicts")
-        seen_ids = [uuid.UUID(block) for block in row.seen_block_ids]
-        reactions = (
-            await reaction_summaries_for_blocks(session, seen_ids)
-            if row.settled_at is not None
-            else {}
-        )
         if receipt.evidence == "native_echo" and row.settled_at is not None:
             from app.domain.agent.turn_resume import started_on_receipt
 
@@ -96,9 +87,3 @@ async def confirm_receipt(sessions, live: LiveWork, receipt) -> None:
     pending = live.unread_inputs.get(receipt.identity.conversation_id)
     if pending is not None:
         pending.pop(receipt.identity.input_id, None)
-
-    for block_id, value in reactions.items():
-        await get_broker().publish(
-            str(receipt.identity.conversation_id),
-            {"type": "reaction", "block_id": str(block_id), "reactions": value},
-        )

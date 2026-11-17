@@ -1,0 +1,1 @@
+The task state you reported has not changed for ⟦slot:minutes⟧ minutes, and once you stop, that is what the board shows. Call cheese_task(action=state) again: with the new state if it changed, or the same one with a note saying what you are doing or waiting on now.

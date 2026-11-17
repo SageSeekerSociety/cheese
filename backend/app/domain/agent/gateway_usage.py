@@ -219,16 +219,21 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     return agents
 
 
-def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
+def launch_env(
+    configuration: dict,
+    efforts: list[str] | tuple[str, ...],
+    default_effort: str | None = None,
+) -> dict:
     """The environment that carries a teammate's thinking effort and compaction
     share into its session.
 
     ``efforts`` are the ones the turn's model honours. An effort it does not is
     left out rather than sent: the harness would pass it to a model that either
-    ignores it or refuses the request.
+    ignores it or refuses the request. ``default_effort`` is the kind of
+    session's own (`prompts.Profile.effort`), used when the teammate set none.
     """
     env: dict[str, str] = {}
-    effort = configuration.get("effort")
+    effort = configuration.get("effort") or default_effort
     if isinstance(effort, str) and effort in efforts:
         env[EFFORT_ENV] = effort
     percent = configuration.get("compact_percent")
@@ -292,6 +297,7 @@ async def _model_kwargs(
     agent: ResolvedAgent | None = None,
     acting_agent: str | None = None,
     task_id: uuid.UUID | None = None,
+    default_effort: str | None = None,
 ) -> tuple[dict, str]:
     """Resolve a turn's model, model environment and usage route.
 
@@ -447,7 +453,9 @@ async def _model_kwargs(
             # restarts the session at the next task boundary, which is when
             # Claude Code reads its environment.
             **launch_env(
-                agent.configuration, choices.get(bound.model, {}).get("efforts", [])
+                agent.configuration,
+                choices.get(bound.model, {}).get("efforts", []),
+                default_effort,
             ),
         },
         # Which conversation the turn belongs to, and so which session's
