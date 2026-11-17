@@ -79,6 +79,8 @@ export const STALE_AFTER_MS = 30 * 60_000
 /** 标着在做、会话却没在跑，超过这么久没回来，就算「可能已断线」。 */
 export const OFFLINE_AFTER_MS = 15 * 60_000
 const OFFLINE_ICON = 'mdi-cloud-off-outline'
+/** 搁置（很久没人理会，快要自动关闭）：灰色月亮。 */
+const NEGLECT_ICON = 'mdi-power-sleep'
 /** 进度很久没变：空心环（不转）+ 右上角橙点，转着会让人以为还在往前走。 */
 const STALE_ICON = 'mdi-circle-outline'
 
@@ -193,6 +195,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'progress_note'
       | 'progress_set_at'
       | 'agent_left_at'
+      | 'neglect'
       | 'session_running'
       | 'moving'
       | 'waiting_on'
@@ -352,7 +355,23 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     default:
       break
   }
-  if (phrase === 'running') tip = detailOf({ row, label, note, line, live, stale, offline, now })
+  // 搁置：很久没人理会，快要自动关闭。图标换成月亮，状态词不变；说清还剩几天、能做什么。
+  const neglected = !!row.neglect && kind !== 'closed'
+  if (neglected && row.neglect) {
+    icon = NEGLECT_ICON
+    tone = 'faint'
+    const days = Math.max(1, Math.ceil((Date.parse(row.neglect.close_at) - now) / 86_400_000))
+    const quiet = waitedFor(row.neglect.since, now)
+    line = joined([line, t('work.taskState.neglect.closeIn', { days })])
+    tip = [
+      t('work.taskState.neglect.title'),
+      t(row.neglect.waiting_on_someone ? 'work.taskState.neglect.waiting' : 'work.taskState.neglect.quiet', {
+        time: quiet,
+      }),
+      t('work.taskState.neglect.closeIn', { days }),
+      t('work.taskState.neglect.hint'),
+    ].join('\n')
+  } else if (phrase === 'running') tip = detailOf({ row, label, note, line, live, stale, offline, now })
   return {
     kind,
     stale,

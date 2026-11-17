@@ -32,5 +32,12 @@
     "updated": "最近更新：{time}前",
     "staleHint": "可以点进去看现场，或在对话里问它一句",
     "offlineHint": "它重新连上后会自动接着做"
+  },
+  "neglect": {
+    "title": "搁置，将自动关闭",
+    "quiet": "已经 {time}没人理会",
+    "waiting": "在等人处理，已经 {time}没人动",
+    "closeIn": "{days} 天后自动关闭",
+    "hint": "在任务里说一句话就会重新计时；关闭后可以重开，PR 不会被关"
   }
 }
