@@ -320,3 +320,17 @@ def test_a_summary_of_another_task_s_submission_is_left_out(
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["summaries"] == []
+
+
+def test_summary_ids_that_are_no_submission_id_are_refused(
+    api_client: TestClient, user_client: UserCreator
+):
+    """「①」「²」过得了 isdigit 却不是数；大过 BIGINT 的数指不到任何一行。都答 400，不是 500。"""
+    board, task_id, _, _, _ = _setup(api_client, user_client)
+    for given in ("①", "²", "9" * 30, "1,abc"):
+        resp = api_client.get(
+            f"/tasks/{task_id}/judge/summaries",
+            params={"submissionIds": given},
+            headers=_auth(board["creator_token"]),
+        )
+        assert resp.status_code == 400, (given, resp.text)

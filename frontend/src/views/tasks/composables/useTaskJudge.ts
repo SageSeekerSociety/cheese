@@ -105,12 +105,17 @@ export async function readJudgeSummaries(
 ): Promise<Map<number, TaskJudgeSummary>> {
   const ids = [...new Set(submissionIds.filter((id) => id > 0))]
   if (!ids.length) return new Map()
-  try {
-    const res = await TaskJudgeApi.summaries(taskId, ids)
-    return new Map(res.summaries.map((s) => [s.submissionId, s]))
-  } catch {
-    return new Map()
+  const out = new Map<number, TaskJudgeSummary>()
+  // 后端一次最多收 `SUMMARY_BATCH` 版：多了分几次问。
+  for (let at = 0; at < ids.length; at += TaskJudgeApi.SUMMARY_BATCH) {
+    try {
+      const res = await TaskJudgeApi.summaries(taskId, ids.slice(at, at + TaskJudgeApi.SUMMARY_BATCH))
+      for (const summary of res.summaries) out.set(summary.submissionId, summary)
+    } catch {
+      // 这一批读不到：那几行画「—」，别的照常。
+    }
   }
+  return out
 }
 
 /** 出题人试跑：排一次，然后读到它跑完。 */

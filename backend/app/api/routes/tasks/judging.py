@@ -258,6 +258,8 @@ class TaskJudgeSummariesOut(BaseModel):
 
 #: 一次最多问几版提交：参与者列表一页最多 200 人。
 MAX_SUMMARY_IDS = 200
+#: 提交 id 是 BIGINT：比这大的数不指任何一行。
+MAX_SUBMISSION_ID = 2**63 - 1
 
 
 @router.get(
@@ -282,7 +284,9 @@ async def get_task_judge_summaries(
         part = part.strip()
         if not part:
             continue
-        if not part.isdigit():
+        # 只认 ASCII 十进制数字：「①」「²」也过得了 isdigit，int() 却不收；大过 BIGINT 的
+        # 数不指任何一行，绑进查询反而报错。
+        if not (part.isascii() and part.isdigit()) or int(part) > MAX_SUBMISSION_ID:
             raise BadRequestError(say("judgeSummaryBadIds"))
         ids.append(int(part))
     if len(ids) > MAX_SUMMARY_IDS:
@@ -292,15 +296,19 @@ async def get_task_judge_summaries(
     for submission_id, run in runs.items():
         if run.task_id != task_id:
             continue
-        shown = judge_queue.run_to_api(run, teacher=True) or {}
+        # 只要几个数：直接从结果行数，不像 ``run_to_api`` 那样把每个用例的输入输出都抄一遍。
+        cases = [c for c in run.results or [] if isinstance(c, dict)]
+        done = run.state not in judge_queue.IN_FLIGHT
         out.append(
             {
                 "submissionId": submission_id,
                 "state": run.state,
-                "passedCases": int(shown.get("passedCases") or 0),
-                "caseCount": int(shown.get("caseCount") or 0),
-                "passedPoints": int(shown.get("passedPoints") or 0),
-                "totalPoints": int(shown.get("totalPoints") or 0),
+                "passedCases": sum(1 for c in cases if c.get("status") == "ok")
+                if done
+                else 0,
+                "caseCount": len(cases) if done else 0,
+                "passedPoints": int(run.passed_points or 0),
+                "totalPoints": int(run.total_points or 0),
             }
         )
     return ok({"summaries": out})

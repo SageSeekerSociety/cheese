@@ -1,5 +1,6 @@
 // 题目测试点的评测（`backend/app/api/routes/tasks/judging.py`）：提交页那块「将要评测的
-// 代码」、一版提交的评测结果、老师展开的用例、参与者列表的评测摘要，以及出题人试跑。
+// 代码」、一版提交的评测结果、参与者列表的评测摘要，以及出题人试跑。老师展开隐藏用例不另
+// 取：能批改的人读到的评测结果里已经带着每个用例的输入和期望输出。
 import type {
   TaskCodeVersion,
   TaskJudgeRun,
@@ -26,7 +27,10 @@ export namespace TaskJudgeApi {
       true
     )
 
-  /** 几版提交各自最近一次评测的摘要（只给能批改的人）。 */
+  /** 一次最多问几版提交（后端 `MAX_SUMMARY_IDS`）。 */
+  export const SUMMARY_BATCH = 200
+
+  /** 几版提交各自最近一次评测的摘要（只给能批改的人），最多 `SUMMARY_BATCH` 版。 */
   export const summaries = (taskId: number, submissionIds: number[]) =>
     axiosRequest<{ summaries: TaskJudgeSummary[] }>(
       { url: `/tasks/${taskId}/judge/summaries`, method: 'GET', params: { submissionIds: submissionIds.join(',') } },
