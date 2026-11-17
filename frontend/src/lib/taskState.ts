@@ -54,6 +54,10 @@ export type TaskStateTone = 'ok' | 'okMark' | 'neutral' | 'warn' | 'ink' | 'dang
 
 export interface TaskState {
   kind: TaskStateKind
+  /** 在跑、但队友报的那一句话超过 `STALE_AFTER_MS` 没变：图标右上角叠一个橙点。 */
+  stale: boolean
+  /** 会话不在跑、一阵子没回来或已离开：图标换成断开的云，状态词不变。 */
+  offline: boolean
   /** 八个状态词中的哪一个。 */
   status: TaskStatus
   icon: string
@@ -69,6 +73,14 @@ export interface TaskState {
   /** 悬停在记号上说的那一句；没有就空串。 */
   tip: string
 }
+
+/** 会话在跑，那一句话超过这么久没变，就算「进度很久没变」。 */
+export const STALE_AFTER_MS = 30 * 60_000
+/** 标着在做、会话却没在跑，超过这么久没回来，就算「可能已断线」。 */
+export const OFFLINE_AFTER_MS = 15 * 60_000
+const OFFLINE_ICON = 'mdi-cloud-off-outline'
+/** 进度很久没变：空心环（不转）+ 右上角橙点，转着会让人以为还在往前走。 */
+const STALE_ICON = 'mdi-circle-outline'
 
 const KIND: Record<BoardPhrase, TaskStateKind> = {
   running: 'running',
@@ -180,6 +192,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'progress_state'
       | 'progress_note'
       | 'progress_set_at'
+      | 'agent_left_at'
       | 'session_running'
       | 'moving'
       | 'waiting_on'
@@ -251,9 +264,24 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   const label = statusLabel(status)
   let line = ''
   let tip = ''
+  let stale = false
+  let offline = false
   switch (kind) {
     case 'running': {
       if (!live) icon = RUNNING_IDLE_ICON
+      // 标着在做：会话在跑但那一句话很久没变，或会话已走了、一阵子没回来 —— 图标要说出来。
+      if (row.progress_state === 'working') {
+        const age = row.progress_set_at ? now - Date.parse(row.progress_set_at) : NaN
+        if (live && age >= STALE_AFTER_MS) {
+          stale = true
+          icon = STALE_ICON
+        }
+        if (!live && (!!row.agent_left_at || age >= OFFLINE_AFTER_MS)) {
+          offline = true
+          icon = OFFLINE_ICON
+          tone = 'danger'
+        }
+      }
       // 卡被退回，平台把任务放回进行中、队友还没说自己在改什么：写谁退回的，修改中。
       if (!note && row.card?.status === 'rejected') {
         line = joined([returnedBy(row.card, nameOf), t('work.taskState.revising')])
@@ -324,8 +352,11 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     default:
       break
   }
+  if (phrase === 'running') tip = detailOf({ row, label, note, line, live, stale, offline, now })
   return {
     kind,
+    stale,
+    offline,
     status,
     icon,
     tone,
@@ -335,4 +366,31 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     line,
     tip,
   }
+}
+
+/** 悬停详情：一行一项（标题、在做什么、会话、最近更新、能做什么）。没有的项不写。 */
+function detailOf(a: {
+  row: StateRow
+  label: string
+  note: string
+  line: string
+  live: boolean
+  stale: boolean
+  offline: boolean
+  now: number
+}): string {
+  const { row, note, live, stale, offline, now } = a
+  const title = stale
+    ? t('work.taskState.detail.staleTitle')
+    : offline
+      ? t('work.taskState.detail.offlineTitle')
+      : a.label
+  const lines = [title, note || a.line]
+  if (offline) lines.push(t('work.taskState.detail.sessionGone'))
+  else lines.push(live ? t('work.taskState.detail.sessionLive') : t('work.taskState.detail.sessionIdle'))
+  const ago = waitedFor(row.progress_set_at, now)
+  if (ago) lines.push(t('work.taskState.detail.updated', { time: ago }))
+  if (stale) lines.push(t('work.taskState.detail.staleHint'))
+  if (offline) lines.push(t('work.taskState.detail.offlineHint'))
+  return lines.filter(Boolean).join('\n')
 }
