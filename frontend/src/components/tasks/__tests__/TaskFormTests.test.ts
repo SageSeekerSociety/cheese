@@ -61,7 +61,13 @@ async function openAddMenu() {
   await screen.findByTestId('task-form-add-tests')
 }
 
-const testsLine = (points = 60): TaskRubricLine => ({ item: '正确性', points, criteria: '', stage: null, kind: 'tests' })
+const testsLine = (points = 60): TaskRubricLine => ({
+  item: '正确性',
+  points,
+  criteria: '',
+  stage: null,
+  kind: 'tests',
+})
 
 describe('测试点那一行', () => {
   it('从「添加一项」加进来时配上一套起步的用例，一个阶段只能加一行', async () => {

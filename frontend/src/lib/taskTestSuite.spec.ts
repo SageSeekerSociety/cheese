@@ -10,7 +10,13 @@ const stages: TaskStage[] = [
   { id: 'a1', name: '一', description: '', dueAt: null },
   { id: 'b2', name: '二', description: '', dueAt: null },
 ]
-const tests = (stage: string | null): TaskRubricLine => ({ item: '正确性', points: 60, criteria: '', stage, kind: 'tests' })
+const tests = (stage: string | null): TaskRubricLine => ({
+  item: '正确性',
+  points: 60,
+  criteria: '',
+  stage,
+  kind: 'tests',
+})
 
 describe('suitesToSend', () => {
   it('只发有测试点那一行的阶段的那一套，读回来才有的几项去掉', () => {
