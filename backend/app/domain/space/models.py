@@ -746,6 +746,7 @@ class SpaceLearningJudgment(Base):
         ),
         # Step 3 counts people per point, and removing a point cascades by it.
         Index("ix_space_learning_judgment_knowledge_point_id", "knowledge_point_id"),
+        Index("ix_space_learning_judgment_misconception_id", "misconception_id"),
         CheckConstraint(
             "level IN ('mastered', 'shaky', 'weak')",
             name="ck_space_learning_judgment_level",
@@ -782,6 +783,17 @@ class SpaceLearningJudgment(Base):
     #: 依据：成员自己的消息（block id），最近的在前，至多几条。
     evidence_block_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False
+    )
+    #: 这条判断背后的那个误解（档位为不稳 / 薄弱时模型归纳，§ step 3）。老师那一侧
+    #: 按它数「常见误解」的人数；掌握的那一档、或者模型说不出误解时为空。
+    misconception_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_learning_misconception.id",
+            ondelete="SET NULL",
+            name="fk_space_learning_judgment_misconception_id",
+        ),
+        nullable=True,
     )
     #: 成员点了「标记不准」的时刻；下一次给出这个知识点的判断时清掉。
     disputed_at: Mapped[datetime | None] = mapped_column(
@@ -884,6 +896,7 @@ class SpaceLearningQuestion(Base):
         Index("ix_space_learning_question_space_user", "space_id", "user_id"),
         Index("ix_space_learning_question_task_id", "task_id"),
         Index("ix_space_learning_question_knowledge_point_id", "knowledge_point_id"),
+        Index("ix_space_learning_question_cluster_id", "cluster_id"),
         CheckConstraint(
             "kind IN ('concept', 'error', 'answer', 'verify', 'other')",
             name="ck_space_learning_question_kind",
@@ -923,8 +936,17 @@ class SpaceLearningQuestion(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     #: 这条提问一句话的概括（模型的话，不是原文），至多几十字。
     gist: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    #: 第 3 步的高频问题簇；那张表建好之前一直是 NULL。
-    cluster_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: 归进的高频问题簇（``SpaceLearningCluster``）；每晚分析的聚类那一步写，还没归
+    #: 进去的是 NULL。
+    cluster_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_learning_cluster.id",
+            ondelete="SET NULL",
+            name="fk_space_learning_question_cluster_id",
+        ),
+        nullable=True,
+    )
     #: 这条消息说出的时刻（与 block 的 created_at 相同）。
     asked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -973,5 +995,251 @@ class SpaceLearningRun(Base):
         DateTime(timezone=True), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningCluster(Base):
+    """一类高频问题：意思相近的几条提问归成的一簇（§ learning analysis, step 3）。
+
+    每晚分析的聚类那一步写：把还没归类的提问（``SpaceLearningQuestion.gist``）交给
+    模型，归进已有的簇或建新簇。``label`` 是这一类的代表性问题（模型的话），
+    ``knowledge_point_id`` 是它多半落在的知识点（说不出就空）。老师的「高频问题」按
+    问过的不同人数排 —— 那是读的时候数 ``space_learning_question`` 里归进来的行，
+    不存在这里，所以这一行只在建簇时写一次。
+    """
+
+    __tablename__ = "space_learning_cluster"
+    __table_args__ = (
+        Index("ix_space_learning_cluster_space_id", "space_id"),
+        Index("ix_space_learning_cluster_knowledge_point_id", "knowledge_point_id"),
+        CheckConstraint(
+            "length(btrim(label)) > 0", name="ck_space_learning_cluster_label"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_cluster_space_id_space",
+        ),
+        nullable=False,
+    )
+    knowledge_point_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="SET NULL",
+            name="fk_space_learning_cluster_knowledge_point_id",
+        ),
+        nullable=True,
+    )
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningMisconception(Base):
+    """一个知识点下的一种常见误解（每晚分析随判断一起归纳）。
+
+    模型给一条「不稳 / 薄弱」的判断时顺带说出背后的误解；它先看这个知识点已有的误
+    解，能对上就用原话，对不上才说一个新的 —— 新的在这里建一行。判断行指向它
+    （``SpaceLearningJudgment.misconception_id``），老师那一侧按指向它的不同成员数排
+    「常见误解」。同一个知识点下同一句话只有一行。
+    """
+
+    __tablename__ = "space_learning_misconception"
+    __table_args__ = (
+        Index(
+            "uq_space_learning_misconception_point_label",
+            "knowledge_point_id",
+            "label",
+            unique=True,
+        ),
+        Index("ix_space_learning_misconception_space_id", "space_id"),
+        CheckConstraint(
+            "length(btrim(label)) > 0", name="ck_space_learning_misconception_label"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_misconception_space_id_space",
+        ),
+        nullable=False,
+    )
+    knowledge_point_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_misconception_knowledge_point_id",
+        ),
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningAdvice(Base):
+    """一个知识点的讲课建议，模型写、每晚为卡住人数最多的几个知识点刷新。
+
+    One row per 知识点: the current advice and the stuck count it was written
+    for. The nightly pass rewrites it when that count or the leading
+    misconceptions have moved, so reading the detail page never calls a model.
+    """
+
+    __tablename__ = "space_learning_advice"
+    __table_args__ = (
+        Index(
+            "uq_space_learning_advice_knowledge_point_id",
+            "knowledge_point_id",
+            unique=True,
+        ),
+        Index("ix_space_learning_advice_space_id", "space_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_advice_space_id_space",
+        ),
+        nullable=False,
+    )
+    knowledge_point_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_advice_knowledge_point_id",
+        ),
+        nullable=False,
+    )
+    advice: Mapped[str] = mapped_column(Text, nullable=False)
+    #: 写这条建议时卡住的人数；人数变了下一晚重写。
+    stuck_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: 写这条建议时排在前面的误解（id，按人数），变了也重写。
+    misconception_ids: Mapped[list[int]] = mapped_column(
+        ARRAY(BigInteger), nullable=False
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningWeek(Base):
+    """一周里一个知识点卡住多少人：判断只存当前，趋势要靠每周记一笔（§ step 3）。
+
+    One row per (board, 知识点, week). The nightly pass rewrites the CURRENT
+    week's row after it has written the night's judgments, so by the end of a
+    week the row holds that week's last count, and earlier weeks stay as they
+    were. ``week_start`` is the Monday of the week in the platform's calendar
+    (``learning_insight_analysis.LOCAL_ZONE``). ``involved_count`` is how many
+    people the analysis had judged on the point that week — the size of the
+    group, which the 「不足 3 人，不分析」 rule is held against.
+    """
+
+    __tablename__ = "space_learning_week"
+    __table_args__ = (
+        Index(
+            "uq_space_learning_week_space_point_week",
+            "space_id",
+            "knowledge_point_id",
+            "week_start",
+            unique=True,
+        ),
+        Index("ix_space_learning_week_knowledge_point_id", "knowledge_point_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_week_space_id_space",
+        ),
+        nullable=False,
+    )
+    knowledge_point_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_week_knowledge_point_id",
+        ),
+        nullable=False,
+    )
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    stuck_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    involved_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningExport(Base):
+    """谁在什么时候导出了一份学情报告（只追加）。
+
+    The report holds only the class as a whole, but it leaves the platform, so
+    who took it, when, in which format and with which parts is kept — the
+    record a teacher's export answers to. ``sections`` are the parts ticked in
+    the dialog; ``knowledge_point_id`` is set when the report covered one 知识点.
+    """
+
+    __tablename__ = "space_learning_export"
+    __table_args__ = (
+        Index("ix_space_learning_export_space_id", "space_id"),
+        Index("ix_space_learning_export_knowledge_point_id", "knowledge_point_id"),
+        CheckConstraint(
+            "format IN ('pdf', 'xlsx', 'docx')", name="ck_space_learning_export_format"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_export_space_id_space",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    format: Mapped[str] = mapped_column(String(8), nullable=False)
+    sections: Mapped[list[str]] = mapped_column(ARRAY(String(32)), nullable=False)
+    knowledge_point_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="SET NULL",
+            name="fk_space_learning_export_knowledge_point_id",
+        ),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

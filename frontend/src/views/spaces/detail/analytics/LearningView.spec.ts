@@ -26,7 +26,6 @@ const base: Props = {
   failed: false,
   errorDetail: null,
   selected: [],
-  student: null,
   knowledgePoint: null,
 }
 function mount(props: Partial<Props> = {}) {
@@ -91,18 +90,19 @@ describe('学习看板的独立画面', () => {
     expect(view.queryByText(t('spaces.analytics.learning.queue.noFlagged'))).toBeNull()
   })
 
-  it('两个筛选独立发送模型变更，也能反映外部传入的值', async () => {
+  it('只能按知识点筛，不能按成员筛；发言前标代号而不是名字', async () => {
     const view = mount()
-    await fireEvent.mouseDown(view.getByRole('combobox', { name: t('spaces.analytics.learning.student') }))
-    await fireEvent.click(await screen.findByRole('option', { name: '爱丽丝' }))
-    expect(view.emitted()['update:student']).toEqual([['alice']])
+    expect(view.queryByRole('combobox', { name: '成员' })).toBeNull()
+    expect(view.queryByText('爱丽丝')).toBeNull()
+    expect(
+      view.queryAllByText(t('spaces.analytics.learning.class.memberCode', { code: 'A7F3' })).length
+    ).toBeGreaterThan(0)
     await fireEvent.mouseDown(view.getByRole('combobox', { name: t('spaces.analytics.learning.knowledgePoint') }))
     await fireEvent.click(await screen.findByRole('option', { name: '瑞利散射' }))
     expect(view.emitted()['update:knowledgePoint']).toEqual([[7]])
-    await view.rerender({ student: 'alice', knowledgePoint: 7 })
-    await view.rerender({ student: 'bob', knowledgePoint: null })
-    expect(view.container.querySelectorAll('.v-select__selection-text')[0]?.textContent).toBe('鲍勃')
-    expect(view.container.querySelectorAll('.v-select__selection-text')[1]?.textContent).toContain(
+    await view.rerender({ knowledgePoint: 7 })
+    await view.rerender({ knowledgePoint: null })
+    expect(view.container.querySelector('.v-select__selection-text')?.textContent).toContain(
       t('spaces.analytics.learning.allKnowledgePoints')
     )
   })

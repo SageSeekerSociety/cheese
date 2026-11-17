@@ -1156,12 +1156,13 @@ def test_filing_a_card_says_what_it_did_to_the_task():
         {
             "action": "request",
             "subject": "feat: add the report",
-            "completes_task": True,
         },
         host,
     )
 
     assert "待审阅" in said
+    # A merge no longer closes the task: the reply says the teammate judges.
+    assert "不会自己关" in said
     assert "清掉" in said
     assert "cheese_task 的 state" in said
     assert "退回或作废" in said

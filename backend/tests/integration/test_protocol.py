@@ -70,4 +70,5 @@ def test_mentor_can_accept(client):
     assert topic["status"] == "active"  # 交付完成不归档 (#442 decision 1)
     task = client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"]
     assert task["accepted_by"] == "mentor-1"
-    assert task["presentation"]["phrase"] == "accepted"
+    # A merge does not end the task: its teammate judges whether it is done.
+    assert task["status"] == "open"

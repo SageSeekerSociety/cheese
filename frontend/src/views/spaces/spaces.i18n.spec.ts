@@ -186,7 +186,7 @@ describe('spaces in English', () => {
     const excerpt = {
       blockId: 'b1',
       quote: 'why does it loop',
-      studentName: 'Ann',
+      memberCode: 'A7F3',
       knowledgePoint: null,
       topicTitle: 'Loops',
       createdAt: null,

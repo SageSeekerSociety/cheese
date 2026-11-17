@@ -20,6 +20,7 @@ import httpx
 from sqlalchemy import or_, select
 
 from app.core.sentences import say
+from app.domain.addressing import Event
 from app.domain.delivery_events import DeliveryEvent, NotificationType, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
@@ -406,30 +407,44 @@ async def poll_uncarded_task_prs(
                     topic = await session.get(Topic, task.room_id)
                     if topic is None or topic.status == TopicStatus.archived:
                         return checked, merged, None
-                    # Merged on the forge without a delivery: nothing said it was
-                    # a step, so the task is done.
+                    # Merged on the forge without a delivery: nobody said the
+                    # task is done, so it goes on, and its owner hears so in
+                    # the task — whether it is over is theirs to say
+                    # (`task_landing`).
                     await delivery_landed(
                         session,
                         task,
                         by=await _merged_by_name(session, status),
                         head=status.head_sha,
                         pr_number=number,
-                        completes=True,
                         handed_over=None,
                         record_instruction=record_instruction,
                         task_teammate=task_teammate,
                     )
+                    # A task closed by hand before its PR merged stays closed:
+                    # there is nothing for its owner to decide.
+                    goes_on = task.status == TaskStatus.open
+                    owner = task.owner_handle if goes_on else None
                     await announce(
                         session,
                         place_id=task.room_id,
                         task_id=task.id,
-                        content=say("prMergedDelivered", pr=number),
+                        content=(
+                            say("prMergedDelivered", pr=number)
+                            if not goes_on
+                            else say(
+                                "prMergedTaskGoesOn", pr=number, owner=f"<@{owner}>"
+                            )
+                            if owner
+                            else say("prMergedTaskGoesOnNoOwner", pr=number)
+                        ),
                         meta=notice(
                             EVENT_ACCEPT_DONE,
                             severity=SEVERITY_INFO,
                             who=WHO_PLATFORM,
                             detail=task.pr_url or "",
                         ),
+                        points_at=Event(mentioned=(owner,) if owner else ()),
                     )
                     await session.commit()
                     merged = True

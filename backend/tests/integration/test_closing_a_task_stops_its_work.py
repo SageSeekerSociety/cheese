@@ -153,13 +153,44 @@ def test_the_owner_closing_a_task_stops_the_turn_running_in_it(client):
         app.dependency_overrides.pop(get_chat_service, None)
 
 
+def _owner_said_it_is_over(client, task: dict) -> str:
+    """The owner's word in the task that it is over: what its own session
+    names to close it (`review.close_grounds`). Written straight in, so it
+    wakes nobody: what is measured here is the close, not a new turn."""
+    from app.domain.block.models import Block, BlockKind
+    from app.domain.event_author import AuthorType
+
+    said = uuid.uuid4()
+
+    async def write():
+        async with client.test_factory() as db:
+            db.add(
+                Block(
+                    id=said,
+                    project_id=uuid.UUID(task["project_id"]),
+                    conversation_id=uuid.UUID(task["id"]),
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="alice",
+                    content="可以了，收吧",
+                )
+            )
+            await db.commit()
+
+    client.portal.call(write)
+    return str(said)
+
+
 def test_a_task_closed_by_its_own_session_is_not_interrupted(client):
     channel, task, room = _working_task(client)
     task_id = uuid.UUID(task["id"])
     try:
         closed = client.post(
             f"/topics/{task['id']}/close",
-            json={"conclusion": "做完了"},
+            json={
+                "conclusion": "做完了",
+                "owner_message_id": _owner_said_it_is_over(client, task),
+            },
             headers=task_agent_headers(
                 task["project_id"], task_id, room_agent_seat(client, room)
             ),
@@ -206,7 +237,10 @@ def test_a_turn_that_closed_its_own_task_gets_to_finish_then_stops(client):
     try:
         closed = client.post(
             f"/topics/{task['id']}/close",
-            json={"conclusion": "做完了"},
+            json={
+                "conclusion": "做完了",
+                "owner_message_id": _owner_said_it_is_over(client, task),
+            },
             headers=task_agent_headers(
                 task["project_id"], task_id, room_agent_seat(client, room)
             ),
