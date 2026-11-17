@@ -11,6 +11,7 @@ import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 import type { TaskLine } from '../../lib/channelTasks'
+import type { Receipt } from '../../lib/readReceipts'
 import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
@@ -49,6 +50,7 @@ import MessageAppCard from './MessageAppCard.vue'
 import MessageEditor from './MessageEditor.vue'
 import MessageFileCard from './MessageFileCard.vue'
 import MessageQuote from './MessageQuote.vue'
+import ReadReceipt from './ReadReceipt.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -128,6 +130,8 @@ const props = defineProps<{
    * 占满一栏。频道主线和私聊不给，那里只收队友的回复。
    */
   foldPlain?: boolean
+  /** 自己这条谁读了谁没读（`lib/readReceipts`）；不是自己的、或没有别人能读时是 null。 */
+  receipt?: Receipt | null
 }>()
 
 // 他自己的芝士替他写的这条：署名照旧是他，名字旁边标出来（docs/agent-principles.md 一、四）。
@@ -349,8 +353,11 @@ const quickOffered = computed(() => {
           <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"
             >mdi-pin</v-icon
           >
+          <ReadReceipt v-if="receipt" class="im-receipt" :receipt="receipt" />
         </template>
       </div>
+      <!-- A continued line has no name row: its ring sits at the row's right edge, level with its first line. -->
+      <ReadReceipt v-if="receipt && !runStart" class="im-receipt im-receipt--cont" :receipt="receipt" />
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
@@ -579,7 +586,7 @@ const quickOffered = computed(() => {
         </button>
       </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-         highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
+         highlighted; click toggles. -->
       <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
         <button
           v-for="r in block.reactions"
@@ -678,6 +685,17 @@ const quickOffered = computed(() => {
   font-size: 12px;
   line-height: var(--lh-14-loose);
   color: var(--faint);
+}
+/* 已读那一圈：在名字那一行的最右端；续话没有那一行，挂在这一行右上角、和第一行字齐平。 */
+.im-receipt {
+  margin-left: auto;
+  align-self: center;
+}
+.im-receipt--cont {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 16px;
 }
 /* 发件箱: 慢请求、断网或正在输入预览时淡一档，正常快发不闪灰。 */
 .im-row--dim .im-text,

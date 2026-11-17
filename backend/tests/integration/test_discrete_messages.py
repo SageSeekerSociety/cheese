@@ -67,7 +67,9 @@ def test_each_message_boundary_is_retained_in_the_session_record(client):
     # interleaved with the tool activity that separates them.
     # The agent's `activity` (working / done) follows the turn's own lifecycle
     # frames and is asserted in test_member_activity.py.
-    types = [f["type"] for f in frames if f["type"] != "activity"]
+    # So is `reads` (the teammate has read what its turn was given), a
+    # standalone fact asserted in test_message_reads.py.
+    types = [f["type"] for f in frames if f["type"] not in ("activity", "reads")]
     assert "delta" not in types
     assert types == [
         "user_block",

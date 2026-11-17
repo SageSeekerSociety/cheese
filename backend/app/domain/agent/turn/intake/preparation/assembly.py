@@ -512,6 +512,7 @@ async def prepare(
         memory=memory,
         pending_ids=pending_ids,
         notice_ids=[b.id for b in notices],
+        read_ids=[b.id for b in [*pending, *notices]],
         read_through=read_through,
         prior_progress=prior_progress,
         earlier_messages=earlier_messages,

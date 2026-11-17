@@ -52,6 +52,8 @@ class PreparedSend:
     # apart from `consumed_ids`: those are the blocks this turn answers for and
     # stamps, while the window it read also carried other seats' messages.
     read_through: tuple[datetime, uuid.UUID] | None
+    # Every block the prompt carries: read by the seat once it is handed over.
+    read_ids: list[uuid.UUID]
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
