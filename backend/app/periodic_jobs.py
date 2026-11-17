@@ -59,6 +59,8 @@ PERIODIC_JOB_NAMES = (
     "forge credential cache cleanup",
     "forge orphan account sweep",
     "quiet task reminder",
+    "neglected task warning",
+    "neglected task close",
     "task deadline reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
@@ -218,7 +220,15 @@ def periodic_jobs(
         get_runner=get_runner,
         last_activity=last_activity,
     )
-    task_quiet_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    task_quiet_periodic.register_periodic_jobs(
+        jobs,
+        sessions=sessions,
+        chat=chat,
+        settle_card=settle_card,
+        announce=announce,
+        record_seat=record_seat_instruction,
+        machines=checkout_sweep.sweep,
+    )
     task_notices_periodic.register_periodic_jobs(jobs, sessions=sessions)
     review_periodic.register_periodic_jobs(
         jobs,

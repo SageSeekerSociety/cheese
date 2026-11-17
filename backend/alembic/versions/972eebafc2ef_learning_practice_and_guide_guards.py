@@ -1,7 +1,7 @@
 """学情分析：巩固练习、复习排期、推送、讲解缓存、每人每日调用，与引导模式的记录
 
 Revision ID: 972eebafc2ef
-Revises: 4007efa0f236
+Revises: d7a2e41f8b06
 Create Date: 2026-11-17
 
 第四步（§ learning analysis, step 4）。六张新表：
@@ -27,7 +27,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "972eebafc2ef"
-down_revision: str | Sequence[str] | None = "4007efa0f236"
+down_revision: str | Sequence[str] | None = "d7a2e41f8b06"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

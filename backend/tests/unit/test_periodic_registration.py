@@ -36,6 +36,8 @@ _EXPECTED_PORTS = {
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
     "machines": checkout_sweep.sweep,
+    "chat": ANY,
+    "announce_to_origin": announce,
 }
 
 #: 接线时从设置里现读的口子：只有草稿扫描的窗口是这种。写成模块级常量会让它与
@@ -60,6 +62,13 @@ _KEYWORD_PORTS = {
         "machines",
     ),
     "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
+    "neglected task close": (
+        "chat",
+        "settle_card",
+        "announce_to_origin",
+        "record_seat",
+        "machines",
+    ),
 }
 
 
@@ -123,6 +132,8 @@ def _world():
             "sessions",
         ),
         ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
+        ("neglected task warning", "task_quiet.neglect.warn_neglected", "sessions"),
+        ("neglected task close", "task_quiet.neglect.close_neglected", "sessions"),
         (
             "task deadline reminder",
             "task_notices.sweep.remind_deadlines",
@@ -485,6 +496,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("forge credential cache cleanup", 3600),
         ("forge orphan account sweep", 3600),
         ("quiet task reminder", 3600),
+        ("neglected task warning", 3600),
+        ("neglected task close", 3600),
         ("task deadline reminder", 3600),
         ("pr poll", 101),
         ("task pr poll", 101),

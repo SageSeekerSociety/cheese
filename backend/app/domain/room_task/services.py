@@ -711,6 +711,7 @@ class TaskService:
             raise UnprocessableEntityError(say("taskStillOpen"))
         task.status = TaskStatus.open
         task.closed_at = None
+        task.closed_reason = None
         task.conclusion = None
         # Reopened is 开启: what its teammate last reported was about the work
         # that closed.

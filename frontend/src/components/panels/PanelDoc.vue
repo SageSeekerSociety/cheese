@@ -214,6 +214,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :agent-name="props.agentName"
     :agent-handle="props.agentHandle"
     :mention-names="people.names.value"
+    :print-mention-names="people.originalNames.value"
     :mention-people="people.people.value"
     :notified-mentions="doc.notifiedMentions.value"
     :fetch-notified-mentions="doc.fetchNotifiedMentions"

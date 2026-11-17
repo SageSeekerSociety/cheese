@@ -349,6 +349,10 @@ class Task(UuidPk, Timestamps, Base):
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Why the platform closed it, when a person did not: `neglect` = nobody
+    # touched it for long enough (`room_task.presentation.neglect`). NULL for
+    # every task a person or its teammate closed. Cleared when it is reopened.
+    closed_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # The main-line message this task was made from, or whose 支线 it was made
     # in: the task shows under it. A message can have any number of tasks.
     # use_alter: tasks↔blocks is a circular FK; add this one via ALTER.
