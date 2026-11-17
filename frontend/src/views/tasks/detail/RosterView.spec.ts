@@ -325,3 +325,57 @@ describe('名单里的额度', () => {
     expect(drawnNames(view)).toEqual(['许一', '周舟', '林小满'])
   })
 })
+
+// 挂了测试点的题多一列「测试点」：每人最新一版通过几个；评测失败的标出来，还在跑的说评测中。
+describe('名单里的测试点', () => {
+  afterEach(() => cleanup())
+
+  function mountTests(judge: Map<number, unknown>) {
+    const latest = new Map<number, Latest>([
+      [1, { submissionId: 501, version: 1, createdAt: Date.now() }],
+      [2, { submissionId: 502, version: 2, createdAt: Date.now() }],
+      [3, { submissionId: 503, version: 1, createdAt: Date.now() }],
+    ])
+    return render(RosterView, {
+      props: {
+        taskData: { ...TASK, testSuite: [{ stage: null, cases: [] }] } as never,
+        participants: [
+          claim(1, '林小满', 'APPROVED', 3),
+          claim(2, '周舟', 'APPROVED', 2),
+          claim(3, '许一', 'APPROVED', 1),
+        ] as never,
+        latestByParticipant: latest,
+        judgeBySubmission: judge as never,
+        loading: false,
+        denied: false,
+        failed: false,
+        failureReason: null,
+        busyId: null,
+      },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
+  }
+
+  it('写每人最新一版通过几个，失败的、还在跑的分开说', () => {
+    const view = mountTests(
+      new Map([
+        [501, { submissionId: 501, state: 'done', passedCases: 2, caseCount: 3, passedPoints: 60, totalPoints: 100 }],
+        [502, { submissionId: 502, state: 'failed', passedCases: 0, caseCount: 0, passedPoints: 0, totalPoints: 0 }],
+        [503, { submissionId: 503, state: 'running', passedCases: 0, caseCount: 0, passedPoints: 0, totalPoints: 0 }],
+      ])
+    )
+    expect(view.getByText(t('tasks.judge.roster.col'))).toBeTruthy()
+    const cells = view.getAllByTestId('roster-tests-cell').map((el) => el.textContent?.trim())
+    const byName = Object.fromEntries(drawnNames(view).map((name, i) => [name, cells[i]]))
+    expect(byName).toEqual({
+      林小满: t('tasks.judge.roster.passed', { n: 2, total: 3 }),
+      周舟: t('tasks.judge.roster.failed'),
+      许一: t('tasks.judge.roster.running'),
+    })
+  })
+
+  it('没挂测试点的题不画这一列', () => {
+    const view = mount({ participants: [claim(1, '林小满', 'APPROVED', 1)] })
+    expect(view.queryByText(t('tasks.judge.roster.col'))).toBeNull()
+  })
+})
