@@ -101,7 +101,13 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
         </div>
       </li>
     </ul>
-    <BaseEmptyState v-else size="inline" class="versions__empty" :title="t('tasks.artifact.noVersions')" />
+    <BaseEmptyState
+      v-else
+      size="inline"
+      align="center"
+      class="versions__empty"
+      :title="t('tasks.artifact.noVersions')"
+    />
     <BaseButton v-if="hidden > 0" size="sm" @click="all = true">
       {{ t('tasks.artifact.showEarlier', { n: hidden }) }}
     </BaseButton>

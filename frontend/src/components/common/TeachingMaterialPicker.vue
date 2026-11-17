@@ -147,6 +147,7 @@ function toggle(id: number, on: boolean) {
         <BaseEmptyState
           v-if="selectable.length === 0"
           size="inline"
+          align="center"
           class="material-picker__empty"
           data-testid="teaching-materials-empty"
           :title="t('spaces.teaching.fields.materialsEmpty')"

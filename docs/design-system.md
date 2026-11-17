@@ -569,6 +569,7 @@ const { saving, saved, dirty, error, run } = useSaveState({
 
 - 属性：`title`、`desc`、`icon`（给空字符串不画图标）、`action`（一颗 `secondary` 小按钮，点了发 `@action`）、`tone`（`error` 只换图标色）、`align`（`center` / `start`）。动作要别的角色或带图标，放默认插槽。
 - `inline` 不带外边距，由所在那块决定：设置卡片里加 `class="settings-empty"`（只管 16px 24px 内距）。
+- **`inline` 居不居中，看它所在的区域里还有没有别的东西。** 整块区域只剩这一句（空列表、空表格、空对话框正文、空面板、空抽屉）就加 `align="center"`，否则它会贴在区域左边，读的人会以为右边还有内容没画出来、或者内容没摆正。跟着列表走的一句、挂在卡片标题说明下面的一句、表单字段下面的一句（`.settings-empty` 那类）保持默认靠左，和上下的字对齐。`page`、`compact` 两档一直居中，不用写。
 - `v-empty-state` 有闸门（`frontend/eslint.config.mjs`）：这一批迁完，全树已经没有一处在用。真要再用，在那一行上面写 `eslint-disable-next-line` 加原因，和 §3.6 一样。
 - 读失败不是空状态，用 §3.10 的 `BaseLoadError`。
 - `AdminEmptyState` 是它的别名（`compact` 布尔值映射成 `size="compact"`），新代码直接用 `BaseEmptyState`。

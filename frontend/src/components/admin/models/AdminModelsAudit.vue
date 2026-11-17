@@ -76,6 +76,7 @@ function auditActionLabel(action: string): string {
     <BaseEmptyState
       v-else-if="!props.items.length"
       size="inline"
+      align="center"
       class="amd__auditEmpty"
       :title="t('models.audit.empty')"
     />

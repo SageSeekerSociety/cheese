@@ -105,7 +105,7 @@ const rows = computed<DiffRow[]>(() => {
 
 <template>
   <div class="aadiff">
-    <BaseEmptyState v-if="!rows.length" size="inline" :title="t('models.audit.diff.empty')" />
+    <BaseEmptyState v-if="!rows.length" size="inline" align="center" :title="t('models.audit.diff.empty')" />
     <ul v-else class="aadiff__rows">
       <li v-for="row in rows" :key="row.field" class="aadiff__row">
         <span class="aadiff__field">{{ row.label }}</span>

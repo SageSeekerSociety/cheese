@@ -225,6 +225,19 @@ describe('公告页', () => {
 
     await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
   })
+
+  // 空的时候这一页只剩那句「暂无公告」：它得落在内容区正中，不能贴左半边——
+  // 贴左看上去像右边还有东西没画出来（docs/design-system.md §3.12）。
+  it('一条公告都没有时，「暂无公告」落在内容区正中', async () => {
+    signIn(OWNER_ID)
+    listAnnouncements.mockImplementation(async () => ({ current: [], expired: [], notifyCount: 0 }))
+    await mount()
+
+    await waitFor(() => expect(document.querySelector('.bes')).toBeTruthy())
+    const block = document.querySelector('.bes') as HTMLElement
+    expect(block.classList.contains('bes--center')).toBe(true)
+    expect(block.classList.contains('bes--start')).toBe(false)
+  })
 })
 
 // 读失败和「一条公告都没有」在屏幕上曾经是同一句话：失败留下的也是空数组，

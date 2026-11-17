@@ -164,7 +164,7 @@ const fieldValue = (name: string) => props.values[name] ?? ''
       <template v-if="list">
         <p v-if="list.problem === 'invalid'" class="t-body c-muted">{{ t('work.mcp.problem.invalid') }}</p>
         <p v-else-if="list.problem === 'unreadable'" class="t-body c-muted">{{ t('work.mcp.problem.unreadable') }}</p>
-        <BaseEmptyState v-else-if="!list.servers.length" size="inline" :title="t('work.mcp.empty')" />
+        <BaseEmptyState v-else-if="!list.servers.length" size="inline" align="center" :title="t('work.mcp.empty')" />
         <div v-else class="mcp-groups">
           <section v-for="group in groups" :key="group.key" class="mcp-group" :data-group="group.key">
             <div class="mcp-group__head">
