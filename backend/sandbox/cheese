@@ -1776,6 +1776,17 @@ PLATFORM_TOOLS = ToolTable(
             },
         ),
         _tool(
+            "cheese_find",
+            "按关键词搜这个项目里你能读到的内容：各频道、支线和任务里的消息，文档段落、"
+            "周报、任务、资料库文件和产物，多久以前的都在内。在别的频道、别的任务里说过"
+            "或很久以前定过的事用它找；只找当前对话或当前频道里的原话用 "
+            "cheese_chat(action=search)。每个词都要命中，没找到就换个说法或少几个词。"
+            "消息和文档段落用 cheese_chat(action=get) 加结果里的 message_id 和 topic "
+            "读全文，资料库文件用 Bash 跑 `cheese library get <名字>` 取。",
+            {"query": _text("关键词，空格分开")},
+            ["query"],
+        ),
+        _tool(
             "platform_request",
             "平台 API 的其余部分：项目成员在网页上能做、其他平台工具又没有的事"
             "（给消息加表情、拉人进频道或改角色、回答问到你的选项问题、读自己的收件箱……）"
@@ -2588,6 +2599,9 @@ DELEGATED_TOOLS = ToolTable(
 #: 文档检索不在其中：个人芝士没有话题，只读谁都能读的那些页。
 _TOPIC_FREE = {
     "cheese_web",
+    # 房间里的搜的是它这条对话所在的项目，后端从凭据里读出是哪条对话；个人芝士的同名
+    # 工具没有话题。
+    "cheese_find",
     "platform_request",
     "cheese_help",
     # 文档自己有编号（CHEESE_DOCUMENT）；只有话题时，从话题查出它的文档。

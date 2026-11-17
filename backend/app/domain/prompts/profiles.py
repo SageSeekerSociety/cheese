@@ -27,6 +27,7 @@ ROOM_TOOLS = frozenset(
         "chat_react",
         "todo_write",
         "cheese_chat",
+        "cheese_find",
         "cheese_doc",
         "cheese_app",
         "cheese_canvas",
@@ -60,12 +61,14 @@ ROOM_TOOLS = frozenset(
 #: the work — that is a task's. It reads files and looks things up (`Read`,
 #: `Bash`) to write a clear task, and writes only its memory (`Write`, `Edit`,
 #: held to `~/.cheese/memory/` by the platform). `cheese_doc` reads and edits
-#: the project's goals, which its opening shows.
+#: the project's goals, which its opening shows. `cheese_find` finds what was
+#: said weeks ago or in another channel, which a session living for weeks needs.
 MAIN_LINE_TOOLS = frozenset(
     {
         "chat_send",
         "chat_react",
         "cheese_chat",
+        "cheese_find",
         "cheese_task.open",
         "cheese_task.tell",
         "cheese_task.look",
