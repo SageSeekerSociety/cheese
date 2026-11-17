@@ -251,6 +251,27 @@ async def cases_of(
     return out
 
 
+async def suite_of_stage(
+    session: AsyncSession, task_id: int, stage: int
+) -> TaskTestSuite | None:
+    """The suite stage ``stage`` of the task carries, or None."""
+    return await session.scalar(
+        select(TaskTestSuite).where(
+            TaskTestSuite.task_id == task_id, TaskTestSuite.stage == stage
+        )
+    )
+
+
+async def cases_with_text(
+    session: AsyncSession, suite_id: int
+) -> list[tuple[TaskTestCase, str, str]]:
+    """The suite's live cases in order, each with its input and expected
+    output read out of the private store — what a judging is given."""
+    rows = (await cases_of(session, [suite_id])).get(suite_id, [])
+    texts = await _cases_text(rows)
+    return [(row, *texts.get(row.id, ("", ""))) for row in rows]
+
+
 async def suite_stages(session: AsyncSession, task_id: int) -> list[int]:
     """The stages that carry 测试点 — what ``rubric.check_tests_lines`` reads."""
     rows = await session.scalars(
@@ -349,8 +370,8 @@ async def replace_suites(
     pointing at it stay), and ``revision`` goes up only when something about it
     actually changed; its cases are written as new rows and the old ones are
     marked ``superseded_at``. A stage whose suite left the form has its row
-    (and cases) removed — nothing points at it in step 1, since no judge run is
-    written yet; when runs exist, step 2 retires the row instead of dropping it.
+    (and cases) removed, and the judge runs made against it go with it
+    (``ON DELETE CASCADE``): taking a stage's 测试点 away takes its results.
 
     Returns whether anything changed, which is what the 题目 version records.
     """

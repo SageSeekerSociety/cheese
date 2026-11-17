@@ -36,7 +36,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.db.session import get_db
-from app.domain.task import auto_score, code_version, usage_score
+from app.domain.task import auto_score, code_version, judge_queue, usage_score
 from app.domain.task.access import (
     bind_review_path,
 )
@@ -332,8 +332,11 @@ async def post_task_submission(
     # 这一版要评测的代码（方案 §数据结构）：默认分支现在指着的那个 commit。读不到就留空
     # —— 交作业不该因为托管方慢而交不上来；连了 GitHub 的项目这一版留空（第 1 步只评
     # 平台托管的仓库）。带了 ``codeSha`` 就是页面上那一版，核一下它还是不是现在这一版。
-    pending = await _pending_code(
+    project = await project_of_claim(
         db, task=task, membership=membership, user_id=auth_user.user_id
+    )
+    pending = (
+        await code_version.for_project(db, project.id) if project is not None else None
     )
     if codeSha and pending is not None and pending.sha != codeSha:
         raise ConflictError(say("submissionCodeMoved"))
@@ -345,6 +348,17 @@ async def post_task_submission(
         contents=contents,
         stage=stage_at,
         code_sha=pending.sha if pending is not None else "",
+    )
+    # 这一阶段挂着测试点、也记下了代码版本，就排一次评测（方案 §一次评测怎么跑）；
+    # 同一版代码已经评过的，直接用那次的结果（``judge_queue``）。
+    await judge_queue.enqueue_for_submission(
+        db,
+        task_id=task_id,
+        stage=stage_at,
+        submission_id=int(submission_dto["id"]),
+        project_id=project.id if project is not None else None,
+        code_sha=pending.sha if pending is not None else "",
+        requested_by=auth_user.user_id,
     )
     # Commit before answering: the page that just submitted opens the submission
     # history next, and must find what it handed in. Same reason as the commit in
@@ -657,18 +671,3 @@ async def delete_task_submission_review(
     await review_service.delete_review(submission_id=submission_id)
     review_dto = await review_service.get_review_dto(submission_id)
     return ok({"review": review_dto})
-
-
-async def _pending_code(db, *, task, membership, user_id: int):
-    """这一版提交将要评测的代码：提交者那条领取的项目的默认分支。
-
-    ``project_of_claim`` 是「继续做」读的那个项目：领取批了、项目开出来了才有，还在等批
-    或者还没「开始做」时是 ``None``。项目没有、连的是 GitHub、或者托管方这一刻读不出来时
-    返回 ``None``：调用方据此留空，绝不因此拒掉这次提交（模块那句「读不到就留空」）。
-    """
-    project = await project_of_claim(
-        db, task=task, membership=membership, user_id=user_id
-    )
-    if project is None:
-        return None
-    return await code_version.for_project(db, project.id)
