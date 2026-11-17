@@ -51,6 +51,28 @@ export type PatchSpaceRequestData = {
   teaching?: SpaceTeaching
 }
 
+// ---- 学情分析（§ learning analysis, step 1）--------------------------------------
+//
+// 一块题目板的学情分析底座：开关、知识点清单、AI 建议、加入时的告知卡。契约见
+// `SpacesApi` 那几条 `learning-analysis` 方法；服务端在
+// `app/api/routes/spaces_learning_analysis.py`。
+
+/** 开关那一条（`PATCH .../learning-analysis`）：开还是关。 */
+export type PatchLearningAnalysisRequestData = {
+  enabled: boolean
+}
+
+/** 新建 / 改名一条知识点（`{ name }`）。 */
+export type KnowledgePointRequestData = {
+  name: string
+}
+
+/** AI 知识点建议的问：题目名 + 题面（纯文本，缺省空串）。 */
+export type KnowledgeSuggestionRequestData = {
+  name: string
+  description: string
+}
+
 export type PostSpaceAnnouncementRequestData = {
   title: string
   content: string

@@ -126,4 +126,21 @@ describe('who is busy in the room, under the composer', () => {
     const { container } = render(MemberActivity, { props: { lines: [typing('Alice'), typing('Bob')] } })
     expect(lines(container)).toEqual(['Alice和Bob正在输入…'])
   })
+
+  it('a working agent shows the spinning mark; 30 minutes without a frame turns it into the hollow ring with a dot', () => {
+    const base = { handle: 'cedar', name: 'Cedar', kind: 'working' as const }
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-21T10:00:00Z'))
+    const nowSec = Date.parse('2026-10-21T10:00:00Z') / 1000
+    const fresh = render(MemberActivity, {
+      props: { lines: [{ ...base, since: nowSec - 60, lastFrameAt: nowSec * 1000 - 5000 }] },
+    })
+    expect(fresh.container.querySelector('.mdi-timelapse')).not.toBeNull()
+    expect(fresh.container.querySelector('.member-activity__stale')).toBeNull()
+    const quiet = render(MemberActivity, {
+      props: { lines: [{ ...base, since: nowSec - 3600, lastFrameAt: (nowSec - 2400) * 1000 }] },
+    })
+    expect(quiet.container.querySelector('.mdi-circle-outline')).not.toBeNull()
+    expect(quiet.container.querySelector('.member-activity__stale')).not.toBeNull()
+  })
 })

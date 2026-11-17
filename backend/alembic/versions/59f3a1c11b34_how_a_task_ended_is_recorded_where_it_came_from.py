@@ -1,7 +1,7 @@
 """How a task ended is recorded where it came from, as an event
 
 Revision ID: 59f3a1c11b34
-Revises: c4e8a2f61d93
+Revises: 9c1f4e7b2a35
 Create Date: 2026-11-14
 
 When a task closed, the conversation it came from (its channel's main line, or
@@ -41,7 +41,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "59f3a1c11b34"
-down_revision: str | Sequence[str] | None = "c4e8a2f61d93"
+down_revision: str | Sequence[str] | None = "9c1f4e7b2a35"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

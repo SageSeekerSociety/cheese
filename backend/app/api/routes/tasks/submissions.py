@@ -11,6 +11,7 @@ from app.api.routes.tasks._common import (
     CreateSubmissionReviewRequest,
     PatchSubmissionReviewRequest,
 )
+from app.api.task_claims import project_of_claim
 from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
@@ -35,15 +36,15 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.db.session import get_db
-from app.domain.task import usage_score
+from app.domain.task import auto_score, code_version, usage_score
 from app.domain.task.access import (
     bind_review_path,
 )
 from app.domain.task.claims import claim_of
+from app.domain.task.review_service import TaskSubmissionReviewService
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
-    TaskSubmissionReviewService,
     TaskSubmissionService,
 )
 from app.domain.task.stages import (
@@ -279,6 +280,10 @@ async def post_task_submission(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
     stage: str | None = Query(default=None, max_length=16),
+    # 提交页那一块「将要评测的代码」把版本号一并送来（``GET /tasks/{id}/code-version``
+    # 读到的那个）。带了就核对：默认分支已经往前走了 —— 页面上那一版不是现在这一版 ——
+    # 就拒掉，让学生看一眼再交（方案 §提交：本地没推上去的改动不在里面）。
+    codeSha: str | None = Query(default=None, max_length=64),
     db=Depends(get_db),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
@@ -324,12 +329,22 @@ async def post_task_submission(
         if existing:
             raise BadRequestError("Task does not allow resubmission")
 
+    # 这一版要评测的代码（方案 §数据结构）：默认分支现在指着的那个 commit。读不到就留空
+    # —— 交作业不该因为托管方慢而交不上来；连了 GitHub 的项目这一版留空（第 1 步只评
+    # 平台托管的仓库）。带了 ``codeSha`` 就是页面上那一版，核一下它还是不是现在这一版。
+    pending = await _pending_code(
+        db, task=task, membership=membership, user_id=auth_user.user_id
+    )
+    if codeSha and pending is not None and pending.sha != codeSha:
+        raise ConflictError(say("submissionCodeMoved"))
+
     submission_dto = await submission_service.submit_task(
         task_id=task_id,
         participant_id=participant_id,
         submitter_id=auth_user.user_id,
         contents=contents,
         stage=stage_at,
+        code_sha=pending.sha if pending is not None else "",
     )
     # Commit before answering: the page that just submitted opens the submission
     # history next, and must find what it handed in. Same reason as the commit in
@@ -419,13 +434,14 @@ async def post_task_submission_review(
         raise ConflictError("Review already exists for this submission")
 
     # 题目有自动算分的行时，老师填的是手动几项的分，总分在这里合成。
-    score, auto_scores = await usage_score.compose_review(
+    score, auto_scores = await auto_score.compose_review(
         db,
         task=task,
         membership=membership,
         submission_id=submission_id,
         accepted=payload.accepted,
         score=payload.score,
+        tests_override=payload.tests_override,
     )
     review_dto = await review_service.create_review(
         submission_id=submission_id,
@@ -517,7 +533,11 @@ async def _update_task_submission_review(
         submission_id=submission_id,
     )
     score, auto_scores, rescored = payload.score, None, False
-    if payload.score is not None or payload.accepted is not None:
+    if (
+        payload.score is not None
+        or payload.accepted is not None
+        or payload.tests_override is not None
+    ):
         current = (await review_service.get_review_dto(submission_id)).get("detail")
         accepted = (
             payload.accepted
@@ -532,13 +552,14 @@ async def _update_task_submission_review(
                     "manual", (current or {}).get("score") or 0
                 )
             )
-        score, auto_scores = await usage_score.compose_review(
+        score, auto_scores = await auto_score.compose_review(
             db,
             task=task,
             membership=membership,
             submission_id=submission_id,
             accepted=accepted,
             score=manual,
+            tests_override=payload.tests_override,
         )
         rescored = True
     review_dto = await review_service.patch_review(
@@ -636,3 +657,18 @@ async def delete_task_submission_review(
     await review_service.delete_review(submission_id=submission_id)
     review_dto = await review_service.get_review_dto(submission_id)
     return ok({"review": review_dto})
+
+
+async def _pending_code(db, *, task, membership, user_id: int):
+    """这一版提交将要评测的代码：提交者那条领取的项目的默认分支。
+
+    ``project_of_claim`` 是「继续做」读的那个项目：领取批了、项目开出来了才有，还在等批
+    或者还没「开始做」时是 ``None``。项目没有、连的是 GitHub、或者托管方这一刻读不出来时
+    返回 ``None``：调用方据此留空，绝不因此拒掉这次提交（模块那句「读不到就留空」）。
+    """
+    project = await project_of_claim(
+        db, task=task, membership=membership, user_id=user_id
+    )
+    if project is None:
+        return None
+    return await code_version.for_project(db, project.id)

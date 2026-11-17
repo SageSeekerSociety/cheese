@@ -12,6 +12,7 @@ from app.api.routes.tasks._common import (
 )
 from app.api.task_deps import _attachment_service
 from app.api.task_serialization import (
+    _enrich_task_knowledge_points,
     _enrich_task_models,
     _task_requirements,
     _task_to_api_model,
@@ -30,6 +31,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
+from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
@@ -45,6 +47,7 @@ from app.domain.task.services import (
 )
 from app.domain.task.stages import stage_lines, stage_news, with_stage_index
 from app.domain.task.submission_state import refresh_task_claims
+from app.domain.task.test_suite import suite_lines
 from app.domain.task_notices import notices as task_notices
 
 
@@ -101,6 +104,7 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
         0
     ]
+    await _enrich_task_knowledge_points(db, [task_model])
 
     return {"task": task_model}
 
@@ -318,10 +322,21 @@ async def update_task(
             task.id, with_stage_index(payload.submission_schema, keys)
         )
 
+    # 测试点：整份替换，和阶段、提交表单、评分要点一样。先写它，评分要点里
+    # 「设为测试点」的那一项才能对着这道题现在的测试点校验。
+    if payload.test_suite is not None:
+        await service.replace_test_suites(
+            task.id, suite_lines(with_stage_index(payload.test_suite, keys))
+        )
+
     # 评分要点：同样整份替换。
     if payload.rubric is not None:
         await service.replace_rubric(
-            task.id, rubric_lines(with_stage_index(payload.rubric, keys))
+            task.id,
+            rubric_lines(
+                with_stage_index(payload.rubric, keys),
+                suite_stages=await service.test_suite_stages(task.id),
+            ),
         )
     if payload.rubric_public is not None:
         task.rubric_public = payload.rubric_public
@@ -329,6 +344,16 @@ async def update_task(
     # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
     if payload.topics is not None:
         await service.replace_topic_relations(task_id=task.id, topic_ids=payload.topics)
+
+    # 知识点列表（§ learning analysis, step 1）：同样整份替换，但先挑一遍 —— 只有
+    # 落在自己板上的知识点才算数，别处来的 id 当它不存在。
+    if payload.knowledge_point_ids is not None:
+        valid_points = await SpaceLearningAnalysisService.of(db).valid_point_ids(
+            space_id=task.space_id, point_ids=payload.knowledge_point_ids
+        )
+        await service.replace_knowledge_point_relations(
+            task_id=task.id, knowledge_point_ids=valid_points
+        )
 
     # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
     apply_task_teaching(task, coerce_teaching(payload.teaching))
@@ -388,6 +413,7 @@ async def update_task(
             requirements=(
                 package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
                 or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]
+                or package_before[package.TESTS] != package_after[package.TESTS]
             ),
             stages=stage_news(
                 package_before[package.STAGES], package_after[package.STAGES]
@@ -402,21 +428,25 @@ async def update_task(
     await db.commit()
 
     task_response = _task_to_api_model(task, include_private_teaching=True)
-    task_response.update(await _task_requirements(service, task.id))
+    task_response.update(await _task_requirements(service, task.id, teacher=True))
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]
+    await _enrich_task_knowledge_points(db, [task_response])
 
     return {"task": task_response}
 
 
 async def _package_parts(service: TaskService, task) -> dict:
     """题目内容里会记版的那几样现在的样子（`package` 的 `changes` 那几格）。阶段、
-    提交内容和评分要点按读者看到的样子比（提交项和评分要点用阶段的 id 指阶段）。"""
-    requirements = await _task_requirements(service, task.id)
+    提交内容、评分要点和测试点按读者看到的样子比（提交项和评分要点用阶段的 id 指阶段；
+    测试点同样按阶段的 id 指，读的是出题人看到的样子 —— 含隐藏用例的输入与期望输出，
+    改到它们也是一版）。"""
+    requirements = await _task_requirements(service, task.id, teacher=True)
     return {
         package.DESCRIPTION: (task.name, task.intro, task.description),
         package.STAGES: requirements["stages"],
         package.SUBMISSION: requirements["submissionSchema"],
         package.RUBRIC: (requirements["rubric"], task.rubric_public),
+        package.TESTS: requirements["testSuite"],
     }

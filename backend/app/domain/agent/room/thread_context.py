@@ -138,6 +138,8 @@ _STATUS_WORDS = {
     "updating_branch": "待审阅",
     "awaiting_review": "待审阅",
     "checks_failed": "待审阅",
+    "deploying": "待审阅",
+    "deploy_blocked": "待审阅",
     "accepted": "已完成",
     "completed": "已完成",
     "closed": "已关闭",

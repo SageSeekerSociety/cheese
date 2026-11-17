@@ -54,6 +54,10 @@ class TaskOut(BaseModel):
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     closed_at: datetime | None = None
+    # Its last delivery merged and it waits for the deploy that puts it live
+    # (`review.deploy_wait`); with the red run of main's CI holding that back.
+    deploying_since: datetime | None = None
+    deploy_blocked_url: str | None = None
     upgraded_from_block_id: uuid.UUID | None = None
     # 它出自的那句话：主线消息本身，或支线里的一条回复。
     source_block_id: uuid.UUID | None = None

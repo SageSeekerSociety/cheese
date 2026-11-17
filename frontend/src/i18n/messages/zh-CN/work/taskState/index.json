@@ -8,6 +8,7 @@
     "awaiting_answer": "待回答",
     "needs_help": "待协助",
     "in_review": "待审阅",
+    "awaiting_deploy": "待部署",
     "done": "已完成",
     "closed": "已关闭"
   },
@@ -20,5 +21,16 @@
   "waitedFor": "已等 {time}",
   "waitsOn": "等{name}",
   "waitsOnYou": "等你",
-  "workedFor": "已做 {time}"
+  "workedFor": "已做 {time}",
+  "blockedRun": "看红的那次 CI",
+  "detail": {
+    "staleTitle": "在跑，但进度很久没变",
+    "offlineTitle": "可能已断线",
+    "sessionLive": "会话：连着，此刻在跑",
+    "sessionIdle": "会话：本轮已结束，等后台任务",
+    "sessionGone": "会话：已离开，没有回来",
+    "updated": "最近更新：{time}前",
+    "staleHint": "可以点进去看现场，或在对话里问它一句",
+    "offlineHint": "它重新连上后会自动接着做"
+  }
 }
