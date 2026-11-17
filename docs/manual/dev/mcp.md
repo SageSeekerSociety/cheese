@@ -25,7 +25,7 @@ covers:
 | --- | --- |
 | 对话 | `chat_send`、`todo_write`、`cheese_ask`、`cheese_chat`（list / search / get / replies / edit） |
 | 文档 | `cheese_doc`（get / set / edit / new / list）、`cheese_app`（save / get）、`cheese_canvas`（get / edit） |
-| 任务与验收 | `cheese_task`（open / state / close / reopen）、`cheese_card`（request / describe / redeliver / ready） |
+| 任务与验收 | `cheese_task`（open / tell / look / accept / report / state / close / reopen）、`cheese_card`（request / describe / redeliver / ready） |
 | 房间 | `cheese_room`（members / rename）、`cheese_notify` |
 | 会话 | `cheese_session`（status / environment / wait / compact / note / deliver_at；compact 要部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
 | 资料 | `cheese_web`（fetch / search）、`cheese_help`、`cheese_library`（list） |
@@ -47,13 +47,13 @@ covers:
 
 一个动词收什么，在调用时查（`run_platform_tool` 里的 `_checked`），发出任何请求之前：
 
-- 没给 `action`，或者给的不是表上的：`cheese_task 要 action：open / state / close / reopen`。
+- 没给 `action`，或者给的不是表上的：`cheese_task 要 action：open / tell / look / accept / report / state / close / reopen`。
 - 缺这个动词的必填参数：`cheese_task(action=state) 缺少参数：state`。
 - 带了这个动词不收的参数，直接拒，并说出哪件收它：`cheese_task(action=close) 不收 subject：subject 是 cheese_card(action=request)、cheese_card(action=describe) 的参数。`，后面列出这个动词收的参数。只给了空值的参数等于没给，不算。
 
 调用按键分派：`<工具>.<action>`（`cheese_task.close`），只做一件事的工具就是它的名字。`request_plan`、`_STEPS`、`_SAY` 都按这个键查。
 
-同一个名字在两张表上可以是两样东西：房间的 `cheese_task` 有 open / state / close / reopen，个人芝士的 `cheese_task` 只有 open，而且以用户的名义、经过授权判断去开；`cheese_card` 在房间里是递卡和维护卡，在个人芝士手里是以审阅人身份 decide。是哪一样看凭证：个人芝士和文档芝士的调用都带代行凭证，pi runner 调 `run_platform_tool(..., delegated=True)`，先查 `DELEGATED_TOOLS`；`catalog.schemas_of` 给这些会话列的也是代行那一样。`chat_send` 也是这样：房间里发在这里，个人芝士手里的那一样以用户的名义发到 `where`，经过授权判断。
+同一个名字在两张表上可以是两样东西：房间的 `cheese_task` 有 open / tell / look / accept / report / state / close / reopen，个人芝士的 `cheese_task` 只有 open，而且以用户的名义、经过授权判断去开；`cheese_card` 在房间里是递卡和维护卡，在个人芝士手里是以审阅人身份 decide。是哪一样看凭证：个人芝士和文档芝士的调用都带代行凭证，pi runner 调 `run_platform_tool(..., delegated=True)`，先查 `DELEGATED_TOOLS`；`catalog.schemas_of` 给这些会话列的也是代行那一样。`chat_send` 也是这样：房间里发在这里，个人芝士手里的那一样以用户的名义发到 `where`，经过授权判断。
 
 一个会话也可以只拿一个对象的几个动词：会话的名单里写键（文档芝士写 `cheese_doc.get`、`cheese_doc.edit`、`cheese_doc.set`），`schemas_of` 给它的 `cheese_doc` 就只有这几个动词，runner 也只放行这几个（`pi/runner.py` 的 `_platform_tool`）。工具的说明是对象的名字加上每个动词一行，由 `ToolTable.narrowed` 按留下的动词重新写，所以没给的动词在说明里一个字也不出现：没开压缩开关的房间读不到「压缩上下文」，文档芝士的 `cheese_memory` 只说读项目记忆。调了没给的动词，回的是这个会话有的那几个（`cheese_memory 要 action：project`），和没写 `action` 时一样（`ask_for_action`）；房间里没开开关时调 compact，三种骨架都经 `run_platform_tool` 拿到同一句，后面跟着它有的那几个动词。
 

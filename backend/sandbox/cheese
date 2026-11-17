@@ -765,6 +765,15 @@ PLATFORM_TOOLS = ToolTable(
                 "task": _text(
                     '这条消息涉及的任务，写编号，如 "#15"；只能是这个频道里的任务'
                 ),
+                "replies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 3,
+                    "description": (
+                        "频道主线专用：消息下方给成员的快捷回答，最多 3 个，每个不超过 40 字；"
+                        "成员点一个，就以他自己的名义回复这条消息"
+                    ),
+                },
             },
         ),
         _tool(
@@ -1120,17 +1129,29 @@ PLATFORM_TOOLS = ToolTable(
                 ),
                 "look": _verb(
                     "在频道主线查看这个频道的一件任务的事实。summary 为概要；diff 为改动，"
-                    "commands 为任务里执行过的命令，chat 为任务里的对话和你与它之间的往来。",
+                    "commands 为任务里执行过的命令，chat 为任务里的对话和你与它之间的往来，"
+                    "file 为任务分支上已提交的一个文件的内容。",
                     {
                         "task": _TASK_REF,
                         "view": {
                             "type": "string",
-                            "enum": ["summary", "diff", "commands", "chat"],
+                            "enum": ["summary", "diff", "commands", "chat", "file"],
                             "description": "查看的视图，默认 summary",
                         },
-                        "path": _text("diff：只看这个文件的改动"),
-                        "q": _text("diff、commands：按关键词筛选"),
+                        "path": _text(
+                            "diff：只看这个文件的改动；file：必填，要看的文件在仓库里的路径"
+                        ),
+                        "q": _text(
+                            "diff、commands：按关键词筛选；file：只看含关键词的行及其前后几行"
+                        ),
                     },
+                    ["task"],
+                ),
+                "accept": _verb(
+                    "在频道主线代审阅人采纳这件任务等待审阅的交付，记为你代他采纳。"
+                    "只在审阅人本人在这一轮的消息里明确说要采纳或合并时使用；"
+                    "采纳的是平台记录的那一版交付。",
+                    {"task": _TASK_REF},
                     ["task"],
                 ),
                 "report": _verb(
@@ -2947,7 +2968,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "request_id": str(uuid.UUID(args["request_id"]))
             if args.get("request_id")
             else str(uuid.uuid4()),
-            **_given(args, "reply_to", "task"),
+            **_given(args, "reply_to", "task", "replies"),
         }
         return {"method": "POST", "path": here + "/messages", "body": body}
     if tool == "chat_react":
@@ -3005,6 +3026,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": here + "/tasks/" + _task_ref(args) + "/tell",
             "body": {"content": args["content"], **_given(args, "asker")},
+        }
+    if tool == "cheese_task.accept":
+        return {
+            "method": "POST",
+            "path": here + "/tasks/" + _task_ref(args) + "/accept",
         }
     if tool == "cheese_task.report":
         return {
@@ -3830,7 +3856,64 @@ def _task_look(args: dict, host) -> str:
         if len(lines) > 400:
             return "\n".join(lines[:400]) + f"\n……（共 {len(lines)} 行，用 path 或 q 缩小范围）"
         return text
-    raise PlatformToolError("view 取 summary、diff、commands、chat 之一")
+    if view == "file":
+        return _task_file(looked, args, q, host)
+    raise PlatformToolError("view 取 summary、diff、commands、chat、file 之一")
+
+
+#: A file the main line looks at in a task: at most this many lines come
+#: back, and with `q`, this many lines around each match.
+LOOK_FILE_LINES = 400
+LOOK_FILE_CONTEXT = 3
+
+
+def _task_file(looked: dict, args: dict, q: str, host) -> str:
+    """`look(view=file)`: a file as the task's branch has it committed — the
+    same read the 文件 panel makes (`/projects/{p}/file`, `source=committed`)
+    — numbered; with `q`, only the lines around its matches."""
+    path = str(args.get("path") or "").strip()
+    if not path:
+        raise PlatformToolError("view=file 要写 path：文件在仓库里的路径")
+    project = host.environ.get("CHEESE_PROJECT", "")
+    query = urllib.parse.urlencode(
+        {"task": looked["id"], "path": path, "source": "committed"}
+    )
+    data = host.request(
+        {"method": "GET", "path": f"/projects/{project}/file?{query}"}
+    )["data"]
+    if data.get("too_large"):
+        return f"{path} 太大，无法整份读出；用 view=diff 加 path 看它的改动。"
+    if data.get("binary") or data.get("content") is None:
+        return f"{path} 不是文本文件。"
+    lines = str(data["content"]).splitlines()
+    numbered = [f"{n:>5}  {line}" for n, line in enumerate(lines, 1)]
+    if q:
+        hits = [i for i, line in enumerate(lines) if q.lower() in line.lower()]
+        if not hits:
+            return f"{path} 中没有包含「{q}」的行。"
+        keep = sorted(
+            {
+                j
+                for i in hits
+                for j in range(
+                    max(0, i - LOOK_FILE_CONTEXT),
+                    min(len(lines), i + LOOK_FILE_CONTEXT + 1),
+                )
+            }
+        )
+        shown, last = [], None
+        for j in keep:
+            if last is not None and j != last + 1:
+                shown.append("  ……")
+            shown.append(numbered[j])
+            last = j
+        numbered = shown
+    if len(numbered) > LOOK_FILE_LINES:
+        return (
+            "\n".join(numbered[:LOOK_FILE_LINES])
+            + f"\n……（只显示了前 {LOOK_FILE_LINES} 行，共 {len(numbered)} 行；用 q 缩小范围）"
+        )
+    return "\n".join(numbered) if numbered else f"{path} 是空文件。"
 
 
 def _chat_page(tool: str):
@@ -5925,6 +6008,12 @@ _SAY = {
         f"已转给任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」。"
     ),
     "cheese_task.report": lambda a, d, e: "已报告给频道主线。",
+    "cheese_task.accept": lambda a, d, e: (
+        f"已代审阅人采纳任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付。"
+        if (d or {}).get("status") == "accepted"
+        else f"任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付合并时有冲突，"
+        "没有采纳成；任务会先解决冲突，解决后要审阅人再采纳一次。"
+    ),
     "chat_send": _say_chat_send,
     "chat_react": lambda a, d, e: "已回应。",
     "cheese_chat.edit": lambda a, d, e: f"已改消息 {a['message_id']}。",

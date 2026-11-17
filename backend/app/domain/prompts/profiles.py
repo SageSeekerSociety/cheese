@@ -72,6 +72,7 @@ MAIN_LINE_TOOLS = frozenset(
         "cheese_task.open",
         "cheese_task.tell",
         "cheese_task.look",
+        "cheese_task.accept",
         "cheese_task.close",
         "cheese_task.reopen",
         "cheese_doc.get",

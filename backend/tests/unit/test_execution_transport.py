@@ -1189,6 +1189,27 @@ def test_a_message_about_a_task_reaches_the_room_naming_that_task(central_transp
     assert process.publications[-1]["task"] == "#8"
 
 
+def test_a_message_offering_quick_replies_reaches_the_room_with_them(
+    central_transport,
+):
+    """A main-line message sent with `replies` reaches the room offering them,
+    so the room can draw them under it."""
+    process, _, _, _ = central_transport
+    process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "content": "报名的人要填什么？",
+                "replies": ["照去年四项", "只要姓名和学号"],
+                "id": "replies-publication",
+                "session_id": "fixture",
+            },
+        },
+    )
+    assert process.publications[-1]["replies"] == ["照去年四项", "只要姓名和学号"]
+
+
 def test_central_tools_reuse_process_and_http_connection(central_transport):
     process, clients, _, work = central_transport
     pid = process.process.pid

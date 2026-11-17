@@ -6,7 +6,7 @@ import type { TaskLine } from '@/lib/channelTasks'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen } from '@testing-library/vue'
+import { fireEvent, render, screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import RoomMessage from './RoomMessage.vue'
@@ -18,6 +18,7 @@ const TASK: TaskLine = {
   title: '首页加报名表',
   owner: 'shirakawa',
   creator: 'shirakawa',
+  teammate: 'cheese-t1',
   state: {
     kind: 'review',
     stale: false,
@@ -78,6 +79,21 @@ describe('消息头上的任务标签', () => {
     const tag = screen.getByRole('button', { name: t('work.room.taskTag.open', { title: TASK.title }) })
     expect(tag.textContent).toContain(TASK.title)
     expect(tag.textContent).not.toContain('待审阅')
+  })
+
+  it('别的 AI 队友做的任务，标签上有做它的那位的头像', () => {
+    mount({
+      taskTag: { ...TASK, teammate: 'cheese-yan' },
+      nameOfHandle: (handle: string) => (handle === 'cheese-yan' ? '小研' : '芝士'),
+    })
+    const tag = screen.getByRole('button', { name: t('work.room.taskTag.open', { title: TASK.title }) })
+    expect(within(tag).getByRole('img', { name: '小研' })).toBeTruthy()
+  })
+
+  it('说话的就是做它的那位时，标签上不画头像', () => {
+    mount({ taskTag: TASK, nameOfHandle: () => '芝士' })
+    const tag = screen.getByRole('button', { name: t('work.room.taskTag.open', { title: TASK.title }) })
+    expect(within(tag).queryByRole('img', { name: '芝士' })).toBeNull()
   })
 
   it('不关于任何任务的消息没有标签', () => {

@@ -33,6 +33,8 @@ export interface TaskLine {
   mine: boolean
   /** 还开着、已经采纳过几步的任务：「已采纳 2 次」。 */
   accepted: string | null
+  /** 做它的那位 AI 队友的席位：别的队友在主线说到这件任务时，任务标签上画它的头像。 */
+  teammate?: string | null
   /** 卡上一次变化的时间。 */
   at: string
   /** 这件任务里最后说的一句，折成一行：状态下面没有话要说时，主线上那张卡的第二行
@@ -67,6 +69,7 @@ export function taskLine(
     title: task.title,
     owner: task.owner_handle ?? null,
     creator: task.created_by ?? task.owner_handle ?? null,
+    teammate: task.teammate ?? null,
     state: pr ? { ...state, line: joined([state.line, pr]) } : state,
     mine,
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
