@@ -15,10 +15,12 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.mcp_notice import unconnected_mcp
 from app.domain.agent.prompt import _sandbox_limits, _session_opening_lines
 from app.domain.agent.room.system_prompt import session_env, session_system_prompt
+from app.domain.agent.session_host.contract import ColdCompaction
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.intake.context import TurnBail
 from app.domain.agent.turn.steps.prepared import PreparedSend
@@ -32,9 +34,10 @@ from app.domain.prompts import (
     render_notice,
     render_opening,
     resume_notice,
+    talk_pointer,
     untitled_task,
 )
-from app.domain.prompts.profile import holds
+from app.domain.prompts.profile import Kind, holds
 from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.user.services import language_of
 
@@ -188,6 +191,9 @@ async def converse(
     if untitled:
         # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
         prompt_text = f"{platform_prompt(untitled_task(TITLE_CHARS), NoticeType.turn)}\n\n{prompt_text}"
+    if prepared.talk_for and keeps_memory(runtime.harness):
+        # 只对这一轮成立：下一轮答的可能是别人。
+        prompt_text = f"{platform_prompt(talk_pointer(prepared.talk_for), NoticeType.turn)}\n\n{prompt_text}"
     if is_resume:
         prompt_text = (
             f"{platform_prompt(resume_notice(), NoticeType.turn)}\n\n{prompt_text}"
@@ -251,6 +257,7 @@ async def converse(
             roster=prepared.roster,
             topic_refs=prepared.topic_refs,
             consumed_ids=prepared.pending_ids + prepared.notice_ids,
+            read_ids=prepared.read_ids,
             read_through=prepared.read_through,
             turn_images=prepared.turn_images,
             replay_notice=prepared.replay_notice,
@@ -262,6 +269,7 @@ async def converse(
             keeps_nothing=prepared.keeps_nothing,
             sender=runtime,
             activate=activate,
+            cold=_when_cold(prepared.kind, model_kwargs.get("model")),
         ),
         topic_id=topic_id,
         turn_id=turn_id,
@@ -280,3 +288,15 @@ async def converse(
         told=told,
     ):
         yield frame
+
+
+def _when_cold(kind: Kind, model: str | None) -> ColdCompaction | None:
+    """Whether this kind of session is compacted when its conversation has gone
+    cold (`Profile.compacts_when_cold`), and after how long: its model's cache
+    lifetime in the gateway model table. A model with none set never is."""
+    if not PROFILES[kind].compacts_when_cold or not model:
+        return None
+    known = next((m for m in gateway_catalog.snapshot() if m.id == model), None)
+    if known is None or known.cache_lifetime_s is None:
+        return None
+    return ColdCompaction(idle_s=float(known.cache_lifetime_s))

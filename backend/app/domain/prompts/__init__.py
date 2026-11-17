@@ -8,6 +8,7 @@ from app.domain.prompts.memory import (
     MEMORY_DIR,
     memory_block,
     private_index_pointer,
+    talk_pointer,
 )
 from app.domain.prompts.notices import (
     HIDDEN_TYPES,
@@ -61,6 +62,19 @@ def untitled_task(title_chars: int) -> str:
     return piece("notices/untitled_task", title_chars=title_chars)
 
 
+def left_unread(count: int, since: str, until: str, people: str, before: str) -> str:
+    """一轮读入的消息有上限（`agent_input_window_*`），超出的那部分没有交给会话，
+    它的已读位置却照样越过了它们：这一轮是唯一能说一声的时候。"""
+    return piece(
+        "notices/left_unread",
+        count=count,
+        since=since,
+        until=until,
+        people=people,
+        before=before,
+    )
+
+
 def resume_notice() -> str:
     """The one thing that is true of a turn rather than of its session."""
     return piece("notices/resume")
@@ -89,6 +103,7 @@ __all__ = [
     "default_teaching_prompt",
     "fit_doc_to_budget",
     "in_language",
+    "left_unread",
     "memory_block",
     "notice_template",
     "opening_changes",
@@ -108,6 +123,7 @@ __all__ = [
     "strip_platform_notice",
     "task_opening_prompt",
     "task_section",
+    "talk_pointer",
     "task_wrap_up",
     "teaching_section",
     "untitled_task",

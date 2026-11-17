@@ -1475,6 +1475,122 @@ def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract
     assert ended["record"]["compact_result"] == "success"
 
 
+def _cold_send(screen, text, cold_text, *, idle_s, work_id) -> str:
+    identifier = str(uuid.uuid4())
+    screen.call(
+        "send",
+        {
+            "input_id": identifier,
+            "work_id": work_id,
+            "text": text,
+            "compact_if_cold": {"idle_s": idle_s, "above_tokens": 1, "text": cold_text},
+        },
+        timeout=300,
+    )
+    return identifier
+
+
+def _said(screen, text):
+    """The echo of the user message the build read, by its text."""
+    return lambda r: (
+        r.get("type") == "user"
+        and r.get("isReplay")
+        and (
+            r["message"]["content"] == text
+            if isinstance(r["message"]["content"], str)
+            else any(block.get("text") == text for block in _blocks(r))
+        )
+    )
+
+
+def test_a_turn_on_a_cold_conversation_is_compacted_before_it_reads(screen, contract):
+    """A conversation idle past its model's cache lifetime re-reads its whole
+    context at full price on its next turn, so it is compacted first, and the
+    turn's input is read after the compaction: the one a compacted session is
+    handed, not the one for a conversation that remembers."""
+    first = str(uuid.uuid4())
+    screen.send("hello", work_id=first)
+    screen.wait_event(_status("idle", first))
+
+    work = str(uuid.uuid4())
+    _cold_send(screen, "only what changed", "the whole state", idle_s=0, work_id=work)
+    screen.wait_event(_status("idle", work))
+
+    compacted = screen.wait(lambda r: r.get("compact_result") is not None)
+    assert compacted["record"]["compact_result"] == "success"
+    read = screen.wait(_said(screen, "the whole state"))
+    assert read["sequence"] > compacted["sequence"], "读到输入时已经压缩完了"
+    assert not any(
+        _said(screen, "only what changed")(e["record"]) for e in screen.records()
+    )
+
+
+def test_a_turn_inside_the_cache_lifetime_is_not_compacted(screen, contract):
+    """Still warm, the context is cheap to read again: nothing is compacted
+    and the turn reads its input as it was."""
+    first = str(uuid.uuid4())
+    screen.send("hello", work_id=first)
+    screen.wait_event(_status("idle", first))
+
+    work = str(uuid.uuid4())
+    _cold_send(
+        screen, "only what changed", "the whole state", idle_s=3600, work_id=work
+    )
+    screen.wait_event(_status("idle", work))
+
+    screen.wait(_said(screen, "only what changed"))
+    assert not any(
+        e["record"].get("compact_result") is not None for e in screen.records()
+    )
+
+
+@pytest.mark.anyio
+async def test_a_conversation_gone_cold_while_its_runner_was_away_is_compacted(
+    machine, monkeypatch
+):
+    """Idle past its cache lifetime, a session has usually been let go too: the
+    runner started again on the same conversation still knows when it last
+    called the model and how large it was, compacts it, and then reads the
+    input meant for a compacted conversation."""
+    runner = await _started(machine, monkeypatch, idle_exit_s=0.5)
+    try:
+        await runner.send(
+            str(uuid.uuid4()), "The password is PINEAPPLE.", work_id=str(uuid.uuid4())
+        )
+        await _results(runner, 1)
+        assert runner.process is not None
+        await asyncio.wait_for(runner.process.wait(), 60)
+    finally:
+        await runner.close()
+
+    again = await _started(machine, monkeypatch)
+    try:
+        await again.send(
+            str(uuid.uuid4()),
+            "only what changed",
+            work_id=str(uuid.uuid4()),
+            compact_if_cold={"idle_s": 0, "above_tokens": 1, "text": "the whole state"},
+        )
+        # The compaction's own result, then the turn's.
+        await _results(again, 3)
+        records = [e["record"] for e in again.journal.read(0)]
+    finally:
+        await again.close()
+    boundary = next(
+        i for i, r in enumerate(records) if r.get("subtype") == "compact_boundary"
+    )
+    read = next(
+        i
+        for i, r in enumerate(records)
+        if r.get("type") == "user"
+        and r.get("isReplay")
+        and "the whole state" in json.dumps(r.get("message"))
+    )
+    assert boundary < read
+    asked = json.dumps(machine.server.state["requests"][-1]["messages"])
+    assert "only what changed" not in asked
+
+
 @pytest.mark.anyio
 async def test_a_bash_call_says_how_much_of_its_wait_was_the_command(
     monkeypatch, tmp_path

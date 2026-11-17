@@ -152,6 +152,7 @@ CALLS = {
     ),
     "cheese_web.search": ({"action": "search", "query": "芝士"}, "GET", "/web-search"),
     "cheese_help": ({"query": "验收"}, "POST", "/docs/agent/search"),
+    "cheese_find": ({"query": "预算"}, "POST", "/assistant/agent/search"),
     "cheese_help.page": ({"page": "accept"}, "POST", "/docs/agent/read"),
     "cheese_room.members": ({"action": "members"}, "GET", f"/topics/{TOPIC}/members"),
     "cheese_session.status": ({"action": "status"}, "GET", f"/topics/{TOPIC}/status"),
@@ -601,7 +602,7 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
         (
             "cheese_task",
             {"title": "数据清洗"},
-            "cheese_task 要 action：open / tell / look / report / state / close / reopen",
+            "cheese_task 要 action：open / tell / look / accept / report / state / close / reopen",
         ),
         (
             "cheese_task",

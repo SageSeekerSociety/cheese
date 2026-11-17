@@ -11,6 +11,7 @@ import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 import type { TaskLine } from '../../lib/channelTasks'
+import type { Receipt } from '../../lib/readReceipts'
 import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
@@ -22,6 +23,8 @@ import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
   artifactName,
+  askAnswers,
+  askClosedByAsker,
   askOptions,
   isImageBlock,
   isVideoBlock,
@@ -47,6 +50,7 @@ import MessageAppCard from './MessageAppCard.vue'
 import MessageEditor from './MessageEditor.vue'
 import MessageFileCard from './MessageFileCard.vue'
 import MessageQuote from './MessageQuote.vue'
+import ReadReceipt from './ReadReceipt.vue'
 import RollingNumber from './RollingNumber.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -126,6 +130,8 @@ const props = defineProps<{
    * 占满一栏。频道主线和私聊不给，那里只收队友的回复。
    */
   foldPlain?: boolean
+  /** 自己这条谁读了谁没读（`lib/readReceipts`）；不是自己的、或没有别人能读时是 null。 */
+  receipt?: Receipt | null
 }>()
 
 // 他自己的芝士替他写的这条：署名照旧是他，名字旁边标出来（docs/agent-principles.md 一、四）。
@@ -195,6 +201,11 @@ const tagWaits = computed(
     !!props.taskTag?.state.line &&
     (props.taskTag.state.status === 'in_review' || props.taskTag.state.status === 'awaiting_answer')
 )
+// 说这件任务的不是做它的那位 AI 队友时，标签上画做它的那位的头像。
+const tagDoer = computed(() => {
+  const doer = props.taskTag?.teammate
+  return doer && doer !== props.block.author ? doer : null
+})
 // 新手浮窗「预览」一站圈的是芝士摆出来的那份；人自己发的附件不算。
 const previewAnchor = computed(() => (props.block.kind === 'artifact' ? 'preview-card' : ''))
 const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
@@ -262,6 +273,16 @@ const said = computed(() => (props.block.meta?.task_result ? noticeText(props.bl
 // 画——我正要作答。判据在 `lib/askGroups`，和谁答得上这道题是同一条。
 const askForOthers = computed(() => !!askOptions(props.block) && !askAsksViewer(props.block, props.viewer))
 const askOpen = ref(false)
+// 主线消息下的快捷回答（`chat_send` 的 replies）：消息照常画，下面一排按钮只给它问
+// 的人。点一个就是以他自己的名义回复这条消息，和提问卡的选项走同一条路；有人答过、
+// 收回或过期之后就不再给。
+const quickReplies = computed(() => !!props.block.meta?.quick_replies && !!askOptions(props.block))
+const quickOffered = computed(() => {
+  if (!quickReplies.value || props.askClosed || askClosedByAsker(props.block)) return []
+  if (askAnswers(props.block).some((answer) => !answer.skipped)) return []
+  if (!askAsksViewer(props.block, props.viewer)) return []
+  return askOptions(props.block) ?? []
+})
 </script>
 
 <template>
@@ -332,8 +353,11 @@ const askOpen = ref(false)
           <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"
             >mdi-pin</v-icon
           >
+          <ReadReceipt v-if="receipt" class="im-receipt" :receipt="receipt" />
         </template>
       </div>
+      <!-- A continued line has no name row: its ring sits at the row's right edge, level with its first line. -->
+      <ReadReceipt v-if="receipt && !runStart" class="im-receipt im-receipt--cont" :receipt="receipt" />
       <!-- B3: a reply shows the message it threads under -->
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
@@ -349,6 +373,13 @@ const askOpen = ref(false)
       >
         <TaskStateMark :state="taskTag.state" :size="14" icon-only />
         <span class="im-task-tag__title">{{ taskTag.title }}</span>
+        <CheeseAvatar
+          v-if="tagDoer"
+          class="im-task-tag__doer"
+          :size="14"
+          :name="nameOfHandle?.(tagDoer)"
+          :handle="tagDoer"
+        />
         <template v-if="taskTagFull">
           <span class="im-task-tag__state">{{ taskTag.state.label }}</span>
           <span v-if="tagWaits" class="im-task-tag__wait">{{ taskTag.state.line }}</span>
@@ -476,7 +507,7 @@ const askOpen = ref(false)
 
            问到别人的题收成一行（`AskFoldLine`）：整张卡占满一栏，而频道里大部分题不是
            问看的人的。点开才长出下面那句题目和整张卡；问到我自己的照整张卡画。 -->
-      <template v-else-if="askOptions(block)">
+      <template v-else-if="askOptions(block) && !quickReplies">
         <AskFoldLine
           v-if="askForOthers"
           :blocks="[block]"
@@ -529,6 +560,18 @@ const askOpen = ref(false)
         </button>
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
+      <div v-if="quickOffered.length" class="im-quick" role="group" :aria-label="t('work.room.message.quickReplies')">
+        <BaseButton
+          v-for="option in quickOffered"
+          :key="option.text"
+          kind="secondary"
+          size="sm"
+          :disabled="askAnswering"
+          @click="emit('ask-reply', block, option.text)"
+        >
+          {{ option.text }}
+        </BaseButton>
+      </div>
       <MessageQuote
         v-if="block.meta?.quoted_context && block.meta.quoted_context.kind !== 'viewing'"
         :quote="block.meta.quoted_context"
@@ -543,7 +586,7 @@ const askOpen = ref(false)
         </button>
       </div>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-         highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
+         highlighted; click toggles. -->
       <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
         <button
           v-for="r in block.reactions"
@@ -616,6 +659,16 @@ const askOpen = ref(false)
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.im-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.im-task-tag__doer {
+  flex: none;
+  margin-left: 2px;
+}
 .im-task-tag__state {
   flex: none;
   margin-left: 4px;
@@ -632,6 +685,17 @@ const askOpen = ref(false)
   font-size: 12px;
   line-height: var(--lh-14-loose);
   color: var(--faint);
+}
+/* 已读那一圈：在名字那一行的最右端；续话没有那一行，挂在这一行右上角、和第一行字齐平。 */
+.im-receipt {
+  margin-left: auto;
+  align-self: center;
+}
+.im-receipt--cont {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 16px;
 }
 /* 发件箱: 慢请求、断网或正在输入预览时淡一档，正常快发不闪灰。 */
 .im-row--dim .im-text,

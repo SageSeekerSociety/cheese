@@ -999,6 +999,7 @@ def transport(config, target_path):
                         "attachments",
                         "request_id",
                         "task",
+                        "replies",
                     ),
                 }
                 if tool in picked:

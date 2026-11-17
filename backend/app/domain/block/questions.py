@@ -183,6 +183,37 @@ async def post_questions(
     return rows
 
 
+#: A main-line message's quick replies (`chat_send`'s ``replies``): at most
+#: this many, each a short answer the person would otherwise type.
+MAX_QUICK_REPLIES = 3
+QUICK_REPLY_CHARS = 40
+#: The key that says a question is a message with quick replies under it, not
+#: a question card (`cheese_ask`): the timeline draws the message as said, and
+#: a row of buttons under it for whoever it asks.
+QUICK_REPLIES = "quick_replies"
+
+
+def quick_replies_meta(
+    replies: list[str], *, asked: tuple[str, ...], deadline: datetime | None
+) -> dict:
+    """What makes an AI teammate's message offer ``replies`` under it.
+
+    Such a message is a question like `post_questions` writes — its options
+    are the replies, it asks ``asked`` (empty: nobody in particular) — so a
+    click is an ordinary message replying to it, recorded on it
+    (`agent.announce.answer_questions`), and once answered or past
+    ``deadline`` its replies are no longer offered. Only how it is drawn
+    differs (`QUICK_REPLIES`)."""
+    return {
+        "options": [{"text": text} for text in replies],
+        "asked": list(asked),
+        "asked_all": False,
+        "answer_log": [],
+        QUICK_REPLIES: True,
+        **({"deadline": deadline.isoformat()} if deadline is not None else {}),
+    }
+
+
 def skip_question(question: Block, *, by: str) -> bool:
     """``by`` 跳过这道题：他不回答它。返回这一下是不是让题了结了（它点名的每个人
     都跳过了，`block.asked.skipped_by_all`）—— 了结了，提问的那位才该知道。

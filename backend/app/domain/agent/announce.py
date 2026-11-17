@@ -46,6 +46,7 @@ from app.domain.addressing import (
     address,
 )
 from app.domain.agent.mentions import _MENTION_RE
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.asked import asked_of, settled, skipped_by
@@ -487,15 +488,35 @@ async def who_started_the_open_turn(
     A turn row names the agent by its instance's handle (the conversation it
     runs in), a seat by the instance's id; either may be on the row.
     """
+    turn = await open_turn_of(session, project_id, conversation_id, seat)
+    if turn is None or not names_a_person(turn.author):
+        return None
+    return turn.author
+
+
+async def open_turn_of(
+    session: AsyncSession, project_id, conversation_id: uuid.UUID, seat: str
+) -> AgentTurn | None:
+    """``seat``'s running turn in this conversation, if it has one: who
+    started it (``author``) and when (``started_at``)."""
     instance = await instance_of_seat(session, project_id, seat)
     turns = AgentTurnRepository(session)
     for handle in (seat, *((instance.handle,) if instance is not None else ())):
-        author = await turns.open_turn_author_for_topic(
-            conversation_id, agent_handle=handle
-        )
-        if author is not None:
-            return author if names_a_person(author) else None
+        turn = await turns.open_turn_for_topic(conversation_id, agent_handle=handle)
+        if turn is not None:
+            return turn
     return None
+
+
+async def word_that_started(session: AsyncSession, turn: AgentTurn) -> Block | None:
+    """The message that started ``turn``: a turn a person's message starts is
+    named by that message (`continuation_id` is the message's id, and a
+    resumed attempt keeps it). None for a turn no message of its author's
+    started."""
+    said = await session.get(Block, turn.continuation_id)
+    if said is None or said.author != turn.author or said.kind != BlockKind.message:
+        return None
+    return said
 
 
 async def _notify(

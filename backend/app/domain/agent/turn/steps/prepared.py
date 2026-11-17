@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.session_host.contract import Image
+from app.domain.agent.session_host.contract import ColdCompaction, Image
 from app.domain.delivery.input_identity import InputRegistrar
 from app.domain.memory.scopes import MemoryScope
 
@@ -33,6 +33,7 @@ class SessionSender(Protocol):
         owes_reply: bool = False,
         session_opening: str = "",
         opening_changes: str = "",
+        cold: ColdCompaction | None = None,
     ) -> bool: ...
 
 
@@ -51,6 +52,8 @@ class PreparedSend:
     # apart from `consumed_ids`: those are the blocks this turn answers for and
     # stamps, while the window it read also carried other seats' messages.
     read_through: tuple[datetime, uuid.UUID] | None
+    # Every block the prompt carries: read by the seat once it is handed over.
+    read_ids: list[uuid.UUID]
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
@@ -65,3 +68,6 @@ class PreparedSend:
     keeps_nothing: bool
     sender: SessionSender
     activate: Callable[[SessionRef], Awaitable[None]]
+    # Compact a conversation gone cold before this turn's input
+    # (`Profile.compacts_when_cold`, the model's cache lifetime); None: never.
+    cold: ColdCompaction | None = None

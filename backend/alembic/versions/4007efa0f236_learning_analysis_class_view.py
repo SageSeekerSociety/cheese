@@ -1,7 +1,7 @@
 """学情分析：高频问题簇、常见误解、讲课建议、按周快照、导出记录
 
 Revision ID: 4007efa0f236
-Revises: a3e5c7d9f1b2
+Revises: e8a7c5417435
 Create Date: 2026-11-17
 
 第三步（§ learning analysis, step 3）：老师端「学情分析」七个页签要的几样东西。五张
@@ -29,7 +29,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "4007efa0f236"
-down_revision: str | Sequence[str] | None = "a3e5c7d9f1b2"
+down_revision: str | Sequence[str] | None = "e8a7c5417435"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
