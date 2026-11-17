@@ -1853,6 +1853,11 @@ TASK_WRITE_FIELDS = {
     "days_to_submit": {"type": "integer"},
     "category": _text("分类名称"),
     "tags": {"type": "array", "items": {"type": "string"}},
+    "knowledge_points": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "这个空间知识点清单里的名称",
+    },
     "real_name": {"type": "boolean"},
     "registration_start": _text("YYYY-MM-DD HH:MM，用户时区；空字符串是立即开始"),
     "team_locking": {

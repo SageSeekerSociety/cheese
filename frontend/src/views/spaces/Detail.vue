@@ -10,6 +10,10 @@
          and says so itself. -->
     <router-view v-if="settled && !underReview" />
   </ErrorBoundary>
+  <!-- 进这块板时那张告知卡：这块板开着学情分析、我还没点过「我已阅读并知悉」就弹一次。
+       它是纯 props + emit 的一件（`components/spaces/LearningNoticeDialog.vue`），弹不弹
+       由这里读到的 `needsAcknowledge` 决定，关掉只有那条按钮一条路。 -->
+  <LearningNoticeDialog v-model:open="noticeOpen" :acknowledging="acknowledging" @acknowledge="onAcknowledge" />
 </template>
 
 <script lang="ts" setup>
@@ -19,8 +23,10 @@ import { storeToRefs } from 'pinia'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useSpaceData } from '@/composables/useSpaceData'
+import { useSpaceLearningNotice } from '@/composables/useSpaceLearningAnalysis'
 
 import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
+import LearningNoticeDialog from '@/components/spaces/LearningNoticeDialog.vue'
 import { useSpaceStore } from '@/stores/space'
 
 const route = useRoute()
@@ -42,6 +48,28 @@ const underReview = computed<'PENDING' | 'REJECTED' | null>(() => {
   const status = current.reviewStatus
   return status === 'PENDING' || status === 'REJECTED' ? status : null
 })
+
+/** 进这块板的告知卡：要不要弹、点了之后记在哪，全在 composable 里（读不到的板不弹）。 */
+const { notice, acknowledge } = useSpaceLearningNotice(() =>
+  // 还没读到这块板、或者它还卡在审核里时先不问：没资格的那会儿问只会换来一个 404。
+  settled.value && !underReview.value ? routeSpaceId.value : undefined
+)
+const acknowledging = ref(false)
+/** 弹不弹照服务端那一份；关掉只有「我已阅读并知悉」一条路（`persistent`），所以写入一律
+ *  不收 —— 点了按钮走 `acknowledge`，那时的 `needsAcknowledge` 自己变假。 */
+const noticeOpen = computed({
+  get: () => notice.value?.needsAcknowledge === true,
+  set: () => {},
+})
+async function onAcknowledge() {
+  if (acknowledging.value) return
+  acknowledging.value = true
+  try {
+    await acknowledge()
+  } finally {
+    acknowledging.value = false
+  }
+}
 
 const getSpace = async (spaceId: number) => {
   await spaceData.fetchSpace(spaceId)
