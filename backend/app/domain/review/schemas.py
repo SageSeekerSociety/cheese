@@ -56,6 +56,9 @@ class AcceptCardCreate(BaseModel):
     # 给就是交出去这次合并本身，代码仓库这类项目交的就是它。
     deliver: str | None = Field(default=None, max_length=512)
     deliver_url: str | None = Field(default=None, max_length=1024)
+    # 旧会话还会送来的「是不是最后一步」，收下不用：合并不再按它关任务，每次合并后由
+    # 任务的 AI 队友判断做没做完（`task_landing`）。留着字段只为不让旧形状 422。
+    completes_task: bool | None = None
     # 上一次退回附带的批注，芝士逐条说处理了没有（`review/comments.py`）。
     comment_outcomes: list[CommentOutcome] = Field(default_factory=list, max_length=200)
 
