@@ -47,7 +47,11 @@ from app.domain.agent.turn.intake.preparation.gates import (
 from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to
-from app.domain.agent.turn_speakers import is_routine_run, private_memory_for
+from app.domain.agent.turn_speakers import (
+    is_routine_run,
+    private_memory_for,
+    talk_notes_for,
+)
 from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
@@ -59,13 +63,20 @@ from app.domain.block.queries import (
     notices_after,
 )
 from app.domain.deliverables import artifacts as project_artifacts
+from app.domain.delivery.models import Delivery
 from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import memory_index
+from app.domain.memory.session import talk_owners
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.prompts import task_section
 from app.domain.room_task import naming
-from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
+from app.domain.room_task.models import (
+    Task,
+    TaskProgress,
+    TaskStatus,
+    TaskTitleSource,
+)
 from app.domain.room_task.place import PlaceResolver
 from app.domain.task import package
 from app.domain.task import teaching as teaching_context
@@ -204,10 +215,9 @@ async def prepare(
         acting_agent = pinned_seat or await _acting_handle(session, topic.id, agent)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
         phases_ms["identity"] = (time.monotonic() - started) * 1000
-        # private 只在一个人和芝士的私聊里带，那个人的那一份（`private_memory_for`）；
-        # 别的房间只有 team。这一位同时也是这一轮对账要点名的那一位
-        # （`MemoryLedger.remember_turn`），所以「告诉它去读的」和「铺到会话目录里
-        # 的」是同一份。
+        # 整棵 private 只在一个人和芝士的私聊里带，那个人的那一份
+        # （`private_memory_for`）。多人的地方带的是这一轮答的那几位各自的
+        # communication 记录（`talk_notes_for`），名册读出来之后再定。
         private_for = await private_memory_for(
             session, agent.instance_id, private_owner=private_owner
         )
@@ -216,13 +226,6 @@ async def prepare(
             topic.project_id,
             speaker=private_for,
             shared_read_only=seats_only(topic),
-        )
-        prep.memory.remember_turn(
-            topic.id,
-            (place.conversation_id, agent.handle),
-            acting=acting_agent,
-            speaker=private_for,
-            pointed=any(section.prefix != "team" for section in memory.sections),
         )
         phases_ms["memory"] = (time.monotonic() - started) * 1000
         project = await load_project(session, topic.project_id)
@@ -273,6 +276,31 @@ async def prepare(
         # 回事」在下游是两种情况（见 `HookWorkState.roster`）。问的是这间房
         # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `announce_mentions`。
         roster = await room_roster(session, topic.project_id, topic)
+        # 这一轮答的是谁：私聊里是那个人；多人的地方是这一轮要答的消息的作者，
+        # 平台为一件任务叫醒的那一轮是这件任务要告诉的人（`_answered`）。他们同时
+        # 是这一轮对账要点名的那几位（`MemoryLedger.remember_turn`），所以「告诉它
+        # 去读的」和「铺到会话目录里的」是同一份。
+        if private_owner is not None:
+            speakers = [private_for] if private_for else []
+            talk_for: list[dict] = []
+        else:
+            speakers = await talk_notes_for(
+                session,
+                agent.instance_id,
+                await _answered(session, roster, own_pending, delivery_id),
+            )
+            named = {m["handle"]: m["name"] for m in roster}
+            talk_for = [
+                {"handle": h, "name": named.get(h) or h}
+                for h in await talk_owners(session, topic.project_id, speakers)
+            ]
+        prep.memory.remember_turn(
+            topic.id,
+            (place.conversation_id, agent.handle),
+            acting=acting_agent,
+            speakers=tuple(speakers),
+            pointed=any(section.prefix != "team" for section in memory.sections),
+        )
         # Topic list so 芝士 can cross-reference topics with <#id> tokens.
         # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
         # ——用户自己打 @某个归档话题也必须还能变成链接）；
@@ -496,7 +524,29 @@ async def prepare(
         ),
         turn_images=turn_images,
         untitled=untitled,
+        talk_for=talk_for,
     )
+
+
+async def _answered(
+    session, roster: list[dict], own_pending: list[Block], delivery_id
+) -> list[str]:
+    """多人的地方里，这一轮答的是谁：要它答的那几条消息的作者里的人；平台为一件
+    任务叫醒的那一轮（任务上报、交回），是这件任务要告诉的人——审阅人、提出它的人
+    和转给它的那几位。"""
+    people = {m["handle"] for m in roster if not m.get("agent")}
+    answered = [b.author for b in own_pending if b.author in people]
+    if delivery_id is not None:
+        row = await session.get(Delivery, delivery_id)
+        task_id = ((row.payload if row is not None else None) or {}).get("taskId")
+        task = await session.get(Task, uuid.UUID(task_id)) if task_id else None
+        if task is not None:
+            answered += [
+                h
+                for h in (task.reviewer_handle, task.created_by, *task.asker_handles)
+                if h in people
+            ]
+    return list(dict.fromkeys(answered))
 
 
 async def _read_window(

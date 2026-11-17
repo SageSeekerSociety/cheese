@@ -1,17 +1,19 @@
 """Whose private memory a turn carries, and whether a turn is a routine's run.
 
-A turn carries a person's private memory only in that person's private chat
-with the agent: every turn there is theirs, and nobody else reads its records
-or speaks to its session. In a shared room nobody's is carried. A room's seat
-keeps one session from turn to turn and answers whoever speaks; a session that
-had read one person's private memory would still hold it when it answers the
-next — in its own conversation and in the transcript the room's executor is
-served (`runner.transcript_chunk`) — and nothing it is asked to do then is
-marked as that person's (a command's output names no file). So a shared room's
-turns carry the shared memory only, and the agent there does not use any one
-person's private preferences. The root design that would let a shared room
-carry them is a session per (seat, speaker), or a fresh session whenever the
-person a seat answers changes; until then the private chat is the one place.
+In a person's private chat with the agent, the turn carries that person's whole
+private memory: every turn there is theirs, and nobody else reads its records or
+speaks to its session.
+
+In a multi-person place — a channel's main line, a task, a 支线 — a turn carries,
+for each person it answers, only that person's `communication` notes: how they
+want to be talked to (`memory.files.talk_view`). A seat there keeps one session
+from turn to turn and answers whoever speaks; what it read for one person is
+still in its context, and in the transcript the place's executor is served
+(`runner.transcript_chunk`), when it answers the next. So the class that reaches
+a multi-person place is the one whose staying behind does not change how the
+agent treats anybody else; everything else of anyone's private memory stays in
+their private chat. The platform picks that class by the note's type, not the
+model.
 
 (A module of its own: `chat.py` is near its size limit, and this is all reads.)
 """
@@ -27,6 +29,7 @@ from app.domain.delivery.models import Delivery
 from app.domain.device.models import DeviceRow
 from app.domain.identity.handles import names_a_person
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
+from app.domain.user.repositories import UserRepository
 from app.domain.user.services import user_by_handle
 
 
@@ -44,9 +47,9 @@ async def is_routine_run(session: AsyncSession, delivery_id: uuid.UUID | None) -
 async def private_memory_for(
     session: AsyncSession, instance_id: uuid.UUID, *, private_owner: str | None
 ) -> str | None:
-    """Whose private memory this agent's turn carries: the person in a private
-    chat (``private_owner``, None in any other room), and nobody's anywhere
-    else (see the module's opening). Only a person has one (`names_a_person`).
+    """Whose whole private memory this agent's turn carries: the person in a
+    private chat (``private_owner``, None in any other place). Only a person has
+    one (`names_a_person`).
 
     A member's own agent whose model connection is on their machine runs its
     session there (`owner_provider`), and its owner reads that disk: it
@@ -65,3 +68,29 @@ async def private_memory_for(
     if machine is None or person is None or machine.owner_user_id != person.id:
         return None
     return private_owner
+
+
+async def talk_notes_for(
+    session: AsyncSession, instance_id: uuid.UUID, answered: list[str]
+) -> list[str]:
+    """In a multi-person place, whose `communication` notes this agent's turn
+    carries: the people it answers (``answered``), held to the same machine
+    rule as a private chat (`private_memory_for`) — a session on a member's own
+    machine is read by that member, so it carries only theirs."""
+    people = list(dict.fromkeys(h for h in answered if names_a_person(h)))
+    if not people:
+        return []
+    owned = await owned_instance(session, instance_id)
+    if owned is None or owned.on_account:
+        return people
+    if owned.device_id is None:
+        return []
+    machine = await session.get(DeviceRow, owned.device_id)
+    if machine is None:
+        return []
+    users = await UserRepository(session).get_by_handles(people)
+    return [
+        handle
+        for handle in people
+        if handle in users and users[handle].id == machine.owner_user_id
+    ]

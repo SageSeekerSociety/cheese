@@ -65,6 +65,8 @@ if sys.platform == "win32":
 from app.domain.memory.files import (
     INDEX_NAME,
     PRIVATE_PREFIX,
+    TEAM_PREFIX,
+    MemoryFileError,
     check_scoped_path,
     conflict_path,
     private_owner,
@@ -385,6 +387,131 @@ def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
     return out
 
 
+def memory_policy(
+    params: dict, scopes: dict[str, dict[str, str]]
+) -> tuple[frozenset[str], dict[str, str]]:
+    """请求里的收件规矩：哪几棵是多人地方铺下的那一份（``views``，只能是这一次
+    点了名的 private），和项目里的人（``people``，handle → 名字）。比这一版旧的
+    平台不发这两样，那就是什么都不限（平台那一侧照样会拦，`memory.session`）。"""
+    views = frozenset(
+        prefix
+        for prefix in params.get("views") or ()
+        if isinstance(prefix, str)
+        and prefix in scopes
+        and prefix.startswith(f"{PRIVATE_PREFIX}/")
+    )
+    given = params.get("people")
+    people = (
+        {
+            handle: name
+            for handle, name in given.items()
+            if isinstance(handle, str) and isinstance(name, str)
+        }
+        if isinstance(given, dict)
+        else {}
+    )
+    return views, people
+
+
+#: 记忆树根上平台自己的文件：对账的三张表。
+_ROOT_FILES = frozenset({".baseline.json", ".bases.json", ".laid.json"})
+
+
+def _sidecar(name: str) -> bool:
+    """平台在作用域目录里留下的旁路副本（`files.rejected_path` / `conflict_path`）。"""
+    return name.endswith((".rejected.md", ".conflict.md"))
+
+
+def _remove(target: Path) -> None:
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target, ignore_errors=True)
+    else:
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+
+
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+_OUTSIDE_SCOPES = (
+    "记忆只收 team/ 和 private/<handle>/ 下的 .md，根目录和别的目录里写的不保存"
+)
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+_NOT_LAID = (
+    "这一轮没有铺下这个人的 private 目录：只有这一轮答复的成员的目录收写入，"
+    "写在别人目录里的不保存"
+)
+
+
+def stray_memory(root: Path, managed: set[str]) -> dict[str, str]:
+    """树上平台不会收的东西（路径 → 原因），说完就从树上拿走。
+
+    对账只读受管作用域里名字合格的 `.md`（`read_memory`），别的写入以前悄悄留在
+    磁盘上或被删掉，写它的 agent 以为写成了。这里把它们一一说出来，回答里带回去
+    （``dropped``），平台下一轮告诉它（`platform_notices.memory_dropped_notice`）；
+    说过一次就拿走，不然每一次对账都再说一遍。只说路径和原因，不带正文。
+    """
+    found: dict[str, str] = {}
+    try:
+        top = sorted(root.iterdir())
+    except OSError:
+        return found
+    for entry in top:
+        if entry.name in _ROOT_FILES:
+            continue
+        if entry.name == TEAM_PREFIX and entry.is_dir() and TEAM_PREFIX in managed:
+            found.update(_strays_in(entry, TEAM_PREFIX))
+            continue
+        if entry.name == PRIVATE_PREFIX and entry.is_dir() and not entry.is_symlink():
+            for owner in sorted(entry.iterdir()):
+                prefix = f"{PRIVATE_PREFIX}/{owner.name}"
+                if prefix in managed and owner.is_dir() and not owner.is_symlink():
+                    found.update(_strays_in(owner, prefix))
+                    continue
+                why = _NOT_LAID if owner.is_dir() else _OUTSIDE_SCOPES
+                for path in _files_under(owner, prefix) or [prefix]:
+                    found[path] = why
+                _remove(owner)
+            continue
+        if entry.name == TEAM_PREFIX or entry.name == PRIVATE_PREFIX:
+            found[entry.name] = _OUTSIDE_SCOPES
+        else:
+            for path in _files_under(entry, entry.name) or [entry.name]:
+                found[path] = _OUTSIDE_SCOPES
+        _remove(entry)
+    return found
+
+
+def _files_under(entry: Path, path: str) -> list[str]:
+    if not entry.is_dir() or entry.is_symlink():
+        return [path] if entry.exists() or entry.is_symlink() else []
+    out: list[str] = []
+    with contextlib.suppress(OSError):
+        for child in sorted(entry.iterdir()):
+            out += _files_under(child, f"{path}/{child.name}")
+    return out
+
+
+def _strays_in(directory: Path, prefix: str) -> dict[str, str]:
+    """一个受管作用域目录里，名字不合格或不是一层文件的那几样。"""
+    found: dict[str, str] = {}
+    with contextlib.suppress(OSError):
+        for entry in sorted(directory.iterdir()):
+            path = f"{prefix}/{entry.name}"
+            if entry.is_file() and not entry.is_symlink():
+                if _sidecar(entry.name):
+                    continue
+                try:
+                    check_scoped_path(path)
+                    continue
+                except MemoryFileError as exc:
+                    found[path] = str(exc)
+            else:
+                for inner in _files_under(entry, path) or [path]:
+                    # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+                    found[inner] = f"一条记忆就一个文件，不放在子目录里：{path!r}"
+            _remove(entry)
+    return found
+
+
 def _recall_baseline(root: Path, name: str = MEMORY_BASELINE) -> dict[str, str]:
     """上一次对账留下的那张表（就在记忆树根上）：指纹表（`MEMORY_BASELINE`），
     或者索引底稿（`MEMORY_BASES`）。
@@ -418,18 +545,6 @@ def _handoff_root(root: Path) -> Path:
     """交出去、平台还没回收到的那几棵（`Runner._hand_over`）：在记忆树旁边，不
     在树里，所以 agent 的文件工具够不着它。"""
     return root.parent / "memory-handoff"
-
-
-def _private_dirs(root: Path) -> set[str]:
-    """树上现有的 private 目录（`private/<handle>`）。"""
-    try:
-        return {
-            f"{PRIVATE_PREFIX}/{entry.name}"
-            for entry in (root / PRIVATE_PREFIX).iterdir()
-            if entry.is_dir() and not entry.is_symlink()
-        }
-    except OSError:
-        return set()
 
 
 def _remove_tree(root: Path, prefix: str) -> None:
@@ -1649,6 +1764,7 @@ class Runner(runner.Runner[Journal]):
 
         没铺过、也没点名的 private 目录（会话替别人干活时写进了这个人的目录）既
         不交也不留：它不是谁的记忆，交回去就是替别人往他的 private 里写了东西。
+        它和树上别的平台不收的写入一起，在回答里说出来（``dropped``，`stray_memory`）。
         """
         if "scopes" not in params:
             return self.acknowledge(params)
@@ -1661,15 +1777,16 @@ class Runner(runner.Runner[Journal]):
         disk, emptied = self.read_memory(set(scopes) | withdrawn)
         for prefix in sorted(withdrawn):
             self._hand_over(root, prefix, disk, baseline, bases)
-        for stray in _private_dirs(root) - set(scopes) - withdrawn:
-            print(
-                f"{ended(self.launch)}: memory sync removed {stray}, "
-                "which this seat never laid down",
-                file=sys.stderr,
-                flush=True,
-            )
-            _remove_tree(root, stray)
-        outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline, bases=bases)
+        stray = stray_memory(root, set(scopes))
+        views, people = memory_policy(params, scopes)
+        outcome = sync_tree(
+            scopes=scopes,
+            disk=disk,
+            baseline=baseline,
+            bases=bases,
+            views=views,
+            people=people,
+        )
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
             # 会被重新铺回去。说出来，因为下一次对账看到的还是同一棵树——同一条会
@@ -1684,7 +1801,9 @@ class Runner(runner.Runner[Journal]):
             )
         # 没收的那几版先留到旁边：新建的那一条马上会被下面的清理删掉。
         for path in outcome.rejected:
-            _write_memory(root, rejected_path(path), disk[path])
+            # 被拒的是一次删除（多人地方里已有的记录只读）时没有正文可留。
+            if path in disk:
+                _write_memory(root, rejected_path(path), disk[path])
         for path, content in outcome.files.items():
             _write_memory(root, path, content)
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
@@ -1712,6 +1831,7 @@ class Runner(runner.Runner[Journal]):
             "files": outcome.files,
             "refused": outcome.refused,
             "rejected": outcome.rejected,
+            "dropped": stray,
             "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
             "withdrawn": self._handed(root),

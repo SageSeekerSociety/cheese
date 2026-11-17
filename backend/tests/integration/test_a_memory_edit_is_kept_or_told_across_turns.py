@@ -349,20 +349,37 @@ async def test_what_a_private_channel_learns_stays_out_of_the_shared_memory(
 
 
 async def _two_people(factory, project_id: uuid.UUID, index: str = "") -> None:
-    """alice 和 bob 在这个项目里各有一份 private 索引。"""
+    """alice 和 bob 在这个项目里各有一条 communication 记录和指向它的索引：这间房
+    是多人的，铺下去的只有这一类（`files.talk_view`）。"""
     async with factory() as session:
         for owner in ("alice", "bob"):
-            await MemoryFileStore(session).write(
-                project_id=project_id,
-                scope=MemoryFileScope.private,
-                owner_handle=owner,
-                path=INDEX_NAME,
-                content=index or f"- [{owner} 的偏好]({owner}.md) — 只是 {owner} 的\n",
-                updated_by=owner,
-                expected_version=None,
-                writer=MemoryWriter.panel,
-            )
+            note = "note.md" if index else f"{owner}.md"
+            for path, content in (
+                (note, _talk(note[: -len(".md")], f"{owner} 要回复简短")),
+                (
+                    INDEX_NAME,
+                    index or f"- [{owner} 的偏好]({owner}.md) — 只是 {owner} 的\n",
+                ),
+            ):
+                await MemoryFileStore(session).write(
+                    project_id=project_id,
+                    scope=MemoryFileScope.private,
+                    owner_handle=owner,
+                    path=path,
+                    content=content,
+                    updated_by=owner,
+                    expected_version=None,
+                    writer=MemoryWriter.panel,
+                )
         await session.commit()
+
+
+def _talk(name: str, body: str) -> str:
+    """一条 communication 记录：一个人要你怎么跟他说话。"""
+    return (
+        f"---\nname: {name}\ndescription: 怎么跟他说话\ntype: communication\n---\n\n"
+        f"{body}\n"
+    )
 
 
 async def test_two_seats_working_for_two_people_at_once_each_hold_only_theirs(
@@ -381,10 +398,10 @@ async def test_two_seats_working_for_two_people_at_once_each_hold_only_theirs(
     first = _seat(project_id, room)
     second = SessionRef(project_id, room, "helper", harness=CLAUDE_CODE)
     ledger.remember_turn(
-        room, (room, first.agent_handle), acting="cheese", speaker="alice"
+        room, (room, first.agent_handle), acting="cheese", speakers=("alice",)
     )
     ledger.remember_turn(
-        room, (room, second.agent_handle), acting="helper", speaker="bob"
+        room, (room, second.agent_handle), acting="helper", speakers=("bob",)
     )
 
     await ledger.sync(first)
@@ -403,7 +420,7 @@ async def test_two_seats_working_for_two_people_at_once_each_hold_only_theirs(
 async def test_a_private_memory_written_before_the_seat_turns_to_someone_else_reaches_its_owner(
     business_db_factory, tmp_path, monkeypatch
 ):
-    """One seat answers alice, then bob. What alice's turn wrote into her
+    """One seat answers alice, then bob. The note alice's turn wrote into her
     private memory is hers even when no reconciliation ran between the two
     turns: bob's turn hands it to the platform as hers and takes it off the
     tree, and her next turn lays it down again."""
@@ -411,17 +428,14 @@ async def test_a_private_memory_written_before_the_seat_turns_to_someone_else_re
     factory = business_db_factory
     project_id, _, room = await _setup(factory)
     original = "- [她的偏好](note.md) — 原来那一版\n"
-    edited = "- [她的偏好](note.md) — 她这一轮改过的\n"
-    note = (
-        "---\nname: alice-new\ndescription: 新记下的\ntype: feedback\n---\n\n"
-        "alice-unsynced-new-note\n"
-    )
+    edited = original + "- [新记下的](alice-new.md) — 她这一轮说的\n"
+    note = _talk("alice-new", "alice-unsynced-new-note")
     await _two_people(factory, project_id, original)
     sessions = _Session(tmp_path)
     ledger = _ledger(factory, sessions)
     seat = _seat(project_id, room)
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("alice",)
     )
     await ledger.sync(seat)
     hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
@@ -429,7 +443,7 @@ async def test_a_private_memory_written_before_the_seat_turns_to_someone_else_re
     (hers / "alice-new.md").write_text(note, encoding="utf-8")
 
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("bob",)
     )
     await ledger.sync(seat)
 
@@ -446,7 +460,7 @@ async def test_a_private_memory_written_before_the_seat_turns_to_someone_else_re
     assert written is not None and written.content == note
 
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("alice",)
     )
     await ledger.sync(seat)
 
@@ -454,7 +468,9 @@ async def test_a_private_memory_written_before_the_seat_turns_to_someone_else_re
     assert (hers / "alice-new.md").read_text(encoding="utf-8") == note
 
 
-_NOTE = "---\nname: first-note\ndescription: 她记下的第一条\ntype: feedback\n---\n\n"
+_NOTE = (
+    "---\nname: first-note\ndescription: 她记下的第一条\ntype: communication\n---\n\n"
+)
 
 
 class _LosesOneAnswer(_Session):
@@ -480,7 +496,7 @@ async def _alice_then_bob(factory, tmp_path, sessions, index: str = ""):
     ledger = _ledger(factory, sessions)
     seat = _seat(project_id, room)
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("alice",)
     )
     await ledger.sync(seat)
     hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
@@ -510,7 +526,7 @@ async def test_a_first_private_memory_reaches_its_owner_when_the_seat_turns_to_s
     (hers / "first-note.md").write_text(_NOTE + "alice-first-note\n", encoding="utf-8")
 
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("bob",)
     )
     await ledger.sync(seat)
 
@@ -535,7 +551,7 @@ async def test_a_private_memory_handed_back_is_in_its_owners_history_alone(
     (hers / "first-note.md").write_text(_NOTE + "alice-first-note\n", encoding="utf-8")
 
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("bob",)
     )
     await ledger.sync(seat)
 
@@ -565,7 +581,7 @@ async def test_a_private_memory_handed_back_on_a_lost_answer_still_reaches_its_o
     hers.mkdir(parents=True, exist_ok=True)
     (hers / "first-note.md").write_text(_NOTE + "alice-kept-note\n", encoding="utf-8")
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("bob",)
     )
     sessions.lose = True
     with pytest.raises(ConnectionError):
@@ -573,7 +589,7 @@ async def test_a_private_memory_handed_back_on_a_lost_answer_still_reaches_its_o
 
     await ledger.sync(seat)
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("alice",)
     )
     await ledger.sync(seat)
 
@@ -585,15 +601,19 @@ async def test_a_private_memory_handed_back_on_a_lost_answer_still_reaches_its_o
 async def test_an_owners_version_the_platform_overwrote_on_hand_back_is_kept_for_them(
     business_db_factory, tmp_path, monkeypatch
 ):
-    """alice's turn edits her note while the platform's copy of it changes too;
-    the seat turns to bob before they are reconciled. The platform's version
-    wins, as it always does, and alice's version is kept where only she reads
-    it, her private chat — not in the room bob's turn works in."""
+    """alice's turn writes a note while the platform gets a note of the same
+    name too; the seat turns to bob before they are reconciled. The platform's
+    version wins, as it always does, and alice's version is kept where only
+    she reads it, her private chat — not in the room bob's turn works in."""
     monkeypatch.setenv("HOME", str(tmp_path))
     factory = business_db_factory
     sessions = _Session(tmp_path)
     project_id, room, ledger, seat, hers = await _alice_then_bob(
         factory, tmp_path, sessions
+    )
+    hers.mkdir(parents=True, exist_ok=True)
+    (hers / "first-note.md").write_text(
+        _NOTE + "alice-unique-edit-4985\n", encoding="utf-8"
     )
     async with factory() as session:
         await MemoryFileStore(session).write(
@@ -601,35 +621,15 @@ async def test_an_owners_version_the_platform_overwrote_on_hand_back_is_kept_for
             scope=MemoryFileScope.private,
             owner_handle="alice",
             path="first-note.md",
-            content=_NOTE + "the platform's first version\n",
+            content=_NOTE + "the platform's newer version\n",
             updated_by="alice",
             expected_version=None,
             writer=MemoryWriter.panel,
         )
         await session.commit()
-    await ledger.sync(seat)
-    (hers / "first-note.md").write_text(
-        _NOTE + "alice-unique-edit-4985\n", encoding="utf-8"
-    )
-    async with factory() as session:
-        store = MemoryFileStore(session)
-        row = await store.get(
-            project_id, MemoryFileScope.private, "alice", "first-note.md"
-        )
-        await store.write(
-            project_id=project_id,
-            scope=MemoryFileScope.private,
-            owner_handle="alice",
-            path="first-note.md",
-            content=_NOTE + "the platform's newer version\n",
-            updated_by="alice",
-            expected_version=row.version,
-            writer=MemoryWriter.panel,
-        )
-        await session.commit()
 
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("bob",)
     )
     await ledger.sync(seat)
 
@@ -667,7 +667,11 @@ async def test_a_turn_that_worked_for_someone_without_reading_their_index_is_cou
     ledger = _ledger(factory, sessions)
     seat = _seat(project_id, room)
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="alice", pointed=True
+        room,
+        (room, seat.agent_handle),
+        acting="cheese",
+        speakers=("alice",),
+        pointed=True,
     )
     await ledger.sync(seat)
 
@@ -714,13 +718,13 @@ async def test_a_handoff_merged_once_is_not_merged_again_when_its_receipt_is_los
     ledger = _ledger(factory, sessions)
     seat = _seat(project_id, room)
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("alice",)
     )
     await ledger.sync(seat)
     hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
     (hers / "secret.md").write_text(_NOTE + "alice-wants-this-forgotten-4985\n")
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("bob",)
     )
     heard = sessions.memory
     lost = {"once": False}
@@ -768,13 +772,13 @@ async def test_a_handoff_is_not_merged_again_when_its_receipt_goes_unanswered(
     ledger = _ledger(factory, sessions)
     seat = _seat(project_id, room)
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("alice",)
     )
     await ledger.sync(seat)
     hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
     (hers / "secret.md").write_text(_NOTE + "alice-wants-this-forgotten-4985\n")
     ledger.remember_turn(
-        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+        room, (room, seat.agent_handle), acting="cheese", speakers=("bob",)
     )
     heard = sessions.memory
     unanswered = {"once": False}

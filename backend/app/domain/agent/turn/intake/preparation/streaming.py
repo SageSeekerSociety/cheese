@@ -32,6 +32,7 @@ from app.domain.prompts import (
     render_notice,
     render_opening,
     resume_notice,
+    talk_pointer,
     untitled_task,
 )
 from app.domain.prompts.profile import holds
@@ -176,6 +177,9 @@ async def converse(
     if untitled:
         # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
         prompt_text = f"{platform_prompt(untitled_task(TITLE_CHARS), NoticeType.turn)}\n\n{prompt_text}"
+    if prepared.talk_for and keeps_memory(runtime.harness):
+        # 只对这一轮成立：下一轮答的可能是别人。
+        prompt_text = f"{platform_prompt(talk_pointer(prepared.talk_for), NoticeType.turn)}\n\n{prompt_text}"
     if is_resume:
         prompt_text = (
             f"{platform_prompt(resume_notice(), NoticeType.turn)}\n\n{prompt_text}"

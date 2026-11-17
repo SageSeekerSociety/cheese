@@ -8,6 +8,7 @@ from app.domain.prompts.memory import (
     MEMORY_DIR,
     memory_block,
     private_index_pointer,
+    talk_pointer,
 )
 from app.domain.prompts.notices import (
     HIDDEN_TYPES,
@@ -108,6 +109,7 @@ __all__ = [
     "strip_platform_notice",
     "task_opening_prompt",
     "task_section",
+    "talk_pointer",
     "task_wrap_up",
     "teaching_section",
     "untitled_task",

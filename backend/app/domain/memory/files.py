@@ -64,17 +64,29 @@ _INDEX_LINE_RE = re.compile(
 
 
 class MemoryType(StrEnum):
-    """四种类型，照搬 CC。
+    """五种类型：CC 的四种，加芝士自己的一种。
 
     `user` 是「这个人是谁」，永远是 private；`feedback` 是「你该怎么做」——纠正
     和**被认可的做法**都算，只记纠正会让 agent 越来越保守；`project` 是代码和
     git 读不出的进行中工作与约束；`reference` 是外部系统的入口。
+
+    `communication` 是一个人要你怎么跟他说话：回复多长、先说什么、要不要 @ 他。
+    它是一个人的 private 记忆里**唯一**会被带进多人地方（频道主线、任务、支线）
+    的一类（`talk_view`），所以它只能在本人的 private 里，而且由平台按类型挑、
+    按类型收（`policy_breach`），不靠提示词嘱咐。「替他把活做细」不是这一类：
+    那种要求会落到别人的交付上。
     """
 
     user = "user"
     feedback = "feedback"
     project = "project"
     reference = "reference"
+    communication = "communication"
+
+
+#: 一条 `communication` 记忆正文的上限（字符）。「回复简短，先说结论」一句话就说完；
+#: 比这长的多半夹带了别的要求，而这一类是会进多人地方的那一类。
+TALK_BODY_MAX = 300
 
 
 class MemoryFileScope(StrEnum):
@@ -163,7 +175,7 @@ def parse_memory_file(text: str) -> MemoryFile:
     except ValueError as exc:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise MemoryFileError(
-            "type 只能是 user / feedback / project / reference，"
+            "type 只能是 " + " / ".join(kind.value for kind in MemoryType) + "，"
             f"拿到的是 {fields['type']}"
         ) from exc
     body = text[match.end() :].strip()
@@ -417,3 +429,180 @@ def check_scoped_path(path: str) -> tuple[str, str]:
         raise MemoryFileError(f"一条记忆就一个文件，路径不对：{path!r}")
     check_path(rest[0])
     return prefix, rest[0]
+
+
+# --- 一个人的 private 在多人地方：只有 communication 那一类 ---------------------
+#
+# 私聊里，平台铺下这个人整棵 private；在频道主线、任务、支线这些多人的地方，只铺
+# 这一轮答的那几位各自的 `communication` 记录（`talk_view`），而且只能新记这一类
+# （`policy_breach` 的 ``view``）。挑哪几条、收哪几条由平台按 frontmatter 里的
+# type 定，不由 agent 定：会话里留着的东西下一轮还在（同一个会话接着答下一位），
+# 而只有「怎么跟他说话」这一类留下来不会改变它怎么对待别人。
+#
+# 平台核得了的是形状：在谁的目录下、type 是不是那一类、正文多长、有没有点别的成员
+# 的名。核不了的是意思：一条把「多检查别人的改动」标成 communication 的记录，只要
+# 不点名，平台照收——那一层靠规矩（`prompts/pieces/memory/`）。
+
+#: 多人地方里，铺下来的那几条记录是只读的；这一类只能新记。
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+VIEW_READ_ONLY = (
+    "多人的地方只能新记这位成员的 communication 记录，已有的记录在这里只读；"
+    "要改或删，请他在和你的私聊里说"
+)
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+VIEW_TYPE_ONLY = (
+    "多人的地方只收这位成员的 communication 记录（怎么跟他说话：回复长短、先说什么、"
+    "要不要 @ 他），别的类型在这里不记"
+)
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+TALK_IN_TEAM = (
+    "communication 记录只记在本人的 private/<handle>/ 里；team 是全项目共看的，"
+    "不记某一个人要你怎么跟他说话"
+)
+
+
+def is_talk_note(content: str) -> bool:
+    try:
+        return parse_memory_file(content).type is MemoryType.communication
+    except MemoryFileError:
+        return False
+
+
+def _owner_of(prefix: str) -> str | None:
+    parts = prefix.split("/")
+    if len(parts) != 2 or parts[0] not in (PRIVATE_PREFIX, PERSONAL_PREFIX):
+        return None
+    return parts[1]
+
+
+def _names_others(note: MemoryFile, owner: str, people: dict[str, str]) -> str | None:
+    """这条记录点了哪一位别的成员（handle 或名字）；没有点名是 None。"""
+    text = f"{note.description}\n{note.body}"
+    for handle, name in sorted(people.items()):
+        if handle == owner:
+            continue
+        if handle and re.search(
+            rf"(?<![A-Za-z0-9_-]){re.escape(handle)}(?![A-Za-z0-9_-])",
+            text,
+            re.IGNORECASE,
+        ):
+            return handle
+        if name and len(name) >= 2 and name in text:
+            return name
+    return None
+
+
+def policy_breach(
+    path: str,
+    content: str | None,
+    previous: str | None,
+    *,
+    view: bool = False,
+    people: dict[str, str] | None = None,
+) -> str | None:
+    """会话写的这一版（``content``，删除是 None）平台收不收；不收就说为什么。
+
+    ``path`` 是带作用域前缀的路径，``previous`` 是平台那一版（新建时 None）。
+    ``view``：这一棵是多人地方铺下的那一份（`talk_view`），已有的记录只读，只收
+    新记的 communication。``people`` 是项目里的人（handle → 名字）：一条
+    communication 点了本人以外任何一位的名，就是在要你区别对待别人，不收。
+
+    索引不在这里判：它没有 type，多人地方里它新加的行跟着它指的记录走
+    （`merge_view_index`）。
+    """
+    try:
+        prefix, name = check_scoped_path(path)
+    except MemoryFileError:
+        return None
+    if name == INDEX_NAME:
+        return None
+    if view and previous is not None:
+        return VIEW_READ_ONLY
+    if content is None:
+        return None
+    try:
+        note = parse_memory_file(content)
+    except MemoryFileError as exc:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        return f"{VIEW_TYPE_ONLY}（这一条读不出 type：{exc}）" if view else None
+    if note.type is not MemoryType.communication:
+        return VIEW_TYPE_ONLY if view else None
+    owner = _owner_of(prefix)
+    if owner is None:
+        return TALK_IN_TEAM
+    if len(note.body) > TALK_BODY_MAX:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        return (
+            f"communication 记录的正文 {len(note.body)} 字，上限 {TALK_BODY_MAX} 字："
+            "只写他要你怎么跟他说话，一两句就够"
+        )
+    if (named := _names_others(note, owner, people or {})) is not None:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        return (
+            f"这条 communication 记录提到了另一位成员（{named}）。要你区别对待别人的"
+            "话不记；能改写成不点名、他对自己这边的要求时再记"
+        )
+    return None
+
+
+def talk_view(files: dict[str, str]) -> dict[str, str]:
+    """一个人的 private 树（文件名 → 正文）在多人地方铺下的那一份：只有他的
+    communication 记录，和只指向它们的索引。
+
+    索引取他自己那份 `MEMORY.md` 里指向这几条的行，原样、原序；有记录而索引里
+    没有指向它的，按 frontmatter 补一行（`MemoryFile.index_line`），好让每一条都
+    读得到。别的行一行都不放：索引的一行就是一条记忆。
+    """
+    eligible = {
+        name: content
+        for name, content in files.items()
+        if name != INDEX_NAME and is_talk_note(content)
+    }
+    lines = [
+        line
+        for line in (files.get(INDEX_NAME) or "").splitlines()
+        if (entries := parse_index(line)) and entries[0].path in eligible
+    ]
+    pointed = {parse_index(line)[0].path for line in lines}
+    lines += [
+        parse_memory_file(eligible[name]).index_line(name)
+        for name in sorted(eligible)
+        if name not in pointed
+    ]
+    view = dict(eligible)
+    if lines:
+        view[INDEX_NAME] = "\n".join(lines) + "\n"
+    return view
+
+
+def merge_view_index(
+    laid: str, written: str, real: str, kept: set[str]
+) -> tuple[str, list[str]]:
+    """多人地方里改过的那份索引（``written``，铺下去时是 ``laid``），合回他真正
+    的那份索引 ``real``。
+
+    只收**新加的、指向 ``kept`` 里一条记录**的行（``kept`` 是这一棵在这一次之后
+    有的 communication 记录），接在 ``real`` 后面；删掉的、改掉的行和指向别处的
+    新行都不收——已有的记录在这里只读，而索引的一行本身就是一条记忆。返回合好的
+    索引和没收的那几行。
+    """
+    old = set(laid.splitlines())
+    present = set(real.splitlines())
+    taken: list[str] = []
+    refused: list[str] = []
+    for line in written.splitlines():
+        if line in old or not line.strip():
+            continue
+        entries = parse_index(line)
+        if entries and entries[0].path in kept:
+            if line not in present and line not in taken:
+                taken.append(line)
+        else:
+            refused.append(line)
+    refused += [
+        line for line in laid.splitlines() if line not in set(written.splitlines())
+    ]
+    if not taken:
+        return real, refused
+    body = real if not real or real.endswith("\n") else real + "\n"
+    return body + "\n".join(taken) + "\n", refused
