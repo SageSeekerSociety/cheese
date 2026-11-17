@@ -176,6 +176,11 @@ def _world():
             "sessions",
         ),
         ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
+        (
+            "learning analysis nightly",
+            "space.learning_insight_analysis.run_nightly",
+            "sessions",
+        ),
     ],
 )
 async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
@@ -538,6 +543,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("relay balance check", 126),
         ("credit warnings", 125),
         ("ci activity sweep", 300),
+        ("learning analysis nightly", 3600),
     ]
     # Every process serves requests that read the platform model roles, so that
     # one refresh runs everywhere; every other clock only on the lock holder.

@@ -446,6 +446,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     # no administrator has pointed the role (app.core.model_roles).
     learning_analysis_model: str = "deepseek-flash"
     learning_analysis_timeout_seconds: float = 60.0
+    # 每晚学情分析（space/learning_insight_analysis.py）：每块板每天的调用上限（费用记在开启者
+    # 名下，这是刹车）、几点（Asia/Shanghai）开跑、一次调用最多读一个成员的几条发言。
+    learning_analysis_daily_calls_per_space: int = 200
+    learning_analysis_run_hour: int = 2
+    learning_analysis_batch_messages: int = 40
     # What a conversation's sandboxes may spend a day on models, per budget
     # holder (`gateway_usage.MachineGatewayKey`): their calls go out on a key
     # of their own with this cap on the gateway, so a machine whose owner

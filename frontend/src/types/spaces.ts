@@ -139,6 +139,74 @@ export type SpaceLearningNoticeState = {
   acknowledged: boolean
 }
 
+// ---- 我的学习洞察（§ learning analysis, step 2）-------------------------------------
+//
+// 每晚分析写下的结果，成员只读得到自己的那一份。契约见 `SpacesApi.readMyLearningInsight`
+// / `disputeLearningJudgment`；服务端在 `app/domain/space/learning_insight_service.py`。
+
+/** AI 判断的三档。「未涉及」不是一档：没有判断（`judgment: null`）就是它。 */
+export type LearningLevel = 'mastered' | 'shaky' | 'weak'
+
+/** 一条提问的类型：问概念、贴报错、要答案、验证思路、其他。 */
+export type LearningQuestionKind = 'concept' | 'error' | 'answer' | 'verify' | 'other'
+
+/** 一条依据：我自己的一条消息的摘录，以及它在哪道题里。 */
+export type LearningEvidence = {
+  blockId: string
+  taskId: number | null
+  taskName: string
+  quote: string
+  /** epoch 毫秒。 */
+  createdAt: number | null
+}
+
+/** AI 对一个知识点的当前判断。 */
+export type LearningJudgment = {
+  id: number
+  level: LearningLevel
+  /** 一句话：为什么是这一档。 */
+  summary: string
+  /** 我标过「不准」：降权（不当「最该补的」），下次分析时复核。 */
+  disputed: boolean
+  analyzedAt: number | null
+  evidence: LearningEvidence[]
+}
+
+/** 清单里的一个知识点，带上我的判断；`judgment` 为空即「未涉及」。 */
+export type LearningInsightPoint = {
+  id: number
+  name: string
+  judgment: LearningJudgment | null
+}
+
+/** 「我常问的」一类：一个知识点（可能归不进清单）× 一种提问类型。 */
+export type LearningFrequentQuestion = {
+  knowledgePointId: number | null
+  knowledgePointName: string | null
+  kind: LearningQuestionKind
+  count: number
+  /** 最近一条的概括（模型的话，不是原文）。 */
+  example: string
+}
+
+/** 「我的学习洞察」（`GET /spaces/{spaceId}/learning-analysis/me`）。 */
+export type MyLearningInsight = {
+  /** 这块板开没开学情分析；没开时其余都是空的。 */
+  enabled: boolean
+  /** 最近一次更新，epoch 毫秒；还没分析过是 null。 */
+  updatedAt: number | null
+  /** 全部知识点，按清单顺序。 */
+  knowledgePoints: LearningInsightPoint[]
+  /** 最该补的那个知识点；没有要补的是 null。 */
+  focusKnowledgePointId: number | null
+  frequentQuestions: LearningFrequentQuestion[]
+  /** 读了什么：一共几条发言、哪几道题各几条。 */
+  sources: {
+    messagesRead: number
+    tasks: { taskId: number; name: string; messagesRead: number }[]
+  }
+}
+
 /** One person the space is visible to — see `SpacesApi.listMembers`. */
 export type SpaceMember = {
   userId: number
