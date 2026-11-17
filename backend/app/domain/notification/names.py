@@ -172,6 +172,14 @@ async def names_for(
     )
 
 
+async def referents_for(session: AsyncSession, *values: Any) -> dict[int, str]:
+    """``id -> handle`` for everyone the entity references inside ``values`` name."""
+    ids: set[int] = set()
+    for value in values:
+        ids |= user_ids_in(value)
+    return await usernames_by_ids(session, ids) if ids else {}
+
+
 async def names_and_referents(
     session: AsyncSession,
     *values: Any,
