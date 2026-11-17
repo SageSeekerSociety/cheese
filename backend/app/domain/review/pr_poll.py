@@ -420,13 +420,20 @@ async def poll_uncarded_task_prs(
                         record_instruction=record_instruction,
                         task_teammate=task_teammate,
                     )
-                    owner = task.owner_handle
+                    # A task closed by hand before its PR merged stays closed:
+                    # there is nothing for its owner to decide.
+                    goes_on = task.status == TaskStatus.open
+                    owner = task.owner_handle if goes_on else None
                     await announce(
                         session,
                         place_id=task.room_id,
                         task_id=task.id,
                         content=(
-                            say("prMergedTaskGoesOn", pr=number, owner=f"<@{owner}>")
+                            say("prMergedDelivered", pr=number)
+                            if not goes_on
+                            else say(
+                                "prMergedTaskGoesOn", pr=number, owner=f"<@{owner}>"
+                            )
                             if owner
                             else say("prMergedTaskGoesOnNoOwner", pr=number)
                         ),

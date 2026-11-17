@@ -137,7 +137,9 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
     ]
     assert delivered["accepted_by"] == "alice"
     assert delivered["accepted_at"] is not None
-    assert delivered["presentation"]["phrase"] == "accepted"
+    # A merge does not end the task: its teammate judges whether it is done.
+    assert delivered["status"] == "open"
+    assert delivered["presentation"]["phrase"] != "accepted"
     assert topic["accepted_at"] is None
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
@@ -357,8 +359,9 @@ def test_no_new_card_after_delivery(client):
     )
     assert r.status_code == 422
     # 拒的是「分支上没有新东西」这个事实，不是「这个话题交付过了」这段历史：
-    # 房间接着干活、有了新提交就该能再递一张（见 test_accept_does_not_archive）。
-    assert "任务已结束" in r.json()["message"]
+    # 合并后任务换到下一步的新分支，有了新提交就能再递一张
+    # （见 test_accept_does_not_archive）。
+    assert "没有可交付的改动" in r.json()["message"]
     # 话题没有被归档 —— 拒绝的只是这一张空卡。
     assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 

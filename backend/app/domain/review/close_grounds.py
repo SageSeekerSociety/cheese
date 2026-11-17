@@ -85,19 +85,20 @@ async def grounds_to_close(
 async def _last_delivery_landed(session: AsyncSession, task: Task) -> bool:
     """Whether ``task``'s last delivery landed: one did, and no card filed
     after it is still open or was sent back. A card voided (``revoked``) was
-    never decided, and does not count either way."""
+    never decided, and does not count either way; one sent back before the
+    landing — a PR then merged on the forge — is history."""
     if task.accepted_at is None:
         return False
-    latest = await session.scalar(
-        select(AcceptCard.status)
+    later = await session.scalar(
+        select(AcceptCard.id)
         .where(
             AcceptCard.task_id == task.id,
-            AcceptCard.status != AcceptStatus.revoked,
+            AcceptCard.created_at > task.accepted_at,
+            AcceptCard.status.not_in((AcceptStatus.accepted, AcceptStatus.revoked)),
         )
-        .order_by(AcceptCard.created_at.desc())
         .limit(1)
     )
-    return latest is None or latest == AcceptStatus.accepted
+    return later is None
 
 
 async def _unchecked(session: AsyncSession, task_id: uuid.UUID) -> list[str]:

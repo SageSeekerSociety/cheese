@@ -152,9 +152,10 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 card_id=card.id, decided_by="alice", head_sha=delivered_head
             )
             await session.commit()
-            # The accepted task is being written up before it closes; the
-            # other one is untouched.
-            assert first.closing_since is not None
+            # The accepted task goes on, for its teammate to judge whether it
+            # is done (`task_landing`); the other one is untouched.
+            assert first.status == TaskStatus.open
+            assert first.accepted_at is not None
             assert second.status == TaskStatus.open
             assert second.closing_since is None
             assert (await session.get(Topic, room)).status == "active"

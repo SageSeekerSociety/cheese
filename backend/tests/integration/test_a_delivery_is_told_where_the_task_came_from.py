@@ -61,14 +61,13 @@ def _opened_in_the_main_line(client, room: str) -> uuid.UUID:
     return task.id
 
 
-def _file(client, room: str, *, completes_task: bool = True) -> str:
+def _file(client, room: str) -> str:
     r = client.post(
         f"/topics/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
             "change_subject": _SUBJECT,
             "reviewer_handle": "alice",
-            "completes_task": completes_task,
         },
     )
     assert r.status_code == 200, r.text
@@ -245,28 +244,33 @@ def _accepted_last_step(client, app_world) -> tuple[str, uuid.UUID]:
 
 def test_a_written_up_task_ends_in_the_main_line_once(client, app_world):
     room, task_id = _accepted_last_step(client, app_world)
-    # Accepted, and being written up: nothing is said past the hand-in yet.
-    [handed_in] = _told(client, room, task_id)
+    # Accepted: the hand-in and the step that landed, and no ending yet.
+    handed_in, landed = _told(client, room, task_id)
     assert handed_in["meta"].get("delivery") is not None
+    assert "任务继续进行" in landed["content"]
 
     written_up(client, str(task_id))
 
     *_, ending = _told(client, room, task_id)
-    assert len(_told(client, room, task_id)) == 2
+    assert len(_told(client, room, task_id)) == 3
     assert "做完了" in ending["content"]
     # The ending is the teammate's own words, said under its name.
     assert ending["kind"] == "message"
     assert ending["author_type"] == "participant"
 
 
-def test_a_task_whose_write_up_never_comes_still_ends_in_the_main_line(
+def test_a_merge_its_teammate_never_follows_up_leaves_the_task_open(
     client, app_world
 ):
+    """No merge closes a task: an hour on, with its teammate silent, it is
+    still open, and the main line has heard only that the step landed."""
     room, task_id = _accepted_last_step(client, app_world)
 
     time_passes(client, str(task_id), minutes=60)
     watch(client)
 
-    *_, ending = _told(client, room, task_id)
+    *_, landed = _told(client, room, task_id)
     assert len(_told(client, room, task_id)) == 2
-    assert "已采纳" in ending["content"]
+    assert "已采纳" in landed["content"]
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"
