@@ -44,6 +44,13 @@ WEB_SEARCH = "supports_web_search"
 _SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE, WEB_SEARCH}) | (
     _UPSTREAM_INFO_KEYS
 )
+# How long, in seconds, the model's cached prefix stays warm once idle: a fact
+# about the model as people pick it, measured from its cache hits, so every
+# row carries it (`catalogue_info`). Not ``CACHE_TTL``, which is what one
+# upstream is asked for and is not the same number (an upstream may keep a
+# cache for less than it was asked, and one that is asked nothing keeps its
+# own). The platform compacts a session idle past it (`room.cold`).
+CACHE_LIFETIME = "cheese_cache_lifetime_s"
 
 
 # 我方对外用短名,网关用 LiteLLM 的字段名。翻译只在这一处发生,别让字段名散到服务层
@@ -151,6 +158,8 @@ class AdminModel:
     # config.yaml 就是 ``config``,``blocked`` 要每一行都停了才算,``priced`` 要每条
     # 在用的线路都有价 —— 与 ``LlmGateway.models`` 给选择器的答案同一个口径。
     sources: tuple[AdminSource, ...] = ()
+    # 缓存闲置多久失效，秒（``CACHE_LIFETIME``）；None 是没填。
+    cache_lifetime_s: int | None = None
 
 
 @dataclass(frozen=True)

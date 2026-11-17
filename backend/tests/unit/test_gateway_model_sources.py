@@ -447,6 +447,31 @@ async def test_relabelling_a_model_relabels_every_source():
 
 
 @pytest.mark.anyio
+async def test_a_models_cache_lifetime_is_set_cleared_and_read_on_every_source():
+    """How long a model's cache stays warm is the model's: set on the page, the
+    platform reads it whichever row comes first, and 0 takes it away."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)
+
+    saved = await service.update(
+        handle="admin", name="glm", payload=ModelUpdate(cache_lifetime_s=300)
+    )
+    assert saved["model"]["cache_lifetime_s"] == 300, "页面读回的是刚存的"
+    picker = {m.id: m for m in await gw.catalogue().models()}
+    assert picker["glm"].cache_lifetime_s == 300
+    gw.rows.reverse()
+    picker = {m.id: m for m in await gw.catalogue().models()}
+    assert picker["glm"].cache_lifetime_s == 300, "哪一行排第一都是同一个数"
+
+    await service.update(
+        handle="admin", name="glm", payload=ModelUpdate(cache_lifetime_s=0)
+    )
+    picker = {m.id: m for m in await gw.catalogue().models()}
+    assert picker["glm"].cache_lifetime_s is None
+
+
+@pytest.mark.anyio
 async def test_an_upstream_edit_on_a_model_with_several_sources_is_refused():
     gw = _Gateway()
     service = _service(gw)
