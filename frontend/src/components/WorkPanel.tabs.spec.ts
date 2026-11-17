@@ -200,3 +200,37 @@ describe('面板收着：进任务不自动把面板拉开', () => {
     await waitFor(() => expect(emitted()['update:tab']).toContainEqual(['site']))
   })
 })
+
+// 频道里正在审阅的那一件交付：固定的那几格不动，右边多一格写着任务名、能关的页签。关掉它
+// 回到打开它之前那一格。
+describe('交付那一格', () => {
+  it('固定的几格都还在，交付那一格排在它们右边', async () => {
+    const { findAllByRole } = mount({ delivery: { id: 'k1', title: '报名表改短' } })
+    const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
+    expect(labels).toEqual(['概览', '支线', '文件', '例行事务', '报名表改短'])
+  })
+
+  it('从「支线」打开交付，关掉它回到「支线」', async () => {
+    const { container, emitted, getByTestId, rerender } = mount({
+      tab: 'threads',
+      delivery: { id: 'k1', title: '报名表改短' },
+    })
+    await waitFor(() => expect(selected(container)).toBe('支线'))
+    await rerender({ tab: 'delivery', delivery: { id: 'k1', title: '报名表改短' } })
+    await waitFor(() => expect(selected(container)).toBe('报名表改短'))
+    getByTestId('panel-tab-close').click()
+    await waitFor(() => expect(emitted()['close-delivery']).toHaveLength(1))
+    expect(emitted()['update:tab']).toContainEqual(['threads'])
+  })
+
+  it('没被选中时关掉它，人留在原来那一格', async () => {
+    const { container, emitted, getByTestId } = mount({
+      tab: 'files',
+      delivery: { id: 'k1', title: '报名表改短', dot: true },
+    })
+    await waitFor(() => expect(selected(container)).toBe('文件'))
+    getByTestId('panel-tab-close').click()
+    await waitFor(() => expect(emitted()['close-delivery']).toHaveLength(1))
+    expect(selected(container)).toBe('文件')
+  })
+})

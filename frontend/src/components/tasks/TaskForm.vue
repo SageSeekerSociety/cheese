@@ -139,6 +139,7 @@ const {
   rubric,
   rubricPublic,
   rubricMissingName,
+  rubricBadTotal,
   stages,
   stageMissingName,
   isSubmitting,

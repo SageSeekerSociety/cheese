@@ -200,14 +200,16 @@ async def list_library(
     flat: bool = False,
     q: str = "",
     kind: str | None = None,
+    sort: str = "off",
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict:
     """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。一页一页地给。
 
     不给 `flat` / `q` / `kind` 时是 `dir` 那一层：文件夹在前，然后是文件；给了就是
-    整个资料库里对得上的文件（只给 `flat` 是全部）。`next` 是下一页的游标，
-    没有下一页时为 null。
+    整个资料库里对得上的文件（只给 `flat` 是全部）。`sort` 是排序框：`off`（默认）
+    就是上面这个顺序；`asc` / `desc` 把文件夹和文件排进同一条时间线，只比时间，
+    同一时刻才比名字。`next` 是下一页的游标，没有下一页时为 null。
 
     Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
     room that has never seen that file."""
@@ -221,6 +223,7 @@ async def list_library(
         flat=flat,
         q=q.strip(),
         kind=kind,
+        sort=sort,
         after=cursor,
         limit=limit,
     )
@@ -576,10 +579,11 @@ async def list_team_library(
     flat: bool = False,
     q: str = "",
     kind: str | None = None,
+    sort: str = "off",
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict:
-    """团队的资料库，一页一页地给，和项目的资料库一样翻。"""
+    """团队的资料库，一页一页地给，和项目的资料库一样翻、一样排。"""
     await _team_member(team_id, db, resolver)
     entries, after = await library_listing.page(
         db,
@@ -589,6 +593,7 @@ async def list_team_library(
         flat=flat,
         q=q.strip(),
         kind=kind,
+        sort=sort,
         after=cursor,
         limit=limit,
     )

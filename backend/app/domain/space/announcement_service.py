@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, readable_text, review_text
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.addressing import Event, Hand, address
 from app.domain.avatars.models import Avatar
@@ -74,6 +75,20 @@ def first_line(content: str) -> str:
                 line if len(line) <= _EXCERPT_LENGTH else f"{line[:_EXCERPT_LENGTH]}…"
             )
     return ""
+
+
+async def _review_if_published(
+    space: Space, title: str | None, content: str | None
+) -> None:
+    """An open space's announcements are read by everyone in its scope, so
+    what they say is published (``app.core.content_review``); a members-only
+    space's are not."""
+    if space.open_scope is None:
+        return
+    await review_text(
+        TextKind.PUBLIC_TEXT,
+        [title, readable_text(content) if content is not None else None],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +197,7 @@ class SpaceAnnouncementService:
         now = datetime.now(UTC)
         if expires_at is not None and expires_at <= now:
             raise BadRequestError("expiresAt must be in the future")
+        await _review_if_published(space, title, content)
         row = SpaceAnnouncement(
             space_id=space_id,
             author_id=author_id,
@@ -210,6 +226,11 @@ class SpaceAnnouncementService:
         set_expires_at: bool = False,
     ) -> AnnouncementView:
         row = await self._row_or_404(space_id, announcement_id)
+        await _review_if_published(
+            await self._space_or_404(space_id),
+            title if title is not None and title.strip() != row.title else None,
+            content if content != row.content else None,
+        )
         said_changed = False
         if title is not None:
             cleaned = _clean_title(title)

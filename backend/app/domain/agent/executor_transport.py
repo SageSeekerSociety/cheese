@@ -891,6 +891,11 @@ class RemoteClient:
                 "content": content,
                 "request_id": publication_id,
                 **({"reply_to": args["reply_to"]} if args.get("reply_to") else {}),
+                # The task the message is about (`#8` or its id): the room
+                # resolves it and tags the message (`topics_messages`).
+                **({"task": str(args["task"])} if args.get("task") else {}),
+                # Short answers offered under a main-line message.
+                **({"replies": list(args["replies"])} if args.get("replies") else {}),
                 **({"attachments": attachments} if attachments else {}),
             }
         ).encode()

@@ -19,6 +19,7 @@ import { createAvatar } from '@/api/avatars'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { teamAllows } from '@/lib/teamPermissions'
 import { patchQuery } from '@/query/client'
 import { keys } from '@/query/keys'
 
@@ -28,7 +29,7 @@ const addressPrefix = `${window.location.host}/teams/`
 const router = useRouter()
 const teamData = inject(teamDataInjectionKey, ref())
 
-const canEdit = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
+const canEdit = computed(() => teamAllows(teamData.value, 'edit_settings'))
 const saving = ref(false)
 const saved = ref(false)
 const error = ref('')

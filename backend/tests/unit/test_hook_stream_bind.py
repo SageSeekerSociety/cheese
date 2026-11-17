@@ -217,6 +217,7 @@ async def test_an_entry_from_a_superseded_session_moves_nothing(db_factory):
             agent_handle=seat,
             resume_token="sess-new",
             harness="pi",
+            generation=0,
         )
         await session.commit()
 
@@ -280,6 +281,7 @@ async def test_a_pointer_writer_and_a_bind_serialize_on_the_row(db_factory):
             agent_handle=seat,
             resume_token="sess-old",
             harness="pi",
+            generation=0,
         )
         await session.commit()
 
@@ -301,6 +303,7 @@ async def test_a_pointer_writer_and_a_bind_serialize_on_the_row(db_factory):
             agent_handle=seat,
             resume_token="sess-new",
             harness="pi",
+            generation=0,
         )
         event = _event(
             f"接管 {nonce_t}", entry_id="e2", pos=2, session_id="sess-old", harness="pi"
@@ -478,6 +481,7 @@ async def test_a_reader_stalled_through_a_stop_and_reattach_moves_nothing(db_fac
             agent_handle=seat,
             resume_token="sess-1",
             harness="pi",
+            generation=0,
         )
         await session.commit()
 

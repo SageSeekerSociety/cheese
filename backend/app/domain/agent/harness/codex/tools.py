@@ -561,7 +561,7 @@ class RemoteTools:
                     self.answered = owed["id"]
                     # And where the runner reads it, to know the turn may end.
                     Path(owed["answered"]).write_text(owed["id"])
-                elif key not in owed["reads"]:
+                elif owed.get("held", True) and key not in owed["reads"]:
                     return {
                         "success": False,
                         "contentItems": [{"type": "inputText", "text": owed["reason"]}],

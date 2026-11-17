@@ -14,6 +14,7 @@ here, and `alerting.send`'s own repeat windows (an hour, then four, then a day)
 are what keeps it from being said every tick.
 """
 
+import asyncio
 import logging
 from collections.abc import Callable
 
@@ -22,7 +23,7 @@ from redis.asyncio import Redis
 from app.core import alerting
 from app.core.config import settings
 from app.core.redis import get_redis_client
-from app.domain.agent.gateway_admin import AdminModel, GatewayAdmin, UsageWindow
+from app.domain.agent.gateway_admin import AdminModel, GatewayAdmin
 from app.domain.agent.gateway_models_helpers import LEDGER_START, _spend_cap
 from app.domain.day_windows import utc_now
 
@@ -104,15 +105,25 @@ def _send(
 async def check(
     admin: GatewayAdmin, redis: Redis | None, *, today: str
 ) -> list[tuple[str, float]]:
-    """Read every cap and the ledger once; say each new crossing. Returns the
-    (upstream, level) pairs said this time."""
+    """Read every cap and, for each capped upstream, its own ledger; say each
+    new crossing. Returns the (upstream, level) pairs said this time.
+
+    One request per capped upstream, not one for the whole ledger: a cap is a
+    lifetime sum, so the window starts at `LEDGER_START`, and the whole ledger
+    is several megabytes the gateway takes about a second and a half to send —
+    on every sweep, every few minutes, with the event loop decoding it. Only
+    a handful of upstreams carry a cap, and the page's own cap figures
+    (`answers._cap_spend`) are read the same way, for the same reason."""
     caps = caps_by_upstream(await admin.models())
     if not caps:
         return []
-    ledger: UsageWindow = await admin.usage(LEDGER_START.isoformat(), today)
+    ledgers = await asyncio.gather(
+        *(admin.usage(LEDGER_START.isoformat(), today, upstream=u) for u in caps)
+    )
+    by_upstream = {u: w.by_upstream for u, w in zip(caps, ledgers, strict=True)}
     said: list[tuple[str, float]] = []
     for upstream, (cap, names) in caps.items():
-        row = ledger.by_upstream.get(upstream)
+        row = by_upstream[upstream].get(upstream)
         used = row.spend_usd if row is not None else 0.0
         mark = level(used, cap)
         before = await _said(redis, upstream, cap)

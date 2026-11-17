@@ -32,6 +32,7 @@ from app.domain.agent.device_hub import (
     DeviceOffline,
     DeviceUnreachable,
 )
+from app.domain.agent.task_checkout import checkout_steps
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine import session_work
@@ -370,6 +371,7 @@ async def execute(
             db,
             payload,
             target,
+            answer,
             topic_id=topic_id,
             session_id=session_id,
             took_s=time.monotonic() - (deadline - payload.timeout),
@@ -388,6 +390,7 @@ async def _time_checkout(
     db: AsyncSession,
     payload: "ExecutionRequest",
     lease: dict,
+    answer,
     *,
     topic_id: uuid.UUID,
     session_id: uuid.UUID | None,
@@ -404,8 +407,13 @@ async def _time_checkout(
     ):
         return
     try:
+        value = (answer.get("value") if isinstance(answer, dict) else None) or {}
         await keep_checked_out(
-            db, conversation_id=topic_id, session_id=session_id, total_s=took_s
+            db,
+            conversation_id=topic_id,
+            session_id=session_id,
+            total_s=took_s,
+            steps=checkout_steps(str(value.get("stdout") or "")),
         )
         await db.commit()
     except Exception:

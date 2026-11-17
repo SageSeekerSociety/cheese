@@ -148,5 +148,11 @@
   "starterCompressionUnsupported": "压缩包里的 {path} 用了不支持的压缩方式，用普通 zip 格式重新压缩",
   "claimInProgress": "这次领取的项目正在创建，过一会儿再试一次",
   "starterIgnoreUnreadable": "压缩包里的忽略规则 {path} 读不出来，为免把它要忽略的文件放进仓库，这份压缩包不能作为起始代码",
-  "projectFromTaskByStarting": "这个页面已经过期：刷新题目页，点「开始做这道题」建项目"
+  "projectFromTaskByStarting": "这个页面已经过期：刷新题目页，点「开始做这道题」建项目",
+  "githubMigrationCardsPending": "项目里还有 {count} 张待审阅的验收卡，它们指着平台仓库里的 PR。先采纳或退回，再迁到 GitHub",
+  "githubMigrationNotHosted": "只有由平台托管仓库的项目才能迁到 GitHub",
+  "githubMigrationPushFailed": "把代码推到 GitHub 没有成功，GitHub 上的仓库没被改动，稍后再试",
+  "githubMigrationSourceEmpty": "平台仓库里还没有任何分支，没有可迁的内容",
+  "githubMigrationStarterPending": "题目的起步代码还在写入平台仓库，等它写完再迁",
+  "githubMigrationTargetNotEmpty": "这个 GitHub 仓库里已经有别的内容。请换一个空仓库，平台不会覆盖已有的提交"
 }

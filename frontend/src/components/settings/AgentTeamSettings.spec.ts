@@ -371,4 +371,137 @@ describe('技能面板的 409', () => {
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
     expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
   })
+  function skillsWorld(rows: ProjectAgent[]) {
+    listProjectAgents.mockResolvedValue({ data: rows, total: rows.length })
+    listSkillCatalog.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
+    listMachineSkills.mockResolvedValue({ skills: [] })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    setAgentEditing.mockResolvedValue({ editing: null })
+    fetchSkillMarket.mockResolvedValue(MARKET)
+    fetchMachineSkill.mockResolvedValue(landed('documents', '文档'))
+  }
+  const skillButtons = () => screen.findAllByRole('button', { name: '技能' })
+  async function closePanel() {
+    await fireEvent.click(await screen.findByRole('button', { name: t('global.cancel') }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  // 名册是 query 缓存里那一份、保存后不重读：关掉面板再打开同一位，面板从名册那一行
+  // 重新起，版本号要接上刚才那一笔，不能白撞一次 409。
+  it('保存成功后关掉面板再重开同一位，下一次保存带上翻过页的版本', async () => {
+    skillsWorld([agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 })])
+    updateProjectAgent.mockResolvedValueOnce({ version: 2 }).mockResolvedValueOnce({ version: 3 })
+    mountPage()
+
+    await fireEvent.click((await skillButtons())[0])
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await closePanel()
+    await fireEvent.click((await skillButtons())[0])
+    fetchMachineSkill.mockResolvedValue(landed('images', '图'))
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
+    expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({
+      expected_version: 2,
+      configuration: expect.objectContaining({ skills: ['wolfram', 'documents', 'images'] }),
+    })
+  })
+
+  it('保存还没回来就关掉面板、随后成功：重开同一位照样接上版本', async () => {
+    skillsWorld([agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 })])
+    let releaseSave: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseSave = resolve))
+    updateProjectAgent
+      .mockImplementationOnce(async () => {
+        await held
+        return { version: 2 }
+      })
+      .mockResolvedValueOnce({ version: 3 })
+    mountPage()
+
+    await fireEvent.click((await skillButtons())[0])
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await closePanel()
+    releaseSave()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await fireEvent.click((await skillButtons())[0])
+    fetchMachineSkill.mockResolvedValue(landed('images', '图'))
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
+    expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
+  })
+
+  // 重开得比上一场的保存回来还早：面板上的名单是从名册读的旧名单。这时不能把那一笔的新
+  // 版本号塞给面板，否则下一颗带着新版本号和旧名单落库，刚存进去的那颗被悄悄盖掉；
+  // 宁可带旧版本撞一次 409、重读。
+  it('上一场的保存在重开同一位之后才回来：下一笔不拿新版本配旧名单', async () => {
+    skillsWorld([agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 })])
+    let releaseSave: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseSave = resolve))
+    updateProjectAgent
+      .mockImplementationOnce(async () => {
+        await held
+        return { version: 2 }
+      })
+      .mockResolvedValueOnce({ version: 3 })
+    mountPage()
+
+    await fireEvent.click((await skillButtons())[0])
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await closePanel()
+    await fireEvent.click((await skillButtons())[0])
+    releaseSave()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    fetchMachineSkill.mockResolvedValue(landed('images', '图'))
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
+    expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({
+      expected_version: 1,
+      configuration: expect.objectContaining({ skills: ['wolfram', 'images'] }),
+    })
+  })
+
+  it('上一位的保存晚到时人已换到另一位：面板不被拉回上一位，下一笔写给现在这位', async () => {
+    skillsWorld([
+      agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 }),
+      agent({
+        id: 'b2',
+        handle: 'glm',
+        display_name: '芝士GLM',
+        seat_handle: 'cheese-b2',
+        is_default: false,
+        version: 5,
+      }),
+    ])
+    let releaseSave: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseSave = resolve))
+    updateProjectAgent
+      .mockImplementationOnce(async () => {
+        await held
+        return { version: 2 }
+      })
+      .mockResolvedValueOnce({ version: 6 })
+    mountPage()
+
+    await fireEvent.click((await skillButtons())[0])
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await closePanel()
+    await fireEvent.click((await skillButtons())[1])
+    releaseSave()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    fetchMachineSkill.mockResolvedValue(landed('images', '图'))
+    await installFrom()
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
+    expect(updateProjectAgent.mock.calls[1][1]).toBe('b2')
+    expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({
+      expected_version: 5,
+      configuration: expect.objectContaining({ skills: ['images'] }),
+    })
+  })
 })

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import mimetypes
 import re
 import time
@@ -576,13 +577,16 @@ class PreviewHostMiddleware:
         response.headers["Content-Security-Policy"] = _mcp_app_csp(entry)
         return response
 
-    async def _keep_touching(self, conversation_id, seat, project_id) -> None:
-        """Touch the previewed sandbox every ``PREVIEW_TOUCH_STEP_S`` while a
-        live connection to it (a dev server's HMR socket) stays open: a page
-        that only holds that socket sends no request, and was taken for
-        nobody looking once the idle time passed."""
-        while True:
-            await asyncio.sleep(PREVIEW_TOUCH_STEP_S)
+    def _touch_on_use(self, conversation_id, seat, project_id, touches: set):
+        """What a live connection to the preview (a dev server's HMR socket)
+        calls for each message the page sends that is not a keep-alive: the
+        sandbox is touched, at most once per ``PREVIEW_TOUCH_STEP_S``, each
+        time with a session of its own. A page only held open sends nothing,
+        and its sandbox goes idle and freezes like any other; the next request
+        thaws it."""
+        last = -math.inf
+
+        async def touch() -> None:
             try:
                 async with self.sessions() as sessions:
                     session = await anext(sessions)
@@ -593,6 +597,18 @@ class PreviewHostMiddleware:
                 logger.warning(
                     "keeping a previewed sandbox in use failed", exc_info=True
                 )
+
+        def used() -> None:
+            nonlocal last
+            now = time.monotonic()
+            if now - last < PREVIEW_TOUCH_STEP_S:
+                return
+            last = now
+            task = asyncio.create_task(touch())
+            touches.add(task)
+            task.add_done_callback(touches.discard)
+
+        return used
 
     async def websocket(
         self, websocket: WebSocket, topic_id: uuid.UUID, content: str | None = None
@@ -630,22 +646,19 @@ class PreviewHostMiddleware:
                     project_id=place.project_id,
                 )
             # No DB session or read transaction lives for the HMR connection.
-            # While it is open the page is being looked at: the sandbox is kept
-            # in use as by its HTTP requests, each touch with a session of its
-            # own (`_keep_touching`).
-            keeping = asyncio.create_task(
-                self._keep_touching(place.conversation_id, seat, place.project_id)
-            )
-            try:
-                async with asyncio.timeout(max(0, claims["exp"] - time.time())):
-                    await relay_ws(
-                        websocket,
-                        topic_id,
-                        seat,
-                        **({"instance": resource["instance"]} if resource else {}),
-                    )
-            finally:
-                keeping.cancel()
+            # What the page sends over it keeps the sandbox in use as its HTTP
+            # requests do; holding it open does not (`_touch_on_use`).
+            touches: set[asyncio.Task] = set()
+            async with asyncio.timeout(max(0, claims["exp"] - time.time())):
+                await relay_ws(
+                    websocket,
+                    topic_id,
+                    seat,
+                    **({"instance": resource["instance"]} if resource else {}),
+                    on_use=self._touch_on_use(
+                        place.conversation_id, seat, place.project_id, touches
+                    ),
+                )
         except (AppError, BaseError, TimeoutError):
             if websocket.application_state != WebSocketState.DISCONNECTED:
                 await websocket.close(code=1008)

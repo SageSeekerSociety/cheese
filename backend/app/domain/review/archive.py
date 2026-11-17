@@ -211,10 +211,10 @@ def _note_for_closed_task(card: AcceptCard, was: AcceptStatus) -> str:
     """
     if pr_left_open(card):
         return (
-            f"任务已关闭，平台已停止跟进 PR #{card.pr_number}。"
+            f"任务已结束，平台已停止跟进 PR #{card.pr_number}。"
             f"PR 未合并：{card.pr_url or '（无链接）'}"
         )
-    return f"任务已关闭，审阅随之关闭，关闭时状态为「{was}」。"
+    return f"任务已结束，审阅随之关闭，关闭时状态为「{was}」。"
 
 
 async def close_cards_for_closed_task(

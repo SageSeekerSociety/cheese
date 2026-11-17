@@ -1,11 +1,11 @@
 import type { Component } from 'vue'
-import type { Team } from '@/types'
+import type { Team, TeamPermission } from '@/types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const replace = vi.fn()
@@ -84,16 +84,25 @@ afterEach(() => {
   dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
 })
 
+/** What the server says each seat may do to the team (`app/domain/team/permissions.py`). */
+function held(role: Team['role']): TeamPermission[] {
+  if (role === 'OWNER')
+    return ['view_members', 'edit_settings', 'manage_members', 'change_roles', 'recruit', 'disband', 'transfer']
+  if (role === 'ADMIN') return ['view_members', 'edit_settings', 'manage_members', 'recruit']
+  return role === 'MEMBER' ? ['view_members'] : []
+}
+
 function mount(overrides: Partial<Team>) {
   setLocale('zh-CN')
   const team = ref({
+    viewerPermissions: held(overrides.role),
     id: 7,
     handle: 'crew',
     name: 'Cheese 核心组',
     intro: '',
     avatarId: 1,
     owner: { id: 1 },
-    // 第 4 个管理员不在 examples 里：只剩 role 能说明他是管理员。
+    // 第 4 个管理员不在 examples 里：只剩服务端说的权限能说明他是管理员。
     admins: { total: 4, examples: [] },
     members: { total: 0, examples: [] },
     visibility: 'public',
@@ -108,6 +117,19 @@ function mount(overrides: Partial<Team>) {
   // 注入的那一份就是页头读的那一份：团队被改过没有，看它。
   return { ...view, team }
 }
+
+describe('the invite shortcut from the sidebar (?invite=1)', () => {
+  it('opens the invite box once the full team says the owner may invite', async () => {
+    route.query = { invite: '1' }
+    // 侧栏的缓存行先到：它不带 viewerPermissions，这时还不知道能不能邀请。
+    const { team } = mount({ role: 'OWNER', viewerPermissions: undefined })
+    await screen.findByRole('heading', { level: 2, name: '成员' })
+    expect(screen.queryByLabelText('用户名或邮箱')).toBeNull()
+
+    team.value = { ...team.value, viewerPermissions: held('OWNER') }
+    expect(await screen.findByLabelText('用户名或邮箱')).toBeTruthy()
+  })
+})
 
 describe('who manages the team link', () => {
   it('an admin who is not among the listed examples', async () => {
@@ -138,6 +160,7 @@ describe('who the join link is read for', () => {
     expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
 
     team.value.role = 'ADMIN'
+    team.value.viewerPermissions = held('ADMIN')
 
     await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledWith(7))
     await screen.findByText('加入方式')
@@ -149,6 +172,7 @@ describe('who the join link is read for', () => {
     await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1))
 
     team.value.role = 'MEMBER'
+    team.value.viewerPermissions = held('MEMBER')
 
     await waitFor(() => expect(screen.queryByText('加入方式')).toBeNull())
     expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1)
@@ -378,7 +402,7 @@ describe('answering a join request', () => {
     for (const fn of inboxListeners) fn()
     expect(TeamsApi.listTeamJoinRequests).not.toHaveBeenCalled()
 
-    team.value = { ...team.value, role: 'ADMIN' }
+    team.value = { ...team.value, role: 'ADMIN', viewerPermissions: held('ADMIN') }
     await waitFor(() => expect(TeamsApi.listTeamJoinRequests).toHaveBeenCalledWith(7))
   })
 })
@@ -416,6 +440,85 @@ describe('inviting someone by name', () => {
 
     await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalledTimes(1))
     expect(vi.mocked(TeamsApi.createInvitation).mock.calls[0][1]).toMatchObject({ userId: 58 })
+  })
+
+  // 一个替身后端：每个到它这里的邀请都落一行，和修前两次提交都越过「先查」时一样；
+  // 列表读回它记下的。断言看的是页面上列出了几条邀请，不数调用了几次。
+  function inviteServer() {
+    const sent: unknown[] = []
+    const held: Array<() => void> = []
+    let holding = false
+    let failing = false
+    vi.mocked(TeamsApi.createInvitation).mockImplementation((async (_team: number, body: { userId: number }) => {
+      if (failing) {
+        failing = false
+        throw new ApiError(503, 'Service Unavailable')
+      }
+      sent.push({
+        id: 100 + sent.length,
+        type: 'INVITATION',
+        status: 'PENDING',
+        message: null,
+        createdAt: '2026-11-07T08:00:00Z',
+        user: { id: body.userId, username: 'zhangheng', nickname: '张衡', avatarId: null },
+      })
+      if (holding) await new Promise<void>((release) => held.push(release))
+      return true
+    }) as never)
+    vi.mocked(TeamsApi.listTeamInvitations).mockImplementation((async () => ({ invitations: [...sent] })) as never)
+    return {
+      holdAnswers: () => (holding = true),
+      releaseAnswers: () => {
+        holding = false
+        held.splice(0).forEach((release) => release())
+      },
+      failNext: () => (failing = true),
+    }
+  }
+
+  const invitedRows = () => {
+    const section = document.getElementById('team-invitations')
+    return section ? within(section).queryAllByText('张衡') : []
+  }
+
+  it('submitting again while the first invitation is on its way leaves one invitation', async () => {
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
+    const server = inviteServer()
+    server.holdAnswers()
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhangheng')
+    await screen.findByText('张衡', {}, { timeout: 2000 })
+    const form = screen.getByRole('button', { name: '邀请' }).closest('form')!
+    await fireEvent.submit(form)
+    // 第一次已经发出、还没回话：再回车提交两次。
+    await waitFor(() => expect(TeamsApi.createInvitation).toHaveBeenCalled())
+    await fireEvent.submit(form)
+    await fireEvent.submit(form)
+    const lockedWhileOnItsWay = (screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement).disabled
+
+    server.releaseAnswers()
+    await waitFor(() => expect(invitedRows()).toHaveLength(1))
+    expect(lockedWhileOnItsWay).toBe(true)
+  })
+
+  it('an invitation that failed can be sent again from the same dialog, and is then listed once', async () => {
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
+    const server = inviteServer()
+    server.failNext()
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhangheng')
+    await screen.findByText('张衡', {}, { timeout: 2000 })
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+    // 失败了：框还开着、查到的人还在，按钮又能按了，列表里还没有这一位。
+    const button = screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement
+    await waitFor(() => expect(button.disabled).toBe(false))
+    expect(screen.getByTestId('found-user')).toBeTruthy()
+    expect(invitedRows()).toHaveLength(0)
+
+    await fireEvent.submit(button.closest('form')!)
+    await waitFor(() => expect(invitedRows()).toHaveLength(1))
   })
 
   it('editing the name drops the person found for the old one at once', async () => {

@@ -69,6 +69,14 @@ EVENT_CARD_VOIDED: Final = "card_voided"
 #: 验收卡的描述或交付物被更正了 —— 这次改动会在 main 的历史里说什么，或者
 #: 验收人要审的那一份，变了。
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
+#: 一件任务交了一版去审阅，记在它出自的那段对话里（频道主线，或它出自的支线）：
+#: `meta.task_id` 是那件任务，`meta.delivery` 是它递的卡和第几版，画成一张交付卡。
+EVENT_TASK_FILED: Final = "task_filed"
+#: 一件任务的一版被退回了，同样记在它出自的那段对话里。
+EVENT_TASK_RETURNED: Final = "task_returned"
+#: 一件任务关闭了，同样记在它出自的那段对话里：句子说它怎么结束的（写成的结论、
+#: 采纳了没写总结、或者直接关掉）。
+EVENT_TASK_ENDED: Final = "task_ended"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 
@@ -184,6 +192,11 @@ EVENT_CONTEXT_COMPACT: Final = "context_compact"
 #: 这一轮开着，而跑它的机器够不着（离线、会话进程还没起来、连接在换）。平台在等
 #: 它回来；回来了同一行改成已恢复（`meta.state = "over"`）。
 EVENT_DEVICE_WAITING: Final = "device_waiting"
+#: 对话压不下去了（`context_full`），平台不再指着这场原生会话：下一轮开一条新的、
+#: 把整份现状重新告诉它。记在现场，不在对话里 —— 说在房间里像一次报错，而这不是
+#: 报错，是平台自己换了一条接着走的路；对话本身没丢，丢的是没落到文件、任务或结论
+#: 里的那部分上下文。`agent_sessions.abandoned_at` 是同一件事的状态那一半。
+EVENT_CONVERSATION_ABANDONED: Final = "conversation_abandoned"
 #: 平台请房间里刚干过活的队友补第一版实况文档。频道不再有实况文档，平台也不再
 #: 这样提醒；这个值留给已经落在时间线上的那些行。
 EVENT_DOC_MISSING: Final = "doc_missing"
@@ -222,6 +235,9 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
+        EVENT_TASK_FILED,
+        EVENT_TASK_RETURNED,
+        EVENT_TASK_ENDED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_BLOCK_UPGRADED,
         EVENT_ENVIRONMENT_FAILED,
@@ -270,6 +286,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_API_RETRY,
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
+        EVENT_CONVERSATION_ABANDONED,
         EVENT_DOC_MISSING,
         EVENT_MCP_NOT_CONNECTED,
         EVENT_MENTION_FUSED,
@@ -293,6 +310,7 @@ RUN_RECORD_EVENTS: Final = frozenset(
         EVENT_API_RETRY,
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
+        EVENT_CONVERSATION_ABANDONED,
         EVENT_TIMED_DELIVERY,
         "cloud_startup",
         "cloud_provisioning",
@@ -377,6 +395,11 @@ _SHOWN_AS: Final[dict[str, str]] = {
     EVENT_DEPENDENCY_REJECTED: SHOWN_NOT,
     # 草稿的下落画在草稿卡片上。
     EVENT_MAIL_RESULT: SHOWN_NOT,
+    # 任务出自的那段对话里记下的交了一版、退回了一版、关闭了：频道里发生的事，
+    # 不是谁说的话。
+    EVENT_TASK_FILED: SHOWN_HAPPENING,
+    EVENT_TASK_RETURNED: SHOWN_HAPPENING,
+    EVENT_TASK_ENDED: SHOWN_HAPPENING,
     # AI 队友交出来、等人读过再定的东西。
     EVENT_SKILL_PROPOSED: SHOWN_CARD,
     EVENT_ROUTINE_PROPOSED: SHOWN_CARD,

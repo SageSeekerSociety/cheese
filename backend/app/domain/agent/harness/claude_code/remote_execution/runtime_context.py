@@ -103,11 +103,17 @@ def context(self, known_files=None):
 
 
 def task_fs(self, params):
-    """Read or edit one task's live worktree, never the room's host filesystem."""
+    """Read or edit one task's live worktree, never the room's host filesystem.
+
+    A task without a checkout (``in_workspace``: its project has no
+    repository) is worked in the room's workspace, and is read there."""
     task_id = str(uuid.UUID(params["task_id"]))
     home = Path(self.env["HOME"]).resolve()
-    root = (home / ".cheese" / "tasks" / task_id).resolve()
-    root.relative_to(home)
+    if params.get("in_workspace"):
+        root = self.root
+    else:
+        root = (home / ".cheese" / "tasks" / task_id).resolve()
+        root.relative_to(home)
     if not root.is_dir():
         return {"error": "not_found", "missing": "worktree"}
     operation = params["operation"]

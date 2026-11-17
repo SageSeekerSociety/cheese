@@ -16,6 +16,7 @@ from typing import cast
 
 import pytest
 
+from app.domain.agent import sandbox_image
 from app.domain.agent_session.models import LEFT_HOST_KEY
 from app.domain.identity.actor import Actor
 from app.domain.machine import services as machine_services
@@ -177,6 +178,7 @@ def _host(device_id, *, cores=4, memory_mb=8192, disk_gb=100, whole=False, **kw)
         memory_mb=memory_mb,
         disk_gb=40,
         sandbox_disk_gb=disk_gb,
+        sandbox_image=sandbox_image.default_image()["reference"],
         created_at=datetime.now(UTC) - timedelta(hours=1),
         enrolled_at=datetime.now(UTC) - timedelta(hours=1),
         idle_since=None,

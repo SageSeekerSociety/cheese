@@ -130,13 +130,13 @@ async def inform(session: AsyncSession, task: Task, said: str) -> None:
 #: Where a returned or voided card leaves the task: back in its teammate's
 #: hands (`progress.back_to_work`), able to report again.
 BACK_TO_WORK = (
-    "看板上这件任务回到了「在做」，cheese_task(action=state) 又能报了"
+    "看板上这件任务回到了「进行中」，cheese_task(action=state) 又能报了"
     "（你递卡之前报的那一条在递卡时已经清掉）。"
 )
 
 #: The closed-task ending of an instruction: the line still goes out, but there
 #: is nothing left to work on.
-TASK_CLOSED = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+TASK_CLOSED = "原任务已结束或不存在；如需继续修改，请由新任务承接。"
 
 
 def card_voided(
@@ -158,7 +158,7 @@ def card_voided(
 
 def reviewer_changed(*, by: str | None, reviewer: str) -> str:
     who = f"@{by} 把" if by else "平台把"
-    return f"{who}这件任务的验收卡改由 @{reviewer} 审阅，卡照旧在等审阅。"
+    return f"{who}这件任务的验收卡改由 @{reviewer} 审阅，卡照旧待审阅。"
 
 
 def accept_revoked(*, by: str, pr: int | None) -> str:
@@ -189,6 +189,15 @@ def task_closed_unasked() -> str:
     return (
         "平台关闭了这件任务：最后一步已经采纳，叫你写总结、关闭任务的那条指令"
         "一直没能交到你手上，平台没再等，直接关了。"
+    )
+
+
+def task_closed_neglected(*, days: int) -> str:
+    """Nobody touched the task for ``days`` days and the platform closed it
+    (`task_quiet.neglect`)."""
+    return (
+        f"平台关闭了这件任务：已经 {days} 天没有人理会。它的 PR 和分支都还在，"
+        "有人重新打开它时再接着做。"
     )
 
 

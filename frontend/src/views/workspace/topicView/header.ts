@@ -91,5 +91,5 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
     }
   })
 
-  return { taskHeaderBinding, topicHeaderBinding, setDynamicTitle }
+  return { taskHeaderBinding, topicHeaderBinding }
 }

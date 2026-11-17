@@ -68,6 +68,12 @@ export function rememberWindow(topicId: string, author: string | null, window: S
   WINDOWS.set(keyOf(topicId, author), { ...window, blocks: kept })
 }
 
+/** 这段对话不给看了（401/403）：它所有视角存着的那一窗都丢掉。 */
+export function forgetTopicWindows(topicId: string): void {
+  const prefix = `${topicId}\u0000`
+  for (const key of [...WINDOWS.keys()]) if (key.startsWith(prefix)) WINDOWS.delete(key)
+}
+
 /** 测试和换人登录用：整张表清掉。 */
 export function forgetWindows(): void {
   WINDOWS.clear()

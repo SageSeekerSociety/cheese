@@ -177,7 +177,7 @@ async def _channel(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
             if t.status == TaskStatus.open
         ]
         if tasks:
-            lines.append("进行中的任务：")
+            lines.append("未结束的任务：")
             lines += [
                 f"- 任务「{t.title}」（{refs.task(project.slug, t.number)}）"
                 for t in tasks[:LISTED]
@@ -190,7 +190,7 @@ async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
     project, found = await _numbered(reader, ref, address.Numbered.task)
     place = await access.topic(found.id)
     task = place.task
-    state = "进行中" if task.status == TaskStatus.open else "已结束"
+    state = "未结束" if task.status == TaskStatus.open else "已结束"
     lines = [
         f"任务「{task.title}」（{refs.task(project.slug, found.number)}），{state}，"
         f"在频道「{place.room.title}」"
@@ -212,7 +212,7 @@ async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
 
 
 _STATUS: dict[str, str] = {
-    AcceptStatus.pending: "等审阅",
+    AcceptStatus.pending: "待审阅",
     AcceptStatus.accepted: "已采纳",
     AcceptStatus.rejected: "已退回",
     AcceptStatus.revoked: "已撤回",
@@ -308,7 +308,7 @@ async def _project(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
             project.id, rooms=rooms, status=TaskStatus.open.value
         )
     ]
-    lines.append(f"进行中的任务（{len(tasks)} 个）：")
+    lines.append(f"未结束的任务（{len(tasks)} 个）：")
     lines += [
         f"- 「{t.title}」（{refs.task(slug, t.number)}），负责人 {t.owner_handle or '无'}"
         for t in tasks[-LISTED:]

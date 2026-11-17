@@ -149,8 +149,8 @@ class AcceptCard(UuidPk, Timestamps, Base):
     deliverable_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # `link`：交出去的是一个地址（网站、看板），只记指针。
     deliverable_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    # 这次交付是不是这件任务的最后一步，递卡的人声明。是：采纳后任务完成、关闭。
-    # 不是：采纳后任务还开着，下一步从项目最新的代码接着做。
+    # 旧卡上递卡人声明的「是不是最后一步」，留着老数据。合并不再按它关任务：
+    # 每次合并后由任务的 AI 队友判断做没做完（`task_landing`）。新卡写 false。
     completes_task: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
     )
@@ -306,3 +306,20 @@ class AcceptApproval(UuidPk, Timestamps, Base):
         ForeignKey("accept_cards.id", ondelete="CASCADE"), index=True
     )
     approver_handle: Mapped[str] = mapped_column(String(64))
+
+
+class DeployReport(UuidPk, Base):
+    """One deploy of a repository that reported back to this platform: the
+    commit it put live and when (`review.deploy_wait.ship`).
+
+    A project waits for its deploy before its tasks are written up only while
+    reports keep coming (`deploy_wait.waits_for_deploy`): a platform no deploy
+    reports to closes tasks on merge as it always did, and none is left
+    waiting for a report that will never come."""
+
+    __tablename__ = "deploy_reports"
+
+    # "owner/repo", lower case.
+    repo: Mapped[str] = mapped_column(String(255), index=True)
+    sha: Mapped[str] = mapped_column(String(64))
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

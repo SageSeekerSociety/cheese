@@ -442,6 +442,8 @@ def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_proj
                 "title": "登录验证码",
                 "owner_handle": "lisi",
                 "here": True,
+                # A project with a repository: the task has its branch.
+                "branch_name": "task/abc12345",
             }
         }
     )
@@ -451,6 +453,25 @@ def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_proj
     [plan] = host.requests
     assert plan["body"]["here"] is True
     assert "cheese worktree" in out
+
+
+def test_a_thread_turned_into_a_task_without_a_repository_is_not_sent_to_a_checkout():
+    host = Host(
+        {
+            ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
+                "id": _ROOM,
+                "title": "竞品调研",
+                "owner_handle": "lisi",
+                "here": True,
+                "branch_name": None,
+            }
+        }
+    )
+    out = run(
+        "cheese_task", {"action": "open", "title": "竞品调研", "here": True}, host
+    )
+    assert "cheese worktree" not in out
+    assert "工作目录" not in out
 
 
 # --- memory, roster, status and the rest -----------------------------------
@@ -1135,12 +1156,88 @@ def test_filing_a_card_says_what_it_did_to_the_task():
         {
             "action": "request",
             "subject": "feat: add the report",
-            "completes_task": True,
         },
         host,
     )
 
-    assert "等审" in said
+    assert "待审阅" in said
+    # A merge no longer closes the task: the reply says the teammate judges.
+    assert "不会自己关" in said
     assert "清掉" in said
     assert "cheese_task 的 state" in said
     assert "退回或作废" in said
+
+
+# --- the main line looking into a task's file --------------------------------
+
+_TASK_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def _looked_file(content=None, **flags):
+    return Host(
+        {
+            ("GET", f"/topics/{_ROOM}/tasks/8"): {
+                "id": _TASK_ID,
+                "number": 8,
+                "title": "首页加报名表",
+                "summary": "#8 首页加报名表",
+                "exchange": [],
+            },
+            ("GET", "/projects/project-1/file"): {
+                "content": content,
+                "binary": False,
+                "too_large": False,
+                **flags,
+            },
+        }
+    )
+
+
+def test_the_main_line_reads_a_file_as_the_task_committed_it():
+    host = _looked_file('<template>\n  <form id="signup">\n</template>\n')
+
+    out = run(
+        "cheese_task",
+        {"action": "look", "task": "#8", "view": "file", "path": "src/Home.vue"},
+        host,
+    )
+
+    asked = parse_qs(urlsplit(host.requests[-1]["path"]).query)
+    assert asked["task"] == [_TASK_ID]
+    assert asked["source"] == ["committed"]
+    assert '<form id="signup">' in out
+
+
+def test_a_file_look_with_q_shows_only_the_lines_around_its_matches():
+    lines = [f"line {n}" for n in range(1, 101)]
+    lines[49] = "signupDeadline: null"
+    host = _looked_file("\n".join(lines))
+
+    out = run(
+        "cheese_task",
+        {
+            "action": "look",
+            "task": "#8",
+            "view": "file",
+            "path": "site.config.ts",
+            "q": "deadline",
+        },
+        host,
+    )
+
+    assert "signupDeadline: null" in out
+    assert "line 48" in out and "line 52" in out
+    assert "line 1\n" not in out and "line 100" not in out
+
+
+def test_a_long_file_is_cut_with_a_note():
+    host = _looked_file("\n".join(f"line {n}" for n in range(1, 2001)))
+
+    out = run(
+        "cheese_task",
+        {"action": "look", "task": "#8", "view": "file", "path": "big.txt"},
+        host,
+    )
+
+    assert "line 400" in out and "line 401" not in out
+    assert "2000" in out

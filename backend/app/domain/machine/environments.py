@@ -75,11 +75,13 @@ async def environment_of(
     device = (
         (instance.configuration or {}).get("execution_device_id") if instance else None
     )
-    chosen = (
-        Default(Sandbox(spec=TEAM_DEVICES), "agent")
-        if device
-        else default_for(topic, task, project.settings if project else None)
-    )
+    spec = (instance.configuration or {}).get("execution_spec") if instance else None
+    if device:
+        chosen = Default(Sandbox(spec=TEAM_DEVICES), "agent")
+    elif spec:
+        chosen = Default(Sandbox(spec=spec), "agent")
+    else:
+        chosen = default_for(topic, task, project.settings if project else None)
     written = await sessions.set_environment(
         row.conversation_id,
         row.agent_handle,

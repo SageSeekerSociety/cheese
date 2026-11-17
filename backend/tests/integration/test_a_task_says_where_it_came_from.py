@@ -27,6 +27,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
+    join_project_team,
     post_message,
     post_project,
     room_agent_seat,
@@ -117,6 +118,8 @@ def test_a_teammates_task_in_a_thread_quotes_what_the_person_said_there(client):
 
 def test_a_teammates_task_in_the_main_line_quotes_the_message_that_asked_it(client):
     project, channel, seat = _channel(client)
+    # With someone else in the project, a message that calls nobody asks nobody.
+    join_project_team(client, project, "bob")
     asked = post_message(
         client, channel, "alice", {"content": f"<@{seat}> 把拖拽排序修好"}
     )
@@ -131,6 +134,8 @@ def test_a_teammates_task_in_the_main_line_quotes_the_message_that_asked_it(clie
 
 def test_a_teammates_task_quotes_nothing_when_no_one_asked_it(client):
     project, channel, seat = _channel(client)
+    # With someone else in the project, a message that calls nobody asks nobody.
+    join_project_team(client, project, "bob")
     post_message(client, channel, "alice", {"content": "今天谁值班？"})
 
     task = _teammate_task(client, project, channel, seat)
@@ -195,6 +200,9 @@ def test_the_asking_message_is_found_with_one_identity_question_per_window(clien
     most twice: the handles once, and which of them carry a binding once.
     """
     project, channel, seat = _channel(client)
+    # With someone else in the project, the message the 支线 hangs under calls
+    # nobody: no turn runs alongside the read this test counts.
+    join_project_team(client, project, "bob")
     root = post_message(client, channel, "alice", {"content": "对话栏有问题"})
     thread = _thread(client, root["id"])
     asked = _seed_asked_window(client, project, thread, seat)

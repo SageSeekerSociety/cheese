@@ -47,6 +47,7 @@ from app.domain.notification import (
 )
 from app.domain.notification import push_models as notification_push  # noqa: F401
 from app.domain.oauth import models as oauth  # noqa: F401
+from app.domain.onboarding import models as onboarding  # noqa: F401
 from app.domain.passkey import models as passkey  # noqa: F401
 from app.domain.pin import models as pin  # noqa: F401
 from app.domain.project import models as project  # noqa: F401
@@ -63,6 +64,7 @@ from app.domain.session_record import models as session_record  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
+from app.domain.task import judging_models as task_judging  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
 from app.domain.team import models as team  # noqa: F401
 from app.domain.thread import models as thread  # noqa: F401

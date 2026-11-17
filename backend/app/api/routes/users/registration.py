@@ -28,6 +28,7 @@ from app.api.users_deps import (
 from app.api.write_access import ROUTE_DECIDES
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.content_review import TextKind, review_text
 from app.core.email import EMAIL_FORMAT
 from app.core.errors import (
     BadRequestError,
@@ -199,6 +200,10 @@ async def register_user(
         await client_budget.refund(client)
     finally:
         await redis.aclose()
+    # After the email code, not before: each review is a billed call, and only
+    # someone holding a code mailed to them gets this far. A nickname refused
+    # here costs its author a new code.
+    await review_text(TextKind.NAME, [nickname])
 
     try:
         user, profile = await auth_service.register_with_password(

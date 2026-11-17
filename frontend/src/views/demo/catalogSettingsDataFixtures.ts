@@ -57,12 +57,16 @@ export function modelChoice(
   return { description: '', default: false, allowed: true, requires_plan: null, ...over }
 }
 
-/** 项目默认模型那两档的现状。默认回落部署给的 sonnet，可选的只有两档。 */
+/** 项目主模型的现状。没设就是「自动」：对话 Kimi K3，任务和分身 DeepSeek Flash。 */
 export function defaultModelState(over: Partial<ProjectDefaultModel> = {}): ProjectDefaultModel {
   return {
     model: null,
-    subagent_model: null,
     deployment_default: 'sonnet',
+    automatic: {
+      conversation: { id: 'kimi-k3', label: 'Kimi K3' },
+      task: { id: 'deepseek-flash', label: 'DeepSeek Flash' },
+      subagent: { id: 'deepseek-flash', label: 'DeepSeek Flash' },
+    },
     choices: [
       modelChoice({ id: 'sonnet', label: 'Claude Sonnet 5' }),
       modelChoice({ id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash' }),

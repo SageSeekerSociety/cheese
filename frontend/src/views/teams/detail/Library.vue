@@ -113,6 +113,9 @@ watch(
         user_handle: m.user.username,
         name: m.user.nickname,
         name_source: 'human',
+        // 名单行上画「谁写的这份文档」用它。团队接口回的是**自己挑过**的那张（没挑过
+        // 是 null），漏掉这一格，每个人都退成首字母。
+        avatar_id: m.user.avatarId ?? null,
       }))
     } catch {
       // 名字读不到，行上照旧写账号名。

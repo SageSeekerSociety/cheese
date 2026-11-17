@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { Team } from '@/types'
+import type { Team, TeamPermission } from '@/types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -38,6 +38,14 @@ import Leave from './Leave.vue'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
+/** What the server says each seat may do to the team (`app/domain/team/permissions.py`). */
+function held(role: Team['role']): TeamPermission[] {
+  if (role === 'OWNER')
+    return ['view_members', 'edit_settings', 'manage_members', 'change_roles', 'recruit', 'disband', 'transfer']
+  if (role === 'ADMIN') return ['view_members', 'edit_settings', 'manage_members', 'recruit']
+  return role === 'MEMBER' ? ['view_members'] : []
+}
+
 function crew(role: Team['role']): Team {
   return {
     id: 7,
@@ -50,6 +58,7 @@ function crew(role: Team['role']): Team {
     members: { total: 0, examples: [] },
     visibility: 'public',
     role,
+    viewerPermissions: held(role),
   } as unknown as Team
 }
 
@@ -103,7 +112,8 @@ describe('the last section of team settings', () => {
 
   it('after a transfer the owner is an admin, and the section offers leaving instead', async () => {
     getMembers.mockResolvedValue({ members: [{ role: 'MEMBER', user: { id: 2, username: 'bob', nickname: 'Bob' } }] })
-    transferOwner.mockResolvedValue({ team: crew('OWNER') })
+    // The server answers with the team as the reader now stands on it: an admin.
+    transferOwner.mockResolvedValue({ team: crew('ADMIN') })
     const team = mount(crew('OWNER'))
     await fireEvent.click(screen.getByRole('button', { name: '转让' }))
     await fireEvent.click(await screen.findByText('Bob'))

@@ -1019,3 +1019,27 @@ def test_performance_counts_the_heap_only_when_asked(client, as_admin):
     name = f"{__name__}.{HeldByTheProcess.__qualname__}"
     assert counts.get(name, 0) >= 3000, heap["top"][:5]
     assert heap["tracked"] >= 3000 and heap["frozen"] >= 0
+
+
+def test_the_heap_census_says_who_holds_the_leading_types(client, as_admin):
+    """Asked for owners, the census traces a sample of each leading type to
+    the objects holding it.
+
+    The fixture used to allocate 30,000 of its own objects and expect them to
+    rank in the process's top six types. That is not the test's to control:
+    the app's own dict/list/tuple counts vary with what the harness loaded, and
+    on CI they already fill all six slots — the keeper never appeared, and the
+    case failed twice in a row before a rerun. It now asks for a type the app
+    certainly holds in quantity (``dict``) and asserts the shape of the answer:
+    a sample, and the objects holding that sample."""
+
+    r = client.get(
+        "/admin/stats/performance",
+        params={"heap": "true", "owners": "true"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    owners = {row["type"]: row for row in r.json()["data"]["heap"]["owners"]}
+    assert "builtins.dict" in owners, list(owners)
+    assert owners["builtins.dict"]["sampled"] > 0
+    assert owners["builtins.dict"]["held_by"], owners["builtins.dict"]

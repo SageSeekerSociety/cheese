@@ -24,7 +24,6 @@ from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
-from app.domain.agent.room_events import _known_commits, _turn_changeset
 from app.domain.project import starter as starter_archive
 from app.domain.project.forge import (
     branch_head,
@@ -635,7 +634,8 @@ def _push_with_cli(binding, token, root, author):
 async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     db_factory, monkeypatch, tmp_path, owner_credit
 ):
-    from app.api.routes.accept import _accept_service, _pr_checks_payload
+    from app.api.accept_service import accept_service
+    from app.api.routes.accept import _pr_checks_payload
     from app.domain.review import services as review_services
     from app.domain.site.services import (
         publication_source,
@@ -698,8 +698,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     owner, repo = binding.repo.split("/", 1)
     publisher = ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
     reviewed = await asyncio.to_thread(_push_with_cli, binding, token, tmp_path, author)
-    baseline = await _known_commits(db_factory, binding.project_id, room.id)
-    assert baseline == {reviewed}
     async with db_factory() as session:
         assert await branch_head(binding.project_id, session, "task/report") == reviewed
         files = ProjectFiles(session, binding.project_id, task.id)
@@ -753,11 +751,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             },
         )
         assert check.status_code == 201, check.text
-        changes = await _turn_changeset(
-            db_factory, binding.project_id, room.id, baseline
-        )
-        assert changes is not None and changes.commits == [latest]
-        assert changes.files == [{"path": "appendix.md", "added": 1, "removed": 0}]
         async with db_factory() as session:
             card = AcceptCard(
                 topic_id=room.id,
@@ -783,12 +776,12 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await _accept_service(session).push_fix(task.id)
+            refreshed = await accept_service(session).push_fix(task.id)
             assert refreshed["pushed"] is True
             # The checks read closed its session, so the card is read again.
             card = await session.get(AcceptCard, card.id)
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            again = await _accept_service(session).push_fix(task.id)
+            again = await accept_service(session).push_fix(task.id)
             assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
@@ -809,7 +802,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await _accept_service(session).accept(
+            accepted = await accept_service(session).accept(
                 card_id=card.id, decided_by="reviewer", head_sha=latest
             )
             await session.commit()

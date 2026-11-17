@@ -11,6 +11,7 @@
   "settingCompact": "context compaction",
   "settingSkills": "skills",
   "settingFollowDefault": "Follow the default",
+  "settingAutomatic": "Automatic",
   "settingInheritMain": "Use project main model",
   "settingNamingAuto": "Smart names",
   "settingNamingManual": "Manual names",

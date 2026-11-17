@@ -1,5 +1,6 @@
 // 团队和个人名下的文档（#3774）：只属于团队、不属于哪个项目的那些。个人名下的文档
 // 属于自己的个人团队。读写都是团队成员；删除和移动是作者和团队管理员。
+import type { LibrarySort } from '../lib/libraryQuery'
 import type { ProjectDocument } from '../lib/projectDocument'
 import type { ListedDocument } from './projectDocuments'
 
@@ -7,9 +8,16 @@ import { request } from './http'
 
 const base = (teamId: number) => `/teams/${teamId}/documents`
 
-/** 团队的文档，最近改过的在前。 */
-export function listTeamDocuments(teamId: number): Promise<{ data: ListedDocument[]; next: string | null }> {
-  return request<{ data: ListedDocument[]; next: string | null }>(base(teamId))
+/** 团队的文档，最近改过的在前。
+ *
+ *  `sort` 是资料库页那个排序框：`asc` / `desc` 时和同一个资料库里的文件、文件夹排进
+ *  同一条时间线。 */
+export function listTeamDocuments(
+  teamId: number,
+  sort: LibrarySort = 'off'
+): Promise<{ data: ListedDocument[]; next: string | null }> {
+  const query = sort === 'off' ? '' : `?sort=${sort}`
+  return request<{ data: ListedDocument[]; next: string | null }>(`${base(teamId)}${query}`)
 }
 
 /** 在团队（或自己名下）新建一份空文档。 */

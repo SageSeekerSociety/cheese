@@ -18,7 +18,12 @@ import signal
 import sys
 from pathlib import Path
 
-from app.domain.agent.harness.claude_code.runner import LAUNCH, Runner, ended
+from app.domain.agent.harness.claude_code.runner import (
+    LAUNCH,
+    RETIRED_ENV,
+    Runner,
+    ended,
+)
 
 COMMAND = "CHEESE_CLAUDE_COMMAND"
 
@@ -43,6 +48,7 @@ async def serve(state: Path) -> None:
             env=env,
             resume=env.get("CHEESE_RESUME_SESSION") or None,
             agent_handle=env.get("CHEESE_AUTHOR") or None,
+            retired=env.get(RETIRED_ENV) or None,
         )
         assert runner.process is not None
         process = asyncio.create_task(runner.process.wait())

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, review_text
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.team import permissions as team_seats
@@ -60,6 +61,8 @@ class RecruitmentService:
         # them, and a group that takes people is a shared team.
         if team.personal_owner_user_id is not None:
             raise BadRequestError(say("personalTeamTakesNoRecruits"))
+        # The plaza is read by everyone signed in, the contact line included.
+        await review_text(TextKind.PUBLIC_TEXT, [title, content, contact])
         return await self._repo.create(
             team_id=team_id,
             title=title,
@@ -122,6 +125,16 @@ class RecruitmentService:
             team = await self._team_repo.get_by_id(post.team_id)
             if team is not None and team.personal_owner_user_id is not None:
                 raise BadRequestError(say("personalTeamTakesNoRecruits"))
+        await review_text(
+            TextKind.PUBLIC_TEXT,
+            [
+                title if title != post.title else None,
+                content if content != post.content else None,
+                contact
+                if isinstance(contact, str) and contact != post.contact
+                else None,
+            ],
+        )
         return await self._repo.update(
             post,
             title=title,

@@ -135,8 +135,10 @@ async def toggle_reaction(
     broker: Annotated[InProcessBroker, Depends(get_broker)],
 ) -> dict:
     """Slack-style toggle: add the (emoji, caller) reaction, or remove it when
-    the same caller reacts with the same emoji again. Broadcasts the block's
-    fresh aggregate to the topic channel so every open client updates live.
+    the same caller reacts with the same emoji again; with ``add_only`` (what
+    an AI teammate's `chat_react` sends) it only ever adds. Broadcasts the
+    block's fresh aggregate to the topic channel so every open client updates
+    live.
 
     A reaction is a write somebody does in a room, so it takes what any write
     there takes: a verified caller who can reach the block's room. The
@@ -148,6 +150,18 @@ async def toggle_reaction(
     carries no author. So the global sandbox token alone (the trusted dev
     credential, gate-only, naming nobody) gets a 401 here, since there is no one
     to put the reaction under."""
+    added, reactions = await _react(
+        db, resolver, broker, block_id, body.emoji, toggle=not body.add_only
+    )
+    present = added or body.add_only
+    return ok({"toggled": "added" if present else "removed", "reactions": reactions})
+
+
+async def _react(
+    db, resolver, broker, block_id: uuid.UUID, emoji: str, *, toggle: bool
+) -> tuple[bool, list]:
+    """React to a block as the caller, and tell every open client: the toggle
+    adds or removes; otherwise it only adds."""
     repo = BlockRepository(db)
     block = await repo.get(block_id)
     if block is None:
@@ -165,7 +179,10 @@ async def toggle_reaction(
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required to react")
-    added = await repo.toggle_reaction(block_id, body.emoji, actor.handle)
+    if toggle:
+        added = await repo.toggle_reaction(block_id, emoji, actor.handle)
+    else:
+        added = await repo.add_reaction_if_absent(block_id, emoji, actor.handle)
     reactions = await repo.reactions_for_block(block_id)
     # Commit before broadcasting so a client that refetches on the frame
     # never reads stale state.
@@ -174,7 +191,7 @@ async def toggle_reaction(
         str(block.conversation_id),
         {"type": "reaction", "block_id": str(block_id), "reactions": reactions},
     )
-    return ok({"toggled": "added" if added else "removed", "reactions": reactions})
+    return added, reactions
 
 
 @router.post(

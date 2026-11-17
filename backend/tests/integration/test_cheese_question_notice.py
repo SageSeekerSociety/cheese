@@ -396,70 +396,20 @@ def _ask_an_old_question(
     return block
 
 
-def test_typing_a_reply_settles_a_question_row(client):
-    """没点选项、直接打字回了一句，也是回答：通知不再是未读，也不再说「待你回答」。
-
-    实况：被问的人在房间里打字答了，首页「动态」里那条还是未读，还写着「已暂停，
-    待你回答」。
+def test_typing_a_reply_does_not_settle_a_question_row(client):
+    """没点选项、自己打字回了一句：那句话可能只是追问，题仍在等回答，通知保持未读，
+    由提问的那位读完确认（`block.questions.confirm_pending`）才结。
     """
     alice = seed_user(client, "alice")
     pid, room = _room(client)
     _ask_an_old_question(client, room, asked=["alice"])
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
-    (before,) = _questions(client, alice)
-    assert before["read"] is False
 
-    _say(client, room, "按项目，外包单列")
+    _say(client, room, "解释一下这个问题是什么意思？")
 
-    assert _shown(client, pid, room)["phrase"] != NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
     (row,) = _questions(client, alice)
-    assert row["read"] is True
-    assert row["contextMetadata"]["answered"] == "按项目，外包单列"
-    unread = client.get(
-        "/notifications/unread-count", headers={"Authorization": f"Bearer {alice}"}
-    )
-    assert unread.json()["data"]["count"] == 0
-
-
-def test_the_mention_in_a_typed_reply_is_not_part_of_the_answer(client):
-    """回话时点了队友的名，通知里记的回答只有他说的话，不带那个 @。"""
-    alice = seed_user(client, "alice")
-    _pid, room = _room(client)
-    _ask_an_old_question(client, room, asked=["alice"])
-
-    _say(client, room, f"<@{room_agent_seat(client, room)}> 按部门")
-
-    (row,) = _questions(client, alice)
-    assert row["contextMetadata"]["answered"] == "按部门"
-
-
-def test_a_long_typed_answer_is_shortened_in_the_notification(client):
-    """通知里的回答是一行说明，不是聊天记录 —— 太长就截到 `ANSWER_EXCERPT_CHARS`。"""
-    alice = seed_user(client, "alice")
-    _pid, room = _room(client)
-    _ask_an_old_question(client, room, asked=["alice"])
-    reply = "按项目统计，" + "外包和临时人员的费用都单独列一栏，" * 10
-
-    _say(client, room, reply)
-
-    (row,) = _questions(client, alice)
-    answered = row["contextMetadata"]["answered"]
-    assert answered.startswith("按项目统计，外包和临时人员")
-    assert answered.endswith("…")
-    assert len(answered) < len(reply)
-
-
-def test_only_the_next_message_is_the_answer(client):
-    """答完又接着说了几句：通知里记的还是回答那一句，不被后面的话改写。"""
-    alice = seed_user(client, "alice")
-    _pid, room = _room(client)
-    _ask_an_old_question(client, room, asked=["alice"])
-
-    _say(client, room, "按项目")
-    _say(client, room, "顺便把上个月的也重算一下")
-
-    (row,) = _questions(client, alice)
-    assert row["contextMetadata"]["answered"] == "按项目"
+    assert row["read"] is False
 
 
 def test_someone_else_typing_does_not_answer_for_the_person_asked(client):

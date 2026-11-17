@@ -50,7 +50,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code import stuck
+from app.domain.agent.harness.claude_code import compaction, stuck
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.processes import (
     end,
@@ -65,6 +65,8 @@ if sys.platform == "win32":
 from app.domain.memory.files import (
     INDEX_NAME,
     PRIVATE_PREFIX,
+    TEAM_PREFIX,
+    MemoryFileError,
     check_scoped_path,
     conflict_path,
     private_owner,
@@ -96,10 +98,6 @@ SETTLE_S = 0.5
 RELEASE_GRACE_S = 5.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
-#: How long the runner waits for a compaction it asked the build for to report
-#: its `result`. Summarising a full window takes minutes; this is the outer
-#: bound on believing it will come at all, not an expected duration.
-COMPACT_TIMEOUT_S = 1800.0
 # How long a new turn waits to see the project's context as it is now before it
 # starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
@@ -128,6 +126,9 @@ LAST_WORDS = 1000
 # up opens with ``ended(launch)``, and a backend waiting on one launch reads
 # only what that launch left.
 LAUNCH = "CHEESE_RUNNER_LAUNCH"
+#: The conversation the platform no longer continues (`SessionStart.retired`):
+#: a start does not take it up, not even from this runner's own record.
+RETIRED_ENV = "CHEESE_RETIRED_SESSION"
 #: The launch whose agent process has not had its ending reported yet: set when
 #: a process starts, cleared once its ``exited`` is in the outbox. Still set
 #: when a runner starts, it names a process that died with its runner.
@@ -354,8 +355,8 @@ def memory_root() -> Path:
 
     不放在房间的家里：一间房的几个座位共用那个家，而两个座位可以同时在替两个人
     干活，一棵共用的树上就会同时躺着两个人的 private，各自的会话都读得到对方的。
-    一个座位同一时刻只替一个人干活，换人时上一位的那一棵交回平台
-    （`tree.withdrawn_prefixes`）。
+    一个座位的树上只有它这一轮点了名的那几位的 private，换了答复的人，上一轮的
+    那几棵交回平台（`tree.withdrawn_prefixes`）。
     """
     config = os.environ.get("CHEESE_EXECUTION_CONFIG") or ""
     if not config:
@@ -383,6 +384,131 @@ def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
             check_scoped_path(f"{prefix}/{name}")
         out[prefix] = files
     return out
+
+
+def memory_policy(
+    params: dict, scopes: dict[str, dict[str, str]]
+) -> tuple[frozenset[str], dict[str, str]]:
+    """请求里的收件规矩：哪几棵是多人地方铺下的那一份（``views``，只能是这一次
+    点了名的 private），和项目里的人（``people``，handle → 名字）。比这一版旧的
+    平台不发这两样，那就是什么都不限（平台那一侧照样会拦，`memory.session`）。"""
+    views = frozenset(
+        prefix
+        for prefix in params.get("views") or ()
+        if isinstance(prefix, str)
+        and prefix in scopes
+        and prefix.startswith(f"{PRIVATE_PREFIX}/")
+    )
+    given = params.get("people")
+    people = (
+        {
+            handle: name
+            for handle, name in given.items()
+            if isinstance(handle, str) and isinstance(name, str)
+        }
+        if isinstance(given, dict)
+        else {}
+    )
+    return views, people
+
+
+#: 记忆树根上平台自己的文件：对账的三张表。
+_ROOT_FILES = frozenset({".baseline.json", ".bases.json", ".laid.json"})
+
+
+def _sidecar(name: str) -> bool:
+    """平台在作用域目录里留下的旁路副本（`files.rejected_path` / `conflict_path`）。"""
+    return name.endswith((".rejected.md", ".conflict.md"))
+
+
+def _remove(target: Path) -> None:
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target, ignore_errors=True)
+    else:
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+
+
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+_OUTSIDE_SCOPES = (
+    "记忆只收 team/ 和 private/<handle>/ 下的 .md，根目录和别的目录里写的不保存"
+)
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+_NOT_LAID = (
+    "这一轮没有铺下这个人的 private 目录：只有这一轮答复的成员的目录收写入，"
+    "写在别人目录里的不保存"
+)
+
+
+def stray_memory(root: Path, managed: set[str]) -> dict[str, str]:
+    """树上平台不会收的东西（路径 → 原因），说完就从树上拿走。
+
+    对账只读受管作用域里名字合格的 `.md`（`read_memory`），别的写入以前悄悄留在
+    磁盘上或被删掉，写它的 agent 以为写成了。这里把它们一一说出来，回答里带回去
+    （``dropped``），平台下一轮告诉它（`platform_notices.memory_dropped_notice`）；
+    说过一次就拿走，不然每一次对账都再说一遍。只说路径和原因，不带正文。
+    """
+    found: dict[str, str] = {}
+    try:
+        top = sorted(root.iterdir())
+    except OSError:
+        return found
+    for entry in top:
+        if entry.name in _ROOT_FILES:
+            continue
+        if entry.name == TEAM_PREFIX and entry.is_dir() and TEAM_PREFIX in managed:
+            found.update(_strays_in(entry, TEAM_PREFIX))
+            continue
+        if entry.name == PRIVATE_PREFIX and entry.is_dir() and not entry.is_symlink():
+            for owner in sorted(entry.iterdir()):
+                prefix = f"{PRIVATE_PREFIX}/{owner.name}"
+                if prefix in managed and owner.is_dir() and not owner.is_symlink():
+                    found.update(_strays_in(owner, prefix))
+                    continue
+                why = _NOT_LAID if owner.is_dir() else _OUTSIDE_SCOPES
+                for path in _files_under(owner, prefix) or [prefix]:
+                    found[path] = why
+                _remove(owner)
+            continue
+        if entry.name == TEAM_PREFIX or entry.name == PRIVATE_PREFIX:
+            found[entry.name] = _OUTSIDE_SCOPES
+        else:
+            for path in _files_under(entry, entry.name) or [entry.name]:
+                found[path] = _OUTSIDE_SCOPES
+        _remove(entry)
+    return found
+
+
+def _files_under(entry: Path, path: str) -> list[str]:
+    if not entry.is_dir() or entry.is_symlink():
+        return [path] if entry.exists() or entry.is_symlink() else []
+    out: list[str] = []
+    with contextlib.suppress(OSError):
+        for child in sorted(entry.iterdir()):
+            out += _files_under(child, f"{path}/{child.name}")
+    return out
+
+
+def _strays_in(directory: Path, prefix: str) -> dict[str, str]:
+    """一个受管作用域目录里，名字不合格或不是一层文件的那几样。"""
+    found: dict[str, str] = {}
+    with contextlib.suppress(OSError):
+        for entry in sorted(directory.iterdir()):
+            path = f"{prefix}/{entry.name}"
+            if entry.is_file() and not entry.is_symlink():
+                if _sidecar(entry.name):
+                    continue
+                try:
+                    check_scoped_path(path)
+                    continue
+                except MemoryFileError as exc:
+                    found[path] = str(exc)
+            else:
+                for inner in _files_under(entry, path) or [path]:
+                    # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+                    found[inner] = f"一条记忆就一个文件，不放在子目录里：{path!r}"
+            _remove(entry)
+    return found
 
 
 def _recall_baseline(root: Path, name: str = MEMORY_BASELINE) -> dict[str, str]:
@@ -418,18 +544,6 @@ def _handoff_root(root: Path) -> Path:
     """交出去、平台还没回收到的那几棵（`Runner._hand_over`）：在记忆树旁边，不
     在树里，所以 agent 的文件工具够不着它。"""
     return root.parent / "memory-handoff"
-
-
-def _private_dirs(root: Path) -> set[str]:
-    """树上现有的 private 目录（`private/<handle>`）。"""
-    try:
-        return {
-            f"{PRIVATE_PREFIX}/{entry.name}"
-            for entry in (root / PRIVATE_PREFIX).iterdir()
-            if entry.is_dir() and not entry.is_symlink()
-        }
-    except OSError:
-        return set()
 
 
 def _remove_tree(root: Path, prefix: str) -> None:
@@ -647,7 +761,7 @@ class Runner(runner.Runner[Journal]):
         self.last_frame_monotonic: float | None = None
         self.last_frame_work: str | None = None
 
-    capabilities = (runner.LONG_POLL, runner.LIVE)
+    capabilities = (runner.LONG_POLL, runner.LIVE, runner.COMPACT_IF_COLD)
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -658,7 +772,11 @@ class Runner(runner.Runner[Journal]):
         env: dict[str, str],
         resume: str | None,
         agent_handle: str | None,
+        retired: str | None = None,
     ) -> str:
+        """Start Claude Code on ``resume``, else on the conversation this
+        runner last ran, else on a new one. ``retired``: a conversation the
+        platform no longer continues, never taken up again from here."""
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
         self.execution = env.get("CHEESE_EXECUTION_CONFIG")
@@ -668,13 +786,15 @@ class Runner(runner.Runner[Journal]):
             end(sessions_on(self.config_dir, agent_handle))
         self._report_left_exit()
         saved = self.journal.recall("session_id")
+        if saved and saved == retired:
+            saved = None
         failed = self.journal.recall("resume_failed")
         resumed = next(
             (
                 candidate
                 for candidate in (resume, saved)
                 if candidate
-                and candidate != failed
+                and candidate not in (failed, retired)
                 and transcript(self.config_dir, candidate) is not None
             ),
             None,
@@ -740,8 +860,9 @@ class Runner(runner.Runner[Journal]):
         so the reply tools are those: without this, a session could not stop
         right after chat_send, and every turn would be made to write closing
         words only the session sees."""
-        terminal = ",".join(f"mcp__native__{tool}" for tool in runner.REPLY_TOOLS)
-        return {**super().agent_env(env), "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
+        env = super().agent_env(env)
+        terminal = ",".join(f"mcp__native__{tool}" for tool in self.reply_tools)
+        return {**env, "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
 
     def starting(self) -> bool:
         """Still inside ``SETTLE_S`` of the launch, and not yet answered.
@@ -1269,6 +1390,8 @@ class Runner(runner.Runner[Journal]):
             else None
         )
         main = not from_file and record.get("parent_tool_use_id") is None
+        if main:
+            compaction.note(self, record)
         if kind == "system" and record.get("subtype") == "init":
             self.proven = True
             self.ready = {
@@ -1511,7 +1634,7 @@ class Runner(runner.Runner[Journal]):
             self.reply_settled()
         if self.compact_when_idle and not self.closing:
             self.compact_when_idle = False
-            self.helpers.append(runner.watched(self._compact_now()))
+            self.helpers.append(runner.watched(compaction.now(self)))
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -1648,6 +1771,7 @@ class Runner(runner.Runner[Journal]):
 
         没铺过、也没点名的 private 目录（会话替别人干活时写进了这个人的目录）既
         不交也不留：它不是谁的记忆，交回去就是替别人往他的 private 里写了东西。
+        它和树上别的平台不收的写入一起，在回答里说出来（``dropped``，`stray_memory`）。
         """
         if "scopes" not in params:
             return self.acknowledge(params)
@@ -1660,15 +1784,16 @@ class Runner(runner.Runner[Journal]):
         disk, emptied = self.read_memory(set(scopes) | withdrawn)
         for prefix in sorted(withdrawn):
             self._hand_over(root, prefix, disk, baseline, bases)
-        for stray in _private_dirs(root) - set(scopes) - withdrawn:
-            print(
-                f"{ended(self.launch)}: memory sync removed {stray}, "
-                "which this seat never laid down",
-                file=sys.stderr,
-                flush=True,
-            )
-            _remove_tree(root, stray)
-        outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline, bases=bases)
+        stray = stray_memory(root, set(scopes))
+        views, people = memory_policy(params, scopes)
+        outcome = sync_tree(
+            scopes=scopes,
+            disk=disk,
+            baseline=baseline,
+            bases=bases,
+            views=views,
+            people=people,
+        )
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
             # 会被重新铺回去。说出来，因为下一次对账看到的还是同一棵树——同一条会
@@ -1683,7 +1808,9 @@ class Runner(runner.Runner[Journal]):
             )
         # 没收的那几版先留到旁边：新建的那一条马上会被下面的清理删掉。
         for path in outcome.rejected:
-            _write_memory(root, rejected_path(path), disk[path])
+            # 被拒的是一次删除（多人地方里已有的记录只读）时没有正文可留。
+            if path in disk:
+                _write_memory(root, rejected_path(path), disk[path])
         for path, content in outcome.files.items():
             _write_memory(root, path, content)
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
@@ -1711,6 +1838,7 @@ class Runner(runner.Runner[Journal]):
             "files": outcome.files,
             "refused": outcome.refused,
             "rejected": outcome.rejected,
+            "dropped": stray,
             "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
             "withdrawn": self._handed(root),
@@ -1936,6 +2064,7 @@ class Runner(runner.Runner[Journal]):
         work_id: str | None = None,
         steering: bool = False,
         owes_reply: bool = False,
+        compact_if_cold: dict | None = None,
     ) -> dict:
         """A user message, or words said to a session that is working.
 
@@ -1943,13 +2072,18 @@ class Runner(runner.Runner[Journal]):
         mid-turn at the next tool boundary. They differ only in whose turn a
         message opens when the session happens to be idle by the time it reads
         it — ``steering`` says it was addressed to a turn already running.
+        A new turn on a cold conversation is compacted first
+        (``compaction.when_cold``), and then says ``compact_if_cold['text']``.
         """
         how = "steer" if steering else "send"
 
         async def submit() -> dict:
+            said = text
             if not steering and not self.working:
                 await self._catch_up()
-            await self._put(identifier, work_id, text, images or [], how)
+                if await compaction.when_cold(self, compact_if_cold):
+                    said = compact_if_cold["text"]  # type: ignore[index]
+            await self._put(identifier, work_id, said, images or [], how)
             return {"input_id": identifier}
 
         return await self.accept(
@@ -2035,42 +2169,7 @@ class Runner(runner.Runner[Journal]):
         }
 
     def request_compact(self) -> dict:
-        """The session asked to compact its own context: `/compact`, written
-        once the turn it asked in has ended.
-
-        Written then, and not mid-turn: a tool call in flight is answered at a
-        tool boundary, and the build takes what comes in on stdin at those
-        boundaries, so a slash command written from inside a tool call arrives
-        as part of that turn — where the pinned build's contract says nothing
-        about what a slash command does. A tool call is always inside a turn,
-        so the request always defers.
-
-        Once a turn is the whole rate limit: a request still waiting and one
-        that has already run look the same to the agent that asked, and a
-        second `/compact` would only summarise the first one's output.
-        """
-        if self.compact_when_idle:
-            return {"already": True}
-        self.compact_when_idle = True
-        # A tool call is answered inside a turn, so `_end` is where this
-        # normally goes. A session already idle has no turn coming.
-        if not self.working and not self.closing:
-            self.compact_when_idle = False
-            self.helpers.append(runner.watched(self._compact_now()))
-        return {"requested": True, "already": False}
-
-    async def _compact_now(self) -> None:
-        """Write `/compact` the way `/reload-skills` is written, and wait for
-        the command's `result` in the background.
-
-        Not through `dispatch`: the tool call that asked has been answered
-        already, and a compaction of a full window takes minutes to report.
-        What the room shows meanwhile comes from the build's own
-        `system/status` records (`events._compacting`)."""
-        try:
-            await self.command("/compact", COMPACT_TIMEOUT_S)
-        except Exception as error:  # the session goes on without it
-            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
+        return compaction.request(self)
 
     # --- the socket ----------------------------------------------------------
 
@@ -2183,6 +2282,7 @@ class Runner(runner.Runner[Journal]):
                 work_id=params.get("work_id"),
                 steering=method == "steer",
                 owes_reply=bool(params.get("owes_reply")),
+                compact_if_cold=params.get("compact_if_cold"),
             )
         if method == "interrupt":
             self.interrupting = self.working

@@ -73,6 +73,11 @@ async function mount(currentUserId: number) {
       { user: OWNER, role: 'OWNER' },
       { user: ADMIN, role: 'ADMIN' },
     ],
+    // What the server says this reader may do: only the owner manages admins.
+    viewerPermissions:
+      currentUserId === OWNER.id
+        ? ['view', 'edit_settings', 'manage_members', 'manage_admins', 'delete']
+        : ['view', 'edit_settings', 'manage_members'],
   } as never
 
   const router = createRouter({

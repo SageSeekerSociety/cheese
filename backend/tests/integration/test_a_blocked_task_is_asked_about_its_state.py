@@ -8,7 +8,7 @@ the moment it is back at work: the turn a person's message opens. It is asked,
 not decided: whether it can carry on now is the teammate's to say.
 """
 
-from app.domain.agent.harness.notices import blocked_report_reminder
+from app.domain.prompts import blocked_report_reminder
 from tests.ask_fixtures import wait_turn_idle
 from tests.integration.conftest import (
     new_project,

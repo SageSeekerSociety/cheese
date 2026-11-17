@@ -682,6 +682,7 @@ describe('模型管理 · 平台模型角色', () => {
     role: 'voice_asr_model',
     model: 'qwen-audio-asr',
     fallback: 'qwen-audio-asr',
+    inherits: null,
     chosen: false,
     offered_only: false,
   }

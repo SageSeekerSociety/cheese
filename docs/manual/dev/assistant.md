@@ -61,7 +61,7 @@ covers:
 
 面板上那一轮怎么画分两半：不管写的是什么都一样的那一半（面板拿的形状、每一步怎么说）在 `lib/assistantView.ts`；写进题目草稿的改动卡、发布的结果怎么说在 `lib/draftChangeView.ts`。
 
-桌面上面板默认停在右边（把页面挤窄，芝士往表单里写时并排看得见），可以取消固定，变成右下角的浮层；这一项记在浏览器里（`cheesex.agentDocked`）。发布页、改题页在桌面上打开时，停在右边的面板自动打开。手机上从底部升起。
+桌面上面板默认停在右边（把页面挤窄，芝士往表单里写时并排看得见），可以取消固定，变成右下角的浮层；这一项记在浏览器里（`cheesex.agentDocked`）。浮层按住头部那一行能拖到任何地方（`composables/useFloatingPanelSpot.ts`），位置按占窗口的比例记在 `cheesex.agentFloatSpot`，所以换屏幕、改窗口大小之后它还在那个相对角落，窗口缩到放不下时收回屏幕里；双击头部回右下角。发布页、改题页在桌面上打开时，停在右边的面板自动打开。手机上从底部升起。
 ## 会话 {#session}
 
 和房间里的芝士是同一套底座：中心会话机上钉住版本的 pi，由 runner 守着，用同一个启动脚本起（`harness/pi/launch.py`、`host.py`），后端用同一种「等到有新东西才回」的读法读它的日志和正在写的内容（`driven/runner.py`）。区别是没有房间要的那些东西：没有项目、频道锁和房间日志。起会话、发问题、读回答由会话核心做（`agent/session_host/`），和[文档里的芝士](/dev/doc-agent#session)、[房间里的芝士](/dev/harness#contract)共用；这里只决定会话是什么样的（`personal/session.py`）。
@@ -99,7 +99,7 @@ covers:
 | `cheese_card(action=decide)` | 采纳或退回一项待审阅的改动 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
 | `cheese_people` | 项目里邀请、改角色、移出；频道里加入、移出；团队里邀请、改角色、移出；空间里加入、移出、设或撤管理员 | 经授权判断，成员接口 |
 | `cheese_room(action=create)` | 新建频道 | 经授权判断，`POST /topics` |
-| `cheese_room(action=set)` | 项目短名、任务命名、默认 AI 队友、默认模型；频道负责人 | 经授权判断，项目设置的接口 |
+| `cheese_room(action=set)` | 项目短名、任务命名、默认 AI 队友、项目主模型（`auto` 改回自动）；频道负责人 | 经授权判断，项目设置的接口 |
 | `cheese_space` | 空间的名称、简介、可见题目上限；公告；分类；加入链接（是否要批准、重置）；审核待审核的题目 | 经授权判断，空间设置、公告、加入链接和 `PATCH /tasks/{id}` |
 | `cheese_settings` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
 | `cheese_web(action=fetch)` | 读一个网页 | 经授权判断，`POST /fetch` |

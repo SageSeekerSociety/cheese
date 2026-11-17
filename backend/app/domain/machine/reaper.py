@@ -32,7 +32,7 @@ from app.core.sentences import say
 from app.domain.agent_session.models import LEASE_DEVICE, LOST_KEY, AgentSession
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
-from app.domain.machine import enrollment
+from app.domain.machine import enrollment, host_refresh
 from app.domain.machine.infra_records import keep_host_lost
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -49,6 +49,7 @@ from app.domain.machine.models import (
     MachineStatus,
     capacity,
     hard_capacity,
+    sandbox_image_ready,
 )
 from app.domain.machine.progress import (
     publish_line,
@@ -142,6 +143,7 @@ def accepting(host: CloudHost) -> bool:
         and host.disk_full_since is None
         and host.status not in {MachineStatus.error, MachineStatus.deleting, *GONE}
         and not _failed_unenrolled(host)
+        and (host.device_id is None or sandbox_image_ready(host))
     )
 
 
@@ -252,6 +254,8 @@ class PoolSweep:
         await self._repo.lock_pool()
         hosts = await self._repo.live()
         load = await self._repo.occupancy(parked=True)
+        # Without the parked: what a host brought up in place waits on.
+        held = await self._repo.occupancy()
         for host in hosts:
             if host.device_id is None or self._hub.is_online(host.device_id):
                 host.offline_since = None
@@ -284,6 +288,7 @@ class PoolSweep:
             else 0
         )
         idle: list[CloudHost] = []
+        refreshing: list[CloudHost] = []
         for host in live:
             homes = load.get(host.id, 0)
             if host.whole_machine:
@@ -292,6 +297,13 @@ class PoolSweep:
                 if not homes and host.machine_id is not None:
                     host.released_at = now
                     idle.append(host)
+                continue
+            if host.draining_since is not None and host.refresh_in_place:
+                # Brought up to date where it is (`host_refresh`): once only
+                # parked sandboxes are on it, which stay.
+                host.idle_since = None
+                if not held.get(host.id) and host.device_id is not None:
+                    refreshing.append(host)
                 continue
             if host.draining_since is not None:
                 # Going anyway: it takes no new sandbox, and leaves the moment
@@ -346,6 +358,8 @@ class PoolSweep:
         for host in idle:
             logger.info("cloud pool releasing idle host %s", host.hostname)
             await self._delete_at_provider(host)
+        for host in refreshing:
+            await self._refresh(host, now)
         if fixed and live and not any(host.draining_since for host in idle):
             # One rebuilt host released this sweep is enough for the sweep;
             # otherwise it decides itself whether one rebuilding holds it up.
@@ -411,7 +425,7 @@ class PoolSweep:
         it. Reads the provider with no lock held, then looks at the pool again
         under its lock."""
         try:
-            version = await enrollment.current_host_image_version(self._client)
+            version, legacy = await enrollment.current_host_versions(self._client)
         except (MicroCloudError, ValidationError):
             # Without today's version no host can be called out of date; asking
             # again next sweep is cheaper than guessing.
@@ -421,6 +435,11 @@ class PoolSweep:
             return
         await self._repo.lock_pool()
         hosts = await self._repo.live()
+        for host in hosts:
+            if host.image_version == legacy:
+                # Recorded before the version had two halves, and made of
+                # what a host created now is: that version, not a rebuild.
+                host.image_version = version
         load = await self._repo.occupancy(parked=True)
         draining = [host for host in hosts if host.draining_since is not None]
         if any(not load.get(host.id) for host in draining):
@@ -459,8 +478,91 @@ class PoolSweep:
             return
         host.draining_since = now
         host.idle_since = None
+        # Only its enrollment script changed, and age is not why it goes: the
+        # script runs again where it is (`host_refresh`), and what the host
+        # holds stays.
+        days = settings.cloud_host_rebuild_after_days
+        host.refresh_in_place = (
+            settings.cloud_host_refresh_in_place
+            and enrollment.same_machine(host.image_version, version)
+            and not (days > 0 and host.created_at < now - timedelta(days=days))
+        )
+        host.refresh_started_at = None
         await self._session.commit()
-        logger.info("cloud pool rebuilding stale host %s", host.hostname)
+        logger.info(
+            "cloud pool %s stale host %s",
+            "refreshing" if host.refresh_in_place else "rebuilding",
+            host.hostname,
+        )
+
+    async def _refresh(self, host: CloudHost, now: datetime) -> None:
+        """Run the enrollment script again on a drained host that holds
+        nothing but parked sandboxes, and read back how it went
+        (`host_refresh`): started on the first sweep, read on the ones after.
+        It is up to date once the run succeeds; a run that failed or outlasted
+        ``REFRESH_WAIT`` turns the host over to the rebuild."""
+        assert host.device_id is not None
+        if host.refresh_started_at is None:
+            try:
+                await host_refresh.start(self._hub, host.device_id)
+            except Exception:
+                logger.warning(
+                    "cloud pool could not refresh %s in place; rebuilding it",
+                    host.hostname,
+                    exc_info=True,
+                )
+                await self._rebuild_instead(host)
+                return
+            await self._repo.lock_pool()
+            await self._session.refresh(host)
+            host.refresh_started_at = now
+            await self._session.commit()
+            logger.info("cloud pool refreshing %s in place", host.hostname)
+            return
+        state, said = await host_refresh.poll(self._hub, host.device_id)
+        if state == "running":
+            if host_refresh.overdue(host.refresh_started_at, now):
+                logger.warning(
+                    "cloud pool refresh of %s did not finish; rebuilding it",
+                    host.hostname,
+                )
+                await self._rebuild_instead(host)
+            return
+        if state == "failed":
+            logger.warning(
+                "cloud pool refresh of %s failed; rebuilding it: %s",
+                host.hostname,
+                said,
+            )
+            await self._rebuild_instead(host)
+            return
+        try:
+            version = await enrollment.current_host_image_version(self._client)
+        except (MicroCloudError, ValidationError):
+            # Read again next sweep; the run is done and stays done.
+            return
+        await self._repo.lock_pool()
+        await self._session.refresh(host)
+        if not enrollment.same_machine(host.image_version, version):
+            # The machine half moved while the script ran: a new machine it is.
+            await self._session.commit()
+            await self._rebuild_instead(host)
+            return
+        host.image_version = version
+        host.draining_since = None
+        host.refresh_in_place = False
+        host.refresh_started_at = None
+        await self._session.commit()
+        logger.info("cloud pool refreshed %s in place", host.hostname)
+
+    async def _rebuild_instead(self, host: CloudHost) -> None:
+        """Turn a host being brought up to date in place over to the rebuild:
+        still draining, it is released once nothing is on it."""
+        await self._repo.lock_pool()
+        await self._session.refresh(host)
+        host.refresh_in_place = False
+        host.refresh_started_at = None
+        await self._session.commit()
 
     def _outdated(self, host: CloudHost, version: str, now: datetime) -> bool:
         """Whether a host no longer matches what a host created now would be:

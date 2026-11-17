@@ -60,6 +60,7 @@ export const TOOL_LABELS: Record<string, string> = {
   // 工具表说出来。`cheese_<命令>` 那几条（`cheese_worktree` 等）给旧记录用：pi
   // 房间曾把 CLI 的命令当工具，现在和别的骨架一样在 bash 里跑 `cheese …`。
   chat_send: 'toolLabels.chatSend',
+  chat_react: 'toolLabels.chatReact',
   'cheese_chat.edit': 'toolLabels.chatEdit',
   todo_write: 'toolLabels.todoWrite',
   'cheese_chat.list': 'toolLabels.cheeseChatList',
@@ -104,6 +105,10 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_task.close': 'toolLabels.cheeseCloseTask',
   'cheese_task.reopen': 'toolLabels.cheeseReopenTask',
   'cheese_task.state': 'toolLabels.cheeseTaskState',
+  'cheese_task.tell': 'toolLabels.cheeseTaskTell',
+  'cheese_task.look': 'toolLabels.cheeseTaskLook',
+  'cheese_task.report': 'toolLabels.cheeseTaskReport',
+  'cheese_task.accept': 'toolLabels.cheeseTaskAccept',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   'cheese_web.fetch': 'toolLabels.cheeseFetch',
   // 个人芝士的工具（backend/sandbox/cheese 的 DELEGATED_TOOLS）。
@@ -125,6 +130,7 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_space.review': 'toolLabels.cheeseSpaceReview',
   cheese_settings: 'toolLabels.cheeseSettingsSet',
   cheese_routine: 'toolLabels.cheeseRoutine',
+  cheese_automation: 'toolLabels.cheeseRoutine',
   cheese_todo: 'toolLabels.cheeseTodo',
   cheese_subagent_start: 'toolLabels.agent',
   cheese_subagent_send: 'toolLabels.cheeseSubagentSend',
@@ -177,11 +183,18 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_session.compact': 'toolLabels.cheeseCompact',
   'cheese_session.note': 'toolLabels.cheeseNote',
   'cheese_session.deliver_at': 'toolLabels.cheeseDeliverAt',
+  // 频道那一套：建、改、停、交回结果。名字和个人的那套不同，所以各写一行。
   'cheese_routine.create': 'toolLabels.cheeseRoutineDraft',
   'cheese_routine.list': 'toolLabels.cheeseRoutineList',
   'cheese_routine.update': 'toolLabels.cheeseRoutineUpdate',
   'cheese_routine.pause': 'toolLabels.cheeseRoutinePause',
   'cheese_routine.report': 'toolLabels.cheeseRoutineReport',
+  // 个人那一套：建、改、停；没有「交回结果」（它不经频道）。
+  'cheese_automation.create': 'toolLabels.cheeseRoutineDraft',
+  'cheese_automation.list': 'toolLabels.cheeseRoutineList',
+  'cheese_automation.change': 'toolLabels.cheeseRoutineUpdate',
+  'cheese_automation.update': 'toolLabels.cheeseRoutineUpdate',
+  'cheese_automation.pause': 'toolLabels.cheeseRoutinePause',
   'cheese_skill.propose': 'toolLabels.cheeseSkillDraft',
   'cheese_skill.update': 'toolLabels.cheeseSkillUpdate',
   platform_request: 'toolLabels.platformRequest',

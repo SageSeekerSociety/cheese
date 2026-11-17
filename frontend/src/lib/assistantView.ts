@@ -202,7 +202,7 @@ const STEP_ARG: Record<string, string> = {
   'cheese_room.create': 'title',
   'cheese_web.fetch': 'url',
   'cheese_web.search': 'query',
-  cheese_routine: 'title',
+  cheese_automation: 'title',
   cheese_notify: 'text',
   cheese_memory: 'description',
   cheese_subagent_start: 'description',

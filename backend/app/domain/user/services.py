@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, review_text
 from app.core.email import is_placeholder_email
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
@@ -479,6 +480,14 @@ class UserProfileService:
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
         if profile is None:
             raise NotFoundError("User profile not found")
+        # Every signed-in user reads a profile, so what changes in it is
+        # published; what stays as it was has been through this already.
+        await review_text(
+            TextKind.NAME, [nickname if nickname != profile.nickname else None]
+        )
+        await review_text(
+            TextKind.PUBLIC_TEXT, [intro if intro != profile.intro else None]
+        )
         await self._profile_repo.update_profile(
             profile, nickname=nickname, intro=intro, avatar_id=avatar_id
         )

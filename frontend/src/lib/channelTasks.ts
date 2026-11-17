@@ -3,11 +3,12 @@
 //
 // 状态不在这里算（后端 `presentation` 算好了），状态那一格长什么样在 `lib/taskState.ts`；
 // 这里只补卡自己的几样：采纳过几步、合进去的是哪个 PR、最后说的一句。
-import type { RoomTask } from '../cx_types'
+import type { Block, RoomTask } from '../cx_types'
 import type { TaskState } from './taskState'
 
+import { isAgentHandle } from './authorship'
 import { replySnippet } from './blockDisplay'
-import { taskState } from './taskState'
+import { joined, taskState } from './taskState'
 
 import { t } from '@/i18n'
 
@@ -32,6 +33,8 @@ export interface TaskLine {
   mine: boolean
   /** 还开着、已经采纳过几步的任务：「已采纳 2 次」。 */
   accepted: string | null
+  /** 做它的那位 AI 队友的席位：别的队友在主线说到这件任务时，任务标签上画它的头像。 */
+  teammate?: string | null
   /** 卡上一次变化的时间。 */
   at: string
   /** 这件任务里最后说的一句，折成一行：状态下面没有话要说时，主线上那张卡的第二行
@@ -39,7 +42,8 @@ export interface TaskLine {
   latest?: string | null
 }
 
-function acceptedLabel(task: ChannelTask): string | null {
+/** 最后一步采纳了的任务，状态词下面那一行接着写合进去的是哪个 PR。 */
+function acceptedPr(task: ChannelTask): string | null {
   if (task.presentation.phrase !== 'accepted' || !task.last_accepted_pr) return null
   const n = task.accepted_count ?? 1
   return n > 1
@@ -59,13 +63,14 @@ export function taskLine(
   const open = task.status !== 'closed'
   const n = task.accepted_count ?? 0
   const state = taskState(task, { viewer, nameOf, agentName })
-  const label = acceptedLabel(task)
+  const pr = acceptedPr(task)
   return {
     id: task.id,
     title: task.title,
     owner: task.owner_handle ?? null,
     creator: task.created_by ?? task.owner_handle ?? null,
-    state: label ? { ...state, label } : state,
+    teammate: task.teammate ?? null,
+    state: pr ? { ...state, line: joined([state.line, pr]) } : state,
     mine,
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
     at: task.last_message?.created_at ?? task.updated_at,
@@ -77,10 +82,12 @@ export function taskLine(
 const NO_NAMES = { mentionNames: {}, topicTitles: {} }
 
 /** 每条消息下面挂着的任务，按创建的先后。主线上是它挂在哪条主线消息下面；`inside` 一段
- *  支线（或支线转成的任务）里，是它出自哪句话，这段对话自己转成的那件不算。 */
+ *  支线（或支线转成的任务）里，是它出自哪句话，这段对话自己转成的那件不算。AI 队友在主线上
+ *  开的那几件不在这里，它们画在队友的回复下面（`teammateTaskLines`）。 */
 export function tasksByOrigin(tasks: readonly RoomTask[], inside?: string | null): Map<string, RoomTask[]> {
   const under = new Map<string, RoomTask[]>()
   for (const task of [...tasks].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    if (!inside && openedByTeammateInMainLine(task)) continue
     const origin = !inside ? task.upgraded_from_block_id : task.id === inside ? null : task.source_block_id
     if (!origin) continue
     const list = under.get(origin)
@@ -92,3 +99,33 @@ export function tasksByOrigin(tasks: readonly RoomTask[], inside?: string | null
 
 /** 频道概览「最近做完」那一栏有几件：概览只读这么多已经做完的。 */
 export const RECENT_DONE = 3
+
+/** AI 队友在频道主线上开的任务：它挂在要做这件事的那条主线消息下面，出自的也是那一条。 */
+function openedByTeammateInMainLine(task: RoomTask): boolean {
+  return (
+    !!task.upgraded_from_block_id &&
+    task.source_block_id === task.upgraded_from_block_id &&
+    !!task.created_by &&
+    isAgentHandle(task.created_by)
+  )
+}
+
+/** 频道主线上，AI 队友开的任务那一行画在哪条消息下面：队友回答那一轮的最后一条消息。那一轮
+ *  以要做这件事的那条消息命名（`turn_id`）；队友在那一轮里还没说话时，先画在那条消息下面。
+ *  按创建的先后。 */
+export function teammateTaskLines(tasks: readonly RoomTask[], blocks: readonly Block[]): Map<string, RoomTask[]> {
+  const answer = new Map<string, string>()
+  for (const block of blocks) {
+    if (block.kind === 'message' && block.turn_id && isAgentHandle(block.author)) answer.set(block.turn_id, block.id)
+  }
+  const under = new Map<string, RoomTask[]>()
+  for (const task of [...tasks].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    if (!openedByTeammateInMainLine(task)) continue
+    const origin = task.upgraded_from_block_id as string
+    const at = answer.get(origin) ?? origin
+    const list = under.get(at)
+    if (list) list.push(task)
+    else under.set(at, [task])
+  }
+  return under
+}

@@ -46,6 +46,7 @@ from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
+from app.core.gc_tuning import tune_after_startup
 from app.core.health import set_domain_checks, set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
@@ -60,16 +61,19 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.ownership import keep_holding
+from app.core.policy import oversee_with
 from app.core.process_role import is_api_pool
 from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
 from app.core.route_index import index_routes
 from app.core.route_mounting import FAILED_ROUTE_MODULES
+from app.core.startup_freeze import freeze_after_startup
 from app.core.storage import reuse_s3_connections
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.admin.services import is_platform_admin
 from app.domain.agent import gateway_catalog
 from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub import machine as machine_streams
@@ -590,6 +594,14 @@ async def lifespan(application: FastAPI):
         reuse_s3_connections(),
         reuse_forge_connections(),
     ):
+        # The warm-ups above loaded the object store's SDK models after the
+        # import-time freeze; freeze them too, once, before serving
+        # (`core/startup_freeze.py`).
+        freeze_after_startup()
+        # And let the middle generation fill before it is promoted, so full
+        # collections — which walk the whole live heap with the loop held — run
+        # less often (`core/gc_tuning.py` says how much, and why).
+        tune_after_startup()
         try:
             yield
         finally:
@@ -1090,6 +1102,11 @@ async def app_version() -> dict:
 # itself; with a connection owner, the owner relays them here over HTTP.
 if not settings.device_connection_url:
     machine_streams.serve(machine_relay.in_process(app))
+
+# The platform's admins manage every space and team (app/core/policy.py): the
+# policies cannot import the admin domain that knows who they are, so it is
+# named to them here, at import, before any request is judged.
+oversee_with(is_platform_admin)
 
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).

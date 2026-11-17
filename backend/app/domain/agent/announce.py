@@ -46,9 +46,10 @@ from app.domain.addressing import (
     address,
 )
 from app.domain.agent.mentions import _MENTION_RE
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.asked import asked_of, settled, skipped_by
+from app.domain.block.asked import PENDING, asked_of, settled, skipped_by
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -341,8 +342,11 @@ async def answer_questions(
         meta["answer_log"] = [
             *(meta.get("answer_log") or []),
             {
-                # One of its options (what a click sends), or words of his own.
-                "kind": "option" if picked else "note",
+                # One of its options (what a click sends) answers it. Words of
+                # his own are only a reply for now: whether they answer it or
+                # just talk about it is the asking agent's call
+                # (`block.questions.confirm_pending`), so the question stays open.
+                "kind": "option" if picked else PENDING,
                 "option": picked,
                 "note": None if picked else said,
                 "by": reply.author,
@@ -351,9 +355,16 @@ async def answer_questions(
             },
         ]
         question.meta = meta
-    await finish_answering(
-        session, reply=reply, questions=questions, said=said, recipient=recipient
-    )
+    settled_now = [q for q in questions if _offered(dict(q.meta or {})).get(said)]
+    if settled_now:
+        await finish_answering(
+            session, reply=reply, questions=settled_now, said=said, recipient=recipient
+        )
+    else:
+        # Only pending replies: nothing is settled, the asker still reads it.
+        await _point_at_asker(
+            session, reply=reply, questions=questions, recipient=recipient
+        )
     return questions
 
 
@@ -379,6 +390,15 @@ async def finish_answering(
     )
     for notice in await notices_now_answered(session, questions):
         await settle(session, notice, {"answered": excerpt})
+    await _point_at_asker(
+        session, reply=reply, questions=questions, recipient=recipient
+    )
+
+
+async def _point_at_asker(
+    session: AsyncSession, *, reply: Block, questions: list[Block], recipient: dict
+) -> None:
+    """Address ``reply`` to the agent who asked, so it opens that agent's next turn."""
     seat = questions[-1].author
     if not recipient.get("mentioned") and seat in await TopicMemberService(
         session
@@ -487,15 +507,35 @@ async def who_started_the_open_turn(
     A turn row names the agent by its instance's handle (the conversation it
     runs in), a seat by the instance's id; either may be on the row.
     """
+    turn = await open_turn_of(session, project_id, conversation_id, seat)
+    if turn is None or not names_a_person(turn.author):
+        return None
+    return turn.author
+
+
+async def open_turn_of(
+    session: AsyncSession, project_id, conversation_id: uuid.UUID, seat: str
+) -> AgentTurn | None:
+    """``seat``'s running turn in this conversation, if it has one: who
+    started it (``author``) and when (``started_at``)."""
     instance = await instance_of_seat(session, project_id, seat)
     turns = AgentTurnRepository(session)
     for handle in (seat, *((instance.handle,) if instance is not None else ())):
-        author = await turns.open_turn_author_for_topic(
-            conversation_id, agent_handle=handle
-        )
-        if author is not None:
-            return author if names_a_person(author) else None
+        turn = await turns.open_turn_for_topic(conversation_id, agent_handle=handle)
+        if turn is not None:
+            return turn
     return None
+
+
+async def word_that_started(session: AsyncSession, turn: AgentTurn) -> Block | None:
+    """The message that started ``turn``: a turn a person's message starts is
+    named by that message (`continuation_id` is the message's id, and a
+    resumed attempt keeps it). None for a turn no message of its author's
+    started."""
+    said = await session.get(Block, turn.continuation_id)
+    if said is None or said.author != turn.author or said.kind != BlockKind.message:
+        return None
+    return said
 
 
 async def _notify(

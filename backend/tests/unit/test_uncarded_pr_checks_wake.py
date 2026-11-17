@@ -114,6 +114,7 @@ def said(monkeypatch):
         pr_url="https://github.com/acme/widgets/pull/1542",
         status=TaskStatus.open,
         closing_since=None,
+        deploying_since=None,
         pr_checks_head=None,
         pr_checks_state=None,
     )

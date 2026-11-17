@@ -5,18 +5,23 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     ColumnElement,
+    Text,
     Uuid,
     and_,
+    cast,
     column,
     delete,
+    func,
     or_,
     select,
     table,
+    text,
     update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rank import Rank
+from app.core.rank import Spot as TimelineSpot
 from app.core.request_facts import recall
 from app.domain.living_doc.models import Document, DocumentNode
 
@@ -24,6 +29,19 @@ from app.domain.living_doc.models import Document, DocumentNode
 # ``project`` depend on this domain, and importing back would make a cycle.
 _tasks = table("tasks", column("document_id", Uuid))
 _projects = table("projects", column("overview_document_id", Uuid))
+
+
+def _timeline_tie() -> ColumnElement:
+    """A document's place within one moment on the library page's timeline:
+    the title, `chr(1)`, then the id.
+
+    The id is there because two documents can share a title, and the separator
+    is a byte a library file name cannot carry — so a document's tie never
+    collides with a file's. `COLLATE "C"` compares bytes, which is the order
+    `app.core.rank.title_tie` writes down and the browser compares."""
+    return func.concat(
+        func.coalesce(Document.title, ""), text("chr(1)"), cast(Document.id, Text)
+    ).collate("C")
 
 
 def project_own(project_id: uuid.UUID) -> ColumnElement[bool]:
@@ -92,6 +110,49 @@ class DocumentRepository:
         )
         return list(rows)
 
+    async def of_project_timeline(
+        self,
+        project_id: uuid.UUID,
+        *,
+        after: TimelineSpot | None,
+        limit: int,
+        descending: bool,
+        also_of_room: uuid.UUID | None = None,
+    ) -> list[Document]:
+        """The project's own documents on the library page's timeline: only the
+        time, the title as the tie-break — no group, so they sort against files
+        and folders as one list. ``after`` is where the previous page stopped."""
+        own = project_own(project_id)
+        if also_of_room is not None:
+            own = or_(
+                own,
+                and_(
+                    Document.project_id == project_id,
+                    Document.room_id == also_of_room,
+                ),
+            )
+        query = select(Document).where(own)
+        tie = _timeline_tie()
+        if after is not None:
+            query = query.where(
+                or_(
+                    Document.updated_at < after.at,
+                    and_(Document.updated_at == after.at, tie > after.tie),
+                )
+                if descending
+                else or_(
+                    Document.updated_at > after.at,
+                    and_(Document.updated_at == after.at, tie > after.tie),
+                )
+            )
+        order = (
+            (Document.updated_at.desc(), tie)
+            if descending
+            else (Document.updated_at, tie)
+        )
+        rows = await self._session.scalars(query.order_by(*order).limit(limit))
+        return list(rows)
+
     async def of_team(self, team_id: int) -> list[Document]:
         """The team's own documents — none of its projects' — the latest
         changed first. A person's own documents are their personal team's."""
@@ -99,6 +160,25 @@ class DocumentRepository:
             select(Document)
             .where(Document.team_id == team_id, Document.project_id.is_(None))
             .order_by(Document.updated_at.desc(), Document.id)
+        )
+        return list(rows)
+
+    async def of_team_timeline(
+        self, team_id: int, *, descending: bool
+    ) -> list[Document]:
+        """The team's own documents on the library page's timeline: only the
+        time, the title then the id as the tie-break (see
+        `of_project_timeline`)."""
+        tie = _timeline_tie()
+        order = (
+            (Document.updated_at.desc(), tie)
+            if descending
+            else (Document.updated_at, tie)
+        )
+        rows = await self._session.scalars(
+            select(Document)
+            .where(Document.team_id == team_id, Document.project_id.is_(None))
+            .order_by(*order)
         )
         return list(rows)
 

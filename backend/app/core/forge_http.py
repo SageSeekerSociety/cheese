@@ -32,6 +32,7 @@ from typing import Any, Literal
 import httpx
 
 from app.core import forge_etags, forge_quota, metrics
+from app.core.tls_context import OUTBOUND_TLS
 
 #: GitHub closes a connection that has sat idle somewhere between 20 and 60
 #: seconds (measured from the deployment). Letting go of it first means a call
@@ -199,7 +200,14 @@ async def reuse_forge_connections() -> AsyncIterator[None]:
     """Keep forge connections open until the application stops."""
     global _shared
     previous = _shared
-    pool = httpx.AsyncClient(limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S))
+    # This pool, not the per-call client, is what negotiates TLS for the
+    # application's forge traffic: `forge_client` hands the borrowed pool over
+    # as `transport`, and httpx ignores `verify` when a transport is given. So
+    # the shared context has to be given here or the busiest path keeps
+    # building one of its own.
+    pool = httpx.AsyncClient(
+        limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S), verify=OUTBOUND_TLS
+    )
     _shared = (asyncio.get_running_loop(), _Borrowed(pool))
     try:
         yield
@@ -230,6 +238,11 @@ def forge_client(
         forge_quota.observe,
         _count_response,
     ]
+    # The one TLS context the process builds (`core/tls_context`): a client's
+    # own costs tens of milliseconds of the loop to build, and this one is built inside
+    # request handlers and background jobs. A caller that passes `verify=` keeps
+    # its own choice.
+    kwargs.setdefault("verify", OUTBOUND_TLS)
     client = httpx.AsyncClient(event_hooks=hooks, **kwargs)
     plain = client.send
 

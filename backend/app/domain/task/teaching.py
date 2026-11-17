@@ -2,7 +2,7 @@
 
 `protocol.resolve` 回答的是「配置是什么」；这个模块回答的是「这一轮的它长什么
 样」——把课件/知识材料的引用换成名字和链接，把课程名带上，然后交给
-`harness.prompt.teaching_section` 去说。取数和措辞分开，是因为两者失败的方式
+`prompts.teaching_section` 去说。取数和措辞分开，是因为两者失败的方式
 不一样：这里失败是查不到东西，那里失败是话说错了。
 
 **引用，不是拷贝。** `material_ids` / `document_ids` 存的是指向现成
@@ -79,7 +79,7 @@ async def for_project(
     every project re-registered to hear about it. This read is what a *new*
     session starts from; a session already running keeps the copy it opened
     with until its next cold start — `teaching` is deliberately not a tracked
-    section (`harness/opening.py` TRACKED_SECTIONS 与模块说明第 3 条).
+    section (`prompts/opening.py` TRACKED_SECTIONS).
     """
     if project is None or project.external_task_id is None:
         return None

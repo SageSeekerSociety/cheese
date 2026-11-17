@@ -95,34 +95,39 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import listing, say, size_text
-from app.domain.agent.announce import announce
+from app.domain.agent.announce import announce, who_started_the_open_turn
+from app.domain.agent.ask import DEFAULT_QUESTION_LIFETIME
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.mentions import mentioned_outside, unasked
+from app.domain.agent.mentions import _MENTION_RE, mentioned_outside, unasked
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.intake.human import preview_addressing
+from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.store.human import AddressingChanged, HumanHandoff
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import (
+    TASK_TAG,
     ChatAddressingIn,
     ChatAddressingOut,
     ChatAttachmentIn,
     ChatMessageIn,
 )
+from app.domain.block.questions import quick_replies_meta
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.note import send_note
 from app.domain.library import service as library
+from app.domain.mentions import expand_mention_names
 from app.domain.notice_meta import (
     EVENT_MENTION_FUSED,
     SEVERITY_WARN,
     WHO_PLATFORM,
     notice,
 )
+from app.domain.project.address import Numbered, things_by_ref
 from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
 from app.domain.room_task.place import place_or_404
-from app.domain.thread.services import answered_in
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -410,6 +415,12 @@ async def _publish_as_agent(
         if parent is None or parent.conversation_id != place.conversation_id:
             raise ValidationError("reply_to must belong to this conversation")
         reply_parent = parent
+    tagged = await _tagged_task(db, place, body.task) if body.task else None
+    quick = (
+        await _quick_replies(db, place, author, content, body.replies)
+        if body.replies
+        else {}
+    )
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     prepared = (
         await asyncio.to_thread(_read_agent_attachments, body.attachments)
@@ -479,9 +490,16 @@ async def _publish_as_agent(
         topic_refs=[],
         author=author,
         publication_id=publication_id,
-        extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
-        if body.quoted_context
-        else None,
+        extra_meta={
+            **(
+                {"quoted_context": body.quoted_context.model_dump(mode="json")}
+                if body.quoted_context
+                else {}
+            ),
+            **({TASK_TAG: str(tagged)} if tagged is not None else {}),
+            **quick,
+        }
+        or None,
     )
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
@@ -500,25 +518,66 @@ async def _publish_as_agent(
     return payload
 
 
+async def _quick_replies(db, place, seat: str, content: str, replies) -> dict:
+    """What makes a main-line message offer ``replies`` under it
+    (`quick_replies_meta`). It asks the people it @-mentions; naming nobody,
+    whoever started the turn it answers; started by the platform, nobody in
+    particular. Only a channel's main line offers them: in a task, a 支线 or
+    a private chat a question is asked with `cheese_ask`."""
+    if place.inner_id is not None or _is_dm(place.room):
+        raise ValidationError(say("chatRepliesMainLineOnly"))
+    roster = await room_roster(db, place.project_id, place.room)
+    people = {row["handle"] for row in roster if not row.get("agent")}
+    named = [
+        handle
+        for handle in _MENTION_RE.findall(expand_mention_names(content, roster))
+        if handle in people
+    ]
+    if not named:
+        starter = await who_started_the_open_turn(
+            db, place.project_id, place.conversation_id, seat
+        )
+        named = [starter] if starter else []
+    return quick_replies_meta(
+        replies,
+        asked=tuple(dict.fromkeys(named)),
+        deadline=datetime.now(UTC) + DEFAULT_QUESTION_LIFETIME,
+    )
+
+
+async def _tagged_task(db, place, ref: str) -> uuid.UUID:
+    """The task of this channel an AI teammate's message is about, by its
+    number or id; a ref that names none of this channel's tasks is refused
+    with what to use instead."""
+    found = (
+        await things_by_ref(db, place.project_id, Numbered.task, [ref.strip()])
+    ).get(ref.strip())
+    if found is None or found.room_id != place.room_id:
+        raise ValidationError(say("chatTaskUnknown", task=ref.strip()))
+    return found.id
+
+
 async def _summon_the_named(
     chat: ChatService, runner: AgentWorkRunner, place, payload: dict, author: str
 ) -> None:
     """这条消息 @ 到的 AI 队友，各起一轮（`delivery/mention.py`）。
 
     消息先落库、先广播，再记投递：被点名的那位醒来时，房间里已经有它要读的那一行。
+
+    频道主线上不这样：AI 队友在主线的话不叫醒别的 AI 队友，要别的队友做的事开成
+    任务交给它（`cheese_task(action=open)` 的 ``teammate``）。任务和支线里照旧。
     """
+    if place.inner_id is None:
+        return
     # deferred-import: tests patch this name on app.domain.delivery.mention
     from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 
     async with chat.session_factory() as session:
-        block = await BlockRepository(session).get(uuid.UUID(payload["id"]))
         summoned = await record_mentions(
             session,
             project_id=place.project_id,
             room_id=place.room_id,
-            conversation_id=await answered_in(session, block)
-            if block is not None
-            else place.conversation_id,
+            conversation_id=place.conversation_id,
             block_id=uuid.UUID(payload["id"]),
             author=author,
             content=payload["content"],

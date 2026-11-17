@@ -39,6 +39,10 @@ const spaceDetail = vi.fn()
 const listCategories = vi.fn()
 const listDomainGroups = vi.fn()
 const listMaterials = vi.fn()
+// 学情分析：这块板的开关、知识点清单、我能不能让 AI 读题面（默认关着）。
+const readLearningAnalysis = vi.fn()
+const createKnowledgePoint = vi.fn()
+const suggestKnowledgePoints = vi.fn()
 
 const uploadAttachment = vi.fn()
 const attachmentLimits = vi.fn()
@@ -113,6 +117,10 @@ vi.mock('@/api/spaces', () => ({
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
     // 参考资料那一格的候选。给空清单时那一格说的是「资料库里还没有文件」。
     listMaterials: (...a: unknown[]) => listMaterials(...a),
+    // 学情分析：这一栏的开关与知识点清单（默认关着）。用例要量那一栏时改 `readLearningAnalysis`。
+    readLearningAnalysis: (...a: unknown[]) => readLearningAnalysis(...a),
+    createKnowledgePoint: (...a: unknown[]) => createKnowledgePoint(...a),
+    suggestKnowledgePoints: (...a: unknown[]) => suggestKnowledgePoints(...a),
   },
 }))
 
@@ -234,6 +242,17 @@ async function publish(view: ReturnType<typeof render>) {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+/** 评分要点那一节的「添加一项」是一张菜单：「手动评分项」和「额度用量」二选一
+ *  （后者由平台自动算分）。点开的那一张菜单挂在浮层里，所以要拿最后一张。 */
+async function addRubricLine(
+  view: ReturnType<typeof render>,
+  { group = 0, kind = 'manual' }: { group?: number; kind?: 'manual' | 'usage' } = {}
+) {
+  await fireEvent.click(view.getAllByRole('button', { name: '添加一项' })[group])
+  const items = await view.findAllByTestId(kind === 'manual' ? 'task-form-add-manual' : 'task-form-add-usage')
+  await fireEvent.click(items[items.length - 1])
+}
+
 /** 选中分类那枚下拉里的一项。选项画在浮层里，查询挂在 `document.body` 上找得到。 */
 async function pickCategory(view: ReturnType<typeof render>, name = '基础题') {
   const field = view.container.querySelector('[data-agent-field="category"]') as HTMLElement
@@ -352,6 +371,14 @@ beforeEach(() => {
   listCategories.mockImplementation(async () => categoriesBody())
   listDomainGroups.mockImplementation(async () => ({ groups: [] }))
   listMaterials.mockImplementation(async () => ({ materials: [], canManage: false }))
+  // 学情分析默认关着：这一页量别的事时，那一栏不出现。
+  readLearningAnalysis.mockImplementation(async () => ({
+    learningAnalysis: { enabled: false },
+    knowledgePoints: [],
+    canManage: false,
+  }))
+  createKnowledgePoint.mockReset()
+  suggestKnowledgePoints.mockReset()
   listTasks.mockImplementation(async () => ({ tasks: [], distinctParticipants: 0 }))
   listDrafts.mockImplementation(async () => [])
   startDraft.mockImplementation(async (_space: number, fields: Record<string, unknown>) => draftBody(fields))
@@ -424,11 +451,11 @@ describe('发题页：发一道', () => {
     await fireEvent.update(view.getByLabelText('第 2 个提交项'), '合作与参考说明')
     await fireEvent.click(view.getAllByRole('radio', { name: '文字' })[1])
 
-    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await addRubricLine(view)
     await fireEvent.update(view.getByLabelText('第 1 项项目'), '正确性')
     await fireEvent.update(view.getByLabelText('第 1 项分值'), '60')
     await fireEvent.update(view.getByLabelText('第 1 项评分标准'), '8 组记录全对')
-    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await addRubricLine(view)
     await check(view.getByTestId('task-form-rubric-public').querySelector('input')!)
 
     await publish(view)
@@ -454,7 +481,7 @@ describe('发题页：发一道', () => {
     await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
     await fireEvent.update(view.getByLabelText('第 2 个阶段的名称'), '实现')
     await fireEvent.update(view.getAllByLabelText('第 1 个提交项')[1], '代码')
-    await fireEvent.click(view.getAllByRole('button', { name: '添加一项' })[1])
+    await addRubricLine(view, { group: 1 })
     await fireEvent.update(view.getByLabelText('第 1 项项目'), '正确性')
 
     await publish(view)
@@ -517,7 +544,7 @@ describe('发题页：发一道', () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
-    await fireEvent.click(view.getByRole('button', { name: '添加一项' }))
+    await addRubricLine(view)
     await fireEvent.update(view.getByLabelText('第 1 项评分标准'), '格式规范')
 
     await publish(view)
@@ -708,6 +735,65 @@ describe('发题页：发一道', () => {
   })
 })
 
+describe('发题页：涉及的知识点', () => {
+  it('这块板没开学情分析：那一栏不摆', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    await ownTeaching(view)
+    expect(view.queryByTestId('knowledge-points')).toBeNull()
+  })
+
+  it('开着时：挂上一条知识点，跟着表单存进草稿（发布前那一份就是要发的样子）', async () => {
+    readLearningAnalysis.mockResolvedValue({
+      learningAnalysis: { enabled: true },
+      knowledgePoints: [
+        { id: 1, name: '相关子查询', displayOrder: 0 },
+        { id: 2, name: '索引', displayOrder: 1 },
+      ],
+      canManage: true,
+    })
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await ownTeaching(view)
+
+    await waitFor(() => expect(view.getByTestId('knowledge-points')).toBeTruthy(), { timeout: 3000 })
+    await fireEvent.click(view.getByTestId('knowledge-point-add'))
+    await fireEvent.input(await view.findByRole('checkbox', { name: '索引' }), { target: { checked: true } })
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+    expect(sent().knowledgePointIds).toEqual([2])
+  })
+
+  it('采用一条清单里还没有的建议：先加进清单，再挂到这道题上', async () => {
+    readLearningAnalysis.mockResolvedValue({
+      learningAnalysis: { enabled: true },
+      knowledgePoints: [{ id: 1, name: '相关子查询', displayOrder: 0 }],
+      canManage: true,
+    })
+    suggestKnowledgePoints.mockResolvedValue({
+      suggestions: [{ name: '游标', why: '题面提到游标', confidence: 'medium', isNew: true }],
+    })
+    createKnowledgePoint.mockResolvedValue({ knowledgePoint: { id: 9, name: '游标', displayOrder: 1 } })
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await ownTeaching(view)
+
+    await waitFor(() => expect(view.getByTestId('knowledge-point-suggest')).toBeTruthy(), { timeout: 3000 })
+    await fireEvent.click(view.getByTestId('knowledge-point-suggest'))
+    await fireEvent.click(await view.findByTestId('knowledge-point-adopt'))
+
+    await waitFor(() => expect(createKnowledgePoint).toHaveBeenCalledWith(SPACE_ID, { name: '游标' }))
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+    expect(sent().knowledgePointIds).toEqual([9])
+  })
+})
+
 describe('发题页：边写边存', () => {
   it('停手后建一份草稿，地址栏记下它；之后只存改了的那几格', async () => {
     await boardAs(MEMBER)
@@ -885,5 +971,31 @@ describe('发题页：右边的芝士', () => {
 
     await fireEvent.click(view.getByRole('button', { name: '取消固定' }))
     expect(localStorage.getItem('cheesex.agentDocked')).toBe('false')
+  })
+
+  it('取消固定之后按住头部拖得动，位置记在这台浏览器里；双击头部回右下角', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    await fireEvent.click(view.getByRole('button', { name: '取消固定' }))
+    const float = view.getByTestId('agent-host') as HTMLElement
+    const header = float.querySelector('header') as HTMLElement
+    expect(header.getAttribute('title')).toBe('拖动可以换个位置，双击回到右下角')
+
+    await fireEvent.pointerDown(header, { button: 0, pointerId: 1, clientX: 900, clientY: 300 })
+    await fireEvent.pointerMove(window, { pointerId: 1, buttons: 1, clientX: 500, clientY: 100 })
+    await fireEvent.pointerUp(window, { pointerId: 1 })
+
+    // 浮层身上多了一对内联坐标，浏览器里也记下了这次拖到的比例。
+    await waitFor(() => expect(float.style.left).not.toBe(''))
+    expect(float.style.top).not.toBe('')
+    expect(JSON.parse(localStorage.getItem('cheesex.agentFloatSpot') ?? 'null')).toMatchObject({
+      x: expect.any(Number),
+      y: expect.any(Number),
+    })
+
+    await fireEvent.dblClick(header)
+    await waitFor(() => expect(float.style.left).toBe(''))
+    expect(localStorage.getItem('cheesex.agentFloatSpot')).toBeNull()
   })
 })

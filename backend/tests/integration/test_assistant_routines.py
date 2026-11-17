@@ -15,6 +15,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from redis.asyncio import from_url
 from sqlalchemy import select, update
 
@@ -37,6 +38,7 @@ from app.domain.delivery_events import DeliveryEvent
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.project.models import Project
+from app.domain.room_task.models import Task
 from app.domain.routine import personal
 from app.domain.topic.models import Topic
 from app.domain.user.models import UserSession
@@ -152,7 +154,7 @@ def _make_routine(client, gw, me: dict, said: str, **args) -> AssistantRoutine:
     """The person asks for a routine; 芝士 makes it with ``args``."""
     conversation = _start(client, me)
     gw.script = [
-        ("tool", "cheese_routine", {"action": "create", **args}),
+        ("tool", "cheese_automation", {"action": "create", **args}),
         ("text", "已建好。"),
     ]
     r = _ask(client, conversation, said, me)
@@ -241,11 +243,11 @@ def test_a_routine_runs_on_its_own_when_its_time_comes_and_tells_the_person(
         "data"
     ]["messages"]
     assert [m["role"] for m in said] == ["platform", "assistant"]
-    assert "自动化「每日待办」现在运行" in said[0]["text"]
+    assert "例行事务「每日待办」现在运行" in said[0]["text"]
     assert said[1]["text"] == "今天没有待办。"
     # The person is told, and the notice opens the run's conversation.
     [notice] = _notices(client, user_id)
-    assert notice["content"] == "自动化「每日待办」已完成"
+    assert notice["content"] == "例行事务「每日待办」已完成"
     assert notice["assistantConversation"] == str(run.conversation_id)
     assert notice["quote"] == "今天没有待办。"
     # The next time is tomorrow's.
@@ -293,10 +295,12 @@ def test_in_a_run_what_was_not_asked_for_is_left_as_a_card_without_waiting(
     assert time.monotonic() - started < 60
     assert (run.status, run.asked) == ("done", 1)
     shown = keeper.shown[0]
-    assert "[用户（建这条自动化时说）] 每天早上看一下我的项目频道有什么新消息" in shown
-    assert "自动化「看频道」现在运行" not in shown
+    assert (
+        "[用户（建这条例行事务时说）] 每天早上看一下我的项目频道有什么新消息" in shown
+    )
+    assert "例行事务「看频道」现在运行" not in shown
     [notice] = _notices(client, user_id)
-    assert notice["content"] == "自动化「看频道」有 1 项操作待你确认"
+    assert notice["content"] == "例行事务「看频道」有 1 项操作待你确认"
     [card] = _cards(client, user_id)
     assert card.state == "pending" and card.work == str(run.id)
 
@@ -643,7 +647,7 @@ def test_out_of_credits_a_persons_routines_pause_and_they_are_told_once(client):
         "第二条": ("paused", "credits"),
     }
     [notice] = _notices(client, routine.user_id)
-    assert notice["content"] == "额度已用完，自动化已暂停"
+    assert notice["content"] == "额度已用完，例行事务已暂停"
     assert other.id
 
 
@@ -669,7 +673,7 @@ def test_routines_of_someone_away_for_long_pause_until_they_resume_them(client):
     [row] = _routines(client, routine.user_id)
     assert (row.state, row.paused) == ("paused", "away")
     [notice] = _notices(client, routine.user_id)
-    assert notice["content"] == "你已 14 天未登录，自动化已暂停"
+    assert notice["content"] == "你已 14 天未登录，例行事务已暂停"
     resumed = client.post(f"/assistant/routines/{routine.id}/resume", headers=me)
     assert resumed.json()["data"]["routines"][0]["state"] == "active"
 
@@ -878,3 +882,236 @@ def test_a_one_off_routine_that_ran_is_done_frees_its_place_and_is_cleared_later
     assert routine.id not in {r.id for r in left}
     assert len(left) == personal.MAX_ROUTINES
     assert run_id not in {r.id for r in _runs(client, routine.user_id)}
+
+
+# --- a rule saved from the form, with a blank in it ---------------------------
+
+
+def test_a_rule_saved_with_no_moment_waits_for_cheese_to_fill_it(client, gateway):
+    """The form saves a rule with a goal and nothing else. It is not active —
+    it is «filling», the row says what is missing, and the sweep spends one
+    run on deciding it: the platform opens a conversation for it and 芝士
+    writes the moment back. Then it runs like any other."""
+    me = _auth(client, "asker")
+    user_id = _ledger_user(client, "asker")[0]
+    r = client.post(
+        "/assistant/routines",
+        json={"note": "把每天要审的东西列成三条"},
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    [listed] = r.json()["data"]["routines"]
+    assert listed["state"] == "filling"
+    assert listed["title"] == ""
+    assert listed["missing"] == ["名字", "什么时候跑"]
+    assert listed["nextRunAt"] is None
+
+    gateway.script = [
+        (
+            "tool",
+            "cheese_automation",
+            {
+                "action": "change",
+                "routine": listed["id"],
+                "title": "每日待审清单",
+                "trigger": "schedule",
+                "freq": "daily",
+                "time": "08:00",
+            },
+        ),
+        ("text", "定好了。"),
+    ]
+    _tick(client, gateway)
+    [run] = _ended(client, user_id)
+
+    [filled] = _routines(client, user_id)
+    assert filled.state == "active", (filled.state, filled.paused)
+    assert filled.title == "每日待审清单"
+    assert filled.next_run_at is not None
+    # The fill run happened in a conversation of its own, where the platform's
+    # question and 芝士's answer are kept.
+    assert run.conversation_id is not None
+    said = client.get(f"/assistant/conversations/{run.conversation_id}", headers=me)
+    assert said.status_code == 200, said.text
+    roles = [m["role"] for m in said.json()["data"]["messages"]]
+    assert roles[0] == "platform" and "platform" in roles
+    [notice] = _notices(client, user_id)
+    assert "已经定好了" in notice["content"], notice
+
+
+def test_a_rule_cheese_never_filled_is_plainly_stopped_and_says_so(client, gateway):
+    """芝士 runs, says something, and writes nothing back. The rule must not
+    sit there pretending to be generating: it is stopped, and the person is
+    told what is still missing."""
+    me = _auth(client, "asker")
+    user_id = _ledger_user(client, "asker")[0]
+    r = client.post(
+        "/assistant/routines", json={"note": "把每天要审的东西列成三条"}, headers=me
+    )
+    [listed] = r.json()["data"]["routines"]
+
+    gateway.script = [("text", "嗯。")]
+    _tick(client, gateway)
+    _ended(client, user_id)
+
+    [kept] = _routines(client, user_id)
+    assert kept.state == "paused" and kept.paused == "unfilled", (
+        kept.state,
+        kept.paused,
+    )
+    assert kept.next_run_at is None
+    [notice] = _notices(client, user_id)
+    assert "还差" in notice["content"], notice
+    assert listed["id"] == str(kept.id)
+
+
+def test_filling_a_rule_in_by_hand_starts_it(client, gateway):
+    """«修改» with the moment filled in ends the wait: nothing is left for 芝士
+    to decide, so it runs from the next moment."""
+    me = _auth(client, "asker")
+    r = client.post(
+        "/assistant/routines", json={"note": "把每天要审的东西列成三条"}, headers=me
+    )
+    [listed] = r.json()["data"]["routines"]
+
+    r = client.put(
+        f"/assistant/routines/{listed['id']}",
+        json={
+            "note": "把每天要审的东西列成三条",
+            "title": "每日待审清单",
+            "trigger": "schedule",
+            "freq": "daily",
+            "time": "08:00",
+        },
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    kept = client.get("/assistant/routines", headers=me).json()["data"]["routines"][0]
+    assert kept["state"] == "active"
+    assert kept["nextRunAt"] is not None
+    assert kept["missing"] == []
+
+
+def test_a_rule_saved_with_no_goal_is_refused(client):
+    me = _auth(client, "asker")
+    r = client.post("/assistant/routines", json={"note": "  "}, headers=me)
+    assert r.status_code == 422, r.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"trigger": "schedule", "freq": "daily", "time": "08:00"},
+        {"trigger": "schedule", "freq": "hourly", "minute": 5},
+        {"trigger": "schedule", "freq": "weekly", "time": "08:00", "weekdays": [0, 2]},
+        {"trigger": "schedule", "freq": "monthly", "time": "08:00", "day": 1},
+        {"trigger": "mention"},
+        {"trigger": "review"},
+        {"trigger": "due"},
+        {"trigger": "invite"},
+        {"trigger": "filed", "mine": True},
+        {"trigger": "decided", "mine": True, "outcome": "accepted"},
+        {"trigger": "decided", "mine": True, "outcome": "rejected"},
+        {"trigger": "mention", "once": True},
+        {"trigger": ""},
+    ],
+)
+def test_every_blank_the_form_offers_can_be_saved(client, body):
+    """Every choice the settings form draws is one the backend takes: a
+    frequency carries the moment that frequency needs (``minute`` for hourly,
+    ``weekdays`` for weekly, ``day`` for monthly), and a task rule says whose
+    tasks or which one. A choice the form draws but the backend refuses is a
+    person stopped at «保存» with no way forward."""
+    me = _auth(client, "asker")
+    r = client.post(
+        "/assistant/routines",
+        json={"note": "把每天要审的东西列成三条", "title": "每日待审清单", **body},
+        headers=me,
+    )
+    assert r.status_code == 200, (body, r.text)
+    [listed] = r.json()["data"]["routines"]
+    assert listed["state"] == ("active" if body.get("trigger") else "filling"), listed
+
+
+def test_the_notes_beside_a_goal_are_kept_with_it(client):
+    """「补充说明」 is what the goal does not say, and it is kept as the rest of
+    what a run is told to do."""
+    me = _auth(client, "asker")
+    r = client.post(
+        "/assistant/routines",
+        json={
+            "note": "把每天要审的东西列成三条",
+            "explain": "只要题目数，不要人",
+            "trigger": "schedule",
+            "freq": "daily",
+            "time": "08:00",
+        },
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    [listed] = r.json()["data"]["routines"]
+    assert listed["note"] == "把每天要审的东西列成三条\n\n只要题目数，不要人"
+
+
+def test_a_task_rule_from_the_form_names_the_task_by_its_ref(client):
+    """A rule waiting on one task's review says which task — the ref the
+    address bar uses (``ml-course/tasks/12``), the same one 芝士 is given —
+    and reads back with its title."""
+    me = _auth(client, "alice")
+    room_id, _ = _room(client)
+    task = client.post(
+        f"/topics/{room_id}/tasks",
+        json={"title": "接入搜索"},
+        headers=_auth(client, "alice"),
+    ).json()["data"]
+
+    async def where():
+        async with client.test_factory() as s:
+            row = (
+                await s.execute(select(Task).where(Task.id == task["id"]))
+            ).scalar_one()
+            project = (
+                await s.execute(select(Project).where(Project.id == row.project_id))
+            ).scalar_one()
+            return project.slug, row.number
+
+    slug, number = asyncio.run(where())
+    r = client.post(
+        "/assistant/routines",
+        json={
+            "note": "先过一遍改动",
+            "trigger": "filed",
+            "task": f"{slug}/tasks/{number}",
+        },
+        headers=me,
+    )
+    assert r.status_code == 200, r.text
+    [listed] = r.json()["data"]["routines"]
+    assert "接入搜索" in listed["when"], listed["when"]
+
+
+def test_a_rule_belongs_to_whoever_saved_it_and_to_nobody_else(client):
+    """A rule made from the form is its maker's: another person holding its id
+    is answered 404, exactly as for a rule that never existed, and the rule is
+    left as it was. Nobody signed in is refused before either."""
+    mine = _auth(client, "asker")
+    theirs = _auth(client, "dora")
+    r = client.post(
+        "/assistant/routines", json={"note": "把每天要审的东西列成三条"}, headers=mine
+    )
+    [listed] = r.json()["data"]["routines"]
+    path = f"/assistant/routines/{listed['id']}"
+    body = {"note": "改成别人的意思", "title": "别人的名字", "trigger": "schedule"}
+
+    stranger = client.put(path, json=body, headers=theirs)
+    assert stranger.status_code == 404, stranger.text
+    anonymous = client.put(path, json=body)
+    assert anonymous.status_code == 401, anonymous.text
+    kept = client.get("/assistant/routines", headers=mine).json()["data"]["routines"][0]
+    assert kept["note"] == "把每天要审的东西列成三条"
+    assert kept["title"] == ""
+    # A path that is not a rule id at all is a malformed request, not a look
+    # somebody may take: the declared parameter is validated as the kind's id
+    # (this app answers its validation failures 400).
+    malformed = client.put("/assistant/routines/not-a-uuid", json=body, headers=mine)
+    assert malformed.status_code == 400, malformed.text

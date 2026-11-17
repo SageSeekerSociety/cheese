@@ -57,7 +57,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.memory.files import INDEX_NAME
+from app.domain.memory.files import INDEX_NAME, is_talk_note
 from app.domain.memory.models import (
     MemoryDreamRun,
     MemoryDreamRunStatus,
@@ -324,6 +324,24 @@ def dream_answer(before: dict[str, str], answer: str) -> DreamAnswer:
     return DreamAnswer(
         tree=tree, summary=summary.strip() if isinstance(summary, str) else ""
     )
+
+
+def talk_widened(before: dict[str, str], after: dict[str, str]) -> bool:
+    """这一份整理是不是把 communication 这一类变宽了：把一条别的类型的记录改成了
+    它，或者新写出一条它、却没有并掉任何一条原有的它。
+
+    这一类是一个人的 private 里唯一会进多人地方的（`files.talk_view`）。整理只
+    合并、改写已有的记录，不新增事实，所以一条 communication 只能从几条
+    communication 并出来；从别的类型变出来的，就是把不该进多人地方的东西带了进去。
+    命中就整份不写（`MemoryLedger._dream_scope`）：只拦其中一条，同一份里删掉的
+    那几条照样删，就丢了东西。
+    """
+    talk_before = {name for name, body in before.items() if is_talk_note(body)}
+    talk_after = {name for name, body in after.items() if is_talk_note(body)}
+    if any(name in before for name in talk_after - talk_before):
+        return True
+    born = talk_after - set(before)
+    return bool(born) and not (talk_before - talk_after)
 
 
 def _flat_name(name: object) -> bool:

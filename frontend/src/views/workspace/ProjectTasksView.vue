@@ -2,16 +2,16 @@
 // 全部任务（画面）：这个项目里的任务，一张按状态分组的列表。项目总览的「全部任务」
 // 和频道下面那一行「全部任务」进的都是这一页，后者带着频道筛选。
 //
-// 分组的顺序是「下一步在谁手上」：待处理在最上面（下一步在人手上），然后检查中、
-// 进行中、未开始。等你的那几件在行上用暖色写出来，不单独拉一组——「需要我处理」
-// 只在首页「待办」一处。十四天没动静的收进最底下的「已停滞」，点开才列出来。
+// 按状态词分组：待协助、待回答在最上面（下一步在人手上），然后待审阅、进行中、
+// 未开始。等你的那几件在行上用暖色写出来，不单独拉一组——「需要我处理」只在首页
+// 「待办」一处。十四天没动静的收进最底下的「已停滞」，点开才列出来。
 //
 // 筛选：任务归谁、任务是否关闭、交付是否采纳、哪个频道。数据和
-// 去处都由容器 ProjectTasks 给。进行中的是整份，在这里分组、筛选、数；已关闭的只会越
+// 去处都由容器 ProjectTasks 给。未结束的是整份，在这里分组、筛选、数；已结束的只会越
 // 积越多，容器一页一页读（服务端筛好、数好），这里往下滚到底时要下一页（`more`）。
 import type { TaskDeliveryFilter, TaskFilter } from '@/api/tasks'
 import type { MenuAction } from '@/components/common/menuAction'
-import type { BoardColumn, RoomTask } from '@/cx_types'
+import type { RoomTask } from '@/cx_types'
 import type { TaskState } from '@/lib/taskState'
 
 import { computed, ref } from 'vue'
@@ -24,9 +24,8 @@ import AppPage from '@/components/common/AppPage.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
-import { columnLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
-import { taskState } from '@/lib/taskState'
+import { STATUS_ORDER, statusLabel, taskState, taskStatus } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
 const props = defineProps<{
@@ -114,23 +113,19 @@ const shown = computed(() => [...shownOpen.value, ...shownClosed.value])
 // 已关闭的滚到最底下那一行露出来时要下一页。
 const sentinel = useLoadMoreSentinel(() => emit('more'))
 
-const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building']
+// 未结束的按状态词分组，次序是 `STATUS_ORDER`：要人出手的在前。
 const groups = computed(() => {
-  const openGroups = ORDER.map((column) => ({
-    column,
-    label: columnLabel(column),
+  const openGroups: { key: string; label: string; count: number; tasks: RoomTask[] }[] = STATUS_ORDER.map((status) => ({
+    key: status as string,
+    label: statusLabel(status),
     count: 0,
-    tasks: shownOpen.value.filter(
-      (task) =>
-        !task.stalled &&
-        (task.presentation.column === column || (column === 'building' && task.presentation.column === 'done'))
-    ),
+    tasks: shownOpen.value.filter((task) => !task.stalled && taskStatus(task.presentation.phrase) === status),
   }))
     .filter((group) => group.tasks.length)
     .map((group) => ({ ...group, count: group.tasks.length }))
   if (shownClosed.value.length)
     openGroups.push({
-      column: 'done',
+      key: 'ended',
       label: t('work.channelTasks.closed'),
       count: props.closedCounts?.[whose.value] ?? shownClosed.value.length,
       tasks: shownClosed.value,
@@ -268,7 +263,7 @@ function stateOf(task: RoomTask): TaskState {
       {{ t('work.channelTasks.empty') }}
     </div>
     <template v-else>
-      <section v-for="group in groups" :key="group.column" class="tasks__group">
+      <section v-for="group in groups" :key="group.key" class="tasks__group">
         <h2 class="tasks__group-head">
           {{ group.label }}
           <span class="tasks__count">{{ group.count }}</span>
@@ -342,9 +337,18 @@ function stateOf(task: RoomTask): TaskState {
                 ># {{ channelTitle.get(task.room_id) ?? '' }}</span
               >
               <span class="tasks__who">
-                <span v-if="task.owner_handle" class="tasks__name" data-user-content>{{
-                  nameOf(task.owner_handle)
-                }}</span>
+                <template v-if="task.owner_handle">
+                  <UserAvatar
+                    :size="20"
+                    :name="nameOf(task.owner_handle)"
+                    :avatar="avatars[task.owner_handle] || ''"
+                    :seed="task.owner_handle"
+                  />
+                  <span class="tasks__name" data-user-content>{{ nameOf(task.owner_handle) }}</span>
+                </template>
+                <span v-if="task.contributor_handles?.length" class="c-faint"
+                  >+{{ task.contributor_handles.length }}</span
+                >
               </span>
               <span class="tasks__state">
                 <TaskStateMark :state="stateOf(task)" />

@@ -16,6 +16,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core import raster_images
 from app.core.config import settings
+from app.core.content_review import review_image
 from app.core.errors import BadRequestError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say, size_text
 from app.core.srgb_images import to_srgb
@@ -155,6 +156,9 @@ async def create_avatar(
     # page in that gamut, and the whole screen shifts colour with it on some
     # phones. Already-sRGB pictures come back untouched.
     file_content = await asyncio.to_thread(to_srgb, file_content)
+    # Served to anyone at /avatars/{id}, whatever ends up using it — a profile,
+    # a team, a space — so the picture is reviewed once, here, before it exists.
+    await review_image(file_content)
 
     await aiofiles.os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)
 

@@ -52,6 +52,8 @@ export interface ModelRow {
   tier?: 'included' | 'premium' | 'frontier'
   /** 需开通才能用：只有管理员开通了的团队能看到、能用它。缺省是不需要。 */
   overseas?: boolean
+  /** 缓存闲置多久失效，秒；没填是 null。 */
+  cache_lifetime_s?: number | null
   /** 全部线路，按网关试它们的先后排好。 */
   sources?: SourceRow[]
 }

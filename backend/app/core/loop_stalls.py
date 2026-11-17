@@ -48,6 +48,9 @@ STALL_S = 0.1
 KEEP = 10
 # Frames kept per stack, innermost first.
 DEPTH = 14
+# Library frames kept inside one folded entry (see `_where`): enough to name
+# the call and the layer it sits in, not the whole chain.
+LIBRARY_DEPTH = 4
 # The backend's own package: frames under it are the ones a stall names.
 _APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
 
@@ -55,11 +58,11 @@ _worst: list[dict] = []
 _recent: deque[dict] = deque(maxlen=KEEP)
 _count = 0
 _samples: Counter[tuple[str, ...]] = Counter()
-# The collector's passes, per generation: how many, and how long in all and at
-# worst. A stall whose stack is only a weakref callback (`weakref.py remove`)
+# The collector's passes, per generation: how many, how long in all and at
+# worst, and how many objects they freed in all and in the slowest pass. A stall whose stack is only a weakref callback (`weakref.py remove`)
 # is the collector freeing what died, and `gc_ms` on the stall says how much
 # of it the collector took.
-_gc_runs = [[0, 0.0, 0.0] for _ in range(3)]
+_gc_runs = [[0, 0.0, 0.0, 0, 0] for _ in range(3)]
 # When the pass in flight began; None between passes, so a "stop" whose
 # "start" this callback never saw is not charged.
 _gc_started: float | None = None
@@ -79,14 +82,28 @@ def stall_status() -> dict:
         "count": _count,
         "worst": list(_worst),
         "recent": list(reversed(_recent)),
+        # What decides how often the middle generation is promoted: the same
+        # number the server sets at startup (`core/gc_tuning`). Beside the
+        # pass counts above it says whether the tuning reached this process.
+        "thresholds": list(gc.get_threshold()),
         "gc": [
             {
                 "generation": generation,
                 "collections": runs,
                 "total_ms": round(total * 1000, 1),
                 "worst_ms": round(worst * 1000, 1),
+                # A full pass's time is the walk and the freeing both: with
+                # how many it freed beside it, the two can be told apart.
+                "collected": collected,
+                "worst_collected": worst_collected,
             }
-            for generation, (runs, total, worst) in enumerate(_gc_runs)
+            for generation, (
+                runs,
+                total,
+                worst,
+                collected,
+                worst_collected,
+            ) in enumerate(_gc_runs)
         ],
     }
 
@@ -98,8 +115,24 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
 
     SQLAlchemy runs a statement's result handling (rows, JSON decoding) in a
     greenlet of its own, whose frames end at the greenlet: the stack carries
-    on in the greenlet that switched to it, where the backend's frames are."""
+    on in the greenlet that switched to it, where the backend's frames are.
+
+    When the loop is held inside a library that has no backend frame of its own
+    anywhere below the innermost one — a socket read in `ssl`, a signal handled
+    while `socket.recv` waits — every frame is a library frame. Keeping only the
+    innermost then left a one-frame stack that named the library and not the
+    caller: production's stalls in `ssl.py read` could not say which of the
+    backend's calls was waiting. Those frames are kept, folded into one entry,
+    until the first backend frame is reached.
+
+    The fold is bounded like the stack: `LIBRARY_DEPTH` innermost frames and a
+    count of the rest. This runs in the signal handler, once per sample for as
+    long as the stall lasts, and the result is kept as a key and in the board;
+    a synchronous library chain can be tens of frames deep, and following it to
+    the end would cost work the constant says it will not."""
     out: list[str] = []
+    library: list[str] = []
+    dropped = 0
     glet = getcurrent() if getcurrent is not None else None
     while len(out) < DEPTH:
         if frame is None:
@@ -111,15 +144,31 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
         code = frame.f_code
         path = code.co_filename
         if path.startswith(_APP):
-            short = "app/" + path[len(_APP) :]
+            if library:
+                # One entry for the library calls between two backend frames:
+                # the innermost names the call holding the loop, the rest say
+                # how deep it sits.
+                out.append(_folded(library, dropped))
+                library, dropped = [], 0
+            out.append(f"app/{path[len(_APP) :]}:{frame.f_lineno} {code.co_name}")
         elif not out:
-            short = path.rsplit("site-packages/", 1)[-1].rsplit("/lib/python", 1)[-1]
-        else:
-            frame = frame.f_back
-            continue
-        out.append(f"{short}:{frame.f_lineno} {code.co_name}")
+            if len(library) < LIBRARY_DEPTH:
+                short = path.rsplit("site-packages/", 1)[-1]
+                short = short.rsplit("/lib/python", 1)[-1]
+                library.append(f"{short}:{frame.f_lineno} {code.co_name}")
+            else:
+                dropped += 1
         frame = frame.f_back
+    if library and len(out) < DEPTH:
+        out.append(_folded(library, dropped))
     return tuple(out)
+
+
+def _folded(library: list[str], dropped: int) -> str:
+    """One stack entry for a run of library frames, saying how many deeper
+    ones it left out."""
+    folded = " <- ".join(library)
+    return f"{folded} (+{dropped} deeper)" if dropped else folded
 
 
 def _on_gc(phase: str, info: dict) -> None:
@@ -133,9 +182,13 @@ def _on_gc(phase: str, info: dict) -> None:
     _gc_started = None
     _gc_since_beat += took
     runs = _gc_runs[min(info.get("generation", 2), 2)]
+    freed = info.get("collected", 0)
     runs[0] += 1
     runs[1] += took
-    runs[2] = max(runs[2], took)
+    runs[3] += freed
+    if took >= runs[2]:
+        runs[2] = took
+        runs[4] = freed
 
 
 def _on_alarm(signum: int, frame: FrameType | None) -> None:

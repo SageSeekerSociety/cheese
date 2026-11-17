@@ -223,10 +223,17 @@ class ProjectFiles:
             # Interactive file requests must not inherit the agent's 11-minute
             # command timeout; cancellation also cancels the pending device call.
             async with asyncio.timeout(30):
+                # A task with no branch has no checkout of its own: its work is
+                # where its session works, the room's workspace.
                 result = await self._executor(
                     target,
                     "task_fs",
-                    {"task_id": str(task.id), "operation": operation, **params},
+                    {
+                        "task_id": str(task.id),
+                        "operation": operation,
+                        "in_workspace": not task.branch_name,
+                        **params,
+                    },
                 )
         except (TimeoutError, DeviceOffline, DeviceNotReady) as exc:
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
@@ -508,6 +515,33 @@ class ProjectFiles:
                 "message": item["commit"]["message"].splitlines()[0],
             }
             for item in commits
+        ]
+
+    async def commits(self, path: str | None = None, limit: int = 30) -> list[dict]:
+        """The default branch's commits, newest first: what landed, when, and
+        whose name the commit carries. With ``path``, only the commits that
+        changed that one file.
+
+        The project's current version, never a task's: this is the history the
+        project's files show, the one every task's delivery lands on."""
+        if path is not None:
+            path = clean_path(path)
+        head = await self.revision()
+        query = (
+            f"/commits?sha={head}&per_page={limit}&limit={limit}"
+            "&stat=false&files=false&verification=false"
+        )
+        if path:
+            query += f"&path={quote(path, safe='')}"
+        items = await self._data(self.project_id, self.session, query) or []
+        return [
+            {
+                "sha": item["sha"],
+                "subject": (item["commit"]["message"].splitlines() or [""])[0],
+                "author": item["commit"]["author"]["name"],
+                "at": item["commit"]["committer"]["date"],
+            }
+            for item in items
         ]
 
     async def changed_files(self):

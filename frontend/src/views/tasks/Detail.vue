@@ -508,6 +508,7 @@ onMounted(() => {
         :task-id="taskData.id"
         :participant-id="reviewing.id"
         :stage="stages[reviewStage]?.id ?? null"
+        :rubric="taskData.rubric ?? []"
         :reviewable="true"
         :is-dialog="true"
         :outlined="true"

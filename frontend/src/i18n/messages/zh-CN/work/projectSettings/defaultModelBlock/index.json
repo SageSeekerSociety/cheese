@@ -1,6 +1,6 @@
 {
-  "loadFailed": "加载默认模型失败",
-  "reset": "恢复默认模型",
+  "loadFailed": "加载项目主模型失败",
+  "reset": "改回自动",
   "save": "保存",
-  "saveFailed": "保存默认模型失败"
+  "saveFailed": "保存项目主模型失败"
 }

@@ -50,12 +50,15 @@ from app.domain.agent.turn.intake.native_entries import _bind_user_entry
 from app.domain.agent.turn.intake.notes import (
     _keep_note,
     _note_compaction,
+    _note_given_up,
     _note_retry,
     _running_compactions,
 )
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.state.notices import (
     _TOOL_ACTION,
+    CONTEXT_FULL,
+    CONTEXT_FULL_CODE,
     PROVIDER_OUT_OF_CREDIT,
     _turn_failure_notice,
     model_error_notice,
@@ -63,6 +66,7 @@ from app.domain.agent.turn.state.notices import (
 )
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
 from app.domain.agent.turn.store.intervals import turn_credits_refused
+from app.domain.agent.turn.store.session_inputs import abandon_opening
 from app.domain.agent.turn_inputs import mark_session_for_turn
 from app.domain.agent_instance.own.naming import connection_name
 from app.domain.block.models import Block
@@ -128,16 +132,16 @@ async def _turn_ended_noticed(
                 Block.meta["delivery_id"].as_string() == delivery,
             ),
         )
+    # The same event type is not the same line: every failed turn carries
+    # `turn_failed`, `context_full` among them, so an earlier plain failure of
+    # the same delivery must not count as this one having been said — that would
+    # skip the abandonment of an un-compactable conversation for good.
+    said = Block.meta["event_type"].as_string() == meta.get("event_type")
+    if meta.get("code"):
+        said = and_(said, Block.meta["code"].as_string() == meta["code"])
     async with sessions() as session:
         return (
-            await session.scalar(
-                select(Block.id)
-                .where(
-                    said_by,
-                    Block.meta["event_type"].as_string() == meta.get("event_type"),
-                )
-                .limit(1)
-            )
+            await session.scalar(select(Block.id).where(said_by, said).limit(1))
             is not None
         )
 
@@ -157,15 +161,26 @@ def _tell_operators(cause: str, project_id: uuid.UUID, turn_id: uuid.UUID, said:
         # The key the gateway's own balance alert was always sent under, so a
         # change of wording does not report an ongoing outage again.
         title, key = "AI 中继余额已用完", "ai-relay-out-of-credit"
+    elif cause == CONTEXT_FULL:
+        # Not a model call failing: the summary that conversation needed could
+        # not be made, so that conversation cannot go on until the model it
+        # needs is available again. Keyed by cause, so one room failing every
+        # few minutes reports once per alerting window, not once per turn.
+        title, key = "有一场对话已满、整理失败，暂时接不上话", "context-full"
     else:
         title, key = f"AI 调用失败：平台侧（{cause}）", f"model-error-{cause}"
+    room_line = (
+        "「这次没做完：对话已经超出模型的容量，整理也失败了」"
+        if cause == CONTEXT_FULL
+        else "「这次没做完：调用的模型出错了」"
+    )
     alerting.send(
         title,
         [
             f"项目 {project_id}",
             f"轮次 {turn_id}",
             "上游原文：" + (said or "").strip()[:400],
-            "房间里看到的是「这次没做完：调用的模型出错了」。",
+            f"房间里看到的是{room_line}。",
         ],
         key=key,
         when=time.time(),
@@ -501,13 +516,64 @@ class HookEvents:
                 )
                 if attempted is not None:
                     meta = {**meta, "delivery_id": str(attempted[0])}
-                if not recovering and not await _turn_ended_noticed(
+                noticed = recovering or await _turn_ended_noticed(
                     sessions,
                     turn_id,
                     meta,
                     conversation_id=conversation_id,
                     asked=attempted is not None and attempted[1],
+                )
+                if (
+                    not noticed
+                    and not recovering
+                    and meta.get("code") == CONTEXT_FULL_CODE
+                    and seat
                 ):
+                    # The conversation is past its window and the summary that
+                    # would shrink it could not be made. The next turn would
+                    # send the same history and be refused the same way, so this
+                    # one is over: a new session, told the whole project state,
+                    # picks up from here.
+                    #
+                    # No harness in the condition: the failure report may name
+                    # none (`AgentResult.harness` defaults to None) while the
+                    # pointer it clears carries the project's own, and requiring
+                    # one here leaves that pointer in place — the same refusal
+                    # on every later turn, which is the state this ends.
+                    # `abandon_opening` resolves it the way the writer does.
+                    #
+                    # Inside this branch on purpose — a report delivered again
+                    # finds its line already there and must not clear a pointer
+                    # a newer turn has since written. Best-effort for the same
+                    # reason the pointer's own write is: this sits on a failure
+                    # path, and a raise here would leave the turn open with no
+                    # line at all.
+                    given_up = None
+                    try:
+                        given_up = await abandon_opening(
+                            sessions,
+                            conversation_id=conversation_id,
+                            seat=seat,
+                            harness=event.harness,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "could not abandon the un-compactable conversation of %s",
+                            conversation_id,
+                        )
+                    if given_up is not None:
+                        # The row it named, not the seat the event named: the
+                        # record is filed under the agent whose conversation it
+                        # was.
+                        await _note_given_up(
+                            sessions,
+                            conversation_id,
+                            turn_id,
+                            given_up,
+                            inner_id,
+                            channel,
+                        )
+                if not noticed:
                     room_meta = dict(meta)
                     if "error" in room_meta:
                         # Startup diagnostics are platform records. The room

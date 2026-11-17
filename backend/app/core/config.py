@@ -157,6 +157,19 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     # team group's Feishu custom-bot webhook URL. Empty sends nothing; on a
     # deployment the health report names that as a failure (`feedback_announce`).
     feishu_feedback_webhook: str = ""
+    # The RAM AccessKey the backend checks publicly visible text and pictures
+    # with, at Alibaba Cloud Content Moderation (`app.core.content_review`).
+    # Empty on a developer's machine and in the test suite, which then publish
+    # without the check; a deployment refuses to boot without both
+    # (`_require_content_review_key_on_deployment`).
+    aliyun_green_access_key_id: str = ""
+    aliyun_green_access_key_secret: str = ""
+
+    @property
+    def content_review_configured(self) -> bool:
+        return bool(
+            self.aliyun_green_access_key_id and self.aliyun_green_access_key_secret
+        )
 
     # Coordinated ingress cutover is a separate release. No implicit fallback.
     preview_connection_mode: Literal["legacy", "owner"] = "legacy"
@@ -426,6 +439,18 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # 出题页「涉及的知识点」那一块的 AI 建议：读一道题的题面，给出一组知识点
+    # （app/domain/space/knowledge_suggestions.py）。它的虚拟 key 不带预算：问一次
+    # 由发问的那个人付钱（与问芝士同一口径），所以模型必须在网关上计价。
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
+    learning_analysis_model: str = "deepseek-flash"
+    learning_analysis_timeout_seconds: float = 60.0
+    # 每晚学情分析（space/learning_insight_analysis.py）：每块板每天的调用上限（费用记在开启者
+    # 名下，这是刹车）、几点（Asia/Shanghai）开跑、一次调用最多读一个成员的几条发言。
+    learning_analysis_daily_calls_per_space: int = 200
+    learning_analysis_run_hour: int = 2
+    learning_analysis_batch_messages: int = 40
     # What a conversation's sandboxes may spend a day on models, per budget
     # holder (`gateway_usage.MachineGatewayKey`): their calls go out on a key
     # of their own with this cap on the gateway, so a machine whose owner
@@ -571,9 +596,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     agent_first_output_timeout_s: float = 300.0
     # 一轮读多少：这个座位上次读过之后的新消息。The count bounds the query and
     # the characters bound the prompt. A seat that has been away longer than one
-    # window reads the newest part of the conversation; what it skipped stays
-    # behind its cursor and is not handed over later (a room is not a mail
-    # queue, and replaying a day of chatter into one turn helps nobody).
+    # window reads the newest part of the conversation; what it skipped is not
+    # handed over later (replaying a day of chatter into one turn helps nobody),
+    # but the turn says how many, whose and where to read them (`left_unread`).
     agent_input_window_messages: int = 40
     agent_input_window_chars: int = 12000
     # The wall-clock mark past which a turn is recorded as long. A metric, not
@@ -828,6 +853,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     handover_timeout_s: float = Field(default=20.0, ge=0)
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
+    # Close a task nobody has touched for long enough (`room_task.presentation.neglect`:
+    # waiting on someone 7 days, otherwise 14). The kill switch if it ever closes the
+    # wrong ones: off, the sweep only reminds.
+    task_neglect_auto_close: bool = True
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
     # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.
@@ -960,6 +989,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
 
     # --- the platform's own repo: CI activity ---
     platform_repository: str = "SageSeekerSociety/cheese"
+    # Repositories whose dev deploy tells this platform what it put live
+    # (`.github/workflows/deploy-dev.yml` → `scripts.ship_tasks`). A task in a
+    # project on one of them waits for that deploy before it is written up and
+    # closed (`review.deploy_wait`) — while reports keep arriving, so an
+    # instance no deploy reports to is not affected.
+    task_deploy_wait_repositories: list[str] = ["SageSeekerSociety/cheese"]
+    task_deploy_blocked_interval_s: int = 300
     ci_activity_sweep_interval_s: int = 300
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
@@ -1431,6 +1467,39 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
             "the backend env file and keep it with the database backups, "
             f"because nothing encrypted under it can be read without it. "
             f"Generate one with: {generate}"
+        )
+
+    @model_validator(mode="after")
+    def _require_content_review_key_on_deployment(self) -> "Settings":
+        """Refuse to boot a deployment that cannot check what it publishes.
+
+        Text and pictures everyone signed in can see are checked by Content
+        Moderation before they are written (`app.core.content_review`); without
+        the key there is nothing to check them with. A deployment that booted
+        anyway would either publish them unchecked or refuse every such write,
+        and both would surface only when someone edits a nickname. Same two
+        signals as the JWT_SECRET guard, for the same reason (#439), and a
+        RuntimeError for the same reason.
+        """
+        if self.content_review_configured:
+            return self
+        if not self.deployed_via_compose and self.environment in (
+            "development",
+            "test",
+        ):
+            return self
+        # i18n-exempt: refuses the boot; read by an operator in the log
+        raise RuntimeError(
+            "ALIYUN_GREEN_ACCESS_KEY_ID and ALIYUN_GREEN_ACCESS_KEY_SECRET must "
+            f"both be set on a deployment (ENVIRONMENT reads '{self.environment}'"
+            + (
+                ", started by the deploy compose file"
+                if self.deployed_via_compose
+                else ""
+            )
+            + "). Publicly visible text and pictures are checked with Alibaba "
+            "Cloud Content Moderation before they are written, and this is its "
+            "RAM AccessKey; set both in the backend env file."
         )
 
 

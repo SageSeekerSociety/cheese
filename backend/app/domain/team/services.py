@@ -16,6 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, review_text
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -30,6 +31,7 @@ from app.domain.team.models import (
     TeamVisibility,
     team_seq,
 )
+from app.domain.team.permissions import TEAM
 from app.domain.team.repositories import (
     TeamRepository,
     refuse_anyone_but_the_owner,
@@ -163,19 +165,28 @@ class TeamService:
     async def visible_team(self, team_id: int, user_id: int) -> Team:
         """The team as ``user_id`` may see it by id, or 404.
 
-        A member sees their team. Anyone else sees it only when it is a public,
-        shared team; a stealth or personal team answers exactly like a missing
-        one, so probing ids tells nobody which exist. The join link is the other
-        way in (:meth:`team_for_join_token`).
+        A member sees their team, and a platform admin every shared team
+        (``TEAM.sees``). Anyone else sees it only when it is a public, shared
+        team; a stealth or personal team answers exactly like a missing one, so
+        probing ids tells nobody which exist. The join link is the other way in
+        (:meth:`team_for_join_token`).
         """
         team = await self._repo.get_by_id(team_id)
-        if team is not None and (
-            team.open_to_all or await self._repo.is_team_member(team_id, user_id)
-        ):
+        if team is not None and await TEAM.sees(self._repo._session, team, user_id):
             return team
         raise NotFoundError(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
+
+    async def team_to_join(self, team_id: int, user_id: int) -> Team:
+        """The team ``user_id`` may ask to join by id, or 404: one they find by
+        who they are (``TEAM.visible``). A platform admin sees every shared
+        team, but oversight is not a way in — a stealth team stays reachable
+        only through its join link."""
+        team = await self._repo.get_by_id(team_id)
+        if team is not None and await TEAM.visible(self._repo._session, team, user_id):
+            return team
+        raise NotFoundError.for_resource("team", team_id)
 
     async def teams_of_seen_by(self, user_id: int, viewer_id: int | None) -> list[Team]:
         """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of
@@ -378,6 +389,11 @@ class TeamService:
                 data={"field": "name", "value": name.strip()},
             )
 
+        # A new team is discoverable (``Team.visibility`` defaults to public),
+        # so its name and introduction are published as it is made.
+        await review_text(TextKind.NAME, [name.strip()])
+        await review_text(TextKind.PUBLIC_TEXT, [intro, description])
+
         now = datetime.now(UTC)
         # Without a chosen handle the team gets ``team-<id>``, the same
         # placeholder every team had before handles existed, for its owner to
@@ -422,6 +438,13 @@ class TeamService:
         handle: str | None = None,
     ) -> Team:
         team = await self._get_team_or_error(team_id)
+        await self._review_what_it_publishes(
+            team,
+            name=name.strip() if isinstance(name, str) else None,
+            intro=intro,
+            description=description,
+            visibility=visibility,
+        )
         if name is not None:
             if not isinstance(name, str):
                 raise BadRequestError("Team name must be string")
@@ -456,6 +479,39 @@ class TeamService:
         team.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
         return team
+
+    @staticmethod
+    async def _review_what_it_publishes(
+        team: Team,
+        *,
+        name: str | None,
+        intro: str | None,
+        description: str | None,
+        visibility: TeamVisibility | None,
+    ) -> None:
+        """Review the name, introduction and description a stranger will read
+        once this change is made: what changes on a discoverable team, and all
+        of it on a team becoming discoverable. A team only its members see
+        publishes nothing."""
+        becomes_public = (
+            team.personal_owner_user_id is None
+            and (visibility.value if visibility is not None else team.visibility)
+            == TeamVisibility.PUBLIC.value
+        )
+        if not becomes_public:
+            return
+        was_public = team.open_to_all
+
+        def published(new: str | None, old: str) -> str | None:
+            if new is None:
+                return None if was_public else old
+            return None if was_public and new == old else new
+
+        await review_text(TextKind.NAME, [published(name, team.name)])
+        await review_text(
+            TextKind.PUBLIC_TEXT,
+            [published(intro, team.intro), published(description, team.description)],
+        )
 
     async def delete_team(self, *, team_id: int, has_live_projects: bool) -> None:
         """``has_live_projects``: the team still owns projects that are not

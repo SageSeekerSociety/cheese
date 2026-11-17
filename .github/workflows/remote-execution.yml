@@ -30,6 +30,9 @@ jobs:
       - name: The connector keeps screens as processes
         working-directory: cli
         run: go test ./internal/procscreen/...
+      - name: The connector updates itself without filling the disk
+        working-directory: cli
+        run: go test ./internal/update/...
       - name: The runner and the session's helpers
         working-directory: backend
         env:

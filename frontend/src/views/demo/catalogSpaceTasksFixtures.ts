@@ -12,8 +12,11 @@
  */
 import type { SettingsGroup } from '@/components/common/SettingsOverlay.vue'
 import type {
+  MyLearningInsight,
   Space,
   SpaceCategory,
+  SpaceKnowledgePoint,
+  SpaceKnowledgeSuggestion,
   SpaceMaterial,
   SpaceTeaching,
   Task,
@@ -114,6 +117,12 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
         to: { name: 'SpacesDetailSettingsGuidance', params: { spaceId: '7' } },
         icon: 'mdi-robot-outline',
       },
+      {
+        key: 'SpacesDetailSettingsLearningAnalysis',
+        label: t('spaces.settings.tabs.learningAnalysis'),
+        to: { name: 'SpacesDetailSettingsLearningAnalysis', params: { spaceId: '7' } },
+        icon: 'mdi-chart-box-outline',
+      },
     ],
   },
 ]
@@ -123,6 +132,23 @@ export const SPACE_TEACHING: SpaceTeaching = {
   mode: 'guide',
   systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。不要用 pthread 以外的线程库。',
 }
+
+/** 这块板的知识点清单（所有题目共用）：发题 / 改题那一栏的候选。 */
+export const SPACE_KNOWLEDGE_POINTS: SpaceKnowledgePoint[] = [
+  { id: 91, name: '相关子查询', displayOrder: 1 },
+  { id: 92, name: '红黑树的旋转', displayOrder: 2 },
+]
+
+/** AI 读题面回来的建议：一条清单里已有、一条清单里没有。 */
+export const SPACE_KNOWLEDGE_SUGGESTIONS: SpaceKnowledgeSuggestion[] = [
+  {
+    name: '相关子查询',
+    why: '题面要求「不能用 JOIN，改用子查询」，多是相关子查询写不对',
+    confidence: 'high',
+    isNew: false,
+  },
+  { name: '游标', why: '题面提到逐行处理结果集', confidence: 'medium', isNew: true },
+]
 
 /** 资料库里的几份：文件、图、文本、仅管理员的一档各来一个。 */
 export const SPACE_MATERIALS: SpaceMaterial[] = [
@@ -530,4 +556,57 @@ export const PANEL_SPLIT = {
       results: [],
     },
   ],
+}
+
+/** 「我的学习洞察」：一个成员在这块板上的结果 —— 一条薄弱（最该补的）、一条掌握、一条未涉及。 */
+export const MY_LEARNING_INSIGHT: MyLearningInsight = {
+  enabled: true,
+  updatedAt: Date.UTC(2026, 10, 16, 6, 20),
+  focusKnowledgePointId: 91,
+  knowledgePoints: [
+    {
+      id: 91,
+      name: '相关子查询',
+      judgment: {
+        id: 501,
+        level: 'weak',
+        summary: '你知道子查询能嵌套，但还不清楚内层怎样引用外层当前那一行。',
+        disputed: false,
+        analyzedAt: Date.UTC(2026, 10, 16, 6, 20),
+        evidence: [
+          {
+            blockId: 'b-91-1',
+            taskId: 3,
+            taskName: '第 3 题',
+            quote: '子查询里怎么引用外层那一行我一直没搞懂。',
+            createdAt: Date.UTC(2026, 10, 15, 6, 2),
+          },
+        ],
+      },
+    },
+    {
+      id: 92,
+      name: '红黑树的旋转',
+      judgment: {
+        id: 502,
+        level: 'mastered',
+        summary: '你能自己说清左旋和右旋各在什么时候用。',
+        disputed: false,
+        analyzedAt: Date.UTC(2026, 10, 16, 6, 20),
+        evidence: [],
+      },
+    },
+    { id: 93, name: 'GROUP BY 与 HAVING', judgment: null },
+  ],
+  frequentQuestions: [
+    { knowledgePointId: 91, knowledgePointName: '相关子查询', kind: 'concept', count: 4, example: '怎么引用外层的列' },
+    { knowledgePointId: null, knowledgePointName: null, kind: 'error', count: 2, example: 'WHERE 里写 AVG 报错' },
+  ],
+  sources: {
+    messagesRead: 63,
+    tasks: [
+      { taskId: 3, name: '第 3 题', messagesRead: 41 },
+      { taskId: 4, name: '第 4 题', messagesRead: 22 },
+    ],
+  },
 }

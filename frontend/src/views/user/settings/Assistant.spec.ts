@@ -170,11 +170,11 @@ describe('芝士 settings', () => {
     const deletes = view.getAllByRole('button', { name: '删除' })
     await fireEvent.click(deletes[deletes.length - 1])
     expect(setRoutineMock).not.toHaveBeenCalledWith('r1', 'delete')
-    await waitFor(() => expect(view.getByText('删除自动化「每日待办」？')).toBeTruthy())
+    await waitFor(() => expect(view.getByText('删除例行事务「每日待办」？')).toBeTruthy())
     const confirm = view.getAllByRole('button', { name: '删除' })
     await fireEvent.click(confirm[confirm.length - 1])
     await waitFor(() => expect(setRoutineMock).toHaveBeenCalledWith('r1', 'delete'))
-    await waitFor(() => expect(view.getByText('暂无自动化')).toBeTruthy())
+    await waitFor(() => expect(view.getByText('还没有例行事务')).toBeTruthy())
   })
 
   it('what 芝士 remembers is edited and deleted from the page', async () => {

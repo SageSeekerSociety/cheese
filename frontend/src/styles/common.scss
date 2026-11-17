@@ -37,6 +37,15 @@ html.app-shell-open #app {
   border-top-left-radius: 0;
 }
 
+/* 拖侧栏右缘的这段时间里不走过渡（这个类由 SecondaryNavigation 的拖拽把手加在
+ * <html> 上，松手摘掉）。抽屉的宽度和内容区的左内边距各带 Vuetify 的 0.2 秒过渡：
+ * 拖的时候每收到一次鼠标移动就改一次宽度，每次都重新起一段过渡，分界线于是永远追
+ * 不上指针，松手后还要再滑完剩下那段。收起、展开那些动画不在拖拽期间，照旧。 */
+html.sidebar-resizing .v-navigation-drawer,
+html.sidebar-resizing .v-main {
+  transition: none;
+}
+
 .app-pane {
   border-top: 1px solid var(--line);
   background: var(--surface);

@@ -17,7 +17,7 @@ rest of what the two ends share.
 import asyncio
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from http.cookies import CookieError, SimpleCookie
 
 import anyio
@@ -276,10 +276,31 @@ async def relay_http(
                 await upstream.aclose()
 
 
+#: A message from the page shorter than this that names a ping or heartbeat
+#: is the page's own keep-alive (Next.js pings its dev server every few
+#: seconds), sent whether or not anybody is there.
+KEEPALIVE_MOST = 128
+
+
+def is_keepalive(text: str | None, data: bytes | None) -> bool:
+    """Whether a message from the page is only its socket's keep-alive."""
+    if data is not None:
+        return False
+    said = (text or "").lower()
+    return len(said) < KEEPALIVE_MOST and ("ping" in said or "heartbeat" in said)
+
+
 async def relay_ws(
-    websocket: WebSocket, topic_id: uuid.UUID, seat: str, *, instance: str | None = None
+    websocket: WebSocket,
+    topic_id: uuid.UUID,
+    seat: str,
+    *,
+    instance: str | None = None,
+    on_use: Callable[[], None] | None = None,
 ) -> None:
-    """Pump the authorized preview's HMR socket without holding a DB session."""
+    """Pump the authorized preview's HMR socket without holding a DB session.
+    ``on_use`` is called for each message the page sends that is not a
+    keep-alive: someone is using the app, not only holding it open."""
     hub = connection_hub(websocket)
     stream = hub.open_stream(topic_id, seat)
     if stream is None:
@@ -310,7 +331,7 @@ async def relay_ws(
         meta, _ = wire.decode_meta(payload)
         subprotocol = str(meta.get("subprotocol") or "") or None
         await websocket.accept(subprotocol=subprotocol)
-        await _pump(websocket, stream)
+        await _pump(websocket, stream, on_use)
     except (TimeoutError, ValueError, OSError, RuntimeError, WebSocketDisconnect):
         pass
     finally:
@@ -322,7 +343,11 @@ async def relay_ws(
                 pass
 
 
-async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
+async def _pump(
+    browser: WebSocket,
+    stream: PreviewStream,
+    on_use: Callable[[], None] | None = None,
+) -> None:
     """Run both directions until either side closes, then tear the other down."""
 
     async def browser_to_app() -> None:
@@ -354,6 +379,8 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
                     await browser.close(code=1009, reason="preview message too large")
                     return
                 if payload:
+                    if on_use is not None and not is_keepalive(text, data):
+                        on_use()
                     await stream.send(wire.OP_WS_MSG, payload)
         except (WebSocketDisconnect, OSError, RuntimeError):
             return

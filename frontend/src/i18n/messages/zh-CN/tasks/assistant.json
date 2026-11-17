@@ -115,6 +115,7 @@
   },
   "dock": "固定到右侧",
   "undock": "取消固定",
+  "dragHint": "拖动可以换个位置，双击回到右下角",
   "anywhere": {
     "greeting": "有什么想问的，或者要我做的事，都可以说。",
     "placeholder": "输入问题或要做的事",
@@ -151,7 +152,7 @@
     "expired": "已过期"
   },
   "run": {
-    "routine": "自动化「{title}」开始运行",
+    "routine": "例行事务「{title}」开始运行",
     "wait": "「{title}」开始运行",
     "filed": "任务「{task}」提交审阅了",
     "accepted": "任务「{task}」的提交已采纳",

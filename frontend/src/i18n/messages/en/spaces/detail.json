@@ -2,6 +2,7 @@
   "allContests": "All challenges",
   "announcements": "Announcements",
   "auditTasks": {
+    "adminHelp": "Challenges waiting for review in every space, oldest first. A platform admin can approve or reject them without being in the space.",
     "applyDeadline": "Applications close {date}",
     "approve": "Approve",
     "by": "By {name}",

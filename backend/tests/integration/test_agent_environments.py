@@ -297,7 +297,10 @@ async def test_the_platforms_sandbox_never_lands_on_a_persons_computer(
         }
     )
     placed = SimpleNamespace(
-        id=uuid.uuid4(), device_id="platform-host", whole_machine=False
+        id=uuid.uuid4(),
+        device_id="platform-host",
+        whole_machine=False,
+        sandbox_image=work_lease.launch.sandbox_image.default_image()["reference"],
     )
 
     async def place(self, session_id, **kwargs):

@@ -25,6 +25,7 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
 	"github.com/SageSeekerSociety/cheese/cli/internal/host"
+	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
 
 // placeWithin is the longest the service waits on placing its runtime before
@@ -48,6 +49,11 @@ func (p *program) Start(_ ksvc.Service) error {
 	cfg, err := host.LoadConfig(p.cfgPath)
 	if err != nil {
 		return fmt.Errorf("service: %w", err)
+	}
+	if self, err := update.SelfPath(); err == nil {
+		if n, size := update.Cleanup(self); n > 0 {
+			log.Printf("cheese: removed %d abandoned update downloads (%d MB)", n, size>>20)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	// What the server's commands need and this system lacks (see `devenv`) is

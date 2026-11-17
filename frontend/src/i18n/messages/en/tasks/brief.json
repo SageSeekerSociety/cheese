@@ -1,11 +1,13 @@
 {
   "details": "Details",
   "empty": "No details",
-  "materials": "Materials",
-  "submission": "What to submit",
   "kindFile": "File",
   "kindText": "Text",
+  "materials": "Materials",
   "rubric": "Rubric",
   "rubricPrivate": "Visible to graders only",
-  "stages": "Stages"
+  "rubricRuleRank": "By class rank: the less you used, the higher you score; finalised at the deadline",
+  "rubricRuleThreshold": "By threshold: up to {full} credits scores full marks, {zero} credits scores 0, in between pro-rated",
+  "stages": "Stages",
+  "submission": "What to submit"
 }

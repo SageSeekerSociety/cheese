@@ -47,6 +47,11 @@ const SECTIONS = [
   { name: 'SpacesDetailSettingsTemplates', label: 'spaces.settings.tabs.templates', icon: 'mdi-file-document-outline' },
   { name: 'SpacesDetailSettingsDomainGroups', label: 'spaces.settings.tabs.domainGroups', icon: 'mdi-email-outline' },
   { name: 'SpacesDetailSettingsGuidance', label: 'spaces.settings.tabs.guidance', icon: 'mdi-robot-outline' },
+  {
+    name: 'SpacesDetailSettingsLearningAnalysis',
+    label: 'spaces.settings.tabs.learningAnalysis',
+    icon: 'mdi-chart-box-outline',
+  },
 ]
 
 const groups = computed(() => [

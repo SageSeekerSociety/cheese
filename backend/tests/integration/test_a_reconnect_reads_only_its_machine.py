@@ -87,3 +87,53 @@ def test_the_checkout_sweep_of_a_machine_reads_its_leases_not_whole_rows(client)
     assert "work_lease ->> 'device_id'" in read, read
     assert "execution_request ->" in read, read
     assert "agent_sessions.execution_request," not in read, read
+
+
+def test_a_takeover_reads_the_columns_place_needs_not_whole_rows(client):
+    # A takeover walks every placed session on the platform. Selecting the ORM
+    # entity built a full object per row — every column decoded — for the six
+    # fields the caller reads; production's worst stall (283 ms, 2026-11-04)
+    # was those rows being built.
+    _project, _root, room = _channel(client)
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(" ".join(statement.split()))
+
+    async def go():
+        async with client.test_factory() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO agent_sessions (id, conversation_id,"
+                    " agent_handle, harness, runtime_location, created_at,"
+                    " updated_at) VALUES (gen_random_uuid(), :room, 'a', 'claude',"
+                    " CAST(:loc AS json), now(), now())"
+                ),
+                {"room": uuid.UUID(room), "loc": _place("dev-1")},
+            )
+            await db.flush()
+            event.listen(Engine, "after_cursor_execute", record)
+            try:
+                return await AgentSessionService(db).placed_sessions(
+                    harness="claude", device_id="dev-1"
+                )
+            finally:
+                event.remove(Engine, "after_cursor_execute", record)
+
+    placed = asyncio.run(go())
+    assert placed, "the placed session still comes back"
+    (read,) = [s for s in statements if "FROM agent_sessions JOIN topics" in s]
+    # The columns place() needs are read; the ones it does not are not.
+    for column in (
+        "agent_sessions.runtime_location",
+        "agent_sessions.work_lease",
+        "agent_sessions.resume_token",
+    ):
+        assert column in read, read
+    for column in (
+        "agent_sessions.execution_request",
+        "agent_sessions.told",
+        "agent_sessions.drain_started_at",
+    ):
+        assert column not in read, read
+    assert read.count("agent_sessions.*") == 0, read

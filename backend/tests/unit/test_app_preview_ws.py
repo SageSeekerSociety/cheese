@@ -285,3 +285,53 @@ async def test_relay_preserves_negotiated_close_without_decoding_legacy_text(
     assert len(closes) == 1
     assert (closes[0]["code"], closes[0]["reason"]) == expected
     assert machine.streams == {}
+
+
+async def test_only_what_the_page_sends_beyond_its_keepalive_counts_as_use():
+    """A preview tab left open holds its HMR socket and may ping over it; that
+    keeps nobody's sandbox in use. A message the app itself is sent does."""
+
+    class Transport:
+        async def send_bytes(self, data):
+            pass
+
+    hub = PreviewHub()
+    machine = hub.attach(uuid.uuid4(), "seat", Transport())
+    stream = machine.open()
+    pages = [
+        {"text": '{"event":"ping","page":"/"}'},
+        {"text": "heartbeat"},
+        {"text": '{"type":"custom","event":"save","data":{"id":1}}'},
+        {"bytes": b"\x01\x02"},
+    ]
+    connected = False
+
+    async def receive():
+        nonlocal connected
+        if not connected:
+            connected = True
+            return {"type": "websocket.connect"}
+        if pages:
+            return {"type": "websocket.receive", **pages.pop(0)}
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send(_message):
+        pass
+
+    browser = WebSocket(
+        {"type": "websocket", "path": "/hmr", "headers": []}, receive, send
+    )
+    await browser.accept()
+    used = []
+    await asyncio.wait_for(
+        preview_relay._pump(browser, stream, lambda: used.append(1)), 1
+    )
+    assert len(used) == 2
+
+
+def test_a_keepalive_is_short_text_naming_a_ping():
+    assert preview_relay.is_keepalive('{"type":"ping"}', None)
+    assert preview_relay.is_keepalive("HEARTBEAT", None)
+    assert not preview_relay.is_keepalive("ping" + "x" * 200, None)
+    assert not preview_relay.is_keepalive('{"type":"update"}', None)
+    assert not preview_relay.is_keepalive(None, b"ping")

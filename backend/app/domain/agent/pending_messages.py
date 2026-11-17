@@ -12,12 +12,14 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.queries import DEFERRED_INPUT, queued_messages
-from app.domain.delivery.agent import redispatch_undelivered
+from app.domain.delivery.agent import dispatch_pending, redispatch_undelivered
 from app.domain.delivery.input_holds import seats_with_unfinished_input
+from app.domain.delivery.ledger import dedup_key
+from app.domain.delivery.mention import AFTER, HELD
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
 from app.domain.run_record.models import RunRecord
-from app.domain.thread.services import answered_in_many
 
 _runner = None
 logger = logging.getLogger(__name__)
@@ -74,6 +76,55 @@ async def defer_message(session, block_id):
         block.meta = {**(block.meta or {}), DEFERRED_INPUT: True}
 
 
+async def release_in_turn(chat, runner, topic_id) -> int:
+    """Wake the teammates whose turn on a message has come: a message in a
+    channel's main line that names several wakes them in the order it names
+    them (`delivery.mention.record_mentions`), each once the one before it is
+    done with it — has taken it up and has no work running here. Called when
+    work in ``topic_id`` ends, however it ended. Returns how many it woke."""
+    ready = []
+    async with chat.session_factory() as session:
+        held = list(
+            await session.scalars(
+                select(Delivery).where(
+                    Delivery.conversation_id == topic_id,
+                    Delivery.payload[HELD].as_boolean().is_(True),
+                    Delivery.state == "pending",
+                )
+            )
+        )
+        for row in held:
+            before_seat = row.payload.get(AFTER)
+            try:
+                block_id = uuid.UUID(str(row.payload.get("blockId")))
+            except ValueError:
+                continue
+            if before_seat and chat._compute.work_in_flight(topic_id, before_seat):
+                continue
+            before = await session.scalar(
+                select(Delivery).where(
+                    Delivery.dedup_key == dedup_key(block_id, before_seat)
+                )
+            )
+            if before is not None:
+                # Named after another: that one has been sent its turn.
+                if before.state in ("pending", "claimed"):
+                    continue
+            else:
+                # The one the message woke itself has read it.
+                block = await session.get(Block, block_id)
+                if block is None or consumed_turn(block) is None:
+                    continue
+            row.payload = {**row.payload, HELD: False}
+            ready.append(row.id)
+        await session.commit()
+    if not ready:
+        return 0
+    return await dispatch_pending(
+        chat.session_factory, chat=chat, runner=runner, delivery_ids=ready
+    )
+
+
 def nudge_messages(chat, topic_id, runner=None):
     """Look for messages left waiting in ``topic_id``, in the background.
 
@@ -111,6 +162,10 @@ def nudge_messages(chat, topic_id, runner=None):
             await runner.resume_lost_messages(chat, topic_id=topic_id)
         except Exception:
             logger.exception("pending message recovery failed topic=%s", topic_id)
+        try:
+            await release_in_turn(chat, runner, topic_id)
+        except Exception:
+            logger.exception("ordered wake failed topic=%s", topic_id)
 
     task = asyncio.create_task(scan(), name=f"pending-messages:{topic_id}")
     runner._tasks.add(task)
@@ -162,9 +217,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 )
             )
         )
-        # Only messages this scan may start a turn for are asked where they are
-        # answered: that read opens the 支线 of a main-line message, so it may
-        # not run for one already begun or answered.
         waiting = [
             block
             for block in mentioned
@@ -172,11 +224,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             and block.id not in answered
             and not runner.turn_pending(block.id)
         ]
-        # A channel's main line is answered in the message's 支线. The messages
-        # of one scan come from a handful of conversations, so the question is
-        # put once for the batch instead of twice per message
-        # (`thread.services.answered_in_many`).
-        answered_in_by_block = await answered_in_many(session, waiting)
         # The hold each message runs into is keyed by (conversation, seat), and
         # the seat is the one the message named: the loop checks `acting`
         # against exactly that before asking. One read answers every pair.
@@ -184,7 +231,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             session,
             [
                 (
-                    answered_in_by_block[block.id],
+                    block.conversation_id,
                     recipient_seat((block.meta or {}).get("agent_recipient") or {}),
                 )
                 for block in waiting
@@ -198,19 +245,17 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             session,
             [
                 (
-                    answered_in_by_block[block.id],
+                    block.conversation_id,
                     ((block.meta or {}).get("agent_recipient") or {}).get("handle"),
                 )
                 for block in waiting
             ],
         )
         seats = {}
-        for block in mentioned:
-            if block.id not in answered_in_by_block:
-                continue
+        for block in waiting:
             recipient = (block.meta or {}).get("agent_recipient") or {}
             handle = recipient.get("handle")
-            conversation = answered_in_by_block[block.id]
+            conversation = block.conversation_id
             key = (conversation, handle)
             if key in seats:
                 continue

@@ -75,7 +75,14 @@ def pool_env(workers: int) -> dict[str, str]:
     return env
 
 
+#: Set for every process this entry point starts, and by nothing else: the app
+#: reads it to tell a serving process from one a test or a script started
+#: (`core/startup_freeze.py`).
+SERVING = "CHEESE_SERVING"
+
+
 def main() -> int:
+    os.environ[SERVING] = "1"
     workers = _int("API_POOL_WORKERS", 0)
     if workers <= 0:
         argv = realtime_argv()

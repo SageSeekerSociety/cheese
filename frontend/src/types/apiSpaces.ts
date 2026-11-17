@@ -51,6 +51,28 @@ export type PatchSpaceRequestData = {
   teaching?: SpaceTeaching
 }
 
+// ---- 学情分析（§ learning analysis, step 1）--------------------------------------
+//
+// 一块题目板的学情分析底座：开关、知识点清单、AI 建议、加入时的告知卡。契约见
+// `SpacesApi` 那几条 `learning-analysis` 方法；服务端在
+// `app/api/routes/spaces_learning_analysis.py`。
+
+/** 开关那一条（`PATCH .../learning-analysis`）：开还是关。 */
+export type PatchLearningAnalysisRequestData = {
+  enabled: boolean
+}
+
+/** 新建 / 改名一条知识点（`{ name }`）。 */
+export type KnowledgePointRequestData = {
+  name: string
+}
+
+/** AI 知识点建议的问：题目名 + 题面（纯文本，缺省空串）。 */
+export type KnowledgeSuggestionRequestData = {
+  name: string
+  description: string
+}
+
 export type PostSpaceAnnouncementRequestData = {
   title: string
   content: string
@@ -293,18 +315,12 @@ export type SpaceAnalyticsParticipants = {
 
 // 学习维度 (管理员看板 · 学习): 成员说过的话、卡点、讲解提纲。读的是成员项目里的
 // 对话，不是赛题与报名表，所以类型和上面那一组分开。
-export type SpaceLearningStudent = {
-  handle: string
-  name: string
-}
-
 export type SpaceLearningKnowledgePoint = {
   categoryId: number
   name: string
 }
 
 export type SpaceLearningFilters = {
-  students: SpaceLearningStudent[]
   knowledgePoints: SpaceLearningKnowledgePoint[]
   projectCount: number
 }
@@ -314,8 +330,8 @@ export type SpaceLearningExcerpt = {
   blockId: string
   topicId: string
   projectId: string
-  student: string
-  studentName: string
+  /** 本空间固定代号（如 A7F3）：老师只看全班整体，发言不标是谁。 */
+  memberCode: string
   topicTitle: string
   createdAt: number
   quote: string
@@ -363,6 +379,179 @@ export type SpaceLearningOutline = {
   sections: SpaceLearningOutlineSection[]
   /** 勾中但已经读不到的发言 id。 */
   missing: string[]
+}
+
+// 学情分析 · 老师看全班整体（§ learning analysis, step 3，
+// `app/api/routes/spaces_learning_class.py`）。只有整体：没有成员 id、handle 或名字；
+// 例句只标本空间固定代号。``analysed: false`` 是「不足 3 人，不分析」，那时人数都是 null。
+export type LearningClassTaskCompletion = {
+  taskId: number
+  name: string
+  analysed: boolean
+  notStarted: number | null
+  inProgress: number | null
+  submitted: number | null
+  passed: number | null
+}
+
+export type LearningClassFocusPoint = {
+  knowledgePointId: number
+  name: string
+  stuck: number
+  involved: number
+}
+
+export type LearningClassOverview = {
+  enabled: boolean
+  minPeople: number
+  updatedAt: number | null
+  members: number
+  completion: { rate: number | null; submitted: number; expected: number }
+  messagesThisWeek: number
+  weakPoints: number
+  tasks: LearningClassTaskCompletion[]
+  focus: LearningClassFocusPoint[]
+}
+
+export type LearningClassQuadrant = 'both' | 'hard' | 'focus' | 'normal'
+
+export type LearningClassPoint = {
+  id: number
+  name: string
+  analysed: boolean
+  asked: number | null
+  involved: number | null
+  stuck: number | null
+  stuckRate: number | null
+  quadrant: LearningClassQuadrant | null
+}
+
+export type LearningClassPoints = {
+  enabled: boolean
+  minPeople: number
+  members: number
+  askedRatio: number
+  stuckRatio: number
+  askedThreshold: number
+  points: LearningClassPoint[]
+}
+
+export type LearningCodedQuote = { code: string; quote: string; taskName?: string | null }
+
+export type LearningClassMisconception = {
+  id: number
+  label: string
+  people: number
+  examples: LearningCodedQuote[]
+}
+
+export type LearningClassPointDetail = {
+  enabled: boolean
+  minPeople: number
+  knowledgePoint: { id: number; name: string }
+  analysed: boolean
+  members: number
+  involved: number | null
+  stuck: number | null
+  newThisWeek: number | null
+  tasks: string[]
+  mastery: { mastered: number; shaky: number; weak: number; untouched: number } | null
+  misconceptions: LearningClassMisconception[]
+  hiddenMisconceptions: number
+  advice: { text: string; generatedAt: number | null } | null
+}
+
+export type LearningClassCluster = {
+  id: number
+  label: string
+  knowledgePointId: number | null
+  knowledgePointName: string | null
+  people: number
+  asks: number
+  trend: 'up' | 'down' | 'new' | null
+  example: LearningCodedQuote | null
+}
+
+export type LearningClassQuestions = {
+  enabled: boolean
+  minPeople: number
+  totalQuestions: number
+  totalClusters: number
+  hiddenClusters: number
+  clusters: LearningClassCluster[]
+}
+
+export type LearningExcerptMessage = { role: 'member' | 'agent'; code: string | null; text: string; at: number | null }
+
+export type LearningExcerpt = {
+  code: string
+  taskName: string
+  at: number | null
+  messages: LearningExcerptMessage[]
+  /** 「查看原文」的坐标：只有读得了那个项目的人（导师）才有。 */
+  source: { topicId: string; projectId: string; blockId: string } | null
+}
+
+export type LearningClassExcerpts = {
+  enabled: boolean
+  minPeople: number
+  analysed: boolean
+  title: string
+  excerpts: LearningExcerpt[]
+}
+
+export type LearningClassWords = {
+  enabled: boolean
+  minPeople: number
+  windowDays: number
+  words: Array<{ word: string; count: number; people: number; isNew: boolean; rising: boolean }>
+  errors: Array<{ line: string; count: number; people: number }>
+}
+
+export type LearningClassTaskDifficulty = {
+  taskId: number
+  name: string
+  analysed: boolean
+  claims: number | null
+  completionRate: number | null
+  avgTurns: number | null
+  avgHours: number | null
+  stuckRate: number | null
+  answerSeekers: number | null
+}
+
+export type LearningClassTasks = { enabled: boolean; minPeople: number; tasks: LearningClassTaskDifficulty[] }
+
+export type LearningQuestionKind = 'concept' | 'error' | 'answer' | 'verify' | 'other'
+
+export type LearningClassBehavior = {
+  enabled: boolean
+  minPeople: number
+  analysed: boolean
+  totalQuestions: number
+  kinds: Array<{ kind: LearningQuestionKind; count: number; share: number }>
+  /** 时段的列名（本地钟点，如 `0-8`）。 */
+  slots: string[]
+  /** 7 行（周一到周日）× slots 列；不足 3 人的格子为 null。 */
+  heat: Array<Array<number | null>>
+  dependency: { low: number; mid: number; high: number } | null
+}
+
+export type LearningClassTrend = {
+  enabled: boolean
+  minPeople: number
+  /** 每周的星期一，ISO 日期。 */
+  weeks: string[]
+  series: Array<{ knowledgePointId: number; name: string; values: Array<number | null> }>
+}
+
+export type LearningExportFormat = 'pdf' | 'xlsx' | 'docx'
+export type LearningExportSection = 'tasks' | 'points' | 'advice' | 'excerpts'
+
+export type LearningExportRequest = {
+  format: LearningExportFormat
+  sections: LearningExportSection[]
+  knowledgePointId?: number | null
 }
 
 // 「我发布的题目」那几个类型挪到领域类型 `@/types/spaces.ts` 了：题目列表拆出来的那半张

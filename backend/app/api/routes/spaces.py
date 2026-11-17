@@ -189,8 +189,8 @@ async def get_space(
 
     # 私有指导只对这块板的管理员可见（#944 的第二种可见性）。一次判定同时决定空间
     # 与项目集两处的 `teaching` —— 一个屏幕上的两份配置要么都看得到，要么都看不到。
-    may_manage = auth_user.user_id > 0 and await space_seats.runs(
-        db, space_id, auth_user.user_id
+    may_manage = await space_seats.SPACE.may(
+        db, space, auth_user.user_id, SpacePermission.edit_settings
     )
 
     categories = None
@@ -208,7 +208,11 @@ async def get_space(
     # admins / classificationTopics 都由这一个构建器给齐：前端拿到任何
     # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
     space_data = await _build_full_space_payload(
-        space, service=service, db=db, include_private=may_manage
+        space,
+        service=service,
+        db=db,
+        viewer_id=auth_user.user_id,
+        include_private=may_manage,
     )
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
@@ -298,7 +302,9 @@ async def create_space(
     db=Depends(get_db),
 ) -> dict:
     if await service.exists_by_name(payload.name):
-        raise ConflictError(f"Space with name '{payload.name}' already exists")
+        # 一句目录里的句子：这条提示会原样出现在「新建空间」弹窗里（弹窗显示服务端
+        # 自己那句话），写死一句英文只会让人不知道该怎么办。
+        raise ConflictError(say("spaceNameTaken"))
 
     task_templates = _expect_list(payload.task_templates, "taskTemplates")
     classification_topic_ids: list[int] = payload.classification_topics or []
@@ -329,7 +335,7 @@ async def create_space(
     # 就会 404「Space not found」（合并队列 run 36296605673 实测）。
     await db.commit()
     space_data = await _build_full_space_payload(
-        space, service=service, db=db, include_private=True
+        space, service=service, db=db, viewer_id=auth_user.user_id, include_private=True
     )
     return ok({"space": space_data})
 
@@ -378,7 +384,7 @@ async def patch_space(
             topic_ids=classification_topic_ids,
         )
     space_data = await _build_full_space_payload(
-        space, service=service, db=db, include_private=True
+        space, service=service, db=db, viewer_id=auth_user.user_id, include_private=True
     )
     return ok({"space": space_data})
 
@@ -417,7 +423,9 @@ async def list_space_members(
     if (
         space is not None
         and space.open_scope is not None
-        and not await space_seats.runs(db, space_id, auth_user.user_id)
+        and not await space_seats.SPACE.may(
+            db, space, auth_user.user_id, SpacePermission.manage_members
+        )
     ):
         raise ForbiddenError(say("openSpaceMembersAdminsOnly"))
     members = await service.list_members(space_id)
@@ -449,6 +457,13 @@ async def add_space_member(
         raise NotFoundError(
             "User not found", data={"type": "user", "id": payload.user_id}
         )
+    await space_seats.SPACE.refuse_own_seat(
+        db,
+        space_id,
+        auth_user.user_id,
+        SpacePermission.manage_members,
+        seats=payload.user_id,
+    )
     member = await service.add_member(
         space_id=space_id,
         target_user_id=payload.user_id,

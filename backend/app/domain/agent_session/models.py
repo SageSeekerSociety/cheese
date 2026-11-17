@@ -41,7 +41,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, literal_column, text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    literal_column,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -111,6 +120,27 @@ class SessionPlace:
     runtime: dict
     #: 工作机器租约：这条会话的手。私聊这类"手就在会话机上"的路子没有单独的租约。
     lease: dict | None
+
+
+def place_of(
+    runtime_location: dict | None, work_lease: dict | None
+) -> SessionPlace | None:
+    """The place a session's two columns describe, or None where it has none.
+
+    The one construction of a `SessionPlace` from stored columns. Both the
+    entity and the column-only read of it
+    (`agent_session.repositories.PlacedRow`) call this, so a key added here
+    reaches both instead of one.
+    """
+    if not runtime_location:
+        return None
+    return SessionPlace(
+        machine=runtime_location["device_id"],
+        channel=runtime_location["channel"],
+        resource_id=runtime_location["resource_id"],
+        runtime=runtime_location.get("runtime") or {},
+        lease=work_lease,
+    )
 
 
 #: The device a session's lease is on, as `ix_agent_sessions_lease_device`
@@ -186,10 +216,27 @@ class AgentSession(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     # 这条对话最近一次被告知的项目现状，每一段一个摘要
-    # （`harness.prompt.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
+    # （`prompts.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
     # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过，或者告诉过的已经
     # 被一次上下文压缩换成了摘要（`forget_told`）：那一轮整份都说。
     told: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # 这条对话被放弃了：它长过模型的窗口，而把前面整理成摘要那次调用（压缩）
+    # 自己失败了。之后每一轮都会把同一段装不下的历史再送一遍、被同样拒绝，
+    # 所以平台把下一轮换成一条新会话（`abandon_opening`）。
+    #
+    # 单独一列，不是把 `resume_token` 置空：空已经是「这里从来没跑过」
+    # （`has_any`，现场栏和算力钉都读它），一个跑了几个小时的房间不会因为一段
+    # 对话被放弃就变成没跑过。读 `resume_token` 的地方见到这一列就当前者为空。
+    abandoned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 这条对话是在它这一类会话的第几版规矩下开的（`prompts.Profile.generation`）。
+    # 规矩换到和旧对话相矛盾的那一版时，旧对话不再续上，和被放弃的一样当作没有
+    # 可续的（`resume_token`）；下一条新对话记下时一起记下它的版次（`save`）。
+    # 版次开始记录之前的会话是 0。
+    generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     # When the drain of this session's runner began: a runner another release
     # started, at work when this release took it over, is left to finish for
     # at most ``settings.runner_drain_s`` from here (``room.sessions.lifecycle``).
@@ -213,16 +260,7 @@ class AgentSession(UuidPk, Timestamps, Base):
         ``lease``（工作机器）是**房间**那一半，见 :class:`SessionPlace`：它跟着
         这一行走只是为了读的人当场看得见，解析它的是房间那一项。
         """
-        location = self.runtime_location
-        if not location:
-            return None
-        return SessionPlace(
-            machine=location["device_id"],
-            channel=location["channel"],
-            resource_id=location["resource_id"],
-            runtime=location.get("runtime") or {},
-            lease=self.work_lease,
-        )
+        return place_of(self.runtime_location, self.work_lease)
 
 
 class AgentEnvironment(Base):

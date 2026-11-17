@@ -340,6 +340,9 @@ def image_owner(options, root: Path, *, start_runtime=True, origin=None):
         "REDIS_URL": f"redis://{cache}:6379/0",
         "SANDBOX_TOKEN": SECRET,
         "PLATFORM_ADMIN_HANDLES": '["acceptance"]',
+        # And its content review key; nothing here publishes, so it is never used.
+        "ALIYUN_GREEN_ACCESS_KEY_ID": "acceptance",
+        "ALIYUN_GREEN_ACCESS_KEY_SECRET": "acceptance",
         "DB_POOL_SIZE": "5",
         "DB_MAX_OVERFLOW": "5",
     }

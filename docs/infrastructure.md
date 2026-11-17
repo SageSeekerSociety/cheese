@@ -674,7 +674,14 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   queue behind a merge burst, which the alert would have to read as death. The
   per-machine labels above are what let a half-dead machine (one slot gone) be
   named rather than averaged away. It says so in Feishu when
-  `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either way.
+  `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either way. Listing
+  runners needs Administration (read) on the repository, which the workflow
+  token can never hold, so the job reads the `CI_POOL_RUNNERS_TOKEN` secret: a
+  fine-grained personal access token with only that permission, on this
+  repository only. A GitHub App installation token expires within the hour, so
+  using an App means adding a step that mints one per run, not storing one.
+  While the secret is unset the job leaves a notice that the pool was not
+  checked, sends nothing and stays green.
   `box-heartbeat.yml`'s `ci-pool` job remains as the "can the pool still run
   anything at all" check.
 - Liveness (on demand): `box-diag.yml`'s `ci-pool` job prints hostname, disk,
@@ -835,7 +842,14 @@ Changing backend env (e.g. enabling an OAuth provider):
 
 1. Edit the env file — dev: `/home/nictheboy/cheese-backend-py/backend/.env`
    (the compose `env_file` default; `BACKEND_ENV_FILE` overrides). **Back it up
-   first** (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`).
+   first** (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`). prod (RUC) reads the
+   same default path on `cheese-prod-app` unless its `~/ops/deploy.env` sets
+   `BACKEND_ENV_FILE`; etrip reads `/opt/cheese-deploy/.env.prod`. A variable
+   the backend refuses to boot without on a deployment — `JWT_SECRET`,
+   `DATA_ENCRYPTION_KEY`, `PLATFORM_ADMIN_HANDLES`,
+   `ALIYUN_GREEN_ACCESS_KEY_ID` and `ALIYUN_GREEN_ACCESS_KEY_SECRET`
+   (`deploy/.env.prod.example`) — is in each of these files before a release
+   that needs it reaches that box.
 2. env_file is read at container **create** time — `docker restart` does NOT
    pick up changes. Recreate via the deploy script, re-deploying the sha that
    is already running:

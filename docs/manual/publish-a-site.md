@@ -13,7 +13,7 @@ slug: publish-a-site
 
 ## 让芝士做展示页 {#build}
 
-在频道里把下面这条消息交给芝士，芝士把这条支线转为任务后接着动手，点消息下方的任务卡跟进。交给芝士、跟进任务的步骤见[把一件事交给芝士并验收](/working-with-cheese#describe-goal)。
+在频道里把下面这条消息交给芝士，芝士建一个任务后接着动手，点它回复下方的任务跟进。交给芝士、跟进任务的步骤见[把一件事交给芝士并验收](/working-with-cheese#describe-goal)。
 
 ```prompt
 给我们的课程项目做一个展示页：一句话介绍、三张截图的位置、四个人的分工。只用 HTML 和 CSS，放在 site/ 目录，入口是 site/index.html。
@@ -21,7 +21,7 @@ slug: publish-a-site
 
 芝士工作期间，任务页右侧的「预览」显示它最近打开的网页。需要修改时，在任务中告诉芝士。
 
-芝士提交后，检查展示页并点「采纳并完成任务」，步骤见[检查结果：采纳或退回](/working-with-cheese#review-result)。网站只发布采纳之后的版本。
+芝士提交后，检查展示页并点「采纳」，步骤见[检查结果：采纳或退回](/working-with-cheese#review-result)。网站只发布采纳之后的版本。
 
 ## 发布网站 {#publish}
 

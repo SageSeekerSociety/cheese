@@ -11,6 +11,7 @@ import type {
   TaskProgress,
   TaskStage,
   TaskSubmission,
+  TaskUsage,
   TeamSummary,
 } from '@/types'
 import type {
@@ -46,6 +47,20 @@ export namespace TaskBoardApi {
 
   export const update = (taskId: number, data: PatchTaskRequestData) =>
     axiosRequest<{ task: Task }>({ url: `/tasks/${taskId}`, method: 'PATCH', data }, true)
+
+  /** 平台管理员的待审核题目（`/admin/tasks`）：所有空间里还没审的题，最早发的在前，
+   *  每道带着它的空间、话题和提交要求。 */
+  export const unreviewedEverywhere = (pageStart?: string) =>
+    axiosRequest<{ tasks: Task[]; page: EncodedCursorPage }>(
+      { url: '/admin/tasks', method: 'GET', params: { pageStart } },
+      true
+    )
+
+  /** 平台管理员通过或驳回一道题，不必在它的空间里。 */
+  export const reviewAsPlatformAdmin = (
+    taskId: number,
+    data: { approved: 'APPROVED' | 'DISAPPROVED'; rejectReason?: string }
+  ) => axiosRequest<{ task: Task }>({ url: `/admin/tasks/${taskId}/review`, method: 'POST', data }, true)
 
   export const del = (taskId: number) => axiosMutation({ url: `/tasks/${taskId}`, method: 'DELETE' }, true)
 
@@ -247,7 +262,7 @@ export namespace TaskBoardApi {
       stage?: string
     }
   ) =>
-    axiosRequest<{ submissions: TaskSubmission[]; page: Page }>(
+    axiosRequest<{ submissions: TaskSubmission[]; page: Page; usage?: TaskUsage }>(
       { url: `/tasks/${taskId}/participants/${participantId}/submissions`, method: 'GET', params },
       true
     )

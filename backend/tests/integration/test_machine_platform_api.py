@@ -191,6 +191,14 @@ async def test_sandbox_forge_token_on_socket_returns_placeholder_to_sandbox_and_
         async def granted_permissions(self):
             return {"contents": "write"}
 
+        # A channel's session keeps nothing and is handed the reading token;
+        # which one is not what this asks.
+        async def read_token(self):
+            return "ghs_real_single_repo_token", "2026-10-27T10:00:00Z"
+
+        async def read_permissions(self):
+            return {"contents": "read"}
+
     async def tokens_for_project(_id, _session):
         return Minter()
 

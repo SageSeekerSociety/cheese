@@ -28,7 +28,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import owner_reads, reaper, services
+from app.domain.machine import enrollment, owner_reads, reaper, sandbox_images, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -38,6 +38,7 @@ from app.domain.machine.models import (
     SandboxHome,
     WarmMachine,
 )
+from app.domain.machine.sandbox_images import image_for_session
 from app.domain.machine.services import (
     CUSTOMER_REF,
     CloudKeepsFailing,
@@ -135,6 +136,9 @@ class Case:
                 host.ai_status = AiStatus.disabled
                 host.device_id = device_id
                 host.enrolled_at = datetime.now(UTC)
+                host.sandbox_image = enrollment.sandbox_image.default_image()[
+                    "reference"
+                ]
                 host.last_seen_at = datetime.now(UTC)
                 await db.commit()
 
@@ -291,6 +295,7 @@ def _warm_machine_ready(case: Case) -> str:
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.50",
                     sandbox_disk_gb=64,
+                    sandbox_image=enrollment.sandbox_image.default_image()["reference"],
                     create_request={
                         "hostname": "warm-1",
                         "offeringId": 1,
@@ -534,13 +539,26 @@ def test_sessions_placed_at_once_share_the_one_host_being_created(pool):
     assert len(pool.cloud.created) == 1
 
 
-def test_a_full_host_takes_a_warm_machine_before_creating_one(pool):
+@pytest.mark.parametrize("previous_image", [False, True])
+def test_a_full_host_takes_a_warm_machine_before_creating_one(pool, previous_image):
     first_two = pool.room("alice", 2)
     [bob] = pool.room("bob", 1)
     full = pool.place("alice", first_two[0])
     pool.up(full)
     assert pool.place("alice", first_two[1]) == full
     warm = _warm_machine_ready(pool)
+    if previous_image:
+
+        async def use_previous():
+            async with pool.client.test_request_factory() as db:
+                row = await db.scalar(
+                    select(WarmMachine).where(WarmMachine.device_id == warm)
+                )
+                assert row is not None
+                row.sandbox_image = "ghcr.io/example/sandbox@sha256:" + "a" * 64
+                await db.commit()
+
+        pool.run(use_previous)
 
     claimed = pool.place("bob", bob)
 
@@ -1236,3 +1254,50 @@ def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
 
     assert pool.run(waiting) == []
     assert pool.room_lines("alice").count("环境已就绪") == 2
+
+
+def test_an_existing_sandbox_keeps_its_image_when_its_host_switches(pool):
+    first, second = pool.room("alice", 2)
+    host_id = pool.place("alice", first)
+    device = pool.up(host_id)
+    old = enrollment.sandbox_image.default_image()["reference"]
+    new = "ghcr.io/example/sandbox@sha256:" + "f" * 64
+
+    async def pin_then_switch():
+        async with pool.client.test_request_factory() as db:
+            assert await image_for_session(db, device, first) == old
+            host = await db.get(CloudHost, host_id)
+            host.sandbox_image = new
+            await db.commit()
+
+    pool.run(pin_then_switch)
+    assert pool.place("alice", second) == host_id
+
+    async def images():
+        async with pool.client.test_request_factory() as db:
+            return (
+                await image_for_session(db, device, first),
+                await image_for_session(db, device, second),
+            )
+
+    assert pool.run(images) == (old, new)
+
+
+def test_a_prepared_host_finishes_maintenance_without_waiting_for_prewarm(
+    pool, monkeypatch
+):
+    (first,) = pool.room("alice", 1)
+    host_id = pool.place("alice", first)
+    pool.up(host_id)
+
+    async def unavailable(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(sandbox_images.device_hub, "exec", unavailable)
+
+    async def sweep():
+        await asyncio.wait_for(
+            sandbox_images.sweep(pool.client.test_request_factory), timeout=1
+        )
+
+    pool.run(sweep)

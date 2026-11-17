@@ -9,6 +9,7 @@ from app.domain.machine.models import (
     CloudHost,
     MachineStatus,
     SandboxHome,
+    sandbox_image_ready,
 )
 
 # What a tool waiting on its cloud sandbox is told.
@@ -67,17 +68,7 @@ async def _home_removed(db, session_id) -> bool:
 
 async def _cloud_progress(db, hub, host_id) -> str | bool:
     """Where the host of the session's sandbox is on its way to being usable."""
-    host = (
-        await db.execute(
-            select(
-                CloudHost.status,
-                CloudHost.device_id,
-                CloudHost.enroll_attempts,
-                CloudHost.released_at,
-                CloudHost.whole_machine,
-            ).where(CloudHost.id == host_id)
-        )
-    ).one_or_none()
+    host = await db.get(CloudHost, host_id)
     if host is None or host.released_at:
         # The pool let go of it; the next attempt places the session again.
         return True
@@ -98,4 +89,4 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
     if host.status in GONE:
         # Gone upstream: the next attempt forgets it and places the session.
         return True
-    return hub.is_online(host.device_id)
+    return hub.is_online(host.device_id) and sandbox_image_ready(host)
