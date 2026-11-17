@@ -9,6 +9,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
+import ProjectMenuList from './ProjectMenuList.vue'
+import TopicRailBadge from './TopicRailBadge.vue'
+
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -20,6 +23,14 @@ const props = defineProps<{
   terms: { project: string; topic: string }
   /** 整页形态（手机）：这几页收进了项目菜单，这一行不画。 */
   page: boolean
+  /** 桌面：项目菜单挂在这一行最后的「更多」上（侧栏头换成了项目切换器）。不给就不画。 */
+  more?: {
+    menuPages: { key: string; label: string; icon: string }[]
+    docsActive: boolean
+    privateUnreadTotal: number
+    canTransfer: boolean
+    canLeave: boolean
+  } | null
 }>()
 
 const emit = defineEmits<{
@@ -29,7 +40,20 @@ const emit = defineEmits<{
   // `TopicRailRow` 的 `press` 同一条理由）。
   (e: 'press-page', key: string): void
   (e: 'cancel-prefetch'): void
+  (e: 'select-docs'): void
+  (e: 'open-transfer'): void
+  (e: 'open-leave'): void
 }>()
+
+// 「更多」里的某一页开着（技能、成员、设置、项目文档……）：这一行别的格都不是它，
+// 「更多」就是它在侧栏上的位置，照选中的行那样标出来。
+const onMorePage = computed(
+  () =>
+    !!props.more &&
+    (props.more.docsActive ||
+      props.routeName === 'project-settings' ||
+      props.more.menuPages.some((p) => p.key === props.routeName))
+)
 
 // 点下去到那一页出来之间，这一行一直亮着：只靠按下的那一下，手指抬起后又变回原样，
 // 等得久的人会以为没点到（同 TopicRailRow）。
@@ -98,6 +122,44 @@ const entries = computed(() =>
       </template>
       <v-list-item-title>{{ e.label }}</v-list-item-title>
     </v-list-item>
+    <!-- 项目菜单：项目文档、成员、例行事务、技能、全部任务、设置、转让或退出。和总览、
+         资料库排在一起，项目里的页面都从这一行进。私聊的未读挂在它上面。 -->
+    <v-menu v-if="more" location="bottom start">
+      <template #activator="{ isActive, props: menuProps }">
+        <v-list-item
+          v-bind="menuProps"
+          tabindex="0"
+          rounded="lg"
+          class="nav-row pinned-row"
+          :class="{ 'is-active': onMorePage || isActive }"
+          :style="{ paddingInlineStart: '8px' }"
+          :aria-current="onMorePage ? 'page' : undefined"
+          data-testid="project-more"
+          :aria-label="t('work.sidebar.projectMenu')"
+        >
+          <template #prepend>
+            <span class="row-slot"><v-icon size="16" class="row-glyph" icon="mdi-dots-horizontal" /></span>
+          </template>
+          <v-list-item-title>{{ t('navigation.project.more') }}</v-list-item-title>
+          <template v-if="more.privateUnreadTotal > 0" #append>
+            <TopicRailBadge :count="more.privateUnreadTotal" />
+          </template>
+        </v-list-item>
+      </template>
+      <ProjectMenuList
+        :menu-pages="more.menuPages"
+        :docs-active="more.docsActive"
+        :route-name="routeName"
+        :terms="terms"
+        :private-unread-total="more.privateUnreadTotal"
+        :can-transfer="more.canTransfer"
+        :can-leave="more.canLeave"
+        @open-page="emit('open-page', $event)"
+        @select-docs="emit('select-docs')"
+        @open-transfer="emit('open-transfer')"
+        @open-leave="emit('open-leave')"
+      />
+    </v-menu>
   </v-list>
 </template>
 

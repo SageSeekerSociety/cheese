@@ -14,6 +14,8 @@ import type { SettingsGroup } from '@/components/common/SettingsOverlay.vue'
 import type {
   Space,
   SpaceCategory,
+  SpaceKnowledgePoint,
+  SpaceKnowledgeSuggestion,
   SpaceMaterial,
   SpaceTeaching,
   Task,
@@ -114,6 +116,12 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
         to: { name: 'SpacesDetailSettingsGuidance', params: { spaceId: '7' } },
         icon: 'mdi-robot-outline',
       },
+      {
+        key: 'SpacesDetailSettingsLearningAnalysis',
+        label: t('spaces.settings.tabs.learningAnalysis'),
+        to: { name: 'SpacesDetailSettingsLearningAnalysis', params: { spaceId: '7' } },
+        icon: 'mdi-chart-box-outline',
+      },
     ],
   },
 ]
@@ -123,6 +131,23 @@ export const SPACE_TEACHING: SpaceTeaching = {
   mode: 'guide',
   systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。不要用 pthread 以外的线程库。',
 }
+
+/** 这块板的知识点清单（所有题目共用）：发题 / 改题那一栏的候选。 */
+export const SPACE_KNOWLEDGE_POINTS: SpaceKnowledgePoint[] = [
+  { id: 91, name: '相关子查询', displayOrder: 1 },
+  { id: 92, name: '红黑树的旋转', displayOrder: 2 },
+]
+
+/** AI 读题面回来的建议：一条清单里已有、一条清单里没有。 */
+export const SPACE_KNOWLEDGE_SUGGESTIONS: SpaceKnowledgeSuggestion[] = [
+  {
+    name: '相关子查询',
+    why: '题面要求「不能用 JOIN，改用子查询」，多是相关子查询写不对',
+    confidence: 'high',
+    isNew: false,
+  },
+  { name: '游标', why: '题面提到逐行处理结果集', confidence: 'medium', isNew: true },
+]
 
 /** 资料库里的几份：文件、图、文本、仅管理员的一档各来一个。 */
 export const SPACE_MATERIALS: SpaceMaterial[] = [

@@ -127,7 +127,7 @@ class Teaching:
     #: 本节学习目标 — what the student should be able to do by the end. Its
     #: presence is also what makes a 教学安排 EDUCATIONAL: a config with goals
     #: and no `system_prompt` gets the default teaching template (Socratic +
-    #: 形态纪律, see `harness.opening`), because "学习目标" is the teacher saying
+    #: 形态纪律, see `prompts.opening`), because "学习目标" is the teacher saying
     #: "this one is here to learn" — and a blank prompt then means "use your
     #: teaching manners", not "have no manners".
     learning_goals: list[str] = field(default_factory=list)
@@ -285,10 +285,12 @@ class Protocol:
 
     @property
     def model(self) -> str | None:
-        """The model a project opened from this pack runs on by default
-        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``).
-        It becomes the project's ``default_model`` only when the project has
-        not chosen one; None leaves the deployment's default."""
+        """The model the pack's credits do the work on
+        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``):
+        a project opened from it runs its tasks on it unless the teammate
+        chose another — it becomes the default teammate's ``task_model`` when
+        that is unset. None leaves tasks to the teammate's and the project's
+        own choice."""
         return _text(self.resource_pack.get("model"))
 
     @property

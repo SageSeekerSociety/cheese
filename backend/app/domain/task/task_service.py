@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BadRequestError
 from app.core.sentences import say
 from app.domain.tag.models import Tag
-from app.domain.task import stages
+from app.domain.task import stages, test_suite
 from app.domain.task.inputs import APPROVE_APPROVED, map_approve_type
 from app.domain.task.models import (
     Task,
@@ -245,6 +245,20 @@ class TaskService:
             task_id
         )
 
+    async def replace_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        await self._repo.replace_knowledge_point_relations(
+            task_id=task_id, knowledge_point_ids=knowledge_point_ids
+        )
+
+    async def add_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        await self._repo.add_knowledge_point_relations(
+            task_id=task_id, knowledge_point_ids=knowledge_point_ids
+        )
+
     async def list_submission_schema(
         self, task_id: int
     ) -> Sequence[TaskSubmissionSchemaEntry]:
@@ -274,6 +288,26 @@ class TaskService:
     async def replace_rubric(self, task_id: int, lines: Sequence[RubricLine]) -> None:
         await TaskRubricRepository(session=self._require_session()).replace(
             task_id, lines
+        )
+
+    async def list_test_suites(self, task_id: int) -> list[test_suite.TaskTestSuite]:
+        return await test_suite.list_suites(self._require_session(), task_id)
+
+    async def replace_test_suites(
+        self, task_id: int, lines: Sequence[test_suite.SuiteLine]
+    ) -> bool:
+        return await test_suite.replace_suites(self._require_session(), task_id, lines)
+
+    async def test_suite_stages(self, task_id: int) -> list[int]:
+        """这道题挂了测试点的阶段 —— ``rubric`` 校验「设为测试点的那一项要有测试点」
+        时读它。"""
+        return await test_suite.suite_stages(self._require_session(), task_id)
+
+    async def suites_to_api(
+        self, task_id: int, keys: Sequence[str], *, teacher: bool
+    ) -> list[dict]:
+        return await test_suite.suites_to_api(
+            self._require_session(), task_id, keys, teacher=teacher
         )
 
     async def list_stages(self, task_id: int) -> list[TaskStage]:

@@ -223,10 +223,17 @@ class ProjectFiles:
             # Interactive file requests must not inherit the agent's 11-minute
             # command timeout; cancellation also cancels the pending device call.
             async with asyncio.timeout(30):
+                # A task with no branch has no checkout of its own: its work is
+                # where its session works, the room's workspace.
                 result = await self._executor(
                     target,
                     "task_fs",
-                    {"task_id": str(task.id), "operation": operation, **params},
+                    {
+                        "task_id": str(task.id),
+                        "operation": operation,
+                        "in_workspace": not task.branch_name,
+                        **params,
+                    },
                 )
         except (TimeoutError, DeviceOffline, DeviceNotReady) as exc:
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc

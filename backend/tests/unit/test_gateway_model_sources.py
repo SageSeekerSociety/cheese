@@ -937,14 +937,17 @@ async def test_marking_a_model_as_needing_approval_marks_every_source():
 def _argon_like_kimi() -> dict:
     config = json.loads(json.dumps(_KIMI_CONFIG))
     config["model_info"].update(
-        cheese_overseas=True, cheese_spend_cap_usd=1000, cheese_no_explicit_cache=True
+        cheese_overseas=True,
+        cheese_spend_cap_usd=1000,
+        cheese_no_explicit_cache=True,
+        cheese_cache_ttl="1h",
     )
     return config
 
 
 @pytest.mark.anyio
 async def test_a_source_on_another_upstream_needs_approval_but_no_cap_or_cache_rule():
-    """Approval is the model's; a spend cap and the cache-mark strip are what one
+    """Approval is the model's; a spend cap and the cache rules are what one
     upstream model needs, so a source on another upstream does not take them."""
     gw = _Gateway([_argon_like_kimi()])
     service = _service(gw)
@@ -957,12 +960,13 @@ async def test_a_source_on_another_upstream_needs_approval_but_no_cap_or_cache_r
     assert new_row["model_info"]["cheese_overseas"] is True
     assert "cheese_spend_cap_usd" not in new_row["model_info"]
     assert "cheese_no_explicit_cache" not in new_row["model_info"]
+    assert "cheese_cache_ttl" not in new_row["model_info"]
 
 
 @pytest.mark.anyio
 async def test_a_source_on_the_same_upstream_keeps_its_cap_and_cache_rule():
-    """Another key for the same upstream model must not escape the cap, nor send
-    the cache marks that upstream refuses."""
+    """Another key for the same upstream model must not escape the cap, nor lose
+    the cache rules that upstream needs."""
     gw = _Gateway([_argon_like_kimi()])
     service = _service(gw)
     same = {
@@ -983,6 +987,7 @@ async def test_a_source_on_the_same_upstream_keeps_its_cap_and_cache_rule():
     assert new_row["litellm_params"]["model"] == config_row["litellm_params"]["model"]
     assert new_row["model_info"]["cheese_spend_cap_usd"] == 1000
     assert new_row["model_info"]["cheese_no_explicit_cache"] is True
+    assert new_row["model_info"]["cheese_cache_ttl"] == "1h"
 
 
 # --- Spend cap: one per upstream model, set from the page ----------------------

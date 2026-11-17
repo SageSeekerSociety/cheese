@@ -35,7 +35,7 @@ from app.domain.review.models import (
 )
 from app.domain.review.schemas import AcceptCardOut
 from app.domain.review.services.notices import _announce_of
-from app.domain.review.task_landing import record_at_origin
+from app.domain.review.task_landing import record_at_origin, tell_opener_filed
 from app.domain.room_task import progress
 from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
@@ -164,12 +164,13 @@ async def create_card(
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
     if topic.status == TopicStatus.archived:
         raise ValidationError(say("topicArchivedNoReview"))
-    # A task whose last delivery landed is over, even while its AI teammate is
-    # still writing it up (`room_task.closing`).
+    # A task whose last delivery landed is over, even while it waits for its
+    # deploy (`review.deploy_wait`) or its AI teammate is still writing it up
+    # (`room_task.closing`).
     if (
         task.status != TaskStatus.open
         or task.closing_since is not None
-        or not task.branch_name
+        or task.deploying_since is not None
     ):
         raise ValidationError(say("taskEndedOrNoBranch"))
     subject = (change_subject or "").strip()
@@ -189,6 +190,13 @@ async def create_card(
     hands_over_repository = (
         not (deliver or "").strip() and not (deliver_url or "").strip()
     )
+    if hands_over_repository and not task.branch_name:
+        # deferred-import: tests replace this name on app.domain.project.forge
+        from app.domain.project.forge import binding_for_project
+
+        if await binding_for_project(task.project_id, self._session) is None:
+            raise ValidationError(say("taskNoRepositoryToMerge"))
+        raise ValidationError(say("taskEndedOrNoBranch"))
     if hands_over_repository:
         _no_artifact_action(artifact, new_artifact, about)
     else:
@@ -266,7 +274,11 @@ async def create_card(
     # after the forge and machine reads above, so those seconds hold up no one
     # writing in the task; read again under it, the task may have ended since.
     await lock_task_for_change(self._session, task.id)
-    if task.status != TaskStatus.open or task.closing_since is not None:
+    if (
+        task.status != TaskStatus.open
+        or task.closing_since is not None
+        or task.deploying_since is not None
+    ):
         raise ValidationError(say("taskEndedOrNoBranch"))
     card = await self._repo.add(
         topic_id=topic_id,
@@ -319,6 +331,16 @@ async def create_card(
         say("taskFiledForReview", title=said_title(task)),
         announce=_announce_of(self),
         refers={"delivery": {"card_id": str(card.id), "version": len(existing) + 1}},
+    )
+    # The AI teammate that opened the task from the channel's main line is
+    # told what was handed in, to say so there in its own words.
+    await tell_opener_filed(
+        self._session,
+        task,
+        card,
+        version=len(existing) + 1,
+        reviewers=reviewers,
+        record_seat=self._record_seat,
     )
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)

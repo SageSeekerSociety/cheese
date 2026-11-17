@@ -24,10 +24,10 @@ from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.carried_bodies import carried_bodies
-from app.domain.agent.harness.prompt import task_section
 from app.domain.agent.prompt import _topic_ref_lists, offered_attachments
 from app.domain.agent.queries import _acting_handle, _agent_at, require_pinned_seat
 from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.room.system_prompt import session_kind
 from app.domain.agent.room.thread_context import (
     channel_context as _channel_context,
 )
@@ -63,6 +63,7 @@ from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import memory_index
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
+from app.domain.prompts import task_section
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import PlaceResolver
@@ -229,7 +230,7 @@ async def prepare(
         # 赛题. Resolved here — in the transaction everything else the prompt
         # is built from is read in, and fresh on every turn — so a 项目集 that
         # moved on to 第 4 周 is what the NEXT session starts with. (What a
-        # session already running sees is `harness.prompt`'s 生效语义.)
+        # session already running sees is the 生效语义 of `prompts.render`.)
         #
         # A project that is not a course pays nothing for this line: no
         # 赛题, or no `teaching` on the 项目集, is no query and no prompt
@@ -356,7 +357,12 @@ async def prepare(
             else None
         )
         thread_tasks = (
-            await _channel_tasks(session, topic, root)
+            await _channel_tasks(
+                session,
+                topic,
+                root,
+                names={m["handle"]: m["name"] for m in roster},
+            )
             if root is not None or in_main_line
             else None
         )
@@ -432,6 +438,7 @@ async def prepare(
     return TurnContext(
         room_id=place.room_id,
         inner_id=place.inner_id,
+        task_id=place.task_id,
         # Except the turn that is a routine's run in a 支线: a rule its
         # owner confirmed, which keeps what it produces.
         keeps_nothing=not place.keeps_work
@@ -442,6 +449,7 @@ async def prepare(
             owner=task.owner_handle,
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
+            has_checkout=task.branch_name is not None,
         ),
         # 只看还开着的活：关闭不清这条上报（`closing.close_task` 不碰它），而关掉的
         # 活还能被人叫起来说话；那时看板显示的是关闭，再叫它报状态只会被 422 拒掉。
@@ -470,6 +478,7 @@ async def prepare(
         provider=provider,
         harness=wanted_harness,
         needs_place=needs_place,
+        kind=session_kind(place, needs_place=needs_place),
         replay_notice=replay_notice,
         resume_session_id=resume_session_id,
         role=role,

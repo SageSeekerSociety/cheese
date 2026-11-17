@@ -740,8 +740,9 @@ class Runner(runner.Runner[Journal]):
         so the reply tools are those: without this, a session could not stop
         right after chat_send, and every turn would be made to write closing
         words only the session sees."""
-        terminal = ",".join(f"mcp__native__{tool}" for tool in runner.REPLY_TOOLS)
-        return {**super().agent_env(env), "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
+        env = super().agent_env(env)
+        terminal = ",".join(f"mcp__native__{tool}" for tool in self.reply_tools)
+        return {**env, "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
 
     def starting(self) -> bool:
         """Still inside ``SETTLE_S`` of the launch, and not yet answered.

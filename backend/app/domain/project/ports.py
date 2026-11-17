@@ -55,6 +55,9 @@ class DefaultTeammate(Protocol):
     人设只在它**还没有**的时候落 —— 一个项目自己挑过的人设不该被后来的一次赛题报名
     覆盖；建项目那一次实例刚出生，本来也没有人设，所以那一条路不受这条规矩影响。
 
+    ``task_model`` 是资源包指定的模型：队友「任务里使用」还没设时落成它，同样不覆盖
+    一个已经挑过的。
+
     形状就是 `AgentInstanceService.materialize_default` 加它的 `set_type`，改完就地
     flush，调用方不用自己刷。
     """
@@ -67,6 +70,7 @@ class DefaultTeammate(Protocol):
         display_name: str | None = None,
         type_name: str | None = None,
         pack_prompt: str | None = None,
+        task_model: str | None = None,
     ) -> None: ...
 
 
@@ -302,8 +306,9 @@ class AcceptedTerms:
     #: contract migration after b7d4e1a9c2f3 moves it into the guidance (that
     #: migration's PR removes it).
     pack_prompt: str | None = None
-    #: The model the project runs on unless it already chose one (``None``:
-    #: the deployment's default).
+    #: The model the publisher's credits do the work on: the default
+    #: teammate's model in tasks, unless it already chose one (``None``: the
+    #: teammate's own choice, else the project's).
     model: str | None = None
     #: When the pack goes out once per person: the 题目 whose packs count as
     #: this one's (this one included). A team that holds a pack from any of

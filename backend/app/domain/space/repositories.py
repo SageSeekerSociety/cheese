@@ -25,6 +25,15 @@ from app.domain.space.group_repositories import (
     SpaceDomainGroupDomainRepository,
     SpaceDomainGroupRepository,
 )
+
+# 学情分析的两张行（知识点清单、告知卡确认记录）也在模块自己那边，同样从这里
+# re-export：这一份是空间域的 repository 门面，调用方一律
+# ``from app.domain.space.repositories import ...``。
+from app.domain.space.learning_analysis_repositories import (
+    SpaceKnowledgePointRepository,
+    SpaceLearningNoticeRepository,
+    TaskKnowledgePointRepository,
+)
 from app.domain.space.member_repositories import (
     SpaceJoinRepository,
     SpaceMemberRepository,
@@ -48,9 +57,12 @@ __all__ = [
     "SpaceDomainGroupDomainRepository",
     "SpaceDomainGroupRepository",
     "SpaceJoinRepository",
+    "SpaceKnowledgePointRepository",
+    "SpaceLearningNoticeRepository",
     "SpaceMemberRepository",
     "SpaceRepository",
     "SpaceUserRankRepository",
+    "TaskKnowledgePointRepository",
 ]
 
 

@@ -85,6 +85,8 @@ async def listing(service: pkg.GatewayModelsService) -> dict:
                 "role": role,
                 "model": model_roles.get(role),
                 "fallback": model_roles.fallback(role),
+                # The role whose model ``fallback`` is, when it is a role's.
+                "inherits": spec.inherits,
                 "chosen": model_roles.chosen(role),
                 "offered_only": spec.offered,
             }
@@ -106,7 +108,7 @@ def _check_target(role: str, model: AdminModel | None, name: str) -> None:
 async def set_role(
     service: pkg.GatewayModelsService, *, handle: str, role: str, model: str | None
 ) -> dict:
-    """Point ``role`` at ``model``; None goes back to its ``Settings`` field."""
+    """Point ``role`` at ``model``; None goes back to its fallback."""
     if role not in model_roles.ROLES:
         raise NotFoundError(say("roleNotFound", role=role))
     await refresh(service._db)

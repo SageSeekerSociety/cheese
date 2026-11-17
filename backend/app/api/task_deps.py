@@ -32,10 +32,10 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.task.review_service import TaskSubmissionReviewService
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
-    TaskSubmissionReviewService,
     TaskSubmissionService,
 )
 from app.domain.team.repositories import TeamRepository

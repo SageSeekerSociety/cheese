@@ -13,7 +13,6 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -22,31 +21,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.domain.agent.document import question
-from app.domain.agent.harness.prompt import WRITING
-from app.domain.agent.model_catalog import catalog, subagent_default
+from app.domain.agent.model_catalog import Scene, catalog, pick
+from app.domain.agent.skills import load_skill
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.policy import gate
 from app.domain.project.services import ProjectService
-from app.domain.room_task import binding
+from app.domain.prompts import Facts, Kind, render_system
 from app.domain.service_keys import gateway_base
-from app.domain.skill_library import SKILL_DIR, parse_frontmatter
-from app.domain.usage.services import UsageService
 
 logger = logging.getLogger(__name__)
 
 #: 大项目的思考会吃掉八千以上，给少了正文是空的。
 _ANSWER_TOKENS = 24000
 
-#: 写现状的要求：长，所以单独放在旁边的 Markdown 里。
-_RULES = (Path(__file__).parent / "situation_prompt.md").read_text(encoding="utf-8")
-
 
 def system_prompt() -> str:
-    guide = parse_frontmatter(SKILL_DIR / "doc_writing.md")[1]
-    blocks = parse_frontmatter(SKILL_DIR / "doc_blocks.md")[1]
-    return f"{_RULES}\n\n{WRITING}\n\n# 文档指南\n{guide}\n\n# 块的写法\n{blocks}"
+    """写现状的要求（`pieces/situation/`），加写作规矩、文档指南和块的写法。"""
+    return render_system(Kind.situation, Facts(), skill=load_skill)
 
 
 class ProjectModels(Protocol):
@@ -62,17 +54,12 @@ class ProjectModels(Protocol):
 async def _bind(session: AsyncSession, project_id: uuid.UUID) -> question.Bound | None:
     """这个项目写现状用哪个模型；不走网关、或者被额度和档位挡下，是 None。"""
     project = await ProjectService(session).get_or_404(project_id)
-    configured = project.settings or {}
-    choices = catalog(configured)
-    usage = UsageService(session)
-    policy = gate.policy_of(
-        configured,
-        await usage.plan_model_tiers(project.team_id),
-        overseas_approved=await usage.overseas_approved(project.team_id),
+    # No teammate writes it: the project main model, else the platform's
+    # subagent role, the job the platform does on the project's behalf.
+    picked = pick(
+        Scene.subagent, catalog(project.settings), project_settings=project.settings
     )
-    chosen = binding.resolve(
-        None, choices, default_model=subagent_default(configured, choices, policy)
-    )
+    chosen = picked.binding
     if chosen.supply != GATEWAY:
         return None
     agent = await AgentInstanceService(session).for_project(project)
@@ -82,6 +69,7 @@ async def _bind(session: AsyncSession, project_id: uuid.UUID) -> question.Bound 
         model=chosen.model,
         wire_model=chosen.wire_model,
         supply=chosen.supply,
+        automatic=picked.automatic,
     )
     await question.admit(session, project_id, bound)
     return bound

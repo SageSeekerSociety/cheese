@@ -9,7 +9,7 @@
   "loadFailed": "Couldn't load channels",
   "members": "{count} members",
   "noMatch": "No matching channels",
-  "openTasks": "{count} tasks in progress",
+  "openTasks": "{count} open tasks",
   "private": "Private channel",
   "search": "Search channels"
 }

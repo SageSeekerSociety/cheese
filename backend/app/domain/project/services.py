@@ -184,6 +184,7 @@ class ProjectService:
         display_name: str | None = None,
         type_name: str | None = None,
         pack_prompt: str | None = None,
+        task_model: str | None = None,
     ) -> None:
         """这个项目的那一位芝士：没有就播一个，人设按调用方说的落上去。
 
@@ -198,6 +199,7 @@ class ProjectService:
             display_name=display_name,
             type_name=type_name,
             pack_prompt=pack_prompt,
+            task_model=task_model,
         )
 
     async def _has_earmark(self, project: Project, task_id: int) -> bool:
@@ -746,32 +748,20 @@ class ProjectService:
         terms = await terms_port.terms(task_id)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
+        # The pack's model is what the publisher's credits do the work on: the
+        # default teammate's model in tasks. The project main model stays
+        # unset (「自动」), so conversation runs on the platform's pick.
         await self._seed_default_teammate(
-            project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
+            project,
+            type_name=terms.default_role,
+            pack_prompt=terms.pack_prompt,
+            task_model=terms.model,
         )
-        if terms.model:
-            await self._seed_default_model(project, terms.model)
         if terms.compute_credits > 0 and await self._earmark_due(
             project, task_id, terms
         ):
             await self._grant_earmark(
                 project, task_id, credits_total=terms.compute_credits
-            )
-
-    async def _seed_default_model(self, project: Project, model: str) -> None:
-        """The model the 题目's pack names (the new-user starters run on
-        DeepSeek V4.1 Flash), as the project's starting ``default_model``.
-
-        ``default_model`` is a member setting, and a member's change of it goes
-        through `change_member_settings`, which says it in the 综合. This is
-        not a change anyone made: it fills the key only while it is unset, as
-        part of the configuration the project takes from its 题目, the way the
-        default teammate's persona is. A project that picked its own keeps it.
-        Read under the settings lock so the check and the write see one blob."""
-        await self._repo.lock_settings(project)
-        if not (project.settings or {}).get("default_model"):
-            await self._repo.merge_settings(
-                project, {"default_model": model}, locked=True
             )
 
     async def _earmark_due(

@@ -47,6 +47,7 @@ const {
   setDefault,
   deactivating,
   deactivate,
+  projectAutomatic,
 } = useProjectAgents(() => props.projectId)
 
 // 「跟随项目」时也把项目那个模型的名字写出来：否则这一行说不清它到底跑在哪。
@@ -58,9 +59,11 @@ function modelOf(agent: ProjectAgent): string {
   }
   const main = models.value.find((m) => m.default)
   return t('work.projectSettings.agents.rowModel', {
-    model: main
-      ? t('work.projectSettings.agents.rowInherit', { model: main.label })
-      : t('work.projectSettings.agents.rowInheritPlain'),
+    model: projectAutomatic.value
+      ? t('work.projectSettings.agents.rowInherit', { model: t('work.models.automaticPlain') })
+      : main
+        ? t('work.projectSettings.agents.rowInherit', { model: main.label })
+        : t('work.projectSettings.agents.rowInheritPlain'),
   })
 }
 

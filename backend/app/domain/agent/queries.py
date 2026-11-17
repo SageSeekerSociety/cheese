@@ -28,7 +28,7 @@ from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationE
 from app.core.request_facts import recall
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.model_catalog import catalog
+from app.domain.agent.model_catalog import Scene, catalog, gate_call, pick
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
     memory_handed_back_notice,
@@ -59,7 +59,6 @@ from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.reads import get_by_ids
-from app.domain.room_task import binding
 from app.domain.room_task.models import Task
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
@@ -627,7 +626,9 @@ async def _say_handed_back(
             )
 
 
-def _model_policy_call(project, agent=None) -> gate.Call:
+def _model_policy_call(
+    project, agent=None, *, scene: Scene = Scene.conversation
+) -> gate.Call:
     """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
 
     两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
@@ -638,20 +639,13 @@ def _model_policy_call(project, agent=None) -> gate.Call:
     给一个猜出来的人。
     """
     choices = catalog(project.settings)
-    bound = binding.resolve(
-        None,
+    picked = pick(
+        scene,
         choices,
-        agent_model=agent.configuration.get("model") if agent else None,
-        default_model=(project.settings or {}).get("default_model"),
+        project_settings=project.settings,
+        teammate=agent.configuration if agent else None,
     )
-    return gate.Call(
-        resource=gate.Resource.model,
-        subject=bound.model,
-        label=choices[bound.model]["label"],
-        tier=choices[bound.model]["tier"],
-        approver=project.owner_handle or "",
-        overseas=choices[bound.model]["overseas"],
-    )
+    return gate_call(picked, choices, approver=project.owner_handle or "")
 
 
 async def instance_of_handle(
@@ -672,3 +666,22 @@ async def instance_of_handle(
                 AgentInstance.handle == agent_handle,
             )
         )
+
+
+async def agent_for_seat(
+    session: AsyncSession, place: Place, seat: str | None
+) -> ResolvedAgent:
+    """The agent a seat's session row is keyed by, in this place.
+
+    An event names who ACTED — the seat its session authors under. The row is
+    keyed by the agent that seat belongs to, the key the next turn reads the
+    resume token back under. One function for every writer, because a write
+    under the seat and a read under the agent do not fail: they find nothing,
+    and the caller goes on as if it had worked (`chat_places._save_session_pointer`,
+    `turn.store.session_inputs.abandon_opening`)."""
+    owner = await ProjectRepository(session).get(place.project_id)
+    if owner is not None:
+        named = await AgentInstanceService(session).for_seat_handle(owner, seat)
+        if named is not None:
+            return named
+    return await _agent_at(session, place)

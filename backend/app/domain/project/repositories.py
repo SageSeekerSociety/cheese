@@ -699,9 +699,15 @@ class ProjectGitInstallationRepository:
         repo: str,
         repository_id: int | None,
         account: str,
+        moved_from_forgejo: bool = False,
     ) -> ProjectGitInstallation:
         """Bind `repo` (through `installation_id`) to `project_id`, replacing
         any prior repo the project was connected to.
+
+        A project hosted on the platform's Forgejo is switched only with
+        ``moved_from_forgejo``: its branches have been copied to `repo` first
+        (`github_migration.mirror_to_github`). Without it a Forgejo binding is
+        refused, so connecting GitHub never silently drops the hosted history.
 
         One installation may serve several projects — an org installs the App
         once and it covers many repos, and every token is minted for the one
@@ -720,7 +726,12 @@ class ProjectGitInstallationRepository:
             forge = ProjectForge(project_id=project_id)
             self._session.add(forge)
         elif forge.kind == "forgejo":
-            raise ConflictError(say("forgeMigrationUnavailable"))
+            if not moved_from_forgejo:
+                raise ConflictError(say("forgeMigrationUnavailable"))
+            # The Forgejo repository stays where it is, as the copy's source;
+            # its account's password is derived from the project id, so
+            # nothing is lost with this column.
+            forge.account_password = None
         forge.kind = "github_app"
         forge.repo = repo
         forge.url = f"https://github.com/{repo}.git"

@@ -30,7 +30,10 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task import progress
-from app.domain.room_task.lock_order import lock_task_for_change
+from app.domain.room_task.lock_order import (
+    lock_task_for_change,
+    lock_tasks_for_change,
+)
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -235,6 +238,28 @@ class TaskService:
         task.pr_number, task.pr_url = number, url
         await self._session.flush()
         return task
+
+    async def forget_open_prs(self, project_id: uuid.UUID) -> int:
+        """The project's repository moved to another forge: an open task's PR
+        lives on the one it left. Forget it, so the draft sweep
+        (`open_without_pr`) opens the task's PR again where the branch now is.
+        A closed task keeps its PR link as the record of where it landed.
+        Returns how many tasks were reset."""
+        ids = await self._session.scalars(
+            select(Task.id).where(
+                Task.status == TaskStatus.open,
+                Task.pr_number.is_not(None),
+                Task.room_id.in_(
+                    select(Topic.id).where(Topic.project_id == project_id)
+                ),
+            )
+        )
+        tasks = await lock_tasks_for_change(self._session, list(ids))
+        for task in tasks:
+            task.pr_number = task.pr_url = None
+            task.pr_checks_head = task.pr_checks_state = None
+        await self._session.flush()
+        return len(tasks)
 
     async def record_check(self, task: Task, *, ok: bool, detail: str) -> Task:
         task.last_check_at = datetime.now(UTC)
@@ -449,6 +474,17 @@ class TaskService:
         """
         return await self._repo.list_by_ids(task_ids)
 
+    @staticmethod
+    def is_closed(task: Task) -> bool:
+        return task.status == TaskStatus.closed
+
+    async def add_asker(self, task: Task, handle: str) -> None:
+        """Keep ``handle`` among the members a request was passed on to
+        ``task`` for (`Task.asker_handles`)."""
+        if handle not in (task.asker_handles or []):
+            task.asker_handles = [*(task.asker_handles or []), handle]
+            await self._session.flush()
+
     async def set_credits(
         self,
         task: Task,
@@ -594,20 +630,28 @@ class TaskService:
     ) -> Task:
         """Record a task's branch; its executor creates the worktree on its machine.
 
+        A project with no repository, or whose repository has no default branch,
+        gives its tasks no branch: they are worked without a checkout, and one
+        opened after a repository is bound gets its branch then (`give_branch`).
+
         ``task_id`` is a 支线's id when the 支线 itself becomes the task: the
         conversation keeps its id, and with it everything said in it."""
         # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import default_branch
+        from app.domain.project.forge import default_branch_if_any
 
-        base = await default_branch(project_id, self._session)
+        base = await default_branch_if_any(project_id, self._session)
         if base_task_id is not None:
             parent = await self.require_in_room(room_id, base_task_id)
-            if parent.branch_name is None:
-                raise UnprocessableEntityError(say("pastTaskNoBranch"))
             # An open task's branch holds its step still to land; a closed
-            # task's landed, unless it never delivered.
-            if parent.status == TaskStatus.open or (
-                parent.accepted_at is None and parent.delivered_head is None
+            # task's landed, unless it never delivered. A task with no branch
+            # has nothing of its own to build on.
+            if (
+                base is not None
+                and parent.branch_name is not None
+                and (
+                    parent.status == TaskStatus.open
+                    or (parent.accepted_at is None and parent.delivered_head is None)
+                )
             ):
                 base = parent.branch_name
         if reviewer_handle is None:
@@ -631,7 +675,8 @@ class TaskService:
             contributor_handles=contributor_handles or [],
             flush=False,
         )
-        self._name_branch(task)
+        if base is not None:
+            self._name_branch(task)
         task.base_branch, task.base_task_id = base, base_task_id
         if flush:
             await self._session.flush()
@@ -643,7 +688,9 @@ class TaskService:
         opens a PR of its own. The machine moves the task's checkout onto it
         (`cheese worktree`), carrying what had not landed. ``base_branch``: the
         project's default branch, when the caller read it from the forge before
-        locking ``task``."""
+        locking ``task``. A task with no branch goes on where it is."""
+        if task.branch_name is None:
+            return
         # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
@@ -678,15 +725,20 @@ class TaskService:
         await self._session.flush()
         return task
 
-    async def give_branch(self, task: Task) -> None:
+    async def give_branch(self, task: Task) -> bool:
         """The branch a task that arrived without one is worked on, cut from the
-        project's default branch like a new task's."""
+        project's default branch like a new task's. False, and the task left as
+        it is, while the project has no default branch to cut it from."""
         # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import default_branch
+        from app.domain.project.forge import default_branch_if_any
 
-        task.base_branch = await default_branch(task.project_id, self._session)
+        base = await default_branch_if_any(task.project_id, self._session)
+        if base is None:
+            return False
+        task.base_branch = base
         self._name_branch(task)
         await self._session.flush()
+        return True
 
     @staticmethod
     def _name_branch(task: Task) -> None:

@@ -28,7 +28,10 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn, SessionState
 from app.domain.agent_instance.adapters import task_teammate
-from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.agent import (
+    record_seat_instruction,
+    record_task_instruction,
+)
 from app.domain.delivery.models import Delivery
 from app.domain.review import pr_poll
 from app.domain.room_task.closing import CLOSES_TASK
@@ -303,6 +306,8 @@ def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
                 service,
                 announce,
                 record_instruction=record_task_instruction,
+                record_seat=record_seat_instruction,
+                dispatch_pending=_dispatch_nothing,
                 task_teammate=task_teammate,
             )
         )
@@ -331,6 +336,8 @@ def test_the_write_up_deadline_does_not_stop_other_work_in_the_task(client):
                 service,
                 announce,
                 record_instruction=record_task_instruction,
+                record_seat=record_seat_instruction,
+                dispatch_pending=_dispatch_nothing,
                 task_teammate=task_teammate,
             )
         )
@@ -378,3 +385,7 @@ def test_a_turn_begun_after_the_close_is_left_to_answer(client):
         app.dependency_overrides[get_chat_service] = lambda: holder
         retire_topic(client, task_id)
         app.dependency_overrides.pop(get_chat_service, None)
+
+
+async def _dispatch_nothing() -> None:
+    """What a sweep hands on to an AI teammate is not this test's business."""

@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.domain.materials.services import MaterialService
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
+from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
@@ -91,3 +92,12 @@ async def get_space_topics_service(
     db=Depends(get_db),
 ) -> SpaceTagsService:
     return SpaceTagsService(session=db)
+
+
+async def get_space_learning_analysis_service(
+    db=Depends(get_db),
+) -> SpaceLearningAnalysisService:
+    """学情分析那块板自己的行（开关、知识点清单、告知卡记录）。AI 建议那一问不在
+    这里 —— 它要网关与账本，在 ``app.domain.space.knowledge_suggestions``，路由把
+    两边接起来。"""
+    return SpaceLearningAnalysisService.of(db)

@@ -50,6 +50,7 @@ from app.domain.review.ports import (
     Chat,
     DispatchPending,
     RecordInstruction,
+    RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
 )
@@ -258,6 +259,7 @@ async def poll_uncarded_task_prs(
             # task's earlier steps landed on PRs it no longer holds.
             or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
             Task.closing_since.is_(None),
+            Task.deploying_since.is_(None),
             Topic.status != TopicStatus.archived,
             # A card that is still waiting for its reviewer keeps the task in
             # this poll: its checks turning green is news to the line too.
@@ -389,6 +391,7 @@ async def poll_uncarded_task_prs(
                         or task.project_id != project
                         or (task.status != TaskStatus.open and task.delivered_head)
                         or task.closing_since is not None
+                        or task.deploying_since is not None
                     ):
                         return checked, merged, None
                     if await session.scalar(
@@ -588,7 +591,11 @@ async def _wake_when_checks_pass(
         task = await lock_task_for_change(session, task_id)
         if task is None or task.project_id != project_id or task.pr_number != number:
             return
-        if task.status is not TaskStatus.open or task.closing_since is not None:
+        if (
+            task.status is not TaskStatus.open
+            or task.closing_since is not None
+            or task.deploying_since is not None
+        ):
             if task is not None:
                 _set_checks(task, head, state)
                 await session.commit()
@@ -669,6 +676,8 @@ async def sweep_closings(
     announce: Announce,
     *,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
 ) -> dict:
@@ -676,7 +685,9 @@ async def sweep_closings(
     goes on to its next step (`task_landing.go_on_while_working`), and one
     past its write-up deadline is closed and its room told what was left
     undone (`room_task.closing.close_overdue`). ``machines`` removes a closed
-    task's checkouts on the machines holding it."""
+    task's checkouts on the machines holding it. What a close tells the AI
+    teammate that opened the task (`task_landing.tell_origin_ended`) is sent
+    once the closes are committed."""
     sessions = chat.session_factory
     gone_on = await go_on_while_working(
         sessions,
@@ -687,8 +698,12 @@ async def sweep_closings(
         closed = await close_overdue(session, chat, machines=machines)
         for overdue in closed:
             await tell_room_undelivered(session, overdue, announce=announce)
-            await tell_origin_ended(session, overdue.task, task_teammate=task_teammate)
+            await tell_origin_ended(
+                session, overdue.task, announce=announce, record_seat=record_seat
+            )
         await session.commit()
+    if closed:
+        await dispatch_pending()
     return {"gone_on": len(gone_on), "closed": len(closed)}
 
 

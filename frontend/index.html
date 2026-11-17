@@ -541,12 +541,14 @@
         right: 16px;
         width: 72px;
       }
+      /* 左边那一列方块栏 2026-11-16 拿掉了（Navigation/appNav.ts）：骨架也不再画它，
+         侧栏从窗口左缘开始。 */
       #sx-boot-skeleton .sx-rail {
         position: absolute;
         top: 32px;
         left: 0;
         bottom: 0;
-        display: flex !important;
+        display: none !important;
         flex-direction: column;
         align-items: center;
         width: 64px;
@@ -588,7 +590,7 @@
       #sx-boot-skeleton .sx-body {
         position: absolute;
         top: 32px;
-        left: 64px;
+        left: 0;
         right: 0;
         bottom: 0;
         display: flex !important;

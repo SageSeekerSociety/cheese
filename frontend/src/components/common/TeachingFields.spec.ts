@@ -2,7 +2,8 @@
 //   1. 方式四选一；题目那一层多一个「沿用上层设置」，底下给出空间那一份要求；
 //   2. 每改一格都把**整份**报回去；
 //   3. 人敲的字不要在回程里被改写（那个还没成形的空格）；
-//   4. 选上的技能在格子里带着它的说明。
+//   4. 选上的技能在格子里带着它的说明；
+//   5. 「涉及的知识点」只在题目那一层且这块板开着学情分析时出现。
 import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching } from '@/types'
 
@@ -154,6 +155,24 @@ describe('TeachingFields', () => {
     expect(view.getByText('spaces.teaching.mode.inherit')).toBeTruthy()
     expect(view.getByLabelText('spaces.teaching.fields.taskPrompt')).toBeTruthy()
     expect(view.getByTestId('teaching-space-prompt').textContent).toContain('先问他试过什么。')
+  })
+
+  it('「涉及的知识点」只在题目那一层且这块板开着学情分析时出现', async () => {
+    const spaceLevel = mount({ knowledgeEnabled: true })
+    expect(spaceLevel.queryByTestId('knowledge-points')).toBeNull()
+
+    cleanup()
+    const off = mount({ inherit: true, knowledgeEnabled: false })
+    expect(off.queryByTestId('knowledge-points')).toBeNull()
+
+    cleanup()
+    const shown = mount({
+      inherit: true,
+      knowledgeEnabled: true,
+      knowledgePoints: [],
+      knowledgePointList: [{ id: 91, name: '相关子查询', displayOrder: 1 }],
+    })
+    expect(shown.getByTestId('knowledge-points')).toBeTruthy()
   })
 
   it('人敲的字不在回程里被改写：还没成形的空格留着', async () => {

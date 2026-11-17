@@ -207,10 +207,20 @@ class AgentSession(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     # 这条对话最近一次被告知的项目现状，每一段一个摘要
-    # （`harness.prompt.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
+    # （`prompts.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
     # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过，或者告诉过的已经
     # 被一次上下文压缩换成了摘要（`forget_told`）：那一轮整份都说。
     told: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # 这条对话被放弃了：它长过模型的窗口，而把前面整理成摘要那次调用（压缩）
+    # 自己失败了。之后每一轮都会把同一段装不下的历史再送一遍、被同样拒绝，
+    # 所以平台把下一轮换成一条新会话（`abandon_opening`）。
+    #
+    # 单独一列，不是把 `resume_token` 置空：空已经是「这里从来没跑过」
+    # （`has_any`，现场栏和算力钉都读它），一个跑了几个小时的房间不会因为一段
+    # 对话被放弃就变成没跑过。读 `resume_token` 的地方见到这一列就当前者为空。
+    abandoned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # When the drain of this session's runner began: a runner another release
     # started, at work when this release took it over, is left to finish for
     # at most ``settings.runner_drain_s`` from here (``room.sessions.lifecycle``).

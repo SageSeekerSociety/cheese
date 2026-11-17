@@ -13,10 +13,10 @@ from app.core.domain_errors import (
 )
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.task import services as task_services
+from app.domain.task.review_service import TaskSubmissionReviewService
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
-    TaskSubmissionReviewService,
     TaskSubmissionService,
 )
 
@@ -492,6 +492,7 @@ class TestTaskSubmissionService:
             version=1,
             stage=0,
             package_revision=None,
+            code_sha="",
         )
         entry_repo.create_entries.assert_awaited_once()
 
@@ -548,6 +549,7 @@ class TestTaskSubmissionService:
             version=3,
             stage=0,
             package_revision=None,
+            code_sha="",
         )
 
     @pytest.mark.anyio

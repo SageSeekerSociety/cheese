@@ -339,6 +339,10 @@ export interface RoomTask {
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
+  /** 最后一步已合并、在等部署上线（后端 `review/deploy_wait.py`）；没在等是 null。 */
+  deploying_since?: string | null
+  /** 等部署时挡住它的那次主干 CI 红（run 链接）；主干没红是 null。 */
+  deploy_blocked_url?: string | null
   upgraded_from_block_id?: string | null
   /** 它出自的那句话：主线消息本身，或支线里的一条回复。 */
   source_block_id?: string | null
@@ -391,7 +395,14 @@ export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'ar
 export type TaskProgressState = 'working' | 'waiting' | 'blocked'
 
 type BuildingPhrase = 'running' | 'waiting' | 'started' | 'idle' | 'draft'
-type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
+type DeliveringPhrase =
+  | 'gate_running'
+  | 'awaiting_checks'
+  | 'fixing_checks'
+  | 'resolving_conflict'
+  | 'updating_branch'
+  | 'deploying'
+  | 'deploy_blocked'
 type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer' | 'blocked'
 type DonePhrase = 'accepted' | 'completed' | 'closed' | 'archived'
 export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
@@ -416,6 +427,8 @@ export interface ThreadCard {
   subject?: string | null
   /** 这张卡递给谁审阅（可能已经改由别人审阅，和任务建时定的那位不同）。 */
   reviewer?: string | null
+  /** 谁采纳或退回了这张卡；还没定、或自动合并的是空。 */
+  decided_by?: string | null
 }
 
 export interface TopicProgress {
@@ -812,6 +825,10 @@ export interface AgentConfiguration {
   body: string
   skills: string[]
   model?: string | null
+  /** 任务里使用的模型；null 同 `model`。 */
+  task_model?: string | null
+  /** 分身使用的模型；null 同 `model`。 */
+  subagent_model?: string | null
   effort?: 'low' | 'medium' | 'high' | 'max' | null
   compact_percent?: number | null
 }

@@ -284,8 +284,10 @@ def guide() -> str:
 
     if os.environ.get("DOC_WRITING_GUIDE"):
         return os.environ["DOC_WRITING_GUIDE"]
-    from app.domain.agent.harness.prompt import WRITING
     from app.domain.agent.skills import load_skills
+    from app.domain.prompts import piece
+
+    WRITING = piece("writing")
 
     # What a document agent gets: the writing rules, the guide, and the blocks.
     return "\n\n".join(

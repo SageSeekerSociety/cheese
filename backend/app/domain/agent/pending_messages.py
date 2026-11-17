@@ -12,8 +12,11 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.queries import DEFERRED_INPUT, queued_messages
-from app.domain.delivery.agent import redispatch_undelivered
+from app.domain.delivery.agent import dispatch_pending, redispatch_undelivered
 from app.domain.delivery.input_holds import seats_with_unfinished_input
+from app.domain.delivery.ledger import dedup_key
+from app.domain.delivery.mention import AFTER, HELD
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
 from app.domain.run_record.models import RunRecord
@@ -73,6 +76,55 @@ async def defer_message(session, block_id):
         block.meta = {**(block.meta or {}), DEFERRED_INPUT: True}
 
 
+async def release_in_turn(chat, runner, topic_id) -> int:
+    """Wake the teammates whose turn on a message has come: a message in a
+    channel's main line that names several wakes them in the order it names
+    them (`delivery.mention.record_mentions`), each once the one before it is
+    done with it — has taken it up and has no work running here. Called when
+    work in ``topic_id`` ends, however it ended. Returns how many it woke."""
+    ready = []
+    async with chat.session_factory() as session:
+        held = list(
+            await session.scalars(
+                select(Delivery).where(
+                    Delivery.conversation_id == topic_id,
+                    Delivery.payload[HELD].as_boolean().is_(True),
+                    Delivery.state == "pending",
+                )
+            )
+        )
+        for row in held:
+            before_seat = row.payload.get(AFTER)
+            try:
+                block_id = uuid.UUID(str(row.payload.get("blockId")))
+            except ValueError:
+                continue
+            if before_seat and chat._compute.work_in_flight(topic_id, before_seat):
+                continue
+            before = await session.scalar(
+                select(Delivery).where(
+                    Delivery.dedup_key == dedup_key(block_id, before_seat)
+                )
+            )
+            if before is not None:
+                # Named after another: that one has been sent its turn.
+                if before.state in ("pending", "claimed"):
+                    continue
+            else:
+                # The one the message woke itself has read it.
+                block = await session.get(Block, block_id)
+                if block is None or consumed_turn(block) is None:
+                    continue
+            row.payload = {**row.payload, HELD: False}
+            ready.append(row.id)
+        await session.commit()
+    if not ready:
+        return 0
+    return await dispatch_pending(
+        chat.session_factory, chat=chat, runner=runner, delivery_ids=ready
+    )
+
+
 def nudge_messages(chat, topic_id, runner=None):
     """Look for messages left waiting in ``topic_id``, in the background.
 
@@ -110,6 +162,10 @@ def nudge_messages(chat, topic_id, runner=None):
             await runner.resume_lost_messages(chat, topic_id=topic_id)
         except Exception:
             logger.exception("pending message recovery failed topic=%s", topic_id)
+        try:
+            await release_in_turn(chat, runner, topic_id)
+        except Exception:
+            logger.exception("ordered wake failed topic=%s", topic_id)
 
     task = asyncio.create_task(scan(), name=f"pending-messages:{topic_id}")
     runner._tasks.add(task)

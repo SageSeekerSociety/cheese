@@ -27,12 +27,14 @@ EXTRA_HEADERS = "extra_headers"
 UPSTREAM_HEADERS = "cheese_upstream_headers"
 SESSION_HEADER = "cheese_session_header"
 FREE = "cheese_free"
-# What one upstream model needs (no_explicit_cache.py, spend_cap.py), not
-# the model as people pick it: a new source on the same upstream model takes
-# them from a row that has them, one on another upstream does not.
+# What one upstream model needs (no_explicit_cache.py, cache_ttl.py,
+# spend_cap.py), not the model as people pick it: a new source on the same
+# upstream model takes them from a row that has them, one on another upstream
+# does not.
 NO_EXPLICIT_CACHE = "cheese_no_explicit_cache"
+CACHE_TTL = "cheese_cache_ttl"
 SPEND_CAP = "cheese_spend_cap_usd"
-_UPSTREAM_INFO_KEYS = frozenset({NO_EXPLICIT_CACHE, SPEND_CAP})
+_UPSTREAM_INFO_KEYS = frozenset({NO_EXPLICIT_CACHE, CACHE_TTL, SPEND_CAP})
 # Whether this deployment runs Anthropic's server web search
 # (deploy/gateway/web_search.py). It describes one server, not the model or
 # its upstream string: RUC's vLLM and a DeepSeek relay both call

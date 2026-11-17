@@ -35,7 +35,7 @@ const SOURCE = new URL(
   import.meta.url,
 ).href;
 
-export const NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话：";
+export const NOTICE = '<platform_notice type="harness">\n⟦slot:text⟧\n</platform_notice>';
 
 type Handler = (event: any, ctx: any) => any;
 

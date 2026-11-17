@@ -73,6 +73,25 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
+    # 最后一步合并了，项目的部署会回报平台：等上线，下一步在 CI 和部署手上。
+    (
+        "已合并，等部署",
+        task(deploying=True, accepted_at=NOW),
+        Column.delivering,
+        Delivering.deploying,
+    ),
+    # 等部署时主干 CI 红了：部署被挡住，仍在「检查中」，队友报的在做压不过它。
+    (
+        "已合并，主干红挡住部署",
+        task(
+            deploying=True,
+            deploy_blocked=True,
+            accepted_at=NOW,
+            progress=TaskProgress.working,
+        ),
+        Column.delivering,
+        Delivering.deploy_blocked,
+    ),
     # 芝士问了一个问题，下一步在人手上。
     (
         "芝士在等回答",

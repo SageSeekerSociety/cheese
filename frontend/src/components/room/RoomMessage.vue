@@ -10,6 +10,7 @@
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { TaskLine } from '../../lib/channelTasks'
 import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
@@ -38,6 +39,7 @@ import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 import MarkdownView from '../common/MarkdownView.vue'
 import UserAvatar from '../common/UserAvatar.vue'
+import TaskStateMark from '../task/TaskStateMark.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import FileBlockMenu from './FileBlockMenu.vue'
@@ -59,6 +61,10 @@ const props = defineProps<{
   /** 被回复的那一条；不在当前页时是随页带来的一行预览；没有就是 null。 */
   parent: Block | ReplyPreview | null
   parentName: string | null
+  /** 这条消息说它是关于哪件任务的：消息头上挂这件任务的标签，点开是那件任务。 */
+  taskTag?: TaskLine | null
+  /** 这是关于这件任务的最新一条：标签上再写状态词和在等谁。 */
+  taskTagFull?: boolean
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
   runStart: boolean
   /** 同一个人隔了一阵又开口：重新带上名字和时间，但只空一小档。 */
@@ -183,6 +189,12 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
+// 标签上「在等谁」只在任务等人审阅或回答时写：那一行在别的状态下说的是别的事。
+const tagWaits = computed(
+  () =>
+    !!props.taskTag?.state.line &&
+    (props.taskTag.state.status === 'in_review' || props.taskTag.state.status === 'awaiting_answer')
+)
 // 新手浮窗「预览」一站圈的是芝士摆出来的那份；人自己发的附件不算。
 const previewAnchor = computed(() => (props.block.kind === 'artifact' ? 'preview-card' : ''))
 const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
@@ -331,6 +343,21 @@ const askOpen = ref(false)
       <button v-if="parent" type="button" class="im-replied" @click="emit('jump', parent.id)">
         <v-icon size="12">mdi-reply</v-icon>
         {{ t('work.room.composer.replyTo', { name: parentName, text: replySnippet(parent, refs) }) }}
+      </button>
+      <!-- 关于哪件任务：和上面的回复那一行同一个样子，点开是那件任务。 -->
+      <button
+        v-if="taskTag"
+        type="button"
+        class="im-task-tag"
+        :aria-label="t('work.room.taskTag.open', { title: taskTag.title })"
+        @click="emit('open-card', taskTag.id)"
+      >
+        <TaskStateMark :state="taskTag.state" :size="14" icon-only />
+        <span class="im-task-tag__title">{{ taskTag.title }}</span>
+        <template v-if="taskTagFull">
+          <span class="im-task-tag__state">{{ taskTag.state.label }}</span>
+          <span v-if="tagWaits" class="im-task-tag__wait">{{ taskTag.state.line }}</span>
+        </template>
       </button>
       <!-- 一份文件：发来的附件（图片直接画成图），或芝士摆出来的东西。旁边一颗 ⋯ 收着
            这一份能做的事；置顶了的带一个小图钉。 -->
@@ -569,6 +596,39 @@ const askOpen = ref(false)
 }
 .im-replied:hover {
   color: var(--ink);
+}
+/* 关于哪件任务：和回复那一行同一种淡底小字条。 */
+.im-task-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-bottom: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.im-task-tag:hover {
+  color: var(--ink);
+}
+.im-task-tag__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.im-task-tag__state {
+  flex: none;
+  margin-left: 4px;
+}
+.im-task-tag__wait {
+  flex: none;
+  margin-left: 2px;
+  color: var(--faint);
 }
 .im-pending-state {
   position: absolute;

@@ -1,8 +1,8 @@
-// 项目默认模型：只吃 props、只往上发事件（A 级）。
+// 项目主模型：只吃 props、只往上发事件（A 级）。
 //
 // 取数与发请求在 `composables/useProjectDefaultModelSettings.ts`（那里另有一份行为测试）。
-// 编辑草稿（还没保存的下拉值、分身那一档）留在这里，是这一件自己一眼看得见的事 ——
-// 下面几条验的就是「选中 → 允许保存 → 报上去」和「回复默认」。
+// 编辑草稿（还没保存的下拉值）留在这里，是这一件自己一眼看得见的事 —— 下面几条验的就是
+// 「选中 → 允许保存 → 报上去」和「改回自动」。
 import type { ProjectDefaultModel } from '../api'
 
 import { createVuetify } from 'vuetify'
@@ -32,8 +32,12 @@ const choices = [
 function state(overrides: Partial<ProjectDefaultModel> = {}): ProjectDefaultModel {
   return {
     model: null,
-    subagent_model: null,
     deployment_default: 'sonnet',
+    automatic: {
+      conversation: { id: 'kimi-k3', label: 'Kimi K3' },
+      task: { id: 'deepseek-flash', label: 'DeepSeek Flash' },
+      subagent: { id: 'deepseek-flash', label: 'DeepSeek Flash' },
+    },
     choices,
     ...overrides,
   }
@@ -60,12 +64,10 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('saves a separate native subagent model without changing the main selection', async () => {
+it('names the models automatic runs on when no main model is set', async () => {
   const view = mount(state())
-  await fireEvent.mouseDown(await view.findByRole('combobox', { name: '默认分身模型' }))
-  await fireEvent.click(await view.findByRole('option', { name: 'DeepSeek V4.1 Flash' }))
-  await fireEvent.click(view.getByRole('button', { name: '保存' }))
-  expect(view.emitted('save')).toEqual([[null, 'deepseek-flash']])
+  expect(await view.findByText('自动（对话 Kimi K3，任务 DeepSeek Flash，分身 DeepSeek Flash）')).toBeTruthy()
+  expect(view.queryByRole('button', { name: '改回自动' })).toBeNull()
 })
 
 it('reports a selected main model and shows it after a reload', async () => {
@@ -76,20 +78,28 @@ it('reports a selected main model and shows it after a reload', async () => {
   await fireEvent.click(await view.findByRole('option', { name: 'DeepSeek V4.1 Flash' }))
   await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
   await fireEvent.click(save)
-  expect(view.emitted('save')).toEqual([['deepseek-flash', null]])
+  expect(view.emitted('save')).toEqual([['deepseek-flash']])
   view.unmount()
 
   const reloaded = mount(state({ model: 'deepseek-flash' }))
   expect(await reloaded.findByText('DeepSeek V4.1 Flash')).toBeTruthy()
 })
 
-it('shows the deployment default while staging a reset and reports null', async () => {
+it('shows automatic while staging a reset and reports null', async () => {
   const view = mount(state({ model: 'deepseek-flash' }))
-  await fireEvent.click(await view.findByRole('button', { name: '恢复默认模型' }))
-  expect(await view.findByText('Claude Sonnet 5')).toBeTruthy()
+  await fireEvent.click(await view.findByRole('button', { name: '改回自动' }))
+  expect(await view.findByText(/^自动（对话 Kimi K3/)).toBeTruthy()
   expect(view.emitted('save')).toBeUndefined()
   await fireEvent.click(view.getByRole('button', { name: '保存' }))
-  expect(view.emitted('save')).toEqual([[null, null]])
+  expect(view.emitted('save')).toEqual([[null]])
+})
+
+it('chooses automatic from the list', async () => {
+  const view = mount(state({ model: 'deepseek-flash' }))
+  await fireEvent.mouseDown(await view.findByRole('combobox', { name: '项目主模型' }))
+  await fireEvent.click(await view.findByRole('option', { name: /^自动（对话 Kimi K3/ }))
+  await fireEvent.click(view.getByRole('button', { name: '保存' }))
+  expect(view.emitted('save')).toEqual([[null]])
 })
 
 it('names the plan a model needs and does not let it be chosen', async () => {
@@ -130,14 +140,14 @@ it('shows a saved model that is no longer offered as unavailable and lets anothe
   const save = await view.findByRole('button', { name: '保存' })
   expect(view.getByText('opus')).toBeTruthy()
   expect(view.queryByText('DeepSeek V4.1 Flash')).toBeNull()
-  expect(view.getByRole('button', { name: '恢复默认模型' })).toBeTruthy()
+  expect(view.getByRole('button', { name: '改回自动' })).toBeTruthy()
   await fireEvent.mouseDown(await view.findByRole('combobox', { name: '项目主模型' }))
   const saved = await view.findByRole('option', { name: /opus/ })
   expect(saved.textContent).toContain('已不可用')
   await fireEvent.click(await view.findByRole('option', { name: 'DeepSeek V4.1 Flash' }))
   await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
   await fireEvent.click(save)
-  expect(view.emitted('save')).toEqual([['deepseek-flash', null]])
+  expect(view.emitted('save')).toEqual([['deepseek-flash']])
 })
 
 it('shows the save receipt and the reason a save failed', async () => {

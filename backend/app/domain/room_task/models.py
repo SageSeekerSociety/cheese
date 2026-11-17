@@ -209,6 +209,12 @@ class Task(UuidPk, Timestamps, Base):
     contributor_handles: Mapped[list[str]] = mapped_column(
         JSON, default=list, server_default="[]", nullable=False
     )
+    # The members a request was passed on to this task for, besides whoever
+    # proposed it (`cheese_task(action=tell)`'s asker): each is told when the
+    # task is handed in or ends.
+    asker_handles: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
+    )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # ``created_by``'s own 芝士 opened it for them (`Actor.by_assistant`): the
     # task is theirs, and its page says their 芝士 made it.
@@ -328,6 +334,16 @@ class Task(UuidPk, Timestamps, Base):
     closing_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Its last delivery merged in a project whose deploy reports back
+    # (`review.deploy_wait`): the task waits, open, until a deploy that
+    # contains the merge reaches dev, and only then is it written up
+    # (`closing_since`). No deadline: a main that stays red keeps it waiting.
+    deploying_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # While it waits: the run of main's Required CI that failed after the
+    # merge and holds the deploy back; NULL when nothing red is known.
+    deploy_blocked_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # When the thread was collapsed. `status == closed` is the flag; this is
     # when — kept apart so "closed" needs no timestamp to be true.
     closed_at: Mapped[datetime | None] = mapped_column(

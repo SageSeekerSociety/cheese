@@ -518,24 +518,45 @@ async def branch_head(
     return data["commit"]["id" if binding.kind == "forgejo" else "sha"]
 
 
-async def default_branch(project_id: uuid.UUID, session: AsyncSession) -> str:
+async def default_branch_if_any(
+    project_id: uuid.UUID, session: AsyncSession
+) -> str | None:
+    """The project's default branch, or None when it has none to cut a task's
+    branch from: no repository is bound, or the repository answered without a
+    default branch. A forge that cannot be reached raises: that passes, and a
+    task made meanwhile must not lose its branch for good."""
     binding = await binding_for_project(project_id, session)
     if binding is None:
-        # ponytail: 本地没有 forgejo（`FORGEJO_URL` 空）时项目没有仓库绑定，而
-        # `default_branch` 是建任务的第一句话（`room_task/services.open_thread`），
-        # 于是连一个任务都建不出来（503「项目没有代码仓库」），agent 也就拿不到
-        # 那台能跑命令的工作机（频道里只读作答）。开发档假定主干叫 main。
-        # 上限：分支不存在；推送、合并、交付在本地仍然一律不可用（各自另有出口）。
-        # 升级路径：配好 FORGEJO_URL 并建出仓库后，这条不再触发。
-        if settings.environment == "development" and not settings.forgejo_url:
-            return "main"
-        raise GatewayUnavailableError(say("forgeNoRepository"))
+        return None
     data = await repository_data(project_id, session)
     if not data or not data.get("default_branch"):
-        raise GatewayUnavailableError(say("forgeNoDefaultBranch"))
+        return None
     binding.default_branch = data["default_branch"]
     await session.flush()
     return binding.default_branch
+
+
+async def branch_commit(
+    project_id: uuid.UUID, session: AsyncSession, branch: str
+) -> str | None:
+    """``branch`` 现在指着的那个 commit（sha），分支不存在时 None。
+
+    提交时记下「这一版要评测的代码」（方案 §数据结构：提交改加提交时的代码版本号）。
+    就是 ``branch_head`` 那句话，只是读的人要的是「这一版的代码」，语义上比它清楚，
+    所以另起一个名字给它。平台托管的仓库才有；连了 GitHub 的项目这一步留空
+    （方案 §分步计划：第 1 步先只支持平台托管的仓库，另一件任务再补 GitHub 的只读
+    凭据）。"""
+    return await branch_head(project_id, session, branch)
+
+
+async def default_branch(project_id: uuid.UUID, session: AsyncSession) -> str:
+    """The project's default branch, for a caller that cannot go on without it."""
+    branch = await default_branch_if_any(project_id, session)
+    if branch is not None:
+        return branch
+    if await binding_for_project(project_id, session) is None:
+        raise GatewayUnavailableError(say("forgeNoRepository"))
+    raise GatewayUnavailableError(say("forgeNoDefaultBranch"))
 
 
 _ACCOUNT_PREFIX = "cheese-"

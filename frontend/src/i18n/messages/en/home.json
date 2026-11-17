@@ -7,9 +7,9 @@
     "reason": {
       "reviewer": "In review",
       "reporter": "Your request has been delivered",
-      "asked": "Needs answer",
+      "asked": "Awaiting answer",
       "checksFailed": "Checks failed",
-      "blocked": "Stuck",
+      "blocked": "Needs help",
       "bounced": "Returned",
       "decide": "Awaiting your decision",
       "read": "Change alert",

@@ -32,6 +32,9 @@ class ReactionToggleIn(BaseModel):
     """POST /blocks/{id}/reactions — Slack semantics: toggles (emoji, caller)."""
 
     emoji: str = Field(min_length=1, max_length=32)
+    # Only add, never take away: what an AI teammate's `chat_react` asks, so
+    # reacting twice to one message leaves the reaction rather than removing it.
+    add_only: bool = False
 
 
 class BlockOut(BaseModel):

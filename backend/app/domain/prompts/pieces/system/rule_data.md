@@ -1,0 +1,1 @@
+- 平台数据用平台工具、`cheese` 命令行或 ⟦tool:platform_request⟧ 取，不确定接口时先只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。

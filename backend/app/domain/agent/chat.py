@@ -102,7 +102,6 @@ from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.session_turn_events import SessionTurnEvents
-from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 from app.domain.agent.turn.intake.assistant import AssistantMessages
 from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.agent.turn.intake.hooks import HookEvents
@@ -201,8 +200,6 @@ class ChatService(
             memory=self._memory.sync,
             quiet=self.prewarm.nudge,
         )
-        # Keep the publication contract present before native skills are invoked.
-        self._skills = NATIVE_CHAT_GUIDANCE
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
@@ -233,7 +230,6 @@ class ChatService(
                 compute=self._compute,
                 memory=self._memory,
                 base_prompt=self._base_prompt,
-                skills=self._skills,
                 model_options=self._model_kwargs,
                 refuse=self._refuse_turn,
                 live=self.live,
@@ -423,6 +419,8 @@ class ChatService(
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
+        task_id: uuid.UUID | None = None,
+        default_effort: str | None = None,
     ) -> tuple[dict, str]:
         """Resolve a turn's model, model environment and usage route
         (gateway_usage.py)."""
@@ -436,6 +434,8 @@ class ChatService(
             topic_id,
             agent=agent,
             acting_agent=acting_agent,
+            task_id=task_id,
+            default_effort=default_effort,
         )
 
     async def project_gateway_key(

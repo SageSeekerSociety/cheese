@@ -5,6 +5,7 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
+from app.domain.task import usage_score
 from app.domain.task.indexed_rows import SWEEPABLE_ROWS
 from app.domain.task.models import TaskMembership, TaskStage
 from app.domain.task.submission_state import (
@@ -115,4 +116,10 @@ async def sweep_expired_deadlines(sessions: SessionFactory) -> dict[str, int]:
     So a clock has to be what calls this.
     """
     async with sessions() as session:
-        return {"failed": await check_and_fail_expired_deadlines(session)}
+        failed = await check_and_fail_expired_deadlines(session)
+    # 排名给分的额度用量在题目截止时定稿（`usage_score`）：同一个钟顺手把暂定分换掉。
+    async with sessions() as session:
+        finalized = await usage_score.finalize_ranked_reviews(session)
+        if finalized:
+            await session.commit()
+    return {"failed": failed, "usage_finalized": finalized}
