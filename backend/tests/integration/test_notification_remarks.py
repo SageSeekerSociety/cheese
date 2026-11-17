@@ -30,6 +30,10 @@ async def _seed_mention(
         finalized=True,
         metadata_payload={
             "content": f"<@{ALICE_HANDLE}> asked <@{MENTIONED_PUBLIC}>",
+            # The written snapshot beside the handle (`authorName`): the page has
+            # to relabel it too, or the title keeps the old name.
+            "author": MENTIONED_PUBLIC,
+            "authorName": MENTIONED_PUBLIC,
             "mentioner": {"type": "user", "id": str(actor_id)},
         },
         created_at=now,
@@ -74,14 +78,16 @@ def test_a_remark_renames_people_only_in_the_inbox_of_the_person_who_set_it(
         headers={"Authorization": f"Bearer {reader.token}"},
     )
     assert mine.status_code == 200, mine.text
-    content = mine.json()["data"]["notification"]["contextMetadata"]["content"]
-    assert REMARK in content, content
+    mine_meta = mine.json()["data"]["notification"]["contextMetadata"]
+    assert REMARK in mine_meta["content"], mine_meta
+    assert mine_meta["authorName"] == REMARK, mine_meta
 
     theirs = api_client.get(
         f"/notifications/{bystander_view_id}",
         headers={"Authorization": f"Bearer {bystander.token}"},
     )
     assert theirs.status_code == 200, theirs.text
-    stranger = theirs.json()["data"]["notification"]["contextMetadata"]["content"]
-    assert REMARK not in stranger, stranger
-    assert MENTIONED_PUBLIC in stranger, stranger
+    stranger_meta = theirs.json()["data"]["notification"]["contextMetadata"]
+    assert REMARK not in stranger_meta["content"], stranger_meta
+    assert MENTIONED_PUBLIC in stranger_meta["content"], stranger_meta
+    assert stranger_meta["authorName"] == MENTIONED_PUBLIC, stranger_meta

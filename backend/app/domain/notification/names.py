@@ -50,6 +50,37 @@ def with_names(value: Any, names: Mapping[str, str]) -> Any:
     return value
 
 
+_NAME_SUFFIX = "Name"
+
+
+def with_snapshot_names(value: Any, names: Mapping[str, str]) -> Any:
+    """Also relabel the ``<key>Name`` snapshot written beside a ``<key>`` handle.
+
+    A written payload keeps a name as it was at the time (``authorName`` beside
+    ``author``), because the email and the push are rendered without a database.
+    On the page, though, the reader's own remark has to win over that snapshot —
+    otherwise a notification about someone they renamed still shows the old
+    label. Only a sibling string that is itself a known handle is swapped, so
+    ``teamName`` (whose ``team`` is an entity reference, not a string) is left
+    alone.
+    """
+    if isinstance(value, Mapping):
+        renamed: dict[Any, Any] = {}
+        for key, nested in value.items():
+            if isinstance(key, str) and key.endswith(_NAME_SUFFIX):
+                source = value.get(key[: -len(_NAME_SUFFIX)])
+                if isinstance(source, str) and source in names:
+                    renamed[key] = names[source]
+                    continue
+            renamed[key] = with_snapshot_names(nested, names)
+        return renamed
+    if isinstance(value, list):
+        return [with_snapshot_names(nested, names) for nested in value]
+    if isinstance(value, tuple):
+        return tuple(with_snapshot_names(nested, names) for nested in value)
+    return value
+
+
 async def names_for(
     session: AsyncSession,
     *values: Any,
