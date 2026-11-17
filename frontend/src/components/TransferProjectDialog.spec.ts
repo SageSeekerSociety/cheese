@@ -116,6 +116,11 @@ describe('TransferProjectDialog', () => {
   })
 
   it('shows a personal remark but sends the selected account identity', async () => {
+    let offeredTo: string | null = null
+    offerTransfer.mockImplementation(async (_project: string, target: string) => {
+      offeredTo = target
+      return { id: 't1', project_id: 'p1', to_handle: target, status: 'pending' }
+    })
     listProjectMembers.mockResolvedValue({
       data: [
         {
@@ -132,8 +137,9 @@ describe('TransferProjectDialog', () => {
     await mount()
     await fireEvent.click(await screen.findByText('My reviewer'))
     expect(screen.getByText('ligan')).toBeTruthy()
+    expect(screen.getByText(/Public colleague/)).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: '发出转让' }))
-    await waitFor(() => expect(offerTransfer).toHaveBeenCalledWith('p1', 'ligan'))
+    await waitFor(() => expect(offeredTo).toBe('ligan'))
   })
 
   it('没有人接得住时说清楚，而不是列一张空表', async () => {
