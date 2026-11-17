@@ -1,5 +1,6 @@
 {
   "askAlreadyAnswered": "这道题已经有人回答过了",
+  "askNothingPending": "这道题上没有等你确认的回复",
   "askAlreadyClosed": "这道题已经收起了，不再等人回答",
   "askAlreadySkipped": "你已经跳过了这道题",
   "askAnswerNotInGroup": "这些题不属于同一组：{ids}",
