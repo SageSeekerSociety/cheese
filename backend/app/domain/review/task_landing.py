@@ -167,7 +167,14 @@ async def delivery_landed(
                 session, task, EVENT_TASK_LANDED, line, announce=announce
             )
         else:
-            await tell_origin(session, task, line, task_teammate=task_teammate)
+            # Said by the teammate, it names nobody: a name in its words would
+            # be an @ that notifies.
+            await tell_origin(
+                session,
+                task,
+                await _step_landed(session, task, None),
+                task_teammate=task_teammate,
+            )
     return True
 
 
@@ -249,7 +256,7 @@ async def deploy_landed(
         await tell_origin(
             session,
             task,
-            await _step_landed(session, task, task.accepted_by),
+            await _step_landed(session, task, None),
             task_teammate=task_teammate,
         )
     else:
@@ -263,8 +270,8 @@ async def deploy_landed(
 async def _step_landed(session: AsyncSession, task: Task, by: str | None) -> str:
     """The origin's line for a step that landed with the task going on: who
     adopted it (``by``, named by `_adopted_by`), as one line with no PR number
-    in it. A merge nobody adopted here (a PR merged on the forge by hand) says
-    only that it landed."""
+    in it. With nobody to name — a PR merged on the forge by hand, or a line
+    the teammate says itself — it says only that it landed."""
     who = await _adopted_by(session, task, by)
     if who is not None:
         return say("taskAdopted", who=who, title=said_title(task))
@@ -543,7 +550,7 @@ async def _go_on_if_asked(
         await tell_origin(
             session,
             task,
-            await _step_landed(session, task, task.accepted_by),
+            await _step_landed(session, task, None),
             task_teammate=task_teammate,
         )
         await session.commit()
