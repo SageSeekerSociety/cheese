@@ -113,7 +113,7 @@ describe('askGroups', () => {
     expect(askAsksViewer(ask('a', 'g', { asked: ['alice'] }), null)).toBe(true)
   })
 
-  it('撤回的题整行不画；过期的还画（它还能答）', () => {
+  it('撤回只认撤回那一条；过期的题不算（它还能答）', () => {
     const withdrawn = ask('a', 'g', {
       answer_log: [{ kind: 'withdrawn', by: 'cheese', at: '2026-10-22T00:01:00Z' }],
     })

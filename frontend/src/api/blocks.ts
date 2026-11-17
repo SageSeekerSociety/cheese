@@ -80,7 +80,7 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
 // Skip a question asked with quick replies: the person it waits on will not
 // answer it. Nothing is said in the room; the question records the skip, stops
 // waiting on him, and the agent that asked is told. Only someone the question
-// waits on can; anyone else is refused. `withdrawAnswer` undoes it. Returns the
+// waits on can; anyone else is refused. `unskipQuestion` undoes it. Returns the
 // question as the room now records it, which every client also gets as a
 // `block_updated` frame.
 export function skipQuestion(questionId: string): Promise<Block> {
@@ -91,15 +91,16 @@ export function skipQuestion(questionId: string): Promise<Block> {
   )
 }
 
-// Take back your own answer to a question asked with quick replies, or your
-// skip of it, so the question waits again and its options come back. `blockId` is the QUESTION —
-// the answer is an ordinary message, and what comes off is the line it left on
-// the question. Only whoever answered it can; anyone else is refused. Returns
-// the question as the room now records it, which every client also gets as a
-// `block_updated` frame.
-export function withdrawAnswer(questionId: string): Promise<Block> {
+// Take back your own skip of a question asked with quick replies, so it waits
+// on you again and its options come back to you. A skip and nothing else:
+// an answer stands, and a question that has one refuses this (`askAnswerIsFinal`
+// — see the route in `backend/app/api/routes/blocks.py`). `questionId` is the
+// QUESTION; the skip is recorded on it. Only the person who skipped can; anyone
+// else is refused. Returns the question as the room now records it, which every
+// client also gets as a `block_updated` frame.
+export function unskipQuestion(questionId: string): Promise<Block> {
   return changesAwaiting(
-    request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
+    request<Block>(`/blocks/${encodeURIComponent(questionId)}/skip`, {
       method: 'DELETE',
     })
   )

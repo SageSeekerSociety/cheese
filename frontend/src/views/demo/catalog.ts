@@ -41,6 +41,7 @@ import { PANEL_VIEW_ENTRIES } from './catalog/panel-views'
 import { TEAM_DOCS_ENTRIES } from './catalog/team-docs'
 import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ADMIN_ENTRIES } from './catalogAdmin'
+import { ASK_ENTRIES } from './catalogAsk'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
 import { CANVAS_ENTRIES } from './catalogCanvas'
@@ -124,6 +125,9 @@ export const CATALOG: CatalogEntry[] = [
   ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
+  // 提问卡那三件（`AskFoldLine`、`AskQuickReplies`、`AskGroupCard`）在自己的文件里：
+  // `catalogAsk.ts`——从 `catalogRoom.ts` 拆出来，那份顶着一千行的上限。
+  ...ASK_ENTRIES,
   // 任务状态那一组（同一种状态在任务卡、页头、侧栏、全部任务、等你处理里各画一遍）：
   // `catalogTaskState.ts`。
   ...TASK_STATE_ENTRIES,

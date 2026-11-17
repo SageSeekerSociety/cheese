@@ -32,7 +32,12 @@ export function askMultiSelect(block: Block): boolean {
   return (block.meta as Record<string, unknown> | null)?.multi_select === true
 }
 
-/** 提问方把它收回去了：这道题在频道里整行不画（它已经不等人答，也没人答得上）。 */
+/**
+ * 提问方把它收回去了：这道题不等人答，也没人答得上。
+ *
+ * 它在频道里仍然占一行，只是收着（`AskFoldLine` 写「芝士撤回了」）：问过这一句是房间
+ * 里的事实，整行不画，看着像从没问过。收起来的那一行不摆选项。
+ */
 export function askWithdrawn(block: Block): boolean {
   return askClosedByAsker(block) === 'withdrawn'
 }

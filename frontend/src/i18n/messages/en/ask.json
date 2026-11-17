@@ -4,6 +4,7 @@
     "titleBare": "Asks you {n} questions",
     "questionOf": "Question {n} of {total}",
     "multiHint": "Pick any number; click again to clear",
+    "skipped": "You skipped this question; it no longer waits on you",
     "otherLabel": "Other answer",
     "previous": "Previous",
     "next": "Next",
@@ -20,6 +21,7 @@
     "listSeparator": ", "
   },
   "fold": {
+    "withdrawn": "The teammate took it back",
     "whoNamed": "{asker} asks {people}",
     "whoBare": "Asks {people}",
     "everyone": "everyone",
@@ -40,11 +42,6 @@
     "closed": "Closed — no longer waiting for an answer",
     "withdrawn": "The teammate took this question back",
     "expired": "This question is past its deadline — you can still answer",
-    "withdraw": "Withdraw",
-    "withdrawAria": "Withdraw your answer “{text}”",
-    "withdrawTitle": "Withdraw this answer?",
-    "withdrawBody": "The question goes back to waiting for a reply, and anyone can pick again. The message you sent stays in the room.",
-    "withdrawFailed": "Could not withdraw it. Try again later",
     "skip": "Skip this question",
     "skipped": "{name}: skipped",
     "undoSkip": "Undo",

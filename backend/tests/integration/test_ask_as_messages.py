@@ -7,11 +7,10 @@ agent's next turn. No turn is held open across the wait, so neither a backend
 handover nor a conversation that ended in between can stand between the answer
 and the agent.
 
-A question takes one answer. Whoever gave it can take it back
-(`DELETE /blocks/{id}/answer`), which leaves the question unanswered — and the
-message the answer was said in, which is the answerer's own — and starts the
-asking agent's turn again, because the turn it was on was decided on an answer
-that no longer counts.
+A question takes one answer, and an answer is final: it is what the answerer
+told the agent that asked, it is recorded on the question for everyone, and the
+message it was said in is in the room. There is no route that takes one back —
+a misclick is corrected by saying so, and the agent decides what to do about it.
 
 Real HTTP, PostgreSQL and the room's runner; the session is the scripted stub.
 """
@@ -29,7 +28,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.main import app
 from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
-from tests.conftest import StubChannel, seed_user, stub_compute, wait_work_idle
+from tests.conftest import StubChannel, seed_user, stub_compute
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -425,111 +424,42 @@ def test_the_notice_stays_open_until_every_question_of_the_call_is_answered(
     assert notice()["read"] is True
 
 
-def _withdraw(client, question_id, *, by="alice"):
-    return client.delete(
-        f"/blocks/{question_id}/answer", headers=session_auth_headers(by)
-    )
-
-
-def _withdraw_and_settle(client, question_id, *, by="alice"):
-    """Take an answer back and wait out the turn the withdrawal starts.
-
-    What a withdrawal does to the agent is not done by the request: it records a
-    delivery, and the asking agent's turn is started from that. Waiting on the
-    room's turns is not enough — the turn is not in the room yet at the moment
-    this answers — so what this waits for is the work it put behind itself."""
-    response = _withdraw(client, question_id, by=by)
-    wait_work_idle()
-    return response
-
-
-def _next_update(ws) -> dict:
-    while True:
-        frame = ws.receive_json()
-        if frame["type"] == "block_updated":
-            return frame["block"]
-
-
-def test_the_answerer_takes_back_their_answer_and_the_agent_runs_again(
-    client, stub_hooks, monkeypatch
-):
-    """A misclick is undone: the question is unanswered again, and the turn that
-    had been decided on that answer is told it is gone."""
+def test_an_answer_is_final(client, stub_hooks, monkeypatch):
+    """There is no route that takes an answer back. Answering is what you told
+    the agent that asked; the question records it for everyone, and the message
+    you sent it in is in the room. A misclick is corrected by saying so, not by
+    erasing the record."""
     _, room = _room(client)
     question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
     _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
     prompts = _prompts(stub_hooks, monkeypatch)
 
-    with room_socket(client, room, "alice") as ws:
-        response = _withdraw_and_settle(client, question["id"])
-        assert response.status_code == 200, response.text
-        seen = _next_update(ws)
+    gone = client.delete(
+        f"/blocks/{question['id']}/answer", headers=session_auth_headers("alice")
+    )
 
-    assert seen["id"] == question["id"] and seen["meta"]["answer_log"] == []
-    assert _block(client, room, question["id"])["meta"]["answer_log"] == []
-    assert len(prompts) == 1 and "撤回" in prompts[0]
-
-
-def test_only_the_answerer_takes_the_answer_back(client, stub_hooks, monkeypatch):
-    pid, room = _room(client)
-    seed_user(client, "bob")
-    join_project_team(client, pid, "bob")
-    question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
-    _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
-    prompts = _prompts(stub_hooks, monkeypatch)
-
-    refused = _withdraw_and_settle(client, question["id"], by="bob")
-
-    assert refused.status_code == 403, refused.text
+    assert gone.status_code in (404, 405), gone.text
     (answer,) = _block(client, room, question["id"])["meta"]["answer_log"]
-    assert answer["by"] == "alice"
+    assert (answer["by"], answer["option"]) == ("alice", "按部门")
+    # Nobody is woken to be told the answer is gone: it is not.
     assert prompts == []
 
 
-def test_a_question_you_never_answered_has_nothing_to_take_back(
+def test_the_reply_an_answer_was_said_in_is_the_answerer_s_own(
     client, stub_hooks, monkeypatch
 ):
-    _, room = _room(client)
-    question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
-
-    refused = _withdraw(client, question["id"])
-
-    assert refused.status_code == 403, refused.text
-
-
-def test_taking_back_an_answer_leaves_the_message_it_was_said_in(
-    client, stub_hooks, monkeypatch
-):
-    """A question records the answer; the message the answerer sent is his own
-    words, and taking the answer back does not unsay them."""
+    """The reply stays in the room, as it always did — the question is what
+    records it, and nothing rewrites either."""
     _, room = _room(client)
     question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
     reply = _say(
         client, room, "alice", {"content": "按部门", "reply_to": question["id"]}
     )
 
-    _withdraw_and_settle(client, question["id"])
+    client.delete(
+        f"/blocks/{question['id']}/answer", headers=session_auth_headers("alice")
+    )
 
     kept = _block(client, room, reply["id"])
     assert kept["content"] == "按部门" and kept["reply_to"] == question["id"]
-
-
-def test_the_question_takes_an_answer_again_after_one_is_taken_back(
-    client, stub_hooks, monkeypatch
-):
-    pid, room = _room(client)
-    seed_user(client, "bob")
-    join_project_team(client, pid, "bob")
-    question = _ask_in_a_turn(
-        client, stub_hooks, monkeypatch, room, to=["alice", "bob"]
-    )
-    _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
-
-    _withdraw_and_settle(client, question["id"])
-    prompts = _prompts(stub_hooks, monkeypatch)
-
-    _say(client, room, "bob", {"content": "按项目", "reply_to": question["id"]})
-
-    answers = _block(client, room, question["id"])["meta"]["answer_log"]
-    assert [(a["by"], a["option"]) for a in answers] == [("bob", "按项目")]
-    assert len(prompts) == 1 and "按项目" in prompts[0]
+    assert _block(client, room, question["id"])["meta"]["answer_log"] != []

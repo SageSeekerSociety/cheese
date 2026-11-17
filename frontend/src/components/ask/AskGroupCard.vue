@@ -43,23 +43,23 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 把整组答案交上去；请求由面板发，组件不取数据。 */
   (e: 'submit', payload: { questionId: string; answers: Record<string, GroupAnswer> }): void
+  /** 这一道我不答（题签上那个叉）；请求由面板发。 */
+  (e: 'skip', block: Block): void
 }>()
 
 type Draft = { options: string[]; note: string }
 
 const questions = computed(() => props.blocks)
 const total = computed(() => questions.value.length)
-/** 别人答过的题（一道题只收一个人的回答；自己答过的那几条不算，改得动）。 */
-const answeredByOthers = computed(() =>
-  questions.value.some((q) => askAnswers(q).some((a) => !a.skipped && a.by !== props.viewer))
-)
 /** 我自己答过了没有——「已提交」看的是这个，不是本地的一个标记。 */
 const submitted = computed(() =>
   questions.value.some((q) => askAnswers(q).some((a) => !a.skipped && a.by === props.viewer))
 )
+/** 整张卡还开着没有：只要还有一道题等我答，就还开着。逐题判（`answerable`）——
+ *  一道题被人答掉或被跳过，同组别的题还各自等各自的回答。 */
 const canAnswer = computed(() => {
-  if (props.closed || answeredByOthers.value) return false
-  return questions.value.some((q) => mayAnswer(q))
+  if (props.closed) return false
+  return questions.value.some((q) => answerable(q))
 })
 
 function mayAnswer(block: Block): boolean {
@@ -68,6 +68,34 @@ function mayAnswer(block: Block): boolean {
   const meta = (block.meta ?? {}) as { asked?: string[]; asked_all?: boolean }
   const asked = meta.asked ?? []
   return !!props.viewer && (asked.length === 0 || !!meta.asked_all || asked.includes(props.viewer))
+}
+
+/** 我在这道题上跳过了：题签上打一横，那一屏上说一句「已跳过」。 */
+function skippedByMe(block: Block): boolean {
+  return askAnswers(block).some((a) => a.skipped && a.by === props.viewer)
+}
+
+/** 这道题现在能答：问到我了、没被收回去、也没人答过、我自己也没跳过它。
+ *
+ *  逐题判，不整组判：一道题被答掉或被跳过，不该把同组别的题一起变灰 —— 它们还各自
+ *  等各自的回答（`canAnswer` 只管整张卡关没关）。 */
+function answerable(block: Block): boolean {
+  if (props.closed || !mayAnswer(block)) return false
+  if (askClosedByAsker(block) === 'withdrawn') return false
+  if (skippedByMe(block)) return false
+  return !askAnswers(block).some((a) => !a.skipped)
+}
+
+/** 这道题的叉还摆着：它可以跳过（题目本身能答，我还没跳）。 */
+function maySkip(block: Block): boolean {
+  return answerable(block)
+}
+
+/** 提问方把这道题收起来了（撤回或过期）：这一屏上说一句。撤回的那道不再摆选项，
+ *  过期的那道照摆 —— 晚到的回答照样算数，和单题卡上一样。 */
+function closedNote(block: Block): string {
+  const closed = askClosedByAsker(block)
+  return closed ? t(`ask.replies.${closed}`) : ''
 }
 
 /** 服务端已经记下的答案：题上的 `answer_log`。提交成没成看它，不看本地标记。 */
@@ -130,7 +158,10 @@ watch(
 )
 
 const answeredCount = computed(() => drafts.value.filter((d) => d.options.length > 0 || d.note.trim()).length)
-const missing = computed(() => total.value - answeredCount.value)
+/** 还缺几道：撤回的那几道不再等人答，不算缺（和 `allAnswered` 同一条）。 */
+const missing = computed(
+  () => questions.value.filter((q) => askClosedByAsker(q) !== 'withdrawn').length - answeredCount.value
+)
 
 function draftFor(index: number): Draft {
   return drafts.value[index] ?? { options: [], note: '' }
@@ -140,7 +171,7 @@ function chosen(index: number, text: string): boolean {
 }
 
 function pick(index: number, text: string, multi: boolean) {
-  if (!canAnswer.value || !answering.value) return
+  if (!answering.value || !answerable(questions.value[index]!)) return
   touched.value = true
   const draft = draftFor(index)
   if (multi) {
@@ -213,8 +244,8 @@ function reopen() {
           :title="q.content"
           @click="(at = i), (reviewing = false)"
         >
-          <span v-if="askHeader(q) || answeredText(i)" class="ask-group__tab-no" aria-hidden="true">{{
-            answeredText(i) ? '✓' : i + 1
+          <span v-if="askHeader(q) || answeredText(i) || skippedByMe(q)" class="ask-group__tab-no" aria-hidden="true">{{
+            answeredText(i) ? '✓' : skippedByMe(q) ? '–' : i + 1
           }}</span>
           <span class="ask-group__tab-label">{{ askHeader(q) || i + 1 }}</span>
         </button>
@@ -232,11 +263,36 @@ function reopen() {
     <!-- 一题一屏 -->
     <template v-if="answering">
       <div class="ask-group__slab">
-        <p class="ask-group__step">{{ label(questions[at]!, at) }}</p>
-        <p class="ask-group__question">{{ questions[at]!.content }}</p>
+        <div class="ask-group__head">
+          <div class="ask-group__heading">
+            <p class="ask-group__step">{{ label(questions[at]!, at) }}</p>
+            <p class="ask-group__question">{{ questions[at]!.content }}</p>
+          </div>
+          <!-- 这一道我不答：整组一个叉会连别的题一起拒掉，所以叉长在题上。跳过的是
+               他自己那一条，同组别的题照旧等他答。 -->
+          <BaseButton
+            v-if="maySkip(questions[at]!)"
+            class="ask-group__skip"
+            kind="ghost"
+            size="sm"
+            icon="mdi-close"
+            :aria-label="t('ask.replies.skip')"
+            :title="t('ask.replies.skip')"
+            @click="emit('skip', questions[at]!)"
+          />
+        </div>
         <p v-if="askMultiSelect(questions[at]!)" class="ask-group__hint">{{ t('ask.group.multiHint') }}</p>
+        <!-- 收起来的那一道：说明一句。撤回的不再摆选项等人点，过期的照摆；同组别的题照旧。 -->
+        <p v-if="closedNote(questions[at]!)" class="ask-group__hint">{{ closedNote(questions[at]!) }}</p>
+        <p v-else-if="skippedByMe(questions[at]!)" class="ask-group__hint">{{ t('ask.group.skipped') }}</p>
 
-        <ul class="ask-group__opts">
+        <!-- 不答的那一道（被我跳过、或被提问方收回去）不再摆选项：跳过的题摆出来只是
+             一排点不动的灰行，和单题卡上一样收掉，那一屏上留一句说明。已经答过的题照
+             摆：答案要预填出来让人看得见自己答了什么。 -->
+        <ul
+          v-if="askClosedByAsker(questions[at]!) !== 'withdrawn' && !skippedByMe(questions[at]!)"
+          class="ask-group__opts"
+        >
           <li v-for="option in askOptions(questions[at]!) ?? []" :key="option.text" class="ask-group__opt">
             <label :class="{ 'is-picked': chosen(at, option.text) }">
               <input
@@ -244,7 +300,7 @@ function reopen() {
                 :name="`ask-group-${questions[at]!.id}`"
                 autocomplete="off"
                 :checked="chosen(at, option.text)"
-                :disabled="!canAnswer"
+                :disabled="!answerable(questions[at]!)"
                 @change="pick(at, option.text, askMultiSelect(questions[at]!))"
               />
               <span>
@@ -260,7 +316,7 @@ function reopen() {
               autocomplete="off"
               :placeholder="t('ask.group.otherLabel')"
               :aria-label="t('ask.group.otherLabel')"
-              :disabled="!canAnswer"
+              :disabled="!answerable(questions[at]!)"
               @input="typeNote(at, ($event.target as HTMLInputElement).value)"
             />
           </li>
@@ -424,6 +480,21 @@ function reopen() {
 
 .ask-group__slab {
   padding: 16px;
+}
+/* 题干与那个叉一行：叉靠右，题占满其余的宽度。 */
+.ask-group__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ask-group__heading {
+  flex: 1;
+  min-width: 0;
+}
+/* 叉：行内最安静的一枚按钮，不抢题干的注意力（它自己不描边、不加底色）。 */
+.ask-group__skip {
+  flex: none;
+  margin: -2px -4px 0 0;
 }
 .ask-group__step {
   margin: 0 0 4px;

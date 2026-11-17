@@ -17,7 +17,7 @@ import type { RefNames } from '../../lib/refChip'
 import { computed } from 'vue'
 
 import { t } from '../../i18n'
-import { askMultiSelect } from '../../lib/askGroups'
+import { askMultiSelect, askWithdrawn } from '../../lib/askGroups'
 import { askAnswers, replySnippet } from '../../lib/blockDisplay'
 
 const props = defineProps<{
@@ -50,8 +50,15 @@ const whom = computed(() => {
 /** 题目收成一行：题目就是那张卡的标题，长的截断，完整的在点开的卡里。 */
 const title = computed(() => replySnippet(first.value, props.refs, 80))
 
+/**
+ * 提问方把这一行收着的题全收回去了：这一行说的是「芝士撤回了」，不再问谁、也不再说
+ * 等没等到 —— 它已经不等人答了。题目照旧写在中间，点开看得到原样。
+ */
+const withdrawn = computed(() => props.blocks.length > 0 && props.blocks.every((b) => askWithdrawn(b)))
+
 /** 已经怎么样了：有人答过就写答案，没人答就写题还开着。 */
 const state = computed(() => {
+  if (withdrawn.value) return ''
   const answered = props.blocks.flatMap((b) => askAnswers(b)).filter((a) => !a.skipped)
   if (answered.length) {
     const one = answered[0]!
@@ -66,13 +73,15 @@ const multi = computed(() => askMultiSelect(first.value))
 
 <template>
   <button type="button" class="ask-fold" :aria-expanded="expanded" @click="emit('toggle')">
-    <span class="ask-fold__who">
+    <!-- 收回来的题不问谁了：它已经不等人答，「问谁」是句空话。 -->
+    <span v-if="!withdrawn" class="ask-fold__who">
       {{ asker ? t('ask.fold.whoNamed', { asker, people: whom }) : t('ask.fold.whoBare', { people: whom }) }}
     </span>
+    <span v-else class="ask-fold__withdrawn">{{ t('ask.fold.withdrawn') }}</span>
     <!-- 点开之后题目就在下面那张卡里，这一行不再说一遍。 -->
     <span v-if="!expanded" class="ask-fold__title">{{ title }}</span>
-    <span class="ask-fold__state">{{ state }}</span>
-    <span v-if="multi && count === 1" class="ask-fold__multi">{{ t('ask.fold.multi') }}</span>
+    <span v-if="state" class="ask-fold__state">{{ state }}</span>
+    <span v-if="multi && count === 1 && !withdrawn" class="ask-fold__multi">{{ t('ask.fold.multi') }}</span>
     <v-icon size="16" class="ask-fold__chevron">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
   </button>
 </template>
@@ -104,6 +113,7 @@ const multi = computed(() => askMultiSelect(first.value))
   outline-offset: 2px;
 }
 .ask-fold__who,
+.ask-fold__withdrawn,
 .ask-fold__state,
 .ask-fold__multi {
   flex: none;

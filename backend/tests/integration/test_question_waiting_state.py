@@ -205,9 +205,9 @@ def test_updating_a_task_keeps_the_callers_personal_question_marker(
     _still_waits(client, project, room, task, question)
 
 
-def test_taking_back_an_answer_reopens_the_question_in_every_task_view(
-    client, stub_hooks, monkeypatch
-):
+def test_an_answer_holds_in_every_task_view(client, stub_hooks, monkeypatch):
+    """An answer cannot be taken back, so the markers that cleared on it stay
+    cleared: no route puts the question back into anyone's list."""
     project, room, task = _setup(client)
     question = _ask(client, stub_hooks, monkeypatch, task)
     post_message(
@@ -217,7 +217,10 @@ def test_taking_back_an_answer_reopens_the_question_in_every_task_view(
     response = client.delete(
         f"/blocks/{question['id']}/answer", headers=session_auth_headers("alice")
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code in (404, 405), response.text
     wait_turn_idle(client, task)
 
-    _still_waits(client, project, room, task, question)
+    assert _question(client, task, question)["meta"]["answer_log"] != []
+    for row in _task_rows(client, project, room, task):
+        assert row["awaits_me"] is False
+        assert row["needs_my_action"] is False
