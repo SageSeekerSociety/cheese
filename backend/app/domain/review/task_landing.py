@@ -151,12 +151,14 @@ async def wait_for_deploy(session: AsyncSession, task: Task) -> bool:
     """``task``'s AI teammate closes it as done: in a project whose deploy
     reports back, whose last delivery was a merge, the task waits open for a
     deploy containing that merge and is written up then (`deploy_landed`).
-    Says whether it waits. A task being written up already waited, or never
-    had to; one with no merge delivered has nothing to deploy."""
+    Says whether it waits: one already waiting goes on waiting, and closing it
+    again does not skip its deploy. A task being written up already waited, or
+    never had to; one with no merge delivered has nothing to deploy."""
+    if task.status == TaskStatus.open and task.deploying_since is not None:
+        return True
     if (
         task.status != TaskStatus.open
         or task.closing_since is not None
-        or task.deploying_since is not None
         or task.delivered_head is None
         or not await waits_for_deploy(session, task.project_id)
     ):
@@ -685,13 +687,13 @@ def task_step_landed_while_working_prompt(
     not in the merge, and the task goes on."""
     start = (
         f"任务「{title}」的这次交付已经采纳并合并，"
-        "但交付之后你又开始了新的工作，它不在这次合并里，任务接着开着。"
+        "但交付之后你又开始了新的工作，它不在这次合并里，任务没有关闭，接着开着。"
         f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
         "再用 cheese_card(action=request) 把它作为下一步递交。"
         if has_checkout
         else f"任务「{title}」的这次交付已经采纳，"
-        "但交付之后你又开始了新的工作，任务接着开着。"
+        "但交付之后你又开始了新的工作，任务没有关闭，接着开着。"
         "手上这件做完后，用 cheese_card(action=request) 把它作为下一步递交。"
     )
     return (

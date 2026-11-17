@@ -1,11 +1,13 @@
-"""A task whose last step merged waits for the deploy that puts it live.
+"""A task its teammate judged done after a merge waits for the deploy that
+puts it live.
 
 #5277 merged at 19:49 on 2026-11-16 and its task closed on the spot, while
 main's Required CI went red and dev stayed on the release before it: the task
 read as done and live for hours when nothing of it had shipped. In a project
-whose deploy reports back, the merged task now stays open, reads as waiting
-for its deploy, shows the red run holding that back, and is written up only
-once a deploy containing the merge is live.
+whose deploy reports back, the task its teammate closes as done now stays
+open, reads as waiting for its deploy, shows the red run holding that back,
+and is written up only once a deploy containing the merge is live. A merge the
+task goes on from does not wait (`task_landing`).
 """
 
 import uuid
@@ -26,7 +28,8 @@ from tests.integration.test_a_task_delivers_in_steps import (
     app_world as _app_world_fixture,
 )
 from tests.integration.test_accept_pr import REPO
-from tests.landing import written_up
+from tests.integration.conftest import session_auth_headers, task_agent_headers
+from tests.landing import teammate_seat, written_up
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -102,25 +105,59 @@ def _task(client, task_id: str) -> dict:
     return client.get(f"/topics/{task_id}/task").json()["data"]
 
 
-def test_the_merged_last_step_waits_for_its_deploy_and_stays_open(
+def _teammate_closes(client, task_id: str) -> dict:
+    project_id, handle = teammate_seat(client, task_id)
+    closed = client.post(
+        f"/topics/{task_id}/close",
+        json={"conclusion": "做完了"},
+        headers=task_agent_headers(project_id, task_id, handle),
+    )
+    assert closed.status_code == 200, closed.text
+    return closed.json()["data"]
+
+
+def _judged_done(client, app_world) -> str:
+    """A step merged, and the task's teammate closed the task as done."""
+    task_id, _ = _accepted_step(client, app_world)
+    _teammate_closes(client, task_id)
+    return task_id
+
+
+def test_a_merged_step_does_not_wait_for_its_deploy(client, app_world, reports_back):
+    _reported(client)
+    task_id, _ = _accepted_step(client, app_world)
+
+    task = _task(client, task_id)
+    assert task["status"] == "open"
+    assert task["deploying_since"] is None
+    # Its teammate is told that a close of its own will wait for the deploy.
+    assert "平台会先等这次交付上线" in _told(client, task_id)
+
+
+def test_the_task_judged_done_waits_for_its_deploy_and_stays_open(
     client, app_world, reports_back
 ):
     _reported(client)
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task_id, _ = _accepted_step(client, app_world)
+
+    said = _teammate_closes(client, task_id)
+    assert said["deploying"] is True
+    # Closing it again while it waits does not skip the deploy.
+    assert _teammate_closes(client, task_id)["deploying"] is True
 
     task = _task(client, task_id)
     assert task["status"] == "open"
     assert task["deploying_since"] is not None
     assert task["presentation"] == {"column": "delivering", "phrase": "deploying"}
     # Nobody is told to write it up yet: nothing of it is live.
-    assert "最后一次交付" not in _told(client, task_id)
+    assert "写完总结就关闭任务" not in _told(client, task_id)
 
 
 def test_the_deploy_that_contains_the_merge_has_it_written_up(
     client, app_world, reports_back
 ):
     _reported(client)
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task_id = _judged_done(client, app_world)
 
     # A deploy of something else does not release it.
     assert _ship(client, [{"sha": "a1", "message": "fix: other (#6)"}]) == []
@@ -138,13 +175,16 @@ def test_the_deploy_that_contains_the_merge_has_it_written_up(
     assert "部署也已上线" in _told(client, task_id)
     # The same deploy reported twice changes nothing.
     assert _ship(client, [{"sha": "a2", "message": "feat: x (#7)"}]) == []
+    # Written up, its teammate closes it, and is not asked for grounds again.
+    written_up(client, task_id)
+    assert _task(client, task_id)["status"] == "closed"
 
 
 def test_a_deploy_of_later_commits_releases_a_merge_whose_report_was_missed(
     client, app_world, reports_back
 ):
     _reported(client)
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task_id = _judged_done(client, app_world)
     later = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
 
     released = _ship(
@@ -159,7 +199,7 @@ def test_a_red_main_shows_the_run_that_holds_the_deploy_back(
 ):
     _reported(client)
     _ci_run(client, 100, "success", ago=timedelta(hours=3))
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task_id = _judged_done(client, app_world)
     _ci_run(client, 101, "failure", ago=timedelta(seconds=-30))
 
     client.portal.call(lambda: deploy_wait.mark_blocked(client.test_factory))
@@ -180,30 +220,30 @@ def test_a_red_main_shows_the_run_that_holds_the_deploy_back(
     assert task["presentation"]["phrase"] == "deploying"
 
 
-def test_without_a_recent_deploy_report_the_task_is_written_up_on_merge(
+def test_without_a_recent_deploy_report_the_task_closes_when_judged_done(
     client, app_world, reports_back
 ):
     """An instance no deploy reports to leaves nothing waiting for one."""
     _reported(client, ago=timedelta(days=30))
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task_id = _judged_done(client, app_world)
 
     task = _task(client, task_id)
     assert task["deploying_since"] is None
-    assert task["presentation"]["phrase"] == "accepted"
-    assert "最后一次交付已经采纳并合并" in _told(client, task_id)
+    assert task["status"] == "closed"
+    assert "平台会先等这次交付上线" not in _told(client, task_id)
 
 
-def test_a_project_on_another_repository_is_written_up_on_merge(client, app_world):
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+def test_a_project_on_another_repository_closes_when_judged_done(client, app_world):
+    task_id = _judged_done(client, app_world)
 
     task = _task(client, task_id)
     assert task["deploying_since"] is None
-    assert task["presentation"]["phrase"] == "accepted"
+    assert task["status"] == "closed"
 
 
 def test_closing_a_waiting_task_by_hand_ends_the_wait(client, app_world, reports_back):
     _reported(client)
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task_id = _judged_done(client, app_world)
 
     _run(
         client,
@@ -211,7 +251,12 @@ def test_closing_a_waiting_task_by_hand_ends_the_wait(client, app_world, reports
         url=RED_RUN,
         id=uuid.UUID(str(task_id)),
     )
-    written_up(client, task_id)
+    closed = client.post(
+        f"/topics/{task_id}/close",
+        json={"conclusion": "先到这里"},
+        headers=session_auth_headers(_task(client, task_id)["owner_handle"]),
+    )
+    assert closed.status_code == 200, closed.text
     task = _task(client, task_id)
     assert task["status"] == "closed"
     assert task["deploying_since"] is None
