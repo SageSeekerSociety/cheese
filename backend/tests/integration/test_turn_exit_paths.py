@@ -106,9 +106,12 @@ async def _stored_session_id(factory, topic_id: str) -> str | None:
     A room's conversation belongs to the agent having it; these topics are all
     served by the project's implicit 芝士, so that is the key to read under."""
     async with factory() as s:
-        return await AgentSessionService(s).resume_token(
-            uuid.UUID(topic_id), CHEESE_HANDLE, harness=harness_for(None)
-        )
+        return (
+            await AgentSessionService(s).conversation(
+                uuid.UUID(topic_id), CHEESE_HANDLE, harness=harness_for(None)
+            )
+            or (None,)
+        )[0]
 
 
 def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
@@ -230,9 +233,9 @@ _CHILD = textwrap.dedent(
 
         for _ in range(500):
             async with factory() as s:
-                token = await AgentSessionService(s).resume_token(
+                token = (await AgentSessionService(s).conversation(
                     uuid.UUID(TOPIC), CHEESE_HANDLE, harness=harness_for(None)
-                )
+                ) or (None,))[0]
             if token == SID:
                 break
             await asyncio.sleep(0.01)

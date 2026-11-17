@@ -162,6 +162,7 @@ class SeatPrewarm:
                 launch.session,
                 system_prompt=launch.system_prompt,
                 resume_token=launch.resume_token,
+                retired_token=launch.retired_token,
                 model=launch.model,
                 env=launch.env,
                 acting=live.acting,

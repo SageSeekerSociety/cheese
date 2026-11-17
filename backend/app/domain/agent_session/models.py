@@ -41,7 +41,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, literal_column, text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    literal_column,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -220,6 +229,13 @@ class AgentSession(UuidPk, Timestamps, Base):
     # 对话被放弃就变成没跑过。读 `resume_token` 的地方见到这一列就当前者为空。
     abandoned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # 这条对话是在它这一类会话的第几版规矩下开的（`prompts.Profile.generation`）。
+    # 规矩换到和旧对话相矛盾的那一版时，旧对话不再续上，和被放弃的一样当作没有
+    # 可续的（`resume_token`）；下一条新对话记下时一起记下它的版次（`save`）。
+    # 版次开始记录之前的会话是 0。
+    generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
     )
     # When the drain of this session's runner began: a runner another release
     # started, at work when this release took it over, is left to finish for

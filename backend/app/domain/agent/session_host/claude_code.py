@@ -86,6 +86,11 @@ class ClaudeCodeDriver:
     def conversation(self, status: dict) -> str:
         return str(status.get("session_id") or "")
 
+    @staticmethod
+    def _runs_retired(spec: SessionSpec, conversation: str) -> bool:
+        """Whether a runner on ``conversation`` is on the one ``spec`` retires."""
+        return bool(spec.retired_token) and conversation == spec.retired_token
+
     def speaks(self, status: dict) -> bool:
         """Whether the runner that answered ``status`` speaks the lifecycle
         protocol this release reads; one the previous release started does
@@ -129,12 +134,17 @@ class ClaudeCodeDriver:
                 system_prompt=spec.system_prompt,
                 model=spec.model or None,
                 resume_session_id=spec.resume_token,
+                retired_session_id=spec.retired_token,
                 launch_name=name,
             ),
             environment_before={},
         )
         screen = await screen_for(runner_alive=known is not None)
-        if known is not None and known.launch == screen.sid:
+        if (
+            known is not None
+            and known.launch == screen.sid
+            and not self._runs_retired(spec, known.conversation)
+        ):
             # The runner that answered the last read is the one this screen
             # still runs, so greeting it would say what is already known.
             return known
@@ -146,6 +156,20 @@ class ClaudeCodeDriver:
             # its place on the same conversation (``resume_session_id``).
             await self.screens._retire_screen(
                 screen, topic_id=owner.place_id, reason="runner_protocol_outdated"
+            )
+            screen = await screen_for(runner_alive=False)
+            status = await self._greet(wire, host, ref, name)
+        elif self._runs_retired(spec, self.conversation(status)) and not (
+            self.working(status) or status.get("tasks")
+        ):
+            # Still on the conversation the platform no longer continues (given
+            # up on, or started under rules its kind has replaced). Once it is
+            # idle its screen is closed and the runner started again, which
+            # does not take that conversation up (``RETIRED_ENV``). While it
+            # works it goes on as it is, as a changed launch waits
+            # (``_ensure_screen``), and the next idle turn replaces it.
+            await self.screens._retire_screen(
+                screen, topic_id=owner.place_id, reason="conversation_retired"
             )
             screen = await screen_for(runner_alive=False)
             status = await self._greet(wire, host, ref, name)

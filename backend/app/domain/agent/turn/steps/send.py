@@ -301,6 +301,7 @@ async def send_prepared(
             prompt_text,
             system_prompt=system_prompt,
             resume_token=resume_session_id,
+            retired_token=prepared.retired_session_id,
             session_opening=opening.text,
             opening_changes=opening_changes(opening, told),
             model=model_kwargs.get("model"),

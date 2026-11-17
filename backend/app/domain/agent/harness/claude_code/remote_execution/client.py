@@ -643,6 +643,16 @@ NARROWABLE_NATIVE = (
     "WebSearch",
     "NotebookEdit",
     "Workflow",
+    # Talking to and stopping subagents, watching background commands, and
+    # the build's own design, trigger and review tools: a session that holds
+    # none of the work has no use for them.
+    "SendMessage",
+    "TaskStop",
+    "ListAgents",
+    "Monitor",
+    "DesignSync",
+    "RemoteTrigger",
+    "ReportFindings",
 )
 
 
@@ -988,6 +998,7 @@ def transport(config, target_path):
                         "reply_to",
                         "attachments",
                         "request_id",
+                        "task",
                     ),
                 }
                 if tool in picked:
