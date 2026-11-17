@@ -327,8 +327,16 @@ async function save() {
         class="co-done"
         @click="emit('open-task', task.id)"
       >
-        <v-icon size="14" class="co-done__mark">mdi-check</v-icon>
+        <v-icon
+          size="14"
+          class="co-done__mark"
+          :title="task.closed_reason === 'neglect' ? t('work.channel.overview.closedByNeglect') : undefined"
+          >{{ task.closed_reason === 'neglect' ? 'mdi-power-sleep' : 'mdi-check' }}</v-icon
+        >
         <span class="co-done__title t-body">{{ taskTitle(task) }}</span>
+        <span v-if="task.closed_reason === 'neglect'" class="t-meta c-faint" data-testid="closed-by-neglect">{{
+          t('work.channel.overview.closedByNeglect')
+        }}</span>
         <span class="t-meta c-faint">{{ relTime(task.closed_at ?? task.created_at) }}</span>
       </button>
     </section>
