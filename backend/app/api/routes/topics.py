@@ -22,7 +22,7 @@ from app.api.deps import (
 from app.api.doc_access import require_role
 from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
@@ -1279,7 +1279,18 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.post("/{topic_id}/questions/{block_id}/confirm")
+class ConfirmedQuestion(BaseModel):
+    """The question after its typed replies were confirmed as the answer: the
+    same shape the ``block_updated`` live frame carries."""
+
+    id: str
+    answer_log: list[dict] = []
+
+
+@router.post(
+    "/{topic_id}/questions/{block_id}/confirm",
+    **typed_response(ConfirmedQuestion),
+)
 async def confirm_typed_answer(
     block_id: uuid.UUID,
     at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],

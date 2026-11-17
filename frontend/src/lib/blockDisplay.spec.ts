@@ -247,7 +247,16 @@ describe('答过这道题的每一句', () => {
       askAnswers(
         asked({
           options: [{ text: 'a' }],
-          answer_log: [{ kind: 'pending', option: null, note: '这是什么意思？', by: 'bob', at: '2026-10-05T00:01:00Z', reply_id: 'r2' }],
+          answer_log: [
+            {
+              kind: 'pending',
+              option: null,
+              note: '这是什么意思？',
+              by: 'bob',
+              at: '2026-10-05T00:01:00Z',
+              reply_id: 'r2',
+            },
+          ],
         })
       )
     ).toEqual([])
