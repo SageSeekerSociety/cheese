@@ -52,6 +52,21 @@ class AgentSessionService:
             conversation_id, agent_handle, harness, generation=generation
         )
 
+    async def retire_older(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        *,
+        harness: str,
+        generation: int,
+    ) -> bool:
+        """Give up on this agent's conversation here when it was started under
+        rules its kind has replaced, and on what it was told. True when it
+        did."""
+        return await self._repo.retire_older(
+            conversation_id, agent_handle, harness, generation=generation
+        )
+
     async def conversation(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> tuple[str, int] | None:

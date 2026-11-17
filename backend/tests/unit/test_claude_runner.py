@@ -615,18 +615,12 @@ def _reaped(process: subprocess.Popen) -> None:
     threading.Thread(target=process.wait, daemon=True).start()
 
 
-async def _started(
-    machine, monkeypatch, *, retired: str | None = None, **options
-) -> Runner:
+async def _started(machine, monkeypatch, **options) -> Runner:
     # The build runs where it was started: the isolated workspace, not the repo.
     monkeypatch.chdir(machine.workspace)
     runner = Runner(machine.state, **options)
     await runner.start(
-        command=machine.command,
-        env=machine.env,
-        resume=None,
-        agent_handle=AGENT,
-        retired=retired,
+        command=machine.command, env=machine.env, resume=None, agent_handle=AGENT
     )
     return runner
 
@@ -867,36 +861,30 @@ async def test_the_message_after_an_idle_exit_continues_the_same_conversation(
     assert "What was the password?" in asked
 
 
-@pytest.mark.anyio
-async def test_a_conversation_the_platform_retired_is_not_taken_up_again(
-    machine, monkeypatch
-):
+def test_a_conversation_the_platform_retired_is_not_taken_up_again(machine, contract):
     """The platform no longer continues a conversation (given up on, or started
-    under rules its kind has replaced): the next start begins a new one, though
-    this runner's own record and the transcript still hold the old."""
-    first = await _started(machine, monkeypatch, idle_exit_s=0.5)
+    under rules its kind has replaced) and says so in the launch: the screen
+    started next begins a new one, though this state directory's own record
+    and the transcript still hold the old."""
+    first = Screen(machine)
     try:
-        await first.send(
-            str(uuid.uuid4()), "The password is PINEAPPLE.", work_id=str(uuid.uuid4())
-        )
-        await _results(first, 1)
-        assert first.process is not None
-        await asyncio.wait_for(first.process.wait(), 60)
-        retired = first.session_id
+        work = str(uuid.uuid4())
+        first.send("The password is PINEAPPLE.", work_id=work)
+        first.wait_event(_status("idle", work))
+        retired = first.call("ping")["session_id"]
     finally:
-        await first.close()
+        first.stop()
 
-    again = await _started(machine, monkeypatch, retired=retired)
+    # Named in the launch's environment, as the platform's launch names it.
+    again = Screen(machine, env={"CHEESE_RETIRED_SESSION": retired})
     try:
-        await again.send(
-            str(uuid.uuid4()), "What was the password?", work_id=str(uuid.uuid4())
-        )
-        # The journal is the state directory's: the first start's result is
-        # still in it.
-        await _results(again, 2)
+        work = str(uuid.uuid4())
+        again.send("What was the password?", work_id=work)
+        again.wait_event(_status("idle", work))
+        started = again.call("ping")["session_id"]
     finally:
-        await again.close()
-    assert again.session_id != retired
+        again.stop()
+    assert started != retired
     asked = json.dumps(machine.server.state["requests"][-1]["messages"])
     assert "What was the password?" in asked
     assert "PINEAPPLE" not in asked

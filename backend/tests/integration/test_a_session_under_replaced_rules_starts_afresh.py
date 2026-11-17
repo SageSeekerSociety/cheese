@@ -16,7 +16,10 @@ import pytest
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.turn.store.session_inputs import abandon_opening
+from app.domain.agent.turn.store.session_inputs import (
+    abandon_opening,
+    remember_opening,
+)
 from app.domain.agent_instance.adapters import room_teammate
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.prompts import PROFILES, Kind
@@ -159,3 +162,41 @@ async def test_a_conversation_given_up_on_is_named_so_it_is_not_taken_up(
         return screen.last_resume_session_id, screen.last_retired_session_id
 
     assert client.portal.call(run) == (None, _OLD)
+
+
+async def test_what_an_older_conversation_was_told_goes_with_it(client):
+    """Retired, the old conversation's record of what it was told is dropped,
+    so the new one is told the whole project state whatever order its first
+    token and its first input arrive in."""
+
+    async def run():
+        factory = client.test_request_factory
+        async with factory() as session:
+            await registered(session, "u")
+            project = await project_service(session).create(name="P", owner_handle="u")
+            await session.commit()
+        topic_id = project.root_topic_id
+        handle = await _seed(factory, topic_id, generation=0)
+        await remember_opening(
+            factory,
+            topic_id=topic_id,
+            agent_handle=handle,
+            harness="claude-code",
+            digests={"roster": "a"},
+            was=None,
+        )
+        async with factory() as session:
+            retired = await AgentSessionService(session).retire_older(
+                topic_id,
+                handle,
+                harness="claude-code",
+                generation=PROFILES[Kind.main_line].generation,
+            )
+            await session.commit()
+        async with factory() as session:
+            told = await AgentSessionService(session).told(
+                topic_id, handle, harness="claude-code"
+            )
+        return retired, told
+
+    assert client.portal.call(run) == (True, None)

@@ -166,7 +166,19 @@ async def converse(
         keeps_memory=keeps_memory(runtime.harness),
     )
     async with prep.sessions() as session:
-        told = await AgentSessionService(session).told(
+        sessions = AgentSessionService(session)
+        # A conversation started under rules this kind has replaced is given
+        # up on as an un-compactable one is, once: what it was told goes with
+        # it, so the new conversation is told the whole state even if its
+        # token is recorded before this opening reaches it.
+        if await sessions.retire_older(
+            topic_id,
+            prepared.agent.handle,
+            harness=prepared.harness,
+            generation=PROFILES[prepared.kind].generation,
+        ):
+            await session.commit()
+        told = await sessions.told(
             topic_id, prepared.agent.handle, harness=prepared.harness
         )
         # 平台自己说给模型的那几句按提问的人的语言走（`user.language`）：一次

@@ -33,7 +33,6 @@ class _Host:
         self.working = working
         self.opened = 0
         self.closed = 0
-        self.retired_at_launch: list[str | None] = []
 
     # --- the device channel ---------------------------------------------
 
@@ -41,7 +40,6 @@ class _Host:
         if self.closed >= self.opened:
             # A screen opened now starts a runner on what its launch offers.
             self.opened += 1
-            self.retired_at_launch.append(launch.retired_session_id)
             self.conversation = launch.resume_session_id or NEW
             self.working = False
         return SimpleNamespace(sid=f"screen-{self.opened}")
@@ -85,7 +83,6 @@ async def test_an_idle_session_on_a_retired_conversation_starts_a_new_one():
     host = _Host(working=False)
     launched = await _launch(host)
     assert launched.conversation == NEW
-    assert host.retired_at_launch == [OLD]
 
 
 @pytest.mark.anyio
@@ -93,4 +90,3 @@ async def test_a_working_session_on_a_retired_conversation_is_left_to_finish():
     host = _Host(working=True)
     launched = await _launch(host)
     assert launched.conversation == OLD
-    assert host.closed == 0

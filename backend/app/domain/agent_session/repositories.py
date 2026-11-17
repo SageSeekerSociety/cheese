@@ -123,6 +123,36 @@ class AgentSessionRepository:
             return Continuation(None, token)
         return Continuation(token, None)
 
+    async def retire_older(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        *,
+        generation: int,
+    ) -> bool:
+        """Give up on this agent's conversation here if it was started under
+        another generation of its kind's rules, as ``forget_conversation``
+        gives one up: what it was told goes with it, so the new conversation
+        is told the whole state. Once: the new conversation's first token
+        records the current generation (``save``). True when it retired one."""
+        result = await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+                AgentSession.resume_token.is_not(None),
+                AgentSession.abandoned_at.is_(None),
+                AgentSession.generation != generation,
+            )
+            .values(
+                abandoned_at=datetime.now(UTC), told=None, updated_at=datetime.now(UTC)
+            )
+        )
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
     async def _pointer(
         self, conversation_id: uuid.UUID, agent_handle: str, harness: str
     ) -> tuple[str | None, bool, int]:
