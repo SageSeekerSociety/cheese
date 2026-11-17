@@ -285,10 +285,12 @@ class Protocol:
 
     @property
     def model(self) -> str | None:
-        """The model a project opened from this pack runs on by default
-        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``).
-        It becomes the project's ``default_model`` only when the project has
-        not chosen one; None leaves the deployment's default."""
+        """The model the pack's credits do the work on
+        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``):
+        a project opened from it runs its tasks on it unless the teammate
+        chose another — it becomes the default teammate's ``task_model`` when
+        that is unset. None leaves tasks to the teammate's and the project's
+        own choice."""
         return _text(self.resource_pack.get("model"))
 
     @property

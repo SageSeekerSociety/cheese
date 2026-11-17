@@ -158,7 +158,7 @@ async def _events_for(
             found.append(
                 (
                     f"task:{task.id}",
-                    f"任务《{task.title}》（{task.id}）已关闭。",
+                    f"任务《{task.title}》（{task.id}）已结束。",
                     task.closed_at,
                 )
             )

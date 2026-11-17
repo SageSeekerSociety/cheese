@@ -43,7 +43,6 @@ from app.domain.room_task import naming
 #: Each member setting → the sentence that names it in the room line.
 _NAMES = {
     "default_model": "settingDefaultModel",
-    "default_subagent_model": "settingSubagentModel",
     "execution_environment": "settingEnvironment",
     "max_concurrent_turns": "settingMaxConcurrentTurns",
     naming.SETTINGS_KEY: "settingTaskNaming",
@@ -163,13 +162,9 @@ async def say_agent_changes(
 
 async def _words(db: AsyncSession, project: Project, key: str, value: object):
     """What the room line calls ``value`` of the member setting ``key``."""
-    if key in ("default_model", "default_subagent_model"):
+    if key == "default_model":
         if value is None:
-            return say(
-                "settingFollowDefault"
-                if key == "default_model"
-                else "settingInheritMain"
-            )
+            return say("settingAutomatic")
         labels = {c["id"]: c["label"] for c in model_choices(project.settings)}
         return labels.get(value, value)
     if key == "execution_environment":

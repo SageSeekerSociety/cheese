@@ -585,7 +585,7 @@ async def _agent_hits(
     for room in hits.get("rooms", []):
         lines.append(f"- 频道「{room['room_title']}」（{room_ref(room['room_id'])}）")
     for task in hits.get("tasks", []):
-        state = "进行中" if task["status"] == "open" else "已结束"
+        state = "未结束" if task["status"] == "open" else "已结束"
         lines.append(
             f"- 任务「{task['title']}」（{await task_ref(task['id'])}），{state}："
             f"{task['snippet']}"

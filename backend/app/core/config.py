@@ -439,6 +439,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # 出题页「涉及的知识点」那一块的 AI 建议：读一道题的题面，给出一组知识点
+    # （app/domain/space/knowledge_suggestions.py）。它的虚拟 key 不带预算：问一次
+    # 由发问的那个人付钱（与问芝士同一口径），所以模型必须在网关上计价。
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
+    learning_analysis_model: str = "deepseek-flash"
+    learning_analysis_timeout_seconds: float = 60.0
     # What a conversation's sandboxes may spend a day on models, per budget
     # holder (`gateway_usage.MachineGatewayKey`): their calls go out on a key
     # of their own with this cap on the gateway, so a machine whose owner

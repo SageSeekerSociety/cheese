@@ -111,7 +111,7 @@ async def test_proposal_cannot_cross_to_a_different_forge():
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("kind", ["file", "link"])
-async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
+async def test_pr_less_file_or_link_card_renders_clean_and_opens_no_pr(
     monkeypatch, kind
 ) -> None:
     """Standalone file/link cards with no branch commits do not open or merge a PR."""
@@ -177,32 +177,11 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
     ]
     assert rendered["merge_state"]["head_sha"] is None
 
-    # _accept_github skips PR publication/merge and settles via real _accept_discussion
+    # Settling a file/link card with nothing to land is `accept`'s, before any
+    # forge is chosen (tests/integration/test_tasks_without_a_repository.py).
     published = AsyncMock()
     service._publish_pr_for_accept = published
-    service._repo = SimpleNamespace(
-        add_approval=AsyncMock(),
-        reviewer_handles=AsyncMock(return_value=("alice",)),
-    )
-    service._settle_the_card = AsyncMock()
-    service._stamp_delivery = AsyncMock()
-    service._mark_task_merged = AsyncMock(return_value=True)
-    service._session = SimpleNamespace(
-        flush=AsyncMock(), refresh=AsyncMock(), get=AsyncMock(return_value=None)
-    )
-    # What an acceptance pays an invited newcomer is the invitation ledger's
-    # rule (tests/integration/test_invite_referrals.py); here only that it is told.
-    from app.domain.usage import referrals
-
-    told = AsyncMock()
-    monkeypatch.setattr(referrals, "on_accepted", told)
     topic = SimpleNamespace(id=card.topic_id, project_id=_pid())
-    got = await service._accept_github(card, topic, "alice", seen_head=None)
-    assert got is card
-    told.assert_awaited_once_with(service._session, "alice")
-    assert card.status == AcceptStatus.accepted
-    assert card.decided_by == "alice"
-    published.assert_not_awaited()
 
     # open_pr_for_card returns None when delivered_task_ids is empty
     monkeypatch.setattr(

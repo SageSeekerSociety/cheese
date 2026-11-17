@@ -619,20 +619,28 @@ class TaskService:
     ) -> Task:
         """Record a task's branch; its executor creates the worktree on its machine.
 
+        A project with no repository, or whose repository has no default branch,
+        gives its tasks no branch: they are worked without a checkout, and one
+        opened after a repository is bound gets its branch then (`give_branch`).
+
         ``task_id`` is a 支线's id when the 支线 itself becomes the task: the
         conversation keeps its id, and with it everything said in it."""
         # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import default_branch
+        from app.domain.project.forge import default_branch_if_any
 
-        base = await default_branch(project_id, self._session)
+        base = await default_branch_if_any(project_id, self._session)
         if base_task_id is not None:
             parent = await self.require_in_room(room_id, base_task_id)
-            if parent.branch_name is None:
-                raise UnprocessableEntityError(say("pastTaskNoBranch"))
             # An open task's branch holds its step still to land; a closed
-            # task's landed, unless it never delivered.
-            if parent.status == TaskStatus.open or (
-                parent.accepted_at is None and parent.delivered_head is None
+            # task's landed, unless it never delivered. A task with no branch
+            # has nothing of its own to build on.
+            if (
+                base is not None
+                and parent.branch_name is not None
+                and (
+                    parent.status == TaskStatus.open
+                    or (parent.accepted_at is None and parent.delivered_head is None)
+                )
             ):
                 base = parent.branch_name
         if reviewer_handle is None:
@@ -656,7 +664,8 @@ class TaskService:
             contributor_handles=contributor_handles or [],
             flush=False,
         )
-        self._name_branch(task)
+        if base is not None:
+            self._name_branch(task)
         task.base_branch, task.base_task_id = base, base_task_id
         if flush:
             await self._session.flush()
@@ -668,7 +677,9 @@ class TaskService:
         opens a PR of its own. The machine moves the task's checkout onto it
         (`cheese worktree`), carrying what had not landed. ``base_branch``: the
         project's default branch, when the caller read it from the forge before
-        locking ``task``."""
+        locking ``task``. A task with no branch goes on where it is."""
+        if task.branch_name is None:
+            return
         # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
@@ -703,15 +714,20 @@ class TaskService:
         await self._session.flush()
         return task
 
-    async def give_branch(self, task: Task) -> None:
+    async def give_branch(self, task: Task) -> bool:
         """The branch a task that arrived without one is worked on, cut from the
-        project's default branch like a new task's."""
+        project's default branch like a new task's. False, and the task left as
+        it is, while the project has no default branch to cut it from."""
         # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import default_branch
+        from app.domain.project.forge import default_branch_if_any
 
-        task.base_branch = await default_branch(task.project_id, self._session)
+        base = await default_branch_if_any(task.project_id, self._session)
+        if base is None:
+            return False
+        task.base_branch = base
         self._name_branch(task)
         await self._session.flush()
+        return True
 
     @staticmethod
     def _name_branch(task: Task) -> None:

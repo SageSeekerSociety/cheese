@@ -23,6 +23,11 @@ const rowsOf = (page: Page) => page.locator('.switcher__row-wrap[data-project-id
 
 async function dragTo(page: Page, from: number, to: number, edge: 'before' | 'after', target: string) {
   const rows = rowsOf(page);
+  // 列表长在一个弹出菜单里，打开时有一段缩放动画；行刚出现就量，量到的是动画途中的盒子，
+  // 按下去落在菜单外面（落到后面的侧栏上），拖起来的不是这一行。先悬停两头：hover 会等
+  // 盒子停稳、指针确实打得到这一行，之后量到的才是行真正的位置。
+  await rows.nth(to).hover();
+  await rows.nth(from).hover();
   const source = (await rows.nth(from).boundingBox())!;
   const dest = (await rows.nth(to).boundingBox())!;
   const line = page.locator(`.switcher__row-wrap--${edge}[data-project-id="${target}"]`);

@@ -432,6 +432,7 @@ async def prepare(
     return TurnContext(
         room_id=place.room_id,
         inner_id=place.inner_id,
+        task_id=place.task_id,
         # Except the turn that is a routine's run in a 支线: a rule its
         # owner confirmed, which keeps what it produces.
         keeps_nothing=not place.keeps_work
@@ -442,6 +443,7 @@ async def prepare(
             owner=task.owner_handle,
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
+            has_checkout=task.branch_name is not None,
         ),
         # 只看还开着的活：关闭不清这条上报（`closing.close_task` 不碰它），而关掉的
         # 活还能被人叫起来说话；那时看板显示的是关闭，再叫它报状态只会被 422 拒掉。

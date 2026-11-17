@@ -416,6 +416,8 @@ export interface ThreadCard {
   subject?: string | null
   /** 这张卡递给谁审阅（可能已经改由别人审阅，和任务建时定的那位不同）。 */
   reviewer?: string | null
+  /** 谁采纳或退回了这张卡；还没定、或自动合并的是空。 */
+  decided_by?: string | null
 }
 
 export interface TopicProgress {
@@ -812,6 +814,10 @@ export interface AgentConfiguration {
   body: string
   skills: string[]
   model?: string | null
+  /** 任务里使用的模型；null 同 `model`。 */
+  task_model?: string | null
+  /** 分身使用的模型；null 同 `model`。 */
+  subagent_model?: string | null
   effort?: 'low' | 'medium' | 'high' | 'max' | null
   compact_percent?: number | null
 }

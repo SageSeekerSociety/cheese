@@ -710,3 +710,66 @@ def test_checkout_brings_the_default_branch_and_keeps_what_was_changed(
     git(work, "push", "-q", str(forge), "trunk")
     cli.main()
     assert (checkout / "app.py").read_text() == "trying something\n"
+
+
+_NO_REPOSITORY = {
+    "ok": False,
+    "status": 404,
+    "error": {
+        "message": "这个项目没有代码仓库，任务没有工作目录",
+        "i18n": {"key": "taskWithoutRepository", "params": {}},
+    },
+}
+_TASK = "33333333-3333-4333-8333-333333333333"
+
+
+def _platform_without_a_repository(cli, monkeypatch, tmp_path):
+    """A machine whose task has no checkout: the platform answers opening it
+    that the project has no repository."""
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(cli, "PROJECT", "44444444-4444-4444-8444-444444444444")
+
+    def call(method, path, body=None, *, tolerate=(), **_):
+        if 404 not in tolerate:
+            raise SystemExit(f"[cheese] {method} {path} 失败 HTTP 404")
+        return _NO_REPOSITORY
+
+    monkeypatch.setattr(cli, "_call", call)
+
+
+def test_syncing_a_task_without_a_repository_has_nothing_to_push(monkeypatch, tmp_path):
+    """Filing for review syncs the task first and refuses on a failed sync; a
+    task without a repository has nothing to push, and that is no failure."""
+    cli = _load()
+    _platform_without_a_repository(cli, monkeypatch, tmp_path)
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "sync", "--task", _TASK])
+
+    cli.main()
+
+
+def test_opening_a_task_without_a_repository_says_why(monkeypatch, tmp_path):
+    cli = _load()
+    _platform_without_a_repository(cli, monkeypatch, tmp_path)
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "worktree", _TASK])
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main()
+
+    said = str(stopped.value.code)
+    assert "这个项目没有代码仓库" in said
+    assert "taskWithoutRepository" in said
+
+
+def test_a_file_handed_over_from_the_workspace_is_named_relative_to_it():
+    """A task without a checkout works in the session's workspace; a file
+    there named by its absolute path is the file the platform reads."""
+    plan = _load().request_plan(
+        "cheese_card.redeliver",
+        {"deliver": "/home/agent/room/reports/survey.md"},
+        {
+            "CHEESE_TOPIC": _TASK,
+            "CHEESE_PROJECT": "44444444-4444-4444-8444-444444444444",
+            "CHEESE_WORK": "/home/agent/room",
+        },
+    )
+    assert plan["body"]["deliver"] == "reports/survey.md"

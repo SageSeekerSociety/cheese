@@ -17,7 +17,7 @@ Effort = Literal["low", "medium", "high", "max"]
 
 
 class AgentConfiguration(BaseModel):
-    """A saved role and optional model; None inherits the project main model.
+    """A saved role and optional models; None inherits the project main model.
 
     MCP servers are not here: they belong to the agent's type, and a session
     reads them from there (`agent_instance.services.type_of_seat`).
@@ -26,6 +26,10 @@ class AgentConfiguration(BaseModel):
     body: str = ""
     skills: list[str] = Field(default_factory=list)
     model: str | None = None
+    # What it runs on in a task, and what its subagents run on. None follows
+    # ``model`` (``agent.model_catalog.pick``).
+    task_model: str | None = None
+    subagent_model: str | None = None
     execution_device_id: str | None = Field(default=None, max_length=64)
     # Explicit platform selection for new teammates; absent on older teammates,
     # which continue to inherit their conversation's environment defaults.

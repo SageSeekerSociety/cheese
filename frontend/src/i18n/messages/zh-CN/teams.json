@@ -121,7 +121,8 @@
     "descriptionPlaceholder": "描述你的团队定位、目标和文化...",
     "cancel": "取消",
     "createDone": "创建团队成功",
-    "createFailed": "创建团队失败，请稍后重试"
+    "createFailed": "创建团队失败，请稍后重试",
+    "avatarFailed": "上传头像失败，换一张或稍后重试"
   },
   "mine": {
     "title": "我的团队",

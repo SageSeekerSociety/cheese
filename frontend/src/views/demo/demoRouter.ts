@@ -41,6 +41,11 @@ const catalogTargets = [
     component: blank,
   },
   { path: '/spaces/:spaceId/manage/settings/guidance', name: 'SpacesDetailSettingsGuidance', component: blank },
+  {
+    path: '/spaces/:spaceId/manage/settings/learning-analysis',
+    name: 'SpacesDetailSettingsLearningAnalysis',
+    component: blank,
+  },
   { path: '/spaces/:spaceId/manage/settings/materials', name: 'SpacesDetailSettingsMaterials', component: blank },
   { path: '/users/:handle', name: 'UserPage', component: blank },
   { path: '/users/settings/invites', name: 'UserSettingsInvites', component: blank },

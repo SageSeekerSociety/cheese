@@ -107,10 +107,10 @@ it.each(['success', 'failure'])('keeps a new model save busy when the old save r
   vi.mocked(api.setProjectDefaultModel).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
   const view = host((enabled) => useProjectDefaultModelSettings(() => 'p', { enabled }))
   await flush()
-  const first = view.state.save('old', null)
+  const first = view.state.save('old')
   await view.leave()
   await view.enter()
-  const second = view.state.save('new', null)
+  const second = view.state.save('new')
   if (outcome === 'success') old.resolve(defaultModelState({ model: 'old' }))
   else old.reject(new Error('old failure'))
   await first

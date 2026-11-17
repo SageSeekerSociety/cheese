@@ -166,11 +166,7 @@ async def create_card(
         raise ValidationError(say("topicArchivedNoReview"))
     # A task whose last delivery landed is over, even while its AI teammate is
     # still writing it up (`room_task.closing`).
-    if (
-        task.status != TaskStatus.open
-        or task.closing_since is not None
-        or not task.branch_name
-    ):
+    if task.status != TaskStatus.open or task.closing_since is not None:
         raise ValidationError(say("taskEndedOrNoBranch"))
     subject = (change_subject or "").strip()
     if not subject:
@@ -189,6 +185,13 @@ async def create_card(
     hands_over_repository = (
         not (deliver or "").strip() and not (deliver_url or "").strip()
     )
+    if hands_over_repository and not task.branch_name:
+        # deferred-import: tests replace this name on app.domain.project.forge
+        from app.domain.project.forge import binding_for_project
+
+        if await binding_for_project(task.project_id, self._session) is None:
+            raise ValidationError(say("taskNoRepositoryToMerge"))
+        raise ValidationError(say("taskEndedOrNoBranch"))
     if hands_over_repository:
         _no_artifact_action(artifact, new_artifact, about)
     else:

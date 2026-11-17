@@ -30,10 +30,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.addressing import Event, address
-from app.domain.agent.model_catalog import catalog
+from app.domain.agent.model_catalog import Scene, catalog, shown_model
 from app.domain.agent.opening import opening_state
 from app.domain.agent.session_state import running_conversations
 from app.domain.agent.teammate_runs import teammate_runs
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -111,7 +112,8 @@ def card_row(card, version: int | None, reviewers: Sequence[str]) -> dict | None
     """The card a task row carries: where it rides (PR) and, for a card in
     review, what the row's second line says — whom it waits on (``reviewers``,
     the card's own set from `accept_card_reviewer`), 「第 N 版」 (``version``,
-    how many cards the task has filed), what was handed in, and since when.
+    how many cards the task has filed), what was handed in, and since when;
+    for a settled card, who accepted or returned it.
     ``card`` is the `AcceptCard` row or the `RailCard` value; both carry these
     fields."""
     if card is None:
@@ -124,6 +126,8 @@ def card_row(card, version: int | None, reviewers: Sequence[str]) -> dict | None
         "version": version,
         # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
         "reviewer": "、".join(reviewers) or None,
+        # 谁采纳或退回了这张卡：任务状态下面那一行写「林老师已采纳」「林老师已退回」。
+        "decided_by": card.decided_by,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
     }
@@ -194,6 +198,19 @@ async def task_rows(
     # 构造几百遍。
     project = await ProjectRepository(db).get(project_id)
     choices = catalog(project.settings if project else None)
+    # 没花过钱的卡写它下一轮会用的模型：这件任务的队友在任务里用什么。
+    teammates = await AgentInstanceService(db).for_tasks(
+        project_id, {task.id: (task.room_id, task.agent_handle) for task, _ in threads}
+    )
+    planned = {
+        task_id: shown_model(
+            Scene.task,
+            choices,
+            project_settings=project.settings if project else None,
+            teammate=teammate.configuration,
+        )
+        for task_id, teammate in teammates.items()
+    }
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
     in_place = await from_threads(
@@ -224,7 +241,10 @@ async def task_rows(
                 **task_row_json(task),
                 # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
                 "model": presentation.card_model(
-                    task, spent=spent.get(task.id), choices=choices
+                    task,
+                    spent=spent.get(task.id),
+                    choices=choices,
+                    planned=planned.get(task.id),
                 ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": shown.as_dict(),
@@ -596,10 +616,22 @@ async def task_page_row(db: AsyncSession, place, task, *, me: str) -> dict:
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)
+    choices = catalog(project.settings if project else None)
+    teammate = (
+        await AgentInstanceService(db).for_tasks(
+            place.project_id, {task.id: (task.room_id, task.agent_handle)}
+        )
+    )[task.id]
     out["model"] = presentation.card_model(
         task,
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
-        choices=catalog(project.settings if project else None),
+        choices=choices,
+        planned=shown_model(
+            Scene.task,
+            choices,
+            project_settings=project.settings if project else None,
+            teammate=teammate.configuration,
+        ),
     )
     card = cards.get(task.id)
     out["card"] = card_row(

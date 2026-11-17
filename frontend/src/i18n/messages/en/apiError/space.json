@@ -8,5 +8,12 @@
   "openSpaceScopeRequired": "An open space needs at least one email suffix",
   "openSpaceScopeTooLong": "At most {max} email suffixes",
   "openSpaceSuffixInvalid": "Not a valid email suffix: {suffix}",
-  "openSpaceUnderReview": "A space under review cannot be opened"
+  "openSpaceUnderReview": "A space under review cannot be opened",
+  "spaceNameTaken": "That space name is taken. Pick another",
+  "learningPointNameRequired": "A knowledge point needs a name",
+  "learningPointNameTooLong": "A knowledge point name is at most {max} characters",
+  "learningPointNameTaken": "\"{name}\" is already on the list",
+  "learningPointLimit": "At most {max} knowledge points",
+  "learningPointNotFound": "That knowledge point does not exist or was removed",
+  "learningAnalysisNoModel": "Learning analysis is unavailable right now; try again later"
 }

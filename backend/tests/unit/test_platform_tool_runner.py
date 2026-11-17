@@ -442,6 +442,8 @@ def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_proj
                 "title": "登录验证码",
                 "owner_handle": "lisi",
                 "here": True,
+                # A project with a repository: the task has its branch.
+                "branch_name": "task/abc12345",
             }
         }
     )
@@ -451,6 +453,25 @@ def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_proj
     [plan] = host.requests
     assert plan["body"]["here"] is True
     assert "cheese worktree" in out
+
+
+def test_a_thread_turned_into_a_task_without_a_repository_is_not_sent_to_a_checkout():
+    host = Host(
+        {
+            ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
+                "id": _ROOM,
+                "title": "竞品调研",
+                "owner_handle": "lisi",
+                "here": True,
+                "branch_name": None,
+            }
+        }
+    )
+    out = run(
+        "cheese_task", {"action": "open", "title": "竞品调研", "here": True}, host
+    )
+    assert "cheese worktree" not in out
+    assert "工作目录" not in out
 
 
 # --- memory, roster, status and the rest -----------------------------------
@@ -1140,7 +1161,7 @@ def test_filing_a_card_says_what_it_did_to_the_task():
         host,
     )
 
-    assert "等审" in said
+    assert "待审阅" in said
     assert "清掉" in said
     assert "cheese_task 的 state" in said
     assert "退回或作废" in said

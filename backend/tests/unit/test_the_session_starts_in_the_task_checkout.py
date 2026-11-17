@@ -239,6 +239,33 @@ def test_a_room_is_not_a_checkout_that_failed(
     assert capsys.readouterr().err == ""
 
 
+def test_a_task_without_a_repository_works_where_the_room_does(monkeypatch, capsys):
+    """A task in a project with no repository has no checkout. Its session
+    starts in the project view, says nothing on stderr and does not ask the
+    machine again on every command, as it would for a failed lookup."""
+    from app.domain.agent.executor_transport import RemoteClient
+
+    monkeypatch.setenv("CHEESE_TOPIC", TASK)
+    client = RemoteClient({"kind": "device", "workspace": ROOM})
+    asked = []
+
+    def call(method, params=None, **_):
+        asked.append(method)
+        return {
+            "value": {
+                "stdout": "Exit code 1\n[cheese] 这个项目没有代码仓库，任务没有工作目录"
+                "（taskWithoutRepository）\n"
+            }
+        }
+
+    client.call = call
+    assert client.working_directory() == ROOM
+    assert client.working_directory() == ROOM
+    assert "checkout_pending" not in client.config
+    assert len(asked) == 1
+    assert capsys.readouterr().err == ""
+
+
 def test_a_machine_that_could_not_be_asked_is_asked_again(monkeypatch):
     """A failed lookup is not the answer "this is a room": the session keeps
     the project view this time, and the next call asks again instead of being
