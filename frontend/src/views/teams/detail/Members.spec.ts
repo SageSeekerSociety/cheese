@@ -620,7 +620,19 @@ describe('个人备注', () => {
     mount({ role: 'ADMIN' })
 
     expect(await screen.findByText('秦老师')).toBeTruthy()
-    expect(screen.getByText('(qinmo) · qinmo')).toBeTruthy()
+    // 昵称和账号是同一串时不重复写两遍。
+    expect(screen.getByText('qinmo')).toBeTruthy()
+    expect(screen.queryByText('(qinmo) · qinmo')).toBeNull()
+  })
+
+  it('原名和账号不同时两样都写', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({
+      members: [{ user: { id: 9, nickname: '秦末', username: 'qinmo', remark: '秦老师' }, role: 'MEMBER' }],
+    } as never)
+    mount({ role: 'ADMIN' })
+
+    expect(await screen.findByText('秦老师')).toBeTruthy()
+    expect(screen.getByText('(秦末) · qinmo')).toBeTruthy()
   })
 
   it('没设备注的人仍显示昵称', async () => {
@@ -642,7 +654,7 @@ describe('个人备注', () => {
 
     await screen.findByRole('button', { name: /批准/ })
     expect(screen.getAllByText('秦老师').length).toBeGreaterThan(0)
-    expect(screen.getByText('(qinmo) · qinmo')).toBeTruthy()
+    expect(screen.queryByText('(qinmo) · qinmo')).toBeNull()
   })
 
   it('已发送邀请里的受邀人显示备注', async () => {

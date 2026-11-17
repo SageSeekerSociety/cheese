@@ -26,10 +26,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import after_own_commit
 from app.domain.notification.models import NotificationType
-from app.domain.notification.names import names_for, with_names
+from app.domain.notification.names import (
+    handles_in,
+    names_by_handles,
+    names_for_reader,
+    snapshot_swaps,
+    user_ids_in,
+    with_names,
+    with_snapshot_names,
+)
 from app.domain.notification.push import PUSHABLE, away_text, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
-from app.domain.user.services import languages_by_ids
+from app.domain.user.services import (
+    handles_by_ids_present,
+    languages_by_ids,
+)
 
 #: At most this many are handed over at once: back from a night asleep, the
 #: system's notification list should not fill up.
@@ -112,12 +123,26 @@ async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> di
     rows = await repo.pushable_after(user_id, PUSHABLE, after, NOTICES_AT_ONCE)
     # A push names people by name, not by the room's <@handle> token. It goes to
     # one reader, so that reader's own remarks name people, as the roster does.
-    names = await names_for(
-        db, *(row.metadata_payload for row in rows), viewer_id=user_id
-    )
+    handles: set[str] = set()
+    user_ids: set[int] = set()
+    for row in rows:
+        payload = row.metadata_payload or {}
+        handles |= handles_in(payload)
+        user_ids |= user_ids_in(payload)
+    # A person may be named by an entity reference rather than a token
+    # (`requester` in a join request); their handle is what carries the remark.
+    referents = await handles_by_ids_present(db, user_ids)
+    handles |= set(referents.values())
+    public_names = await names_by_handles(db, sorted(handles)) if handles else {}
+    names = await names_for_reader(db, sorted(handles), public_names, viewer_id=user_id)
+    # The snapshot beside a handle (`authorName`, `requesterName`) is written at
+    # send time; the page relabels it too, so a push and the inbox row agree.
+    swaps = snapshot_swaps(names, public_names)
     items = []
     for row in rows:
-        payload = with_names(row.metadata_payload or {}, names)
+        payload = with_snapshot_names(
+            with_names(row.metadata_payload or {}, names), names, swaps
+        )
         title, body = push_text(NotificationType(row.type), payload, locale)
         items.append(
             {"id": row.id, "title": title, "body": body, "url": push_link(payload)}

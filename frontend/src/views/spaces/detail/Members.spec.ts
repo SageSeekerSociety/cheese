@@ -347,7 +347,8 @@ describe('空间成员页', () => {
     })
     await mount(OWNER.id)
     await waitFor(() => expect(document.body.textContent).toContain('秦老师'))
-    expect(document.body.textContent).toContain('(qinmo)')
+    // 昵称和账号是同一串：副行只写一次，不写成「(qinmo) · qinmo」。
+    expect(document.body.textContent).not.toContain('(qinmo) · qinmo')
   })
 
   it('读失败时成员那一块换成原因和一条重试，不再假装只有管理员', async () => {

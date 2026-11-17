@@ -91,3 +91,58 @@ def test_a_remark_renames_people_only_in_the_inbox_of_the_person_who_set_it(
     assert REMARK not in stranger_meta["content"], stranger_meta
     assert MENTIONED_PUBLIC in stranger_meta["content"], stranger_meta
     assert stranger_meta["authorName"] == MENTIONED_PUBLIC, stranger_meta
+
+
+def test_a_live_push_renames_people_by_the_readers_own_remark(
+    user_client: UserCreator, api_client: TestClient, db_session, _portal
+):
+    """The push a browser shows names people the way the inbox row does.
+
+    A join request's push title is built from the ``requesterName`` snapshot
+    written beside the ``requester`` handle, so that snapshot is what has to be
+    relabelled — a token swap alone leaves the public name in the title.
+    """
+    from app.domain.notification.live import notices_after
+
+    reader = user_client.create_user(nickname="live-reader")
+    reader.token = user_client.login(api_client, reader.username, reader.password)
+    requester = "alice-live-test"
+    requester_user = user_client.create_user(username=requester, nickname=requester)
+
+    async def seed() -> int:
+        row = Notification(
+            receiver_id=reader.user_id,
+            type=NotificationType.TEAM_JOIN_REQUEST,
+            read=False,
+            finalized=True,
+            metadata_payload={
+                # The shape the platform writes: an entity reference for who,
+                # and the public name snapshotted beside it for the push.
+                "requester": {"type": "user", "id": str(requester_user.user_id)},
+                "requesterName": requester,
+                "teamName": "一个团队",
+            },
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db_session.add(row)
+        await db_session.commit()
+        return row.id
+
+    row_id = _portal.call(seed)
+
+    saved = api_client.put(
+        f"/users/{requester}/remark",
+        json={"remark": REMARK},
+        headers={"Authorization": f"Bearer {reader.token}"},
+    )
+    assert saved.status_code == 200, saved.text
+
+    async def read() -> dict:
+        # ``after`` is the cursor the browser already showed; a push frame only
+        # carries what came after it, so read from just under this row.
+        return await notices_after(db_session, reader.user_id, row_id - 1)
+
+    frame = _portal.call(read)
+    said = " ".join(item["title"] + " " + item["body"] for item in frame["items"])
+    assert REMARK in said, said

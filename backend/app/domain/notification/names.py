@@ -10,13 +10,16 @@ as it was written.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.user.repositories import UserRepository
-from app.domain.user.services import names_by_handles, remarks_by_handles
+from app.domain.user.services import (
+    handles_by_ids_present,
+    names_by_handles,
+    remarks_by_handles,
+)
 
 _TOKEN = re.compile(r"<@([\w-]+)>")
 
@@ -32,6 +35,33 @@ def handles_in(value: Any) -> set[str]:
     elif isinstance(value, (list, tuple)):
         for nested in value:
             found |= handles_in(nested)
+    return found
+
+
+_USER_ID = re.compile(r"^\d+$")
+
+
+def user_ids_in(value: Any) -> set[int]:
+    """Every user id a ``{"type": "user", "id": "<int>"}`` reference names.
+
+    A payload may name a person by an entity reference instead of a
+    ``<@handle>`` token (``requester`` in a join request). That reference is what
+    says who the person is, and the snapshot beside it (``requesterName``) is
+    what the page has to relabel.
+    """
+    found: set[int] = set()
+    if isinstance(value, Mapping):
+        if (
+            value.get("type") == "user"
+            and isinstance(value.get("id"), str)
+            and _USER_ID.match(value["id"])
+        ):
+            found.add(int(value["id"]))
+        for nested in value.values():
+            found |= user_ids_in(nested)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            found |= user_ids_in(nested)
     return found
 
 
@@ -53,31 +83,59 @@ def with_names(value: Any, names: Mapping[str, str]) -> Any:
 _NAME_SUFFIX = "Name"
 
 
-def with_snapshot_names(value: Any, names: Mapping[str, str]) -> Any:
-    """Also relabel the ``<key>Name`` snapshot written beside a ``<key>`` handle.
+def snapshot_swaps(
+    names: Mapping[str, str], public_names: Mapping[str, str]
+) -> dict[str, str]:
+    """Public name -> the remark that replaced it, for this one reader.
 
     A written payload keeps a name as it was at the time (``authorName`` beside
     ``author``), because the email and the push are rendered without a database.
-    On the page, though, the reader's own remark has to win over that snapshot —
-    otherwise a notification about someone they renamed still shows the old
-    label. Only a sibling string that is itself a known handle is swapped, so
-    ``teamName`` (whose ``team`` is an entity reference, not a string) is left
-    alone.
+    On the page the reader's own remark has to win over that snapshot instead,
+    and the snapshot sometimes sits beside an entity reference rather than a
+    handle (``requesterName`` beside ``requester``), so the only way back to who
+    it names is the public name itself. This is that map; names the reader has
+    no remark for are absent.
     """
+    return {
+        public: names[handle]
+        for handle, public in public_names.items()
+        if handle in names and names[handle] != public
+    }
+
+
+def with_snapshot_names(
+    value: Any,
+    names: Mapping[str, str],
+    swaps: Mapping[str, str] | None = None,
+) -> Any:
+    """Also relabel the ``<key>Name`` snapshot written beside a person.
+
+    ``names`` relabels a snapshot whose sibling is the person's own handle.
+    ``swaps`` (``snapshot_swaps``) covers the case where the sibling is an
+    entity reference instead: the snapshot's own public name is looked up and
+    replaced by the reader's remark. Anything matching neither — a team's name,
+    say — is left alone.
+    """
+    swaps = swaps or {}
     if isinstance(value, Mapping):
         renamed: dict[Any, Any] = {}
         for key, nested in value.items():
             if isinstance(key, str) and key.endswith(_NAME_SUFFIX):
-                source = value.get(key[: -len(_NAME_SUFFIX)])
-                if isinstance(source, str) and source in names:
-                    renamed[key] = names[source]
-                    continue
-            renamed[key] = with_snapshot_names(nested, names)
+                snapshot = value.get(key)
+                if isinstance(snapshot, str) and snapshot:
+                    source = value.get(key[: -len(_NAME_SUFFIX)])
+                    if isinstance(source, str) and source in names:
+                        renamed[key] = names[source]
+                        continue
+                    if snapshot in swaps:
+                        renamed[key] = swaps[snapshot]
+                        continue
+            renamed[key] = with_snapshot_names(nested, names, swaps)
         return renamed
     if isinstance(value, list):
-        return [with_snapshot_names(nested, names) for nested in value]
+        return [with_snapshot_names(nested, names, swaps) for nested in value]
     if isinstance(value, tuple):
-        return tuple(with_snapshot_names(nested, names) for nested in value)
+        return tuple(with_snapshot_names(nested, names, swaps) for nested in value)
     return value
 
 
@@ -85,10 +143,12 @@ async def names_for(
     session: AsyncSession,
     *values: Any,
     viewer_id: int | None = None,
+    viewer_handle: str | None = None,
 ) -> dict[str, str]:
     """The names of everyone the tokens inside ``values`` name, in one query.
 
-    ``viewer_id`` is the reader this text is being rendered for. A personal
+    ``viewer_id`` (or ``viewer_handle``, when the caller already resolved it) is
+    the reader this text is being rendered for. A personal
     remark (``UserTeammateRemark``) is private to the person who set it, and a
     notification is shown to one recipient, so the reader's own remarks replace
     the public nickname here exactly as the roster does on a page. Absent, the
@@ -100,11 +160,34 @@ async def names_for(
         handles |= handles_in(value)
     if not handles:
         return {}
-    names = await names_by_handles(session, sorted(handles))
-    viewer_handle = await handle_of_id(session, viewer_id)
+    return await names_for_reader(
+        session,
+        sorted(handles),
+        await names_by_handles(session, sorted(handles)),
+        viewer_id=viewer_id,
+        viewer_handle=viewer_handle,
+    )
+
+
+async def names_for_reader(
+    session: AsyncSession,
+    handles: Sequence[str],
+    public_names: Mapping[str, str],
+    *,
+    viewer_id: int | None = None,
+    viewer_handle: str | None = None,
+) -> dict[str, str]:
+    """``public_names`` overlaid with the reader's own remarks.
+
+    Split out so a caller rendering a batch for several recipients can read the
+    public names once and then pay only one remark query per reader.
+    """
+    names = dict(public_names)
+    if viewer_handle is None:
+        viewer_handle = await handle_of_id(session, viewer_id)
     if not viewer_handle:
         return names
-    remarks = await remarks_by_handles(session, viewer_handle, sorted(handles))
+    remarks = await remarks_by_handles(session, viewer_handle, list(handles))
     names.update(remarks)
     return names
 
@@ -113,5 +196,16 @@ async def handle_of_id(session: AsyncSession, user_id: int | None) -> str | None
     """The account handle behind a user id, or None when there is no such user."""
     if user_id is None:
         return None
-    user = await UserRepository(session).get_by_id(user_id)
-    return user.username if user is not None else None
+    return (await handles_by_ids_present(session, [user_id])).get(user_id)
+
+
+async def handles_of_ids(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> dict[int, str]:
+    """user_id -> account handle, one query for however many recipients.
+
+    A batch of notifications goes to several people at once, and each one reads
+    their own remarks: resolving the reader id to a handle once per delivery
+    turned a per-recipient lookup into a query per person.
+    """
+    return await handles_by_ids_present(session, user_ids)

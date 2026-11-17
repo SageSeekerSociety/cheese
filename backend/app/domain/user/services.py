@@ -149,6 +149,21 @@ async def timezones_by_handles(
 REMARK_MAX_LENGTH = 32
 
 
+async def handles_by_ids_present(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> dict[int, str]:
+    """user_id -> 账号 handle，只有平台上真有的那几个在结果里。
+
+    渲染一批发给好几个人的通知时，每个人各自用自己设的备注取名字：先把这一批
+    收件人一次翻成 handle，再按人查备注，别每封信再各查一次账号。
+    """
+    wanted = sorted({i for i in user_ids if i is not None})
+    if not wanted:
+        return {}
+    users = await UserRepository(session).get_by_ids(wanted)
+    return {user.id: user.username for user in users.values()}
+
+
 async def remarks_by_handles(
     session: AsyncSession, viewer_handle: str | None, handles: Iterable[str]
 ) -> dict[str, str]:

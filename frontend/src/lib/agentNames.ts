@@ -50,6 +50,21 @@ export function userOriginalName(
   return user ? user.nickname || user.username || '' : ''
 }
 
+/**
+ * 设了备注时，名字下面那行要补的身份：原名与账号。原名和账号是同一串时只写一次
+ * （没档案的人后端把昵称填成账号），两处都不写时返回空串。
+ */
+export function secondaryIdentity(
+  user: { nickname?: string | null; username?: string | null; remark?: string | null } | null | undefined
+): string {
+  if (!user?.remark) return ''
+  const original = userOriginalName(user)
+  const handle = user.username || ''
+  if (!original) return handle
+  if (!handle || original === handle) return original
+  return `(${original}) · ${handle}`
+}
+
 /** 设了备注时悬停看到的原名与 @handle；没设备注返回 null。 */
 export function memberHoverTitle(
   row: { name?: string | null; name_source?: string | null; remark?: string | null } | null | undefined,

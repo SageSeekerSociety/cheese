@@ -15,6 +15,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { secondaryIdentity, userName } from '@/lib/agentNames'
 import { myHandle } from '@/me'
 
 export type Role = SpaceAdminRoleType | 'MEMBER'
@@ -75,6 +76,11 @@ function rowName(row: Row): string {
   return row.remark || row.name
 }
 
+/** 一行的副行身份（原名与账号）；昵称等于账号时只写一次。 */
+function rowIdentity(row: Row): string {
+  return secondaryIdentity({ nickname: row.name, username: row.handle, remark: row.remark })
+}
+
 // 搜备注、原名和账号都算：设了备注的人被原来的名字找到，仍是同一个人。
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -103,13 +109,12 @@ const domainGroupsTarget = { name: 'SpacesDetailSettingsDomainGroups', params: {
 const showRequests = computed(() => !!props.joinLink?.approval || props.requests.length > 0 || props.requestsFailed)
 
 function requesterName(request: SpaceJoinRequest): string {
-  const user = request.user
-  return user?.remark || user?.nickname || user?.username || String(request.userId)
+  return userName(request.user) || String(request.userId)
 }
 
-/** 申请人的原名（不含个人备注），设了备注时画在名字下面。 */
-function requesterOriginalName(request: SpaceJoinRequest): string {
-  return request.user?.nickname || request.user?.username || ''
+/** 申请人的副行身份（原名与账号），设了备注时才画。 */
+function requesterIdentity(request: SpaceJoinRequest): string {
+  return secondaryIdentity(request.user)
 }
 
 function formatTime(at: number): string {
@@ -168,8 +173,8 @@ function formatTime(at: number): string {
           />
           <div class="mem__request-main">
             <div class="mem__name">{{ requesterName(request) }}</div>
-            <div v-if="request.user?.remark" class="mem__muted">
-              ({{ requesterOriginalName(request) }}) · {{ request.user?.username }}
+            <div v-if="requesterIdentity(request)" class="mem__muted">
+              {{ requesterIdentity(request) }}
             </div>
             <div class="mem__muted">
               {{ t('spaces.members.requests.requestedAt', { time: formatTime(request.createdAt) }) }}
@@ -240,9 +245,7 @@ function formatTime(at: number): string {
                   {{ rowName(row) }}
                   <span v-if="row.handle === myHandle()" class="mem__muted">{{ t('spaces.members.you') }}</span>
                 </div>
-                <div class="mem__muted">
-                  <span v-if="row.remark && row.name">({{ row.name }}) · </span>{{ row.handle }}
-                </div>
+                <div class="mem__muted">{{ rowIdentity(row) }}</div>
               </div>
             </div>
           </td>
