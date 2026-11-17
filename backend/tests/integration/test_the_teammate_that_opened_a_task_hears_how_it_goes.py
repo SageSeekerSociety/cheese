@@ -300,6 +300,31 @@ def _accepted_last_step(client, app_world) -> tuple[str, uuid.UUID]:
     return room, task_id
 
 
+def _judged_done_and_live(client, task_id: uuid.UUID) -> None:
+    """The task's teammate judged it done and the deploy of its merge went
+    live: the task is in its write-up window (`task_landing.deploy_landed`),
+    the one place left where the platform closes a task by itself."""
+    from app.domain.agent_instance.adapters import task_teammate
+    from app.domain.delivery.agent import record_task_instruction
+    from app.domain.review.task_landing import deploy_landed
+    from app.domain.room_task.lock_order import lock_task_for_change
+
+    async def live():
+        async with client.test_factory() as session:
+            task = await lock_task_for_change(session, task_id)
+            assert task is not None
+            task.deploying_since = datetime.now(UTC)
+            await deploy_landed(
+                session,
+                task,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
+            )
+            await session.commit()
+
+    client.portal.call(live)
+
+
 def test_a_task_its_session_wrote_up_is_told_with_its_conclusion(client, app_world):
     room, task_id = _accepted_last_step(client, app_world)
     assert len(_told_opener(client, room)) == 1  # the version handed in
@@ -318,6 +343,7 @@ def test_a_task_its_session_wrote_up_is_told_with_its_conclusion(client, app_wor
 
 def test_a_task_whose_write_up_never_comes_is_told_once(client, app_world):
     room, task_id = _accepted_last_step(client, app_world)
+    _judged_done_and_live(client, task_id)
 
     time_passes(client, str(task_id), minutes=60)
     watch(client)
@@ -331,6 +357,7 @@ def test_a_task_whose_write_up_never_comes_is_told_once(client, app_world):
 
 def test_a_task_whose_write_up_never_starts_is_told_once(client, app_world):
     room, task_id = _accepted_last_step(client, app_world)
+    _judged_done_and_live(client, task_id)
     chat = client.app.dependency_overrides[get_chat_service]()
 
     async def never_started():

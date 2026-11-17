@@ -68,7 +68,6 @@ class AcceptCardRepository:
         deliverable_kind: DeliverableKind | None = None,
         deliverable_name: str | None = None,
         deliverable_url: str | None = None,
-        completes_task: bool = True,
     ) -> AcceptCard:
         # 递卡是房间的事 —— 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch
         # belongs to the room, not to any one card in it.
@@ -84,7 +83,9 @@ class AcceptCardRepository:
             deliverable_kind=deliverable_kind,
             deliverable_name=deliverable_name,
             deliverable_url=deliverable_url,
-            completes_task=completes_task,
+            # Read by nothing since a merge stopped closing a task
+            # (`task_landing`); kept on old rows, false on new ones.
+            completes_task=False,
         )
         self._session.add(card)
         await self._session.flush()

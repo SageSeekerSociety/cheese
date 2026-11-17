@@ -182,7 +182,6 @@ async def create_accept_card(
         about=body.about,
         deliver=body.deliver,
         deliver_url=body.deliver_url,
-        completes_task=body.completes_task,
         task_id=task_id,
     )
     # What 芝士 did about the comments the last 退回 sent, for the next reviewer.
