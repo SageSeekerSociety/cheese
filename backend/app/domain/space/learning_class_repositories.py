@@ -27,7 +27,6 @@ from app.domain.conversation.services import room_column
 from app.domain.project.models import Project
 from app.domain.space.learning_service import member_words, readable_rooms
 from app.domain.space.models import (
-    SpaceAdminRelation,
     SpaceKnowledgePoint,
     SpaceLearningAdvice,
     SpaceLearningCluster,
@@ -50,8 +49,6 @@ from app.domain.task.submission_state import (
     COMPLETION_STATUS_SUCCESS,
 )
 from app.domain.topic.models import Topic
-from app.domain.user.models import User, UserProfile, UserRealNameIdentity
-from app.domain.user.realname_services import open_realname_field
 
 #: 「卡住」的两档。
 STUCK_LEVELS = ("shaky", "weak")
@@ -139,58 +136,6 @@ class LearningClassReads:
             )
         )
         return {int(uid) for uid in rows.all()}
-
-    async def identity_terms(self, space_id: int) -> tuple[list[str], list[str]]:
-        """这块板上所有可能出现在对话里的人的昵称、handle、实名，以及学号。
-
-        成员、管理员，加上被分析过但已经离开的人（他们的话还会被引用）。只用来遮蔽
-        （``learning_privacy.Masker``），不返回给任何人。
-        """
-        people = (
-            select(SpaceMember.user_id.label("uid"))
-            .where(SpaceMember.space_id == space_id)
-            .union(
-                select(cast(SpaceAdminRelation.user_id, Integer)).where(
-                    SpaceAdminRelation.space_id == space_id
-                ),
-                select(cast(SpaceLearningQuestion.user_id, Integer)).where(
-                    SpaceLearningQuestion.space_id == space_id
-                ),
-            )
-            .subquery()
-        )
-        rows = (
-            await self._session.execute(
-                select(User.username, UserProfile.nickname, UserRealNameIdentity)
-                .select_from(User)
-                .join(people, people.c.uid == User.id)
-                .outerjoin(UserProfile, UserProfile.user_id == User.id)
-                .outerjoin(
-                    UserRealNameIdentity,
-                    (UserRealNameIdentity.user_id == User.id)
-                    & UserRealNameIdentity.deleted_at.is_(None),
-                )
-            )
-        ).all()
-        names: list[str] = []
-        student_ids: list[str] = []
-        for username, nickname, identity in rows:
-            names.extend([str(username or ""), str(nickname or "")])
-            if identity is not None:
-                try:
-                    names.append(open_realname_field(identity, "real_name"))
-                    student_ids.append(open_realname_field(identity, "student_id"))
-                except Exception:  # an unreadable sealed value only loses a mask term
-                    continue
-        return names, student_ids
-
-    async def user_ids_by_handle(self, handles: Sequence[str]) -> dict[str, int]:
-        if not handles:
-            return {}
-        rows = await self._session.execute(
-            select(User.username, User.id).where(User.username.in_(list(set(handles))))
-        )
-        return {str(name): int(uid) for name, uid in rows.all()}
 
     # --- 判断与提问 -------------------------------------------------------
 

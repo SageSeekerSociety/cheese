@@ -17,5 +17,7 @@
   "learningPointNotFound": "这条知识点不存在或已删除",
   "learningAnalysisNoModel": "学情分析暂时用不了，稍后再试",
   "learningAnalysisDisabled": "这个空间没有开启学情分析",
-  "learningJudgmentNotFound": "这条判断不存在，可能已经更新了"
+  "learningJudgmentNotFound": "这条判断不存在，可能已经更新了",
+  "learningGroupNotFound": "这一组不存在，可能已经更新了",
+  "learningExportEmpty": "至少勾选一项要导出的内容"
 }

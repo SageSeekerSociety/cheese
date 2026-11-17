@@ -25,7 +25,17 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from sqlalchemy import Integer, cast, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
+from app.domain.space.models import (
+    SpaceAdminRelation,
+    SpaceLearningQuestion,
+    SpaceMember,
+)
+from app.domain.user.models import User, UserProfile, UserRealNameIdentity
+from app.domain.user.realname_services import open_realname_field
 
 #: 代号几位。4 位 base32 是 2^20 种，几百人的班里撞上的机会很小；撞上了也只是两个
 #: 人的例句标了同一个代号，人数统计按 id 数，不受影响。
@@ -140,3 +150,64 @@ class Masker:
         out = _NAME_SAID.sub(lambda m: m.group(1) + NAME_MARK, out)
         out = _NAME_IAM.sub(lambda m: m.group(1) + NAME_MARK, out)
         return out
+
+
+# --- 一块板的人 ---------------------------------------------------------------
+
+
+async def masker_for(session: AsyncSession, space_id: int) -> Masker:
+    """这块板的遮蔽规则：所有可能出现在对话里的人的昵称、handle、实名与学号。
+
+    成员、管理员，加上被分析过但已经离开的人（他们的话还会被引用）。一条语句。
+    实名与学号只在这里解开、只用来遮，不返回给任何人。
+    """
+    people = (
+        select(SpaceMember.user_id.label("uid"))
+        .where(SpaceMember.space_id == space_id)
+        .union(
+            select(cast(SpaceAdminRelation.user_id, Integer)).where(
+                SpaceAdminRelation.space_id == space_id
+            ),
+            select(cast(SpaceLearningQuestion.user_id, Integer)).where(
+                SpaceLearningQuestion.space_id == space_id
+            ),
+        )
+        .subquery()
+    )
+    rows = (
+        await session.execute(
+            select(User.username, UserProfile.nickname, UserRealNameIdentity)
+            .select_from(User)
+            .join(people, people.c.uid == User.id)
+            .outerjoin(UserProfile, UserProfile.user_id == User.id)
+            .outerjoin(
+                UserRealNameIdentity,
+                (UserRealNameIdentity.user_id == User.id)
+                & UserRealNameIdentity.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    names: list[str] = []
+    student_ids: list[str] = []
+    for username, nickname, identity in rows:
+        names.extend([str(username or ""), str(nickname or "")])
+        if identity is not None:
+            try:
+                names.append(open_realname_field(identity, "real_name"))
+                student_ids.append(open_realname_field(identity, "student_id"))
+            except Exception:  # an unreadable sealed value only loses a mask term
+                continue
+    return Masker.of(names, student_ids)
+
+
+async def codes_for(
+    session: AsyncSession, space_id: int, handles: Iterable[str]
+) -> dict[str, str]:
+    """handle → 这个人在这块板上的代号。认不出的 handle 不在结果里。"""
+    wanted = sorted({h for h in handles if h})
+    if not wanted:
+        return {}
+    rows = await session.execute(
+        select(User.username, User.id).where(User.username.in_(wanted))
+    )
+    return {str(name): member_code(space_id, int(uid)) for name, uid in rows.all()}

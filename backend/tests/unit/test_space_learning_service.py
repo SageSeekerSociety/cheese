@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.space import learning_service
+from app.domain.space.learning_privacy import Masker, member_code
 from app.domain.space.learning_service import (
     QUESTION_LIMIT,
     REVIEW_FLAG_MISSING,
@@ -249,8 +250,19 @@ def _service(
     async def _may_read_project(_session, *, project_id, handle):
         return project_id in allowed
 
+    async def _codes_for(_session, space_id, handles):
+        known = [u.username for u in session.users]
+        return {
+            h: member_code(space_id, known.index(h) + 1) for h in handles if h in known
+        }
+
+    async def _masker_for(_session, _space_id):
+        return Masker.of([u.nickname or "" for u in session.users])
+
     monkeypatch.setattr(learning_service, "ProjectRepository", DummyProjectRepository)
     monkeypatch.setattr(learning_service, "may_read_project", _may_read_project)
+    monkeypatch.setattr(learning_service, "codes_for", _codes_for)
+    monkeypatch.setattr(learning_service, "masker_for", _masker_for)
     return SpaceLearningService(session=session)
 
 
@@ -260,7 +272,10 @@ def _service(
 
 
 @pytest.mark.anyio
-async def test_filters_lists_only_students_the_asker_may_read(monkeypatch):
+async def test_filters_count_only_readable_projects_and_offer_no_member_filter(
+    monkeypatch,
+):
+    """老师只看全班整体：筛选里没有「成员」这一维，计数只数读得了的项目。"""
     alice = project("Alice 的作业", "alice", 1)
     bob = project("Bob 的作业", "bob", 2)
     carol = project("Carol 的作业", "carol", 3)
@@ -273,25 +288,8 @@ async def test_filters_lists_only_students_the_asker_may_read(monkeypatch):
 
     data = await svc.filters(space_id=7, handle="teacher")
 
-    assert [s["handle"] for s in data["students"]] == ["alice", "bob"]
+    assert "students" not in data
     assert data["projectCount"] == 2
-
-
-@pytest.mark.anyio
-async def test_filters_falls_back_to_the_handle_when_there_is_no_nickname(monkeypatch):
-    alice = project("Alice 的作业", "alice", 1)
-    bob = project("Bob 的作业", "bob", 2)
-    session = FakeSession(
-        projects=[alice, bob],
-        users=[user("alice", "爱丽丝"), user("bob", None)],
-        blocks=[block(alice), block(bob)],
-    )
-    svc = _service(monkeypatch, session)
-
-    data = await svc.filters(space_id=7, handle="teacher")
-
-    names = {s["handle"]: s["name"] for s in data["students"]}
-    assert names == {"alice": "爱丽丝", "bob": "bob"}
 
 
 @pytest.mark.anyio
@@ -302,7 +300,6 @@ async def test_filters_are_empty_when_no_project_is_readable(monkeypatch):
 
     data = await svc.filters(space_id=7, handle=None)
 
-    assert data["students"] == []
     assert data["projectCount"] == 0
 
 
@@ -335,7 +332,7 @@ async def test_queues_report_the_review_flag_signal_as_absent(monkeypatch):
     svc = _service(monkeypatch, session, project_ids=[])
 
     data = await svc.queues(
-        space_id=7, handle="teacher", student=None, from_ts=None, to_ts=None
+        space_id=7, handle="teacher", from_ts=None, to_ts=None
     )
 
     assert data["reviewFlag"]["available"] is False
@@ -378,7 +375,7 @@ async def test_queues_count_students_not_questions(monkeypatch):
     svc = _service(monkeypatch, session)
 
     data = await svc.queues(
-        space_id=7, handle="teacher", student=None, from_ts=None, to_ts=None
+        space_id=7, handle="teacher", from_ts=None, to_ts=None
     )
 
     top = data["stuckPoints"][0]
@@ -409,7 +406,7 @@ async def test_queues_every_row_can_point_back_at_a_real_message(monkeypatch):
     svc = _service(monkeypatch, session)
 
     data = await svc.queues(
-        space_id=7, handle="teacher", student=None, from_ts=None, to_ts=None
+        space_id=7, handle="teacher", from_ts=None, to_ts=None
     )
 
     point = data["stuckPoints"][0]
@@ -430,7 +427,7 @@ async def test_queues_keep_questions_that_belong_to_no_knowledge_point(monkeypat
     svc = _service(monkeypatch, session)
 
     data = await svc.queues(
-        space_id=7, handle="teacher", student=None, from_ts=None, to_ts=None
+        space_id=7, handle="teacher", from_ts=None, to_ts=None
     )
 
     assert len(data["stuckPoints"]) == 1
@@ -444,7 +441,7 @@ async def test_queues_are_empty_rather_than_broken_when_nothing_was_said(monkeyp
     svc = _service(monkeypatch, FakeSession(projects=[alice]))
 
     data = await svc.queues(
-        space_id=7, handle="teacher", student=None, from_ts=None, to_ts=None
+        space_id=7, handle="teacher", from_ts=None, to_ts=None
     )
 
     assert data["stuckPoints"] == []
@@ -469,37 +466,43 @@ async def test_questions_are_scoped_to_the_readable_students(monkeypatch):
     data = await svc.questions(
         space_id=7,
         handle="teacher",
-        student=None,
         from_ts=None,
         to_ts=None,
         knowledge_point=None,
     )
 
-    assert [q["student"] for q in data["questions"]] == ["alice"]
+    assert [q["quote"] for q in data["questions"]] == ["这一步为什么要先乘后加？"]
     assert data["total"] == 1
 
 
 @pytest.mark.anyio
-async def test_questions_filter_by_student(monkeypatch):
+async def test_questions_show_a_member_code_and_never_a_name(monkeypatch):
+    """每条发言前标的是本空间固定代号；成员的 handle、昵称不在返回里，原话里出现的
+    名字也遮掉了。"""
     alice = project("Alice 的作业", "alice", 1)
     bob = project("Bob 的作业", "bob", 2)
     session = FakeSession(
         projects=[alice, bob],
         users=[user("alice", "爱丽丝"), user("bob", "鲍勃")],
-        blocks=[block(alice), block(bob)],
+        blocks=[block(alice), block(bob, content="我是鲍勃，这题怎么写")],
     )
     svc = _service(monkeypatch, session)
 
     data = await svc.questions(
         space_id=7,
         handle="teacher",
-        student="bob",
         from_ts=None,
         to_ts=None,
         knowledge_point=None,
     )
 
-    assert [q["studentName"] for q in data["questions"]] == ["鲍勃"]
+    codes = {q["memberCode"] for q in data["questions"]}
+    assert codes == {member_code(7, 1), member_code(7, 2)}
+    for item in data["questions"]:
+        assert "student" not in item and "studentName" not in item
+        flat = repr(item)
+        assert "alice" not in flat and "bob" not in flat
+        assert "鲍勃" not in flat and "爱丽丝" not in flat
 
 
 @pytest.mark.anyio
@@ -518,7 +521,6 @@ async def test_questions_filter_by_knowledge_point(monkeypatch):
     data = await svc.questions(
         space_id=7,
         handle="teacher",
-        student=None,
         from_ts=None,
         to_ts=None,
         knowledge_point=12,
@@ -548,7 +550,6 @@ async def test_questions_respect_the_time_window(monkeypatch):
     data = await svc.questions(
         space_id=7,
         handle="teacher",
-        student=None,
         from_ts=int(NOW.timestamp() * 1000),
         to_ts=int(datetime(2026, 3, 31, tzinfo=UTC).timestamp() * 1000),
         knowledge_point=None,
@@ -573,7 +574,6 @@ async def test_every_question_carries_the_coordinates_to_jump_back(monkeypatch):
     data = await svc.questions(
         space_id=7,
         handle="teacher",
-        student=None,
         from_ts=None,
         to_ts=None,
         knowledge_point=None,
