@@ -16,7 +16,7 @@ it (``python3 -I -c``), and fails unless the limit held:
 The image is the Python runtime's (``backend/sandbox/judge/Dockerfile.python``),
 already loaded under the name ``app.domain.judge.runtimes`` gives it.
 
-    backend/.venv/bin/python scripts/remote_execution/judge_acceptance.py \\
+    python3 scripts/remote_execution/judge_acceptance.py \\
         --output tmp/judge-acceptance
 """
 
