@@ -28,13 +28,16 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.block.asked import (
     EXPIRED,
+    PENDING,
     SKIPPED,
     WITHDRAWN,
     answered,
     closed_by_the_asker,
     may_answer,
+    pending_replies,
     skipped_by,
     skipped_by_all,
+    withdrawn_by_the_asker,
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -301,6 +304,35 @@ async def withdraw_question(session, *, question: Block, by: str) -> Block:
         "answer_log": [
             *(meta.get("answer_log") or []),
             _closed_entry(WITHDRAWN, by=by),
+        ],
+    }
+    await session.flush()
+    return question
+
+
+async def confirm_pending(session, *, question: Block, by: str) -> Block:
+    """提问的那位确认：人打字回的那几句就是答案，题就此结掉。
+
+    打字回复先以 ``kind=pending`` 记在题上（`announce.answer_questions`），题仍在
+    等回答、黄灯不灭；那句话是答案还是追问、岔话，只有提问的那位读得懂。它判定是
+    答案，就走这一步，把待确认的条目改成 ``kind=note``，题因此 `answered`。判定不是
+    答案时什么都不用做，题保持打开。
+
+    只有题块作者可以确认，没有待确认的回复就拒掉，已经了结的题也不再收。flush，不
+    commit；通知由调用方结。
+    """
+    meta = dict(question.meta or {})
+    if question.author != by:
+        raise ForbiddenError(say("askWithdrawNotYours"))
+    if answered(meta) or withdrawn_by_the_asker(meta):
+        raise ConflictError(say("askAlreadyAnswered"))
+    if not pending_replies(meta):
+        raise UnprocessableEntityError(say("askNothingPending"))
+    question.meta = {
+        **meta,
+        "answer_log": [
+            {**entry, "kind": "note"} if (entry or {}).get("kind") == PENDING else entry
+            for entry in (meta.get("answer_log") or [])
         ],
     }
     await session.flush()

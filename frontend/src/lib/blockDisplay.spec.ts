@@ -242,6 +242,17 @@ describe('答过这道题的每一句', () => {
     ])
   })
 
+  it('打字回复还没被提问方确认时不算回答', () => {
+    expect(
+      askAnswers(
+        asked({
+          options: [{ text: 'a' }],
+          answer_log: [{ kind: 'pending', option: null, note: '这是什么意思？', by: 'bob', at: '2026-10-05T00:01:00Z', reply_id: 'r2' }],
+        })
+      )
+    ).toEqual([])
+  })
+
   it('早先答的「以上都不是」照样读得出来', () => {
     expect(
       askAnswers(

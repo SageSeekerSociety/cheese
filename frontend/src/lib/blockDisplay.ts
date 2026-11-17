@@ -195,7 +195,8 @@ export function askAnswers(block: Block): AskAnswer[] {
   const log = (block.meta as Record<string, unknown> | null)?.answer_log
   if (!Array.isArray(log)) return []
   return (log as Record<string, unknown>[])
-    .filter((entry) => entry.kind !== 'withdrawn' && entry.kind !== 'expired')
+    // `pending`：打字回复还没被提问方确认成答案，题照旧开着，不算回答。
+    .filter((entry) => !['withdrawn', 'expired', 'pending'].includes(String(entry.kind)))
     .map((entry: Record<string, unknown>) => ({
       by: String(entry.by ?? ''),
       // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。

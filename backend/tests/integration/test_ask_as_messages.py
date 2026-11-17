@@ -174,6 +174,8 @@ def test_clicking_an_option_starts_the_agents_next_turn_with_that_answer(
 def test_typing_a_reply_instead_starts_the_next_turn_too(
     client, stub_hooks, monkeypatch
 ):
+    """Words of his own wake the asker but do not settle the question: they may
+    be a question about it. The asker confirms them as the answer, or not."""
     _, room = _room(client)
     question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
     prompts = _prompts(stub_hooks, monkeypatch)
@@ -184,9 +186,44 @@ def test_typing_a_reply_instead_starts_the_next_turn_too(
     (answer,) = _block(client, room, question["id"])["meta"]["answer_log"]
     assert (answer["by"], answer["kind"], answer["note"]) == (
         "alice",
-        "note",
+        "pending",
         "都不是，按季度统计",
     )
+    # Still waiting: the agent has not said it was the answer.
+    assert "answered" not in _block(client, room, question["id"])["meta"]
+
+
+def test_the_asker_confirming_a_typed_reply_settles_the_question(
+    client, stub_hooks, monkeypatch
+):
+    _, room = _room(client)
+    question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
+    _say(client, room, "alice", {"content": "这是什么意思？"})
+
+    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+        response = client.post(
+            f"/blocks/{question['id']}/question/confirm", headers=headers
+        )
+    assert response.status_code == 200, response.text
+    (answer,) = _block(client, room, question["id"])["meta"]["answer_log"]
+    assert (answer["kind"], answer["note"]) == ("note", "这是什么意思？")
+
+
+def test_a_new_question_takes_over_from_the_one_still_waiting(
+    client, stub_hooks, monkeypatch
+):
+    _, room = _room(client)
+    old = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
+    new = {
+        "questions": [
+            {"question": "换个问法？", "options": [{"text": "好"}, {"text": "不好"}]}
+        ]
+    }
+    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+        response = client.post(f"/topics/{room}/asks", json=new, headers=headers)
+        assert response.status_code == 200, response.text
+    kinds = [e["kind"] for e in _block(client, room, old["id"])["meta"]["answer_log"]]
+    assert kinds == ["withdrawn"]
 
 
 def test_talk_to_someone_else_while_a_question_waits_is_not_its_answer(
