@@ -80,7 +80,7 @@
     "queued": "排队等评测…",
     "running": "正在评测…",
     "failedUnknown": "评测没能完成",
-    "casesPassed": "个测试点通过，用例分 {points}/{total}",
+    "casesPassed": "测试点通过 · 用例分 {points}/{total}",
     "lineScore": "折算得分",
     "margin": "最慢的用例 {slowest} ms，时限 {limit} ms，还有 {left} ms 余量",
     "overLimit": "最慢的用例 {slowest} ms，超过了时限 {limit} ms",
@@ -127,5 +127,10 @@
     "passed": "{n}/{total}",
     "failed": "评测失败",
     "running": "评测中"
+  },
+  "brief": {
+    "title": "自动评测",
+    "summary": "{n} 个测试点，其中 {samples} 个样例 · {runtime} · 每个用例 {ms} ms、{mb} MB。交上去后平台跑你项目默认分支上的代码。",
+    "rule": "按测试点自动给分：通过用例的分值占比折算到这一项"
   }
 }

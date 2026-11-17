@@ -149,6 +149,7 @@
               <div v-if="testsRubricLine && accepted !== false" class="tsh__adjust mb-4">
                 <BaseButton
                   v-if="!testsAdjust"
+                  class="tsh__adjust-btn"
                   kind="secondary"
                   size="sm"
                   prepend-icon="mdi-pencil-outline"
@@ -187,9 +188,14 @@
                     hide-details
                     data-testid="task-review-tests-reason"
                   />
-                  <BaseButton kind="ghost" size="sm" data-testid="task-review-tests-restore" @click="stopAdjust">{{
-                    t('tasks.judge.review.restore')
-                  }}</BaseButton>
+                  <BaseButton
+                    class="tsh__adjust-btn"
+                    kind="ghost"
+                    size="sm"
+                    data-testid="task-review-tests-restore"
+                    @click="stopAdjust"
+                    >{{ t('tasks.judge.review.restore') }}</BaseButton
+                  >
                 </template>
               </div>
               <v-textarea
@@ -688,6 +694,10 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.tsh__adjust-btn {
+  align-self: flex-start;
 }
 
 .gradient-card {

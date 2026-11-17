@@ -80,7 +80,7 @@
     "queued": "Waiting in the judging queue…",
     "running": "Judging…",
     "failedUnknown": "The judging could not finish",
-    "casesPassed": "test points passed, case points {points}/{total}",
+    "casesPassed": "test points passed · case points {points}/{total}",
     "lineScore": "Scaled score",
     "margin": "Slowest case {slowest} ms, limit {limit} ms, {left} ms to spare",
     "overLimit": "Slowest case {slowest} ms, over the {limit} ms limit",
@@ -127,5 +127,10 @@
     "passed": "{n}/{total}",
     "failed": "Judging failed",
     "running": "Judging"
+  },
+  "brief": {
+    "title": "Automatic judging",
+    "summary": "{n} test points, {samples} of them samples · {runtime} · {ms} ms and {mb} MB per case. When you hand in, the platform runs the code on your project's default branch.",
+    "rule": "Scored by the test points: the share of case points passed, scaled to this item"
   }
 }
