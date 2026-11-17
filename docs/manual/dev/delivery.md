@@ -48,7 +48,7 @@ steps:
 3. `cheese_card(action=ready)` 去掉 draft 状态。递验收卡也会让 PR 变成可评审；只标记可评审不会生成验收卡。
 4. 验收面板显示改动、检查和评审状态。芝士自己跑检查；托管平台上的 CI 由那边的 runner 跑，平台只读结果。
 5. 采纳时检查评审人、需要的采纳人数、项目策略，以及浏览器里显示的那一版，然后调用托管平台的合并接口（`backend/app/api/routes/accept.py`）。检查了什么、状态怎么算见[验收与采纳](/dev/accept#accept-is-merge)。
-6. 合并成功就记录交付。验收卡说这是最后一步（`completes_task`）就关闭任务；不是最后一步，任务换到下一步的分支上继续，见[分步交付](/dev/tasks#steps)。房间继续可用。
+6. 合并成功就记录交付。任务不关，换到下一步的分支上，平台叫任务的芝士判断做没做完，见[分步交付](/dev/tasks#steps)。房间继续可用。
 
 一次交付只有一个 PR（`Task.pr_number`）。改验收卡不会新开 PR，`cheese push-fix` 推的还是同一个，见[任务与工作目录](/dev/tasks#push-fix)。
 
