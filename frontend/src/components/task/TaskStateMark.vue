@@ -42,6 +42,7 @@ watch(
     class="task-state"
     :class="{
       'task-state--live': state.live,
+      'task-state--stale': state.stale,
       'task-state--attend': attend,
       'task-state--strong': emphasis,
     }"
@@ -50,10 +51,14 @@ watch(
     :data-live="state.live ? '' : undefined"
     :role="iconOnly ? 'img' : undefined"
     :aria-label="iconOnly ? state.label : undefined"
-    :title="iconOnly ? state.label : undefined"
+    :title="state.detail || (iconOnly ? state.label : undefined)"
     data-testid="task-state"
   >
-    <v-icon class="task-state__icon" :size="size" aria-hidden="true">{{ state.icon }}</v-icon>
+    <span class="task-state__mark">
+      <v-icon class="task-state__icon" :size="size" aria-hidden="true">{{ state.icon }}</v-icon>
+      <!-- 在跑但那一句话很久没变：图标不转、右上角一个橙点（`lib/taskState.ts` 的 STALE_AFTER_MS）。 -->
+      <span v-if="state.stale" class="task-state__stale" data-testid="task-state-stale" />
+    </span>
     <span v-if="!iconOnly" class="task-state__label">{{ state.label }}</span>
   </span>
 </template>
@@ -66,6 +71,24 @@ watch(
   min-width: 0;
   color: var(--muted);
   white-space: nowrap;
+}
+.task-state__mark {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.task-state__stale {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+.task-state--live.task-state--stale .task-state__icon {
+  animation: none;
 }
 .task-state__icon {
   flex: none;

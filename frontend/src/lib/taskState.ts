@@ -31,6 +31,10 @@ export type TaskStateTone = 'ok' | 'okMark' | 'neutral' | 'warn' | 'ink' | 'dang
 
 export interface TaskState {
   kind: TaskStateKind
+  /** 在跑、但队友报的那一句话超过 `STALE_AFTER_MS` 没变：图标右上角叠一个橙点。 */
+  stale: boolean
+  /** 悬停详情：状态、那一句话、会话连没连、最近更新、能做什么，一行一项。 */
+  detail: string
   icon: string
   tone: TaskStateTone
   /** 标签：状态本身，两三个字（`work.taskState.label.*`）。 */
@@ -42,6 +46,14 @@ export interface TaskState {
   /** 标签下面那一行；没有就空串。 */
   line: string
 }
+
+/** 会话在跑，那一句话超过这么久没变，就算「进度很久没变」。 */
+export const STALE_AFTER_MS = 30 * 60_000
+/** 标着在做、会话却没在跑，超过这么久没回来，就算「可能已断线」。 */
+export const OFFLINE_AFTER_MS = 15 * 60_000
+const OFFLINE_ICON = 'mdi-cloud-off-outline'
+/** 进度很久没变：空心环（不转）+ 右上角橙点，转着会让人以为还在往前走。 */
+const STALE_ICON = 'mdi-circle-outline'
 
 const KIND: Record<BoardPhrase, TaskStateKind> = {
   running: 'running',
@@ -104,6 +116,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'progress_state'
       | 'progress_note'
       | 'progress_set_at'
+      | 'agent_left_at'
       | 'session_running'
       | 'moving'
       | 'waiting_on'
@@ -164,9 +177,25 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   let tone = look.tone
   let label = t(`work.taskState.label.${kind}`)
   let line = ''
+  let stale = false
+  let offline = false
   switch (kind) {
     case 'running': {
       if (!live) icon = RUNNING_IDLE_ICON
+      // 标着「在做」：会话在跑但那一句话很久没变，或会话已走了、一阵子没回来 —— 图标要说出来。
+      if (row.progress_state === 'working' && !wrappingUp) {
+        const age = row.progress_set_at ? now - Date.parse(row.progress_set_at) : NaN
+        if (live && age >= STALE_AFTER_MS) {
+          stale = true
+          icon = STALE_ICON
+        }
+        if (!live && (!!row.agent_left_at || age >= OFFLINE_AFTER_MS)) {
+          offline = true
+          icon = OFFLINE_ICON
+          tone = 'danger'
+          label = t('work.taskState.label.offline')
+        }
+      }
       // 那句话和那个时刻只在它报的就是「在做」时属于这一格：它报了在等、卡住，会话又跑
       // 起来了（后端照会话判成在做），那句说的是在等什么、卡在哪，写在「在做」后面就是假话。
       if (row.progress_state !== 'working') break
@@ -216,8 +245,11 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     default:
       break
   }
+  const detail = detailOf({ row, label, note, line, live, stale, offline, now, ctx })
   return {
     kind,
+    stale,
+    detail,
     icon,
     tone,
     label,
@@ -225,4 +257,30 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
     line,
   }
+}
+
+/** 悬停详情：一行一项（标题、在做什么、会话、最近更新、能做什么）。没有的项不写。 */
+function detailOf(a: {
+  row: StateRow
+  label: string
+  note: string
+  line: string
+  live: boolean
+  stale: boolean
+  offline: boolean
+  now: number
+  ctx: StateContext
+}): string {
+  const { row, note, live, stale, offline, now } = a
+  const title = stale ? t('work.taskState.detail.staleTitle') : a.label
+  const lines = [title, note || a.line]
+  if (row.presentation.phrase === 'running') {
+    if (offline) lines.push(t('work.taskState.detail.sessionGone'))
+    else lines.push(live ? t('work.taskState.detail.sessionLive') : t('work.taskState.detail.sessionIdle'))
+    const ago = waitedFor(row.progress_set_at, now)
+    if (ago) lines.push(t('work.taskState.detail.updated', { time: ago }))
+    if (stale) lines.push(t('work.taskState.detail.staleHint'))
+    if (offline) lines.push(t('work.taskState.detail.offlineHint'))
+  }
+  return lines.filter(Boolean).join('\n')
 }

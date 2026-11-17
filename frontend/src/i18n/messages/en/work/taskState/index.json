@@ -10,12 +10,22 @@
     "bounced": "Returned",
     "accepted": "Accepted",
     "open": "Open",
-    "closed": "Closed"
+    "closed": "Closed",
+    "offline": "May be offline"
   },
   "submitted": "Submitted {time}",
   "version": "Version {n}",
   "waitedFor": "{time} so far",
   "waitsOn": "{name}'s turn",
   "waitsOnYou": "Your turn",
-  "workedFor": "{time} so far"
+  "workedFor": "{time} so far",
+  "detail": {
+    "staleTitle": "Running, but progress hasn't changed in a while",
+    "sessionLive": "Session: connected, running now",
+    "sessionIdle": "Session: turn ended, waiting on a background task",
+    "sessionGone": "Session: left and has not come back",
+    "updated": "Last update: {time} ago",
+    "staleHint": "Open it to see what's happening, or ask it in the conversation",
+    "offlineHint": "It will carry on by itself once it reconnects"
+  }
 }

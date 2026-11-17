@@ -215,3 +215,47 @@ describe('其余几种', () => {
     expect(taskState(task('running'), ctx).attention).toBeNull()
   })
 })
+
+describe('在做：进度很久没变 / 可能已断线', () => {
+  const working = (over: Partial<RoomTask>) =>
+    task('running', { progress_state: 'working', progress_note: '在跑 e2e 全套', ...over })
+
+  it('会话在跑、那一句话 30 分钟内更新：不算很久没变', () => {
+    const s = taskState(working({ session_running: true, progress_set_at: minutesAgo(29) }), ctx)
+    expect(s.stale).toBe(false)
+    expect(s.live).toBe(true)
+  })
+
+  it('会话在跑、那一句话超过 30 分钟没变：橙点、图标不转', () => {
+    const s = taskState(working({ session_running: true, progress_set_at: minutesAgo(45) }), ctx)
+    expect(s.stale).toBe(true)
+    expect(s.detail).toContain('进度很久没变')
+    expect(s.detail).toContain('在跑 e2e 全套')
+  })
+
+  it('会话停着、15 分钟内：只是静止的钟，不算断线', () => {
+    const s = taskState(working({ session_running: false, progress_set_at: minutesAgo(10) }), ctx)
+    expect(s.label).toBe('在做')
+    expect(s.icon).toBe('mdi-progress-clock')
+  })
+
+  it('会话停着、超过 15 分钟没回来：可能已断线', () => {
+    const s = taskState(working({ session_running: false, progress_set_at: minutesAgo(20) }), ctx)
+    expect(s.label).toBe('可能已断线')
+    expect(s.icon).toBe('mdi-cloud-off-outline')
+    expect(s.tone).toBe('danger')
+  })
+
+  it('队友已离开：立即算可能已断线', () => {
+    const s = taskState(
+      working({ session_running: false, progress_set_at: minutesAgo(2), agent_left_at: minutesAgo(1) }),
+      ctx
+    )
+    expect(s.label).toBe('可能已断线')
+  })
+
+  it('报的是在等：不按断线算', () => {
+    const s = taskState(task('waiting', { progress_state: 'waiting', progress_set_at: minutesAgo(90) }), ctx)
+    expect(s.label).toBe('在等')
+  })
+})

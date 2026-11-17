@@ -10,12 +10,22 @@
     "bounced": "退回",
     "accepted": "已采纳",
     "open": "开启",
-    "closed": "已关闭"
+    "closed": "已关闭",
+    "offline": "可能已断线"
   },
   "submitted": "{time}提交",
   "version": "第 {n} 版",
   "waitedFor": "已等 {time}",
   "waitsOn": "等 {name}",
   "waitsOnYou": "等你",
-  "workedFor": "已做 {time}"
+  "workedFor": "已做 {time}",
+  "detail": {
+    "staleTitle": "在跑，但进度很久没变",
+    "sessionLive": "会话：连着，此刻在跑",
+    "sessionIdle": "会话：本轮已结束，等后台任务",
+    "sessionGone": "会话：已离开，没有回来",
+    "updated": "最近更新：{time}前",
+    "staleHint": "可以点进去看现场，或在对话里问它一句",
+    "offlineHint": "它重新连上后会自动接着做"
+  }
 }
