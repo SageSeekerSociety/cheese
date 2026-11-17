@@ -65,7 +65,7 @@ EXCERPT_LIMIT = 3
 EXAMPLE_LIMIT = 2
 #: 高频词读最近几周的话、至多几条；列几个词、几条报错。
 WORD_WEEKS = 4
-WORD_MESSAGE_LIMIT = 20000
+WORD_MESSAGE_LIMIT = 8000
 WORD_LIMIT = 40
 ERROR_LIMIT = 10
 #: 「代写迹象」：一个人在一道题里至少问了几条、其中「要答案」占多少。
@@ -388,7 +388,8 @@ class SpaceLearningClassService:
             misconceptions.append(
                 {
                     "id": mid,
-                    "label": labels[mid][1],
+                    # 模型归纳的话，提示里不让写人名；照样遮一遍，宁可多遮。
+                    "label": masker.mask(labels[mid][1]),
                     "people": len(people),
                     "examples": examples,
                 }
@@ -417,7 +418,10 @@ class SpaceLearningClassService:
             "misconceptions": misconceptions,
             "hiddenMisconceptions": hidden,
             "advice": (
-                {"text": advice.advice, "generatedAt": _ms(advice.generated_at)}
+                {
+                    "text": masker.mask(advice.advice),
+                    "generatedAt": _ms(advice.generated_at),
+                }
                 if advice is not None
                 else None
             ),
@@ -462,7 +466,7 @@ class SpaceLearningClassService:
         blocks = await self._reads.excerpt_blocks(
             [bid for _uid, bid in first_of.values()]
         )
-        masker = await self._masker(space.id) if blocks else Masker()
+        masker = await self._masker(space.id)
         clusters = []
         for s in shown:
             example = None
