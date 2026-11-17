@@ -18,8 +18,7 @@ const excerpt = (over: Partial<SpaceLearningExcerpt> = {}): SpaceLearningExcerpt
   blockId: 'block-1',
   topicId: 'topic-1',
   projectId: 'project-1',
-  student: 'zhangsan',
-  studentName: '张三',
+  memberCode: 'A7F3',
   topicTitle: '第一次作业',
   createdAt: new Date('2026-03-01T10:00:00.000Z').getTime(),
   quote: '这个循环为什么停不下来',
@@ -28,24 +27,22 @@ const excerpt = (over: Partial<SpaceLearningExcerpt> = {}): SpaceLearningExcerpt
 })
 
 describe('学习的筛选', () => {
-  it('成员与知识点进出地址栏', () => {
+  it('知识点进出地址栏；地址里的成员筛选不再生效（老师只看全班整体）', () => {
     const query = normalizeAnalyticsQuery({ student: 'zhangsan', knowledgePoint: '7' }, NOW)
 
-    expect(query.student).toBe('zhangsan')
     expect(query.knowledgePoint).toBe(7)
-    expect(serializeAnalyticsQuery(query)).toMatchObject({ student: 'zhangsan', knowledgePoint: '7' })
+    expect(serializeAnalyticsQuery(query)).toMatchObject({ knowledgePoint: '7' })
+    expect(serializeAnalyticsQuery(query)).not.toHaveProperty('student')
   })
 
   it('清掉筛选时不留下空参数', () => {
-    const query = normalizeAnalyticsQuery({ student: '', knowledgePoint: 'x' }, NOW)
+    const query = normalizeAnalyticsQuery({ knowledgePoint: 'x' }, NOW)
 
-    expect(query.student).toBeUndefined()
     expect(query.knowledgePoint).toBeUndefined()
-    expect(serializeAnalyticsQuery(query)).not.toHaveProperty('student')
     expect(serializeAnalyticsQuery(query)).not.toHaveProperty('knowledgePoint')
   })
 
-  it('学习只带时间 / 成员 / 知识点，不把分类和题目审批状态带过去', () => {
+  it('学习只带时间 / 知识点，不把分类、题目审批状态和成员带过去', () => {
     const filters = normalizeAnalyticsQuery(
       {
         from: '2025-09-20',
@@ -61,12 +58,11 @@ describe('学习的筛选', () => {
     expect(buildAnalyticsApiParams('learning', filters)).toEqual({
       from: new Date('2025-09-20T00:00:00.000Z').getTime(),
       to: new Date('2026-03-19T23:59:59.999Z').getTime(),
-      student: 'zhangsan',
       knowledgePoint: 7,
     })
   })
 
-  it('队列不认知识点，只发时间与成员', () => {
+  it('队列不认知识点，只发时间', () => {
     const filters = normalizeAnalyticsQuery({ from: '2025-09-20', to: '2026-03-19', knowledgePoint: '7' }, NOW)
 
     expect(buildLearningQueueParams(filters)).toEqual({

@@ -82,7 +82,6 @@
   },
   "learning": {
     "allKnowledgePoints": "全部",
-    "allStudents": "全部",
     "buildOutline": "生成讲解提纲",
     "clear": "清空",
     "knowledgePoint": "知识点",
@@ -110,7 +109,7 @@
       "unavailable": "暂无可显示的内容"
     },
     "quote": {
-      "pick": "勾选 {name} 的这条发言",
+      "pick": "勾选成员 {code} 的这条发言",
       "source": "查看原文"
     },
     "selected": "已选 {n} 条发言",
@@ -119,13 +118,233 @@
       "latest": "最近 {time}",
       "pick": "勾选卡点 {label}"
     },
-    "student": "成员",
-    "summary": "可查看的成员项目 {projects} 个 · 成员 {students} 人 · 发言 {questions} 条 · 共性卡点 {stuck} 个",
+    "summary": "可查看的成员项目 {projects} 个 · 发言 {questions} 条 · 共性卡点 {stuck} 个",
     "toast": {
       "filtersFailed": "加载学习筛选条件失败",
       "outlineFailed": "生成讲解提纲失败"
     },
-    "unclassified": "未归类"
+    "unclassified": "未归类",
+    "class": {
+      "sub": {
+        "overview": "总览",
+        "points": "重难点",
+        "questions": "高频问题",
+        "words": "高频词",
+        "tasks": "题目难度",
+        "behavior": "提问行为",
+        "trend": "趋势"
+      },
+      "subsLabel": "学情分析的页签",
+      "export": "导出报告",
+      "off": {
+        "title": "这个空间没有开启学情分析",
+        "desc": "空间管理员在「设置 › 学情分析」里开启后，这里会按知识点显示全班的整体情况。下面是原有的发言和队列。"
+      },
+      "loadFailed": "加载学情分析失败",
+      "notAnalysed": "不足 3 人，不分析",
+      "memberCode": "成员 {code}",
+      "lede": {
+        "overview": "只显示全班整体，不显示到人；每天凌晨更新。某一组不足 3 人不分析。",
+        "points": "「重点」看问到的人多不多，「难点」看涉及的人里有多少卡住。两条分界可以在下面调，只影响这一页的归类。",
+        "questions": "AI 把意思相近的提问归成一类，按问过的人数排序。同一个人问十遍只算一人。",
+        "words": "从成员这一周的发言里抽出的词，已去掉虚词和贴进来的题面。只列至少 3 个人说过的词。",
+        "tasks": "每道题的难度从几处看：完成率（领题与提交记录）、对话轮数和卡住率（对话分析）、代写迹象。",
+        "behavior": "AI 给每条提问标一个类型；时段按成员发问的时间（北京时间）统计。",
+        "trend": "各知识点每周卡住的人数。课上讲过某个知识点后，可以在这里看卡住的人有没有变少。"
+      },
+      "overview": {
+        "completionRate": "题目完成率",
+        "completionHint": "已提交 / 应做",
+        "members": "纳入分析的成员",
+        "membersHint": "空间成员全部纳入",
+        "messages": "本周与 AI 的对话",
+        "messagesHint": "条",
+        "weak": "较弱的知识点",
+        "weakHint": "重点且难点",
+        "tasksTitle": "题目完成情况",
+        "tasksHint": "按题汇总，共 {n} 人",
+        "tasksEmpty": "还没有题目",
+        "status": {
+          "notStarted": "未领",
+          "inProgress": "进行中",
+          "submitted": "已提交",
+          "passed": "已通过"
+        },
+        "focusTitle": "下节课值得讲的",
+        "focusStuck": "{stuck} / {involved} 人卡住",
+        "focusLink": "看常见误解和讲课建议",
+        "focusEmpty": "还没有足够的分析结果",
+        "updated": "最近更新于 {time}",
+        "notYet": "还没有分析结果，每晚会读一次成员的新发言",
+        "legacyTitle": "原有的发言与队列"
+      },
+      "points": {
+        "tableTitle": "按知识点",
+        "col": {
+          "name": "知识点",
+          "asked": "问到",
+          "stuck": "卡住",
+          "rate": "卡住率",
+          "quadrant": "归类"
+        },
+        "quadrant": {
+          "both": "重点且难点",
+          "hard": "难点",
+          "focus": "重点",
+          "normal": "一般"
+        },
+        "askedRatio": "重点：问到的人 ≥ 成员的 {pct}（{n} 人）",
+        "stuckRatio": "难点：卡住率 ≥ {pct}",
+        "note": "「卡住」= AI 判断为不稳或薄弱，卡住率按涉及这个知识点的人算。点一行看常见误解和讲课建议。",
+        "chartX": "问到的人数（共 {n} 人）",
+        "empty": "清单里还没有知识点"
+      },
+      "detail": {
+        "back": "返回学情分析",
+        "stuckLine": "{stuck} / {involved} 人卡住",
+        "tasksLine": "涉及 {tasks}",
+        "newLine": "近 7 天新增 {n} 人",
+        "misTitle": "常见误解",
+        "misPeople": "{n} 人",
+        "misHidden": "另有 {n} 种误解不足 3 人，不列",
+        "misEmpty": "还没有归纳出常见误解",
+        "viewExcerpts": "看匿名对话",
+        "masteryTitle": "掌握分布",
+        "levels": {
+          "mastered": "掌握",
+          "shaky": "不稳",
+          "weak": "薄弱",
+          "untouched": "未涉及"
+        },
+        "levelCount": "{level} {n} 人",
+        "noList": "卡住的 {n} 人不列名单。",
+        "adviceTitle": "讲课建议",
+        "adviceEmpty": "卡住的人足够多时，每晚会为卡住最多的几个知识点生成讲课建议。",
+        "exportPoint": "导出这个知识点",
+        "whoTitle": "谁能看到什么",
+        "whoBody": "老师只看全班整体：人数、误解、匿名摘录，看不到是谁卡住。摘录去掉姓名、学号，只标本空间固定代号。某一组不足 3 人时不做分析，只写「不足 3 人，不分析」。"
+      },
+      "questions": {
+        "title": "高频问题",
+        "summary": "共 {questions} 条提问归成 {clusters} 类，展示 {shown} 类",
+        "hidden": "另有 {n} 类问过的人不足 3 人，不列",
+        "meta": "{people} 人问过 · 共 {asks} 次",
+        "trend": {
+          "up": "本周变多",
+          "down": "变少",
+          "new": "本周新出现"
+        },
+        "viewExcerpts": "看匿名对话",
+        "empty": "还没有问过 3 人以上的问题",
+        "noPoint": "未归到知识点"
+      },
+      "words": {
+        "cloudTitle": "词云 · 本周",
+        "rankTitle": "排行",
+        "col": {
+          "word": "词",
+          "count": "出现次数",
+          "people": "说过的人"
+        },
+        "newMark": "新",
+        "rising": "变多",
+        "errorsTitle": "高频报错",
+        "errorsHint": "成员贴给 AI 的报错，按说过的人数排。",
+        "errCol": {
+          "line": "报错",
+          "count": "次数",
+          "people": "说过的人"
+        },
+        "empty": "这一周还没有 3 人以上说过的词",
+        "errorsEmpty": "这一周还没有 3 人以上贴过的报错"
+      },
+      "tasks": {
+        "col": {
+          "name": "题目",
+          "claims": "领题",
+          "completion": "完成率",
+          "turns": "平均对话轮数",
+          "hours": "平均用时",
+          "stuck": "卡住率",
+          "seekers": "代写迹象"
+        },
+        "hours": "{n} 小时",
+        "people": "{n} 人",
+        "seekersHint": "代写迹象：在这道题里至少问了 2 次、一半以上是「直接要答案」的人数。用时是从领题到第一次提交。",
+        "empty": "还没有题目"
+      },
+      "behavior": {
+        "kindsTitle": "提问类型",
+        "kinds": {
+          "concept": "概念理解",
+          "error": "报错调试",
+          "answer": "直接要答案",
+          "verify": "验证自己的思路",
+          "other": "其他"
+        },
+        "kindShare": "{kind} {pct}",
+        "heatTitle": "什么时候问",
+        "days": {
+          "1": "周一",
+          "2": "周二",
+          "3": "周三",
+          "4": "周四",
+          "5": "周五",
+          "6": "周六",
+          "7": "周日"
+        },
+        "heatHint": "格子越深问得越多；不足 3 人的时段留白。",
+        "heatCell": "{day} {slot} 点：{n} 条",
+        "depTitle": "对 AI 的依赖程度",
+        "depHint": "每人「直接要答案」占自己提问的比例",
+        "dep": {
+          "low": "不到 10%",
+          "mid": "10% – 30%",
+          "high": "30% 以上"
+        },
+        "people": "{n} 人",
+        "depNote": "只给人数，不标到人",
+        "empty": "提问的人还不足 3 人，不分析"
+      },
+      "trend": {
+        "title": "卡住人数 · 按周",
+        "empty": "还没有按周的记录",
+        "gap": "空着的点：那一周不足 3 人，或还没有记录。"
+      },
+      "excerpt": {
+        "title": "匿名对话摘录",
+        "hint": "只显示本空间固定代号，不显示真名；对话里的姓名、学号、手机号已遮掉。",
+        "agent": "芝士",
+        "source": "查看原文",
+        "close": "关闭",
+        "empty": "没有可摘录的对话",
+        "failed": "读不到摘录，稍后再试"
+      },
+      "exportDialog": {
+        "title": "导出报告",
+        "hint": "导出的只有全班整体分析，不含任何成员的姓名或个人结果；摘录只标代号。",
+        "scope": "范围",
+        "scopeAll": "全部知识点",
+        "scopeOne": "只导出「{name}」",
+        "content": "内容",
+        "sections": {
+          "tasks": "题目完成情况（按题汇总）",
+          "points": "各知识点卡住的人数和常见误解",
+          "advice": "讲课建议",
+          "excerpts": "匿名对话摘录（不标是谁，每个误解最多 3 段）"
+        },
+        "format": "格式",
+        "formats": {
+          "pdf": "PDF",
+          "xlsx": "Excel",
+          "docx": "Word"
+        },
+        "cancel": "取消",
+        "submit": "导出",
+        "failed": "导出失败，稍后再试",
+        "fileName": "学情分析报告"
+      }
+    }
   },
   "overview": {
     "alerts": "待处理",
@@ -254,7 +473,7 @@
   },
   "tabs": {
     "alerts": "告警",
-    "learning": "学习",
+    "learning": "学情分析",
     "overview": "总览",
     "participants": "参与者",
     "publishers": "出题人",
