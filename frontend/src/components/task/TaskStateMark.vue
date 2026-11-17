@@ -51,7 +51,7 @@ watch(
     :data-live="state.live ? '' : undefined"
     :role="iconOnly ? 'img' : undefined"
     :aria-label="iconOnly ? state.label : undefined"
-    :title="state.detail || (iconOnly ? state.label : undefined)"
+    :title="iconOnly ? state.tip || state.label : state.tip || undefined"
     data-testid="task-state"
   >
     <span class="task-state__mark">

@@ -306,3 +306,20 @@ class AcceptApproval(UuidPk, Timestamps, Base):
         ForeignKey("accept_cards.id", ondelete="CASCADE"), index=True
     )
     approver_handle: Mapped[str] = mapped_column(String(64))
+
+
+class DeployReport(UuidPk, Base):
+    """One deploy of a repository that reported back to this platform: the
+    commit it put live and when (`review.deploy_wait.ship`).
+
+    A project waits for its deploy before its tasks are written up only while
+    reports keep coming (`deploy_wait.waits_for_deploy`): a platform no deploy
+    reports to closes tasks on merge as it always did, and none is left
+    waiting for a report that will never come."""
+
+    __tablename__ = "deploy_reports"
+
+    # "owner/repo", lower case.
+    repo: Mapped[str] = mapped_column(String(255), index=True)
+    sha: Mapped[str] = mapped_column(String(64))
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

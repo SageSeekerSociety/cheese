@@ -362,6 +362,9 @@ async def close_task(
     # read there as 已采纳 while the task is open — the one state that is
     # listed in neither 「未完成」 nor 「已关闭」.
     task.closing_since = None
+    # Nor for its deploy: closed by hand while it waited, it is over.
+    task.deploying_since = None
+    task.deploy_blocked_url = None
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)

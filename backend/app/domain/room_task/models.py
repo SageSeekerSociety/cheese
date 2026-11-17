@@ -328,6 +328,16 @@ class Task(UuidPk, Timestamps, Base):
     closing_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Its last delivery merged in a project whose deploy reports back
+    # (`review.deploy_wait`): the task waits, open, until a deploy that
+    # contains the merge reaches dev, and only then is it written up
+    # (`closing_since`). No deadline: a main that stays red keeps it waiting.
+    deploying_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # While it waits: the run of main's Required CI that failed after the
+    # merge and holds the deploy back; NULL when nothing red is known.
+    deploy_blocked_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # When the thread was collapsed. `status == closed` is the flag; this is
     # when — kept apart so "closed" needs no timestamp to be true.
     closed_at: Mapped[datetime | None] = mapped_column(

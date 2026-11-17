@@ -8,6 +8,7 @@
     "awaiting_answer": "Awaiting answer",
     "needs_help": "Needs help",
     "in_review": "In review",
+    "awaiting_deploy": "Awaiting deploy",
     "done": "Done",
     "closed": "Closed"
   },
@@ -21,6 +22,7 @@
   "waitsOn": "{name}'s turn",
   "waitsOnYou": "Your turn",
   "workedFor": "{time} so far",
+  "blockedRun": "See the failed CI run",
   "detail": {
     "staleTitle": "Running, but progress hasn't changed in a while",
     "offlineTitle": "May be offline",

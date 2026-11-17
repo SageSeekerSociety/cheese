@@ -5,9 +5,12 @@ last step (``AcceptCard.completes_task``). Any step but the last leaves the
 task open and moves it onto a branch cut from the project's latest code, for
 its AI teammate to carry on from. The last one has the AI teammate write the
 task up and close it (`room_task.closing`). Either
-way the discussion the task came from hears what landed. Nothing is watched
-after the merge: the repository's CI and deploy on its default branch are
-its own.
+way the discussion the task came from hears what landed. In a project whose
+deploy reports back (`deploy_scope`) the last one first waits, open, until a
+deploy containing the merge is live (`Task.deploying_since`,
+`deploy_wait.ship`), and only then is written up (`deploy_landed`). Nothing
+else is watched after the merge: the repository's CI and deploy on its default
+branch are its own.
 
 A last step lands as a step after all when the task's own AI teammate's
 session is at work on a message it read that was sent after the delivery was
@@ -45,6 +48,7 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import SEVERITY_INFO, WHO_PLATFORM, notice
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
+from app.domain.review.deploy_scope import waits_for_deploy
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.ports import Announce, RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
@@ -117,17 +121,24 @@ async def delivery_landed(
             ),
             record_instruction=record_instruction,
         )
-    elif task.status == TaskStatus.open and task.closing_since is None:
-        task.closing_since = now
-        await tell_agent(
-            session,
-            task,
-            task_summary_prompt(
-                title=task.title, has_checkout=task.branch_name is not None
-            ),
-            record_instruction=record_instruction,
-            closes=True,
-        )
+    elif (
+        task.status == TaskStatus.open
+        and task.closing_since is None
+        and task.deploying_since is None
+    ):
+        if (
+            head is not None
+            and pr_number is not None
+            and await waits_for_deploy(session, task.project_id)
+        ):
+            # Merged is not live: the task waits for the deploy that contains
+            # this merge, and is written up once that has reported
+            # (`deploy_landed`). A delivery that is not a merge — a file, a
+            # URL, a conclusion — has nothing to deploy.
+            task.deploying_since = now
+            task.deploy_blocked_url = None
+        else:
+            await _write_up(session, task, record_instruction=record_instruction)
     await session.flush()
     # The last step says nothing at the origin now: the task's ending is said
     # there once, when it closes (`tell_origin_ended`), whichever way it does.
@@ -138,6 +149,73 @@ async def delivery_landed(
             _step_landed(task, pr_number),
             task_teammate=task_teammate,
         )
+    return True
+
+
+async def _write_up(
+    session: AsyncSession,
+    task: Task,
+    *,
+    record_instruction: RecordInstruction | None,
+    deployed: bool = False,
+) -> None:
+    """``task``'s last step landed: its AI teammate writes it up and closes it
+    (`room_task.closing`)."""
+    task.closing_since = datetime.now(UTC)
+    await tell_agent(
+        session,
+        task,
+        task_summary_prompt(
+            title=task.title,
+            has_checkout=task.branch_name is not None,
+            deployed=deployed,
+        ),
+        record_instruction=record_instruction,
+        closes=True,
+    )
+
+
+async def deploy_landed(
+    session: AsyncSession,
+    task: Task,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+) -> bool:
+    """A deploy containing the merge ``task`` waits for is live: the task
+    stops waiting and goes the way its last step would have gone on merge.
+    Written up and closed — unless its AI teammate was asked for more while it
+    waited, in which case that work goes on as the next step, as it does for a
+    last step that lands while such work runs (module docstring).
+
+    Says whether the task was waiting; one that is not is left alone, so a
+    second report of the same deploy changes nothing. The caller holds the
+    task's row (`room_task.lock_order`)."""
+    if task.deploying_since is None:
+        return False
+    task.deploying_since = None
+    task.deploy_blocked_url = None
+    if task.status != TaskStatus.open:
+        await session.flush()
+        return True
+    if await _asked_for_more(
+        session,
+        task,
+        since=await _handed_over(session, task),
+        task_teammate=task_teammate,
+    ):
+        await _go_on(session, task, record_instruction=record_instruction)
+        await tell_origin(
+            session,
+            task,
+            _step_landed(task, task.pr_number),
+            task_teammate=task_teammate,
+        )
+    else:
+        await _write_up(
+            session, task, record_instruction=record_instruction, deployed=True
+        )
+    await session.flush()
     return True
 
 
@@ -585,12 +663,17 @@ def task_step_landed_while_working_prompt(
     )
 
 
-def task_summary_prompt(*, title: str, has_checkout: bool) -> str:
-    """What a task's agent is told when its last delivery lands: write the task
-    up, then close it."""
+def task_summary_prompt(
+    *, title: str, has_checkout: bool, deployed: bool = False
+) -> str:
+    """What a task's agent is told when its last delivery lands — or, in a
+    project that waits for its deploy, when that deploy is live: write the
+    task up, then close it."""
+    landed = "已经采纳" + ("并合并" if has_checkout else "")
+    if deployed:
+        landed += "，部署也已上线"
     return (
-        f"任务「{title}」的最后一次交付已经采纳{'并合并' if has_checkout else ''}，"
-        "写完总结就关闭任务。"
+        f"任务「{title}」的最后一次交付{landed}，写完总结就关闭任务。"
         "只做三件事：\n"
         "1. 用 cheese_doc(action=get) 读实况文档，用 cheese_doc(action=edit) 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
