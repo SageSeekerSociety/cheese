@@ -10,7 +10,7 @@
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
-import type { TaskLine } from '../../lib/channelTasks'
+import type { DeliveryView, TaskLine } from '../../lib/channelTasks'
 import type { Receipt } from '../../lib/readReceipts'
 import type { RefNames } from '../../lib/refChip'
 
@@ -45,6 +45,7 @@ import UserAvatar from '../common/UserAvatar.vue'
 import TaskStateMark from '../task/TaskStateMark.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
+import DeliveryActions from './DeliveryActions.vue'
 import FileBlockMenu from './FileBlockMenu.vue'
 import MessageAppCard from './MessageAppCard.vue'
 import MessageEditor from './MessageEditor.vue'
@@ -69,6 +70,10 @@ const props = defineProps<{
   taskTag?: TaskLine | null
   /** 这是关于这件任务的最新一条：标签上再写状态词和在等谁。 */
   taskTagFull?: boolean
+  /** 这件任务交了一版在等人审阅，这一条是主线上关于它的最新一条：下面挂处理这一版的按钮。 */
+  deliveryHere?: boolean
+  /** 这条下面那颗「采纳」按下去了，还在等结果。 */
+  adopting?: boolean
   /** 同一个人连着说的第一条——只有它带头像和名字。 */
   runStart: boolean
   /** 同一个人隔了一阵又开口：重新带上名字和时间，但只空一小档。 */
@@ -178,6 +183,8 @@ const emit = defineEmits<{
   (e: 'ask-withdraw', block: Block): void
   /** 这道题不回答，跳过。 */
   (e: 'ask-skip', block: Block): void
+  /** 交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: DeliveryView }): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -195,12 +202,9 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
-// 标签上「在等谁」只在任务等人审阅或回答时写：那一行在别的状态下说的是别的事。
-const tagWaits = computed(
-  () =>
-    !!props.taskTag?.state.line &&
-    (props.taskTag.state.status === 'in_review' || props.taskTag.state.status === 'awaiting_answer')
-)
+// 标签上「在等谁」只在任务等人审阅或回答时写，只写等谁（「等你」「等林老师」）：交付的
+// 题目、第几版、什么时候交的在任务的页签上，挤进标签会把任务名挤没。
+const tagWaits = computed(() => props.taskTag?.state.waits || '')
 // 说这件任务的不是做它的那位 AI 队友时，标签上画做它的那位的头像。
 const tagDoer = computed(() => {
   const doer = props.taskTag?.teammate
@@ -382,7 +386,7 @@ const quickOffered = computed(() => {
         />
         <template v-if="taskTagFull">
           <span class="im-task-tag__state">{{ taskTag.state.label }}</span>
-          <span v-if="tagWaits" class="im-task-tag__wait">{{ taskTag.state.line }}</span>
+          <span v-if="tagWaits" class="im-task-tag__wait">{{ tagWaits }}</span>
         </template>
       </button>
       <!-- 一份文件：发来的附件（图片直接画成图），或芝士摆出来的东西。旁边一颗 ⋯ 收着
@@ -572,6 +576,13 @@ const quickOffered = computed(() => {
           {{ option.text }}
         </BaseButton>
       </div>
+      <DeliveryActions
+        v-if="deliveryHere && taskTag"
+        :task="taskTag"
+        :viewer="viewer"
+        :adopting="adopting"
+        @delivery="emit('delivery', $event)"
+      />
       <MessageQuote
         v-if="block.meta?.quoted_context && block.meta.quoted_context.kind !== 'viewing'"
         :quote="block.meta.quoted_context"
@@ -676,7 +687,6 @@ const quickOffered = computed(() => {
 .im-task-tag__wait {
   flex: none;
   margin-left: 2px;
-  color: var(--faint);
 }
 .im-pending-state {
   position: absolute;

@@ -16,6 +16,7 @@ import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { useTopicActions } from './topicView/actions'
 import { useTopicAddress } from './topicView/address'
+import { useAdoptInPlace } from './topicView/adoptInPlace'
 import { useCardPhase, useTopicConversation } from './topicView/conversation'
 import { useDeliveryTab } from './topicView/delivery'
 import { useTopicHeader } from './topicView/header'
@@ -40,6 +41,7 @@ import { t } from '@/i18n'
 import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
+import { taskState } from '@/lib/taskState'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { VIEWING_CONTEXT } from '@/lib/viewingContext'
 import { myHandle } from '@/me'
@@ -295,39 +297,102 @@ const delivery = useDeliveryTab({
   },
 })
 const {
-  tab: deliveryTab,
+  tabs: deliveryTabs,
   shownTab,
   select: onWorkPanelTab,
   close: closeDelivery,
   arrived: onDeliveryArrived,
 } = delivery
-const deliveryTaskId = computed(() => props.reviewTaskId ?? deliveryTab.value?.taskId ?? null)
+const deliveryTaskId = computed(() => props.reviewTaskId ?? null)
 const reviewRead = useQuery(
   computed(() => ({ ...roomTaskQuery(deliveryTaskId.value ?? ''), enabled: !!deliveryTaskId.value })),
   queryClient
 )
 const reviewTask = computed<RoomTask | null>(() => (deliveryTaskId.value ? reviewRead.data.value ?? null : null))
 const reviewHead = computed(() => ({ heading: reviewTask.value ? taskTitle(reviewTask.value) : '' }))
-const deliveryTabBinding = computed(() =>
-  mdAndUp.value && deliveryTab.value
-    ? { id: deliveryTab.value.taskId, title: reviewHead.value.heading, dot: deliveryTab.value.dot }
+// 页头上的状态词和在等谁：和主线标签、侧栏任务行同一份算法（`lib/taskState`）。
+function stateOf(task: RoomTask | null) {
+  return task
+    ? taskState(task, {
+        viewer: myHandle(),
+        nameOf: (handle: string) => memberNames.value[handle] || handle,
+        agentName: store.agentName,
+      })
     : null
+}
+const reviewState = computed(() => stateOf(reviewTask.value))
+// 右栏里开着的每一格任务各读各的（页签上的名字、它那一栏的页头和只读与否）。
+// 只在页签打开时读一次（同一份缓存，`roomTaskQuery`）；正看着的那一格读的是上面那份活的。
+const tabTasks = ref<Record<string, RoomTask>>({})
+watch(
+  () => deliveryTabs.value.map((tab) => tab.taskId),
+  (ids) => {
+    for (const id of ids) {
+      if (tabTasks.value[id]) continue
+      void queryClient
+        .fetchQuery(roomTaskQuery(id))
+        .then((task) => (tabTasks.value = { ...tabTasks.value, [id]: task }))
+        .catch(() => undefined)
+    }
+  },
+  { immediate: true }
 )
-// 审阅那一栏（工作面板的审阅模式）要的几样：这件任务的改动和预览。
+function tabTask(taskId: string): RoomTask | null {
+  return tabTasks.value[taskId] ?? null
+}
+/** 这件任务读回来的那一行：在它的地址上是 `reviewTask`，别的开着的页签各读各的。 */
+function taskFor(taskId: string): RoomTask | null {
+  return taskId === deliveryTaskId.value ? reviewTask.value : tabTask(taskId)
+}
+const deliveryTabsBinding = computed(() =>
+  mdAndUp.value
+    ? deliveryTabs.value.map((tab) => {
+        const task = taskFor(tab.taskId)
+        return { id: tab.taskId, title: task ? taskTitle(task) : '', dot: tab.dot }
+      })
+    : []
+)
+// 打开的这件任务看哪一种（对话 / 改动 / 预览）：主线上「查看改动」「预览」点名，人在
+// 那一栏里换了就跟着换。记着是哪件任务的：换一件任务从它的对话看起。
+const reviewView = ref<{ taskId: string; view: string } | null>(null)
+// 主线上按了「退回」：这件任务的页签开出写理由的那一块。每按一次一个新记号，只给那件任务。
+const returnAsk = ref<{ taskId: string; token: string } | null>(null)
+let returnAsks = 0
+function openTaskChat(taskId: string) {
+  reviewView.value = null
+  returnAsk.value = null
+  return openTask(taskId)
+}
+// 主线上交付那几颗按钮：去看改动、预览，就地采纳，或退回（topicView/adoptInPlace.ts）。
+const adoptInPlace = useAdoptInPlace({
+  me: () => myHandle(),
+  store,
+  topicId: () => props.topicId,
+  openTask: (taskId) => openTask(taskId),
+  showView: (taskId, view) => {
+    reviewView.value = { taskId, view }
+    returnAsk.value = null
+  },
+  askReturn: (taskId) => (returnAsk.value = { taskId, token: `${taskId}:${++returnAsks}` }),
+})
+const adoptingTask = adoptInPlace.adopting
+// 审阅那一栏（工作面板的审阅模式）要的几样：这件任务的对话、改动和预览。
 function reviewPanel(taskId: string) {
   return {
     review: true,
     reviewReload: reviewReload.value,
     topic: selectedTopic.value,
     taskId,
-    taskReadOnly: !reviewTask.value || reviewTask.value.status !== 'open',
-    taskHasBranch: reviewTask.value?.branch_name !== null,
+    taskReadOnly: !taskFor(taskId) || taskFor(taskId)?.status !== 'open',
+    taskHasBranch: taskFor(taskId)?.branch_name !== null,
     activityTick: activityTick.value,
     agentName: store.agentName,
-    agentHandle: reviewTask.value?.agent_handle ?? store.agentHandle,
+    agentHandle: taskFor(taskId)?.agent_handle ?? store.agentHandle,
     members: store.members,
     memberNames: memberNames.value,
     topicList: store.topics,
+    tab: reviewView.value?.taskId === taskId ? reviewView.value.view : undefined,
+    askReturn: returnAsk.value?.taskId === taskId ? returnAsk.value.token : null,
   }
 }
 // 支线左上角的返回：回到「支线」那一格的列表。
@@ -356,7 +421,7 @@ useScreenHeader(() => {
     return {
       content: {
         component: DeliveryHead,
-        props: { ...reviewHead.value, bar: true, onOpenTask: () => openTaskPage(reviewing) },
+        props: { ...reviewHead.value, state: reviewState.value, bar: true, onOpenTask: () => openTaskPage(reviewing) },
       },
     }
   }
@@ -414,7 +479,7 @@ const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } 
   onReview,
   reloadAccept,
   loadSkills,
-  opening: { onOpenThread, openTask, upgradeInColumn },
+  opening: { onOpenThread, openTask: openTaskChat, upgradeInColumn },
   openTopic,
   panelRef,
   chatColumn,
@@ -425,6 +490,7 @@ const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } 
   handleTurnDone,
   handleWorking,
   handleStateChanged,
+  onDelivery: (act) => void adoptInPlace.onDelivery(act),
 })
 
 // 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：总览、资料库、
@@ -511,7 +577,28 @@ void openPlace()
         @open-card="openTaskPage"
         @mention-click="handleMentionClick"
         @navigate="router.push($event)"
-      />
+        @update:tab="(key: string) => (reviewView = { taskId: reviewTaskId!, view: key })"
+        @return-asked="returnAsk = null"
+      >
+        <template #chat>
+          <TopicChatColumn
+            class="col col-chat flex-grow-1"
+            beside
+            :topic="selectedTopic"
+            :task-id="reviewTaskId"
+            :task-agent-handle="reviewTask?.agent_handle ?? null"
+            :members="store.members"
+            :topic-list="store.topics"
+            :member-names="memberNames"
+            :composer-closed="composerClosed"
+            :ask-closed="askClosed || reviewTask?.status === 'closed'"
+            @open-file="(path: string) => panelRef?.openFile?.(path)"
+            @open-topic="openTopic"
+            @open-card="openTask"
+            @mention-click="handleMentionClick"
+          />
+        </template>
+      </WorkPanel>
       <div
         v-else
         ref="panesRef"
@@ -542,6 +629,7 @@ void openPlace()
             :chapters="chapters.rows.value"
             :chapterable="canChapter"
             :chapter-ids="chapters.chapterIds.value"
+            :adopting-task="adoptingTask"
             v-on="chatEvents"
             @chapter="chapters.add"
             @unchapter="chapters.remove"
@@ -603,7 +691,7 @@ void openPlace()
             :site-turns="siteTurns"
             :topic-list="store.topics"
             :tab="shownTab"
-            :delivery="deliveryTabBinding"
+            :deliveries="deliveryTabsBinding"
             :routine-id="panelRoutineId"
             :card-phase="cardPhase"
             :with-chat="!mdAndUp"
@@ -700,17 +788,45 @@ void openPlace()
               />
             </template>
             <!-- Desktop: the delivery under review, in its own closable tab. -->
-            <template v-if="deliveryTab && mdAndUp" #delivery>
+            <template v-if="mdAndUp" #delivery="{ id }">
               <WorkPanel
-                :key="deliveryTab.taskId"
+                :key="id"
                 class="tab-fill"
-                v-bind="reviewPanel(deliveryTab.taskId)"
-                :review-head="{ heading: reviewHead.heading, version: reviewTask?.card?.version ?? null }"
+                v-bind="reviewPanel(id)"
+                :review-head="{
+                  heading: taskFor(id) ? taskTitle(taskFor(id)!) : '',
+                  version: taskFor(id)?.card?.version ?? null,
+                  state: stateOf(taskFor(id)),
+                }"
                 @open-topic="openTopic"
                 @open-card="openTaskPage"
                 @mention-click="handleMentionClick"
                 @navigate="router.push($event)"
-              />
+                @update:tab="(key: string) => (reviewView = { taskId: id, view: key })"
+                @return-asked="returnAsk = null"
+              >
+                <!-- The task is a thread: its own conversation, the request it came from on top. The
+                     decision is in the head above, so the conversation does not carry a second one. -->
+                <template #chat>
+                  <TopicChatColumn
+                    class="col col-chat flex-grow-1"
+                    beside
+                    accept-elsewhere
+                    :topic="selectedTopic"
+                    :task-id="id"
+                    :task-agent-handle="taskFor(id)?.agent_handle ?? null"
+                    :members="store.members"
+                    :topic-list="store.topics"
+                    :member-names="memberNames"
+                    :composer-closed="composerClosed"
+                    :ask-closed="askClosed || taskFor(id)?.status === 'closed'"
+                    @open-file="(path: string) => panelRef?.openFile?.(path)"
+                    @open-topic="openTopic"
+                    @open-card="openTask"
+                    @mention-click="handleMentionClick"
+                  />
+                </template>
+              </WorkPanel>
             </template>
             <template v-if="!taskId" #threads>
               <!-- Desktop: an open thread stays in the 支线 tab, with a back to the list. -->
@@ -767,6 +883,7 @@ void openPlace()
                 :chapterable="canChapter"
                 :chapter-ids="chapters.chapterIds.value"
                 accept-review-button
+                :adopting-task="adoptingTask"
                 v-on="chatEvents"
                 @chapter="chapters.add"
                 @unchapter="chapters.remove"
