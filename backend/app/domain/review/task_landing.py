@@ -1,34 +1,43 @@
 """What a task's delivery landing does to the task.
 
-A task may deliver several times. The card says whether this delivery is the
-last step (``AcceptCard.completes_task``). Any step but the last leaves the
-task open and moves it onto a branch cut from the project's latest code, for
-its AI teammate to carry on from. The last one has the AI teammate write the
-task up and close it (`room_task.closing`). Either
-way the discussion the task came from hears what landed. In a project whose
-deploy reports back (`deploy_scope`) the last one first waits, open, until a
-deploy containing the merge is live (`Task.deploying_since`,
-`deploy_wait.ship`), and only then is written up (`deploy_landed`). Nothing
-else is watched after the merge: the repository's CI and deploy on its default
-branch are its own.
+A task may deliver several times, and no delivery says by itself that it is
+the last: a card does not carry it (the old ``AcceptCard.completes_task`` is
+kept on old rows and read by nothing), and a person accepting one only says
+this step is good. So every merge that lands leaves the task open and moves it
+onto a branch cut from the project's latest code, and its AI teammate is told
+to judge whether the task is done — against the task's goal, what the task
+document still has open, its checklist, and what the owner said — and either
+carry on or write the task up and close it (`task_landed_prompt`). Whether
+that close is allowed is the close route's to check
+(`close_grounds`): the platform does not read the task document, it checks
+facts. Either way the discussion the task came from hears what landed.
 
-A last step lands as a step after all when the task's own AI teammate's
-session is at work on a message it read that was sent after the delivery was
-handed over, or a message to it there is still waiting to be read — someone
-asked for more after the card went up, and accepted it anyway. What it is doing is not in the
-delivery, and closing the task would stop it half done and leave it with
-nowhere to be delivered. So the task stays open on the next step's branch,
-and the AI teammate delivers that work as the next step. The same holds for a
-task already being written up when such work starts in it
-(`go_on_while_working`). Only the task's own teammate's work counts, and only
-what a person or the teammate itself asked for: an instruction the platform
-gave — another seat woken in the task, a conflict or CI fix — is not more work
-asked of it (`room_task.closing.unfinished`).
+A merge nobody filed a card for — a PR merged on the forge by hand — leaves
+the task open as well; its AI teammate is not woken, and the owner is told in
+the task that it goes on (`pr_poll`).
+
+In a project whose deploy reports back (`deploy_scope`), the teammate's close
+after its last merge waits, open, until a deploy containing that merge is live
+(`Task.deploying_since`, `deploy_wait.ship`), and only then is the task written
+up (`deploy_landed`). Steps before it do not wait. Nothing else is watched
+after the merge: the repository's CI and deploy on its default branch are its
+own.
+
+When the task's own AI teammate's session is at work on a message it read
+that was sent after the delivery was handed over, or a message to it there is
+still waiting to be read — someone asked for more after the card went up, and
+accepted it anyway — it is told the merge landed while it works
+(`task_step_landed_while_working_prompt`), not asked to judge the task done in
+the middle of that work. The same holds for a task already being written up
+when such work starts in it (`go_on_while_working`). Only the task's own
+teammate's work counts, and only what a person or the teammate itself asked
+for: an instruction the platform gave — another seat woken in the task, a
+conflict or CI fix — is not more work asked of it
+(`room_task.closing.unfinished`).
 
 Every path that sees a delivery merge comes through here — an accept click,
-the merge queue, the poller, a PR merged by hand — so none of them can keep
-closing a task the card said goes on, and none of them can land one merge on
-a task twice.
+the merge queue, the poller, a PR merged by hand — so none of them can close a
+task on a merge, and none of them can land one merge on a task twice.
 """
 
 import logging
@@ -79,14 +88,12 @@ async def delivery_landed(
     by: str | None,
     head: str | None,
     pr_number: int | None,
-    completes: bool,
     handed_over: datetime | None,
     record_instruction: RecordInstruction | None,
     task_teammate: TaskTeammate | None,
 ) -> bool:
-    """``task``'s delivery merged. ``completes``: it was the task's last step.
-    ``handed_over``: when its card went up; None for a merge no card asked
-    for, where any turn running in the task is work that merge does not hold.
+    """``task``'s delivery merged. ``handed_over``: when its card went up; None
+    for a merge no card asked for, which wakes nobody (module docstring).
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
@@ -97,51 +104,39 @@ async def delivery_landed(
     task.accepted_by = by or task.accepted_by
     if head:
         task.delivered_head = head[:64]
-    still_working = (
-        completes
-        and task.status == TaskStatus.open
-        and bool(
-            await _asked_for_more(
-                session, task, since=handed_over, task_teammate=task_teammate
-            )
-        )
+    # A task being written up, or waiting for its deploy, already had its
+    # teammate's word that it is done; a merge landing on it now (one merged
+    # by hand, say) is recorded and moves nothing — the deploy it waits for
+    # is read off `accepted_at`, which this merge just moved.
+    goes_on = (
+        task.status == TaskStatus.open
+        and task.closing_since is None
+        and task.deploying_since is None
     )
-    goes_on = task.status == TaskStatus.open and (not completes or still_working)
-    if still_working:
+    if goes_on and handed_over is None:
+        await TaskService(session).next_step(task)
+    elif goes_on and await _asked_for_more(
+        session, task, since=handed_over, task_teammate=task_teammate
+    ):
         await _go_on(session, task, record_instruction=record_instruction)
     elif goes_on:
         await TaskService(session).next_step(task)
         await tell_agent(
             session,
             task,
-            task_next_step_prompt(
+            task_landed_prompt(
                 title=task.title,
                 task_id=task.id,
                 has_checkout=task.branch_name is not None,
+                waits_for_deploy=(
+                    head is not None
+                    and pr_number is not None
+                    and await waits_for_deploy(session, task.project_id)
+                ),
             ),
             record_instruction=record_instruction,
         )
-    elif (
-        task.status == TaskStatus.open
-        and task.closing_since is None
-        and task.deploying_since is None
-    ):
-        if (
-            head is not None
-            and pr_number is not None
-            and await waits_for_deploy(session, task.project_id)
-        ):
-            # Merged is not live: the task waits for the deploy that contains
-            # this merge, and is written up once that has reported
-            # (`deploy_landed`). A delivery that is not a merge — a file, a
-            # URL, a conclusion — has nothing to deploy.
-            task.deploying_since = now
-            task.deploy_blocked_url = None
-        else:
-            await _write_up(session, task, record_instruction=record_instruction)
     await session.flush()
-    # The last step says nothing at the origin now: the task's ending is said
-    # there once, when it closes (`tell_origin_ended`), whichever way it does.
     if goes_on:
         await tell_origin(
             session,
@@ -152,6 +147,26 @@ async def delivery_landed(
     return True
 
 
+async def wait_for_deploy(session: AsyncSession, task: Task) -> bool:
+    """``task``'s AI teammate closes it as done: in a project whose deploy
+    reports back, whose last delivery was a merge, the task waits open for a
+    deploy containing that merge and is written up then (`deploy_landed`).
+    Says whether it waits. A task being written up already waited, or never
+    had to; one with no merge delivered has nothing to deploy."""
+    if (
+        task.status != TaskStatus.open
+        or task.closing_since is not None
+        or task.deploying_since is not None
+        or task.delivered_head is None
+        or not await waits_for_deploy(session, task.project_id)
+    ):
+        return False
+    task.deploying_since = datetime.now(UTC)
+    task.deploy_blocked_url = None
+    await session.flush()
+    return True
+
+
 async def _write_up(
     session: AsyncSession,
     task: Task,
@@ -159,8 +174,8 @@ async def _write_up(
     record_instruction: RecordInstruction | None,
     deployed: bool = False,
 ) -> None:
-    """``task``'s last step landed: its AI teammate writes it up and closes it
-    (`room_task.closing`)."""
+    """``task`` is done and, where it waits for its deploy, live: its AI
+    teammate writes it up and closes it (`room_task.closing`)."""
     task.closing_since = datetime.now(UTC)
     await tell_agent(
         session,
@@ -183,10 +198,10 @@ async def deploy_landed(
     task_teammate: TaskTeammate | None,
 ) -> bool:
     """A deploy containing the merge ``task`` waits for is live: the task
-    stops waiting and goes the way its last step would have gone on merge.
-    Written up and closed — unless its AI teammate was asked for more while it
-    waited, in which case that work goes on as the next step, as it does for a
-    last step that lands while such work runs (module docstring).
+    stops waiting, and its AI teammate — who already judged it done
+    (`wait_for_deploy`) — writes it up and closes it. Unless it was asked for
+    more while it waited: then that work goes on as the next step, as it does
+    for a merge that lands while such work runs (module docstring).
 
     Says whether the task was waiting; one that is not is left alone, so a
     second report of the same deploy changes nothing. The caller holds the
@@ -614,61 +629,83 @@ async def tell_agent(
     )
 
 
-# 下面这三段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
+# 下面这几段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
 # 和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，可那个包里没有一处
 # 用它们 —— 说它们的只有这里，`delivery_landed` 和 `_go_on`。第 9 步把 review 够
 # 不着 `agent` 的那几条调用收进端口时，纯字符串没有理由走端口，就搬回说它的地方。
 
 
-def task_next_step_prompt(*, title: str, task_id, has_checkout: bool) -> str:
-    """What a task's agent is told when one of its deliveries lands and the
-    task goes on."""
-    # 没有工作目录的任务（项目没有仓库）交的是文件或地址：没有合并，也没有新分支。
-    start = (
-        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
-        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
-        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
-        if has_checkout
-        else f"任务「{title}」的这次交付已经采纳，任务还没完成。"
+def _judge(*, deploys: bool) -> str:
+    """How a task's AI teammate tells whether the task is done, and what it
+    does either way, once a merge has landed."""
+    done = (
+        "都做完了：步骤清单全部标成 completed，有不做的项就在关闭时用 unchecked_reason 写明理由；"
+        "直接用 cheese_task(action=close) 关闭，结论写一句结果。"
+        "这个项目要等部署：平台会先等这次合并上线，上线后再叫你更新实况文档、发总结，"
+        "现在不用写。"
+        if deploys
+        else "都做完了：步骤清单全部标成 completed，有不做的项就在关闭时用 unchecked_reason 写明理由；"
+        "用 cheese_doc(action=edit) 把实况文档改成任务完成时的样子，用 chat_send 在任务里发一条总结，"
+        "再用 cheese_task(action=close) 关闭，结论写一句结果。"
     )
     return (
-        start
-        + "对照实况文档接着做下一步，做完再用 cheese_card(action=request) 递一次交付；"
-        "这一步做完任务目标就全部达成时 completes_task 填 true，"
-        "还有没做完的就填 false，并在交付说明里写下一步做什么。"
+        "由你判断任务做没做完：对照任务目标、实况文档里还没做完的、步骤清单，"
+        "和负责人在任务里说过的话（他说过还要接着做的，就没做完）。\n"
+        "- 还有没做完的：在步骤清单里勾掉刚合并的这一步，接着做下一步，"
+        "做完再用 cheese_card(action=request) 递一次交付。\n"
+        f"- {done}\n"
+        "拿不准就用 cheese_ask 问负责人，等他回话，不要先关。"
+        "关闭要有依据：最后一次交付已合并且清单勾完（或写明不做的理由），"
+        "或者负责人在任务里说过结束（关闭时用 owner_message 带上那条消息的 id）；"
+        "两样都没有，平台会拒绝。"
     )
+
+
+def task_landed_prompt(
+    *, title: str, task_id, has_checkout: bool, waits_for_deploy: bool = False
+) -> str:
+    """What a task's agent is told when one of its deliveries lands: the task
+    is still open, and whether it is done is the agent's to judge."""
+    # 没有工作目录的任务（项目没有仓库）交的是文件或地址：没有合并，也没有新分支。
+    start = (
+        f"任务「{title}」的这次交付已经采纳并合并，任务还开着。"
+        f'要接着改文件，先执行 cd "$(cheese worktree {task_id})"：'
+        "工作目录会换到一条从项目最新代码切出的新分支上，没合并的提交和改动会一起带过去。"
+        if has_checkout
+        else f"任务「{title}」的这次交付已经采纳，任务还开着。"
+    )
+    return start + _judge(deploys=waits_for_deploy)
 
 
 def task_step_landed_while_working_prompt(
     *, title: str, task_id, has_checkout: bool
 ) -> str:
-    """What a task's agent is told when the delivery it called the last lands
-    while it is working on something begun after that delivery went up: the
-    delivery counts as a step, and the work goes on as the next one."""
+    """What a task's agent is told when one of its deliveries lands while it
+    is working on something begun after that delivery went up: that work is
+    not in the merge, and the task goes on."""
     start = (
-        f"任务「{title}」你标成最后一步的那次交付已经采纳并合并，"
-        "但交付之后你又开始了新的工作，它不在这次合并里，所以任务没有关闭，接着开着。"
+        f"任务「{title}」的这次交付已经采纳并合并，"
+        "但交付之后你又开始了新的工作，它不在这次合并里，任务接着开着。"
         f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
-        "再用 "
+        "再用 cheese_card(action=request) 把它作为下一步递交。"
         if has_checkout
-        else f"任务「{title}」你标成最后一步的那次交付已经采纳，"
-        "但交付之后你又开始了新的工作，所以任务没有关闭，接着开着。"
-        "手上这件做完后，用 "
+        else f"任务「{title}」的这次交付已经采纳，"
+        "但交付之后你又开始了新的工作，任务接着开着。"
+        "手上这件做完后，用 cheese_card(action=request) 把它作为下一步递交。"
     )
     return (
-        start + "cheese_card(action=request) 把它作为下一步递交，"
-        "做完任务目标就全部达成时 completes_task 填 true。"
-        "新做的东西如果不需要交付，就用 cheese_task(action=close) 关闭任务，结论里写明。"
+        start + "新做的东西不需要交付的，做完后照常判断任务做没做完。"
+        + _judge(deploys=False)
     )
 
 
 def task_summary_prompt(
     *, title: str, has_checkout: bool, deployed: bool = False
 ) -> str:
-    """What a task's agent is told when its last delivery lands — or, in a
-    project that waits for its deploy, when that deploy is live: write the
-    task up, then close it."""
+    """What a task's agent is told once a task it judged done is live, in a
+    project that waits for its deploy (`deploy_landed`): write the task up,
+    then close it."""
     landed = "已经采纳" + ("并合并" if has_checkout else "")
     if deployed:
         landed += "，部署也已上线"

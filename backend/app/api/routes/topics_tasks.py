@@ -89,8 +89,9 @@ from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.project_permissions import Permission
 from app.domain.review.archive import OPEN_CARD_STATUSES, close_cards_for_closed_task
+from app.domain.review.close_grounds import grounds_to_close
 from app.domain.review.services import AcceptService
-from app.domain.review.task_landing import tell_origin_ended
+from app.domain.review.task_landing import tell_origin_ended, wait_for_deploy
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard
@@ -243,15 +244,18 @@ async def conclude_task(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """关闭任务：someone who works it — its owner or a contributor — or its
-    own session says it is over. With a conclusion it is done — the work did
-    not end in a merge (research, a decision); without one it was put down.
-    Delivered work closes by itself when its change is accepted.
+    own session says it is over. With a conclusion it is done; without one it
+    was put down. A merge does not close a task (`review.task_landing`): its
+    teammate judges it done and closes it here.
 
     Closing is not undone by reopening (its open cards are voided, its pull
     request closed), so it is kept to the people whose word the task's
     teammate acts on (`TaskService.takes_part`); reopening is wider. Its own
     session may not close it while a delivery on it waits on a person: that
-    close would void the delivery, which is the person's decision.
+    close would void the delivery, which is the person's decision. Nor
+    without grounds the platform can check (`review.close_grounds`). In a
+    project that waits for its deploy, its own session's close after a merge
+    leaves it open, waiting for that merge to go live (``deploying: true``).
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     # Before anything else is locked: the task lock order (`lock_order`); the
@@ -268,6 +272,16 @@ async def conclude_task(
             raise ConflictError(say("taskCloseWhileDeliveryWaits"))
     elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
+    grounds = (
+        await grounds_to_close(
+            db,
+            task,
+            owner_message=body.owner_message_id,
+            unchecked_reason=body.unchecked_reason,
+        )
+        if actor.via == "cheese"
+        else None
+    )
     credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
     # Who reported it and who works it is the owner's to change (`update_task`);
     # a contributor closing the task does not get to rewrite that.
@@ -301,6 +315,20 @@ async def conclude_task(
                 else task.contributor_handles
             ),
         )
+    if grounds is not None and grounds.unchecked:
+        conclusion = "\n\n".join(part for part in (conclusion, grounds.unchecked) if part)
+    # Its teammate judged it done, but in a project that waits for its deploy
+    # the task stays open until its last merge is live, and is written up then
+    # (`task_landing.wait_for_deploy`).
+    if actor.via == "cheese" and await wait_for_deploy(db, task):
+        out = await task_out(
+            db,
+            task,
+            (await AcceptService(db).latest_by_task([task.id])).get(task.id),
+            me=actor.handle or "",
+        )
+        await db.commit()
+        return ok({**out, "deploying": True})
     # Its own session closing it is the turn that would be stopped, and it
     # ends by itself.
     task = await close_task(
