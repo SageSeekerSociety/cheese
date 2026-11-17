@@ -1,11 +1,14 @@
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, date, datetime
 from enum import Enum
 
 from sqlalchemy import (
     JSON,
+    UUID,
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -16,7 +19,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
@@ -696,5 +699,279 @@ class SpaceLearningNotice(Base):
         DateTime(timezone=True), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+#: 一条判断的三档（§ learning analysis, step 2）。「未涉及」不是一档：没有那一行就是它。
+LEARNING_LEVELS = ("mastered", "shaky", "weak")
+#: 一条提问是哪一类：问概念、贴报错、要答案、验证思路、其他。
+LEARNING_QUESTION_KINDS = ("concept", "error", "answer", "verify", "other")
+
+
+class SpaceLearningJudgment(Base):
+    """AI 对一个成员在一块板的一个知识点上「现在怎么样」的判断（每晚分析写）。
+
+    One row per (board, person, 知识点): the CURRENT judgment, overwritten by the
+    next analysis that has something new to say about that point. History is
+    not kept here — what a member sees is 「我现在在哪」, and the class view (step
+    3) aggregates current rows; a trend would be a table of its own.
+
+    A judgment always points at what it rests on: ``evidence_block_ids`` are the
+    member's own messages the model cited, and the CHECK refuses an empty list,
+    so 「指不出依据就不写」 holds in the schema and not only in the parser. The
+    ids are not foreign keys — ``blocks`` is the hottest table in the tree and a
+    key into it would lock it on every write here; a block that is gone simply
+    drops out of the excerpts when the page is read.
+
+    ``disputed_at`` is the member's 「标记不准」: the row stays (it is still the
+    last thing the model said), is shown as disputed and left out of 「最该补的」
+    and of any class count, and the next analysis of that point is told to
+    re-check it. A fresh judgment of the point clears it.
+
+    「未涉及」 is the absence of a row, not a fourth level.
+    """
+
+    __tablename__ = "space_learning_judgment"
+    __table_args__ = (
+        # One current judgment per (board, person, point). Also the index the
+        # member's own page reads by (its first two columns) and the space_id
+        # foreign key's index.
+        Index(
+            "uq_space_learning_judgment_space_user_point",
+            "space_id",
+            "user_id",
+            "knowledge_point_id",
+            unique=True,
+        ),
+        # Step 3 counts people per point, and removing a point cascades by it.
+        Index("ix_space_learning_judgment_knowledge_point_id", "knowledge_point_id"),
+        CheckConstraint(
+            "level IN ('mastered', 'shaky', 'weak')",
+            name="ck_space_learning_judgment_level",
+        ),
+        CheckConstraint(
+            "cardinality(evidence_block_ids) > 0",
+            name="ck_space_learning_judgment_evidence",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_judgment_space_id_space",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    knowledge_point_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_judgment_knowledge_point_id",
+        ),
+        nullable=False,
+    )
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: 一句话归纳：为什么是这一档。给成员本人读的。
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: 依据：成员自己的消息（block id），最近的在前，至多几条。
+    evidence_block_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False
+    )
+    #: 成员点了「标记不准」的时刻；下一次给出这个知识点的判断时清掉。
+    disputed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 模型最近一次给出（或改写）这条判断的时刻。
+    analyzed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningCursor(Base):
+    """How far the nightly analysis has read one member's words in one 题目.
+
+    One row per (board, person, 题目). The position is the last message read,
+    as ``(created_at, id)`` — the same order the analysis reads in, with the id
+    breaking ties between messages written in the same instant — so the next
+    night starts strictly after it. It moves only after the model answered and
+    the answer was written; a failed call leaves it where it was, and those
+    messages are read again next time.
+
+    ``messages_read`` is how many of the member's messages this 题目 has fed in
+    so far: the member's page says 「依据你在 N 道题里的 M 条发言」 from these rows.
+    """
+
+    __tablename__ = "space_learning_cursor"
+    __table_args__ = (
+        Index(
+            "uq_space_learning_cursor_space_user_task",
+            "space_id",
+            "user_id",
+            "task_id",
+            unique=True,
+        ),
+        Index("ix_space_learning_cursor_task_id", "task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_cursor_space_id_space",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_cursor_task_id_task",
+        ),
+        nullable=False,
+    )
+    last_block_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_block_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    messages_read: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningQuestion(Base):
+    """One question a member asked, as the nightly analysis filed it.
+
+    One row per message (``block_id``): which 题目 it was asked in, which 知识点
+    it is about (NULL when the model could not place it on the list), what kind
+    of question it is, and a short gist in the model's words. The member's page
+    groups these into 「我常问的」; step 3 counts them per 知识点 and per 题目
+    across the class (people, not messages) and groups the gists into
+    recurring questions — ``cluster_id`` is that group, left NULL until step 3
+    writes the clusters (and the table they point at).
+
+    Only the member's own messages are ever filed here, and only from rooms the
+    analysis reads (no private chats, no members-only channels). ``block_id``
+    is not a foreign key for the reason ``SpaceLearningJudgment`` gives.
+    """
+
+    __tablename__ = "space_learning_question"
+    __table_args__ = (
+        Index("uq_space_learning_question_block_id", "block_id", unique=True),
+        # A member's own questions in a board (「我常问的」), and the space_id
+        # foreign key's index.
+        Index("ix_space_learning_question_space_user", "space_id", "user_id"),
+        Index("ix_space_learning_question_task_id", "task_id"),
+        Index("ix_space_learning_question_knowledge_point_id", "knowledge_point_id"),
+        CheckConstraint(
+            "kind IN ('concept', 'error', 'answer', 'verify', 'other')",
+            name="ck_space_learning_question_kind",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_question_space_id_space",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_question_task_id_task",
+        ),
+        nullable=False,
+    )
+    block_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    knowledge_point_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="SET NULL",
+            name="fk_space_learning_question_knowledge_point_id",
+        ),
+        nullable=True,
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: 这条提问一句话的概括（模型的话，不是原文），至多几十字。
+    gist: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: 第 3 步的高频问题簇；那张表建好之前一直是 NULL。
+    cluster_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: 这条消息说出的时刻（与 block 的 created_at 相同）。
+    asked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SpaceLearningRun(Base):
+    """One board's nightly analysis on one day: how many model calls it made.
+
+    One row per (board, day), the day in the platform's local calendar
+    (``learning_insight_analysis.LOCAL_ZONE``). ``calls`` is what the daily cap
+    is held against — counted before each call is made, so a call that fails
+    still counts and a gateway that keeps failing cannot spend past the cap.
+    ``finished_at`` says that night's pass reached its end (every member's new
+    words read, or the cap reached: ``capped``); until then the hourly tick
+    comes back to it.
+    """
+
+    __tablename__ = "space_learning_run"
+    __table_args__ = (
+        Index("uq_space_learning_run_space_day", "space_id", "run_date", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id",
+            ondelete="CASCADE",
+            name="fk_space_learning_run_space_id_space",
+        ),
+        nullable=False,
+    )
+    run_date: Mapped[date] = mapped_column(Date, nullable=False)
+    calls: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    capped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
