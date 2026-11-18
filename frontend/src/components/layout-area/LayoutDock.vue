@@ -16,7 +16,7 @@
  *
  * Space is not shared in proportion when the area resizes (`proportional-layout` off): a
  * cell with a width of its own is a low-priority view in dockview's terms and keeps that
- * width, and the other cells absorb the change, as in an editor's workbench.
+ * width, and the other cells absorb the change, as a code editor's side bar does.
  */
 import 'dockview-vue/dist/styles/dockview.css'
 
