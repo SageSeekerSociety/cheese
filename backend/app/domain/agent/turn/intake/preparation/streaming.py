@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.mcp_notice import unconnected_mcp
+from app.domain.agent.personal.prompt import now_line
 from app.domain.agent.prompt import _sandbox_limits, _session_opening_lines
 from app.domain.agent.room.system_prompt import session_env, session_system_prompt
 from app.domain.agent.session_host.contract import ColdCompaction, PrivateText
@@ -195,6 +196,9 @@ async def converse(
         # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
         prompt_text = f"{platform_prompt(untitled_task(TITLE_CHARS), NoticeType.turn)}\n\n{prompt_text}"
     private, talk_told = _talk_notes(prepared.talk_for, told, runtime.harness)
+    # 这一轮按那位成员的钟点说现在几号（`clock_zone`）：会话机的钟在别的时区，
+    # 记忆里写下的日期跟着这一句走（`pieces/memory/types_*.md`）。
+    prompt_text = f"{platform_prompt(now_line(prepared.clock_zone), NoticeType.turn)}\n\n{prompt_text}"
     if is_resume:
         prompt_text = (
             f"{platform_prompt(resume_notice(), NoticeType.turn)}\n\n{prompt_text}"

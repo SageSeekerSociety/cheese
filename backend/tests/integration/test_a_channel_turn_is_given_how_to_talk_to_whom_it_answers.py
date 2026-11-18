@@ -1,9 +1,13 @@
 """A channel's conversation is handed a member's `communication` notes in the
 turn that first answers that member, and again only once they changed; a turn
-answering someone else never carries them.
+answering someone else never carries them. Each turn is also told the date and
+time on the clock of the member who started it.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import update
 
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
@@ -11,6 +15,8 @@ from app.domain.agent.compute import ComputePool
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.writers import MemoryWriter
+from app.domain.notification.preferences import local_time
+from app.domain.user.models import User
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import (
     join_project_team,
@@ -134,3 +140,31 @@ def test_a_turn_with_no_notes_carries_no_section(client, tmp_path):
     said = turn("carol", "@芝士 报名表做到哪了")
 
     assert "communication" not in said
+
+
+def test_a_turn_is_told_the_time_on_the_clock_of_the_member_who_started_it(
+    client, tmp_path
+):
+    _project, room = _channel(client)
+
+    async def zones(session):
+        for handle, zone in (("alice", "Asia/Shanghai"), ("bob", "America/New_York")):
+            await session.execute(
+                update(User).where(User.username == handle).values(timezone=zone)
+            )
+
+    _db(client, zones)
+    turn = _turns(client, tmp_path, room)
+
+    for handle, zone in (("alice", "Asia/Shanghai"), ("bob", "America/New_York")):
+        before = datetime.now(UTC)
+        said = turn(handle, "@芝士 今天几号")
+        after = datetime.now(UTC)
+        shown = {
+            f"现在是 {local_time(moment, zone):%Y-%m-%d %H:%M}"
+            for moment in (before, after, before + (after - before) / 2)
+        } | {
+            f"现在是 {local_time(before + timedelta(minutes=m), zone):%Y-%m-%d %H:%M}"
+            for m in range(int((after - before).total_seconds() // 60) + 1)
+        }
+        assert any(line in said for line in shown), (handle, said[:400])

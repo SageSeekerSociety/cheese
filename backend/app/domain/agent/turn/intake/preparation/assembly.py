@@ -68,6 +68,7 @@ from app.domain.block.queries import (
 )
 from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.delivery.models import Delivery
+from app.domain.identity.handles import names_a_person
 from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import memory_index
 from app.domain.memory.session import talk_notes
@@ -90,6 +91,7 @@ from app.domain.thread.services import thread_opening
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import conversation_progress, project_topics
 from app.domain.usage.alerts import agent_note
+from app.domain.user.services import timezones_by_handles
 
 if TYPE_CHECKING:
     from app.domain.agent.turn.intake import preparation as pkg
@@ -307,6 +309,26 @@ async def prepare(
                     await talk_notes(session, topic.project_id, speakers)
                 ).items()
             ]
+        # 这一轮按谁的钟点说日期：发消息叫起这一轮的那位成员；平台叫起的一轮是
+        # 它要答的那位，私聊里是那个人，都没有时是项目负责人。
+        clock_owner = next(
+            (
+                handle
+                for handle in (
+                    addressed.author if addressed is not None else None,
+                    *answered,
+                    private_owner,
+                    project.owner_handle if project is not None else None,
+                )
+                if handle and names_a_person(handle)
+            ),
+            None,
+        )
+        clock_zone = (
+            (await timezones_by_handles(session, [clock_owner])).get(clock_owner)
+            if clock_owner
+            else None
+        )
         prep.memory.remember_turn(
             topic.id,
             (place.conversation_id, agent.handle),
@@ -554,6 +576,7 @@ async def prepare(
         turn_images=turn_images,
         untitled=untitled,
         talk_for=talk_for,
+        clock_zone=clock_zone,
     )
 
 

@@ -200,6 +200,9 @@ class TurnContext:
     # （`prompts.talk_notes`）。私聊里是空的——那里的整棵 private 在 `memory`
     # 里指着。
     talk_for: list[dict]
+    # 这一轮说日期用的时区（`notification.preferences.local_time`）：叫起这一轮
+    # 的那位成员报上来的；None 是没报过，按默认的北京时间说。
+    clock_zone: str | None
     prior_progress: list[dict]
     #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
     #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：
