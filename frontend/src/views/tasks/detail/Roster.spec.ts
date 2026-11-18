@@ -27,6 +27,8 @@ vi.mock('@/api/taskJudge', () => ({
 }))
 vi.mock('@/lib/toast', () => ({ toast: { success: api.success, info: api.info, error: api.error } }))
 
+import Roster from './Roster.vue'
+
 const t = (key: string, named?: Record<string, unknown>) => i18n.global.t(key, named ?? {})
 
 beforeAll(() => {
@@ -49,7 +51,8 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe('重新评测全部最新提交', () => {
+// 整页挂上 Vuetify 的对话框，机器忙时一次要好几秒：放宽单个用例的时限。
+describe('重新评测全部最新提交', { timeout: 20_000 }, () => {
   it('确认以后调接口、说排上了几版，再重读「测试点」那一列', async () => {
     api.getParticipants.mockResolvedValue({
       participants: [
@@ -69,7 +72,6 @@ describe('重新评测全部最新提交', () => {
     api.summaries.mockResolvedValue({ summaries: [] })
     api.rejudge.mockResolvedValue({ queued: 3, reused: 1, unchanged: 0, skipped: 0 })
 
-    const { default: Roster } = await import('./Roster.vue')
     const view = render(Roster, {
       props: { taskData: { id: 42, submitterType: 'USER', testSuite: [{ stage: null, cases: [] }] } as never },
       global: { plugins: [createVuetify({ components, directives }), i18n] },
@@ -108,7 +110,6 @@ describe('重新评测全部最新提交', () => {
     api.summaries.mockResolvedValue({ summaries: [] })
     api.rejudge.mockRejectedValue(new Error('没有权限'))
 
-    const { default: Roster } = await import('./Roster.vue')
     const view = render(Roster, {
       props: { taskData: { id: 42, submitterType: 'USER', testSuite: [{ stage: null, cases: [] }] } as never },
       global: { plugins: [createVuetify({ components, directives }), i18n] },
