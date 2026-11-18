@@ -153,7 +153,9 @@ def proxy(forge):
     os.unlink(platform_dir / "platform.sock")
 
 
-def _send(port: int, method: str, path: str, body: bytes, **headers: str) -> int:
+def _answer(
+    port: int, method: str, path: str, body: bytes, **headers: str
+) -> tuple[int, bytes]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
         conn.request(
@@ -163,10 +165,21 @@ def _send(port: int, method: str, path: str, body: bytes, **headers: str) -> int
             headers={"Authorization": "token placeholder", **headers},
         )
         response = conn.getresponse()
-        response.read()
-        return response.status
+        return response.status, response.read()
     finally:
         conn.close()
+
+
+def _send(port: int, method: str, path: str, body: bytes, **headers: str) -> int:
+    return _answer(port, method, path, body, **headers)[0]
+
+
+def _refused(status: int, answer: bytes) -> bool:
+    """Refused with an HTTP error, or — a push git can read — with every ref
+    it updates rejected, as a forge's hook rejects one."""
+    if status == 403:
+        return True
+    return status == 200 and b"ng refs/heads/" in answer and b"ok refs/" not in answer
 
 
 def _json(value: dict) -> bytes:
@@ -501,9 +514,9 @@ def test_closing_a_waiting_delivery_is_refused(
 ):
     _port, seen = forge
 
-    status = _send(proxy, method, path, body, **headers)
+    status, answer = _answer(proxy, method, path, body, **headers)
 
-    assert status == 403
+    assert _refused(status, answer)
     # Nothing that request said reached the forge (looking a node id up is
     # the proxy's own question, not the agent's request).
     assert (method, path, body) not in seen

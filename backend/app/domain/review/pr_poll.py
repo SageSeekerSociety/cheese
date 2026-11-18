@@ -15,10 +15,12 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import httpx
 from sqlalchemy import or_, select
 
+from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.addressing import Event
 from app.domain.delivery_events import DeliveryEvent, NotificationType, SettleCard
@@ -217,10 +219,93 @@ async def advance_card(
 
     Also the prompt read after the platform itself changed a card in a way
     the next read acts on — a reviewer adopting the version they just handed
-    in (`routes/accept.py`): the forge answers for a head pushed a moment
-    ago within seconds, and the card should not wait for the next tick to
-    hear it. A read that still finds no answer leaves the card to the next
-    forge event or tick, like any other."""
+    in (`routes/accept.py`).
+
+    A step that finds the forge still working out whether the card's head
+    merges asks again a moment later (`_settle`): both GitHub and Forgejo
+    compute it after a head moves and answer "unknown" until then, and the
+    tick is a minute away."""
+    again = partial(
+        _advance_once,
+        chat,
+        announce,
+        card_id,
+        settle_card=settle_card,
+        record_instruction=record_instruction,
+        record_seat=record_seat,
+        task_teammate=task_teammate,
+        uncommitted=uncommitted,
+    )
+    failure, computing = await again()
+    if computing is not None:
+        _settle(card_id, computing, again)
+    return failure
+
+
+#: How long after a read that found the forge still working out a card's
+#: merge state the card is read again, one wait per read; after the last,
+#: the tick takes over. About thirty seconds in all.
+SETTLE_AFTER_S: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0)
+
+
+@dataclass
+class _Settling:
+    """The re-reads under way for one card, at most one chain per card."""
+
+    head: str
+    step: int = 0
+    #: Another step found the forge still computing while this chain read.
+    renewed: bool = False
+
+
+_settling: dict[uuid.UUID, _Settling] = {}
+
+
+def _settle(card_id: uuid.UUID, head: str, again) -> None:
+    """Read ``card_id`` again after a short wait, while the forge works out
+    whether ``head`` merges. A card already being re-read keeps its one
+    chain, which starts over when the head has moved."""
+    chain = _settling.get(card_id)
+    if chain is not None:
+        if chain.head != head:
+            chain.head, chain.step = head, 0
+        chain.renewed = True
+        return
+    _settling[card_id] = _Settling(head)
+    spawn(_settle_chain(card_id, again), name=f"settle merge state {card_id}")
+
+
+async def _settle_chain(card_id: uuid.UUID, again) -> None:
+    chain = _settling[card_id]
+    try:
+        while chain.step < len(SETTLE_AFTER_S):
+            await asyncio.sleep(SETTLE_AFTER_S[chain.step])
+            chain.step += 1
+            chain.renewed = False
+            _failure, computing = await again()
+            if computing is None and not chain.renewed:
+                # Answered, or nothing to read: an unreachable or rate-limited
+                # forge, or a card no longer waiting. The tick has it from here.
+                return
+            if computing is not None and computing != chain.head:
+                chain.head, chain.step = computing, 0
+    finally:
+        _settling.pop(card_id, None)
+
+
+async def _advance_once(
+    chat: Chat,
+    announce: Announce,
+    card_id: uuid.UUID,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
+) -> tuple[str | None, str | None]:
+    """One step of ``card_id``: the failure to report, if any, and the head
+    whose merge state the forge was still working out, if it was."""
     # deferred-import: tests replace this name on app.domain.review.services
     from app.domain.review.services import AcceptService
 
@@ -229,19 +314,20 @@ async def advance_card(
     # domain importing up into the API layer (`.importlinter`, C1).
     runner = chat.work_runner
     async with chat.session_factory() as session:
+        service = AcceptService(
+            session,
+            announce=announce,
+            settle_card=settle_card,
+            record_instruction=record_instruction,
+            record_seat=record_seat,
+            task_teammate=task_teammate,
+            uncommitted=uncommitted,
+        )
         try:
-            await AcceptService(
-                session,
-                announce=announce,
-                settle_card=settle_card,
-                record_instruction=record_instruction,
-                record_seat=record_seat,
-                task_teammate=task_teammate,
-                uncommitted=uncommitted,
-            ).advance_pr_card(card_id, chat_service=chat, runner=runner)
+            await service.advance_pr_card(card_id, chat_service=chat, runner=runner)
             await session.commit()
             _transient_misses.pop(card_id, None)
-            return None
+            return None, service.merge_state_computing_for
         except Exception as exc:  # one card must not stop the rest
             await session.rollback()
             _report_card_failure(card_id, exc)
@@ -254,7 +340,7 @@ async def advance_card(
                 record_instruction=record_instruction,
                 task_teammate=task_teammate,
             )
-            return f"{card_id}: {exc}"
+            return f"{card_id}: {exc}", None
 
 
 async def _merged_by_name(session, status) -> str | None:
@@ -460,6 +546,7 @@ async def poll_uncarded_task_prs(
                         handed_over=None,
                         record_instruction=record_instruction,
                         task_teammate=task_teammate,
+                        announce=announce,
                     )
                     # A task closed by hand before its PR merged stays closed:
                     # there is nothing for its owner to decide.
@@ -748,6 +835,7 @@ async def sweep_closings(
         sessions,
         record_instruction=record_instruction,
         task_teammate=task_teammate,
+        announce=announce,
     )
     async with sessions() as session:
         closed = await close_overdue(session, chat, machines=machines)

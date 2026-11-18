@@ -161,6 +161,10 @@ async def _poll_pr_card(
     if status.state == "closed":
         await self._void_closed_pr_card(card=card, topic=topic)
         return
+    if status.mergeable_state == "unknown":
+        # Both forges work a head's mergeability out after it moves, and
+        # answer "unknown" until they have; the poller asks again shortly.
+        self.merge_state_computing_for = status.head_sha
 
     if card.note_code == notes.NoteCode.waiting_merge_queue:
         if await client.merge_queue_entry(

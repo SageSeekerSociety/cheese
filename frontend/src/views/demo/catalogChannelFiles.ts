@@ -114,7 +114,8 @@ export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
   {
     id: 'dm-view-view',
     title: 'DmViewView',
-    about: '私聊页的两栏：左边对话，右边「文件」面板，中间可拖的分隔，可以收起或铺满。对话和面板由页面放进来。',
+    about:
+      '私聊页的两块：左边对话，右边「文件」面板，可以收起；桌面上两块各进外壳布局区的一格（分隔线归布局区），预览站里没有外壳，两块就并排画在这里。对话和面板由页面放进来。',
     file: 'src/views/workspace/DmViewView.vue',
     component: DmViewView,
     needs: ['vuetify', 'i18n'],
@@ -125,14 +126,19 @@ export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
       docked: true,
       panelOpen: true,
       panelFloat: false,
+      canFocus: false,
       focusMode: false,
       chatNews: false,
       focusLabel: '专注模式',
       focusIcon: 'mdi-arrow-expand',
-      chatStyle: { flex: '0 0 50%' },
     },
     states: [
-      { name: '并排', note: '面板开着，页签栏右边是铺满和收起。', props: {}, expect: '文件' },
+      {
+        name: '并排',
+        note: '面板开着，页签栏右边是收起；铺满要外壳的布局区，预览站里没有。',
+        props: {},
+        expect: '文件',
+      },
       {
         name: '取不到',
         note: '这段私聊打不开时只有一句话。',

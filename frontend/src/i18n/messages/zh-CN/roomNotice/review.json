@@ -131,6 +131,7 @@
   "taskReturned": "{who} 退回了「{title}」",
   "taskAdopted": "{who} 采纳了「{title}」",
   "taskHandedInBy": "{who} 提交了「{title}」，待审阅",
+  "taskHandedInAndAdopted": "{who} 提交并采纳了「{title}」",
   "cardHandedInAgain": "{actor} 再提交了一版「{title}」，需要重新查看",
   "mergeWithheldUncommitted": "这件任务有保存过、还没提交的修改，这一版里没有它们",
   "mergeWithheldUncommittedWhy": "合下去就落下了那些修改。再提交一版，新的一版会照常审阅。",

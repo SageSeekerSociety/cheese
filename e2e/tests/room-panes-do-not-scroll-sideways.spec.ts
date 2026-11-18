@@ -9,7 +9,8 @@ import { expect, test, type Page } from '@playwright/test'
 //
 // 只有真浏览器量得出来：happy-dom 不排版，scrollWidth 恒等于 clientWidth，这一条在单测里
 // 永远绿。这里挂真的 DmViewView（和频道页共用 `topic-panes.css` 和同一套浮层）和产品样式，
-// 外面再套一层和话题页一样的裁剪容器。
+// 外面再套一层和话题页一样的裁剪容器。没有外壳的布局区，对话和浮层就画在这一排里，
+// 浮层压在对话那一块上，和桌面上它在对话那一格里时一样。
 
 const fixture = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body>
 <div id="fixture"></div><script type="module">
@@ -28,9 +29,8 @@ createApp({render:()=>h(VApp,{class:'h-100'},()=>h('div',{
 },[
   h(DmViewView,{
     error:null, ready:true, desktop:true, docked:false,
-    panelOpen:false, panelFloat:true, focusMode:false, chatNews:false,
+    panelOpen:false, panelFloat:true, canFocus:false, focusMode:false, chatNews:false,
     focusLabel:'专注', focusIcon:'mdi-arrow-expand',
-    chatStyle:{flex:'0 0 50%'},
   },{chat:()=>h('div',{style:'flex:1 1 auto;min-width:0'},'对话'),panel:()=>h('div',{style:'height:400px;overflow:auto'},'面板')}),
 ]))}).use(vuetify).use(i18n).use(pinia).mount('#fixture');
 </script></body></html>`

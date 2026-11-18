@@ -26,6 +26,7 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
+import { userName } from '@/lib/agentNames'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { agentDocked, agentOpen, toggleAgent, useAgentContext, useAgentSurface } from '@/stores/agent'
 import { splitOrigin } from '@/views/spaces/model'
@@ -100,7 +101,8 @@ useAgentSurface(() => ({
 /** 简介里那一段「出处」（`〔…〕`）是老库把来源写进 `intro` 的约定，`splitOrigin` 把
  *  它摘出来。摘要与出处是同一段文本的两半，所以两个都由它给，不各填各的。 */
 const intro = computed(() => splitOrigin(taskData.value?.intro ?? ''))
-const publisherName = computed(() => taskData.value?.creator.nickname || taskData.value?.creator.username || '')
+// `userName` 已经退到账号（`nickname || username || ''`），不再另加兜底。
+const publisherName = computed(() => userName(taskData.value?.creator))
 const publishedOn = computed(() => {
   const at = taskData.value?.createdAt
   return at ? dayjs(at).format(t('tasks.page.dateFormat')) : ''
