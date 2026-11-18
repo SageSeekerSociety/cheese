@@ -14,6 +14,7 @@ import TaskJudgeResult from '../TaskJudgeResult.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import { suiteIncomplete } from '@/lib/taskTestSuite'
 import { TEST_TRIAL } from '@/lib/testTrial'
 
 const open = defineModel<boolean>({ default: false })
@@ -62,7 +63,8 @@ watch(open, (shown) => {
 
 const inFlight = (state: string | undefined) => state === 'queued' || state === 'running'
 const ready = computed(
-  () => files.value.some((file) => file.path.trim() && file.content.trim()) && !!props.suite.runCmd.trim()
+  // 三种形态各自缺什么由 `suiteIncomplete` 判：命令判分没有运行命令，要的是命令。
+  () => files.value.some((file) => file.path.trim() && file.content.trim()) && !suiteIncomplete(props.suite)
 )
 const busy = computed(() => starting.value || inFlight(trial.value?.state))
 

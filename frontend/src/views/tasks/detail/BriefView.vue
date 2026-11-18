@@ -79,15 +79,10 @@
       <div v-for="group in suiteGroups" :key="group.key" class="tb__suite">
         <h3 v-if="group.title" class="tb__stage t-eyebrow-read" data-user-content>{{ group.title }}</h3>
         <p class="tb__suite-meta t-meta-read">
-          {{
-            t('tasks.judge.brief.summary', {
-              n: group.suite.caseCount ?? group.suite.cases.length,
-              samples: group.samples.length,
-              runtime: t(`tasks.judge.runtime.${group.suite.runtime.replace('.', '_')}`),
-              ms: group.suite.timeLimitMs,
-              mb: group.suite.memoryMb,
-            })
-          }}
+          {{ suiteSummary(group.suite, group.samples.length) }}
+        </p>
+        <p v-if="group.suite.protectedPaths?.length" class="tb__suite-meta t-meta-read">
+          {{ t('tasks.judge.brief.protected', { paths: group.suite.protectedPaths.join('、') }) }}
         </p>
         <div v-for="(entry, index) in group.samples" :key="index" class="tb__sample">
           <span class="tb__sample-name" data-user-content>{{ entry.name }}</span>
@@ -121,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import type { Task, TaskProgress, TaskRubricLine, TaskRubricLineConfig } from '@/types'
+import type { Task, TaskProgress, TaskRubricLine, TaskRubricLineConfig, TaskTestSuite } from '@/types'
 import type { TaskFileData } from '@/types/taskBoard'
 
 import { computed } from 'vue'
@@ -176,6 +171,26 @@ const suiteGroups = computed(() =>
     }
   })
 )
+
+/** 一套测试点的一句话：输入/输出用例说用例数和限额，测试脚本、命令判分说整轮时限。 */
+function suiteSummary(suite: TaskTestSuite, samples: number): string {
+  const runtime = t(`tasks.judge.runtime.${suite.runtime.replace('.', '_')}`)
+  if (suite.kind === 'SCRIPT') {
+    return t('tasks.judge.brief.summaryScript', {
+      runtime,
+      files: suite.testFileCount ?? suite.testFiles?.length ?? 0,
+      s: suite.totalTimeLimitS ?? 0,
+    })
+  }
+  if (suite.kind === 'COMMAND') return t('tasks.judge.brief.summaryCommand', { runtime, s: suite.totalTimeLimitS ?? 0 })
+  return t('tasks.judge.brief.summary', {
+    n: suite.caseCount ?? suite.cases.length,
+    samples,
+    runtime,
+    ms: suite.timeLimitMs,
+    mb: suite.memoryMb,
+  })
+}
 
 /** 这一行是不是平台自动算分的（额度用量、测试点）；老题的评分要点都是手动行。 */
 const isAuto = (line: { kind?: string }) => (line.kind ?? 'manual') !== 'manual'

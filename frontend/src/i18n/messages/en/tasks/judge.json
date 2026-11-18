@@ -20,7 +20,8 @@
     "runtime_error": "Runtime error",
     "output_limit": "Output limit exceeded",
     "compile_error": "Compile error",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "missing": "Did not run"
   },
   "form": {
     "add": "Test points",
@@ -61,7 +62,11 @@
     "addCase": "Add a case",
     "trial": "Try with reference code",
     "showHiddenNames": "Show hidden cases' names to students (when off they see numbers like \"Hidden case 1\")",
-    "incomplete": "Test points need a run command and at least one case"
+    "incomplete": "Test points are incomplete: IO cases need a run command and cases; a test script needs test files, a run command and a test name on every scored row; grading commands need a command and the original of every protected file",
+    "selfTest": "Self-tests per student per day",
+    "selfTestHint": "Students can run only the samples on their current code, unscored; leave empty to turn off",
+    "selfTestOff": "Off",
+    "selfTestUnit": "/ day"
   },
   "trial": {
     "title": "Try with reference code",
@@ -91,7 +96,19 @@
     "expected": "Expected output",
     "actual": "Actual output",
     "firstDiff": "Differs from the expected output from line {line}",
-    "stderr": "Program errors"
+    "stderr": "Program errors",
+    "testsPassed": "Tests passed · {points}/{total} points",
+    "score": "Score from the grading commands",
+    "scoreFailedTitle": "Scoring failed",
+    "scoreFailedTeacher": "This run does not count as 0: read the program output below and set the test score by hand when grading.",
+    "scoreFailedStudent": "This run does not count as 0; your teacher will score it by hand.",
+    "programOutput": "Program output (first 200 lines)",
+    "studentOutput": "Program output",
+    "private": "Hidden from students",
+    "hiddenItems": "{n} more points come from checks that are not shown",
+    "skipped": "Skipped",
+    "unscored": "Not scored",
+    "message": "Failure message"
   },
   "submit": {
     "title": "Code to be judged",
@@ -102,7 +119,9 @@
     "today": "today {time}",
     "yesterday": "yesterday {time}",
     "hint": "The platform records this version when you hand in and judges it; later pushes don't change it. Changes not pushed yet aren't in it, so have Cheese push first.",
-    "missing": "The project's code can't be read right now. You can still hand in; this version won't be judged automatically and the teacher will score the tests by hand."
+    "missing": "The project's code can't be read right now. You can still hand in; this version won't be judged automatically and the teacher will score the tests by hand.",
+    "suiteOther": "This stage is judged by {kind}, automatically after you hand in",
+    "suiteOtherLine": "This stage is judged by {kind}; the result counts toward \"{name}\" ({points} points)"
   },
   "history": {
     "title": "Judge result",
@@ -131,6 +150,102 @@
   "brief": {
     "title": "Automatic judging",
     "summary": "{n} test points, {samples} of them samples · {runtime} · {ms} ms and {mb} MB per case. When you hand in, the platform runs the code on your project's default branch.",
-    "rule": "Scored by the test points: the share of case points passed, scaled to this item"
+    "rule": "Scored by the test points: the share of case points passed, scaled to this item",
+    "summaryScript": "Test script · {runtime} · {files} test files, {s} s in all. After you hand in, the platform runs the setter's tests next to your code.",
+    "summaryCommand": "Grading commands · {runtime} · {s} s in all. After you hand in, the platform runs the setter's grading commands in your code.",
+    "protected": "These files are restored to the starter originals before judging: {paths}"
+  },
+  "kind": {
+    "label": "Kind of test points",
+    "IO": "Input/output cases",
+    "SCRIPT": "Test script",
+    "COMMAND": "Grading commands",
+    "hint": {
+      "IO": "Feed each case an input and compare the output",
+      "SCRIPT": "Run your unit tests and score each test from the JUnit report",
+      "COMMAND": "Run your grading commands and read the score they give"
+    }
+  },
+  "files": {
+    "summary": "{n} files · {size}",
+    "path": "Path of file {n}",
+    "protectedPlaceholder": "For example src/config.py",
+    "noContent": "Original not uploaded",
+    "uploadOriginal": "Upload the original of file {n}",
+    "remove": "Remove file {n}",
+    "addProtected": "Add a protected file",
+    "upload": "Upload files"
+  },
+  "script": {
+    "limitation": "Student code runs in the same process as the tests and can write wherever they can: this kind stops files that pretend to be a score, not deliberate forging at run time. Use input/output cases for exams.",
+    "files": "Test files",
+    "filesHint": "Copied into tests/ next to the student code before judging; yours win over a student file of the same name. Students never see them.",
+    "runHint": "Write a JUnit XML report to $JUDGE_REPORT; the default fits the runtime",
+    "totalTime": "Total time limit",
+    "totalTimeHint": "30–600 seconds",
+    "seconds": "s",
+    "logLines": "Output students may read when scoring fails",
+    "logLinesHint": "First lines of the program output; 0 shows none (teachers always see the first 200)",
+    "lines": "lines",
+    "scoring": "Scoring",
+    "average": "Every test weighs the same",
+    "perTest": "Points per test",
+    "averageHint": "Each test in the report is worth 1 point, scaled to this item by the share passed.",
+    "perTestHint": "Only the tests below count ({points} points in all); extra tests in the report score 0, and a listed test that did not run counts as failed.",
+    "testId": "Test name of row {n}",
+    "testIdPlaceholder": "classname::name or name",
+    "name": "Name of row {n}",
+    "namePlaceholder": "Name (defaults to the test name)",
+    "addTest": "Add a test"
+  },
+  "command": {
+    "limitation": "Grading commands run in the same container as the student code: this stops a submitted score.json from pretending to be a score, not deliberate forging at run time. Use input/output cases for exams.",
+    "commands": "Commands",
+    "commandsHint": "Run in order in the code directory; stops at the first that fails",
+    "command": "Command {n}",
+    "commandPlaceholder": "For example python3 grade.py",
+    "up": "Move command {n} up",
+    "down": "Move command {n} down",
+    "remove": "Remove command {n}",
+    "add": "Add a command",
+    "source": "Where the score comes from",
+    "sourceLine": "Last line SCORE: x/y",
+    "sourceJson": "score.json",
+    "sourceLineHint": "The last line printed by the last command reads SCORE: 7/10 (decimals allowed).",
+    "sourceJsonHint": "The grader writes score.json at the repository root with score and max; items may list each check (name, score, max), and those with visible false are shown to teachers only.",
+    "protected": "Protected files",
+    "protectedHint": "Starter files students may not change: before each judging your original overwrites the student copy. Type the path, then upload the original.",
+    "graders": "Grader files",
+    "gradersHint": "Grading programs and data only you have, placed at their paths before judging (the file name by default; add a directory if needed). Students never see them."
+  },
+  "import": {
+    "button": "Import cases",
+    "hint": "Upload a zip of paired 1.in / 1.out files (.ans and input1.txt / output1.txt work too)",
+    "done": "Imported {n} hidden cases, 10 points each",
+    "doneUnpaired": "Imported {n} hidden cases, 10 points each; {skipped} unpaired files were left out",
+    "notZip": "Cannot read this file: it must be a plain zip (not encrypted, not split)",
+    "empty": "No paired case files in the zip: it needs two files with the same name, like 1.in and 1.out",
+    "tooLarge": "\"{file}\" is over {kb} KB and cases must be within {kb} KB; nothing was imported",
+    "tooMany": "The zip has {n} cases; with the {existing} already here that is over the limit of {max}; nothing was imported",
+    "notText": "\"{file}\" is not UTF-8 text; nothing was imported"
+  },
+  "selfTest": {
+    "title": "Self-test the samples",
+    "hint": "Runs only the sample cases on the code your default branch points at now; unscored, and not a hand-in.",
+    "run": "Self-test samples",
+    "remaining": "{left} self-tests left today ({limit} a day)",
+    "usedUp": "All {limit} self-tests used today; resets {when}",
+    "pastDue": "Past the deadline; self-tests are closed",
+    "ran": "This run used {sha}",
+    "none": "No self-test yet"
+  },
+  "rejudge": {
+    "button": "Re-judge every latest submission",
+    "title": "Re-judge every latest submission?",
+    "body": "Each participant's latest version is judged again against the current test points. Scores already graded stay; code already judged on this revision reuses its result at no extra cost.",
+    "confirm": "Re-judge",
+    "done": "Queued {queued}; {reused} reused an existing result",
+    "nothing": "Nothing to re-judge: every latest version is already judged on this revision",
+    "failed": "Could not queue the re-judging"
   }
 }
