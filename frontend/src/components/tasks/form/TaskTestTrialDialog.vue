@@ -137,7 +137,13 @@ function start() {
       <p v-if="error" class="ttt__error" role="alert" data-testid="task-test-trial-error">{{ error }}</p>
       <section v-if="trial" class="ttt__result" :aria-label="t('tasks.judge.trial.result')">
         <span class="ttt__label">{{ t('tasks.judge.trial.result') }}</span>
-        <TaskJudgeResult :run="trial" teacher :slowest-ms="trial.slowestMs" :time-limit-ms="trial.timeLimitMs" />
+        <TaskJudgeResult
+          :run="trial"
+          teacher
+          :kind="suite.kind"
+          :slowest-ms="suite.kind === 'IO' ? trial.slowestMs : null"
+          :time-limit-ms="suite.kind === 'IO' ? trial.timeLimitMs : null"
+        />
       </section>
     </div>
   </AdaptiveDialog>
