@@ -16,6 +16,7 @@ from app.domain.review.ports import (
     RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
+    Uncommitted,
 )
 
 GateNudge = Callable[[uuid.UUID, str, str, dict], Awaitable[None]]
@@ -46,6 +47,7 @@ def register_periodic_jobs(
     record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
     machines: SweepCheckouts | None = None,
 ) -> None:
     jobs.register(
@@ -58,6 +60,7 @@ def register_periodic_jobs(
             record_instruction=record_instruction,
             record_seat=record_seat,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         ),
         forge_bound=True,
     )

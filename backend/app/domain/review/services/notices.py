@@ -99,9 +99,10 @@ async def _announce_filed(
     topic: Topic,
     card: AcceptCard,
     task: Task,
+    by: str | None = None,
 ) -> None:
     return await _announce_filed_from_room(
-        self._session, topic, card, task, announce=_announce_of(self)
+        self._session, topic, card, task, announce=_announce_of(self), by=by
     )
 
 
@@ -248,23 +249,23 @@ async def _note_merge_blocked(
     `_note_left_merge_queue`: a refusal is not the only way an accepted PR
     stops.
     """
-    # GitHub 的原话是外部字符串，而它要被贴进芝士的终端（见
+    # 代码托管服务的原话是外部字符串，而它要被贴进芝士的终端（见
     # `pr_signals.sanitize_external`）。
     reason = pr_signals.sanitize_external(reason)
     await _note_merge_stop_and_wake(
         self,
         card=card,
         topic=topic,
-        note=f"PR #{card.pr_number} GitHub 拒绝合并：{reason}",
+        note=f"PR #{card.pr_number} 的合并被拒绝：{reason}",
         log=f"PR merge refused for card {card.id}: {reason}",
         lead=(
             f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
-            "被 GitHub 拒绝合并：\n"
+            "的合并被拒绝：\n"
             f"```\n{reason[:1500]}\n```\n"
         ),
         action=(
             f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
-            "检查 GitHub 返回的具体原因；若是冲突，确认 PR 当前目标分支后再合入，"
+            "看上面拒绝的具体原因；若是冲突，确认 PR 当前目标分支后再合入，"
             "解决并验证后提交，用 cheese push-fix 更新原 PR。"
             "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
             "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"

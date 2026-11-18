@@ -37,6 +37,7 @@ from tests.support.review_ports import (
     record_task_instruction,
     settle_card,
     task_teammate,
+    uncommitted,
 )
 
 pytestmark = pytest.mark.anyio
@@ -49,6 +50,7 @@ _PORTS = {
     "record_instruction": record_task_instruction,
     "record_seat": record_seat_instruction,
     "task_teammate": task_teammate,
+    "uncommitted": uncommitted,
 }
 
 

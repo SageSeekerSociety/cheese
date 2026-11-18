@@ -43,7 +43,7 @@ from tests.integration.conftest import (
 from tests.landing import written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
-from tests.support.review_ports import task_teammate
+from tests.support.review_ports import task_teammate, uncommitted
 
 REPO = "acme/widgets"
 
@@ -223,6 +223,7 @@ def _poll(client) -> dict:
             record_instruction=record_task_instruction,
             record_seat=record_seat_instruction,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         )
     )
 
@@ -2628,7 +2629,7 @@ def test_a_pr_closed_without_merging_voids_its_card(client, app_world):
     assert result["errors"] == []
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
-    assert f"PR #{number} 已在 GitHub 关闭且没有合并" in card["note"]
+    assert f"PR #{number} 已被关闭且没有合并" in card["note"]
     assert "作废" in card["note"]
     assert fake.merge_calls == []
 

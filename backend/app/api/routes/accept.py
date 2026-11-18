@@ -55,7 +55,7 @@ from app.domain.review.comments import instruction as comment_instruction
 from app.domain.review.comments import summary as comment_summary
 from app.domain.review.forge_clients import proposal_client
 from app.domain.review.github_pr import GitHubPRError
-from app.domain.review.models import DeliverableKind
+from app.domain.review.models import AcceptStatus, DeliverableKind
 from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptCardDescribe,
@@ -279,7 +279,9 @@ class HandInDraftOut(BaseModel):
 
 class HandedInOut(BaseModel):
     card: AcceptCardOut
-    accepted: bool
+    #: 「提交并采纳」: the adoption of this head is armed, and the version is
+    #: merged under this person's name once the forge says it merges.
+    adopting: bool
 
 
 @router.get("/topics/{topic_id}/hand-in", **typed_response(HandInStandingOut))
@@ -378,7 +380,7 @@ class HandInBody(BaseModel):
     body: str | None = None
     reviewer_handle: str | None = None
     #: The person reviews it themselves and adopts it in the same go
-    #: (「提交并采纳」), through the ordinary accept and its gates.
+    #: (「提交并采纳」): merged under their name once the forge says it merges.
     accept: bool = False
 
 
@@ -396,9 +398,10 @@ async def hand_in_route(
     has not committed is committed under their name and pushed, and the
     version is filed as a teammate's is, or moves the one waiting.
 
-    ``accept`` adopts it right away when the person is its only reviewer and
-    the accept's own checks let it through; otherwise it waits as any version
-    does, and ``accepted`` says which."""
+    ``accept`` adopts it when the person is its only reviewer: the adoption
+    of the head they handed in is armed, and the poller merges it once the
+    forge and the project's rules let it, as it merges any armed version;
+    ``adopting`` says whether it was armed."""
     actor, task = _handing_in(at)
     svc = accept_service(db)
     handed = await hand_in.hand_in(
@@ -414,7 +417,6 @@ async def hand_in_route(
         wake=partial(wake_for_files, db.bind),
     )
     card = handed.card
-    card_id = card.id
     await db.commit()
     naming.nudge(task.id, "signal")
     reviewers = await svc.reviewer_handles_for_cards([card.id])
@@ -441,28 +443,23 @@ async def hand_in_route(
                 topic_id=task.room_id,
                 project_id=task.project_id,
             )
-    # Only the head this person handed in is adopted in the same go: a card
-    # showing any other moved since, and waits to be looked at.
-    adopting = adopting and card.pr_head_sha == handed.head
-    accepted = False
+    # Only the head this person handed in is adopted: a card showing any other
+    # moved since, and waits to be looked at. The forge has not said yet
+    # whether a head pushed a moment ago merges, so the adoption is armed and
+    # completes when it does (`AcceptService.adopt_when_ready`).
+    adopting = (
+        adopting
+        and card.status == AcceptStatus.pending
+        and card.pr_number is not None
+        and card.pr_head_sha == handed.head
+    )
     if adopting:
-        try:
-            await svc.accept(
-                card_id=card.id,
-                decided_by=actor.handle,
-                head_sha=card.pr_head_sha,
-                by_assistant=actor.by_assistant,
-            )
-            await db.commit()
-            accepted = True
-        except (ValidationError, ConflictError, ForbiddenError) as waits:
-            # Its checks have to run first: it waits for this person as any
-            # version does.
-            logger.info("handed-in card %s waits: %s", card_id, waits)
-            await db.rollback()
-        card = await svc._card_or_404(card_id)
+        card = await svc.adopt_when_ready(
+            card_id=card.id, decided_by=actor.handle, head_sha=handed.head or ""
+        )
+        await db.commit()
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
-    return ok({"card": await svc.describe(card), "accepted": accepted})
+    return ok({"card": await svc.describe(card), "adopting": adopting})
 
 
 @router.post("/topics/{topic_id}/ready", dependencies=[ROUTE_DECIDES])

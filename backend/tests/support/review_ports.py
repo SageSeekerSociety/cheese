@@ -16,6 +16,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
+from app.domain.machine.hand_in import uncommitted
 
 __all__ = [
     "pumping",
@@ -23,6 +24,7 @@ __all__ = [
     "record_task_instruction",
     "settle_card",
     "task_teammate",
+    "uncommitted",
 ]
 
 

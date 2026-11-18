@@ -37,8 +37,8 @@ export interface HandInDraft {
 
 export interface HandedIn {
   card: AcceptCard
-  /** 「提交并采纳」当场采纳了；false 是这一版在等审阅（检查要先跑完等）。 */
-  accepted: boolean
+  /** 「提交并采纳」：这一版的采纳已经定下，代码托管服务算出能合并、项目的规则满足后由平台合并。 */
+  adopting: boolean
 }
 
 const at = (taskId: string) => `/topics/${encodeURIComponent(taskId)}/hand-in`
