@@ -279,6 +279,12 @@ describe('what happens to a task is recorded where it came from', () => {
       expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(true)
     })
 
+    it('with no handed-in line, it hangs under the teammate’s earlier word about the task', () => {
+      const { container } = inMainLine([teammate('m1')])
+      expect(actions()).toHaveLength(1)
+      expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(true)
+    })
+
     it('when the teammate said nothing after it, it hangs under the handed-in line', () => {
       const { container } = inMainLine([teammate('m1'), handedIn('d1', 1)])
       expect(actions()).toHaveLength(1)

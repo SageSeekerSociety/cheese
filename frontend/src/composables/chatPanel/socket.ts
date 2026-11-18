@@ -173,8 +173,11 @@ export function usePanelSocket(deps: {
     const landing = deps.timeline.append(b)
     if (landing === 'known' || landing === 'above' || deps.history.reading() || b.author === deps.author) return
     if (b.kind === 'artifact') deps.emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
-    const delivery = deliveryOf(b)
-    if (delivery) deps.emit('delivery-arrived', delivery.taskId)
+    // A version handed in reaches the main line as the platform's line, or — for a task the
+    // main line's teammate opened — as that teammate's own message tagged with the task. The
+    // page reads whether a version waits on me, and acts on each version once.
+    const about = deliveryOf(b)?.taskId ?? (b.kind === 'message' ? taskTagOf(b) : null)
+    if (about) deps.emit('delivery-arrived', about)
     if (landing === 'shown') deps.arrived().add(b.id)
     if ((landing === 'held' || !deps.atBottom.value) && b.kind !== 'event') deps.unseen.value.push(b.id)
   }
@@ -343,4 +346,10 @@ export function usePanelSocket(deps: {
     pushBlock,
     announce,
   }
+}
+
+/** The task a message is tagged with (`meta.task_tag`), if any. */
+function taskTagOf(b: Block): string | null {
+  const id = (b.meta as Record<string, unknown> | null | undefined)?.task_tag
+  return typeof id === 'string' ? id : null
 }
