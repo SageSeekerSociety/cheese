@@ -148,6 +148,12 @@ async def forge_transport(
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, tokens_for_project
 
+    if getattr(request.state, "from_machine_sandbox", False):
+        # A sandbox reaches its forge through the host-side proxy, which
+        # refuses what a session may not write (`forge_proxy`). Asked on its
+        # platform socket instead, this relay would hand it the project's
+        # write credential past that proxy, as `/forge-token` refuses to.
+        return Response(status_code=403)
     credential = credentials.presented(request.headers)
     # Native Git first discovers whether the server requires HTTP Basic auth.
     denied = Response(
