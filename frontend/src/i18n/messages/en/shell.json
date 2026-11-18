@@ -68,5 +68,14 @@
     "deleteChannel": "Couldn’t delete the channel",
     "createTopic": "Couldn’t create the channel",
     "convertMessage": "Couldn’t convert this message"
+  },
+  "layout": {
+    "add": "Add tab",
+    "close": "Close {title}",
+    "collapse": "Collapse",
+    "expand": "Expand {title}",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "tabs": "Tabs"
   }
 }

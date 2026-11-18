@@ -356,6 +356,9 @@ importers:
       dayjs:
         specifier: ^1.11.13
         version: 1.11.13
+      dockview-vue:
+        specifier: 8.9.0
+        version: 8.9.0(vue@3.5.42(typescript@5.9.3))
       dompurify:
         specifier: 3.4.17
         version: 3.4.17
@@ -3762,6 +3765,17 @@ packages:
   dir-glob@3.0.1:
     resolution: {integrity: sha512-WkrWp9GR4KXfKGYzOLmTuGVi1UWFfws377n9cc55/tb6DuqyF6pcQ5AbiHEshaDpY9v6oaSr2XCDidGmMwdzIA==}
     engines: {node: '>=8'}
+
+  dockview-core@8.9.0:
+    resolution: {integrity: sha512-qsXM+9wFik5WSEBq8x4KP041v19iM6cgSKVFrQpIgkJSXTM00+zEb66hI1kG3e+O7L4IKUfSziMUyZrofwetlg==}
+
+  dockview-vue@8.9.0:
+    resolution: {integrity: sha512-djwq2UWX3AW4YuuC0ESJQWSO0NfCPHXGB/VQIvRThfynaQaI4k611MLfpX16VwKvwL2tYsei0RMr/PA3LDDszg==}
+    peerDependencies:
+      vue: ^3.4.0
+
+  dockview@8.9.0:
+    resolution: {integrity: sha512-uZYPtKEOb7j8rrSeT1PqfPP9z5OEiM9+NhLgn9lZ3hVhVpmrWoAWckY7MFGsnQINR3on9mza4RlJQ9lYyq0Ivg==}
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -9672,6 +9686,17 @@ snapshots:
   dir-glob@3.0.1:
     dependencies:
       path-type: 4.0.0
+
+  dockview-core@8.9.0: {}
+
+  dockview-vue@8.9.0(vue@3.5.42(typescript@5.9.3)):
+    dependencies:
+      dockview: 8.9.0
+      vue: 3.5.42(typescript@5.9.3)
+
+  dockview@8.9.0:
+    dependencies:
+      dockview-core: 8.9.0
 
   dom-accessibility-api@0.5.16: {}
 
