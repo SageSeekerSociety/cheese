@@ -344,6 +344,11 @@ class Task(UuidPk, Timestamps, Base):
     # While it waits: the run of main's Required CI that failed after the
     # merge and holds the deploy back; NULL when nothing red is known.
     deploy_blocked_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # While it waits, closed by the channel's main line that opened it: the
+    # conclusion it closes with once its merge is live
+    # (`review.task_landing.deploy_landed`). Kept apart from `conclusion`,
+    # which every reader shows as how the task ended.
+    held_conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
     # When the thread was collapsed. `status == closed` is the flag; this is
     # when — kept apart so "closed" needs no timestamp to be true.
     closed_at: Mapped[datetime | None] = mapped_column(

@@ -306,9 +306,14 @@ TRACKED_SECTIONS = (
 )
 
 
-def task_wrap_up(*, has_checkout: bool) -> str:
+def task_wrap_up(*, has_checkout: bool, coordinated: bool = False) -> str:
     """一件任务怎么收尾，按事情的性质。``has_checkout``：任务有自己的工作目录（项目
-    有代码仓库）；没有的，不提工作目录和合并。"""
+    有代码仓库）；没有的，不提工作目录和合并。``coordinated``：任务是频道主线开的，
+    做没做完由主线判断，任务里的 AI 队友不关闭它。"""
+    if coordinated:
+        return (piece("opening/task_wrap_up_edit") if has_checkout else "") + piece(
+            "opening/task_coordinated"
+        )
     return piece(
         "opening/task_wrap_up",
         edit=piece("opening/task_wrap_up_edit") if has_checkout else "",
@@ -321,8 +326,10 @@ def task_section(
     contributors: Sequence[str] = (),
     closed: bool = False,
     has_checkout: bool,
+    coordinated: bool = False,
 ) -> str:
-    """任务会话那一段：谁的话是指令，在哪里做、怎么收尾。
+    """任务会话那一段：谁的话是指令，在哪里做、怎么收尾。``coordinated``：任务是
+    频道主线开的（`task_wrap_up`）。
 
     它会变：支线转为任务时，会话接着原来的那段对话，开场不会再发一遍；负责人换人、
     协作者进出、任务关闭和重新打开时也一样。所以它是一段会再告诉一次的现状
@@ -340,7 +347,9 @@ def task_section(
         else ""
     )
     return piece(
-        "opening/task_open", who=who, wrap_up=task_wrap_up(has_checkout=has_checkout)
+        "opening/task_open",
+        who=who,
+        wrap_up=task_wrap_up(has_checkout=has_checkout, coordinated=coordinated),
     )
 
 

@@ -12,7 +12,8 @@ A task whose last delivery merged in a project that waits for its deploy
   those commits (the squash title ends in `(#N)`), or when it merged before
   the oldest of them — main is linear, so such a merge was already in the
   release this one replaced, and its own report was missed. Each such task is
-  written up and closed (`task_landing.deploy_landed`).
+  closed with the conclusion the channel's main line gave it, or written up
+  and closed by its AI teammate (`task_landing.deploy_landed`).
 * `mark_blocked` — on a clock, from the CI runs the platform already records
   for its own repository (`ci_activity`): when the newest finished Required CI
   run on main since the task merged failed, nothing will deploy until main is
@@ -38,7 +39,12 @@ from app.domain.review.deploy_scope import (
     repository_of_url,
 )
 from app.domain.review.models import AcceptCard, AcceptStatus, DeployReport
-from app.domain.review.ports import RecordInstruction, TaskTeammate
+from app.domain.review.ports import (
+    Announce,
+    RecordInstruction,
+    RecordSeatInstruction,
+    TaskTeammate,
+)
 from app.domain.review.task_landing import deploy_landed
 from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task
@@ -121,6 +127,8 @@ async def ship(
     sha: str,
     record_instruction: RecordInstruction | None,
     task_teammate: TaskTeammate | None,
+    announce: Announce | None,
+    record_seat: RecordSeatInstruction | None,
 ) -> list[uuid.UUID]:
     """A deploy of ``repository_url`` put ``sha`` live, shipping ``commits``
     (`[{"sha", "message", "merged_at"}]`, oldest first). Keeps the report and
@@ -149,6 +157,8 @@ async def ship(
                     task,
                     record_instruction=record_instruction,
                     task_teammate=task_teammate,
+                    announce=announce,
+                    record_seat=record_seat,
                 ):
                     released.append(task_id)
                 await session.commit()

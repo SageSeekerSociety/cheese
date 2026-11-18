@@ -367,6 +367,7 @@ async def close_task(
     # Nor for its deploy: closed by hand while it waited, it is over.
     task.deploying_since = None
     task.deploy_blocked_url = None
+    task.held_conclusion = None
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)

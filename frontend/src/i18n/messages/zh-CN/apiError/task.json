@@ -83,6 +83,7 @@
   "taskClosedForStart": "这道题已经截止，不能再申请或开始做",
   "claimDeadlinePassedForStart": "你的提交截止时间已经过了，不能再开始做这道题",
   "claimBeingChanged": "这份申请正在处理，过一会儿再试一次",
+  "taskCoordinatedClosedByMainLine": "这件任务由频道主线统筹，做没做完由频道主线判断，任务没有关。有要审阅的交付就提交审阅；没有要审阅的东西，用 cheese_task(action=report) 向频道主线报告已做完（kind 写 done）。",
   "taskCloseWhileDeliveryWaits": "这件任务的交付还在等人决定，任务没有关：关掉会让这份交付作废，这个决定归人。在对话里回一句告诉他在哪里点：采纳点任务对话输入框上方那一条上的「采纳」（手机上先点那一条上的「审阅」，到「改动」页签底部的同一条上点），退回点同一条上的「退回」；关掉任务点任务页右上角「更多操作」里的「关闭任务」。",
   "taskCloseNeedsGrounds": "任务没有关：关闭要有依据，两样里要有一样。一是最后一次交付已经采纳，且步骤清单全部勾完（有不做的项就用 unchecked_reason 写明理由）；二是负责人在这条任务里说过结束，用 owner_message 带上他那条消息的 id。方案、原型、调研摆出来后不关，报「等你看」，等负责人回话。",
   "taskCloseOwnerMessageNotFound": "任务没有关：owner_message 指的那条不是负责人在这条任务里发的消息。照抄负责人说结束的那条消息的 id；他没说过，就先问他。",
