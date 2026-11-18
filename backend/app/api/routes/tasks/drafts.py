@@ -186,9 +186,7 @@ async def _editable_task(db, task_id: int, user_id: int):
     return task
 
 
-async def _task_as_form(
-    db, task, *, private: bool, viewer_id: int | None = None
-) -> dict:
+async def _task_as_form(db, task, *, private: bool) -> dict:
     """The published 题目 as its edit form starts out: every field the form
     saves back, so a change draft saved with one field changed leaves the rest
     as they are — its stages, submission items, rubric and tags included.
@@ -197,11 +195,10 @@ async def _task_as_form(
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=private)
     model.update(await _task_requirements(service, task.id, teacher=private))
-    model = (
-        await _enrich_task_models(
-            db, [model], space_id=task.space_id, viewer_id=viewer_id
-        )
-    )[0]
+    # 表单只用 name/mentors 的 handle/题面这些，`_enrich_task_models` 里
+    # 跟读的人有关的那几样（creator、admins、导师的 remark）到这儿都被裁掉了，
+    # 所以不传 viewer：传了只会白多一次备注查询。
+    model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     await _enrich_task_topics(db, [model])
     await _enrich_task_knowledge_points(db, [model])
     return drafts.task_form(model)
@@ -219,7 +216,7 @@ async def _edit_draft(db, task, user_id: int, conversation_id=None):
         space_id=task.space_id,
         task_id=task.id,
         # Only those who may teach it get here (``_editable_task``).
-        fields=await _task_as_form(db, task, private=True, viewer_id=user_id),
+        fields=await _task_as_form(db, task, private=True),
         conversation_id=conversation_id,
     )
 
@@ -303,7 +300,7 @@ async def read_changes(
     found = await _editable_task(db, task, user_id)
     row = await drafts.for_task(db, user_id, found.id)
     if row is None:
-        form = await _task_as_form(db, found, private=True, viewer_id=user_id)
+        form = await _task_as_form(db, found, private=True)
         return ok({"draft": None, "form": form})
     shown = _full(row, {found.id: found.name}, await drafts.published_items(db, [row]))
     return ok({"draft": shown, "form": shown["fields"]})
@@ -592,7 +589,7 @@ async def agent_read(
     text = drafts.published_view(
         task.id,
         task.name,
-        await _task_as_form(db, task, private=teaches, viewer_id=user_id),
+        await _task_as_form(db, task, private=teaches),
         terms,
         private=teaches,
     )
