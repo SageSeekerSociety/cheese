@@ -128,10 +128,12 @@ onBeforeUnmount(() => hostElements.forEach((element, id) => emit('host', id, ele
   background: var(--surface);
 }
 
+/* The same strip LayoutDock's theme draws: 40px, ink underline under the visible tab. */
 .layout-static__tabs {
   display: flex;
   flex: 0 0 40px;
-  align-items: center;
+  align-items: stretch;
+  box-sizing: border-box;
   padding: 0 6px;
   font-size: 13px;
   color: var(--muted);
@@ -139,13 +141,45 @@ onBeforeUnmount(() => hostElements.forEach((element, id) => emit('host', id, ele
 }
 
 .layout-static__tab {
+  display: flex;
+  position: relative;
+  align-items: center;
+  gap: 6px;
   padding: 0 12px;
   white-space: nowrap;
+}
+
+.layout-static__icon {
+  color: var(--faint);
 }
 
 .layout-static__tab--on {
   font-weight: 600;
   color: var(--ink);
+}
+
+.layout-static__tab--on .layout-static__icon {
+  color: var(--ink);
+}
+
+.layout-static__tab--on::after {
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 2px;
+  content: '';
+  background: var(--ink);
+}
+
+.layout-static__strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding-top: 13px;
+  color: var(--text);
 }
 
 .layout-static__host {

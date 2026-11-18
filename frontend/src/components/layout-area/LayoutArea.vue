@@ -27,8 +27,10 @@ import { useDisplay } from 'vuetify'
 
 import {
   activatePanel,
+  cellOfPanel,
   cellsOf,
   placedPanels,
+  placeInGroup,
   placePanel,
   reconcile,
   restoreArrangement,
@@ -40,7 +42,7 @@ import {
 import { keepScroll } from './keepScroll'
 import LayoutStack from './LayoutStack.vue'
 import LayoutStatic from './LayoutStatic.vue'
-import { rememberedWidth, rememberWidth } from './widths'
+import { rememberedFold, rememberedWidth, rememberFold, rememberWidth } from './widths'
 
 import { storageGet, storageSet } from '@/lib/browserStorage'
 
@@ -60,12 +62,22 @@ const props = withDefaults(
     narrow?: boolean
     /** The panel whose cell fills the wide area (`v-model:maximized`); not remembered. */
     maximized?: string | null
+    /** Each cell's header offers to go back to the page's default arrangement. */
+    resettable?: boolean
   }>(),
-  { locked: false, resizable: true, narrow: undefined, maximized: null }
+  { locked: false, resizable: true, narrow: undefined, maximized: null, resettable: false }
 )
 
 const emit = defineEmits<{
   'update:maximized': [id: string | null]
+  /** The reader picked this panel's tab (or dragged it), in whatever cell. */
+  activated: [id: string]
+  /** The panels on screen now: the visible tab of every cell in sight. */
+  visible: [ids: string[]]
+  /** The reader closed the tab of a transient panel: the page drops it. */
+  close: [id: string]
+  /** The reader double-clicked the tab of a temporary panel: the page keeps it. */
+  keep: [id: string]
 }>()
 
 defineSlots<{
@@ -87,6 +99,26 @@ const infos = computed<LayoutPanelInfo[]>(() =>
   })
 )
 
+const groupOf = (id: string) => byId.value.get(id)?.group
+const transient = computed(() => new Set(props.panels.filter((panel) => panel.transient).map((panel) => panel.id)))
+
+/** Transient panels that are not placed yet go to their group's cell. */
+function withTransients(arrangement: LayoutArrangement, ids: readonly string[]): LayoutArrangement {
+  return ids.reduce((next, id) => (transient.value.has(id) ? placeInGroup(next, id, groupOf) : next), arrangement)
+}
+
+/** A panel whose fold is remembered on its own gets that fold, whatever the arrangement says. */
+function withFolds(arrangement: LayoutArrangement): LayoutArrangement {
+  let next = arrangement
+  for (const panel of props.panels) {
+    if (!panel.foldKey) continue
+    const cell = cellOfPanel(next, panel.id)
+    const folded = rememberedFold(panel.foldKey).value
+    if (cell?.id && !!cell.collapsed !== folded) next = setCollapsed(next, cell.id, folded)
+  }
+  return next
+}
+
 function fromDefault(): LayoutArrangement {
   return withCellIds(reconcile(props.defaultArrangement, declared.value))
 }
@@ -94,34 +126,58 @@ function fromDefault(): LayoutArrangement {
 function savedArrangement(): LayoutArrangement | null {
   const saved = restoreArrangement(storageGet(props.storageKey), {
     version: props.version,
-    declared: declared.value,
-    pinned: props.panels.filter((panel) => panel.pinned).map((panel) => panel.id),
+    declared: declared.value.filter((id) => !transient.value.has(id)),
+    required: props.panels.filter((panel) => panel.pinned || !panel.closable).map((panel) => panel.id),
   })
-  return saved && withCellIds(saved)
+  return saved && withCellIds(reconcile(saved, declared.value))
 }
 
-const arrangement = shallowRef<LayoutArrangement>(savedArrangement() ?? fromDefault())
+function opening(): LayoutArrangement {
+  const base = savedArrangement() ?? fromDefault()
+  return withFolds(withCellIds(withTransients(base, declared.value)))
+}
+
+const arrangement = shallowRef<LayoutArrangement>(opening())
 /** Bumped when the arrangement is replaced from outside dockview, so the adapter reloads. */
 const loadKey = ref(0)
 
 function commit(next: LayoutArrangement, reload = false) {
   arrangement.value = withCellIds(reconcile(next, declared.value))
-  storageSet(props.storageKey, serializeArrangement(arrangement.value, props.version))
+  // Transient panels are the page's business: what is remembered is the rest.
+  const lasting = declared.value.filter((id) => !transient.value.has(id))
+  storageSet(props.storageKey, serializeArrangement(reconcile(arrangement.value, lasting), props.version))
+  for (const panel of props.panels) {
+    const cell = panel.foldKey ? cellOfPanel(arrangement.value, panel.id) : undefined
+    if (cell) rememberFold(panel.foldKey!, !!cell.collapsed)
+  }
   if (reload) loadKey.value++
 }
 
-// Another page's arrangement: its key, or the panels themselves, changed.
+// Another page's arrangement (its key changed) is loaded afresh; panels that come and go
+// on the same page are placed or dropped where they are, without reloading the rest.
 watch(
-  () => [props.storageKey, props.version, declared.value.join('\n')],
-  () => {
-    arrangement.value = savedArrangement() ?? fromDefault()
-    if (maximizedNow.value) setMaximized(null)
-    loadKey.value++
+  () => [props.storageKey, props.version, declared.value.join('\n')] as const,
+  ([key, version], [keyBefore, versionBefore, declaredBefore]) => {
+    if (key !== keyBefore || version !== versionBefore) {
+      arrangement.value = opening()
+      if (maximizedNow.value) setMaximized(null)
+      loadKey.value++
+      return
+    }
+    const before = new Set(declaredBefore.split('\n'))
+    commit(
+      withTransients(
+        arrangement.value,
+        declared.value.filter((id) => !before.has(id))
+      )
+    )
   }
 )
 
 const placed = computed(() => placedPanels(arrangement.value))
-const unplaced = computed(() => unplacedPanels(arrangement.value, declared.value))
+const unplaced = computed(() =>
+  unplacedPanels(arrangement.value, declared.value).filter((id) => !transient.value.has(id))
+)
 const unplacedInfos = computed(() => infos.value.filter((info) => unplaced.value.includes(info.id)))
 
 // ---------------------------------------------------------------- sizes
@@ -232,7 +288,8 @@ watch(
 )
 const visibleActives = computed(() =>
   cellsOf(arrangement.value)
-    .filter((cell) => !sizing(cell, 'row').hidden)
+    // A folded cell shows its strip, not a host: nothing to wait for there.
+    .filter((cell) => !sizing(cell, 'row').hidden && !cell.collapsed)
     .map((cell) => cell.active ?? cell.panels[0])
 )
 /** Latched: once dockview has taken over, a later reload goes through dockview alone. */
@@ -291,21 +348,55 @@ watch(
 
 // ---------------------------------------------------------------- page API
 
-defineExpose({
-  /** Back to the page's default arrangement, forgetting the saved one. */
-  reset() {
-    commit(fromDefault(), true)
-  },
-  /** Shows a panel: brings it back if it was closed, and makes it the visible tab. */
-  open(id: string) {
-    if (!byId.value.has(id)) return
-    let next = activatePanel(placePanel(arrangement.value, id), id)
-    const cell = cellsOf(next).find((c) => c.panels.includes(id))
-    if (cell?.collapsed && cell.id) next = setCollapsed(next, cell.id, false)
-    chosen.value = id
-    commit(next, true)
-  },
+/** Asks dockview to act on a panel without reloading the layout; counted so a repeat still acts. */
+const request = shallowRef<{ id: string; fold?: boolean; n: number } | null>(null)
+let requests = 0
+
+/** Back to the page's default arrangement, forgetting the saved one. */
+function reset() {
+  for (const panel of props.panels) if (panel.foldKey) rememberFold(panel.foldKey, false)
+  commit(withCellIds(withTransients(fromDefault(), declared.value)), true)
+}
+
+/** A panel asked for before the page declared it: shown as soon as it is. */
+let pendingOpen: string | null = null
+watch(declared, (ids) => {
+  if (pendingOpen && ids.includes(pendingOpen)) open(pendingOpen)
 })
+
+/** Shows a panel: brings it back if it was closed, and makes it the visible tab of its cell. */
+function open(id: string) {
+  if (!byId.value.has(id)) {
+    pendingOpen = id
+    return
+  }
+  pendingOpen = null
+  chosen.value = id
+  if (!placed.value.includes(id)) {
+    commit(transient.value.has(id) ? placeInGroup(arrangement.value, id, groupOf) : placePanel(arrangement.value, id))
+  }
+  if (isNarrow.value || !dockReady.value) {
+    let next = activatePanel(arrangement.value, id)
+    const cell = cellOfPanel(next, id)
+    if (cell?.collapsed && cell.id) next = setCollapsed(next, cell.id, false)
+    commit(next, !isNarrow.value)
+    return
+  }
+  request.value = { id, n: ++requests }
+}
+
+/** Folds the cell of this panel to a strip, or opens it again. */
+function fold(id: string, folded: boolean) {
+  const cell = cellOfPanel(arrangement.value, id)
+  if (!cell?.id) return
+  if (isNarrow.value || !dockReady.value) {
+    commit(setCollapsed(arrangement.value, cell.id, folded), !isNarrow.value)
+    return
+  }
+  request.value = { id, fold: folded, n: ++requests }
+}
+
+defineExpose({ reset, open, fold })
 </script>
 
 <template>
@@ -332,12 +423,19 @@ defineExpose({
           :fixed-widths="fixedWidths"
           :default-arrangement="defaultArrangement"
           :maximized="maximizedNow"
+          :resettable="resettable"
+          :request="request"
           @change="commit"
           @host="onDockHost"
           @shown="restoreScroll"
           @ready="dockLoaded = true"
           @resized="onResized"
           @maximized="setMaximized"
+          @activated="emit('activated', $event)"
+          @visible="emit('visible', $event)"
+          @close="emit('close', $event)"
+          @keep="emit('keep', $event)"
+          @reset="reset"
         />
       </div>
     </template>

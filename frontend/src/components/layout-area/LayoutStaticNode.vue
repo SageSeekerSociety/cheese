@@ -73,10 +73,15 @@ const children = computed(() => {
           class="layout-static__tab"
           :class="{ 'layout-static__tab--on': id === active }"
         >
-          {{ info.get(id)?.title ?? id }}
+          <v-icon v-if="info.get(id)?.icon" class="layout-static__icon" size="16" :icon="info.get(id)!.icon" />
+          <span>{{ info.get(id)?.title ?? id }}</span>
         </div>
       </div>
       <div :key="active!" :ref="hostRef(active!)" class="layout-static__host" :data-layout-host="active" />
     </template>
+    <!-- A folded cell: the strip dockview draws, with its icons, not yet clickable. -->
+    <div v-else class="layout-static__strip">
+      <v-icon v-for="id in cell.panels" :key="id" size="18" :icon="info.get(id)?.icon ?? 'mdi-dock-window'" />
+    </div>
   </div>
 </template>

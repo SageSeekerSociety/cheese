@@ -99,8 +99,49 @@ describe('LayoutArea on a narrow screen', () => {
     expect(JSON.stringify(saved.root)).toContain('three')
   })
 
+  it('a panel the page opens while the area is up joins its group, and is not remembered', async () => {
+    const grouped: LayoutPanel[] = [
+      { id: 'one', title: 'One', component: Note, props: { label: 'note one' } },
+      { id: 'two', title: 'Two', component: Note, props: { label: 'note two' }, group: 'work' },
+    ]
+    const panels = ref<LayoutPanel[]>(grouped)
+    const area = ref<{ open(id: string): void }>()
+    render(
+      defineComponent({
+        setup: () => () =>
+          h(LayoutArea, {
+            ref: area,
+            panels: panels.value,
+            defaultArrangement: DEFAULT,
+            storageKey: KEY,
+            version: 1,
+            narrow: true,
+          }),
+      }),
+      { global: { plugins: [createVuetify({ components, directives }), i18n] } }
+    )
+    await screen.findByLabelText('note one')
+    // Asked for before the page has declared it: shown as soon as it is.
+    area.value!.open('opened')
+    panels.value = [
+      ...grouped,
+      {
+        id: 'opened',
+        title: 'Opened',
+        component: Note,
+        props: { label: 'note opened' },
+        group: 'work',
+        transient: true,
+        closable: true,
+      },
+    ]
+    await waitFor(() => shown('note opened'))
+    expect(screen.getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['One', 'Two', 'Opened'])
+    expect(localStorage.getItem(KEY) ?? '').not.toContain('opened')
+  })
+
   it('reset brings the default arrangement back', async () => {
-    localStorage.setItem(KEY, JSON.stringify({ v: 1, root: { panels: ['three'] } }))
+    localStorage.setItem(KEY, JSON.stringify({ v: 1, root: { panels: ['three', 'one'], active: 'three' } }))
     const area = ref<{ reset(): void }>()
     render(
       defineComponent({

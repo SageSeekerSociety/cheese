@@ -8,6 +8,7 @@ import {
   cellsOf,
   defaultWeights,
   placedPanels,
+  placeInGroup,
   placePanel,
   reconcile,
   resetSizes,
@@ -20,7 +21,7 @@ import {
 import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 
 const DECLARED = ['nav', 'chat', 'files', 'preview', 'terminal']
-const OPTIONS = { version: 3, declared: DECLARED, pinned: ['nav'] }
+const OPTIONS = { version: 3, declared: DECLARED, required: ['nav', 'chat'] }
 
 const DEFAULT: LayoutArrangement = {
   root: {
@@ -74,7 +75,7 @@ describe('saving and restoring an arrangement', () => {
         root: { direction: 'row', children: [{ panels: ['nav'] }, { panels: ['nav', 'chat'] }] },
       }),
     ],
-    ['the pinned panel missing', JSON.stringify({ v: 3, root: { panels: ['chat'] } })],
+    ['a panel that cannot be closed missing', JSON.stringify({ v: 3, root: { panels: ['chat'] } })],
   ])('is ignored when it is %s, so the page starts from its default', (_case, raw) => {
     expect(restoreArrangement(raw, OPTIONS)).toBeNull()
   })
@@ -217,6 +218,53 @@ describe('dockview layout round trip', () => {
     expect(left.size).toBe(200)
     const rawLeft = (layout.grid.root.data as Array<{ size?: number }>)[0]
     expect(rawLeft.size).toBe(STRIP_SIZE)
+  })
+})
+
+describe('a panel that appears while the area is open', () => {
+  const groups: Record<string, string> = { files: 'work', preview: 'work', 'file:a': 'work', chat: 'talk' }
+  const groupOf = (id: string) => groups[id]
+
+  it('goes to the cell where the other panels of its group are, behind its visible tab', () => {
+    const area = withCellIds(DEFAULT)
+    const next = placeInGroup(area, 'file:a', groupOf)
+    const cell = cellsOf(next).find((c) => c.panels.includes('file:a'))!
+    expect(cell.id).toBe('top')
+    expect(cell.active).toBe('preview')
+  })
+
+  it('goes to the cell with most of its group when the group is spread over several', () => {
+    // One work panel dragged next to the chat; the rest of the group stays together.
+    const spread = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files'] },
+          { id: 'work', panels: ['preview', 'file:b'] },
+        ],
+      },
+    })
+    const next = placeInGroup(spread, 'file:a', (id) => (id === 'chat' ? 'talk' : 'work'))
+    expect(cellsOf(next).find((c) => c.panels.includes('file:a'))?.id).toBe('work')
+  })
+
+  it('goes where any closed panel would when its group has no cell yet', () => {
+    const lonely = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'a', panels: ['nav'] },
+          { id: 'b', panels: ['chat'] },
+        ],
+      },
+    })
+    const next = placeInGroup(lonely, 'file:a', groupOf)
+    expect(cellsOf(next).find((c) => c.panels.includes('file:a'))?.id).toBe('a')
+  })
+
+  it('stays where it is once placed', () => {
+    const area = withCellIds(DEFAULT)
+    expect(placeInGroup(area, 'chat', groupOf)).toBe(area)
   })
 })
 

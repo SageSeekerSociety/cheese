@@ -250,6 +250,28 @@ export function placePanel(arrangement: LayoutArrangement, panelId: string, near
   })
 }
 
+/**
+ * Places a panel that has just appeared in the cell where the other panels of its group
+ * are — the cell holding most of them, the first such in reading order on a tie — behind
+ * that cell's visible tab. With no such cell it goes where `placePanel` would put it. A
+ * panel already placed stays put.
+ */
+export function placeInGroup(
+  arrangement: LayoutArrangement,
+  panelId: string,
+  groupOf: (id: string) => string | undefined
+): LayoutArrangement {
+  if (placedPanels(arrangement).includes(panelId)) return arrangement
+  const group = groupOf(panelId)
+  const members = (cell: LayoutCell) => cell.panels.filter((id) => group && groupOf(id) === group).length
+  const home = cellsOf(arrangement).reduce<LayoutCell | undefined>(
+    (best, cell) => (members(cell) > (best ? members(best) : 0) ? cell : best),
+    undefined
+  )
+  if (!home) return placePanel(arrangement, panelId)
+  return mapCells(arrangement, (cell) => (cell === home ? { ...cell, panels: [...cell.panels, panelId] } : cell))
+}
+
 // ---------------------------------------------------------------- back to the default sizes
 
 function panelsUnder(node: LayoutNode): string[] {
@@ -308,8 +330,8 @@ export interface RestoreOptions {
   version: number
   /** Every panel the page declares. */
   declared: readonly string[]
-  /** Panels that must be placed: a saved arrangement without one of them is ignored. */
-  pinned: readonly string[]
+  /** Panels that must be placed (they cannot be closed): a saved arrangement without one is ignored. */
+  required: readonly string[]
 }
 
 export function serializeArrangement(arrangement: LayoutArrangement, version: number): string {
@@ -350,8 +372,8 @@ function readNode(value: unknown): LayoutNode | null {
 
 /**
  * What was saved, or null when it cannot be used as it is: not JSON, another version,
- * a shape this code does not write, an undeclared panel, a panel twice, or a pinned panel
- * missing. The caller then starts from the page's default; nothing is half-applied.
+ * a shape this code does not write, an undeclared panel, a panel twice, or a panel that
+ * cannot be closed missing. The caller then starts from the page's default; nothing is half-applied.
  */
 export function restoreArrangement(raw: string | null, options: RestoreOptions): LayoutArrangement | null {
   if (!raw) return null
@@ -370,6 +392,6 @@ export function restoreArrangement(raw: string | null, options: RestoreOptions):
   const arrangement: LayoutArrangement = { root }
   if (hasPlacementFault(arrangement, options.declared)) return null
   const placed = new Set(placedPanels(arrangement))
-  if (options.pinned.some((id) => !placed.has(id))) return null
+  if (options.required.some((id) => !placed.has(id))) return null
   return reconcile(arrangement, options.declared)
 }
