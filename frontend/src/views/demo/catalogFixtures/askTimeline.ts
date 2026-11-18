@@ -24,7 +24,7 @@ export function askTimelineProps(viewer = 'reader', long = false): Record<string
       created_at: '2026-11-18T05:00:00Z',
       meta,
     }) as Block
-  const meta = {
+  const meta: Block['meta'] = {
     notice_id: 'demo-time-scope',
     asked: ['alice'],
     options: [{ text: '最近一周' }, { text: '最近一个月' }],
@@ -33,6 +33,7 @@ export function askTimelineProps(viewer = 'reader', long = false): Record<string
           {
             by: 'alice',
             kind: 'note',
+            option: null,
             note: '请保留完整回答与长名字，报告范围使用最近一个月，并把跨月的数据分别说明。'.repeat(3),
             at: '2026-11-18T05:01:00Z',
           },

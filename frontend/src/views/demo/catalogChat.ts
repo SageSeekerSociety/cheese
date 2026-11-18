@@ -11,6 +11,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import { askTimelineProps } from './catalogFixtures/askTimeline'
 import {
   AGENT_NAME,
   CHAT_ROWS,
@@ -22,8 +23,6 @@ import {
   WANG_CLOSING,
   WANG_EDITING_ROW,
 } from './catalogFixtures'
-
-import { askTimelineProps } from './catalogFixtures/askTimeline'
 
 import ChatErrorToast from '@/components/chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from '@/components/chat/ChatNewMessagesPill.vue'
