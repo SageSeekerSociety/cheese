@@ -67,3 +67,31 @@ describe('文档顶栏左边那一句状态', () => {
     expect(note?.querySelector('.doc-top-bar__note-text')).toBeTruthy()
   })
 })
+
+describe('在线的人叫什么', () => {
+  const peer = {
+    clientId: 7,
+    handle: 'qingmo',
+    agent: false,
+    name: 'Public name',
+    avatar: '',
+    color: '#888',
+  }
+
+  it('查看者给这个人设过备注时，画的是备注', () => {
+    const { container } = mount({
+      peers: [peer],
+      nameOf: (handle: string) => (handle === 'qingmo' ? '秦老师' : handle),
+    })
+    const face = container.querySelector('.doc-presence__face')
+    expect(face?.getAttribute('title')).toContain('秦老师')
+    expect(face?.textContent).toContain('秦')
+  })
+
+  it('没有备注时仍是他自己报的名字，不是账号', () => {
+    const { container } = mount({ peers: [peer], nameOf: (handle: string) => handle })
+    const face = container.querySelector('.doc-presence__face')
+    expect(face?.getAttribute('title')).toContain('Public name')
+    expect(face?.getAttribute('title')).not.toContain('秦')
+  })
+})

@@ -24,6 +24,8 @@ const props = defineProps<{
   loading: boolean
   connection: DocConnection
   peers: DocPeer[]
+  /** handle 读成名字：在线头像用它（名册 + 当前查看者的备注）。 */
+  nameOf?: (handle: string) => string
   /** 现在能不能改：自己切到只读、或者没有编辑权限时是 false。 */
   editable: boolean
   /** 没有编辑权限：左边说只读，没有编辑方式可切。 */
@@ -152,7 +154,7 @@ function pickHeading(pos: number) {
       </template>
     </div>
     <div class="doc-top-bar__actions">
-      <DocPresence v-if="connection === 'connected'" :peers="peers" class="me-1" />
+      <DocPresence v-if="connection === 'connected'" :peers="peers" :name-of="nameOf" class="me-1" />
       <v-menu v-if="!loading" v-model="outlineOpen" location="bottom end" offset="6">
         <template #activator="{ props: menuProps }">
           <button

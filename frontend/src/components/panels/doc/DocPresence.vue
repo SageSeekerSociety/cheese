@@ -10,7 +10,17 @@ import { computed } from 'vue'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 import UserAvatar from '../../common/UserAvatar.vue'
 
-const props = defineProps<{ peers: DocPeer[] }>()
+const props = defineProps<{
+  peers: DocPeer[]
+  /** handle 读成名字：传了就用它（名册 + 当前查看者的个人备注），没传就用广播里的名字。 */
+  nameOf?: (handle: string) => string
+}>()
+
+/** 这一位在这块屏幕上叫什么：查看者给他设过备注就是备注，否则是他自己报的名字。 */
+function displayName(peer: DocPeer): string {
+  const resolved = props.nameOf?.(peer.handle)
+  return resolved && resolved !== peer.handle ? resolved : peer.name
+}
 
 const MAX_FACES = 4
 
@@ -34,10 +44,10 @@ const more = computed(() => people.value.length - shown.value.length)
         v-for="peer in shown"
         :key="peer.handle"
         class="doc-presence__face"
-        :title="`${peer.name} · ${peer.handle}`"
+        :title="`${displayName(peer)} · ${peer.handle}`"
       >
-        <CheeseAvatar v-if="peer.agent" :size="22" :name="peer.name" :handle="peer.handle" />
-        <UserAvatar v-else :size="22" :name="peer.name" :avatar="peer.avatar" :alt="peer.name" />
+        <CheeseAvatar v-if="peer.agent" :size="22" :name="displayName(peer)" :handle="peer.handle" />
+        <UserAvatar v-else :size="22" :name="displayName(peer)" :avatar="peer.avatar" :alt="displayName(peer)" />
       </span>
       <span v-if="more > 0" class="doc-presence__more">+{{ more }}</span>
     </div>
