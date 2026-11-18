@@ -5943,7 +5943,7 @@ def _say_hand_in_prepared(args, data, env) -> str:
     ]
     for item in data.get("items") or []:
         if item.get("kind") == "TEXT":
-            what = f"文字：{item.get('text')}"
+            what = f"文字「{item.get('text')}」"
         elif item.get("source") == "library":
             what = (
                 f"资料库里的「{item.get('path')}」第 {item.get('libraryVersion')} 版"

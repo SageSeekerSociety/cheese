@@ -271,7 +271,7 @@ async def prepare_hand_in(
         else:
             path = clean_path(posixpath.normpath(files[item.number]))
             entry = committed.get(path)
-            if entry is None or entry["kind"] != "blob":
+            if entry is None or entry["kind"] != "blob" or entry["mode"] == "120000":
                 raise NotFoundError(say("handInRepoFileNotFound", path=path))
             _refuse_too_large(path, entry["bytes"])
             row |= {
