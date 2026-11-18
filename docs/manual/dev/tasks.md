@@ -115,7 +115,9 @@ covers:
 
 ## 同步 {#sync}
 
-`cheese sync` 只推提交（`_sync_task`）。没提交的改动、未跟踪文件不上传，平台不替它们留底：沙箱一换，只有推上去的提交还在。
+`cheese sync` 只推提交（`_sync_task`）。没提交的改动（含未跟踪、未被忽略的文件）另存在项目仓库的 `refs/cheese/kept/<任务 id>`（`_keep_working_copy`）：一个提交，树是工作目录的文件，父提交是当时的 HEAD，不在任何分支上；每次另存替换它，没有改动时删掉它。它在临时索引（`GIT_INDEX_FILE`）里 `git add -A` 生成，不动真的索引和工作目录；单个文件超过 10 MB 或合计超过 80 MB 时这一次不存。`cheese sync`（每次提交的钩子）和 `cheese sync --all`（每轮的 checkpoint、离开机器前的 checkpoint）在推送之后各做一次；有人保存任务文件后执行器再做一次（`task_fs` 的 `keep_soon` 跑 `cheese keep`，十秒内的连续保存合成一次）。本机记着上次存的那一份（本地同名 ref），文件和 HEAD 都没变时不碰仓库。
+
+新机器第一次打开任务目录（`_open_from_forge` 新建 worktree）时，在取分支的同一次 fetch 里把它取到 `refs/remotes/origin/cheese-kept/<任务 id>`；父提交就是检出的 HEAD 时用 `git restore --worktree` 铺回去，索引留在 HEAD，原来未跟踪的文件仍是未跟踪（`_lay_back_kept`）。分支此后动过就不铺也不删，平台把这件事告诉 AI 队友（`session_work._lost_notice`）和打开任务文件的人（`taskSandboxReleasedKeptBranchMoved`），读的是仓库里这个提交的父提交和分支的头（`repository/kept_work.py`）。只有平台托管的 Forgejo 仓库这样做：连接 GitHub 的项目不往别人的仓库里写这种 ref，沙箱一换只有推上去的提交还在。
 
 **推 HEAD**（`_deliver_task_branch`）：HEAD 已在本检出上次推送或 fetch 时记下的分支尖（`refs/remotes/origin/<branch>`）里，就不问托管平台、什么都不推：托管平台一时连不上时，问一句只会把它已经有的工作报成「没能推回」，而且每次 sync 都报一遍。否则先读托管平台上这条分支的尖。HEAD 已在其中——同一任务的另一个检出走得更远——就什么都不推；尖在 HEAD 的历史里就普通推送；两边分叉而那个尖是本检出自己在这条分支上有过、后来 amend/rebase 掉的提交，就以它为 lease 替换（`--force-with-lease`），整理本任务的提交（比如移除依赖）本来就是工作的一部分；尖里有本检出从没有过的提交就拒绝，替换会把别人的工作从 PR 上删掉。
 

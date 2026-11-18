@@ -45,7 +45,10 @@ def load_cli(platform: "TaskPlatform"):
 
 
 class TaskPlatform:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, forge_kind: str | None = None):
+        #: The kind of forge the task's project is bound to, as the platform
+        #: says it (`forge_kind`); the platform's own Forgejo is `forgejo`.
+        self.forge_kind = forge_kind
         self.project = str(uuid.uuid4())
         self.room = str(uuid.uuid4())
         self.task_id = str(uuid.uuid4())
@@ -116,7 +119,29 @@ class TaskPlatform:
             "remote": str(self.forge),
             "landed": None,
             "coauthors": [],
+            **(
+                {
+                    "forge_kind": self.forge_kind,
+                    "forge_repo": "owner/repo",
+                    "remote": self.site_remote().as_uri(),
+                }
+                if self.forge_kind
+                else {}
+            ),
         }
+
+    def site_remote(self) -> Path:
+        """The forge as a bound forge's site has it, `<site>/<owner>/<repo>.git`,
+        with the version page the CLI probes to tell it is reachable
+        (`_configure_git_transport`)."""
+        site = self.forge.parent / "site"
+        remote = site / "owner" / "repo.git"
+        if not remote.exists():
+            (site / "api" / "v1").mkdir(parents=True)
+            (site / "api" / "v1" / "version").write_text("{}")
+            remote.parent.mkdir()
+            remote.symlink_to(self.forge)
+        return remote
 
     def branch_head(self) -> str | None:
         found = git(self.forge, "for-each-ref", "--format=%(objectname)", self.ref)

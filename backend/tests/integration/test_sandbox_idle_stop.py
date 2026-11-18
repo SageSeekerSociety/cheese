@@ -37,7 +37,7 @@ from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
-from app.domain.machine.sandbox_wait import SANDBOX_LOST, STOPPED_PROCESSES
+from app.domain.machine.sandbox_wait import SANDBOX_LOST_KEPT, STOPPED_PROCESSES
 from app.domain.machine.services import HostPool
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
@@ -594,7 +594,7 @@ def test_an_idle_sandbox_is_destroyed_and_the_next_tool_call_gets_a_new_one(clou
     assert answer["target"]["device_id"] == "host-a"
     # This machine has no sandbox cgroup for the host program to read, so no
     # process is named: the copy is the one there always was.
-    assert answer["notice"] == SANDBOX_LOST
+    assert answer["notice"] == SANDBOX_LOST_KEPT
     assert not (home / "room" / "notes.md").exists()
     # Told once.
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
@@ -625,7 +625,7 @@ def test_the_agent_is_told_what_was_running_when_its_sandbox_was_destroyed(
     assert sweep(cloud)["destroyed"] == 1
 
     answer = tool_call(cloud, seat, tells_agent=True)
-    assert answer["notice"] == SANDBOX_LOST + "\n" + STOPPED_PROCESSES.format(
+    assert answer["notice"] == SANDBOX_LOST_KEPT + "\n" + STOPPED_PROCESSES.format(
         processes="  npm run dev\n  python3 -m http.server 8000"
     )
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
@@ -1045,7 +1045,7 @@ def test_a_tool_call_during_an_unfinished_removal_waits_and_then_gets_a_new_sand
     assert not home.exists()
     answer = tool_call(cloud, seat, tells_agent=True)
     assert answer["target"]["device_id"] == "host-a"
-    assert answer["notice"] == SANDBOX_LOST
+    assert answer["notice"] == SANDBOX_LOST_KEPT
 
 
 def test_a_conversation_mid_turn_does_not_keep_other_sandboxes(cloud, monkeypatch):

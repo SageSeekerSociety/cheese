@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.machine import reaper, services
-from app.domain.machine.sandbox_wait import SANDBOX_LOST
+from app.domain.machine.sandbox_wait import SANDBOX_LOST_KEPT
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
     host_comes_up,
@@ -23,9 +23,9 @@ from tests.integration.test_sandbox_idle_stop import (
     working_on,
 )
 
-NOTICE = SANDBOX_LOST
+NOTICE = SANDBOX_LOST_KEPT
 
-ROOM_LINE = str(say("sandboxLost"))
+ROOM_LINE = str(say("sandboxLostKept"))
 
 
 def _later(monkeypatch, by: timedelta) -> None:

@@ -25,7 +25,7 @@ covers:
 ## 归档不等于立刻删 {#archive}
 
 - 没归档的房间保留它正在跑的环境。**归档创建一条持久的回收操作，不立刻销毁机器**：默认宽限五分钟（`TOPIC_ARCHIVE_CLEANUP_DELAY_S=300`，改它只影响以后的归档）。
-- 停下会话之前，房间的每条会话在它的机器上做一次尽力而为的 checkpoint（`session_work.checkpoint_room`，由启动这次清理的一方交给 `sweep_retired_storage`），推没推上去都照常往下走：推不上去的提交和没提交的改动跟着那台机器一起没了，平台不留底。清理不检查发布，不因为没推送的改动保留目录。
+- 停下会话之前，房间的每条会话在它的机器上做一次尽力而为的 checkpoint（`session_work.checkpoint_room`，由启动这次清理的一方交给 `sweep_retired_storage`），推没推上去都照常往下走：推不上去的提交跟着那台机器一起没了；任务目录里没提交的改动由这次 checkpoint 另存（见 [tasks.md](tasks.md)，连接 GitHub 的项目除外）。清理不检查发布，不因为没推送的改动保留目录。
 - 云端宿主机上的房间目录删掉之后，它们在宿主机上占的位置还给云主机池（`HostPool.forget_device_homes`）。宿主机本身由池子在空闲一段时间后释放，房间清理从不删宿主机。
 - 进度从 `GET /topics/{id}/cleanup` 读：阶段、期限、已完成的资源数、最近一次失败。
 
