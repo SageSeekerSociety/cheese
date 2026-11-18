@@ -19,8 +19,8 @@
       :title="t('navigation.sidebar.resize')"
       @pointerdown="startResize"
     />
-    <!-- 桌面上侧栏头和侧栏底：老鼠图标 + 项目切换器、头像 + 问芝士（appNav.ts）。四处侧栏
-         （项目、首页、空间、后台）都长这两行，左边那一列拿掉后它们住在这里。 -->
+    <!-- 桌面上侧栏头和侧栏底：项目切换器、搜索和「首页」那一行，头像 + 问芝士（appNav.ts）。
+         四处侧栏（项目、首页、空间、后台）都长这两段，左边那一列拿掉后它们住在这里。 -->
     <template v-if="frame" #prepend><component :is="frame.top" /></template>
     <slot></slot>
     <template v-if="frame" #append><component :is="frame.foot" /></template>
