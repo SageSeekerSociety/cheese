@@ -154,7 +154,7 @@ covers:
 
 **关闭要有依据**（`review/close_grounds.py`）：其余任务自己的会话关任务，两样之一，否则 409：最后一次交付已落地（`Task.accepted_at`，且之后递的卡没有还开着或被退回的）并且步骤清单（`topic_progress`）全部勾完，没勾完的用 `unchecked_reason` 写理由、理由接在结论后面（`taskCloseChecklistOpen`）；或者负责人在这条任务里说过结束，关闭时带上那条消息的 id（`owner_message_id`，平台核对它在这条任务里、作者是负责人，`taskCloseOwnerMessageNotFound`）。两样都没有是 `taskCloseNeedsGrounds`。平台不读实况文档判断还剩什么：自由文字核不了。人关任务不要依据；写总结窗口里（`closing_since`，只在等部署之后出现）的关闭也不再查。
 
-**等部署**：部署会回报平台的项目（`review/deploy_scope.waits_for_deploy`），芝士判断做完、关闭时最后一次交付是一次合并的，接口不关任务，写 `Task.deploying_since`、回 `deploying: true`（`task_landing.wait_for_deploy`），等包含这次合并的部署上线（`deploy_wait.ship`）后由 `deploy_landed` 叫它写总结，写完再关。主线关它开的任务也一样等，结论先存在 `Task.held_conclusion`（`Task.conclusion` 留给关闭之后，界面上一律当成它怎么结束的来显示）；上线后 `deploy_landed` 直接按这句结论关闭，不叫任务的会话写总结，任务出自的那段对话照常记一行，主线也照常收到任务已结束（这次关闭不是它在那一轮做的）。等的时候任务里又有人要了新的东西，就接着做下一步，存着的结论作废。等的时候再关一次照样等，主线再关会换掉存着的结论。中间的合并不等部署。
+**等部署**：部署会回报平台的项目（`review/deploy_scope.waits_for_deploy`），芝士判断做完、关闭时最后一次交付是一次合并的，接口不关任务，写 `Task.deploying_since`、回 `deploying: true`（`task_landing.wait_for_deploy`），等包含这次合并的部署上线（`deploy_wait.ship`）后由 `deploy_landed` 叫它写总结，写完再关。主线关它开的任务也一样等，结论先存在 `Task.held_conclusion`（`Task.conclusion` 留给关闭之后，界面上一律当成它怎么结束的来显示）；上线后 `deploy_landed` 直接按这句结论关闭，不叫任务的会话写总结，任务出自的那段对话照常记一行，主线也照常收到任务已结束（这次关闭不是它在那一轮做的）。等的时候任务里又有人要了新的东西，就接着做下一步，存着的结论作废，主线收到一句它没有按结论关闭的原因。等的时候再关一次照样等，主线再关会换掉存着的结论。中间的合并不等部署。
 
 **一笔合并只落地一次**：`delivery_landed` 认这次合并落到分支上的那个提交（`Task.delivered_head`），已经落过的那一笔直接不做。几条路看到的是同一笔合并，而任务可能早换到下一步的分支上、或者已经被重开了 —— 第二次落地会把已经走过去的任务再换一次分支、再叫一次芝士。没有提交可认的交付（一份讨论、一份产物、一个网址）不受这条约束。
 

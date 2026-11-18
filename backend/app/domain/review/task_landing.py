@@ -318,13 +318,14 @@ async def deploy_landed(
     it. Unless it was asked for more while it waited: then that work goes on as
     the next step, as it does for a merge that lands while such work runs
     (module docstring), and a held conclusion is dropped — the task is not
-    over.
+    over, and the main line that gave it is told so.
 
     Says whether the task was waiting; one that is not is left alone, so a
     second report of the same deploy changes nothing. The caller holds the
     task's row (`room_task.lock_order`)."""
     if task.deploying_since is None:
         return False
+    waited_since = task.deploying_since
     task.deploying_since = None
     task.deploy_blocked_url = None
     held, task.held_conclusion = task.held_conclusion, None
@@ -344,6 +345,17 @@ async def deploy_landed(
             await _step_landed(session, task, None),
             task_teammate=task_teammate,
         )
+        if held is not None:
+            # The main line closed it and was told it would close once live:
+            # it hears that it did not, and why.
+            await wake_opener(
+                session,
+                task,
+                key=f"task_went_on:{task.id}:{waited_since.isoformat()}",
+                event_type=EVENT_TASK_LANDED,
+                content=piece("main_line/report_went_on", task=task_named(task)),
+                record_seat=record_seat,
+            )
     elif held is not None or await main_line_opener(session, task) is not None:
         await _close_as_concluded(
             session,

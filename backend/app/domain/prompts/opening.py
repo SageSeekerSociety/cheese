@@ -310,12 +310,8 @@ def task_wrap_up(*, has_checkout: bool, coordinated: bool = False) -> str:
     """一件任务怎么收尾，按事情的性质。``has_checkout``：任务有自己的工作目录（项目
     有代码仓库）；没有的，不提工作目录和合并。``coordinated``：任务是频道主线开的，
     做没做完由主线判断，任务里的 AI 队友不关闭它。"""
-    if coordinated:
-        return (piece("opening/task_wrap_up_edit") if has_checkout else "") + piece(
-            "opening/task_coordinated"
-        )
     return piece(
-        "opening/task_wrap_up",
+        "opening/task_wrap_up_coordinated" if coordinated else "opening/task_wrap_up",
         edit=piece("opening/task_wrap_up_edit") if has_checkout else "",
     )
 

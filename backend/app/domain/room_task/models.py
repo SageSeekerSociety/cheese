@@ -337,7 +337,8 @@ class Task(UuidPk, Timestamps, Base):
     # Its last delivery merged in a project whose deploy reports back
     # (`review.deploy_wait`): the task waits, open, until a deploy that
     # contains the merge reaches dev, and only then is it written up
-    # (`closing_since`). No deadline: a main that stays red keeps it waiting.
+    # (`closing_since`), or closed with the main line's conclusion
+    # (`held_conclusion`). No deadline: a main that stays red keeps it waiting.
     deploying_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

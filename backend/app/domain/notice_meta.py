@@ -78,7 +78,7 @@ EVENT_TASK_RETURNED: Final = "task_returned"
 #: 采纳了没写总结、或者直接关掉）。
 EVENT_TASK_ENDED: Final = "task_ended"
 #: 一件任务交上来的一版被人采纳、合了进去，同样记在它出自的那段对话里：谁采纳的
-#: （AI 队友凭审阅人一句话代采纳的，写它代谁）。任务照旧开着，由它的队友判断做完没有。
+#: （AI 队友凭审阅人一句话代采纳的，写它代谁）。任务照旧开着，由开它的频道主线、或者它自己的队友判断做完没有。
 EVENT_TASK_LANDED: Final = "task_landed"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
