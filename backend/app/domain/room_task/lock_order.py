@@ -89,7 +89,7 @@ _TASK_ROWS = table(
 def _said_around(session: Session, task_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
     """Where a change to these tasks also says something: each one's room
     (how it ended, what it left undone) and the 支线 under the message it was
-    made from (`review.task_landing.tell_origin`). A 支线 not opened yet is
+    made from (`review.task_landing.record_at_origin`). A 支线 not opened yet is
     opened by the change itself, and needs no lock. Read on the session's own
     connection: it runs inside a flush or a statement's execution too."""
     task_ids = list(task_ids)

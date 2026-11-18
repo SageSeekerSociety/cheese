@@ -460,6 +460,7 @@ async def poll_uncarded_task_prs(
                         handed_over=None,
                         record_instruction=record_instruction,
                         task_teammate=task_teammate,
+                        announce=announce,
                     )
                     # A task closed by hand before its PR merged stays closed:
                     # there is nothing for its owner to decide.
@@ -748,6 +749,7 @@ async def sweep_closings(
         sessions,
         record_instruction=record_instruction,
         task_teammate=task_teammate,
+        announce=announce,
     )
     async with sessions() as session:
         closed = await close_overdue(session, chat, machines=machines)
