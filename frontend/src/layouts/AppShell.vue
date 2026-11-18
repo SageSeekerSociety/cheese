@@ -11,7 +11,7 @@
       <keep-alive>
         <app-bar v-if="!hideAppBar" :links="[]" :logged-in="loggedIn" :has-sidebar="hasSidebar" />
       </keep-alive>
-      <!-- 左边那一列方块栏拿掉了（2026-11-16）：首页和项目进侧栏头，问芝士和头像进侧栏底，
+      <!-- 左边那一列方块栏拿掉了（2026-11-16）：项目进侧栏头，首页是它下面一行，问芝士和头像进侧栏底，
            没有侧栏时进顶栏。格子还在这里算，交给它们画（Navigation/appNav.ts）。 -->
 
       <!-- 二级导航：通过路由渲染。宽档里它是布局区的第一格（传送进去）；窄档（960–1180）
@@ -238,8 +238,8 @@ import {
   workspaceProject,
 } from '@/components/common/Navigation/destinations'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
-import ProjectSwitcher from '@/components/common/Navigation/ProjectSwitcher.vue'
 import SidebarFrameFoot from '@/components/common/Navigation/SidebarFrameFoot.vue'
+import SidebarFrameTop from '@/components/common/Navigation/SidebarFrameTop.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { LayoutArea } from '@/components/layout-area'
@@ -569,7 +569,7 @@ provideAppNav({
   projects: railProjects,
   reorder: reorderRail,
   loggedIn,
-  frame: { top: ProjectSwitcher, foot: SidebarFrameFoot },
+  frame: { top: SidebarFrameTop, foot: SidebarFrameFoot },
   foldSidebar: computed(() => (sidebarInArea.value ? foldSidebar : null)),
 })
 

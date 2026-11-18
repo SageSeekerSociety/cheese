@@ -1,21 +1,22 @@
 // In the desktop app the page opens behind a boot splash (index.html): the
-// rail's home tile, large, in the middle of the window, where the app's own
-// first page left it. Once the app is on screen the tile shrinks into the home
-// slot on the rail, which is the same tile, and the page shows through around
-// it. Without a rail to land in (signed out, narrow window) the splash fades.
+// home tile, large, in the middle of the window, where the app's own first page
+// left it. Once the app is on screen the tile shrinks into the home mark in the
+// sidebar (the head on the home page, else the 首页 row; the top bar when there
+// is no sidebar), and the page shows through around it. Without a home mark to
+// land in (signed out, narrow window) the splash fades.
 
 const LAND_MS = 360
 const FADE_MS = 150
 const HANDOVER_MS = 120
 const EASE_OUT = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
-// The rail's items can arrive a moment after the page; this long is worth
+// The sidebar's items can arrive a moment after the page; this long is worth
 // waiting for them rather than fading.
 const SLOT_WAIT_MS = 800
 
 function homeSlot(deadline: number): Promise<HTMLElement | null> {
   return new Promise((resolve) => {
     const look = () => {
-      const slot = document.querySelector<HTMLElement>('.app-rail-item-cheese')
+      const slot = document.querySelector<HTMLElement>('[data-home-slot]')
       if (slot && slot.getBoundingClientRect().width > 0) return resolve(slot)
       if (performance.now() >= deadline) return resolve(null)
       requestAnimationFrame(look)
