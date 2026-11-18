@@ -115,3 +115,21 @@ def test_a_model_that_fails_leaves_a_line_from_the_files(client, monkeypatch):
     assert drafted.drafted is False
     assert drafted.subject == "修改 index.html、README.md"
     assert drafted.body == ""
+
+
+def test_a_title_alone_leaves_the_body_empty(client, monkeypatch):
+    project, _ = _project_on_a_gateway_model(client)
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        content = "feat(page): invite visitors to sign up"
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": content}}]}
+        )
+
+    monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway.test")
+
+    drafted = _draft(client, project, _Gateway(), httpx.MockTransport(answer))
+
+    assert drafted.drafted is True
+    assert drafted.subject == "feat(page): invite visitors to sign up"
+    assert drafted.body == ""
