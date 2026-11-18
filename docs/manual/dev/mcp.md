@@ -17,15 +17,16 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己的 MCP 服务器，见[项目的 MCP 服务器](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，20 样 {#table}
+## 一张表，21 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 20 样，一个对象一样，括号里是它的动词（见[一个对象一样工具](#objects)）：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 21 样，一个对象一样，括号里是它的动词（见[一个对象一样工具](#objects)）：
 
 | 类别 | 工具 |
 | --- | --- |
 | 对话 | `chat_send`、`todo_write`、`cheese_ask`、`cheese_chat`（list / search / get / replies / edit） |
 | 文档 | `cheese_doc`（get / set / edit / new / list）、`cheese_app`（save / get）、`cheese_canvas`（get / edit） |
 | 任务与验收 | `cheese_task`（open / tell / look / accept / report / state / close / reopen）、`cheese_card`（request / describe / redeliver / ready） |
+| 题目 | `cheese_hand_in`（prepare / confirm）：替成员把项目里的东西交到项目所来自的题目，准备之后，要成员本人发消息同意才提交（开启这一轮的是他在准备之后发的消息），见[替成员提交](/submissions#teammate) |
 | 房间 | `cheese_room`（members / rename）、`cheese_notify` |
 | 会话 | `cheese_session`（status / environment / wait / compact / note / deliver_at；compact 要部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
 | 资料 | `cheese_web`（fetch / search）、`cheese_help`、`cheese_library`（list） |
