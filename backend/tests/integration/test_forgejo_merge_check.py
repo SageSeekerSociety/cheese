@@ -40,7 +40,15 @@ def _forgejo_refusing(fake, monkeypatch, tmp_path, *, conflicting: bool):
     )
 
     def serve(request):
-        number = int(request.url.path.rsplit("/", 1)[1])
+        path = request.url.path
+        if "/git/refs/pull/" in path:
+            number = int(path.split("/git/refs/pull/", 1)[1].split("/", 1)[0])
+            sha = fake.prs[number]["head_sha"]
+            return httpx.Response(
+                200,
+                json=[{"ref": f"refs/pull/{number}/head", "object": {"sha": sha}}],
+            )
+        number = int(path.rsplit("/", 1)[1])
         row = fake.prs[number]
         return httpx.Response(
             200,

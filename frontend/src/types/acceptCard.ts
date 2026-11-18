@@ -52,6 +52,8 @@ export interface AutoMergeInfo {
   allowed: boolean
   armed_by: string | null
   armed_at: string | null
+  /** Armed by 「提交并采纳」: the reviewer adopted this version, not the auto-merge switch. */
+  adopting?: boolean
 }
 
 // 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：

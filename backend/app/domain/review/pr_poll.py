@@ -54,6 +54,7 @@ from app.domain.review.ports import (
     RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
+    Uncommitted,
 )
 from app.domain.review.room_notices import tell_room_undelivered
 from app.domain.review.task_landing import (
@@ -150,6 +151,7 @@ async def poll_open_prs(
     record_instruction: RecordInstruction,
     record_seat: RecordSeatInstruction,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ) -> dict:
     """Reconcile returned batches and advance pending PR cards (#718) one step —
     mirror its merge state, send the events the 「谁的活」 table names, and merge
@@ -161,10 +163,6 @@ async def poll_open_prs(
     from app.domain.review.services import AcceptService
 
     sessions = chat.session_factory
-    # The runner comes off the chat service — the one the composition root
-    # assembled — instead of being imported from `app.api.deps`, which is a
-    # domain importing up into the API layer (`.importlinter`, C1).
-    runner = chat.work_runner
     async with sessions() as session:
         # 孤儿卡修复的第二道锁，换到关掉的活上：一条活已经结束，它名下的卡
         # 不再有人跟。关任务的那条路当场收；这里兜住别的关法，和修复之前就停
@@ -181,34 +179,17 @@ async def poll_open_prs(
     slots = asyncio.Semaphore(PRS_AT_ONCE)
 
     async def advance(card_id: uuid.UUID) -> str | None:
-        """One card in its own session; returns the failure to report, if any."""
         async with slots:
-            async with sessions() as session:
-                try:
-                    await AcceptService(
-                        session,
-                        announce=announce,
-                        settle_card=settle_card,
-                        record_instruction=record_instruction,
-                        record_seat=record_seat,
-                        task_teammate=task_teammate,
-                    ).advance_pr_card(card_id, chat_service=chat, runner=runner)
-                    await session.commit()
-                    _transient_misses.pop(card_id, None)
-                    return None
-                except Exception as exc:  # one card must not stop the rest
-                    await session.rollback()
-                    _report_card_failure(card_id, exc)
-                    await _note_card_poll_crashed(
-                        chat,
-                        announce,
-                        card_id,
-                        exc,
-                        settle_card=settle_card,
-                        record_instruction=record_instruction,
-                        task_teammate=task_teammate,
-                    )
-                    return f"{card_id}: {exc}"
+            return await advance_card(
+                chat,
+                announce,
+                card_id,
+                settle_card=settle_card,
+                record_instruction=record_instruction,
+                record_seat=record_seat,
+                task_teammate=task_teammate,
+                uncommitted=uncommitted,
+            )
 
     # `gather` hands back one outcome per card in the order the cards were
     # picked up, so the errors read the way they did when this was a loop.
@@ -217,6 +198,63 @@ async def poll_open_prs(
         "cards_checked": sum(1 for failure in failures if failure is None),
         "errors": [failure for failure in failures if failure is not None],
     }
+
+
+async def advance_card(
+    chat: Chat,
+    announce: Announce,
+    card_id: uuid.UUID,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
+) -> str | None:
+    """Advance one card a step in its own session, as a tick or a forge event
+    does (`AcceptService.advance_pr_card`); returns the failure to report, if
+    any.
+
+    Also the prompt read after the platform itself changed a card in a way
+    the next read acts on — a reviewer adopting the version they just handed
+    in (`routes/accept.py`): the forge answers for a head pushed a moment
+    ago within seconds, and the card should not wait for the next tick to
+    hear it. A read that still finds no answer leaves the card to the next
+    forge event or tick, like any other."""
+    # deferred-import: tests replace this name on app.domain.review.services
+    from app.domain.review.services import AcceptService
+
+    # The runner comes off the chat service — the one the composition root
+    # assembled — instead of being imported from `app.api.deps`, which is a
+    # domain importing up into the API layer (`.importlinter`, C1).
+    runner = chat.work_runner
+    async with chat.session_factory() as session:
+        try:
+            await AcceptService(
+                session,
+                announce=announce,
+                settle_card=settle_card,
+                record_instruction=record_instruction,
+                record_seat=record_seat,
+                task_teammate=task_teammate,
+                uncommitted=uncommitted,
+            ).advance_pr_card(card_id, chat_service=chat, runner=runner)
+            await session.commit()
+            _transient_misses.pop(card_id, None)
+            return None
+        except Exception as exc:  # one card must not stop the rest
+            await session.rollback()
+            _report_card_failure(card_id, exc)
+            await _note_card_poll_crashed(
+                chat,
+                announce,
+                card_id,
+                exc,
+                settle_card=settle_card,
+                record_instruction=record_instruction,
+                task_teammate=task_teammate,
+            )
+            return f"{card_id}: {exc}"
 
 
 async def _merged_by_name(session, status) -> str | None:
@@ -843,6 +881,7 @@ async def forge_repository_changed(
     record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ) -> None:
     """One repository moved — from a relayed forge event, or from a reconnect."""
 
@@ -863,6 +902,7 @@ async def forge_repository_changed(
             record_instruction=record_instruction,
             record_seat=record_seat,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         )
         await pr_publish.sweep_draft_prs(
             sessions,

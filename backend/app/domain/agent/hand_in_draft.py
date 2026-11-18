@@ -1,9 +1,10 @@
 """The 说明 the platform drafts for a person handing a task's changes in.
 
 When a member opens 「提交审阅」, the title and body are written for them from
-the change itself: what it does and what a reviewer should look at, in the
-wording rules a teammate's own hand-in follows (the title is the squash
-commit's title, so it keeps the repository's convention). One question to the
+the change itself: a title saying what the change made (it is the squash
+commit's title, so it keeps the repository's convention), and a body only
+when the reviewer needs something the title cannot tell them; a title-only
+answer leaves the body empty. One question to the
 project's task model, no session (`agent.one_shot`), billed to the project.
 
 The person can type over it while it is being written, and the hand-in never
@@ -11,15 +12,19 @@ waits on it: a call that fails, is refused or takes too long leaves a line
 made from the changed files (`fallback`).
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import UnprocessableEntityError
 from app.domain.agent import one_shot
 from app.domain.agent.model_catalog import Scene
 from app.domain.prompts import piece
+
+logger = logging.getLogger(__name__)
 
 #: How much of the diff the model reads. A change past it is cut, and the
 #: material says where.
@@ -97,30 +102,43 @@ async def draft(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> Draft:
     """The model's 说明 for this change, or the line from the files. The
-    call's own deadline is ``timeout``; what it spent is charged either way."""
-    answer = None
+    call's own deadline is ``timeout``; what it spent is charged either way.
+    Every way of ending on the line from the files is logged with why."""
     try:
         bound = await one_shot.bind(session, project_id, Scene.task)
-        if bound is not None:
-            answer = await one_shot.ask(
-                project_id=project_id,
-                bound=bound,
-                system=piece("hand_in/draft"),
-                material=material(
-                    task_title=task_title,
-                    diff=diff,
-                    recent_subjects=recent_subjects,
-                    files=files,
-                ),
-                models=models,
-                timeout=timeout,
-                max_tokens=_ANSWER_TOKENS,
-                transport=transport,
-            )
-    except Exception:  # refused, slow or failed: the line from the files
-        answer = None
-    if answer is not None:
-        subject, body = _split(answer.content)
-        if subject:
-            return Draft(subject=subject, body=body, drafted=True)
-    return Draft(subject=fallback(files), body="", drafted=False)
+        if bound is None:
+            logger.info("hand-in draft: no task model project=%s", project_id)
+            return Draft(subject=fallback(files), body="", drafted=False)
+        answer = await one_shot.ask(
+            project_id=project_id,
+            bound=bound,
+            system=piece("hand_in/draft"),
+            material=material(
+                task_title=task_title,
+                diff=diff,
+                recent_subjects=recent_subjects,
+                files=files,
+            ),
+            models=models,
+            timeout=timeout,
+            max_tokens=_ANSWER_TOKENS,
+            transport=transport,
+        )
+    except UnprocessableEntityError as refused:
+        logger.info("hand-in draft refused project=%s: %s", project_id, refused)
+        return Draft(subject=fallback(files), body="", drafted=False)
+    except Exception as exc:  # the line from the files stands
+        logger.warning(
+            "hand-in draft failed project=%s: %s: %s",
+            project_id,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
+        return Draft(subject=fallback(files), body="", drafted=False)
+    subject, body = _split(answer.content) if answer is not None else ("", "")
+    if not subject:
+        # A failed call is logged by `one_shot.ask` with its error.
+        logger.info("hand-in draft: no title in the answer project=%s", project_id)
+        return Draft(subject=fallback(files), body="", drafted=False)
+    return Draft(subject=subject, body=body, drafted=True)

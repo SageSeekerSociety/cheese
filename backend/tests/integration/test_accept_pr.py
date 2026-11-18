@@ -43,7 +43,7 @@ from tests.integration.conftest import (
 from tests.landing import written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
-from tests.support.review_ports import task_teammate
+from tests.support.review_ports import task_teammate, uncommitted
 
 REPO = "acme/widgets"
 
@@ -223,6 +223,7 @@ def _poll(client) -> dict:
             record_instruction=record_task_instruction,
             record_seat=record_seat_instruction,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         )
     )
 
@@ -1713,6 +1714,20 @@ def test_click_405_surfaces_githubs_reason_and_stops(client, app_world):
     assert _topic(client, tid)["accepted_at"] is None
 
 
+def test_a_merge_github_refuses_is_said_to_be_refused_by_github(client, app_world):
+    """On a project bound to GitHub the refusal names GitHub, which is where
+    the person goes to see why."""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.merge_blocked_by_number[number] = "HTTP 405：Base branch was modified"
+
+    r = _accept(client, cid)
+
+    assert r.status_code == 422, r.text
+    assert "GitHub" in r.json()["message"]
+
+
 def _github_enforces(monkeypatch) -> None:
     """这个项目的仓库自己开着分支保护/合并队列：平台不再自己判，直接调 GitHub
     的合并 API（`_pr_verdict` 返回的 `enforces`）。真实实现要打 HTTP，`app_world`
@@ -2628,7 +2643,7 @@ def test_a_pr_closed_without_merging_voids_its_card(client, app_world):
     assert result["errors"] == []
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
-    assert f"PR #{number} 已在 GitHub 关闭且没有合并" in card["note"]
+    assert f"PR #{number} 已被关闭且没有合并" in card["note"]
     assert "作废" in card["note"]
     assert fake.merge_calls == []
 

@@ -433,16 +433,34 @@ async def _again(
                 by=who,
             )
     if card.status == AcceptStatus.pending:
+        # The line below is the record of this version, its 说明 included.
         await service.redescribe(
-            task.id, actor=who, change_subject=subject, change_body=body
+            task.id,
+            actor=who,
+            change_subject=subject,
+            change_body=body,
+            recorded_by_caller=True,
         )
     room = await db.get(Topic, task.room_id)
     if room is not None:
+        detail = "\n\n".join(
+            part for part in (card.change_subject or "", card.change_body or "") if part
+        )
         await service._tell_the_reviewer(
             card,
             room,
-            say("cardHandedInAgain", actor=f"<@{who}>"),
-            meta=notice(EVENT_CARD_REDESCRIBED, severity=SEVERITY_INFO, who=WHO_HUMAN),
+            say(
+                "cardHandedInAgain",
+                actor=f"<@{who}>",
+                title=card.change_subject or said_title(task),
+            ),
+            meta=notice(
+                EVENT_CARD_REDESCRIBED,
+                severity=SEVERITY_INFO,
+                who=WHO_HUMAN,
+                detail=detail or None,
+                detail_label=say("labelChanges"),
+            ),
         )
     await record_at_origin(
         db,

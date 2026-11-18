@@ -89,14 +89,26 @@ class ForgejoClient:
         return f"{forge}/{quote(owner, safe='')}/{quote(repo, safe='')}.git"
 
     async def pull_request_status(self, *, owner, repo, number, token):
-        """The PR as Forgejo reports it, with Forgejo's `false` settled by git.
+        """The PR as Forgejo reports it, with Forgejo's `false` settled by git
+        and its `true` held to the head it reports.
 
         `false` on an open, ready PR is a merge check still running or a
         conflict, and only the test merge tells which (`merge_check`). Its
         answer for this head and base, once there is one, decides: a conflict
         is `mergeable=False`, anything else stays unknown. Without an answer
         yet, one is started in the background and the PR reads unknown; nothing
-        here waits for it."""
+        here waits for it.
+
+        `true` is the verdict of Forgejo's last merge check, and the head the
+        PR reports is the branch as git holds it now. Forgejo takes a push in
+        after the push returns (`services/pull.TestPullRequest`): it moves the
+        PR's `refs/pull/<n>/head` to the new head and, as its next step, marks
+        the PR as being checked. Until then the PR reads `true` from the check
+        of its previous head, and a merge of the new head is refused. So a
+        `true` counts only once that ref names the reported head, read before
+        the PR; before that the PR reads unknown, as GitHub's does while it
+        computes."""
+        taken_in = await self._pull_ref_head(owner, repo, number, token)
         data = self._data(
             await self.request(
                 "GET",
@@ -105,6 +117,8 @@ class ForgejoClient:
             )
         )
         status = self.status(data)
+        if status.mergeable and taken_in != status.head_sha:
+            return replace(status, mergeable=None, mergeable_state="unknown")
         if (
             data.get("mergeable") is not False
             or status.state != "open"
@@ -120,6 +134,29 @@ class ForgejoClient:
         if found is None:
             merge_check.start(url, token, status.base_sha, status.head_sha)
         return status
+
+    async def _pull_ref_head(self, owner, repo, number, token) -> str | None:
+        """The commit Forgejo has taken into PR ``number``: its
+        `refs/pull/<n>/head`. None when Forgejo has no such ref."""
+        name = f"refs/pull/{number}/head"
+        response = await self.request(
+            "GET",
+            f"{self._repo(owner, repo)}/git/{name}",
+            token=token,
+        )
+        if response.status_code == 404:
+            return None
+        found = self._data(response)
+        # One ref named exactly is answered as an object, a prefix as a list.
+        rows = found if isinstance(found, list) else [found]
+        return next(
+            (
+                str((row.get("object") or {}).get("sha") or "") or None
+                for row in rows
+                if isinstance(row, dict) and row.get("ref") == name
+            ),
+            None,
+        )
 
     @staticmethod
     def status(data):

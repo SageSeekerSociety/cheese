@@ -2,6 +2,8 @@
   "add": "添加批注",
   "addAt": "在第 {line} 行写批注",
   "addHere": "写批注；按住 Shift 再点另一行可以选中一段",
+  "adoptCancel": "取消采纳",
+  "adoptWhenChecksPass": "检查通过后由 {who} 采纳",
   "answer": "{agent}：{note}",
   "autoMergeOff": "关闭自动合并",
   "autoMergeOn": "{who} 已开启检查通过后自动合并",

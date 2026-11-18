@@ -91,9 +91,10 @@ class AcceptService:
         （`repository.ports.ExecutorCall`），只在递卡带交付物时才用得上。同上一个
         道理：够不着（`repository` 在本包下面），谁构造谁给。
 
-        ``uncommitted`` 是采纳前问的那一句：任务的工作目录里还有没再提交一版的
-        修改（`ports.Uncommitted`）。不给就不问 —— 不替人决定的那几条路（轮询器
-        合布防过的卡）用不上它。
+        ``uncommitted`` 是合并前问的那一句：任务的工作目录里还有没再提交一版的
+        修改（`ports.Uncommitted`）。采纳、人工放行、轮询器合布防过的卡都问它
+        （`accept._holds_uncommitted`）；要合一张交合并的卡却没接这一个，当场炸掉，
+        不会不问就合。
         """
 
         self._session = session
@@ -198,8 +199,12 @@ class AcceptService:
             self, task_id, actor=actor, deliver=deliver, deliver_url=deliver_url
         )
 
-    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
-        return await notices._announce_filed(self, topic=topic, card=card, task=task)
+    async def _announce_filed(
+        self, topic: Topic, card: AcceptCard, task: Task, *, by: str | None = None
+    ) -> None:
+        return await notices._announce_filed(
+            self, topic=topic, card=card, task=task, by=by
+        )
 
     async def _announce_new_artifact(
         self, topic: Topic, name: str, *, task_id: uuid.UUID
@@ -379,6 +384,13 @@ class AcceptService:
             head_sha=head_sha,
         )
 
+    async def adopt_when_ready(
+        self, *, card_id: uuid.UUID, decided_by: str, head_sha: str
+    ) -> AcceptCard:
+        return await merge_queue.adopt_when_ready(
+            self, card_id=card_id, decided_by=decided_by, head_sha=head_sha
+        )
+
     def _notify_merge_result(
         self,
         topic: Topic,
@@ -440,6 +452,9 @@ class AcceptService:
             )
         finally:
             self._adopting_seat = None
+
+    async def _holds_uncommitted(self, card: AcceptCard) -> bool:
+        return await _accept._holds_uncommitted(self, card)
 
     async def _accept_github(
         self,
@@ -656,6 +671,7 @@ class AcceptService:
         change_subject: str | None = None,
         change_body: str | None = None,
         focus: str | None = None,
+        recorded_by_caller: bool = False,
     ) -> AcceptCard:
         return await decisions.redescribe(
             self,
@@ -664,6 +680,7 @@ class AcceptService:
             change_subject=change_subject,
             change_body=change_body,
             focus=focus,
+            recorded_by_caller=recorded_by_caller,
         )
 
     async def push_fix(

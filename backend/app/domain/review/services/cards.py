@@ -325,7 +325,7 @@ async def create_card(
     # The card says where the task stands now (等审): what its teammate
     # reported before it is over.
     progress.clear(task)
-    await self._announce_filed(topic, card, task)
+    await self._announce_filed(topic, card, task, by=handed_in_by)
     # The AI teammate that opened the task from the channel's main line is
     # told what was handed in, to say so there in its own words; where nobody
     # is told, the place the task came from records that a version is in for
@@ -927,6 +927,8 @@ async def _render(
         "armed_at": (
             card.auto_merge_armed_at.isoformat() if card.auto_merge_armed_at else None
         ),
+        # 布防的人采纳了这一版（「提交并采纳」），不是打开了自动合并。
+        "adopting": bool(card.auto_merge_armed_by and card.auto_merge_adopts),
     }
     # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
     # red one has to be in front of the person about to accept. A check

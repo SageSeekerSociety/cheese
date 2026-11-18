@@ -23,6 +23,7 @@ from app.domain.review.ports import (
     RecordInstruction,
     RecordSeatInstruction,
     TaskTeammate,
+    Uncommitted,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class _Refreshes:
         record_seat: RecordSeatInstruction,
         dispatch_pending: DispatchPending,
         task_teammate: TaskTeammate,
+        uncommitted: Uncommitted,
     ) -> None:
         self._chat = chat
         self._announce = announce
@@ -107,6 +109,7 @@ class _Refreshes:
         self._record_seat = record_seat
         self._dispatch_pending = dispatch_pending
         self._task_teammate = task_teammate
+        self._uncommitted = uncommitted
         self._waiting: dict[tuple, dict] = {}
         self._wake = asyncio.Event()
 
@@ -152,6 +155,7 @@ class _Refreshes:
                     record_instruction=self._record_instruction,
                     record_seat=self._record_seat,
                     task_teammate=self._task_teammate,
+                    uncommitted=self._uncommitted,
                 )
             else:
                 await pr_poll.forge_repository_changed(
@@ -162,6 +166,7 @@ class _Refreshes:
                     record_seat=self._record_seat,
                     dispatch_pending=self._dispatch_pending,
                     task_teammate=self._task_teammate,
+                    uncommitted=self._uncommitted,
                     **event,
                 )
         except Exception:  # the next event or tick retries
@@ -178,6 +183,7 @@ async def listen(
     record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ):
     refreshes = _Refreshes(
         chat,
@@ -187,6 +193,7 @@ async def listen(
         record_seat=record_seat,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
+        uncommitted=uncommitted,
     )
     worker = asyncio.create_task(refreshes.run())
     try:

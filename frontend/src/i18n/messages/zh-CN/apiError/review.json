@@ -131,5 +131,6 @@
   "versionNotAFile": "这一版交出去的不是一份文件",
   "voidForbidden": "只有被指定审阅的人、项目所有者或团队管理员能作废",
   "voidSignIn": "需要登录才能作废",
-  "acceptUncommitted": "无法采纳：这件任务有未提交的修改，这一版里没有它们。先再提交一版，再采纳"
+  "acceptUncommitted": "无法采纳：这件任务有未提交的修改，这一版里没有它们。先再提交一版，再采纳",
+  "prMergeRefused": "PR #{pr} 的合并被拒绝：{reason}"
 }
