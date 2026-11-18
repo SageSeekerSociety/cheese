@@ -689,9 +689,18 @@ defineExpose({
   focus() {
     void nextTick(() => composerInput.value?.focus?.())
   },
-  /** 在正文前面 @ 上这个频道平时交给的那位（仅你可见那一句的「交给芝士」）。已经 @ 了队友就不动。 */
-  addAgentMention() {
-    if (summonReady.value) draft.value = withAgentMention(draft.value)
+  /** 在正文前面 @ 上想说这句话的那位（仅你可见那一句的「交给芝士」）。已经 @ 了队友就不动。
+   *
+   *  **写哪位由叫的人说**，不是这里挑「平时交给的那位」：那一句上写着谁的名字，@ 出来的
+   *  就得是谁。头像平时画的是我最近 @ 过的那位，这个房间交给的却是另一位队友时，照头像
+   *  写就成了屏幕上说交给芝士、发出去交给别人。 */
+  addAgentMention(handle?: string) {
+    if (!summonReady.value) return
+    // 叫的人指定了谁，就写谁；找不着（名册刚换过、那一位已经不在这间房了）**什么都不写**，
+    // 不退回「平时交给的那位」——那一退正是这次要消灭的错：屏幕上说着一个人，@ 出来另一个。
+    // 只有叫的人没说时（没传 handle）才按发送框平时的选择写。
+    const mate = handle ? mates.value.find((m) => m.handle === handle) ?? null : restingMate.value
+    if (mate) draft.value = withAgentMention(draft.value, mate)
     void nextTick(() => composerInput.value?.focus?.())
   },
   askRecipient,
