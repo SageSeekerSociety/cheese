@@ -6,9 +6,11 @@ import {
   acceptsDrop,
   canCollapse,
   cellsOf,
+  defaultWeights,
   placedPanels,
   placePanel,
   reconcile,
+  resetSizes,
   restoreArrangement,
   serializeArrangement,
   setCollapsed,
@@ -215,6 +217,49 @@ describe('dockview layout round trip', () => {
     expect(left.size).toBe(200)
     const rawLeft = (layout.grid.root.data as Array<{ size?: number }>)[0]
     expect(rawLeft.size).toBe(STRIP_SIZE)
+  })
+})
+
+describe('a double-clicked divider gives its split the default sizes back', () => {
+  const PAGE_DEFAULT: LayoutArrangement = {
+    root: {
+      direction: 'row',
+      children: [
+        { panels: ['nav'] },
+        {
+          direction: 'column',
+          children: [
+            { panels: ['head'] },
+            {
+              direction: 'row',
+              children: [
+                { panels: ['chat'], size: 45 },
+                { panels: ['files'], size: 55 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  it('finds the default weights of the split those panels sit in, wherever it is nested', () => {
+    expect(defaultWeights(PAGE_DEFAULT, [['chat'], ['files']])).toEqual([45, 55])
+    expect(defaultWeights(PAGE_DEFAULT, [['nav'], ['head', 'chat', 'files']])).toEqual([1, 1])
+  })
+
+  it('has nothing to give back for a split the default never had', () => {
+    expect(defaultWeights(PAGE_DEFAULT, [['files'], ['chat']])).toBeNull()
+    expect(defaultWeights(PAGE_DEFAULT, [['chat'], ['nav']])).toBeNull()
+  })
+
+  it('the cells share the space they fill now by their default weights', () => {
+    expect(resetSizes(1000, [45, 55], [undefined, undefined])).toEqual([450, 550])
+  })
+
+  it('a cell with a width of its own goes back to its initial width, the rest takes what is left', () => {
+    expect(resetSizes(1440, [1, 1], [280, undefined])).toEqual([280, 1160])
+    expect(resetSizes(200, [1, 1], [280, undefined])).toEqual([200, 0])
   })
 })
 

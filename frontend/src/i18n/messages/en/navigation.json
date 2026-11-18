@@ -141,6 +141,7 @@
     "spaceTasks": "Tasks in spaces"
   },
   "sidebar": {
+    "resize": "Drag to resize",
     "expand": "Expand sidebar",
     "collapse": "Collapse sidebar"
   },

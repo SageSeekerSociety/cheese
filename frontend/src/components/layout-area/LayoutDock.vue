@@ -44,15 +44,18 @@ import {
   canCollapse,
   cellOfPanel,
   cellsOf,
+  defaultWeights,
   hasPlacementFault,
   parentDirection,
   placePanel,
   reconcile,
+  resetSizes,
   setCollapsed,
   withCellIds,
 } from './arrangement'
 import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 import LayoutAddMenu from './LayoutAddMenu.vue'
+import { clampWidth } from './widths'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 
@@ -74,6 +77,10 @@ const props = defineProps<{
   fitHeights: Record<string, number>
   /** The panel whose cell fills the area, or null. */
   maximized: string | null
+  /** The width each panel with a width of its own should have now. */
+  fixedWidths: Record<string, number>
+  /** The page's default: double-clicking a divider gives its split these sizes back. */
+  defaultArrangement: LayoutArrangement
 }>()
 
 const emit = defineEmits<{
@@ -138,6 +145,7 @@ function load(arrangement: LayoutArrangement) {
     stripped.clear()
     constrained.clear()
     fitted.clear()
+    held.clear()
     if (!next.root) {
       dock.clear()
       collapsed = new Set()
@@ -197,6 +205,8 @@ const constrained = new Map<string, string>()
 
 /** Groups currently held to their content's height, at that height. */
 const fitted = new Map<string, number>()
+/** Groups with a width of their own, and the width last given to each. */
+const held = new Map<string, number>()
 
 function applyPolicies() {
   const dock = api.value
@@ -237,7 +247,19 @@ function applyPolicies() {
     }
     const hidden = panels.length > 0 && panels.every((panel) => panel.hidden)
     // dockview hides the other cells while one is maximized, and shows them again itself.
-    if (!dock.hasMaximizedGroup() && group.api.isVisible === hidden) group.api.setVisible(!hidden)
+    if (!dock.hasMaximizedGroup() && group.api.isVisible === hidden) {
+      group.api.setVisible(!hidden)
+      // Shown again at the size it had when hidden: its own width may have changed since.
+      held.delete(id)
+    }
+    // A width of its own changed elsewhere (another place showing the same panel): follow
+    // it, once per new value, never in the middle of a drag.
+    const fixed = panels.find((panel) => panel.width)
+    const wanted = fixed && !column ? props.fixedWidths[fixed.id] : undefined
+    if (wanted !== undefined && !dragging && group.api.isVisible && held.get(id) !== wanted) {
+      held.set(id, wanted)
+      if (Math.abs(group.api.width - wanted) > 1) group.api.setSize({ width: wanted })
+    }
     if (folded && !stripped.has(id)) {
       stripped.add(id)
       group.api.setSize(column ? { height: STRIP_SIZE } : { width: STRIP_SIZE })
@@ -401,7 +423,7 @@ watch(
 
 // What the area decides about each panel (hidden, bare, sizes) can change at any time.
 watch(
-  () => [props.panels, props.fitHeights],
+  () => [props.panels, props.fitHeights, props.fixedWidths],
   () => applyPolicies(),
   { deep: true }
 )
@@ -431,6 +453,51 @@ function endDrag() {
   }
 }
 
+// ---------------------------------------------------------------- double-click: default sizes
+
+/**
+ * Double-clicking a divider gives its split back the sizes the page's default gives it:
+ * a cell with a width of its own goes back to its initial width, the others share the
+ * rest by their default weights. A split the default has no counterpart for stays as is.
+ */
+function onDoubleClick(event: MouseEvent) {
+  const dock = api.value
+  const sash = event.target instanceof Element ? event.target.closest('.dv-sash') : null
+  const container = sash?.closest('.dv-split-view-container')
+  if (!dock || !container || dock.hasMaximizedGroup()) return
+  const horizontal = container.classList.contains('dv-horizontal')
+  const children = [...container.querySelectorAll(':scope > .dv-view-container > .dv-view')]
+    .filter((view) => view.classList.contains('visible'))
+    .map((view) => {
+      const groups = dock.groups.filter((group) => view.contains(group.element))
+      return { view, groups, panels: groups.flatMap((group) => group.panels.map((panel) => panel.id)) }
+    })
+  if (children.length < 2 || children.some((child) => !child.groups.length)) return
+  const weights = defaultWeights(
+    props.defaultArrangement,
+    children.map((child) => child.panels)
+  )
+  if (!weights) return
+  const fixedOf = (panels: string[]) =>
+    horizontal && panels.length ? panels.map((id) => info.value.get(id)?.width).find((width) => width) : undefined
+  const fixed = children.map((child) => {
+    const width = child.groups.length === 1 ? fixedOf(child.panels) : undefined
+    return width ? clampWidth(width, width.initial) : undefined
+  })
+  const extent = (view: Element) =>
+    horizontal ? view.getBoundingClientRect().width : view.getBoundingClientRect().height
+  const total = children.reduce((sum, child) => sum + extent(child.view), 0)
+  const sizes = resetSizes(total, weights, fixed)
+  // dockview gives each change to the last cell of the split: set all but that one, in order.
+  children.slice(0, -1).forEach((child, i) => {
+    child.groups[0].api.setSize(horizontal ? { width: sizes[i] } : { height: sizes[i] })
+  })
+  children.forEach((child) => {
+    const own = fixedOf(child.panels)
+    if (own) emit('resized', child.panels.find((id) => info.value.get(id)?.width)!, clampWidth(own, own.initial))
+  })
+}
+
 onBeforeUnmount(() => {
   endDrag()
   disposables.forEach((d) => d.dispose())
@@ -441,11 +508,13 @@ const noContextMenu = () => []
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- listens for drags and double-clicks on dockview's dividers inside, not a control of its own -->
   <div
     ref="root"
     class="layout-dock"
     :class="{ 'layout-dock--fixed': !resizable }"
     @pointerdown.capture="onPointerDown"
+    @dblclick.capture="onDoubleClick"
   >
     <DockviewVue
       class="layout-dock__view"

@@ -40,7 +40,7 @@ import {
 import { keepScroll } from './keepScroll'
 import LayoutStack from './LayoutStack.vue'
 import LayoutStatic from './LayoutStatic.vue'
-import { clampWidth, readWidth, rememberWidth } from './widths'
+import { rememberedWidth, rememberWidth } from './widths'
 
 import { storageGet, storageSet } from '@/lib/browserStorage'
 
@@ -126,23 +126,16 @@ const unplacedInfos = computed(() => infos.value.filter((info) => unplaced.value
 
 // ---------------------------------------------------------------- sizes
 
-/** The width each panel with a width of its own keeps, remembered under its key. */
-const widths = reactive<Record<string, number>>({})
-watch(
-  () => props.panels,
-  (panels) => {
-    for (const panel of panels) {
-      if (panel.width && widths[panel.id] === undefined) widths[panel.id] = readWidth(panel.width)
-    }
-  },
-  { immediate: true }
-)
+/** The width each panel with a width of its own keeps, live and shared under its key. */
 function widthOf(panel: LayoutPanel): number {
-  return clampWidth(panel.width!, widths[panel.id] ?? panel.width!.initial)
+  return rememberedWidth(panel.width!).value
 }
+const fixedWidths = computed<Record<string, number>>(() =>
+  Object.fromEntries(props.panels.filter((panel) => panel.width).map((panel) => [panel.id, widthOf(panel)]))
+)
 function onResized(id: string, width: number) {
   const spec = byId.value.get(id)?.width
-  if (spec) widths[id] = rememberWidth(spec, width)
+  if (spec) rememberWidth(spec, width)
 }
 
 /** The content height of each `fitHeight` panel, as it is laid out now. */
@@ -336,6 +329,8 @@ defineExpose({
           :resizable="resizable"
           :sizing="sizing"
           :fit-heights="fitHeights"
+          :fixed-widths="fixedWidths"
+          :default-arrangement="defaultArrangement"
           :maximized="maximizedNow"
           @change="commit"
           @host="onDockHost"
