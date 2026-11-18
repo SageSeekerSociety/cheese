@@ -844,8 +844,9 @@ async def tell_origin(
     own conversation, which the landing already speaks in.
 
     What happens to the task on the way — a version handed in, a version
-    returned — and how it ended are the platform's record, not the
-    teammate's words (`record_at_origin`).
+    returned — and how it ended are the platform's record, not the task's
+    teammate's words (`record_at_origin`), except what the main line's
+    teammate that opened it says itself (`tell_origin_ended`).
 
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
