@@ -6,6 +6,9 @@ docker 还是 ``tests/support/fake_docker.py`` 那个替身：命令在本机用
 加载」「出题人的同名文件盖过学生的」都是 pytest 自己跑出来的结果，不是假设。
 """
 
+# fake_docker 夹具从 test_judge_runner 导入后又作参数用，ruff 把它读成重定义（F811）。
+# ruff: noqa: F811
+
 from __future__ import annotations
 
 import base64
