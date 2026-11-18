@@ -18,7 +18,8 @@ defineEmits<{ toggle: []; approve: []; reject: [] }>()
 const { t } = useI18n()
 
 const date = (at: number) => dayjs(at).format('MM-DD HH:mm')
-const publisher = computed(() => userName(props.task.creator) || props.task.creator.username)
+// `userName` 已经退到账号，不再另加兜底。
+const publisher = computed(() => userName(props.task.creator))
 const bodyId = computed(() => `audit-task-${props.task.id}`)
 
 /** 这道题的几项设置，一项一句，排成一行。 */

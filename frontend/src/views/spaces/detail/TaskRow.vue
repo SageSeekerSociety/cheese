@@ -29,7 +29,8 @@ const mine = computed(() => myClaimState(props.task))
 /** 题目自己的状态（`taskState`），和题目页标题旁那一枚是同一个；我手上有一份的题不写。 */
 const state = computed(() => (mine.value ? null : taskState(props.task)))
 const summary = computed(() => splitOrigin(props.task.intro ?? '').summary)
-const publisher = computed(() => userName(props.task.creator) || props.task.creator.username)
+// `userName` 已经退到账号，不再另加兜底。
+const publisher = computed(() => userName(props.task.creator))
 const date = (at: number) => dayjs(at).format(t('tasks.page.dateFormat'))
 
 /** 标签文案。`joined` 只算没被拒的申请（个人或所在团队的）；`joinedTeams` 不看审核，所以不拿它判。 */
