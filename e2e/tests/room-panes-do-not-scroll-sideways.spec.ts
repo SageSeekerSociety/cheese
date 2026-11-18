@@ -29,8 +29,7 @@ createApp({render:()=>h(VApp,{class:'h-100'},()=>h('div',{
 },[
   h(DmViewView,{
     error:null, ready:true, desktop:true, docked:false,
-    panelOpen:false, panelFloat:true, canFocus:false, focusMode:false, chatNews:false,
-    focusLabel:'专注', focusIcon:'mdi-arrow-expand',
+    panelOpen:false, panelFloat:true,
   },{chat:()=>h('div',{style:'flex:1 1 auto;min-width:0'},'对话'),panel:()=>h('div',{style:'height:400px;overflow:auto'},'面板')}),
 ]))}).use(vuetify).use(i18n).use(pinia).mount('#fixture');
 </script></body></html>`

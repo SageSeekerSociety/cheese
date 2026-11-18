@@ -143,6 +143,7 @@
   },
   "sidebar": {
     "resize": "Drag to resize",
+    "title": "sidebar",
     "expand": "Expand sidebar",
     "collapse": "Collapse sidebar"
   },

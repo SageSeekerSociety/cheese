@@ -3,7 +3,7 @@
 // 一张动作卡上的按钮（§3.1.1 控件）：点开相关的那一格——资料库里的一份文档开在面板的
 // 自由区；「它此刻在干什么」去现场；本轮摘要的「查看改动」是隔壁一格，不是新一页；
 // 「查看改动」还要在正文里一处处标出这个人让 AI 队友改的那几处。只有任务有自己的
-// 文档；频道里说的是资料库里的那份，前面那条已经接住了。离开专注模式会重画编辑器、把
+// 文档；频道里说的是资料库里的那份，前面那条已经接住了。面板换一格会重画编辑器、把
 // 它的 DOM 重建一遍，所以要等那次重画落定再标亮闪一下，不然闪完立刻被抹掉。
 //
 // 一条被点开的 <@handle>：去他的成员页。
@@ -34,8 +34,6 @@ export function useTopicActions(opts: {
   place: () => TopicPlace
   /** 面板浮层那一处：正文里标亮之前先把它打开。 */
   panel: { show: () => void }
-  /** 工作面板铺满时先回到并排：要看的东西在对话或面板的某一格里。 */
-  leaveFocus: () => void
   onPanelTab: (key: string) => void
   onReview: () => void
   /** 采纳卡重读。 */
@@ -117,7 +115,6 @@ export function useTopicActions(opts: {
       // AI 队友提议的技能：还在等人的，在面板的自由区开一格，读完就地决定；定下来的和
       // 例行事务去它在项目里的那一页。
       if (resource === 'skill' && opts.panelRef.value?.openSkill) {
-        opts.leaveFocus()
         void opts.loadSkills()
         await nextTick()
         await opts.panelRef.value.openSkill(document)
@@ -129,25 +126,21 @@ export function useTopicActions(opts: {
     }
     if (resource === 'doc' && document) {
       // 资料库里的一份文档：在面板的自由区开一格，不是这个对话自己的文档。
-      opts.leaveFocus()
       await nextTick()
       await opts.panelRef.value?.openDocument?.(document, review)
       return
     }
     if (resource === 'site') {
       // 对话里在动的那个头像：它此刻在干什么，去现场看。
-      opts.leaveFocus()
       opts.onPanelTab('site')
     } else if (resource === 'changes') {
       // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
-      opts.leaveFocus()
       opts.onPanelTab('changes')
     } else if (resource === 'accept') {
       opts.reloadAccept()
     } else if (resource === 'doc') {
       // 只有任务有自己的文档；频道里说的是资料库里的那份，上面那条已经接住了。
       if (!opts.place().taskId) return
-      opts.leaveFocus()
       opts.panel.show()
       await opts.panelRef.value?.showOverview()
       // 「查看改动」：在正文里一处处标出这个人让 AI 队友改的那几处。

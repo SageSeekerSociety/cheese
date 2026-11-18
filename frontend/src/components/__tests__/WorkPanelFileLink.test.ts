@@ -176,9 +176,12 @@ function freeTabs(container: Element): string[] {
   )
 }
 
+/** 这一格看得见：它自己和外面套着它的哪一层都没被藏起来。 */
 function visible(container: Element, selector: string): boolean {
-  const el = container.querySelector<HTMLElement>(selector)
-  return !!el && el.style.display !== 'none'
+  let el = container.querySelector<HTMLElement>(selector)
+  if (!el) return false
+  for (; el && el !== container; el = el.parentElement) if (el.style.display === 'none') return false
+  return true
 }
 
 // 文档那一格是异步组件（编辑器不挡房间首屏），等它把 chip 画出来。

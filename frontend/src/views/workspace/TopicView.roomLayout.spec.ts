@@ -1,14 +1,15 @@
-/** 专注模式：工作面板铺满外壳的整个布局区，对话和侧栏都让开；再按一下回到原来的摆法。
+/** 桌面上频道页交给外壳布局区的那几块：对话一块，工作面板的每一格各一块。
  *
- * 对话让开了，可这件事里等人做的决定不能跟着消失：采纳那一条跟到面板底部，同一时刻
- * 只有一份。入口和出口是面板页签栏右端同一颗按钮。铺满是外壳的事（layouts/pagePanels），
- * 这里用一个只记「谁被铺满」的外壳。
+ * 对话看不见的时候（别的格子放大了、它那一格收着），这件事里等人做的决定不能跟着消失：
+ * 采纳那一条贴到读者在看的那一格工作面板底下，同一时刻只有一份。页签栏上的 ✕ 收起的
+ * 是工作面板那几格。布局区本身（拖、放大、记住摆法）是外壳的事，这里用一个只记「交来
+ * 了哪几块、哪几块在屏幕上」的外壳。
  */
 import type { Component } from 'vue'
 import type { PagePanelsHost } from '@/layouts/pagePanels'
 
-import { defineComponent, h, ref } from 'vue'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { defineComponent, h, nextTick, ref } from 'vue'
+import { render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // 桌面：有并排这回事。窗口多宽不重要，量的是主区那一块。
@@ -114,13 +115,13 @@ vi.mock('@/views/workspace/TopicChatColumn.vue', () => ({
 vi.mock('@/components/TopicAcceptCard.vue', () => ({
   default: { name: 'TopicAcceptCard', template: '<div data-testid="accept">采纳</div>' },
 }))
-// 面板替身：把页签栏右端那几颗按钮（插槽）照样画出来。
+// 面板替身：把贴在底下的那一条（插槽）照样画出来。
 vi.mock('@/components/WorkPanel.vue', () => ({
   default: {
     name: 'WorkPanel',
     setup(_: unknown, { expose, slots }: { expose: (api: unknown) => void; slots: Record<string, () => unknown> }) {
-      expose({ activeTab: () => 'changes' })
-      return () => h('div', { 'data-testid': 'panel' }, slots['tab-actions']?.() as never)
+      expose({ activeTab: () => 'overview' })
+      return () => h('div', { 'data-testid': 'panel' }, slots.dock?.() as never)
     },
   },
 }))
@@ -150,45 +151,42 @@ function mountView() {
   return render(Shell)
 }
 
-describe('专注模式', () => {
-  it('铺满的是工作面板', async () => {
-    const { getByTitle } = mountView()
-    await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
+const ids = () => shell.claim.value?.spec.panels.map((panel) => panel.id) ?? []
+const panel = (id: string) => shell.claim.value?.spec.panels.find((p) => p.id === id)
 
-    await fireEvent.click(getByTitle('专注模式'))
-
-    expect(shell.maximized.value).toBe('work')
+describe('频道页在外壳布局区里', () => {
+  it('交给外壳的是对话和工作面板的每一格', async () => {
+    mountView()
+    await waitFor(() => expect(ids()).toEqual(['conversation', 'overview', 'threads', 'files', 'routines']))
   })
 
-  it('铺满之后，采纳那一条还在，而且只有一份', async () => {
-    const { getByTitle, findAllByTestId } = mountView()
-    await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
-    expect(await findAllByTestId('accept')).toHaveLength(1)
-
-    await fireEvent.click(getByTitle('专注模式'))
-
-    await waitFor(async () => expect(await findAllByTestId('accept')).toHaveLength(1))
+  it('对话在屏幕上时，采纳那一条在对话里，只有一份', async () => {
+    const { findAllByTestId, getByTestId } = mountView()
+    shell.visible.value = ['conversation', 'overview']
+    await nextTick()
+    const accept = await findAllByTestId('accept')
+    expect(accept).toHaveLength(1)
+    expect(getByTestId('chat').contains(accept[0])).toBe(true)
   })
 
-  it('同一颗按钮回到原来的摆法', async () => {
-    const { getByTitle, queryByTitle } = mountView()
-    await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
-    await fireEvent.click(getByTitle('专注模式'))
-    await waitFor(() => expect(getByTitle('退出专注模式')).toBeTruthy())
-
-    await fireEvent.click(getByTitle('退出专注模式'))
-
-    await waitFor(() => expect(queryByTitle('退出专注模式')).toBeNull())
-    expect(shell.maximized.value).toBeNull()
+  it('对话看不见时，采纳那一条贴到工作面板底下，仍只有一份', async () => {
+    const { findAllByTestId, getByTestId } = mountView()
+    shell.visible.value = ['overview']
+    await waitFor(async () => {
+      const accept = await findAllByTestId('accept')
+      expect(accept).toHaveLength(1)
+      expect(getByTestId('panel').contains(accept[0])).toBe(true)
+    })
   })
 
-  it('面板收起，铺满也就不在了', async () => {
-    const { getByTitle } = mountView()
-    await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
-    await fireEvent.click(getByTitle('专注模式'))
+  it('页签栏上的 ✕ 收起工作面板那几格，对话不动', async () => {
+    mountView()
+    await waitFor(() => expect(panel('overview')?.hidden).toBe(false))
 
-    await fireEvent.click(getByTitle('收起概览'))
+    panel('overview')!.actions![0].run()
 
-    await waitFor(() => expect(shell.maximized.value).toBeNull())
+    await waitFor(() => expect(panel('overview')?.hidden).toBe(true))
+    expect(panel('threads')?.hidden).toBe(true)
+    expect(panel('conversation')?.hidden).toBeFalsy()
   })
 })

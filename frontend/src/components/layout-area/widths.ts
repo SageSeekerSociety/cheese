@@ -1,7 +1,8 @@
 /**
- * The width a panel keeps on its own (`LayoutPanel.width`), remembered in the browser
- * under its key: every area that places the panel opens it at the same width, and the
- * width never leaves the panel's bounds, whatever was stored.
+ * What a panel keeps on its own, whatever arrangement it is placed in: the width of its
+ * cell (`LayoutPanel.width`) and whether that cell is folded (`LayoutPanel.foldKey`),
+ * remembered in the browser under their keys. The width never leaves the panel's bounds,
+ * whatever was stored.
  *
  * One live value per key, shared by everyone who reads it: a width dragged in one place
  * (the area's divider, or a drawer showing the same panel outside the area) is the width
@@ -35,6 +36,25 @@ export function rememberedWidth(spec: LayoutPanelWidth): Readonly<Ref<number>> {
     live.set(spec.storageKey, width)
   }
   return width
+}
+
+const folds = new Map<string, Ref<boolean>>()
+
+/** Whether a panel's cell is folded to a strip (`LayoutPanel.foldKey`), shared by every reader. */
+export function rememberedFold(key: string): Readonly<Ref<boolean>> {
+  let folded = folds.get(key)
+  if (!folded) {
+    folded = ref(storageGet(key) === '1')
+    folds.set(key, folded)
+  }
+  return folded
+}
+
+export function rememberFold(key: string, folded: boolean): void {
+  const current = rememberedFold(key) as Ref<boolean>
+  if (current.value === folded) return
+  current.value = folded
+  storageSet(key, folded ? '1' : '0')
 }
 
 /**

@@ -62,6 +62,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import { SIDEBAR_FOLD_KEY } from '@/composables/sidebarWidth'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 
@@ -75,6 +76,7 @@ import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
+import { rememberedFold } from '@/components/layout-area'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'
@@ -96,8 +98,10 @@ const homeLabel = computed(() => {
   if (item.dot) return t('global.labelWithAside', { label: item.title, aside: t('home.nav.unreadActivity') })
   return item.title
 })
-// 侧栏看不见：这一页没有侧栏，或平板上侧栏收着。这时首页、问芝士、头像临时住在顶栏。
-const frameInBar = computed(() => !props.hasSidebar || (compact.value && !open.value))
+// 侧栏看不见：这一页没有侧栏，平板上侧栏收着，或宽档里侧栏收成了一条。这时首页、问芝士、
+// 头像临时住在顶栏。
+const folded = rememberedFold(SIDEBAR_FOLD_KEY)
+const frameInBar = computed(() => !props.hasSidebar || (compact.value ? !open.value : folded.value))
 
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()

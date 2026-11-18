@@ -24,6 +24,8 @@ export interface AppNav {
    *  让 SecondaryNavigation 自己 import：那两样要读账号和芝士面板，侧栏一 import 它们，
    *  每一处用侧栏的画面就不再能只靠 props 画出来（scene-ratchet）。 */
   frame: { top: Component; foot: Component }
+  /** 把侧栏收成一条（侧栏头上那颗按钮）。只有侧栏是布局区的一格时（宽档）才有。 */
+  foldSidebar: ComputedRef<(() => void) | null>
 }
 
 const KEY: InjectionKey<AppNav> = Symbol('app-nav')

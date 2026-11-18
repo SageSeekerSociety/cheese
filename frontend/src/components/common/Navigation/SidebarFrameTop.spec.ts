@@ -97,6 +97,7 @@ async function mount(path: string, reorder = vi.fn()) {
         reorder,
         loggedIn: computed(() => true),
         frame: { top: SidebarFrameTop, foot: SidebarFrameTop },
+        foldSidebar: computed(() => null),
       })
       return () => h(SidebarFrameTop)
     },
