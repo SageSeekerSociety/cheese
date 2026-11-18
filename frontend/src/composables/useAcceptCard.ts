@@ -16,10 +16,12 @@ import { useAcceptCardActions } from '@/composables/acceptCard/actions'
 import { useAcceptCardBar } from '@/composables/acceptCard/bar'
 import { useAcceptCards } from '@/composables/acceptCard/cards'
 import { useAcceptCardDerive } from '@/composables/acceptCard/derive'
+import { useHandIn } from '@/composables/acceptCard/handIn'
 import { signInWithGithub } from '@/composables/useGithubSignIn'
 import { noteAccepted, primeInvitePrompt } from '@/composables/useInvitePrompt'
 import { useReviewComments } from '@/composables/useReviewComments'
 
+import { mayIn } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -30,6 +32,8 @@ export interface AcceptCardHost {
   taskId?: string | null
   /** 谁在看这张卡。默认是登录的那个账号；演示页没有登录的人，读者扮的是卡上点名的审阅人。 */
   viewer?: string
+  /** 任务所在的项目：看的人能不能改它的文件（`edit_content`），决定给不给提交审阅。 */
+  projectId?: string | null
 }
 
 export function useAcceptCard(props: AcceptCardHost) {
@@ -81,11 +85,27 @@ export function useAcceptCard(props: AcceptCardHost) {
     autoMergeVisible,
     reviewerName,
     deciderName,
-    decisionOpen,
+    decisionOpen: cardDecisionOpen,
     acceptLabel,
     forceMergeVisible,
     reviewerChoices,
   } = useAcceptCardDerive({ store, me, pendingCard, acceptedCard, deliveringCard })
+
+  // 人自己提交审阅（acceptCard/handIn.ts）。有人保存过、还没交进去的修改不在等审阅的那一版
+  // 里，这时不给退回和采纳，页头换成「再提交一版」：采纳的得是改过的那一版。
+  const handIn = useHandIn({
+    taskId,
+    me,
+    waiting: () => !!pendingCard.value,
+    mayHandIn: () =>
+      mayIn(
+        store.projects.find((project) => project.id === props.projectId),
+        'edit_content'
+      ),
+    onHandedIn: () => load(),
+    reportError: (error, fallback) => store.reportError(error, fallback),
+  })
+  const decisionOpen = computed(() => cardDecisionOpen.value && handIn.acceptable.value)
 
   // 横条那一行、那个圈、有没有东西可画、以及对外说的相位（acceptCard/bar.ts）。
   const { bar, barColumn, hasBox, phase } = useAcceptCardBar({
@@ -186,7 +206,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     // 这件任务的批注
     comments,
     // 动作
-    reload: () => load(),
+    reload: () => Promise.all([load(), handIn.load()]).then(() => undefined),
     onDownloadDeliverable: actions.onDownloadDeliverable,
     onApproveCard: actions.onApproveCard,
     onReassignCard: actions.onReassignCard,
@@ -197,6 +217,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     onToggleAutoMerge: actions.onToggleAutoMerge,
     onRejectCard: actions.onRejectCard,
     onVoidCard: actions.onVoidCard,
+    // 人自己提交审阅
+    handIn,
     // 画的时候顺手要用的
     author: me,
     agentName,

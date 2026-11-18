@@ -36,6 +36,7 @@ import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskOverview from '@/components/task/TaskOverview.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
+import HandInPanelHost from '@/components/work/HandInPanelHost.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
@@ -172,6 +173,9 @@ const accept = provideAcceptCard({
   get taskId() {
     return props.taskId ?? null
   },
+  get projectId() {
+    return props.projectId
+  },
 })
 function reloadAccept() {
   void accept.reload()
@@ -271,6 +275,7 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   togglePanel,
   openTopic,
   me: AUTHOR,
+  handIn: accept.handIn,
 })
 // ---- 在频道里审阅的那件交付、右栏开着哪一格（见 topicView/delivery.ts）----
 const reviewReload = ref(0)
@@ -538,6 +543,8 @@ void openPlace()
         </template>
         <TopicHeader v-else-if="topicHeaderBinding" v-bind="topicHeaderBinding" />
       </template>
+      <!-- The hand-in panel the task header's submit button opens, on both widths. -->
+      <HandInPanelHost v-if="taskId" />
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
          什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不

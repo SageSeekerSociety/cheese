@@ -5,6 +5,7 @@
 // 转交只归负责人；关了的任务，角色有「新建任务和审阅」的人都能重新打开）。
 import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
+import type { HandInAction } from '@/lib/handIn'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref, watch } from 'vue'
@@ -58,14 +59,19 @@ const props = withDefaults(
     copyLink?: () => void
     /** 我的角色有「新建任务和审阅」：关了的任务我能重新打开。页面从项目的 `my_permissions` 读。 */
     worksTasks?: boolean
+    /** 有不在最近那一版里的修改：写「有未提交的修改」。 */
+    unhanded?: boolean
+    /** 给哪颗提交按钮（「提交审阅」「再提交一版」）；null 不给。 */
+    handIn?: HandInAction
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
-  { connected: true }
+  { connected: true, handIn: null }
 )
 
 const emit = defineEmits<{
   (e: 'open-room'): void
   (e: 'toggle-panel'): void
+  (e: 'hand-in'): void
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -291,6 +297,9 @@ function actionTestId(id: string): string | undefined {
         <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
           t('work.task.progress.left', { name: leftName })
         }}</span>
+        <span v-if="unhanded && isOpen" class="task-header__unhanded" data-testid="task-unhanded">{{
+          t('work.room.accept.handIn.unhanded')
+        }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
         }}</span>
@@ -463,6 +472,9 @@ function actionTestId(id: string): string | undefined {
       </v-card>
     </v-menu>
 
+    <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="task-hand-in" @click="emit('hand-in')">
+      {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
+    </BaseButton>
     <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
     <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
@@ -646,7 +658,8 @@ function actionTestId(id: string): string | undefined {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-header__left {
+.task-header__left,
+.task-header__unhanded {
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 13px;
