@@ -95,7 +95,6 @@
   "rubricUsageThresholds": "额度用量按阈值给分时，要填得满分和得 0 分的额度，得 0 分的要比得满分的大",
   "rubricOneTestsLine": "同一阶段只能有一项评分要点设为「测试点」",
   "rubricTestsWithoutSuite": "这一项设为「测试点」，但这个阶段还没有配测试点",
-  "testSuiteKindLater": "这一版只支持输入/输出用例，测试脚本和命令判分还没有做",
   "testSuiteKindUnknown": "测试点形态只能是输入/输出用例、测试脚本或命令判分",
   "testSuiteRuntimeUnknown": "运行环境只能是平台提供的这几种固定版本",
   "testSuiteNoRunCommand": "测试点需要填运行命令",
@@ -115,5 +114,19 @@
   "testSuiteSelfTestRange": "自测次数需要是 {low} 到 {high} 之间的整数，或者关掉自测",
   "submissionCodeMoved": "你项目默认分支的代码已经变了，先看一眼这一版要评测的代码再提交",
   "lineScoreRange": "这一项的得分需要是 0 到 {points} 之间的整数",
-  "lineScoreNeedsReason": "手动调整测试分要写明原因，学生看得到"
+  "lineScoreNeedsReason": "手动调整测试分要写明原因，学生看得到",
+  "testSuiteFileBadPath": "文件路径「{path}」不对：要写成相对路径，不能有 ..，也不能是空的",
+  "testSuiteFileDuplicate": "文件「{path}」放了两次，一个路径只能放一份",
+  "testSuiteTooManyFiles": "一套测试点最多 {max} 份文件",
+  "testSuiteFilesTooLarge": "一套测试点的文件合计最多 {mb} MB",
+  "testSuiteNoTestFiles": "测试脚本至少要放 1 份测试文件",
+  "testSuiteTestIdMissing": "给分的每一条都要写测试名",
+  "testSuiteTestIdTooLong": "测试名太长，最多 {max} 字",
+  "testSuiteTestIdDuplicate": "同一个测试名只能配一次分",
+  "testSuiteTotalTimeRange": "整轮时限需要是 {low} 到 {high} 秒",
+  "testSuiteLogLinesRange": "给学生看的输出行数需要是 {low} 到 {high}",
+  "testSuiteNoCommands": "命令判分至少要有 1 条命令",
+  "testSuiteTooManyCommands": "命令判分最多 {max} 条命令",
+  "testSuiteScoreSourceUnknown": "分数只能从最后一行的 SCORE: x/y 或仓库根的 score.json 读",
+  "testSuiteInstallDepsLater": "这一版评测时不联网，还不能安装依赖；把依赖放进仓库，或者关掉「安装依赖」"
 }

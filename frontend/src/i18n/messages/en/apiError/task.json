@@ -95,7 +95,6 @@
   "rubricUsageThresholds": "Scoring credit usage by thresholds needs the credits for full points and for zero, and zero must be above full",
   "rubricOneTestsLine": "A stage has at most one rubric line scored by the tests",
   "rubricTestsWithoutSuite": "This line is scored by the tests, but the stage has no test points yet",
-  "testSuiteKindLater": "This version supports input/output cases only; test scripts and command scoring are not built yet",
   "testSuiteKindUnknown": "A suite kind is input/output cases, a test script, or command scoring",
   "testSuiteRuntimeUnknown": "The runtime must be one of the fixed versions the platform provides",
   "testSuiteNoRunCommand": "Test points need a run command",
@@ -115,5 +114,19 @@
   "testSuiteSelfTestRange": "Self-test runs must be a whole number from {low} to {high}, or off",
   "submissionCodeMoved": "Your project's default branch has moved; look at the code this version will be judged on before submitting",
   "lineScoreRange": "This line's score must be a whole number from 0 to {points}",
-  "lineScoreNeedsReason": "A hand-adjusted test score needs a reason; the student sees it"
+  "lineScoreNeedsReason": "A hand-adjusted test score needs a reason; the student sees it",
+  "testSuiteFileBadPath": "The file path \"{path}\" is not valid: write a relative path, without .., and not empty",
+  "testSuiteFileDuplicate": "The file \"{path}\" is given twice; one path holds one file",
+  "testSuiteTooManyFiles": "A test suite holds at most {max} files",
+  "testSuiteFilesTooLarge": "A test suite's files add up to at most {mb} MB",
+  "testSuiteNoTestFiles": "A test script needs at least one test file",
+  "testSuiteTestIdMissing": "Every scored test needs a test name",
+  "testSuiteTestIdTooLong": "The test name is too long; at most {max} characters",
+  "testSuiteTestIdDuplicate": "Each test name can be scored only once",
+  "testSuiteTotalTimeRange": "The total time limit must be {low} to {high} seconds",
+  "testSuiteLogLinesRange": "The output lines shown to students must be {low} to {high}",
+  "testSuiteNoCommands": "Command scoring needs at least one command",
+  "testSuiteTooManyCommands": "Command scoring takes at most {max} commands",
+  "testSuiteScoreSourceUnknown": "The score is read from a last line SCORE: x/y or from score.json at the repository root",
+  "testSuiteInstallDepsLater": "Judging runs offline in this version, so dependencies cannot be installed yet; vendor them into the repository or turn off installing dependencies"
 }
