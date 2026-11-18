@@ -6,7 +6,7 @@ import type { LayoutPanelInfo } from './types'
 
 import { computed } from 'vue'
 
-import { isSplit } from './arrangement'
+import { hidesTabs, isSplit } from './arrangement'
 import { STRIP_SIZE } from './dockviewJson'
 
 const props = defineProps<{
@@ -19,7 +19,7 @@ const props = defineProps<{
 const cell = computed(() => (isSplit(props.node) ? null : props.node))
 const split = computed(() => (isSplit(props.node) ? props.node : null))
 const fits = (node: LayoutNode) => !isSplit(node) && node.panels.some((id) => props.info.get(id)?.fitHeight === true)
-const bare = computed(() => !!cell.value && cell.value.panels.every((id) => props.info.get(id)?.bare === true))
+const bare = computed(() => !!cell.value && hidesTabs(cell.value.panels.map((id) => props.info.get(id) ?? {})))
 const active = computed(() => cell.value && (cell.value.active ?? cell.value.panels[0]))
 
 const hiddenAt = (node: LayoutNode, along: SplitDirection) =>

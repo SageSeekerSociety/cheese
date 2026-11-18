@@ -262,14 +262,52 @@ export function placeInGroup(
   groupOf: (id: string) => string | undefined
 ): LayoutArrangement {
   if (placedPanels(arrangement).includes(panelId)) return arrangement
-  const group = groupOf(panelId)
-  const members = (cell: LayoutCell) => cell.panels.filter((id) => group && groupOf(id) === group).length
-  const home = cellsOf(arrangement).reduce<LayoutCell | undefined>(
+  const home = homeCell(arrangement, groupOf(panelId), groupOf)
+  if (!home) return placePanel(arrangement, panelId)
+  return mapCells(arrangement, (cell) => (cell === home ? { ...cell, panels: [...cell.panels, panelId] } : cell))
+}
+
+/** A group's home: the cell holding most of its panels (the first such, in reading order). */
+export function homeCell(
+  arrangement: LayoutArrangement,
+  group: string | undefined,
+  groupOf: (id: string) => string | undefined
+): LayoutCell | undefined {
+  if (!group) return undefined
+  const members = (cell: LayoutCell) => cell.panels.filter((id) => groupOf(id) === group).length
+  return cellsOf(arrangement).reduce<LayoutCell | undefined>(
     (best, cell) => (members(cell) > (best ? members(best) : 0) ? cell : best),
     undefined
   )
-  if (!home) return placePanel(arrangement, panelId)
-  return mapCells(arrangement, (cell) => (cell === home ? { ...cell, panels: [...cell.panels, panelId] } : cell))
+}
+
+/** What a cell's panels say about its tab strip. */
+export interface StripPanel {
+  bare?: boolean
+  stripWhenShared?: boolean
+}
+
+/**
+ * A cell shows no tab strip when its panels are all bare, or when it holds one panel that
+ * asks for a strip only once it shares the cell: there is nothing to pick between.
+ */
+export function hidesTabs(panels: readonly StripPanel[]): boolean {
+  if (!panels.length) return false
+  return panels.every((panel) => panel.bare) || (panels.length === 1 && panels[0].stripWhenShared === true)
+}
+
+/**
+ * The same arrangement for the reader: the same cells, splits, tab order and folds.
+ * Sizes, the visible tab and cell ids do not count.
+ */
+export function sameArrangement(a: LayoutArrangement, b: LayoutArrangement): boolean {
+  const shape = (node: LayoutNode | null): unknown =>
+    !node
+      ? null
+      : isSplit(node)
+        ? { d: node.direction, c: node.children.map(shape) }
+        : { p: node.panels, f: !!node.collapsed }
+  return JSON.stringify(shape(a.root)) === JSON.stringify(shape(b.root))
 }
 
 // ---------------------------------------------------------------- back to the default sizes

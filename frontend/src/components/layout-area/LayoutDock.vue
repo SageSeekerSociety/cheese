@@ -46,6 +46,8 @@ import {
   cellsOf,
   defaultWeights,
   hasPlacementFault,
+  hidesTabs,
+  homeCell,
   parentDirection,
   placedPanels,
   placePanel,
@@ -83,8 +85,6 @@ const props = defineProps<{
   fixedWidths: Record<string, number>
   /** The page's default: double-clicking a divider gives its split these sizes back. */
   defaultArrangement: LayoutArrangement
-  /** Each cell's header offers to go back to the page's default arrangement. */
-  resettable: boolean
   /** Show this panel (and open its cell), or fold or open its cell; acted on once per `n`. */
   request: { id: string; fold?: boolean; n: number } | null
 }>()
@@ -108,8 +108,6 @@ const emit = defineEmits<{
   close: [id: string]
   /** The reader double-clicked the tab of a temporary panel. */
   keep: [id: string]
-  /** The reader asked for the page's default arrangement. */
-  reset: []
 }>()
 
 const { t } = useI18n()
@@ -121,6 +119,7 @@ const api = shallowRef<DockviewApi>()
 const info = computed(() => new Map(props.panels.map((panel) => [panel.id, panel])))
 const declared = computed(() => props.panels.map((panel) => panel.id))
 const pinned = (id: string) => info.value.get(id)?.pinned === true
+/** Bare cells (the page head, the sidebar) take no dropped tab; a lone pinned panel's cell does. */
 const bareGroup = (group: DockviewGroupPanel) =>
   group.panels.length > 0 && group.panels.every((panel) => info.value.get(panel.id)?.bare)
 
@@ -261,8 +260,7 @@ function applyPolicies() {
     const id = group.id
     const panels = infosOf(group)
     const folded = collapsed.has(id)
-    const bare = panels.length > 0 && panels.every((panel) => panel.bare)
-    const headerHidden = folded || bare
+    const headerHidden = folded || hidesTabs(panels)
     if (group.header.hidden !== headerHidden) group.header.hidden = headerHidden
     const lock = folded ? 'no-drop-target' : false
     if (group.locked !== lock) group.locked = lock
@@ -386,8 +384,16 @@ function addTo(group: DockviewGroupPanel | null, id: string) {
 
 const cellCount = computed(() => cellsOf(model.value).length)
 
-/** The page's buttons for a cell: those its visible tab declares. */
-const actionsOf = (groupId: string) => info.value.get(activeOf[groupId] ?? '')?.actions ?? []
+const groupOf = (id: string) => info.value.get(id)?.group
+/**
+ * The page's buttons for a cell: those its visible tab declares, in its group's home cell
+ * only. A cell split off from the home offers collapse instead.
+ */
+function actionsOf(cellId: string) {
+  const active = info.value.get(activeOf[cellId] ?? '')
+  if (!active?.actions?.length) return []
+  return homeCell(model.value, active.group, groupOf)?.id === cellId ? active.actions : []
+}
 
 /** While a cell is maximized: does a panel out of sight carry a mark (a reply, a change)? */
 const signalledOutOfSight = computed(() => {
@@ -711,17 +717,21 @@ const noContextMenu = () => []
 
       <template #rightHeaderActions="scope: IDockviewHeaderActionsProps">
         <div class="layout-actions">
+          <LayoutAddMenu v-if="unplaced.length && !locked" :panels="unplaced" @pick="addTo(scope.group, $event)" />
           <BaseButton
-            v-for="action in actionsOf(scope.group.id)"
-            :key="action.label"
+            v-if="!maximizedGroup && !actionsOf(scope.group.id).length && canCollapse(model, scope.group.id)"
             kind="ghost"
             size="sm"
-            :icon="action.icon"
-            :aria-label="action.label"
-            :title="action.label"
-            @click="action.run()"
+            :icon="
+              parentDirection(model, scope.group.id) === 'column'
+                ? 'mdi-arrow-collapse-vertical'
+                : 'mdi-arrow-collapse-horizontal'
+            "
+            :aria-label="t('shell.layout.collapse')"
+            :title="t('shell.layout.collapse')"
+            data-layout-collapse
+            @click="collapse(scope.group)"
           />
-          <LayoutAddMenu v-if="unplaced.length && !locked" :panels="unplaced" @pick="addTo(scope.group, $event)" />
           <span v-if="cellCount > 1" class="layout-actions__signalled">
             <BaseButton
               kind="ghost"
@@ -739,28 +749,14 @@ const noContextMenu = () => []
             />
           </span>
           <BaseButton
-            v-if="resettable && !locked"
+            v-for="action in actionsOf(scope.group.id)"
+            :key="action.label"
             kind="ghost"
             size="sm"
-            icon="mdi-restore"
-            :aria-label="t('shell.layout.reset')"
-            :title="t('shell.layout.reset')"
-            data-layout-reset
-            @click="emit('reset')"
-          />
-          <BaseButton
-            v-if="!maximizedGroup && canCollapse(model, scope.group.id)"
-            kind="ghost"
-            size="sm"
-            :icon="
-              parentDirection(model, scope.group.id) === 'column'
-                ? 'mdi-arrow-collapse-vertical'
-                : 'mdi-arrow-collapse-horizontal'
-            "
-            :aria-label="t('shell.layout.collapse')"
-            :title="t('shell.layout.collapse')"
-            data-layout-collapse
-            @click="collapse(scope.group)"
+            :icon="action.icon"
+            :aria-label="action.label"
+            :title="action.label"
+            @click="action.run()"
           />
         </div>
       </template>
@@ -885,7 +881,7 @@ const noContextMenu = () => []
  */
 .layout-dock-theme {
   --dv-tabs-and-actions-container-font-size: 13px;
-  --dv-tabs-and-actions-container-height: 40px;
+  --dv-tabs-and-actions-container-height: var(--layout-tab-strip-height, 40px);
   --dv-tab-font-size: 13px;
   --dv-drag-over-background-color: var(--fill-2);
   --dv-drag-over-border-color: var(--line-2);

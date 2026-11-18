@@ -34,6 +34,7 @@ import {
   placePanel,
   reconcile,
   restoreArrangement,
+  sameArrangement,
   serializeArrangement,
   setCollapsed,
   unplacedPanels,
@@ -62,10 +63,10 @@ const props = withDefaults(
     narrow?: boolean
     /** The panel whose cell fills the wide area (`v-model:maximized`); not remembered. */
     maximized?: string | null
-    /** Each cell's header offers to go back to the page's default arrangement. */
-    resettable?: boolean
+    /** Height of the cells' tab strips (a CSS length), to line them up with a header beside them. */
+    tabStripHeight?: string
   }>(),
-  { locked: false, resizable: true, narrow: undefined, maximized: null, resettable: false }
+  { locked: false, resizable: true, narrow: undefined, maximized: null, tabStripHeight: '40px' }
 )
 
 const emit = defineEmits<{
@@ -352,10 +353,24 @@ watch(
 const request = shallowRef<{ id: string; fold?: boolean; n: number } | null>(null)
 let requests = 0
 
+/**
+ * The page's default arrangement as it would open now: open tasks and files in their
+ * group's cell, and a panel whose fold is remembered on its own (the sidebar) as it is,
+ * since that fold belongs to every page.
+ */
+function defaultNow(): LayoutArrangement {
+  return withFolds(withCellIds(withTransients(fromDefault(), declared.value)))
+}
+
+/** The reader has moved something away from the page's default arrangement. */
+const rearranged = computed(() => {
+  const lasting = declared.value.filter((id) => !transient.value.has(id))
+  return !sameArrangement(reconcile(arrangement.value, lasting), reconcile(defaultNow(), lasting))
+})
+
 /** Back to the page's default arrangement, forgetting the saved one. */
 function reset() {
-  for (const panel of props.panels) if (panel.foldKey) rememberFold(panel.foldKey, false)
-  commit(withCellIds(withTransients(fromDefault(), declared.value)), true)
+  commit(defaultNow(), true)
 }
 
 /** A panel asked for before the page declared it: shown as soon as it is. */
@@ -396,11 +411,11 @@ function fold(id: string, folded: boolean) {
   request.value = { id, fold: folded, n: ++requests }
 }
 
-defineExpose({ reset, open, fold })
+defineExpose({ reset, open, fold, rearranged })
 </script>
 
 <template>
-  <div class="layout-area">
+  <div class="layout-area" :style="{ '--layout-tab-strip-height': tabStripHeight }">
     <template v-if="!isNarrow">
       <LayoutStatic
         v-if="!dockReady"
@@ -423,7 +438,6 @@ defineExpose({ reset, open, fold })
           :fixed-widths="fixedWidths"
           :default-arrangement="defaultArrangement"
           :maximized="maximizedNow"
-          :resettable="resettable"
           :request="request"
           @change="commit"
           @host="onDockHost"
@@ -435,7 +449,6 @@ defineExpose({ reset, open, fold })
           @visible="emit('visible', $event)"
           @close="emit('close', $event)"
           @keep="emit('keep', $event)"
-          @reset="reset"
         />
       </div>
     </template>

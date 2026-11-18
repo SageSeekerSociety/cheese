@@ -128,10 +128,10 @@ onBeforeUnmount(() => hostElements.forEach((element, id) => emit('host', id, ele
   background: var(--surface);
 }
 
-/* The same strip LayoutDock's theme draws: 40px, ink underline under the visible tab. */
+/* The same strip LayoutDock's theme draws: its height, ink underline under the visible tab. */
 .layout-static__tabs {
   display: flex;
-  flex: 0 0 40px;
+  flex: 0 0 var(--layout-tab-strip-height, 40px);
   align-items: stretch;
   box-sizing: border-box;
   padding: 0 6px;

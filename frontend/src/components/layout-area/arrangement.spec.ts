@@ -7,12 +7,15 @@ import {
   canCollapse,
   cellsOf,
   defaultWeights,
+  hidesTabs,
+  homeCell,
   placedPanels,
   placeInGroup,
   placePanel,
   reconcile,
   resetSizes,
   restoreArrangement,
+  sameArrangement,
   serializeArrangement,
   setCollapsed,
   unplacedPanels,
@@ -265,6 +268,72 @@ describe('a panel that appears while the area is open', () => {
   it('stays where it is once placed', () => {
     const area = withCellIds(DEFAULT)
     expect(placeInGroup(area, 'chat', groupOf)).toBe(area)
+  })
+})
+
+describe("a group's home cell", () => {
+  it('is the cell holding most of the group, and moves when most of the group does', () => {
+    const groupOf = (id: string) => (id === 'chat' ? undefined : 'work')
+    const area = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files'] },
+          { id: 'work', panels: ['preview', 'terminal'] },
+        ],
+      },
+    })
+    expect(homeCell(area, 'work', groupOf)?.id).toBe('work')
+    const moved = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files', 'preview'] },
+          { id: 'work', panels: ['terminal'] },
+        ],
+      },
+    })
+    expect(homeCell(moved, 'work', groupOf)?.id).toBe('talk')
+    expect(homeCell(area, undefined, groupOf)).toBeUndefined()
+  })
+})
+
+describe("a cell's tab strip", () => {
+  it('is absent while a panel that wants one only when shared is alone, and back once another joins', () => {
+    const conversation = { stripWhenShared: true }
+    expect(hidesTabs([conversation])).toBe(true)
+    expect(hidesTabs([conversation, {}])).toBe(false)
+  })
+
+  it('is absent over bare panels, present over ordinary ones', () => {
+    expect(hidesTabs([{ bare: true }])).toBe(true)
+    expect(hidesTabs([{}])).toBe(false)
+    expect(hidesTabs([])).toBe(false)
+  })
+})
+
+describe('whether the reader has moved anything', () => {
+  it('ignores sizes, the visible tab and cell ids', () => {
+    const resized = reconcile(DEFAULT, DECLARED)
+    const other = JSON.parse(JSON.stringify(resized)) as LayoutArrangement
+    const top = cellsOf(other).find((cell) => cell.id === 'top')!
+    top.active = 'files'
+    top.size = 7
+    delete top.id
+    expect(sameArrangement(resized, other)).toBe(true)
+  })
+
+  it('counts a tab moved to another cell, a reordered tab and a folded cell', () => {
+    const base = reconcile(DEFAULT, DECLARED)
+    expect(
+      sameArrangement(base, placePanel(reconcile(DEFAULT, ['nav', 'chat', 'files', 'terminal']), 'preview', 'chat'))
+    ).toBe(false)
+    const reordered = JSON.parse(JSON.stringify(base)) as LayoutArrangement
+    cellsOf(reordered)
+      .find((cell) => cell.id === 'top')!
+      .panels.reverse()
+    expect(sameArrangement(base, reordered)).toBe(false)
+    expect(sameArrangement(base, setCollapsed(base, 'bottom', true))).toBe(false)
   })
 })
 

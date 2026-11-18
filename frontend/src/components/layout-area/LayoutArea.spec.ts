@@ -140,9 +140,9 @@ describe('LayoutArea on a narrow screen', () => {
     expect(localStorage.getItem(KEY) ?? '').not.toContain('opened')
   })
 
-  it('reset brings the default arrangement back', async () => {
+  it('says the page is rearranged until reset brings the default arrangement back', async () => {
     localStorage.setItem(KEY, JSON.stringify({ v: 1, root: { panels: ['three', 'one'], active: 'three' } }))
-    const area = ref<{ reset(): void }>()
+    const area = ref<{ reset(): void; rearranged: boolean }>()
     render(
       defineComponent({
         setup: () => () =>
@@ -158,7 +158,9 @@ describe('LayoutArea on a narrow screen', () => {
       { global: { plugins: [createVuetify({ components, directives }), i18n] } }
     )
     await screen.findByLabelText('note three')
+    expect(area.value!.rearranged).toBe(true)
     area.value!.reset()
     await waitFor(() => expect(screen.getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['One', 'Two']))
+    expect(area.value!.rearranged).toBe(false)
   })
 })

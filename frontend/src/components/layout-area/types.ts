@@ -80,8 +80,14 @@ export interface LayoutPanel {
    * draws its edge.
    */
   fitHeight?: boolean
-  /** The cell shows the panel alone, with no tab strip above it. */
+  /** The cell shows the panel alone, with no tab strip above it, and takes no dropped tab. */
   bare?: boolean
+  /**
+   * While it is the only panel in its cell, the cell shows no tab strip: the page around
+   * it already says what it is. A tab dropped there brings the strip back, and the panel
+   * can be dragged by its tab again.
+   */
+  stripWhenShared?: boolean
   /**
    * Out of sight for now: the cell gives its space to its neighbours and comes back at
    * the size and place it had. The panel keeps its instance meanwhile. A cell is hidden
