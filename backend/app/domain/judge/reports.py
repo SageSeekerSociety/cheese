@@ -119,13 +119,21 @@ def parse_junit(data, message_bytes=1024):
     return tests, truncated
 
 
+#: 一个分数能有多大：比这大的不是分数，是坏的输入。
+SCORE_LIMIT = 1e12
+
+
 def _number(raw):
     """A score as a number: an int stays an int, anything else a finite float."""
     if isinstance(raw, bool):
         raise ReportError("score_malformed")
+    # 分数是学生代码能写的文件里读出来的：大得离谱的整数到后端会让 float() 溢出，
+    # 所以整数和小数一样卡在 SCORE_LIMIT 以内。
     if isinstance(raw, int):
-        return raw
-    if isinstance(raw, float) and raw == raw and abs(raw) < 1e12:
+        if abs(raw) < SCORE_LIMIT:
+            return raw
+        raise ReportError("score_malformed")
+    if isinstance(raw, float) and raw == raw and abs(raw) < SCORE_LIMIT:
         return int(raw) if raw.is_integer() else raw
     raise ReportError("score_malformed")
 
@@ -133,6 +141,9 @@ def _number(raw):
 def _plain(raw):
     """``"7"`` reads 7, ``"7.5"`` reads 7.5."""
     value = float(raw)
+    # "9" 写四百位读出来是 inf，JSON 往返成 Infinity，到后端一乘就溢出：不收。
+    if not (value == value and abs(value) < SCORE_LIMIT):
+        raise ReportError("score_malformed")
     return int(value) if value.is_integer() else value
 
 

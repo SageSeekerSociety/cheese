@@ -130,6 +130,11 @@ def test_fractional_scores_keep_their_ratio():
         {"score": -1, "max": 10},
         {"score": 0, "max": 0},
         {"score": True, "max": 10},
+        # 学生代码写得了 score.json：大到 float() 溢出的整数、JSON 里的无穷大，
+        # 都只是一个读不懂的分，不能让这一轮派发出异常。
+        {"score": 1, "max": 10**400},
+        {"score": float("inf"), "max": float("inf")},
+        {"score": 5, "max": float("nan")},
     ],
 )
 def test_a_score_outside_zero_to_max_is_a_scoring_failure(score):
@@ -266,3 +271,19 @@ def test_scored_tests_carry_their_names():
     )
     (case,) = line.cases
     assert (case.test_id, case.name, case.points) == ("tests.test_add::a",) * 2 + (5,)
+
+
+@pytest.mark.parametrize(
+    ("parse", "given"),
+    [
+        ("parse_score_json", b'{"score": 1, "max": 1' + b"0" * 400 + b"}"),
+        ("parse_score_line", "SCORE: 1/" + "9" * 400),
+        ("parse_score_line", "SCORE: " + "9" * 400 + "/10"),
+    ],
+)
+def test_a_score_too_big_to_be_a_score_is_malformed_on_the_judge_host(parse, given):
+    """评测主机那一侧就把它判成坏的分数，不把它当一个数送回后端。"""
+    from app.domain.judge import reports
+
+    with pytest.raises(reports.ReportError):
+        getattr(reports, parse)(given)

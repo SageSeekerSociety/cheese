@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from app.core.sentences import NoticeText, say
@@ -225,9 +226,15 @@ def _scaled(score: float, top: float) -> tuple[int, int]:
 
 
 def _number(raw: object) -> float | None:
+    """评测主机报上来的一个分；不是有限的、合理大小的数就当没有。主机那一侧已经卡过
+    （``reports.SCORE_LIMIT``），这里再兜一次：这一步出异常会让整轮派发都停下。"""
     if isinstance(raw, bool) or not isinstance(raw, int | float):
         return None
-    return float(raw)
+    try:
+        value = float(raw)
+    except OverflowError:
+        return None
+    return value if math.isfinite(value) and abs(value) < 1e12 else None
 
 
 def command(reply: dict, settings: dict) -> Scored:
