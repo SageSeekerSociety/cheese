@@ -315,9 +315,11 @@ async def _poll_pr_card(
         await self._session.flush()  # the mirror and dispatched ledger keep
         raise deferred
 
-    if verdict.state == "clean" and title is None:
+    if verdict.state == "clean" and title is None and not card.auto_merge_armed_by:
         # CLEAN → 通知验收人（按 head 去重）。标题分家时不报「可以合了」：
-        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。
+        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。布防过的卡
+        # 也不报：审阅人已经决定采纳这一版，下面这一拍就以他的名义合并，「等他
+        # 采纳」不是真的。
         await self._notify_ready(card, topic)
     elif verdict.state == "blocked" and "required_check_missing" in kinds:
         # BLOCKED 必跑检查没报到 → 等 CI，不发；超过宽限期转人 ——
