@@ -119,8 +119,9 @@ def parse_junit(data, message_bytes=1024):
     return tests, truncated
 
 
-#: 一个分数能有多大：比这大的不是分数，是坏的输入。
-SCORE_LIMIT = 1e12
+#: 一个分数能有多大：比这大的不是分数，是坏的输入。小数分在后端乘 100 存进 int4 列
+#: （``task_judge_run.passed_points``，上限约 21 亿），所以卡在一千万。
+SCORE_LIMIT = 10_000_000
 
 
 def _number(raw):

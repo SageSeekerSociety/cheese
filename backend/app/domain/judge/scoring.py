@@ -26,6 +26,7 @@ import math
 from dataclasses import dataclass, field
 
 from app.core.sentences import NoticeText, say
+from app.domain.judge.reports import SCORE_LIMIT
 
 #: Inputs and expected outputs kept on a result row for the graders' view.
 KEPT_TEXT = 4096
@@ -234,7 +235,7 @@ def _number(raw: object) -> float | None:
         value = float(raw)
     except OverflowError:
         return None
-    return value if math.isfinite(value) and abs(value) < 1e12 else None
+    return value if math.isfinite(value) and abs(value) < SCORE_LIMIT else None
 
 
 def command(reply: dict, settings: dict) -> Scored:

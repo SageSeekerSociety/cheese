@@ -133,6 +133,8 @@ def test_fractional_scores_keep_their_ratio():
         # 学生代码写得了 score.json：大到 float() 溢出的整数、JSON 里的无穷大，
         # 都只是一个读不懂的分，不能让这一轮派发出异常。
         {"score": 1, "max": 10**400},
+        # 存进 int4 的分（小数分乘 100）放不下的，也是读不懂的分。
+        {"score": 999_999_999_999, "max": 999_999_999_999},
         {"score": float("inf"), "max": float("inf")},
         {"score": 5, "max": float("nan")},
     ],
@@ -277,6 +279,7 @@ def test_scored_tests_carry_their_names():
     ("parse", "given"),
     [
         ("parse_score_json", b'{"score": 1, "max": 1' + b"0" * 400 + b"}"),
+        ("parse_score_json", b'{"score": 999999999999, "max": 999999999999}'),
         ("parse_score_line", "SCORE: 1/" + "9" * 400),
         ("parse_score_line", "SCORE: " + "9" * 400 + "/10"),
     ],
