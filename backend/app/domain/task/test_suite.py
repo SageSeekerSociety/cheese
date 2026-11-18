@@ -543,6 +543,7 @@ async def replace_suites(
     now = datetime.now(UTC)
     for stage, line in wanted.items():
         row = existing.get(stage)
+        bumped = False
         files_changed = row is None or not test_files.same_files(
             row.test_files, line.files
         )
@@ -554,7 +555,7 @@ async def replace_suites(
         elif _suite_differs(row, line) or files_changed:
             _apply(row, line)
             row.revision += 1
-            changed = True
+            bumped = changed = True
         if files_changed:
             # 每份文件一个新键：旧版测试套、已出的评测指着的字节不被覆盖。
             row.test_files = (
@@ -564,6 +565,10 @@ async def replace_suites(
         if row.id is None:
             await session.flush()
         if await _write_cases(session, row, line, now):
+            # 只改了用例也是新的一版：「同一版代码、同一版测试」复用结果靠的就是这个数，
+            # 用例变了还记同一版，旧结果就会被当成新测试的答案拿去用。
+            if existing.get(stage) is not None and not bumped:
+                row.revision += 1
             changed = True
 
     await session.flush()
