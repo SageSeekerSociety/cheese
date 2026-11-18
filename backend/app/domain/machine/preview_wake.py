@@ -251,8 +251,8 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
     async with AsyncSession(bind, expire_on_commit=False) as db:
         frozen = list(
             await db.scalars(
-                select(SandboxHome.session_id)
-                .join(AgentSession, AgentSession.id == SandboxHome.session_id)
+                select(AgentSession.id)
+                .join(SandboxHome, SandboxHome.session_id == AgentSession.id)
                 .where(
                     AgentSession.conversation_id == conversation_id,
                     SandboxHome.frozen_at.is_not(None),
