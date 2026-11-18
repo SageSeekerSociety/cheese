@@ -12,12 +12,14 @@ from app.domain.delivery.agent import (
     dispatch_pending as _dispatch_pending,
 )
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
 
 __all__ = [
     "pumping",
+    "record_seat_instruction",
     "record_task_instruction",
     "settle_card",
     "task_teammate",

@@ -1156,12 +1156,15 @@ PLATFORM_TOOLS = ToolTable(
                 ),
                 "report": _verb(
                     "在频道主线开的任务里，向开它的频道主线报告：question 是需要人回答的问题，"
-                    "blocked 是无法继续及原因。提交审阅和任务结束平台会告诉主线，不用报。",
+                    "blocked 是无法继续及原因，done 是做完了、没有要审阅的交付（调研结论、答复、"
+                    "已经摆出来的方案），写明做成了什么。任务做没做完由频道主线判断，它会关闭任务"
+                    "或告诉你下一步。提交审阅、交付被采纳和任务结束平台会告诉主线，不用报。",
                     {
                         "kind": {
                             "type": "string",
-                            "enum": ["question", "blocked"],
-                            "description": "question 要人回答；blocked 无法继续",
+                            "enum": ["question", "blocked", "done"],
+                            "description": "question 要人回答；blocked 无法继续；"
+                            "done 做完了、没有要审阅的交付",
                         },
                         "content": _text("报告内容"),
                     },
@@ -1190,16 +1193,20 @@ PLATFORM_TOOLS = ToolTable(
                     ["state"],
                 ),
                 "close": _verb(
-                    "在频道主线时，task 写这个频道里你开的那件任务，按成员的要求关闭；"
-                    "等待审阅的任务不能关闭。在任务里时，不写 task："
-                    "任务做完了，或者负责人说结束、放弃时，写明结论关闭。交付合并后任务不会自己关，"
+                    "在频道主线时，task 写这个频道里你开的那件任务：成员要求关闭，或者交付采纳后、"
+                    "任务报告做完后你判断它做完了，写明结论关闭；等待审阅的任务不能关闭。"
+                    "项目要等部署时，合并之后的关闭先等这次合并上线，上线后平台按你写的结论关闭。"
+                    "在任务里时，不写 task；频道主线开的任务不由你关闭，做完了就提交审阅，"
+                    "或用 report 报告 done。其他任务"
+                    "做完了，或者负责人说结束、放弃时，写明结论关闭。交付合并后任务不会自己关，"
                     "平台叫你对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：做完了"
                     "就更新实况文档、发一条总结，再用它关闭，结论写一句结果。"
                     "方案、原型、demo、调研摆出来后不关，报「等你看」，负责人要改或接着做就在同一个任务里做。"
                     "关闭要有依据，两样之一，否则平台拒绝：最后一次交付已合并、且步骤清单全部"
                     "勾完（不做的项用 unchecked_reason 写理由，理由写进结论）；或者负责人在任务里"
                     "说过结束，用 owner_message 带上他那条消息的 id。项目要等部署时，关闭后任务"
-                    "先等这次合并上线，上线后平台再叫你写总结关闭。" + DELIVERY_IS_DECIDED_IN_THE_UI,
+                    "先等这次合并上线，上线后平台再叫你写总结关闭。"
+                    + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "task": _TASK_REF,
                         "conclusion": _text("关闭原因或最终说明"),
@@ -1230,7 +1237,8 @@ PLATFORM_TOOLS = ToolTable(
                     "不进主干也不上产物清单，用 cheese show 摆出预览后报「等你看」、等负责人回话，"
                     "不提交进 git、不递卡，也不关任务。交合并时任务分支上要有改动了文件的提交，"
                     "空提交会被打回；交独立文件（deliver）或地址（deliver_url）且没有仓库改动时直接留快照或记指针，不开 PR。"
-                    "任务可以分几步交付，每一步做完就递；采纳合并后任务不会自己关，平台叫你"
+                    "任务可以分几步交付，每一步做完就递；采纳合并后任务不会自己关。频道主线开的任务"
+                    "由频道主线判断做没做完，它会告诉你下一步；其他任务平台叫你"
                     "对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：没完就从最新代码"
                     "接着做下一步，做完了写总结、用 cheese_task 的 close 关闭。"
                     "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
@@ -3819,9 +3827,15 @@ def _task_look(args: dict, host) -> str:
             + f"　{row['at'][:16].replace('T', ' ')}\n{row['content']}"
             for row in looked["exchange"]
         ]
-        said = _chat_page("cheese_chat.list")({"topic": looked["id"], "limit": 30}, host)
+        said = _chat_page("cheese_chat.list")(
+            {"topic": looked["id"], "limit": 30}, host
+        )
         return "\n\n".join(
-            [*(["你与这件任务之间的往来：", *told] if told else []), "任务里的对话：", said]
+            [
+                *(["你与这件任务之间的往来：", *told] if told else []),
+                "任务里的对话：",
+                said,
+            ]
         )
     if view == "commands":
         rows = host.request(
@@ -3839,28 +3853,40 @@ def _task_look(args: dict, host) -> str:
         if q:
             commands = [c for c in commands if q.lower() in c.lower()]
         if not commands:
-            return "没有执行过的命令。" if not q else f"执行过的命令中没有包含「{q}」的。"
+            return (
+                "没有执行过的命令。" if not q else f"执行过的命令中没有包含「{q}」的。"
+            )
         return "\n".join(f"- {c}" for c in commands[-80:])
     if view == "diff":
         project = host.environ.get("CHEESE_PROJECT", "")
-        diff = host.request(
-            {
-                "method": "GET",
-                "path": f"/projects/{project}/git/diff?task={looked['id']}&source=committed",
-            }
-        )["data"].get("diff") or ""
+        diff = (
+            host.request(
+                {
+                    "method": "GET",
+                    "path": f"/projects/{project}/git/diff?task={looked['id']}&source=committed",
+                }
+            )["data"].get("diff")
+            or ""
+        )
         text = diff if isinstance(diff, str) else json.dumps(diff, ensure_ascii=False)
         path = str(args.get("path") or "").strip()
         if path:
-            parts = [p for p in text.split("diff --git ") if path in p.split("\n", 1)[0]]
+            parts = [
+                p for p in text.split("diff --git ") if path in p.split("\n", 1)[0]
+            ]
             text = "".join("diff --git " + p for p in parts)
         if q:
-            text = "\n".join(line for line in text.splitlines() if q.lower() in line.lower())
+            text = "\n".join(
+                line for line in text.splitlines() if q.lower() in line.lower()
+            )
         if not text.strip():
             return "没有符合条件的改动。"
         lines = text.splitlines()
         if len(lines) > 400:
-            return "\n".join(lines[:400]) + f"\n……（共 {len(lines)} 行，用 path 或 q 缩小范围）"
+            return (
+                "\n".join(lines[:400])
+                + f"\n……（共 {len(lines)} 行，用 path 或 q 缩小范围）"
+            )
         return text
     if view == "file":
         return _task_file(looked, args, q, host)
@@ -3884,9 +3910,9 @@ def _task_file(looked: dict, args: dict, q: str, host) -> str:
     query = urllib.parse.urlencode(
         {"task": looked["id"], "path": path, "source": "committed"}
     )
-    data = host.request(
-        {"method": "GET", "path": f"/projects/{project}/file?{query}"}
-    )["data"]
+    data = host.request({"method": "GET", "path": f"/projects/{project}/file?{query}"})[
+        "data"
+    ]
     if data.get("too_large"):
         return f"{path} 太大，无法整份读出；用 view=diff 加 path 看它的改动。"
     if data.get("binary") or data.get("content") is None:
@@ -6010,17 +6036,34 @@ def _say_skills_read(args, data, env) -> str:
     )
 
 
+def _say_task_accepted(args, data, env) -> str:
+    """What the channel's main line reads after adopting a delivery: landed
+    here (with what the platform tells it next), waiting in the forge's merge
+    queue, or stopped on a conflict."""
+    d = data or {}
+    named = f"任务 #{d.get('number')}「{d.get('title')}」"
+    status = d.get("status")
+    if status == "accepted":
+        said = f"已代审阅人采纳{named}的交付。"
+        return f"{said}\n{d['next']}" if d.get("next") else said
+    if status == "pending":
+        return (
+            f"已代审阅人采纳{named}的交付，正在等合并队列合并。合并后平台会告诉你；"
+            "在那之前不要关闭任务，关闭会关掉这次交付的 PR。"
+        )
+    return f"{named}的交付合并时有冲突，没有采纳成；任务会先解决冲突，解决后要审阅人再采纳一次。"
+
+
 _SAY = {
     "cheese_task.tell": lambda a, d, e: (
         f"已转给任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」。"
     ),
-    "cheese_task.report": lambda a, d, e: "已报告给频道主线。",
-    "cheese_task.accept": lambda a, d, e: (
-        f"已代审阅人采纳任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付。"
-        if (d or {}).get("status") == "accepted"
-        else f"任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付合并时有冲突，"
-        "没有采纳成；任务会先解决冲突，解决后要审阅人再采纳一次。"
+    "cheese_task.report": lambda a, d, e: (
+        "已报告给频道主线。任务做没做完由频道主线判断，等它关闭任务或告诉你下一步。"
+        if (d or {}).get("reported") == "done"
+        else "已报告给频道主线。"
     ),
+    "cheese_task.accept": _say_task_accepted,
     "chat_send": _say_chat_send,
     "chat_react": lambda a, d, e: "已回应。",
     "cheese_chat.edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
@@ -6028,7 +6071,10 @@ _SAY = {
     "cheese_task.open": _say_task,
     "cheese_task.reopen": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
     "cheese_task.close": lambda a, d, e: (
-        f"「{(d or {}).get('title')}」做完了，最后一次合并还没上线，任务先开着等部署；"
+        f"「{(d or {}).get('title')}」最后一次合并还没上线，任务先开着等部署；"
+        "上线后平台按你写的结论关闭它，并告诉你。"
+        if (d or {}).get("deploying") and a.get("task")
+        else f"「{(d or {}).get('title')}」做完了，最后一次合并还没上线，任务先开着等部署；"
         "上线后平台会叫你更新实况文档、发总结、再关闭，现在不用写。"
         if (d or {}).get("deploying")
         else f"「{(d or {}).get('title')}」收了。"

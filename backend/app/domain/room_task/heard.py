@@ -174,6 +174,16 @@ def task_closed(*, by: str, conclusion: str | None) -> str:
     )
 
 
+def task_closed_deployed(*, conclusion: str | None) -> str:
+    """The channel's main line closed the task after its last merge, and the
+    task closed once that merge was live (`review.task_landing.deploy_landed`)."""
+    ended = f"，结论：{conclusion}" if conclusion else "，没有留结论"
+    return (
+        f"最后一次合并已经上线，平台按频道主线的决定关闭了这件任务{ended}。"
+        "之后不再改动项目、不提交审阅。"
+    )
+
+
 def task_closed_late() -> str:
     """The last step landed and the write-up was not done in time
     (`closing.close_overdue`)."""
