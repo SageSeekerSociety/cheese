@@ -55,11 +55,19 @@ class KeptWork:
 
 
 async def kept_work(
-    project_id: uuid.UUID, session: AsyncSession, task_id: uuid.UUID, branch: str
+    project_id: uuid.UUID,
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    branch: str,
+    base: str,
 ) -> KeptWork | None:
     """The task's kept snapshot, or None: nothing uncommitted was kept, or the
     project keeps nothing. A forge that cannot answer raises, as any forge
-    read does (`repository_data`)."""
+    read does (`repository_data`).
+
+    A task whose branch is not on the forge yet is checked out from its
+    ``base``, at the commit the snapshot was cut from when the base has it
+    (`_kept_start`), so that is when it is laid back."""
     if not await keeps_work(project_id, session):
         return None
     data = await repository_data(
@@ -68,9 +76,20 @@ async def kept_work(
     if not data:
         return None
     parents = [parent.get("sha") for parent in data.get("parents") or []]
+    parent = parents[0] if parents else None
     head = await branch_head(project_id, session, branch)
+    if head is not None or parent is None:
+        laid_back = parent is not None and parent == head
+    else:
+        compared = await repository_data(
+            project_id,
+            session,
+            f"/compare/{quote(base, safe='')}...{parent}",
+        )
+        ahead = (compared or {}).get("total_commits", (compared or {}).get("ahead_by"))
+        laid_back = ahead == 0
     return KeptWork(
         commit=data["sha"],
         kept_at=datetime.fromisoformat(data["commit"]["committer"]["date"]),
-        laid_back=bool(parents) and parents[0] == head,
+        laid_back=laid_back,
     )

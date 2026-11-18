@@ -62,16 +62,17 @@ def started(tmp_path, monkeypatch, platform):
     return worktree
 
 
-def move_branch(tmp_path, platform) -> None:
-    """Someone else pushes a commit to the task's branch."""
-    elsewhere = tmp_path / "elsewhere"
+def move_branch(tmp_path, platform, branch: str | None = None) -> None:
+    """Someone else pushes a commit to the task's branch (or to ``branch``)."""
+    branch = branch or platform.branch
+    elsewhere = tmp_path / f"elsewhere-{branch.replace('/', '-')}"
     subprocess.run(
         [
             "git",
             "clone",
             "-q",
             "-b",
-            platform.branch,
+            branch,
             str(platform.forge),
             str(elsewhere),
         ],
@@ -81,7 +82,7 @@ def move_branch(tmp_path, platform) -> None:
     git(elsewhere, "config", "user.email", "someone@users.invalid")
     (elsewhere / "notes.txt").write_text("moved on\n")
     git(elsewhere, "commit", "-qam", "Moved on")
-    git(elsewhere, "push", "-q", "origin", platform.branch)
+    git(elsewhere, "push", "-q", "origin", branch)
 
 
 def test_uncommitted_changes_come_back_in_a_new_sandbox_without_a_commit(
@@ -134,7 +135,7 @@ def test_changes_are_not_laid_over_a_branch_that_moved_since(
 
     assert status(again) == []
     assert (again / "notes.txt").read_text() == "moved on\n"
-    assert "任务分支有了新提交" in capsys.readouterr().err
+    assert "没提交的改动没有放回" in capsys.readouterr().err
     # Still on the forge, for whoever redoes them.
     assert kept_refs(platform)
 
@@ -148,6 +149,13 @@ def forge_reads(monkeypatch, platform):
         return SimpleNamespace(kind=platform.forge_kind)
 
     async def repository_data(project_id, session, path="", **_):
+        if path.startswith("/compare/"):
+            base, _, sha = unquote(path.removeprefix("/compare/")).partition("...")
+            behind = subprocess.run(
+                ["git", "-C", str(platform.forge), "merge-base", "--is-ancestor"]
+                + [sha, f"refs/heads/{base}"],
+            ).returncode
+            return {"total_commits": behind}
         ref = unquote(path.removeprefix("/git/commits/"))
         try:
             sha = git(platform.forge, "rev-parse", "--verify", "-q", ref)
@@ -177,6 +185,7 @@ async def what_a_person_reads(monkeypatch, platform) -> str:
         id=uuid.UUID(platform.task_id),
         room_id=uuid.uuid4(),
         branch_name=platform.branch,
+        base_branch="main",
     )
     room = SimpleNamespace(id=task.room_id, resource_id=None)
     files = forge_files.ProjectFiles(
@@ -198,7 +207,8 @@ async def what_a_person_reads(monkeypatch, platform) -> str:
 
 async def what_the_teammate_reads(platform) -> str:
     """What the task's teammate is told on its first call in a new sandbox."""
-    db = SimpleNamespace(scalar=AsyncMock(return_value=platform.branch))
+    row = SimpleNamespace(first=lambda: (platform.branch, "main"))
+    db = SimpleNamespace(execute=AsyncMock(return_value=row))
     return await session_work._lost_notice(
         db, uuid.UUID(platform.project), uuid.UUID(platform.task_id)
     )
@@ -232,3 +242,19 @@ async def test_people_and_the_teammate_hear_when_the_branch_moved(
     told = await what_the_teammate_reads(platform)
     assert "不会放回" in told
     assert kept[:12] in told
+
+
+@pytest.mark.anyio
+async def test_a_task_with_no_commit_of_its_own_gets_its_changes_back_after_the_base_moved(
+    tmp_path, monkeypatch, platform, forge_reads
+):
+    worktree = sandbox(tmp_path, monkeypatch, platform, "first")
+    (worktree / "report.txt").write_text("first edit, nothing pushed\n")
+    load_cli(platform)._sync_all_tasks()
+    move_branch(tmp_path, platform, "main")
+
+    assert "会放回" in await what_a_person_reads(monkeypatch, platform)
+    assert "不会放回" not in await what_the_teammate_reads(platform)
+    again = sandbox(tmp_path, monkeypatch, platform, "second")
+    assert status(again) == [" M report.txt"]
+    assert (again / "report.txt").read_text() == "first edit, nothing pushed\n"

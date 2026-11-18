@@ -50,9 +50,10 @@ SANDBOX_LOST_KEPT = (
 # Said after it when the kept changes were cut from a head the task's branch
 # has moved past: a new checkout leaves them out rather than guess a merge.
 KEPT_NOT_LAID_BACK = (
-    "{at} 保存的没提交的改动不会放回：保存之后任务分支有了新提交，平台没有替你"
-    "合并。它们在 {ref}（提交 {commit}），打开任务目录后用 git diff HEAD "
-    "{commit} 查看，需要的对照着重做。"
+    "{at} 保存的没提交的改动不会放回：保存时所在的提交已不是任务分支的最新提交"
+    "（之后分支有了新提交，或那个提交没推上去），平台没有替你合并。它们在 {ref}"
+    "（提交 {commit}），打开任务目录后用 git diff HEAD {commit} 查看，需要的对照"
+    "着重做。"
 )
 # The same, for a sandbox in no project (``holder.Personal``): nothing of it
 # was checkpointed, so nothing comes back.

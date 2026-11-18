@@ -7414,6 +7414,11 @@ def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
     create = [] if existing else ["-b", data["branch"]]
     remote_start = data["branch"] if exists_on_forge else data["base"]
     start = data["branch"] if existing else f"refs/remotes/origin/{remote_start}"
+    if not existing and not exists_on_forge:
+        # A task with nothing pushed yet starts from its base; one whose
+        # sandbox kept uncommitted work starts where that work was cut, as long
+        # as that is still the base's history, so it can be laid back.
+        start = _kept_start(repo, data) or start
     _git_task(repo, "worktree", "prune")
     _git_task(repo, "worktree", "add", *create, str(task_dir), start)
     _lay_back_kept(task_dir, data)
@@ -8033,7 +8038,15 @@ def _keep_working_copy(worktree: Path) -> None:
     marker = _task_marker(worktree)
     if marker is None or not _keeps_work(marker):
         return
-    ref = _kept_ref(marker["task_id"])
+    admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+    with (admin / "cheese-keep.lock").open("a") as lock:
+        # A commit's hook, a turn's checkpoint and a save can all ask at once;
+        # one snapshot at a time keeps the local ref the forge's.
+        _lock(lock)
+        _keep_locked(worktree, _kept_ref(marker["task_id"]))
+
+
+def _keep_locked(worktree: Path, ref: str) -> None:
     try:
         last = _git_task(worktree, "rev-parse", "--verify", "-q", ref)
     except RuntimeError:
@@ -8082,6 +8095,24 @@ def _keep_quietly(worktree: Path) -> None:
         )
 
 
+def _kept_start(repo: Path, data: dict) -> str | None:
+    """Where a new checkout of a task with no branch on the forge starts so
+    its kept snapshot can be laid back: the commit that snapshot was cut from,
+    when the base branch has it. None when there is nothing kept, or it was
+    cut from a commit the base does not have (one that was never pushed)."""
+    if not _keeps_work(data):
+        return None
+    try:
+        parent = _git_task(
+            repo, "rev-parse", "--verify", "-q", f"{_kept_copy(data['task_id'])}^"
+        )
+    except RuntimeError:
+        return None
+    if _is_ancestor(repo, parent, f"refs/remotes/origin/{data['base']}"):
+        return parent
+    return None
+
+
 def _lay_back_kept(task_dir: Path, data: dict) -> None:
     """Lay a new checkout's kept snapshot back over it (`_keep_working_copy`):
     its files come back as uncommitted changes, the index stays at HEAD, and
@@ -8106,7 +8137,8 @@ def _lay_back_kept(task_dir: Path, data: dict) -> None:
         parent = _git_task(task_dir, "rev-parse", f"{kept}^")
         if parent != head:
             print(
-                f"[cheese] 没提交的改动没有放回：保存它们之后，任务分支有了新提交。"
+                "[cheese] 没提交的改动没有放回：保存它们时所在的提交不是现在任务"
+                "分支的最新提交（之后分支有了新提交，或那个提交没推上去）。"
                 f"它们在 {_kept_ref(data['task_id'])}（{kept[:12]}），"
                 f"用 git diff HEAD {kept[:12]} 查看。",
                 file=sys.stderr,

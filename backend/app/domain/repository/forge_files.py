@@ -263,7 +263,11 @@ class ProjectFiles:
         try:
             kept = (
                 await kept_work(
-                    self.project_id, self.session, task.id, task.branch_name
+                    self.project_id,
+                    self.session,
+                    task.id,
+                    task.branch_name,
+                    task.base_branch,
                 )
                 if task.branch_name
                 else None

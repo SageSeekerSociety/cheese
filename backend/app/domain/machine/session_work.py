@@ -1674,11 +1674,17 @@ async def _lost_notice(db, project_id: uuid.UUID, conversation_id: uuid.UUID) ->
     try:
         if not await keeps_work(project_id, db):
             return SANDBOX_LOST
-        branch = await db.scalar(
-            select(Task.branch_name).where(Task.id == conversation_id)
-        )
+        task = (
+            await db.execute(
+                select(Task.branch_name, Task.base_branch).where(
+                    Task.id == conversation_id
+                )
+            )
+        ).first()
         kept = (
-            await kept_work(project_id, db, conversation_id, branch) if branch else None
+            await kept_work(project_id, db, conversation_id, task[0], task[1])
+            if task is not None and task[0]
+            else None
         )
     except Exception:  # the notice goes out without what it could not read
         logger.warning(
