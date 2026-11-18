@@ -1,0 +1,20 @@
+{
+  "color": "Colour",
+  "colorN": "Colour {n}",
+  "default": "Default",
+  "emojiInvalid": "Use a single emoji",
+  "kinds": {
+    "emoji": "Emoji",
+    "icon": "Icon",
+    "image": "Image",
+    "text": "Text"
+  },
+  "remove": "Remove image",
+  "replace": "Replace image",
+  "save": "Save",
+  "saveFailed": "Could not save",
+  "textInvalid": "Up to 2 CJK characters or 4 letters and digits",
+  "title": "Project avatar",
+  "upload": "Upload image",
+  "uploadFailed": "Could not upload"
+}

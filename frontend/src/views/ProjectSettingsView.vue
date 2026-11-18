@@ -8,6 +8,7 @@ import { useBranchProtection } from '@/composables/useBranchProtection'
 import { signInWithGithub } from '@/composables/useGithubSignIn'
 import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectArchive } from '@/composables/useProjectArchive'
+import { useProjectAvatar } from '@/composables/useProjectAvatar'
 import { useProjectComputeSettings } from '@/composables/useProjectComputeSettings'
 import { useProjectCreditBudget } from '@/composables/useProjectCreditBudget'
 import { useProjectDefaultModelSettings } from '@/composables/useProjectDefaultModelSettings'
@@ -23,8 +24,8 @@ import { handOverChannel, listChannels, stepIntoChannel } from '@/api/channels'
 import { diagnoseRoomEnvironment } from '@/api/environment'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
 import DeviceSessionsSwitch from '@/components/DeviceSessionsSwitch.vue'
 import McpServerDialog from '@/components/McpServerDialog.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
@@ -41,6 +42,7 @@ import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubMigrateSettings from '@/components/settings/GithubMigrateSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
+import ProjectAvatarSection from '@/components/settings/ProjectAvatarSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
@@ -156,6 +158,8 @@ const { archiving, archiveError, archiveProject } = useProjectArchive(
 )
 
 const address = useProjectAddress(() => props.projectId)
+const avatar = useProjectAvatar(() => props.projectId)
+const projectAvatar = computed(() => projectRead.data.value?.avatar ?? project.value?.avatar ?? null)
 // 「角色和权限」：一张角色清单，点开一个角色是它自己那一页（地址上的 `?role=`），页上
 // 拨它的权限，⋯ 里改名、删除，内置角色改过权限的可以恢复默认（#4795）。
 const roleKey = computed(() => {
@@ -357,7 +361,7 @@ function close() {
 
     <template #head>
       <div class="whose">
-        <UserAvatar :name="projectName" size="32" kind="org" />
+        <ProjectAvatar :id="projectId" :name="projectName" :avatar="projectAvatar" :size="32" />
         <div class="whose__text">
           <span class="whose__name">{{ projectName }}</span>
           <span class="whose__sub">{{ t('work.projectSettings.title') }}</span>
@@ -614,14 +618,24 @@ function close() {
           />
         </template>
 
-        <ProjectAddressSection
-          v-else-if="section === 'address'"
-          :slug="address.slug.value"
-          :prefix="address.prefix"
-          :saving="address.saving.value"
-          :error="address.error.value"
-          @save="address.save"
-        />
+        <template v-else-if="section === 'address'">
+          <ProjectAvatarSection
+            :project-id="projectId"
+            :name="projectName"
+            :avatar="projectAvatar"
+            :saving="avatar.saving.value"
+            :error="avatar.error.value"
+            @save="avatar.save"
+            @upload="avatar.upload"
+          />
+          <ProjectAddressSection
+            :slug="address.slug.value"
+            :prefix="address.prefix"
+            :saving="address.saving.value"
+            :error="address.error.value"
+            @save="address.save"
+          />
+        </template>
 
         <ProjectMcpSettings
           v-else-if="section === 'mcp'"

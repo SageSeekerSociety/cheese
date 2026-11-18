@@ -1,4 +1,5 @@
 import type { ListPayload, Project, ProjectSite, ProjectSiteInfo, WaitingItem } from '../cx_types'
+import type { ProjectAvatarSpec } from '../utils/projectAvatar'
 
 import { ApiError, request } from './http'
 
@@ -77,6 +78,14 @@ export function listProjectsForTask(taskId: number): Promise<ListPayload<Project
 // Single project card.
 export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
+}
+
+/** 换项目格子画的东西（项目设置里能改设置的人才行）。kind 为 null 回到从项目名取字的默认格子。 */
+export function setProjectAvatar(projectId: string, avatar: ProjectAvatarSpec): Promise<ProjectAvatarSpec> {
+  return request<ProjectAvatarSpec>(`/projects/${encodeURIComponent(projectId)}/avatar`, {
+    method: 'PUT',
+    body: JSON.stringify(avatar),
+  })
 }
 
 /** 归档项目：只有所有者能做。项目从所有人的列表里消失、不能再修改，里面的内容都保留。 */

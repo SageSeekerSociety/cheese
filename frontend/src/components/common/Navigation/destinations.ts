@@ -157,6 +157,7 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
           type: 'item' as const,
           title: p.name,
           projectId: p.id,
+          avatar: p.avatar ?? null,
           // 上次待的地方还在，就直接落回它——每天的主路径是「回到昨天那个房间」，
           // 先落到项目首页等于多加一跳。不在了（或没记过）才落到项目首页。
           to: lastPlace ? placeHref(ref, lastPlace) : `/projects/${ref}`,

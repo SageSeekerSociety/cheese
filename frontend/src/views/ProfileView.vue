@@ -25,6 +25,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
@@ -426,17 +427,7 @@ const carriedSkills = computed<string[]>(() => {
                 class="profile__row profile__row--project"
                 :to="{ name: 'workspace-project', params: { projectId: p.project_id } }"
               >
-                <!-- 项目格子走 UserAvatar（kind="org" = 圆角方块，§3.14）：没挑过头像就退成项目名
-                     首字母的底色方块。和左侧人像同一个组件、同一套退化，不再这里自己
-                     截首字、自己上色。种子用 project_id —— 颜色跟着项目走，改名不换色。 -->
-                <UserAvatar
-                  :avatar="''"
-                  :name="p.name"
-                  :seed="p.project_id"
-                  kind="org"
-                  :size="32"
-                  class="profile__tile"
-                />
+                <ProjectAvatar :id="p.project_id" :name="p.name" :avatar="p.avatar" :size="32" class="profile__tile" />
                 <span class="profile__row-text">
                   <span class="profile__row-title">
                     <span class="profile__project-name" data-user-content>{{ p.name }}</span>

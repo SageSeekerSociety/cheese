@@ -142,8 +142,12 @@ function hexAt(chroma: number, hueDeg: number): string {
 
 const hueCache = new Map<number, string>()
 
-/** `#rrggbb` for a hue, at the fixed avatar lightness. Memoized per hue. */
-function backgroundForHue(hueDeg: number): string {
+/**
+ * `#rrggbb` for a hue, at the fixed avatar lightness. Memoized per hue. Exported
+ * for the colour a project picked for its tile (`projectAvatar.ts`): the same
+ * wheel, so a picked colour reads like a derived one.
+ */
+export function backgroundForHue(hueDeg: number): string {
   const cached = hueCache.get(hueDeg)
   if (cached !== undefined) return cached
   const hex = hexAt(fitChroma(AVATAR_L, AVATAR_C, hueDeg), hueDeg)

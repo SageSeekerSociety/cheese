@@ -80,6 +80,10 @@ dependencies = [
     # 格式；PDF 用已有的 pymupdf。仓库里此前没有能写 xlsx / docx 的库。
     "openpyxl==3.1.5",
     "python-docx==1.2.0",
+    # A project avatar's emoji is one grapheme cluster (`\X`) holding a
+    # pictograph; the standard library's `re` knows neither. It reached the
+    # image only through another package's dependency tree before.
+    "regex==2026.9.29",
 ]
 
 [dependency-groups]

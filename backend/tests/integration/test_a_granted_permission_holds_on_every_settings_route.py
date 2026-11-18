@@ -1,6 +1,6 @@
 """A permission a project grants a role holds on every route that asks for it:
 a mentor whose role was granted 「编辑设置」 changes the project's settings —
-its address and which tiers may run as well as its default model — and a mentor
+its address, which tiers may run, its default model and its avatar — and a mentor
 without it changes none of them."""
 
 from tests.integration.conftest import new_project, session_auth_headers
@@ -37,6 +37,11 @@ def _settings_changed_by(client, pid: str, handle: str) -> list[int]:
         client.put(
             f"/projects/{pid}/default-model", json={"model": None}, headers=as_them
         ).status_code,
+        client.put(
+            f"/projects/{pid}/avatar",
+            json={"kind": "emoji", "glyph": "🚀"},
+            headers=as_them,
+        ).status_code,
     ]
 
 
@@ -45,7 +50,7 @@ def test_a_mentor_granted_edit_settings_changes_every_setting(client):
     _invite(client, pid, "teacher", "mentor")
     _grant_mentors(client, pid, edit_settings=True)
 
-    assert _settings_changed_by(client, pid, "teacher") == [200, 200, 200]
+    assert _settings_changed_by(client, pid, "teacher") == [200, 200, 200, 200]
 
 
 def test_a_mentor_without_it_changes_none(client):
@@ -53,4 +58,4 @@ def test_a_mentor_without_it_changes_none(client):
     _invite(client, pid, "teacher", "mentor")
     _grant_mentors(client, pid, edit_settings=False)
 
-    assert _settings_changed_by(client, pid, "teacher") == [403, 403, 403]
+    assert _settings_changed_by(client, pid, "teacher") == [403, 403, 403, 403]

@@ -33,7 +33,7 @@ import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import { useAppNav } from './common/Navigation/appNav'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
-import UserAvatar from './common/UserAvatar.vue'
+import ProjectAvatar from './common/ProjectAvatar.vue'
 import VirtualList from './common/VirtualList.vue'
 import TopicRailBrowseRow from './topic-sidebar/TopicRailBrowseRow.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
@@ -564,10 +564,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :aria-current="p.id === selectedProjectId ? 'true' : undefined"
             @click="switchProjectFromSheet(p.id)"
           >
-            <!-- 项目头像走 UserAvatar（kind="org" = 圆角方块，§3.14）：和左栏人像同一个组件、同一套
-                 「没图就退成底色首字母」的规矩，不再这里自己截首字、自己上色。种子用
-                 项目 id —— 颜色跟着项目走，改名不换色（契约 §3.14）。 -->
-            <UserAvatar kind="org" :name="p.name" :seed="p.id" :size="20" class="project-switch__avatar" />
+            <ProjectAvatar :id="p.id" :name="p.name" :avatar="p.avatar" :size="20" class="project-switch__avatar" />
             <span class="project-switch__name">{{ p.name }}</span>
             <v-icon v-if="p.id === selectedProjectId" size="18" class="project-switch__check" icon="mdi-check" />
           </button>

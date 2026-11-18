@@ -19,7 +19,7 @@
       'app-rail-item-cheese': item.icon === 'cheese',
       'app-rail-item--tile': !!item.projectId,
       'app-rail-item--add': item.add,
-      'app-rail-item--icon': item.icon && item.icon !== 'cheese' && !item.add && !item.img,
+      'app-rail-item--icon': item.icon && item.icon !== 'cheese' && !item.add,
       'app-rail-item--dragging': dragging,
       'app-rail-item--drop-before': dropEdge === 'before',
       'app-rail-item--drop-after': dropEdge === 'after',
@@ -55,11 +55,9 @@
     </v-tooltip>
 
     <template v-if="item.projectId">
-      <!-- project tile: the project's own avatar (rounded square, Discord-style).
-           交给 UserAvatar 画：挑过头像就上图，没挑过（img 是空串）就退成项目名
-           首字母的底色方块。别再这里自己烘一张 SVG data URI —— 那是第二处
-           「自己画头像」的地方，颜色还会跟着名字而不是项目走。 -->
-      <UserAvatar :avatar="item.img ?? ''" :name="item.title" :seed="item.projectId" kind="org" :size="48" />
+      <!-- project tile: the project's own avatar (rounded square, Discord-style), drawn by
+           ProjectAvatar like every other project tile. -->
+      <ProjectAvatar :id="item.projectId" :name="item.title" :avatar="item.avatar" :size="48" />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="26" height="26" class="cheese-icon" />
@@ -94,7 +92,7 @@ import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'

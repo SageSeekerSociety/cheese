@@ -21,9 +21,6 @@
     >
       <span class="bottom-tabs__icon">
         <v-icon v-if="item.icon">{{ item.icon }}</v-icon>
-        <v-avatar v-else-if="item.img" size="24">
-          <v-img :src="item.img"></v-img>
-        </v-avatar>
         <!-- 件数角标：和桌面 rail 那一格同一颗（RailItem 的 .app-rail-item__badge）。
              画给眼睛的，读屏从上面的 aria-label 里听到件数。 -->
         <span v-if="item.badge" class="bottom-tabs__badge" aria-hidden="true">{{
