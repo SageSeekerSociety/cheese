@@ -275,6 +275,7 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   handIn: accept.handIn,
   // 布局区那一份在下面才建（它要读打开的交付）；页头渲染时早已有了。
   resetLayout: () => (room.panels.rearranged.value ? room.panels.reset : null),
+  panelControls: () => room.panelControls.value,
 })
 // ---- 在频道里审阅的那件交付、右栏开着哪一格（见 topicView/delivery.ts）----
 const reviewReload = ref(0)

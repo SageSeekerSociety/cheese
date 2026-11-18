@@ -256,6 +256,8 @@ function applyPolicies() {
   // The page hid the panels of the maximized cell: the maximize ends with them.
   const big = dock.groups.find((group) => group.api.isMaximized())
   if (big && infosOf(big).length && infosOf(big).every((panel) => panel.hidden)) dock.exitMaximizedGroup()
+  /** A cell appeared, disappeared or changed its limits: the room the others had changed. */
+  let reshaped = false
   for (const group of dock.groups) {
     const id = group.id
     const panels = infosOf(group)
@@ -284,6 +286,7 @@ function applyPolicies() {
     if (constrained.get(id) !== key) {
       constrained.set(id, key)
       group.api.setConstraints(constraints)
+      reshaped = true
     }
     if (fitHeight !== undefined && fitted.get(id) !== fitHeight) {
       fitted.set(id, fitHeight)
@@ -295,6 +298,7 @@ function applyPolicies() {
       group.api.setVisible(!hidden)
       // Shown again at the size it had when hidden: its own width may have changed since.
       held.delete(id)
+      reshaped = true
     }
     // A width of its own changed elsewhere (another place showing the same panel): follow
     // it, once per new value, never in the middle of a drag.
@@ -313,6 +317,19 @@ function applyPolicies() {
       expanded.delete(id)
       if (size) group.api.setSize(column ? { height: size } : { width: size })
     }
+  }
+  // Neighbours whose minimum did not fit squeezed a cell below its own width (the sidebar
+  // while the page still showed more cells than the window holds). With the room back, it
+  // returns to the width the reader gave it.
+  if (reshaped && !dragging) restoreHeldWidths(dock)
+}
+
+function restoreHeldWidths(dock: DockviewApi) {
+  for (const group of dock.groups) {
+    const fixed = infosOf(group).find((panel) => panel.width)
+    if (!fixed || !group.api.isVisible || parentDirection(model.value, group.id) === 'column') continue
+    const wanted = props.fixedWidths[fixed.id]
+    if (wanted !== undefined && Math.abs(group.api.width - wanted) > 1) group.api.setSize({ width: wanted })
   }
 }
 

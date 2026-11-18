@@ -11,6 +11,11 @@ export interface WorkLayout {
   show: (key: string) => void
 }
 
+/** 工作面板一格内容的元素 id：页头「概览」那颗开关用它说自己管着哪几块。 */
+export function workPaneId(key: string): string {
+  return `work-pane-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`
+}
+
 /** 一格页签上要画的：名字、图标、有没有东西、信号。面板算好，页面交给布局区。 */
 export interface WorkTabMeta {
   key: string

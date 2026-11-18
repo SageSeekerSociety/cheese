@@ -16,6 +16,7 @@ import type { PagePanel, PagePanels, PagePanelsHandle } from '@/layouts/pagePane
 import { computed, ref, watch } from 'vue'
 
 import { useCommands } from '@/commands'
+import { workPaneId } from '@/components/work/workLayout'
 import { t } from '@/i18n'
 
 /** 对话那一块。 */
@@ -59,6 +60,8 @@ export function useRoomLayout(
   conversationInSight: ComputedRef<boolean>
   /** 对话看不见的这段时间里来了新回复。 */
   noteChatNews: () => void
+  /** 页头「概览」开合的那几块的 id：交给外壳时是工作面板在屏幕上的那几格，否则是整块面板。 */
+  panelControls: ComputedRef<string>
 } {
   const chatNews: Ref<boolean> = ref(false)
 
@@ -123,6 +126,16 @@ export function useRoomLayout(
       ? { outlet: (key) => panels.outlet(key), visible: panels.visible.value, show: (key) => panels.show(key) }
       : null
   )
+  // 收着时说的是上一次在屏幕上的那几格（再打开回到的就是它们）；从没打开过时是第一格。
+  let lastInSight: string[] = []
+  const panelControls = computed(() => {
+    if (!workLayout.value) return 'topic-panel'
+    const keys = opts.tabs().map((tab) => tab.key)
+    const inSight = keys.filter((key) => panels.visible.value.has(key))
+    if (inSight.length) lastInSight = inSight
+    const named = inSight.length ? inSight : lastInSight.filter((key) => keys.includes(key))
+    return (named.length ? named : keys.slice(0, 1)).map(workPaneId).join(' ')
+  })
   const conversationInSight = computed(() => !panels.active.value || panels.visible.value.has(CONVERSATION))
   watch(conversationInSight, (inSight) => {
     if (inSight) chatNews.value = false
@@ -153,6 +166,7 @@ export function useRoomLayout(
     panels,
     workLayout,
     conversationInSight,
+    panelControls,
     noteChatNews: () => {
       if (!conversationInSight.value) chatNews.value = true
     },
