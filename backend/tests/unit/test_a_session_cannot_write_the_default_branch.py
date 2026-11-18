@@ -76,6 +76,9 @@ def forge(tmp_path):
     bare.mkdir(parents=True)
     _git("init", "-q", "--bare", "-b", DEFAULT, str(bare), cwd=tmp_path)
     _git("config", "http.receivepack", "true", cwd=bare)
+    _git("config", "receive.advertisePushOptions", "true", cwd=bare)
+    _git("config", "receive.advertiseAtomic", "true", cwd=bare)
+    _git("config", "uploadpack.allowFilter", "true", cwd=bare)
     seed = tmp_path / "seed"
     _git("init", "-q", "-b", DEFAULT, str(seed), cwd=tmp_path)
     (seed / "README").write_text("widgets\n")
@@ -115,6 +118,8 @@ def forge(tmp_path):
                 "CONTENT_TYPE": self.headers.get("Content-Type", ""),
                 "CONTENT_LENGTH": str(len(body)),
                 "HTTP_CONTENT_ENCODING": self.headers.get("Content-Encoding", ""),
+                # Fetches speak protocol v2, as modern git asks for.
+                "GIT_PROTOCOL": self.headers.get("Git-Protocol", ""),
                 "REMOTE_USER": "teammate",
             }
             out = subprocess.run(
@@ -299,6 +304,183 @@ def test_its_own_task_branch_and_kept_work_still_land(forge, checkout):
     deleted = _git("push", "origin", f":{TASK_BRANCH}", cwd=checkout)
     assert deleted.returncode == 0, deleted.stderr
     assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == ""
+
+
+# A push the proxy cannot read is refused (it might write the default branch),
+# so every way git itself sends a push to a task branch has to be read. Each
+# case below also checks, in git's own trace, that git sent it the way named.
+
+
+def _traced(*args: str, cwd: Path) -> subprocess.CompletedProcess:
+    """`git` with its HTTP headers traced to stderr."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        env={
+            **os.environ,
+            **_GIT_ENV,
+            "GIT_TRACE_CURL": "1",
+            "GIT_TRACE_CURL_NO_DATA": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def _sent_header(push: subprocess.CompletedProcess, header: str) -> bool:
+    return any(
+        "Send header" in line and header.lower() in line.lower()
+        for line in push.stderr.splitlines()
+    )
+
+
+def _commit_random(checkout: Path, megabytes: int) -> str:
+    (checkout / "blob.bin").write_bytes(os.urandom(megabytes * 1024 * 1024))
+    _git("add", "blob.bin", cwd=checkout)
+    _git("commit", "-q", "-m", "large", cwd=checkout)
+    return _git("rev-parse", "HEAD", cwd=checkout).stdout.strip()
+
+
+def test_a_large_push_sent_in_chunks_lands(forge, checkout):
+    """Larger than `http.postBuffer`: git first sends a 4-byte probe, then
+    the push with `Transfer-Encoding: chunked`."""
+    _port, bare, _api = forge
+    head = _commit_random(checkout, 3)
+
+    push = _traced("push", "origin", f"HEAD:refs/heads/{TASK_BRANCH}", cwd=checkout)
+
+    assert push.returncode == 0, push.stderr[-2000:]
+    assert _sent_header(push, "Transfer-Encoding: chunked")
+    assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == head
+
+
+def test_a_large_push_sent_in_one_body_lands(forge, checkout):
+    _port, bare, _api = forge
+    head = _commit_random(checkout, 3)
+
+    push = _traced(
+        "-c",
+        "http.postBuffer=104857600",
+        "push",
+        "origin",
+        f"HEAD:refs/heads/{TASK_BRANCH}",
+        cwd=checkout,
+    )
+
+    assert push.returncode == 0, push.stderr[-2000:]
+    assert not _sent_header(push, "Transfer-Encoding: chunked")
+    assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == head
+
+
+def test_a_push_of_many_branches_at_once_lands(forge, checkout):
+    """300 task branches in one push: a long command list. (git compresses
+    only fetch requests, not pushes; a gzip-encoded push, from another client,
+    is read in `test_forge_proxy_keeps_waiting_deliveries_open.py`.)"""
+    _port, bare, _api = forge
+    head = _git("rev-parse", "HEAD", cwd=checkout).stdout.strip()
+    names = [f"{TASK_BRANCH}-{n}" for n in range(300)]
+    refs = "".join(f"create refs/heads/{name} {head}\n" for name in names)
+    subprocess.run(
+        ["git", "update-ref", "--stdin"],
+        cwd=checkout,
+        input=refs,
+        text=True,
+        check=True,
+        env={**os.environ, **_GIT_ENV},
+    )
+
+    push = _traced(
+        "push",
+        "origin",
+        f"refs/heads/{TASK_BRANCH}-*:refs/heads/{TASK_BRANCH}-*",
+        cwd=checkout,
+    )
+
+    assert push.returncode == 0, push.stderr[-2000:]
+    assert all(_tip(bare, f"refs/heads/{name}") == head for name in names)
+
+
+def test_a_push_with_push_options_lands(forge, checkout):
+    _port, bare, _api = forge
+    head = _git("rev-parse", "HEAD", cwd=checkout).stdout.strip()
+
+    push = _git(
+        "push",
+        "-o",
+        "ci.skip",
+        "-o",
+        "note=x",
+        "origin",
+        f"HEAD:refs/heads/{TASK_BRANCH}",
+        cwd=checkout,
+    )
+
+    assert push.returncode == 0, push.stderr
+    assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == head
+
+
+def test_an_atomic_push_lands(forge, checkout):
+    _port, bare, _api = forge
+    head = _git("rev-parse", "HEAD", cwd=checkout).stdout.strip()
+
+    push = _git(
+        "push",
+        "--atomic",
+        "origin",
+        f"HEAD:refs/heads/{TASK_BRANCH}",
+        f"+HEAD:{KEPT_REF}",
+        cwd=checkout,
+    )
+
+    assert push.returncode == 0, push.stderr
+    assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == head
+    assert _tip(bare, KEPT_REF) == head
+
+
+def test_a_push_carrying_no_new_objects_lands(forge, checkout):
+    """A new branch at a commit the forge already has sends an empty pack;
+    a delete sends none."""
+    _port, bare, _api = forge
+    tip = _tip(bare, DEFAULT)
+
+    created = _git("push", "origin", f"{tip}:refs/heads/{TASK_BRANCH}", cwd=checkout)
+    assert created.returncode == 0, created.stderr
+    assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == tip
+
+    deleted = _git("push", "origin", f":refs/heads/{TASK_BRANCH}", cwd=checkout)
+    assert deleted.returncode == 0, deleted.stderr
+    assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == ""
+
+
+def test_a_push_from_a_shallow_clone_lands(tmp_path, forge, proxy):
+    """Cloned with `--depth 1` over protocol v2; the push names the shallow
+    boundary before its commands."""
+    _port, bare, _api = forge
+    work = tmp_path / "shallow"
+    cloned = _traced(
+        "-c",
+        "protocol.version=2",
+        "clone",
+        "-q",
+        "--depth",
+        "1",
+        f"http://127.0.0.1:{proxy}/acme/widgets.git",
+        str(work),
+        cwd=tmp_path,
+    )
+    assert cloned.returncode == 0, cloned.stderr[-2000:]
+    assert _sent_header(cloned, "Git-Protocol: version=2")
+    assert (work / ".git" / "shallow").exists()
+    (work / "more.txt").write_text("more\n")
+    _git("add", "more.txt", cwd=work)
+    _git("commit", "-q", "-m", "more", cwd=work)
+    head = _git("rev-parse", "HEAD", cwd=work).stdout.strip()
+
+    push = _git("push", "origin", f"HEAD:refs/heads/{TASK_BRANCH}", cwd=work)
+
+    assert push.returncode == 0, push.stderr
+    assert _tip(bare, f"refs/heads/{TASK_BRANCH}") == head
 
 
 def _send(port: int, method: str, path: str, body: bytes) -> tuple[int, str]:
