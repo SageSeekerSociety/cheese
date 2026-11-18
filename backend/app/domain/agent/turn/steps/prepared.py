@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.session_host.contract import ColdCompaction, Image
+from app.domain.agent.session_host.contract import ColdCompaction, Image, PrivateText
 from app.domain.delivery.input_identity import InputRegistrar
 from app.domain.memory.scopes import MemoryScope
 
@@ -34,6 +34,8 @@ class SessionSender(Protocol):
         session_opening: str = "",
         opening_changes: str = "",
         cold: ColdCompaction | None = None,
+        private: tuple[PrivateText, ...] = (),
+        on_private: Callable[[], None] | None = None,
     ) -> bool: ...
 
 
@@ -71,3 +73,9 @@ class PreparedSend:
     # Compact a conversation gone cold before this turn's input
     # (`Profile.compacts_when_cold`, the model's cache lifetime); None: never.
     cold: ColdCompaction | None = None
+    # Members' `communication` notes for this turn, each readable only by its
+    # owner in the session's records (`PrivateText`), and what the
+    # conversation holds of them once they are given: ``talk/<handle>`` →
+    # digest, kept with what it was told (`remember_opening`).
+    private: tuple[PrivateText, ...] = ()
+    talk_told: tuple[tuple[str, str], ...] = ()

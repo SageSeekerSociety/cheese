@@ -17,8 +17,9 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.domain.agent.announce import announce
 from app.domain.agent_instance.adapters import task_teammate
-from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.agent import record_seat_instruction, record_task_instruction
 from app.domain.review import deploy_wait
 from tests.integration.conftest import session_auth_headers, task_agent_headers
 from tests.integration.test_a_task_delivers_in_steps import (
@@ -76,6 +77,8 @@ def _ship(client, commits: list[dict]) -> list[uuid.UUID]:
             sha="d00d",
             record_instruction=record_task_instruction,
             task_teammate=task_teammate,
+            announce=announce,
+            record_seat=record_seat_instruction,
         )
     )
 

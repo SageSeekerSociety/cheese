@@ -92,6 +92,10 @@ LIVE = "live"
 #: conversation gone cold before it reads the input (Claude Code's
 #: ``compaction.when_cold``).
 COMPACT_IF_COLD = "compact_if_cold"
+#: A new turn's input may carry ``private``: blocks only one person may read,
+#: which the runner stamps on every record carrying them (Claude Code's
+#: ``Runner._private_texts``).
+PRIVATE_TEXT = "private_text"
 
 
 def current_loop() -> asyncio.AbstractEventLoop | None:

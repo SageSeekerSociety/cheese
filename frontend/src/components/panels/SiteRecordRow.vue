@@ -53,9 +53,10 @@ const exchange = computed(() => {
   // 说这句的总是一位 AI 队友；记下说话人之前的那几条没有署名，按默认的名字称呼。
   const name = props.memberNames[author] ?? t('work.room.defaultAgentName')
   if (way === 'told') return t('work.room.site.exchange.told', { name })
-  return t(props.block.meta?.kind === 'blocked' ? 'work.room.site.exchange.blocked' : 'work.room.site.exchange.asked', {
-    name,
-  })
+  const kind = props.block.meta?.kind
+  if (kind === 'blocked') return t('work.room.site.exchange.blocked', { name })
+  if (kind === 'done') return t('work.room.site.exchange.done', { name })
+  return t('work.room.site.exchange.asked', { name })
 })
 const images = ref<Record<string, string>>({})
 const imageError = ref(false)

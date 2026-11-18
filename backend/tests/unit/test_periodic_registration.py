@@ -51,6 +51,7 @@ _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
         "record_instruction",
+        "record_seat",
         "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
