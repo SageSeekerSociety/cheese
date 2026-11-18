@@ -131,7 +131,7 @@
   "handInLibraryFileNotFound": "The library has no “{name}”",
   "handInFileTooLarge": "{path} is {mb} MB, over the {max} MB limit for a submitted file",
   "handInNothingPrepared": "Nothing is prepared to hand in. Prepare it, tell the member what will be handed in, and wait for their yes",
-  "handInMemberWordOnly": "You can hand in for {person} only in a turn {person} started by agreeing to it. Tell {person} what is prepared and wait for their reply",
+  "handInMemberWordOnly": "You can hand in for {person} only in a turn they started by agreeing to it. Tell {person} what is prepared and wait for their reply",
   "handInWordBeforePrepare": "{person} sent this message before the hand-in was prepared, so it does not agree to this one. Tell {person} what is prepared and wait for their reply",
   "handInFilesChanged": "The project's files changed after the hand-in was prepared, so it is not what {person} agreed to. Prepare it again and ask {person} to confirm"
 }
