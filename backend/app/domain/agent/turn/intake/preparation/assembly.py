@@ -74,6 +74,7 @@ from app.domain.memory.session import talk_owners
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.prompts import PROFILES, task_section
+from app.domain.review.task_landing import main_line_opener
 from app.domain.room_task import naming
 from app.domain.room_task.models import (
     Task,
@@ -123,6 +124,11 @@ async def prepare(
         topic, task = place.room, place.task
         if topic.status == TopicStatus.archived:
             raise prep.refuse(say("roomArchivedUnarchiveFirst"))
+        # A task the channel's main line opened is judged done by the main
+        # line, and its session is told so every turn (`task_section`).
+        coordinated = (
+            task is not None and await main_line_opener(session, task) is not None
+        )
 
         # 这一轮读什么：这条对话里、这个座位上次读到之后的所有参与者消息，
         # 谁说的都算，说给谁的也算。每个座位各有一份游标（`agent_reads`），
@@ -495,6 +501,7 @@ async def prepare(
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
             has_checkout=task.branch_name is not None,
+            coordinated=coordinated,
         ),
         # 只看还开着的活：关闭不清这条上报（`closing.close_task` 不碰它），而关掉的
         # 活还能被人叫起来说话；那时看板显示的是关闭，再叫它报状态只会被 422 拒掉。

@@ -7,7 +7,7 @@
 只新建一张表：上一版后端不读它。
 
 辨认 ID: cf5d978e2f7d
-Revises: 342495d871e3
+Revises: efcb2b3821d5
 Create Date: 2026-11-18
 """
 
@@ -20,7 +20,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "cf5d978e2f7d"
-down_revision: str | Sequence[str] | None = "342495d871e3"
+down_revision: str | Sequence[str] | None = "efcb2b3821d5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

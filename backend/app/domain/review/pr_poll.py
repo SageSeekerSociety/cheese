@@ -148,6 +148,7 @@ async def poll_open_prs(
     *,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
     task_teammate: TaskTeammate,
 ) -> dict:
     """Reconcile returned batches and advance pending PR cards (#718) one step —
@@ -189,6 +190,7 @@ async def poll_open_prs(
                         announce=announce,
                         settle_card=settle_card,
                         record_instruction=record_instruction,
+                        record_seat=record_seat,
                         task_teammate=task_teammate,
                     ).advance_pr_card(card_id, chat_service=chat, runner=runner)
                     await session.commit()
@@ -838,6 +840,7 @@ async def forge_repository_changed(
     announce: Announce,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
 ) -> None:
@@ -858,6 +861,7 @@ async def forge_repository_changed(
             changed_project_id,
             settle_card=settle_card,
             record_instruction=record_instruction,
+            record_seat=record_seat,
             task_teammate=task_teammate,
         )
         await pr_publish.sweep_draft_prs(
