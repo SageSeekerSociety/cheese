@@ -80,9 +80,13 @@ test('队友在干活时，输入框仍然完整地留在窗口里', async ({ pa
   await expect(page.locator('.composer')).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('.messages')).toBeVisible({ timeout: 60_000 })
 
-  // 几种常用的窗口高矮都量一遍：状态条占多少、窗口多高都不该把输入框挤出去。
-  for (const height of [800, 600, 480]) {
-    await page.setViewportSize({ width: 1200, height })
-    await expect.poll(() => composerOverhang(page), { message: `窗口高 ${height}` }).toBeLessThanOrEqual(0)
+  // 几种常用的窗口都量一遍：桌面、手机宽度，高矮各挑几个。状态条占多少、窗口多大
+  // 都不该把输入框挤出去。手机上这一栏是另一条宿主链（对话在面板的一格里），
+  // 所以宽度也要换着量。
+  for (const [width, height] of [[1200, 800], [1200, 600], [1200, 480], [390, 844], [360, 640]]) {
+    await page.setViewportSize({ width, height })
+    await expect
+      .poll(() => composerOverhang(page), { message: `${width}×${height}` })
+      .toBeLessThanOrEqual(0)
   }
 })
