@@ -74,6 +74,13 @@ class ProjectNameIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class ProjectNameOut(BaseModel):
+    """A project's name after a rename."""
+
+    id: uuid.UUID
+    name: str
+
+
 class ProjectAvatarIn(BaseModel):
     """Replace a project's avatar; every field left out goes back to the default."""
 

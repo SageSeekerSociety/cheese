@@ -18,7 +18,12 @@ from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.avatars.services import is_uploaded
 from app.domain.project import avatar
-from app.domain.project.schemas import ProjectAvatarIn, ProjectAvatarOut, ProjectNameIn
+from app.domain.project.schemas import (
+    ProjectAvatarIn,
+    ProjectAvatarOut,
+    ProjectNameIn,
+    ProjectNameOut,
+)
 from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -51,7 +56,7 @@ async def set_project_avatar(
     return ok(ProjectAvatarOut.of(at.project).model_dump(mode="json"))
 
 
-@router.put("/{project_id}/name")
+@router.put("/{project_id}/name", **typed_response(ProjectNameOut))
 async def rename_project(
     at: Annotated[InProject, Can(Permission.edit_settings)],
     body: ProjectNameIn,
