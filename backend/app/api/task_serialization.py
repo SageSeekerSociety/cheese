@@ -228,9 +228,10 @@ async def _enrich_task_models(
     # 读的人也并进这一批：他的 handle 要从 id 认出来，而这一批本来就要查，
     # 单为他再发一条就是这一页多出来的一次查询（`test_problem_pages_read_once`
     # 数着这条线）。
-    all_user_ids = list(
-        {*creator_ids, *admin_user_ids, *([viewer_id] if viewer_id is not None else [])}
-    )
+    all_user_ids: list[int] = [*creator_ids, *admin_user_ids]
+    if viewer_id is not None:
+        all_user_ids.append(viewer_id)
+    all_user_ids = list(set(all_user_ids))
 
     users = await user_repo.get_by_ids(all_user_ids)
     # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了全局
