@@ -1,6 +1,7 @@
 // 任务交了一版去审阅时，平台在它出自的那段对话里记下的那一行（后端
 // `review.task_landing.record_at_origin`，`event_type` 为 `task_filed`）：是哪件任务、
 // 递的哪张卡、第几版。这一行只记交上去的那一刻，不写审阅到哪一步了，之后也不在原处变。
+// 频道主线上的队友开的任务没有这一行：交上来的事由那位队友自己在主线上说。
 import type { Block } from '../cx_types'
 
 import { renderNoticeMessage } from './noticeText'
