@@ -37,6 +37,7 @@ from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.docs_site import periodic as docs_periodic
 from app.domain.integration import periodic as integration_periodic
 from app.domain.judge import periodic as judge_periodic
+from app.domain.machine import hand_in
 from app.domain.machine import periodic as machine_periodic
 from app.domain.memory import periodic as memory_periodic
 from app.domain.notification import periodic as notification_periodic
@@ -244,6 +245,7 @@ def periodic_jobs(
         record_seat=record_seat_instruction,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
+        uncommitted=hand_in.uncommitted,
         machines=checkout_sweep.sweep,
     )
     machine_periodic.register_periodic_jobs(

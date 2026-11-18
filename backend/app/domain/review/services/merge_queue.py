@@ -88,6 +88,43 @@ async def arm_auto_merge(
     return card
 
 
+async def adopt_when_ready(
+    self: pkg.AcceptService,
+    *,
+    card_id: uuid.UUID,
+    decided_by: str,
+    head_sha: str,
+) -> AcceptCard:
+    """The reviewer adopts the version they have just handed in themselves
+    (「提交并采纳」, `machine.hand_in`).
+
+    That head was pushed a moment ago, and no forge has said yet whether it
+    merges: GitHub computes it after a push, Forgejo takes the push in after
+    it returns (`forgejo_pr.ForgejoClient.pull_request_status`). An accept
+    now could only be refused. So the adoption is armed on that head, as
+    `arm_auto_merge` arms one, and the poller merges it under their name
+    once the forge's verdict and the project's rules let it
+    (`_merge_armed_card`), or not at all if the head moves first
+    (dismiss-stale). The project's `auto_merge_allowed` governs a reviewer
+    arming a version that is not ready yet; here the reviewer decided to
+    adopt this head, and only the forge's answer is outstanding."""
+    card = await self._card_or_404(card_id)
+    if card.status != AcceptStatus.pending or card.pr_number is None:
+        raise ValidationError(say("autoMergeNeedsOpenPr"))
+    topic = await self._topic_or_404(card.topic_id)
+    project = await self._projects.get(topic.project_id)
+    self._forbid_ai(project, decided_by, say("reviewActionAccept"))
+    if decided_by not in await self._repo.reviewer_handles(card.id):
+        raise ForbiddenError(say("acceptReviewerOnly"))
+    if card.pr_head_sha != head_sha:
+        raise ValidationError(say("prNewCommitsAfterView", number=card.pr_number))
+    card.auto_merge_armed_by = decided_by
+    card.auto_merge_armed_at = datetime.now(UTC)
+    await self._session.flush()
+    await self._session.refresh(card)
+    return card
+
+
 async def _write_merge_mirror(
     self: pkg.AcceptService,
     card: AcceptCard,
@@ -411,6 +448,16 @@ async def _merge_armed_card(
     number = card.pr_number
     assert number is not None  # caller checked; keeps the type checker honest
     armer = card.auto_merge_armed_by or ""
+    if await self._holds_uncommitted(card):
+        # The armer adopted this version; a change saved since is not in it.
+        await self._note_needs_human(
+            card=card,
+            topic=topic,
+            reason=say("mergeWithheldUncommitted"),
+            explain=say("mergeWithheldUncommittedWhy"),
+        )
+        await self._session.flush()
+        return
     approvers = await self._repo.list_approver_handles(card.id)
     votes = len(set(approvers) | {armer})
     if votes < protection.approvals_required:

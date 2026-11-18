@@ -325,7 +325,7 @@ async def create_card(
     # The card says where the task stands now (等审): what its teammate
     # reported before it is over.
     progress.clear(task)
-    await self._announce_filed(topic, card, task)
+    await self._announce_filed(topic, card, task, by=handed_in_by)
     # The AI teammate that opened the task from the channel's main line is
     # told what was handed in, to say so there in its own words; where nobody
     # is told, the place the task came from records that a version is in for

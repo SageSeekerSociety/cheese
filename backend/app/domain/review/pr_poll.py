@@ -54,6 +54,7 @@ from app.domain.review.ports import (
     RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
+    Uncommitted,
 )
 from app.domain.review.room_notices import tell_room_undelivered
 from app.domain.review.task_landing import (
@@ -150,6 +151,7 @@ async def poll_open_prs(
     record_instruction: RecordInstruction,
     record_seat: RecordSeatInstruction,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ) -> dict:
     """Reconcile returned batches and advance pending PR cards (#718) one step —
     mirror its merge state, send the events the 「谁的活」 table names, and merge
@@ -192,6 +194,7 @@ async def poll_open_prs(
                         record_instruction=record_instruction,
                         record_seat=record_seat,
                         task_teammate=task_teammate,
+                        uncommitted=uncommitted,
                     ).advance_pr_card(card_id, chat_service=chat, runner=runner)
                     await session.commit()
                     _transient_misses.pop(card_id, None)
@@ -843,6 +846,7 @@ async def forge_repository_changed(
     record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ) -> None:
     """One repository moved — from a relayed forge event, or from a reconnect."""
 
@@ -863,6 +867,7 @@ async def forge_repository_changed(
             record_instruction=record_instruction,
             record_seat=record_seat,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         )
         await pr_publish.sweep_draft_prs(
             sessions,

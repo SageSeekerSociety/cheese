@@ -38,7 +38,7 @@
   "forgejoRequestFailed": "Forgejo 请求失败（HTTP {status}）",
   "forgejoUnreachable": "Forgejo 暂时无法连接：{error}",
   "githubBranchComparisonInvalid": "GitHub 返回了无法识别的分支比较结果，请稍后重试。",
-  "githubMergeRefused": "GitHub 拒绝合并 PR #{pr}：{reason}",
+  "githubMergeRefused": "PR #{pr} 的合并被拒绝：{reason}",
   "githubNoPrNodeId": "GitHub 未返回 PR 的 node_id",
   "githubPrBodyUpdateFailed": "PR 正文更新失败 (HTTP {status}): {reply}",
   "githubPrCloseFailed": "关闭 PR 失败 (HTTP {status}): {reply}",

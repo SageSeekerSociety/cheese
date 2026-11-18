@@ -248,6 +248,25 @@ def test_merge_refused_lands_as_one_line_event(client, app_world):
     assert "405" not in event["content"]
 
 
+def test_a_refused_accept_says_the_merge_was_refused_without_naming_a_forge(
+    client, app_world
+):
+    """A project's forge may be the platform's own: a refused merge says it was
+    refused, and never puts the refusal in the mouth of a product the project
+    does not use (2026-11-18 on dev: 「GitHub 拒绝合并」 on a Forgejo project)."""
+    fake, tid, cid, number = _pr_card(client, app_world)
+    fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+    fake.merge_blocked_by_number[number] = "the forge said no"
+
+    refused = _accept(client, cid)
+
+    assert refused.status_code == 422, refused.text
+    assert "GitHub" not in refused.json()["message"]
+    event = _wait_for_event(client, tid, "merge_refused")
+    assert "GitHub" not in event["content"]
+    assert "GitHub" not in str(event["meta"].get("detail_label") or "")
+
+
 # --------------------------------------------------------------------------
 # 已采纳的 PR 离开合并队列但没合并
 # --------------------------------------------------------------------------

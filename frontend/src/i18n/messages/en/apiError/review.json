@@ -38,7 +38,7 @@
   "forgejoRequestFailed": "The Forgejo request failed (HTTP {status})",
   "forgejoUnreachable": "Can't reach Forgejo right now: {error}",
   "githubBranchComparisonInvalid": "GitHub returned an unusable branch comparison. Try again later.",
-  "githubMergeRefused": "GitHub refused to merge PR #{pr}: {reason}",
+  "githubMergeRefused": "Merging PR #{pr} was refused: {reason}",
   "githubNoPrNodeId": "GitHub didn't return the PR's node_id",
   "githubPrBodyUpdateFailed": "Updating the PR body failed (HTTP {status}): {reply}",
   "githubPrCloseFailed": "Closing the PR failed (HTTP {status}): {reply}",

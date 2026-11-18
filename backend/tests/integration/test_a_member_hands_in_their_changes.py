@@ -10,6 +10,7 @@ pull request follows the branch the way the real one does.
 import asyncio
 import os
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,10 +27,14 @@ from tests.delivery import delivery_task_id
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_accept_pr import (
     _accept,
+    _arm,
+    _cards,
     _give_card_a_pr,
     _make_card,
     _make_project,
     _make_topic,
+    _poll,
+    _protect,
 )
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
@@ -237,20 +242,24 @@ def test_a_reviewer_who_adjusted_a_waiting_version_adopts_the_adjusted_one(
     assert shown == "Tweaked by the reviewer\n"
 
 
-def test_reviewing_it_oneself_hands_in_and_adopts_in_one_go(
+def test_adopting_ones_own_hand_in_completes_once_the_forge_says_it_merges(
     client, world, app_world, monkeypatch
 ):
+    """A head pushed a moment ago has no merge verdict yet: 「提交并采纳」 is not
+    refused for that, and the version is merged under the person's name as
+    soon as the forge says it merges."""
     fake = app_world["fake"]
     monkeypatch.setattr(pr_publish, "enabled", lambda: True)
     seed = fake.seed_pr
 
     def opened(number, *, head, **kwargs):
-        """The pull request opened on the branch shows the branch's own head."""
         seed(number, head=head, **kwargs)
         real = git_store.git(world.sandbox.repo, "rev-parse", head).strip()
         fake.prs[number]["head_sha"] = real
         fake.check_state_by_sha[real] = ("success", "全部通过")
         fake.merge_sha_by_number[number] = "merge-sha-1"
+        # The forge has not computed whether the new head merges.
+        fake.mergeable_state_by_number[number] = "unknown"
         return real
 
     monkeypatch.setattr(fake, "seed_pr", opened)
@@ -259,13 +268,78 @@ def test_reviewing_it_oneself_hands_in_and_adopts_in_one_go(
     r = _hand_in(client, world, reviewer_handle="alice", accept=True)
 
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["accepted"] is True
-    card, _ = _card(client, r.json()["data"]["card"]["id"])
+    card_id = r.json()["data"]["card"]["id"]
+    card, _ = _card(client, card_id)
+    assert card.status == "pending"
+    assert fake.merge_calls == []
+
+    del fake.mergeable_state_by_number[card.pr_number]
+    _poll(client)
+
+    card, _ = _card(client, card_id)
     assert card.status == "accepted"
-    # What was adopted is the branch as handed in, with the saved edit.
-    branch = world.sandbox.branch
-    shown = git_store.git(world.sandbox.repo, "show", f"{branch}:{_note(world)}")
+    assert card.decided_by == "alice"
+    # What was merged is the branch as handed in, with the saved edit.
+    [merged] = [m["sha"] for m in fake.merge_calls]
+    shown = git_store.git(world.sandbox.repo, "show", f"{merged}:{_note(world)}")
     assert shown == "Hello from alice\n"
+
+
+def _settled_lines(client, task_id) -> list[str]:
+    """The lines people read in the task's conversation, once the notices
+    sent off in the background have landed."""
+    from app.core import background
+
+    for _ in range(200):
+        if not background.inflight_count():
+            break
+        time.sleep(0.02)
+    blocks = client.get(f"/topics/{task_id}/blocks").json()["data"]["data"]
+    return [
+        b["content"]
+        for b in blocks
+        if b["kind"] == "event" and (b.get("meta") or {}).get("in_room") is not False
+    ]
+
+
+def test_handing_in_another_version_says_so_in_one_line(client, world, app_world):
+    """One action, one line: the task's conversation records that the member
+    handed in another version, with its title, and nothing else about it."""
+    card_id = _make_card(client, world.tid)
+    _give_card_a_pr(client, app_world, world.tid, card_id, 7)
+    _save(client, world, _note(world), "Tweaked by the reviewer\n")
+    before = _settled_lines(client, world.task_id)
+
+    r = _hand_in(client, world, subject="docs: greet the reader", body="Warmer.")
+
+    assert r.status_code == 200, r.text
+    added = _settled_lines(client, world.task_id)[len(before) :]
+    assert len(added) == 1, added
+    assert "docs: greet the reader" in added[0]
+    assert "alice" in added[0]
+
+
+def test_an_armed_version_is_not_merged_past_a_change_saved_after_it(
+    client, world, app_world
+):
+    """A version armed to merge when its checks pass is adopted as it was:
+    a change a person saved since is not in it, so the poller does not merge
+    it, as an accept would not."""
+    fake = app_world["fake"]
+    card_id = _make_card(client, world.tid)
+    head = _give_card_a_pr(client, app_world, world.tid, card_id, 7)
+    _protect(client, world.pid, auto_merge_allowed=True)
+    fake.check_state_by_sha[head] = ("pending", "还在跑")
+    _poll(client)
+    assert _arm(client, card_id, "alice").status_code == 200
+
+    _save(client, world, _note(world), "Saved after the arm\n")
+    fake.check_state_by_sha[head] = ("success", "全部通过")
+    fake.merge_sha_by_number[7] = "merge-sha-1"
+    _poll(client)
+
+    assert fake.merge_calls == []
+    assert _cards(client, world.tid)[0]["status"] == "pending"
 
 
 def test_an_ai_teammate_does_not_hand_in_on_a_members_road(client, world):
