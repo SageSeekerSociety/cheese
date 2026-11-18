@@ -343,12 +343,19 @@ function ensureFileFromUrl(key: string | null) {
 async function setTab(key: string, opts: { guard?: boolean; announce?: boolean } = {}): Promise<boolean> {
   if (key !== active.value && opts.guard !== false && !(await confirmAnnotationDiscard())) return false
   settled.value = true
+  // Asked again for the tab already chosen: its cell may be folded, hidden behind a
+  // maximized one or showing another tab, so the layout is asked again. A change of tab
+  // reaches the layout through the watch below.
+  if (key === active.value) props.layout?.show(key)
   active.value = key
   if (key === 'changes') markChangesSeen()
-  props.layout?.show(key)
   if (opts.announce !== false) emit('update:tab', key)
   return true
 }
+
+// 桌面上每一格是布局区里的一块：此刻在看哪一格，不管是谁定的（地址、点了页签、关掉一格后
+// 回到来处、规则的链接），布局区都把它翻到它那一格的前面，收着的那一格展开。
+watch(active, (key) => props.layout?.show(key))
 
 // 人点了一格页签：宽屏上内容区淡入淡出一下（lib/viewTransition.ts；窄屏走上面的
 // tabpane-in）。确认「放弃没发的批注」要在过渡之前问完，过渡里不能等人。
