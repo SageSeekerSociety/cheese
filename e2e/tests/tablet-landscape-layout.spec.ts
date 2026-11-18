@@ -1,5 +1,12 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { apiLogin, openFirstProject } from './helpers';
+
+/** 面板并排开在对话右边（外壳布局区里的两格），不是压在对话上的浮层。 */
+async function besideConversation(page: Page) {
+  const chat = await page.locator('.room-conversation').first().boundingBox();
+  const panel = await page.locator('#topic-panel').boundingBox();
+  return !!chat && !!panel && panel.x >= chat.x + chat.width - 1;
+}
 
 // 平板横放那一档：960（Vuetify 的 mdAndUp）到 1180（COMPACT_DESKTOP_MAX_WIDTH）为止。
 //
@@ -45,13 +52,12 @@ test.describe('平板横放（960–1180）', () => {
     const panelToggle = page.locator('[data-panel-toggle]');
     await expect(panelToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#topic-panel')).toBeHidden();
-    await expect(page.locator('.pane-resizer')).toHaveCount(0);
 
-    // 点「概览」：面板并排开在对话右边（两栏中间那条可拖的分隔在），不是浮层。
+    // 点「概览」：面板并排开在对话右边，不是浮层。
     await panelToggle.click();
     await expect(panelToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('#topic-panel')).toBeVisible();
-    await expect(page.locator('.pane-resizer')).toBeVisible();
+    await expect.poll(() => besideConversation(page)).toBe(true);
     await expect(page.locator('.panel-scrim')).toHaveCount(0);
 
     // 这是人的选择：刷新回来还开着。
@@ -98,14 +104,14 @@ test.describe('平板横放（960–1180）', () => {
 
   test('主区放不下两栏时面板浮在对话上：Esc 收起，焦点回到「概览」', async ({ page }) => {
     // 1181 起侧栏常驻。默认 280 宽的侧栏留下 901，够并排；人把侧栏拖到 360，主区只剩
-    // 821，放不下两栏。侧栏宽度记在本机（useSidebarWidth.ts），开页之前写进去。
+    // 821，放不下两栏。侧栏宽度记在本机（composables/sidebarWidth.ts），开页之前写进去。
     await page.addInitScript(() => localStorage.setItem('cheesex.sidebarWidth', '360'));
     await page.setViewportSize({ width: 1181, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
     await page.waitForURL(/\/channels\//);
-    const main = await page.locator('.panes').first().boundingBox();
+    const main = await page.locator('.room-conversation').first().boundingBox();
     expect(main!.width, '这个用例要主区窄于 840').toBeLessThan(840);
 
     // 浮层默认收着。
@@ -113,11 +119,11 @@ test.describe('平板横放（960–1180）', () => {
     await expect(panelToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#topic-panel')).toBeHidden();
 
-    // 打开：浮在对话上，背后一层遮罩，没有两栏中间的分隔。
+    // 打开：浮在对话上，背后一层遮罩。
     await panelToggle.click();
     await expect(page.locator('#topic-panel')).toBeVisible();
     await expect(page.locator('.panel-scrim')).toBeVisible();
-    await expect(page.locator('.pane-resizer')).toHaveCount(0);
+    expect(await besideConversation(page), '窄档里面板该浮在对话上').toBe(false);
 
     // Esc 收起浮层，焦点回到打开它的那颗开关。
     await page.keyboard.press('Escape');
@@ -155,9 +161,9 @@ test.describe('平板横放（960–1180）', () => {
     await rows.first().click();
     await page.waitForURL(/\/channels\//);
 
-    // 对话和面板并排，中间那条分隔在；「概览」开着。
-    await expect(page.locator('.pane-resizer')).toBeVisible();
+    // 对话和面板并排；「概览」开着。
     await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect.poll(() => besideConversation(page)).toBe(true);
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'true');
   });
 });
