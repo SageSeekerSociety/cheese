@@ -34,10 +34,19 @@ def test_the_card_carries_the_contract_fields_and_nothing_else():
     assert card == {
         "id": 3,
         "nickname": "bob",
+        "username": None,
+        "remark": None,
         "avatarId": 9,
         "intro": "hey",
     }
-    assert set(card) == {"id", "nickname", "avatarId", "intro"}
+    assert set(card) == {"id", "nickname", "username", "remark", "avatarId", "intro"}
+
+
+def test_the_card_carries_the_account_and_the_readers_own_remark():
+    """账号是认人和上色的依据，备注是**这个查看者**私下的叫法 —— 两者都在卡上。"""
+    card = answer_author(_profile(), chosen_avatar_id=9, username="bob99", remark="我们叫他小波")
+    assert card["username"] == "bob99"
+    assert card["remark"] == "我们叫他小波"
 
 
 def test_a_person_who_never_picked_an_avatar_has_none_on_either_list():
