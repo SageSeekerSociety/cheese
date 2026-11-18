@@ -11,6 +11,7 @@ from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.review import (
     credit,
+    forge_words,
     merge_state,
     notes,
     pr_text,
@@ -80,6 +81,7 @@ async def arm_auto_merge(
         await self._seen_head_or_refresh(card, topic, head_sha, say("verbArmAutoMerge"))
         card.auto_merge_armed_by = decided_by
         card.auto_merge_armed_at = datetime.now(UTC)
+        card.auto_merge_adopts = False
     else:
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
@@ -120,6 +122,7 @@ async def adopt_when_ready(
         raise ValidationError(say("prNewCommitsAfterView", number=card.pr_number))
     card.auto_merge_armed_by = decided_by
     card.auto_merge_armed_at = datetime.now(UTC)
+    card.auto_merge_adopts = True
     await self._session.flush()
     await self._session.refresh(card)
     return card
@@ -354,19 +357,22 @@ async def _merge_pr_for_accept(
     if result.sha is None:
         # A faithful 405: GitHub (or its enforced protection) said no.
         reason = result.blocked_reason or say("reasonUnstated")
+        kind = (await self._resolve_forge(topic.project_id, card=card)).kind
         self._notify_merge_result(
             topic,
-            say("mergeRefusedOnAccept", pr=number),
+            forge_words.said(kind, "mergeRefusedOnAcceptPlatform", pr=number),
             task_id=card.task_id,
             meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
                 who=WHO_HUMAN,
                 detail=say("mergeRefusedDetail", reason=reason, url=card.pr_url or ""),
-                detail_label=say("labelGithubReply"),
+                detail_label=forge_words.said(kind, "labelRefusalReply"),
             ),
         )
-        raise ValidationError(say("githubMergeRefused", pr=number, reason=reason))
+        raise ValidationError(
+            forge_words.said(kind, "prMergeRefused", pr=number, reason=reason)
+        )
 
     card.pr_merged_at = datetime.now(UTC)
     # Who adopted it is on the card before the task hears it landed: the line
