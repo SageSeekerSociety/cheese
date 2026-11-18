@@ -169,5 +169,6 @@
   "handInSandboxReleasedKept": "任务的环境空闲后已释放。没提交的修改已经保存，AI 队友下次在这件任务里工作时会放回，之后再提交审阅",
   "handInSandboxReleasedKeptBranchMoved": "任务的环境空闲后已释放。没提交的修改已经保存，但任务分支此后有了新提交，不会自动放回，暂时无法提交审阅",
   "handInFailed": "提交审阅失败：{error}。保存的修改都还在，稍后重试",
-  "handInPushUnconfirmed": "提交审阅失败：修改已提交，但没能确认推送到项目仓库。保存的修改都还在，稍后重试"
+  "handInPushUnconfirmed": "提交审阅失败：修改已提交，但没能确认推送到项目仓库。保存的修改都还在，稍后重试",
+  "handInPeopleOnly": "这条路给成员提交自己的修改；AI 队友提交审阅用 cheese_card(action=request)"
 }

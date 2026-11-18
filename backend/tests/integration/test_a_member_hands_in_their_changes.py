@@ -242,10 +242,19 @@ def test_reviewing_it_oneself_hands_in_and_adopts_in_one_go(
 ):
     fake = app_world["fake"]
     monkeypatch.setattr(pr_publish, "enabled", lambda: True)
+    seed = fake.seed_pr
+
+    def opened(number, *, head, **kwargs):
+        """The pull request opened on the branch shows the branch's own head."""
+        seed(number, head=head, **kwargs)
+        real = git_store.git(world.sandbox.repo, "rev-parse", head).strip()
+        fake.prs[number]["head_sha"] = real
+        fake.check_state_by_sha[real] = ("success", "全部通过")
+        fake.merge_sha_by_number[number] = "merge-sha-1"
+        return real
+
+    monkeypatch.setattr(fake, "seed_pr", opened)
     _save(client, world, _note(world), "Hello from alice\n")
-    pr_head = f"sha-{world.sandbox.branch}-1"
-    fake.check_state_by_sha[pr_head] = ("success", "全部通过")
-    fake.merge_sha_by_number[21] = "merge-sha-1"
 
     r = _hand_in(client, world, reviewer_handle="alice", accept=True)
 
@@ -253,3 +262,19 @@ def test_reviewing_it_oneself_hands_in_and_adopts_in_one_go(
     assert r.json()["data"]["accepted"] is True
     card, _ = _card(client, r.json()["data"]["card"]["id"])
     assert card.status == "accepted"
+    # What was adopted is the branch as handed in, with the saved edit.
+    branch = world.sandbox.branch
+    shown = git_store.git(world.sandbox.repo, "show", f"{branch}:{_note(world)}")
+    assert shown == "Hello from alice\n"
+
+
+def test_an_ai_teammate_does_not_hand_in_on_a_members_road(client, world):
+    from tests.delivery import delivery_headers
+
+    r = client.post(
+        f"/topics/{world.task_id}/hand-in",
+        json={"subject": "Anything"},
+        headers=delivery_headers(client, world.tid),
+    )
+
+    assert r.status_code == 403, r.text

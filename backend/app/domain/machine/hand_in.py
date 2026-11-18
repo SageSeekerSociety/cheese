@@ -15,11 +15,11 @@ had not committed was kept on the forge (`repository.kept_work`) and comes back
 in the next sandbox, so that is what the person is told. Commits already on
 the branch need no sandbox and are handed in as they are.
 
-`standing` is the cheap half: whether the task holds changes that are not in
-its latest handed-in version, read from the forge alone, for the badge
-「有未提交的修改」. `uncommitted` asks the sandbox itself when it is awake, for
-the one moment that has to be right: adopting a version (`review.ports
-.Uncommitted`).
+`standing` says whether the task holds changes that are not in its latest
+handed-in version, for the badge 「有未提交的修改」; `uncommitted` is its half
+about files nobody committed, and is also asked before a version is adopted
+(`review.ports.Uncommitted`). An awake sandbox is asked; a frozen one is not
+woken for it, and what the platform kept of it answers instead.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import release_read_session
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -76,7 +77,7 @@ WAITING = (AcceptStatus.pending, AcceptStatus.conflict)
 #: project's own pre-push check (`cheese sync`), as a teammate's does.
 HAND_IN_S = 300
 #: Asking a sandbox whether it has uncommitted files.
-STATUS_S = 15
+STATUS_S = 8
 
 _COMMITTED = "cheese-hand-in:committed"
 _HEAD = "cheese-hand-in:head "
@@ -139,10 +140,11 @@ async def uncommitted(
 ) -> bool:
     """Whether the task's checkout has files it has not committed.
 
-    An awake sandbox is asked. One that is frozen is not thawed for this, and
-    one that is gone cannot be asked: what the platform kept of it answers
-    (`has_kept`), which is only ever on the platform's own forge. Neither
-    answering is no."""
+    An awake sandbox is asked about the files it tracks (a person's save
+    changes one; files a teammate left untracked are not a reason to stop an
+    adoption). One that is frozen is not thawed for this, and one that is
+    gone cannot be asked: what the platform kept of it answers (`has_kept`),
+    which is only ever on the platform's own forge. Neither answering is no."""
     if not task.branch_name:
         return False
     found = await _sandbox(session, task)
@@ -152,7 +154,7 @@ async def uncommitted(
                 executor or execution.call,
                 found[0],
                 f"git --no-optional-locks -C {_checkout(task.id)} "
-                "status --porcelain --untracked-files=all",
+                "status --porcelain --untracked-files=no",
                 seconds=STATUS_S,
             )
             return bool(said.strip())
@@ -186,13 +188,13 @@ class Standing:
 
 
 async def standing(db: AsyncSession, task: Task) -> Standing:
-    """Whether the task holds changes not in its latest handed-in version,
-    from the forge alone: nothing on the sandbox is asked or woken.
+    """Whether the task holds changes not in its latest handed-in version.
 
-    Uncommitted files are known from the kept snapshot, which follows a
-    person's save by about ten seconds and is kept only on the platform's own
-    forge. A version whose head is not known yet (filed a moment ago) counts as
-    holding the branch."""
+    Commits are read from the forge: the branch's head against the latest
+    version's. Uncommitted files are `uncommitted`'s answer: an awake sandbox
+    says; otherwise the kept snapshot, which follows a person's save by about
+    ten seconds and is kept only on the platform's own forge. A version whose
+    head is not known yet (filed a moment ago) counts as holding the branch."""
     cards = await AcceptCardRepository(db).list_for_task(task.id)
     latest = _latest(cards)
     waiting = latest is not None and latest.status in WAITING
@@ -210,7 +212,7 @@ async def standing(db: AsyncSession, task: Task) -> Standing:
                 await ProjectFiles(db, task.project_id, task.id).changed_files()
             )
     return Standing(
-        uncommitted=await has_kept(task.project_id, db, task.id),
+        uncommitted=await uncommitted(db, task),
         ahead=ahead,
         waiting=waiting,
     )
@@ -290,6 +292,9 @@ async def _commit_on_sandbox(
             else say("handInSandboxReleasedKeptBranchMoved")
         )
     author = await _author(db, who)
+    # Nothing is written yet, and the commit and its push can take minutes:
+    # the connection goes back to the pool for them.
+    await release_read_session(db)
     await wake(task.id)
     try:
         said = await _on_sandbox(
@@ -423,7 +428,9 @@ async def _again(
     if not moved:
         raise ValidationError(say("handInNothingNew"))
     await service.push_fix(task.id)
-    if reviewers:
+    # A card stuck on a merge conflict keeps its text and reviewers: those
+    # change only while it waits on its reviewer.
+    if reviewers and card.status == AcceptStatus.pending:
         current = await AcceptCardRepository(db).reviewer_handles(card.id)
         if set(current) != set(reviewers):
             await service.reassign(
@@ -432,9 +439,10 @@ async def _again(
                 admits_reviewer=admits_reviewer,
                 by=who,
             )
-    await service.redescribe(
-        task.id, actor=who, change_subject=subject, change_body=body
-    )
+    if card.status == AcceptStatus.pending:
+        await service.redescribe(
+            task.id, actor=who, change_subject=subject, change_body=body
+        )
     room = await db.get(Topic, task.room_id)
     if room is not None:
         await service._tell_the_reviewer(

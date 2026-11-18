@@ -149,7 +149,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     acceptedCard,
     needsPr,
     comments,
-    reload: (alongside?: Promise<unknown>) => load(alongside),
+    // 采纳被拒的原因可能正是有没交进去的修改：页头的提交状态一起重读。
+    reload: (alongside?: Promise<unknown>) => Promise.all([load(alongside), handIn.load()]).then(() => undefined),
   })
 
   watch(

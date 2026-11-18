@@ -130,6 +130,6 @@
   "taskFiledForReview": "「{title}」已提交审阅",
   "taskReturned": "{who} 退回了「{title}」",
   "taskAdopted": "{who} 采纳了「{title}」",
-  "taskHandedInBy": "{who} 把「{title}」提交审阅",
+  "taskHandedInBy": "{who} 提交了「{title}」，待审阅",
   "cardHandedInAgain": "{actor} 再提交了一版，需要重新查看"
 }

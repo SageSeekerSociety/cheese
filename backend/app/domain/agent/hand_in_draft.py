@@ -11,7 +11,6 @@ waits on it: a call that fails, is refused or takes too long leaves a line
 made from the changed files (`fallback`).
 """
 
-import asyncio
 import uuid
 from dataclasses import dataclass
 
@@ -97,27 +96,27 @@ async def draft(
     timeout: float = DRAFT_TIMEOUT_S,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> Draft:
-    """The model's 说明 for this change, or the line from the files."""
+    """The model's 说明 for this change, or the line from the files. The
+    call's own deadline is ``timeout``; what it spent is charged either way."""
     answer = None
     try:
-        async with asyncio.timeout(timeout):
-            bound = await one_shot.bind(session, project_id, Scene.task)
-            if bound is not None:
-                answer = await one_shot.ask(
-                    project_id=project_id,
-                    bound=bound,
-                    system=piece("hand_in/draft"),
-                    material=material(
-                        task_title=task_title,
-                        diff=diff,
-                        recent_subjects=recent_subjects,
-                        files=files,
-                    ),
-                    models=models,
-                    timeout=timeout,
-                    max_tokens=_ANSWER_TOKENS,
-                    transport=transport,
-                )
+        bound = await one_shot.bind(session, project_id, Scene.task)
+        if bound is not None:
+            answer = await one_shot.ask(
+                project_id=project_id,
+                bound=bound,
+                system=piece("hand_in/draft"),
+                material=material(
+                    task_title=task_title,
+                    diff=diff,
+                    recent_subjects=recent_subjects,
+                    files=files,
+                ),
+                models=models,
+                timeout=timeout,
+                max_tokens=_ANSWER_TOKENS,
+                transport=transport,
+            )
     except Exception:  # refused, slow or failed: the line from the files
         answer = None
     if answer is not None:

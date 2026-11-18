@@ -130,6 +130,6 @@
   "taskFiledForReview": "\"{title}\" was submitted for review",
   "taskReturned": "{who} returned \"{title}\"",
   "taskAdopted": "{who} accepted “{title}”",
-  "taskHandedInBy": "{who} submitted \"{title}\" for review",
+  "taskHandedInBy": "{who} submitted \"{title}\"; it awaits review",
   "cardHandedInAgain": "{actor} submitted another version; it needs another look"
 }

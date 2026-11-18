@@ -247,6 +247,8 @@ def _handing_in(at: InChannel) -> tuple[Actor, Task]:
         raise NotFoundError(say("taskNotFound"))
     if not at.actor.authenticated:
         raise AuthenticationRequiredError()
+    if at.actor.via == "cheese":
+        raise ForbiddenError(say("handInPeopleOnly"))
     return at.actor, at.place.task
 
 
@@ -266,12 +268,20 @@ async def hand_in_standing(
 
 
 @router.get("/topics/{topic_id}/hand-in/panel")
-async def hand_in_panel(topic_id: uuid.UUID, at: HandsIn, db: DbSession) -> dict:
+async def hand_in_panel(
+    topic_id: uuid.UUID,
+    at: HandsIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
     """What the hand-in panel shows: the files handing in now would put in
     the project, with their added and removed lines; the reviewers it goes to
     unless the person picks others (the waiting version's, else the ladder
-    every hand-in climbs); and, when a version is waiting, its 说明."""
+    every hand-in climbs); and, when a version is waiting, its 说明. Refused,
+    as the hand-in itself is, while the task's teammate is at work."""
     _actor, task = _handing_in(at)
+    if await chat.has_running_turn(task.id):
+        raise ConflictError(say("handInWhileWorking"))
     svc = accept_service(db)
     waiting = await svc.waiting_card(task.id)
     if waiting is not None:
@@ -310,8 +320,11 @@ async def hand_in_draft(
 ) -> dict:
     """The 说明 drafted from the change: the project's task model reads what
     handing in now would put in the project. A model that is not reached in
-    time leaves a line made from the changed files (``drafted`` false)."""
+    time leaves a line made from the changed files (``drafted`` false).
+    Nothing is asked while the hand-in would be refused."""
     _actor, task = _handing_in(at)
+    if await chat.has_running_turn(task.id):
+        raise ConflictError(say("handInWhileWorking"))
     diff = await hand_in.live_diff(
         db, task, executor=execution.call, wake=partial(wake_for_files, db.bind)
     )
@@ -398,6 +411,9 @@ async def hand_in_route(
                 topic_id=task.room_id,
                 project_id=task.project_id,
             )
+    # Only the head this person handed in is adopted in the same go: a card
+    # showing any other moved since, and waits to be looked at.
+    adopting = adopting and card.pr_head_sha == handed.head
     accepted = False
     if adopting:
         try:
