@@ -189,8 +189,12 @@ def _accepted_and_live(client, card: str, task_id: str):
     """The card is accepted, its teammate judged the task done, and the deploy
     of its merge went live: the task is in its write-up window, unless its
     teammate was asked for more since the card went up."""
+    from app.domain.agent.announce import announce
     from app.domain.agent_instance.adapters import task_teammate
-    from app.domain.delivery.agent import record_task_instruction
+    from app.domain.delivery.agent import (
+        record_seat_instruction,
+        record_task_instruction,
+    )
     from app.domain.review.task_landing import deploy_landed
     from app.domain.room_task.lock_order import lock_task_for_change
 
@@ -207,6 +211,8 @@ def _accepted_and_live(client, card: str, task_id: str):
                 task,
                 record_instruction=record_task_instruction,
                 task_teammate=task_teammate,
+                announce=announce,
+                record_seat=record_seat_instruction,
             )
             await session.commit()
 
