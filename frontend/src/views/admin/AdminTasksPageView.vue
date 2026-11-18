@@ -63,7 +63,7 @@ const toggleExpand = (taskId: number) => {
         @load-more="emit('loadMore')"
       >
         <template #empty>
-          <BaseEmptyState size="inline" :title="t('spaces.detail.auditTasks.noTasks')" />
+          <BaseEmptyState size="inline" align="center" :title="t('spaces.detail.auditTasks.noTasks')" />
         </template>
         <AuditTaskRow
           v-for="task in tasks"

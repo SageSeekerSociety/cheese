@@ -37,6 +37,7 @@
     <BaseEmptyState
       v-else-if="!visible.length"
       size="inline"
+      align="center"
       class="rs__note"
       :title="rows.length ? t('tasks.roster.noMatch') : t('tasks.roster.empty')"
     />
