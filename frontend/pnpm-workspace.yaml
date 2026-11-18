@@ -82,8 +82,3 @@ packageExtensions:
     peerDependenciesMeta:
       vue-router:
         optional: true
-
-minimumReleaseAgeExclude:
-  - dockview-core@8.9.1
-  - dockview-vue@8.9.1
-  - dockview@8.9.1

@@ -357,8 +357,8 @@ importers:
         specifier: ^1.11.13
         version: 1.11.13
       dockview-vue:
-        specifier: 8.9.1
-        version: 8.9.1(vue@3.5.42(typescript@5.9.3))
+        specifier: 8.9.0
+        version: 8.9.0(vue@3.5.42(typescript@5.9.3))
       dompurify:
         specifier: 3.4.17
         version: 3.4.17
@@ -3766,16 +3766,16 @@ packages:
     resolution: {integrity: sha512-WkrWp9GR4KXfKGYzOLmTuGVi1UWFfws377n9cc55/tb6DuqyF6pcQ5AbiHEshaDpY9v6oaSr2XCDidGmMwdzIA==}
     engines: {node: '>=8'}
 
-  dockview-core@8.9.1:
-    resolution: {integrity: sha512-OzqB63P65qeSquFoyYjQi5yT85ERcmceaJ0+YdQL68IZJmBd5kAfe4UD9bl3xILuXJ1tlXIoExdZ+vLpv30u1g==}
+  dockview-core@8.9.0:
+    resolution: {integrity: sha512-qsXM+9wFik5WSEBq8x4KP041v19iM6cgSKVFrQpIgkJSXTM00+zEb66hI1kG3e+O7L4IKUfSziMUyZrofwetlg==}
 
-  dockview-vue@8.9.1:
-    resolution: {integrity: sha512-RdialPWCk/GPU/6zLjHUieKitG6/B957xV1z0vq9J3kQdoSCq9wjdO2L1jUaa7wamEW6++19qvYLIWzLV0UgSw==}
+  dockview-vue@8.9.0:
+    resolution: {integrity: sha512-djwq2UWX3AW4YuuC0ESJQWSO0NfCPHXGB/VQIvRThfynaQaI4k611MLfpX16VwKvwL2tYsei0RMr/PA3LDDszg==}
     peerDependencies:
       vue: ^3.4.0
 
-  dockview@8.9.1:
-    resolution: {integrity: sha512-y35BxYANBtHJ4q7AIkd2c1Oh2pPx3dsaMhm6s4YvMXyIWlklxHRZupXtN6bS8QuJ/hmy/5ih/Ow2oARbEx4Yog==}
+  dockview@8.9.0:
+    resolution: {integrity: sha512-uZYPtKEOb7j8rrSeT1PqfPP9z5OEiM9+NhLgn9lZ3hVhVpmrWoAWckY7MFGsnQINR3on9mza4RlJQ9lYyq0Ivg==}
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -9687,16 +9687,16 @@ snapshots:
     dependencies:
       path-type: 4.0.0
 
-  dockview-core@8.9.1: {}
+  dockview-core@8.9.0: {}
 
-  dockview-vue@8.9.1(vue@3.5.42(typescript@5.9.3)):
+  dockview-vue@8.9.0(vue@3.5.42(typescript@5.9.3)):
     dependencies:
-      dockview: 8.9.1
+      dockview: 8.9.0
       vue: 3.5.42(typescript@5.9.3)
 
-  dockview@8.9.1:
+  dockview@8.9.0:
     dependencies:
-      dockview-core: 8.9.1
+      dockview-core: 8.9.0
 
   dom-accessibility-api@0.5.16: {}
 
