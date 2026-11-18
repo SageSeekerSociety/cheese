@@ -13,6 +13,8 @@ import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { avatarColor } from '@/utils/avatar'
+
 import DocTopBar from './DocTopBar.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
@@ -86,6 +88,17 @@ describe('在线的人叫什么', () => {
     const face = container.querySelector('.doc-presence__face')
     expect(face?.getAttribute('title')).toContain('秦老师')
     expect(face?.textContent).toContain('秦')
+  })
+
+  it('底色跟着账号走，不跟着备注走', () => {
+    const painted = (nameOf: (handle: string) => string) => {
+      const { container } = mount({ peers: [peer], nameOf })
+      const avatar = container.querySelector('.doc-presence__face .v-avatar')
+      return (avatar as HTMLElement | null)?.style.backgroundColor
+    }
+    // 这一位在两个查看者眼里颜色得一样：一个是自己报的名字，一个是别人给他设的备注。
+    expect(painted((handle) => (handle === 'qingmo' ? '秦老师' : handle))).toBe(avatarColor('qingmo'))
+    expect(painted((handle) => handle)).toBe(avatarColor('qingmo'))
   })
 
   it('没有备注时仍是他自己报的名字，不是账号', () => {

@@ -47,7 +47,14 @@ const more = computed(() => people.value.length - shown.value.length)
         :title="`${displayName(peer)} · ${peer.handle}`"
       >
         <CheeseAvatar v-if="peer.agent" :size="22" :name="displayName(peer)" :handle="peer.handle" />
-        <UserAvatar v-else :size="22" :name="displayName(peer)" :avatar="peer.avatar" :alt="displayName(peer)" />
+        <UserAvatar
+          v-else
+          :size="22"
+          :name="displayName(peer)"
+          :seed="peer.handle"
+          :avatar="peer.avatar"
+          :alt="displayName(peer)"
+        />
       </span>
       <span v-if="more > 0" class="doc-presence__more">+{{ more }}</span>
     </div>
