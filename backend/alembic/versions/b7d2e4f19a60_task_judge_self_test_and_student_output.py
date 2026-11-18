@@ -31,14 +31,20 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     with_lock_retries("task_judge_run")
     op.drop_constraint("ck_task_judge_run_purpose", "task_judge_run", type_="check")
+    # 加成 NOT VALID 不扫表；放宽了的条件旧行一定满足，随后在锁外 VALIDATE。
     op.create_check_constraint(
         "ck_task_judge_run_purpose",
         "task_judge_run",
         "purpose IN ('SUBMISSION', 'TRIAL', 'SELF_TEST')",
+        postgresql_not_valid=True,
     )
     op.add_column(
         "task_judge_run", sa.Column("student_output", sa.Text(), nullable=True)
     )
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TABLE task_judge_run VALIDATE CONSTRAINT ck_task_judge_run_purpose"
+        )
 
 
 def downgrade() -> None:
@@ -49,4 +55,5 @@ def downgrade() -> None:
         "ck_task_judge_run_purpose",
         "task_judge_run",
         "purpose IN ('SUBMISSION', 'TRIAL')",
+        postgresql_not_valid=True,
     )
