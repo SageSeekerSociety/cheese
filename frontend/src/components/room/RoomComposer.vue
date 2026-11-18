@@ -696,8 +696,11 @@ defineExpose({
    *  写就成了屏幕上说交给芝士、发出去交给别人。 */
   addAgentMention(handle?: string) {
     if (!summonReady.value) return
-    const mate = (handle && mates.value.find((m) => m.handle === handle)) || restingMate.value
-    draft.value = withAgentMention(draft.value, mate)
+    // 叫的人指定了谁，就写谁；找不着（名册刚换过、那一位已经不在这间房了）**什么都不写**，
+    // 不退回「平时交给的那位」——那一退正是这次要消灭的错：屏幕上说着一个人，@ 出来另一个。
+    // 只有叫的人没说时（没传 handle）才按发送框平时的选择写。
+    const mate = handle ? mates.value.find((m) => m.handle === handle) ?? null : restingMate.value
+    if (mate) draft.value = withAgentMention(draft.value, mate)
     void nextTick(() => composerInput.value?.focus?.())
   },
   askRecipient,
