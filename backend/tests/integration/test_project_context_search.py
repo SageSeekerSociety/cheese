@@ -9,7 +9,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.living_doc.models import DocumentNode
 from app.domain.living_doc.services import Documents
-from app.domain.project.models import Project, ProjectArtifact
+from app.domain.project.models import Project, ProjectArtifact, ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
@@ -578,3 +578,46 @@ def test_a_hit_names_a_teammate_by_its_name_in_the_project_now(client):
         for _, name, _ in _authors(client, project, "压测", only=["message"]).values()
     }
     assert names == {"Kimi K3"}
+
+
+def _roster(project: str, *handles: str):
+    """Put these people on the project's roster so they may search it."""
+
+    async def go(db):
+        for handle in handles:
+            db.add(ProjectMember(project_id=uuid.UUID(project), user_handle=handle))
+
+    return go
+
+
+def test_a_hit_is_named_by_the_readers_own_remark(client):
+    """The reader's remark names an author in search results, and only for them."""
+    project = _project(client)
+    room = _room(client, project, "备注")
+    reader = "remark-reader"
+    other = "remark-other"
+    _seed(client, _roster(project, reader, other))
+    _seed(client, _nickname(OWNER, "Ada"))
+    _seed(client, _say(project, room, "备注在搜索结果里生效"))
+
+    saved = client.put(
+        f"/users/{OWNER}/remark",
+        json={"remark": "Ada from the lab"},
+        headers=session_auth_headers(reader),
+    )
+    assert saved.status_code == 200, saved.text
+
+    def names(auth: str) -> dict[str, tuple]:
+        r = client.get(
+            f"/projects/{project}/context/search",
+            params={"q": "备注在搜索结果里生效"},
+            headers=session_auth_headers(auth),
+        )
+        assert r.status_code == 200, r.text
+        return {
+            h["snippet"]: (h["author"], h["author_name"])
+            for h in r.json()["data"]["hits"]["records"]
+        }
+
+    assert names(reader) == {"备注在搜索结果里生效": (OWNER, "Ada from the lab")}
+    assert names(other) == {"备注在搜索结果里生效": (OWNER, "Ada")}

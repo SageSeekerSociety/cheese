@@ -12,6 +12,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
+import { userName } from '@/lib/agentNames'
 
 const props = defineProps<{
   team: Team
@@ -52,7 +53,7 @@ async function submit() {
         <div class="t-meta c-muted mt-1">
           <span v-if="team.owner">
             <i18n-t scope="global" keypath="work.teamProfile.owner" tag="span">
-              <template #name><UserRef :handle="team.owner.username" :name="team.owner.nickname" /></template>
+              <template #name><UserRef :handle="team.owner.username" :name="userName(team.owner)" /></template>
             </i18n-t>
             ·
           </span>

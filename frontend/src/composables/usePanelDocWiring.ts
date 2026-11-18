@@ -3,7 +3,6 @@
 //
 // 调用点：接线外壳 `components/work/PanelDocHost.vue`（对话旁边、资料库、项目目标），
 // 和团队文档整页 `views/teams/TeamDocument.vue`——那一页自己取数，画面交给同目录的视图。
-import type { ProjectMemberRow } from '../cx_types'
 import type { PanelDocProps } from './usePanelDoc'
 
 import { useDocPeople } from './useDocPeople'
@@ -11,7 +10,7 @@ import { useDocThreads } from './useDocThreads'
 import { useMentionOutside } from './useMentionOutside'
 import { usePanelDoc } from './usePanelDoc'
 
-export function usePanelDocWiring(props: PanelDocProps & { members?: ProjectMemberRow[] }) {
+export function usePanelDocWiring(props: PanelDocProps) {
   // 名册那一包先建：评论发送前的 `@名字` → 点名要靠它，而它只读 props，不依赖文档那份。
   const docPeople = useDocPeople({
     members: () => props.members ?? [],

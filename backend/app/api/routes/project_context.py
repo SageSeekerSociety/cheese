@@ -47,7 +47,7 @@ from app.domain.room_task.place import place_or_404
 from app.domain.search import bm25
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.user.services import faces_by_handle
+from app.domain.user.services import faces_by_handle, remarks_by_handles
 
 router = APIRouter(prefix="", tags=["project-context"])
 
@@ -191,11 +191,30 @@ async def search_project_context(
     shelf = await shelf_for(db, project_id)
     terms = bm25.words(q)
     await bm25.serial_scans(db)
+    viewer_handle = actor.handle if actor.authenticated else None
     hits = (
-        await search_everything(db, project_id, q, terms, readable, limit, shelf)
+        await search_everything(
+            db,
+            project_id,
+            q,
+            terms,
+            readable,
+            limit,
+            shelf,
+            viewer_handle=viewer_handle,
+        )
         if groups is None
         else await _page(
-            db, project_id, q, terms, readable, groups, limit, offset, shelf
+            db,
+            project_id,
+            q,
+            terms,
+            readable,
+            groups,
+            limit,
+            offset,
+            shelf,
+            viewer_handle=viewer_handle,
         )
     )
     body: dict = {
@@ -222,6 +241,7 @@ async def _page(
     limit: int,
     offset: int,
     shelf: Shelf,
+    viewer_handle: str | None = None,
 ) -> dict[str, list[dict]]:
     hits: dict[str, list[dict]] = {"records": [], "tasks": [], "library": []}
     in_readable = list(readable)
@@ -258,7 +278,9 @@ async def _page(
             ]
         ranked.sort(key=lambda pair: -pair[0])
         hits["records"] = [record for _, record in ranked[offset : offset + limit]]
-        await _name_authors(db, project_id, hits["records"])
+        await _name_authors(
+            db, project_id, hits["records"], viewer_handle=viewer_handle
+        )
     if "tasks" in groups and in_readable:
         tasks = await db.scalars(
             select(Task)
@@ -354,7 +376,11 @@ def _doc_record(
 
 
 async def _name_authors(
-    db: AsyncSession, project_id: uuid.UUID, records: list[dict]
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    records: list[dict],
+    *,
+    viewer_handle: str | None = None,
 ) -> None:
     """Give each record the name its author goes by now, beside the handle it
     stores: a teammate of this project by the name the roster gives it, with
@@ -374,12 +400,15 @@ async def _name_authors(
             teammates[member.handle] = named
             teammates[member.instance_handle] = named
     faces = await faces_by_handle(db, authors - teammates.keys())
+    # The reader's own remark wins over every public name: this text is only
+    # shown to them, and the roster names people the same way.
+    remarks = await remarks_by_handles(db, viewer_handle, authors)
     for record in records:
         name, source = teammates.get(record["author"]) or (
             faces.get(record["author"], (None, None))[0],
             None,
         )
-        record["author_name"] = name
+        record["author_name"] = remarks.get(record["author"]) or name
         record["author_name_source"] = source
 
 
@@ -405,6 +434,7 @@ async def search_everything(
     readable: dict[uuid.UUID, Topic],
     limit: int,
     shelf: Shelf,
+    viewer_handle: str | None = None,
 ) -> dict[str, list[dict]]:
     """``shelf`` is the project's library as the caller reads it
     (`project_library.shelf_for`)."""
@@ -459,7 +489,7 @@ async def search_everything(
                     .limit(limit)
                 )
             ]
-        await _name_authors(db, project_id, records)
+        await _name_authors(db, project_id, records, viewer_handle=viewer_handle)
         hits["records"] = records
         tasks = await db.scalars(
             select(Task)

@@ -4,6 +4,8 @@ export type User = {
   nickname: string
   avatarId: number
   intro: string
+  /** 当前查看者给这个人设的私人称呼；没设过是 null/缺省。只见于本人，不是公开昵称。 */
+  remark?: string | null
   question_count: number
   answer_count: number
   has_real_name_info?: boolean
