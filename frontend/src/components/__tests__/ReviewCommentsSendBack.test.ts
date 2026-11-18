@@ -19,6 +19,7 @@ vi.mock('../../api', async () => {
   return {
     ...actual,
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
+    getHandInStanding: vi.fn().mockResolvedValue({ unhanded: false, waiting: false }),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
     rejectCard: (...a: unknown[]) => rejectCard(...a),
     getTopic: vi.fn().mockResolvedValue({ id: 't1', status: 'active' }),

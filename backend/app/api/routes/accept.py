@@ -252,7 +252,37 @@ def _handing_in(at: InChannel) -> tuple[Actor, Task]:
     return at.actor, at.place.task
 
 
-@router.get("/topics/{topic_id}/hand-in")
+class HandInStandingOut(BaseModel):
+    unhanded: bool
+    waiting: bool
+
+
+class HandInFileOut(BaseModel):
+    path: str
+    additions: int
+    deletions: int
+
+
+class HandInPanelOut(BaseModel):
+    files: list[HandInFileOut]
+    again: bool
+    subject: str | None
+    body: str | None
+    reviewers: list[str]
+
+
+class HandInDraftOut(BaseModel):
+    subject: str
+    body: str
+    drafted: bool
+
+
+class HandedInOut(BaseModel):
+    card: AcceptCardOut
+    accepted: bool
+
+
+@router.get("/topics/{topic_id}/hand-in", **typed_response(HandInStandingOut))
 async def hand_in_standing(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -267,7 +297,7 @@ async def hand_in_standing(
     return ok({"unhanded": found.unhanded, "waiting": found.waiting})
 
 
-@router.get("/topics/{topic_id}/hand-in/panel")
+@router.get("/topics/{topic_id}/hand-in/panel", **typed_response(HandInPanelOut))
 async def hand_in_panel(
     topic_id: uuid.UUID,
     at: HandsIn,
@@ -311,7 +341,7 @@ async def hand_in_panel(
     )
 
 
-@router.post("/topics/{topic_id}/hand-in/draft")
+@router.post("/topics/{topic_id}/hand-in/draft", **typed_response(HandInDraftOut))
 async def hand_in_draft(
     topic_id: uuid.UUID,
     at: HandsIn,
@@ -352,7 +382,7 @@ class HandInBody(BaseModel):
     accept: bool = False
 
 
-@router.post("/topics/{topic_id}/hand-in")
+@router.post("/topics/{topic_id}/hand-in", **typed_response(HandedInOut))
 async def hand_in_route(
     topic_id: uuid.UUID,
     body: HandInBody,

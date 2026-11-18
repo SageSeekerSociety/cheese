@@ -21,6 +21,8 @@ import { signInWithGithub } from '@/composables/useGithubSignIn'
 import { noteAccepted, primeInvitePrompt } from '@/composables/useInvitePrompt'
 import { useReviewComments } from '@/composables/useReviewComments'
 
+import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { mayIn } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -106,6 +108,15 @@ export function useAcceptCard(props: AcceptCardHost) {
     reportError: (error, fallback) => store.reportError(error, fallback),
   })
   const decisionOpen = computed(() => cardDecisionOpen.value && handIn.acceptable.value)
+  // 提交面板里能选的审阅人：自己排在最前，写「（你）」。
+  const handInReviewers = computed(() => {
+    const people = reviewerChoices.value.map((m) => ({ handle: m.user_handle, name: memberName(m) || m.user_handle }))
+    const mine = people.find((p) => p.handle === me.value)
+    return [
+      ...(mine ? [{ handle: mine.handle, name: t('work.room.accept.handIn.you', { name: mine.name }) }] : []),
+      ...people.filter((p) => p.handle !== me.value),
+    ]
+  })
 
   // 横条那一行、那个圈、有没有东西可画、以及对外说的相位（acceptCard/bar.ts）。
   const { bar, barColumn, hasBox, phase } = useAcceptCardBar({
@@ -220,6 +231,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     onVoidCard: actions.onVoidCard,
     // 人自己提交审阅
     handIn,
+    handInReviewers,
     // 画的时候顺手要用的
     author: me,
     agentName,

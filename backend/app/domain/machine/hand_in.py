@@ -59,7 +59,6 @@ from app.domain.repository.kept_work import has_kept, kept_work
 from app.domain.repository.ports import WakeWorkingCopy as Wake
 from app.domain.review import commit_message
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService, ReviewerAdmission
 from app.domain.review.task_landing import record_at_origin
 from app.domain.room_task import heard
@@ -129,7 +128,7 @@ async def _on_sandbox(
     value = receipt.get("value") or {}
     stdout = value.get("stdout") or ""
     if value.get("backgroundTaskId"):
-        raise RuntimeError("the command did not finish")
+        raise TimeoutError  # the command outlived its deadline
     if stdout.startswith("Exit code"):
         raise RuntimeError(stdout.strip()[-600:])
     return stdout
@@ -167,10 +166,6 @@ async def uncommitted(
         return False
 
 
-def _latest(cards: list[AcceptCard]) -> AcceptCard | None:
-    return max(cards, key=lambda c: c.created_at, default=None)
-
-
 @dataclass(frozen=True)
 class Standing:
     """Where a task's work stands against what was handed in."""
@@ -195,8 +190,7 @@ async def standing(db: AsyncSession, task: Task) -> Standing:
     says; otherwise the kept snapshot, which follows a person's save by about
     ten seconds and is kept only on the platform's own forge. A version whose
     head is not known yet (filed a moment ago) counts as holding the branch."""
-    cards = await AcceptCardRepository(db).list_for_task(task.id)
-    latest = _latest(cards)
+    latest = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     waiting = latest is not None and latest.status in WAITING
     if task.status != TaskStatus.open or not task.branch_name:
         return Standing(uncommitted=False, ahead=False, waiting=waiting)
@@ -364,9 +358,8 @@ async def hand_in(
         wake=wake,
     )
     head = await project_forge.branch_head(task.project_id, db, branch)
-    waiting = await AcceptCardRepository(db).list_live_for_places(
-        [task.id], statuses=WAITING
-    )
+    latest = (await service.latest_by_task([task.id])).get(task.id)
+    waiting = [latest] if latest is not None and latest.status in WAITING else []
     if waiting:
         held = waiting[0].pr_head_sha
         card = await _again(
@@ -431,7 +424,7 @@ async def _again(
     # A card stuck on a merge conflict keeps its text and reviewers: those
     # change only while it waits on its reviewer.
     if reviewers and card.status == AcceptStatus.pending:
-        current = await AcceptCardRepository(db).reviewer_handles(card.id)
+        current = (await service.reviewer_handles_for_cards([card.id])).get(card.id, [])
         if set(current) != set(reviewers):
             await service.reassign(
                 card_id=card.id,
