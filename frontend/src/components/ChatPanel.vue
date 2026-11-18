@@ -435,10 +435,12 @@ const unaskedNotice = computed(() => {
   return messages.slice(at + 1).every((m) => m.turn_id === mine.turn_id) ? mine : null
 })
 // 「交给芝士」：走本来就有的那两步——回复这一条、在正文前面 @ 它。发不发由人决定。
+// @ 的是**这一句上写着名字的那位**（`agentSeat`）：发送框平时画的是最近 @ 过的那位，
+// 这个房间交给的可能是另一位队友，那一句却只能是这个房间的座位说的。
 function askAbout(block: Block) {
   unaskedAfter.value = null
   setReply(block)
-  composerRef.value?.addAgentMention?.()
+  composerRef.value?.addAgentMention?.(agentSeat.value?.handle)
 }
 
 // 输入框旁边那颗队友头像要的两样：正在这一栏里跑一轮的队友，和我上一次交给的那位
