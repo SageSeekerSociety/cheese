@@ -250,6 +250,57 @@ export function placePanel(arrangement: LayoutArrangement, panelId: string, near
   })
 }
 
+// ---------------------------------------------------------------- back to the default sizes
+
+function panelsUnder(node: LayoutNode): string[] {
+  return isSplit(node) ? node.children.flatMap(panelsUnder) : node.panels
+}
+
+const sameSet = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n')
+
+/**
+ * The weights the page's default gives a split whose children hold these panels (one
+ * list per child, in order), or null when the default has no such split — the reader
+ * has arranged those panels in a way the page never offered.
+ */
+export function defaultWeights(defaults: LayoutArrangement, children: readonly (readonly string[])[]): number[] | null {
+  const walk = (node: LayoutNode): number[] | null => {
+    if (!isSplit(node)) return null
+    const matches =
+      node.children.length === children.length && node.children.every((c, i) => sameSet(panelsUnder(c), children[i]))
+    if (matches) return weights(node.children)
+    for (const child of node.children) {
+      const inner = walk(child)
+      if (inner) return inner
+    }
+    return null
+  }
+  return defaults.root ? walk(defaults.root) : null
+}
+
+/**
+ * The sizes a split's children go back to, in px out of the `total` they fill now: a
+ * child with a size of its own gets it (never more than the total leaves room for), the
+ * others share the rest by their default weights.
+ */
+export function resetSizes(
+  total: number,
+  weights: readonly number[],
+  fixed: readonly (number | undefined)[]
+): number[] {
+  let free = total
+  const out = weights.map((_, i) => {
+    const own = fixed[i]
+    if (own === undefined) return 0
+    const size = Math.max(0, Math.min(own, free))
+    free -= size
+    return size
+  })
+  const shared = weights.reduce((sum, w, i) => sum + (fixed[i] === undefined ? w : 0), 0)
+  return out.map((size, i) => (fixed[i] === undefined && shared > 0 ? Math.round((weights[i] / shared) * free) : size))
+}
+
 // ---------------------------------------------------------------- persistence
 
 export interface RestoreOptions {

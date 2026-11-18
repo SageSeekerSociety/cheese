@@ -48,13 +48,11 @@ vi.mock('@/stores/workspace', () => ({
     members: [],
     projects: [],
     unreadMap: {},
-    chatPct: 50,
     rememberPlace: vi.fn(),
     loadingTopics: false,
     markRead: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
-    setChatPct: vi.fn(),
   }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
