@@ -12,7 +12,7 @@
     :alt="alt"
     :style="{ fontSize: `${fontPx}px` }"
   >
-    <v-icon v-if="icon" :icon="`mdi-${icon}`" :size="iconPx" class="project-avatar__icon" />
+    <v-icon v-if="icon" :icon="icon" :size="iconPx" class="project-avatar__icon" />
     <template v-else>{{ label }}</template>
   </UserAvatar>
 </template>
@@ -23,7 +23,7 @@
 import { computed } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
-import { projectAvatarColor, type ProjectAvatarSpec, projectInitials } from '@/utils/projectAvatar'
+import { projectAvatarColor, type ProjectAvatarSpec, projectIconClass, projectInitials } from '@/utils/projectAvatar'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
@@ -51,7 +51,7 @@ const px = computed(() => {
 
 const kind = computed(() => avatar?.kind ?? null)
 const image = computed(() => (kind.value === 'image' && avatar?.image_id ? getAvatarUrl(avatar.image_id) : ''))
-const icon = computed(() => (kind.value === 'icon' ? avatar?.glyph ?? '' : ''))
+const icon = computed(() => (kind.value === 'icon' ? projectIconClass(avatar?.glyph) : ''))
 const label = computed(() => {
   if ((kind.value === 'emoji' || kind.value === 'text') && avatar?.glyph) return avatar.glyph
   // 图片取不到时 UserAvatar 退回这一格的字：仍是项目名取的字。

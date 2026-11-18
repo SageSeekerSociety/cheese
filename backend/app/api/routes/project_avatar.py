@@ -13,7 +13,7 @@ from app.api.response import ok, typed_response
 from app.api.write_access import Can, InProject
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.avatars.repositories import AvatarRepository
+from app.domain.avatars.services import is_uploaded
 from app.domain.project import avatar
 from app.domain.project.schemas import ProjectAvatarIn, ProjectAvatarOut
 from app.domain.project_permissions import Permission
@@ -41,10 +41,8 @@ async def set_project_avatar(
         choice = avatar.checked(body.kind, body.glyph, body.hue, body.image_id)
     except avatar.AvatarRefused as refused:
         raise ValidationError(say(_REFUSALS[refused.reason])) from refused
-    if choice.image_id is not None:
-        picture = await AvatarRepository(session=db).get_by_id(choice.image_id)
-        if picture is None or picture.avatar_type != "upload":
-            raise ValidationError(say("projectAvatarImage"))
+    if choice.image_id is not None and not await is_uploaded(db, choice.image_id):
+        raise ValidationError(say("projectAvatarImage"))
     avatar.apply(at.project, choice)
     await db.commit()
     return ok(ProjectAvatarOut.of(at.project).model_dump(mode="json"))

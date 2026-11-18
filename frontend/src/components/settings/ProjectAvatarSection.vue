@@ -150,7 +150,7 @@ function onFile(event: Event) {
             {{ initials }}
           </button>
           <button
-            v-for="icon in PROJECT_ICONS"
+            v-for="(iconClass, icon) in PROJECT_ICONS"
             :key="icon"
             type="button"
             class="pav__opt"
@@ -160,7 +160,7 @@ function onFile(event: Event) {
             :disabled="saving"
             @click="pickIcon(icon)"
           >
-            <v-icon :icon="`mdi-${icon}`" size="20" />
+            <v-icon :icon="iconClass" size="20" />
           </button>
         </div>
 

@@ -1,6 +1,15 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import NotFoundError
 from app.domain.avatars.models import Avatar
 from app.domain.avatars.repositories import AvatarRepository
+
+
+async def is_uploaded(session: AsyncSession, avatar_id: int) -> bool:
+    """Whether ``avatar_id`` is a picture someone uploaded (``POST /avatars``),
+    as opposed to a platform default or nothing at all."""
+    avatar = await AvatarRepository(session=session).get_by_id(avatar_id)
+    return avatar is not None and avatar.avatar_type == "upload"
 
 
 class AvatarService:
