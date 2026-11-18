@@ -80,6 +80,11 @@ describe('交给芝士：写进去的 @ 就是那一句上写着的那位', () =
     expect(hand(`<@alice> @${OTHER.label}改一下`)).toBe(`<@${SEAT.handle}> <@alice> 改一下`)
   })
 
+  // 没拿掉任何东西时，正文连标点都要原样：人名后面紧跟一个逗号不该被加空格。
+  it('开头只 @ 了人、一个字没拿掉：正文逐字不动', () => {
+    expect(hand('<@alice>，请看一下')).toBe(`<@${SEAT.handle}> <@alice>，请看一下`)
+  })
+
   // 只在开头那一段上动手：句子后面打的字原样交回，不会被顺手展开成标签。
   it('句子后面的 @ 和结尾的换行原样留着', () => {
     expect(hand(`<@${OTHER.handle}> 照 @alice 说的改\n`)).toBe(`<@${SEAT.handle}> 照 @alice 说的改\n`)

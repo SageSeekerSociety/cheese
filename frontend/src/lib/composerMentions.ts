@@ -59,19 +59,21 @@ export function handToMentions(
   // （那句话是说给他听的），接着看它后面还有没有队友。拿完之后剩下的正文逐字交回。
   const kept: string[] = []
   let cursor = 0
+  let dropped = false
   for (;;) {
     const start = cursor + /^\s*/.exec(text.slice(cursor))![0].length
     const span = mentionSpans(text.slice(start), roster, topics).find((s) => s.start === 0)
     if (!span) break
     const at = start + span.end
     const handle = /^<@([\w-]+)>$/.exec(expandMentions(text.slice(start, at), roster, topics))?.[1]
-    if (!handle || !summons(handle)) kept.push(text.slice(start, at))
+    dropped = !!handle && summons(handle)
+    if (!dropped) kept.push(text.slice(start, at))
     cursor = at
   }
   // 拿掉的队友可能正好是人和正文之间那道空格（「<@alice> <@芝士O>正文」）：人那位和
   // 接着的正文之间补回一个，不然两截粘成一串。
   const body = text.slice(cursor)
   const head = kept.join(' ')
-  const joined = head ? head + (/^\S/.test(body) ? ` ${body}` : body) : body.trimStart()
+  const joined = head ? head + (dropped && /^\S/.test(body) ? ` ${body}` : body) : body.trimStart()
   return joined ? `<@${seat.handle}> ${joined}` : `<@${seat.handle}>`
 }
