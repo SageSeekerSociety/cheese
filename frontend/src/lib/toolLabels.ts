@@ -75,6 +75,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_canvas: 'toolLabels.cheeseCanvas',
   cheese_room: 'toolLabels.cheeseRoom',
   cheese_card: 'toolLabels.cheeseCard',
+  cheese_hand_in: 'toolLabels.cheeseHandIn',
   cheese_feedback: 'toolLabels.cheeseFeedback',
   cheese_skill: 'toolLabels.cheeseSkill',
   cheese_session: 'toolLabels.cheeseSession',
@@ -109,6 +110,8 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_task.look': 'toolLabels.cheeseTaskLook',
   'cheese_task.report': 'toolLabels.cheeseTaskReport',
   'cheese_task.accept': 'toolLabels.cheeseTaskAccept',
+  'cheese_hand_in.prepare': 'toolLabels.cheeseHandInPrepare',
+  'cheese_hand_in.confirm': 'toolLabels.cheeseHandInConfirm',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   'cheese_web.fetch': 'toolLabels.cheeseFetch',
   // 个人芝士的工具（backend/sandbox/cheese 的 DELEGATED_TOOLS）。
