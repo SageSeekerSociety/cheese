@@ -81,6 +81,7 @@ async def arm_auto_merge(
         await self._seen_head_or_refresh(card, topic, head_sha, say("verbArmAutoMerge"))
         card.auto_merge_armed_by = decided_by
         card.auto_merge_armed_at = datetime.now(UTC)
+        card.auto_merge_adopts = False
     else:
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
@@ -121,6 +122,7 @@ async def adopt_when_ready(
         raise ValidationError(say("prNewCommitsAfterView", number=card.pr_number))
     card.auto_merge_armed_by = decided_by
     card.auto_merge_armed_at = datetime.now(UTC)
+    card.auto_merge_adopts = True
     await self._session.flush()
     await self._session.refresh(card)
     return card

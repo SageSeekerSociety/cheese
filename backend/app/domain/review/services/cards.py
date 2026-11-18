@@ -927,6 +927,8 @@ async def _render(
         "armed_at": (
             card.auto_merge_armed_at.isoformat() if card.auto_merge_armed_at else None
         ),
+        # 布防的人采纳了这一版（「提交并采纳」），不是打开了自动合并。
+        "adopting": bool(card.auto_merge_armed_by and card.auto_merge_adopts),
     }
     # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
     # red one has to be in front of the person about to accept. A check

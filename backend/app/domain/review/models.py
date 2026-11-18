@@ -255,6 +255,11 @@ class AcceptCard(UuidPk, Timestamps, Base):
     auto_merge_armed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 布防来自「提交并采纳」（`merge_queue.adopt_when_ready`）：审阅人采纳了自己
+    # 刚交的这一版，而不是打开了「检查通过后自动合并」。只在布防时有意义。
+    auto_merge_adopts: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     # PR 回流的去重账本 (review/pr_signals.py)：每一类回流（CI 失败 / 评审意见 /
     # 合并冲突）各记「发到哪个内容签名」和「发过几轮」。
     #
