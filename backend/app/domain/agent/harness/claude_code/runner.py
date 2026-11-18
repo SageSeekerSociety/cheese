@@ -36,6 +36,7 @@ Standard library only: this module travels in the runner archive.
 import asyncio
 import base64
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -136,6 +137,10 @@ LIVE_LAUNCH = "live_launch"
 #: The epoch that process was registered under (``register``); empty until it
 #: is. Its ending, reported for it by the next runner, carries this epoch.
 LIVE_EPOCH = "live_epoch"
+#: The input blocks only one person may read, by the digest of their text:
+#: owner (``Runner._private_texts``).
+PRIVATE_TEXTS = "private_texts"
+PRIVATE_TEXTS_KEPT = 256
 #: The platform inputs written to the agent and not read yet, in the order they
 #: were written: what is dropped when the process goes.
 UNREAD_INPUTS = "unread_inputs"
@@ -596,6 +601,11 @@ LINGER_S = 30.0
 TASKS_KEPT = 50
 
 
+def _digest(text: str) -> str:
+    """What an input block that only one person may read is known by."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def _text_of(content: object) -> str:
     if isinstance(content, str):
         return content
@@ -716,6 +726,14 @@ class Runner(runner.Runner[Journal]):
         # The calls on someone's private memory file still waiting for their
         # result: call id → owner (``_private_calls``).
         self.private_calls: dict[str, str] = {}
+        # The input blocks only one person may read (a member's
+        # `communication` notes, `PrivateText`): the block's text, by its
+        # digest -> owner. Kept in the journal, so a runner started again
+        # still stamps the transcript's copy of an input the last one wrote
+        # (``_private_texts``).
+        self.private_texts: dict[str, str] = json.loads(
+            self.journal.recall(PRIVATE_TEXTS) or "{}"
+        )
         # Since the platform last reconciled this tree (`sync_memory`): whether
         # the session worked, and whose private index it read. The platform
         # counts the turns that worked for someone without reading theirs.
@@ -1349,6 +1367,26 @@ class Runner(runner.Runner[Journal]):
                     marked[call] = owner
         return marked
 
+    def _private_texts(self, message: dict) -> dict[str, str]:
+        """The text blocks of an input in this record that only one person may
+        read: block index -> owner, stamped on the record as
+        ``cheese.private_text``.
+
+        Which blocks they are is what this runner itself wrote into the input
+        (``_put``), matched by the block's whole text: the echo and the
+        transcript's copy of the input carry the blocks as they were sent.
+        Who may read what is stamped is `session_record.privacy`'s."""
+        if message.get("type") != "user" or not self.private_texts:
+            return {}
+        content = (message.get("message") or {}).get("content")
+        marked: dict[str, str] = {}
+        for index, block in enumerate(content if isinstance(content, list) else []):
+            if isinstance(block, dict) and block.get("type") == "text":
+                owner = self.private_texts.get(_digest(str(block.get("text") or "")))
+                if owner is not None:
+                    marked[str(index)] = owner
+        return marked
+
     def _watch_marks(self, message: dict) -> dict:
         """What one transcript-shaped record says to the stuck-work clocks,
         and the calls whose results it brings back (``cheese.calls``)."""
@@ -1475,6 +1513,8 @@ class Runner(runner.Runner[Journal]):
                 stamp["calls"] = returned
             if private := self._private_calls(message):
                 stamp["private"] = private
+            if private_text := self._private_texts(message):
+                stamp["private_text"] = private_text
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
@@ -2012,10 +2052,28 @@ class Runner(runner.Runner[Journal]):
         text: str,
         images: list[dict],
         how: str,
+        private: list[dict] | None = None,
     ) -> None:
         content: str | list = (
-            [{"type": "text", "text": text}, *images] if images else text
+            [
+                *({"type": "text", "text": p["text"]} for p in private or ()),
+                {"type": "text", "text": text},
+                *images,
+            ]
+            if images or private
+            else text
         )
+        if private:
+            # Remembered before the write, as ``sent`` is: the echo can be read
+            # before the write returns.
+            self.private_texts.update(
+                {_digest(p["text"]): str(p["owner"]) for p in private}
+            )
+            # A note is given once and again only when it changed, so the
+            # newest are the ones a record still to come can carry.
+            for stale in list(self.private_texts)[:-PRIVATE_TEXTS_KEPT]:
+                del self.private_texts[stale]
+            self.journal.remember(PRIVATE_TEXTS, json.dumps(self.private_texts))
         if how in ("send", "steer"):
             if self.session_id is None or work is None:
                 raise ValueError("An input needs its native session and work identity")
@@ -2065,6 +2123,7 @@ class Runner(runner.Runner[Journal]):
         steering: bool = False,
         owes_reply: bool = False,
         compact_if_cold: dict | None = None,
+        private: list[dict] | None = None,
     ) -> dict:
         """A user message, or words said to a session that is working.
 
@@ -2074,6 +2133,8 @@ class Runner(runner.Runner[Journal]):
         it — ``steering`` says it was addressed to a turn already running.
         A new turn on a cold conversation is compacted first
         (``compaction.when_cold``), and then says ``compact_if_cold['text']``.
+        ``private`` (``{"owner", "text"}``) goes ahead of it, each as a block
+        only its owner may read in the records (``_private_texts``).
         """
         how = "steer" if steering else "send"
 
@@ -2083,12 +2144,18 @@ class Runner(runner.Runner[Journal]):
                 await self._catch_up()
                 if await compaction.when_cold(self, compact_if_cold):
                     said = compact_if_cold["text"]  # type: ignore[index]
-            await self._put(identifier, work_id, said, images or [], how)
+            await self._put(identifier, work_id, said, images or [], how, private)
             return {"input_id": identifier}
 
         return await self.accept(
             identifier,
-            {"text": text, "images": images or [], "work_id": work_id, "how": how},
+            {
+                "text": text,
+                "images": images or [],
+                "work_id": work_id,
+                "how": how,
+                **({"private": private} if private else {}),
+            },
             submit,
             owes_reply=owes_reply,
         )
@@ -2283,6 +2350,7 @@ class Runner(runner.Runner[Journal]):
                 steering=method == "steer",
                 owes_reply=bool(params.get("owes_reply")),
                 compact_if_cold=params.get("compact_if_cold"),
+                private=params.get("private") if method == "send" else None,
             )
         if method == "interrupt":
             self.interrupting = self.working

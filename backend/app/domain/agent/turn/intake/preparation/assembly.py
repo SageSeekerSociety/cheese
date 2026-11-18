@@ -70,7 +70,7 @@ from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.delivery.models import Delivery
 from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import memory_index
-from app.domain.memory.session import talk_owners
+from app.domain.memory.session import talk_notes
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.prompts import PROFILES, task_section
@@ -290,19 +290,22 @@ async def prepare(
         # 平台为一件任务叫醒的那一轮是这件任务要告诉的人（`_answered`）。他们同时
         # 是这一轮对账要点名的那几位（`MemoryLedger.remember_turn`），所以「告诉它
         # 去读的」和「铺到会话目录里的」是同一份。
+        answered = (
+            await _answered(session, roster, own_pending, delivery_id)
+            if private_owner is None
+            else []
+        )
         if private_owner is not None:
             speakers = [private_for] if private_for else []
             talk_for: list[dict] = []
         else:
-            speakers = await talk_notes_for(
-                session,
-                agent.instance_id,
-                await _answered(session, roster, own_pending, delivery_id),
-            )
+            speakers = await talk_notes_for(session, agent.instance_id, answered)
             named = {m["handle"]: m["name"] for m in roster}
             talk_for = [
-                {"handle": h, "name": named.get(h) or h}
-                for h in await talk_owners(session, topic.project_id, speakers)
+                {"handle": h, "name": named.get(h) or h, "notes": notes}
+                for h, notes in (
+                    await talk_notes(session, topic.project_id, speakers)
+                ).items()
             ]
         prep.memory.remember_turn(
             topic.id,

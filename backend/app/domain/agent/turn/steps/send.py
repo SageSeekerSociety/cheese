@@ -302,6 +302,7 @@ async def send_prepared(
             session_opening=opening.text,
             opening_changes=opening_changes(opening, told),
             cold=prepared.cold,
+            private=prepared.private,
             model=model_kwargs.get("model"),
             env=model_kwargs.get("env"),
             acting=acting_agent,
@@ -325,6 +326,8 @@ async def send_prepared(
             agent_handle=prepared.agent_handle,
             harness=prepared.harness,
             digests=opening.digests(),
+            talk=dict(prepared.talk_told),
+            resumed=resume_session_id,
             # A compaction that ended since `told` was read cleared it; this
             # turn told only the changes, so the clear stands.
             was=told,

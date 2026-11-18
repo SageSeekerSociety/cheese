@@ -228,6 +228,21 @@ class ColdCompaction:
 
 
 @dataclass(frozen=True)
+class PrivateText:
+    """Words said to a session that only ``owner`` may read in its records: a
+    member's `communication` notes, given in a multi-person place
+    (`prompts.talk_notes`). The runner puts them in the input as a block of
+    their own and stamps every record that carries that block with ``owner``
+    (``cheese.private_text``), so `session_record.privacy.for_reader` empties
+    it for anyone else. ``held``: the conversation was given this very text
+    already, so it is said again only to a conversation started afresh."""
+
+    owner: str
+    text: str
+    held: bool = False
+
+
+@dataclass(frozen=True)
 class Prompt:
     """One thing said to a session."""
 
@@ -250,6 +265,9 @@ class Prompt:
     #: again (the whole opening, where ``text`` has only what changed).
     cold: ColdCompaction | None = None
     cold_text: str = ""
+    #: Said ahead of ``text``, each as a block only its owner may read in the
+    #: session's records (`PrivateText`).
+    private: tuple[PrivateText, ...] = ()
 
 
 @dataclass(frozen=True)

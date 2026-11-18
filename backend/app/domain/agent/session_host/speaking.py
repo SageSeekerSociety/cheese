@@ -132,6 +132,8 @@ async def _say(
         params["images"] = svc._driver(ref).images(prompt.images)
     if prompt.owes_reply:
         params["owes_reply"] = True
+    if prompt.private and method == "send":
+        params["private"] = [{"owner": p.owner, "text": p.text} for p in prompt.private]
     if prompt.acting is not None:
         params["platform_token"] = prompt.acting
     waits: dict[str, Any] = {}
