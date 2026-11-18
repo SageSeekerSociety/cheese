@@ -50,6 +50,8 @@ const props = defineProps<{
   connected: boolean
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
+  /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
+  resetLayout?: () => void
 }>()
 
 const emit = defineEmits<{
@@ -115,7 +117,15 @@ function roomCommands() {
   if (!nav) return []
   return topicActions(props.topic, nav.router, { rename: startRename, remove: () => (deleteOpen.value = true) })
 }
-const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
+// 「恢复默认摆法」只在 ⋯ 里：命令面板里那一条是页面登记的（views/workspace/roomLayout.ts）。
+const roomActions = computed<MenuAction[]>(() =>
+  [
+    ...roomCommands(),
+    ...(props.resetLayout
+      ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: props.resetLayout }]
+      : []),
+  ].map(menuActionOf)
+)
 
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)

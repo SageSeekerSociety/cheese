@@ -6,7 +6,7 @@ import type { LayoutPanelInfo } from './types'
 
 import { computed } from 'vue'
 
-import { isSplit } from './arrangement'
+import { hidesTabs, isSplit } from './arrangement'
 import { STRIP_SIZE } from './dockviewJson'
 
 const props = defineProps<{
@@ -19,7 +19,7 @@ const props = defineProps<{
 const cell = computed(() => (isSplit(props.node) ? null : props.node))
 const split = computed(() => (isSplit(props.node) ? props.node : null))
 const fits = (node: LayoutNode) => !isSplit(node) && node.panels.some((id) => props.info.get(id)?.fitHeight === true)
-const bare = computed(() => !!cell.value && cell.value.panels.every((id) => props.info.get(id)?.bare === true))
+const bare = computed(() => !!cell.value && hidesTabs(cell.value.panels.map((id) => props.info.get(id) ?? {})))
 const active = computed(() => cell.value && (cell.value.active ?? cell.value.panels[0]))
 
 const hiddenAt = (node: LayoutNode, along: SplitDirection) =>
@@ -73,10 +73,15 @@ const children = computed(() => {
           class="layout-static__tab"
           :class="{ 'layout-static__tab--on': id === active }"
         >
-          {{ info.get(id)?.title ?? id }}
+          <v-icon v-if="info.get(id)?.icon" class="layout-static__icon" size="16" :icon="info.get(id)!.icon" />
+          <span>{{ info.get(id)?.title ?? id }}</span>
         </div>
       </div>
       <div :key="active!" :ref="hostRef(active!)" class="layout-static__host" :data-layout-host="active" />
     </template>
+    <!-- A folded cell: the strip dockview draws, with its icons, not yet clickable. -->
+    <div v-else class="layout-static__strip">
+      <v-icon v-for="id in cell.panels" :key="id" size="18" :icon="info.get(id)?.icon ?? 'mdi-dock-window'" />
+    </div>
   </div>
 </template>

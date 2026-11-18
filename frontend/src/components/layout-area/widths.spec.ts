@@ -4,7 +4,7 @@ import type { LayoutPanelWidth } from './types'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { readWidth, rememberedWidth, rememberWidth } from './widths'
+import { readWidth, rememberedFold, rememberedWidth, rememberFold, rememberWidth } from './widths'
 
 const SIDEBAR: LayoutPanelWidth = { initial: 280, min: 190, max: 480, storageKey: 'test.sidebarWidth' }
 
@@ -38,6 +38,15 @@ describe('a panel width remembered under its key', () => {
     expect(readWidth(DRAWER)).toBe(280)
     rememberWidth(DRAWER, 400)
     expect(readWidth(DRAWER)).toBe(400)
+  })
+
+  it('a fold is the same for every reader of its key, and remembered', () => {
+    const one = rememberedFold('test.folded')
+    const other = rememberedFold('test.folded')
+    expect(one.value).toBe(false)
+    rememberFold('test.folded', true)
+    expect(other.value).toBe(true)
+    expect(localStorage.getItem('test.folded')).toBe('1')
   })
 
   it('a broken stored value gives the initial width', () => {

@@ -231,6 +231,7 @@ async def _merge_pr_for_accept(
     if status.merged:
         # 有人已经在 GitHub 上合了这个 PR —— 同一件事，照单收下。
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
+        card.decided_by = decided_by
         await self._mark_task_merged(card, delivered_head=status.head_sha)
         if status.merge_commit_sha:
             card.pr_head_sha = status.merge_commit_sha
@@ -522,13 +523,16 @@ async def _merge_armed_card(
         await self._session.flush()
         return
     card.pr_merged_at = datetime.now(UTC)
-    await self._mark_task_merged(card, delivered_head=card.pr_head_sha)
-    card.pr_head_sha = result.sha
-    await self._repo.add_approval(card.id, armer)
+    # Who adopted it is on the card before the task hears it landed: the line
+    # its discussion hears, and what the main line is told, name them
+    # (`task_landing.delivery_landed`).
     card.decided_by = armer
     card.decided_by_assistant = False
     card.decided_by_seat = None
     card.decided_at = datetime.now(UTC)
+    await self._mark_task_merged(card, delivered_head=card.pr_head_sha)
+    card.pr_head_sha = result.sha
+    await self._repo.add_approval(card.id, armer)
     await self._finish_pr_accept(card=card, topic=topic)
 
 

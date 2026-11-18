@@ -6,8 +6,8 @@ once the task is committed closed. The work must not be handed off earlier:
 that lands before the commit finds the task still open, gives up, and is never
 retried — the closed task's PR stays open.
 
-Something in a request releases a savepoint (``review.task_landing.tell_origin``
-wraps its courtesy line in one), and SQLAlchemy dispatches ``after_commit`` when
+Something in a request releases a savepoint (``review.task_landing.record_at_origin``
+wraps its line in one), and SQLAlchemy dispatches ``after_commit`` when
 a savepoint is released too. Handing the work to a one-shot ``after_commit``
 listener therefore spent it on that savepoint. This pins the use site rather
 than the helper: ``test_a_released_savepoint_is_not_a_commit.py`` says what

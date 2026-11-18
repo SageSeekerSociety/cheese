@@ -126,11 +126,6 @@ export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
       docked: true,
       panelOpen: true,
       panelFloat: false,
-      canFocus: false,
-      focusMode: false,
-      chatNews: false,
-      focusLabel: '专注模式',
-      focusIcon: 'mdi-arrow-expand',
     },
     states: [
       {

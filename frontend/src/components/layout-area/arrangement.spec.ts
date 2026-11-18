@@ -7,11 +7,15 @@ import {
   canCollapse,
   cellsOf,
   defaultWeights,
+  hidesTabs,
+  homeCell,
   placedPanels,
+  placeInGroup,
   placePanel,
   reconcile,
   resetSizes,
   restoreArrangement,
+  sameArrangement,
   serializeArrangement,
   setCollapsed,
   unplacedPanels,
@@ -20,7 +24,7 @@ import {
 import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 
 const DECLARED = ['nav', 'chat', 'files', 'preview', 'terminal']
-const OPTIONS = { version: 3, declared: DECLARED, pinned: ['nav'] }
+const OPTIONS = { version: 3, declared: DECLARED, required: ['nav', 'chat'] }
 
 const DEFAULT: LayoutArrangement = {
   root: {
@@ -74,7 +78,7 @@ describe('saving and restoring an arrangement', () => {
         root: { direction: 'row', children: [{ panels: ['nav'] }, { panels: ['nav', 'chat'] }] },
       }),
     ],
-    ['the pinned panel missing', JSON.stringify({ v: 3, root: { panels: ['chat'] } })],
+    ['a panel that cannot be closed missing', JSON.stringify({ v: 3, root: { panels: ['chat'] } })],
   ])('is ignored when it is %s, so the page starts from its default', (_case, raw) => {
     expect(restoreArrangement(raw, OPTIONS)).toBeNull()
   })
@@ -217,6 +221,119 @@ describe('dockview layout round trip', () => {
     expect(left.size).toBe(200)
     const rawLeft = (layout.grid.root.data as Array<{ size?: number }>)[0]
     expect(rawLeft.size).toBe(STRIP_SIZE)
+  })
+})
+
+describe('a panel that appears while the area is open', () => {
+  const groups: Record<string, string> = { files: 'work', preview: 'work', 'file:a': 'work', chat: 'talk' }
+  const groupOf = (id: string) => groups[id]
+
+  it('goes to the cell where the other panels of its group are, behind its visible tab', () => {
+    const area = withCellIds(DEFAULT)
+    const next = placeInGroup(area, 'file:a', groupOf)
+    const cell = cellsOf(next).find((c) => c.panels.includes('file:a'))!
+    expect(cell.id).toBe('top')
+    expect(cell.active).toBe('preview')
+  })
+
+  it('goes to the cell with most of its group when the group is spread over several', () => {
+    // One work panel dragged next to the chat; the rest of the group stays together.
+    const spread = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files'] },
+          { id: 'work', panels: ['preview', 'file:b'] },
+        ],
+      },
+    })
+    const next = placeInGroup(spread, 'file:a', (id) => (id === 'chat' ? 'talk' : 'work'))
+    expect(cellsOf(next).find((c) => c.panels.includes('file:a'))?.id).toBe('work')
+  })
+
+  it('goes where any closed panel would when its group has no cell yet', () => {
+    const lonely = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'a', panels: ['nav'] },
+          { id: 'b', panels: ['chat'] },
+        ],
+      },
+    })
+    const next = placeInGroup(lonely, 'file:a', groupOf)
+    expect(cellsOf(next).find((c) => c.panels.includes('file:a'))?.id).toBe('a')
+  })
+
+  it('stays where it is once placed', () => {
+    const area = withCellIds(DEFAULT)
+    expect(placeInGroup(area, 'chat', groupOf)).toBe(area)
+  })
+})
+
+describe("a group's home cell", () => {
+  it('is the cell holding most of the group, and moves when most of the group does', () => {
+    const groupOf = (id: string) => (id === 'chat' ? undefined : 'work')
+    const area = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files'] },
+          { id: 'work', panels: ['preview', 'terminal'] },
+        ],
+      },
+    })
+    expect(homeCell(area, 'work', groupOf)?.id).toBe('work')
+    const moved = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files', 'preview'] },
+          { id: 'work', panels: ['terminal'] },
+        ],
+      },
+    })
+    expect(homeCell(moved, 'work', groupOf)?.id).toBe('talk')
+    expect(homeCell(area, undefined, groupOf)).toBeUndefined()
+  })
+})
+
+describe("a cell's tab strip", () => {
+  it('is absent while a panel that wants one only when shared is alone, and back once another joins', () => {
+    const conversation = { stripWhenShared: true }
+    expect(hidesTabs([conversation])).toBe(true)
+    expect(hidesTabs([conversation, {}])).toBe(false)
+  })
+
+  it('is absent over bare panels, present over ordinary ones', () => {
+    expect(hidesTabs([{ bare: true }])).toBe(true)
+    expect(hidesTabs([{}])).toBe(false)
+    expect(hidesTabs([])).toBe(false)
+  })
+})
+
+describe('whether the reader has moved anything', () => {
+  it('ignores sizes, the visible tab and cell ids', () => {
+    const resized = reconcile(DEFAULT, DECLARED)
+    const other = JSON.parse(JSON.stringify(resized)) as LayoutArrangement
+    const top = cellsOf(other).find((cell) => cell.id === 'top')!
+    top.active = 'files'
+    top.size = 7
+    delete top.id
+    expect(sameArrangement(resized, other)).toBe(true)
+  })
+
+  it('counts a tab moved to another cell, a reordered tab and a folded cell', () => {
+    const base = reconcile(DEFAULT, DECLARED)
+    expect(
+      sameArrangement(base, placePanel(reconcile(DEFAULT, ['nav', 'chat', 'files', 'terminal']), 'preview', 'chat'))
+    ).toBe(false)
+    const reordered = JSON.parse(JSON.stringify(base)) as LayoutArrangement
+    cellsOf(reordered)
+      .find((cell) => cell.id === 'top')!
+      .panels.reverse()
+    expect(sameArrangement(base, reordered)).toBe(false)
+    expect(sameArrangement(base, setCollapsed(base, 'bottom', true))).toBe(false)
   })
 })
 

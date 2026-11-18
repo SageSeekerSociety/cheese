@@ -373,6 +373,7 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "titleAutoRenamed",
         "taskLanded",
         "taskStepLanded",
+        "taskHandedInBy",
         "computeAnyDevice",
         "computeCloud",
         "computeCloudVm",

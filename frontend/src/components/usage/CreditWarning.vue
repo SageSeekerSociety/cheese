@@ -40,7 +40,7 @@ defineProps<{
   height: 20px;
   border-radius: var(--radius-sm);
   background: var(--warn);
-  /* 实心警示块上的那个惊叹号：和侧栏角标同一套（`RailItem` 的 `--inverse-surface`）。 */
+  /* 实心警示块上的那个惊叹号：和侧栏件数同一套（common.scss 的 `.side-nav__count`）。 */
   color: var(--inverse-surface);
   font-size: 12px;
   font-weight: 700;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { WorkTabMeta } from '@/components/work/workLayout'
 import type { RoomTask } from '@/cx_types'
 import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
@@ -25,10 +26,10 @@ import { useTopicPanelState } from './topicView/panel'
 import { useSkillProposals } from './useSkillProposals'
 
 import HandInDialog from '@/components/accept/HandInDialog.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import NewThreadDialog from '@/components/channel/NewThreadDialog.vue'
+import { roomTabs } from '@/components/panels/panelTabList'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import DeliveryHead from '@/components/room/DeliveryHead.vue'
@@ -52,9 +53,9 @@ import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { openRoomTasksQuery, roomTaskQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { CONVERSATION, useRoomLayout } from '@/views/workspace/roomLayout'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
-import { useRoomFocus, WORK_PANEL } from '@/views/workspace/useRoomFocus'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. A task in the room
@@ -158,7 +159,7 @@ provide(
 const pendingNotes = usePendingNotes((content) => chatColumn.value?.say(content) ?? false)
 provide(PENDING_NOTES, pendingNotes)
 
-// 这个话题（任务）的采纳卡，整页一份：对话栏的那一条、「改动」页顶部、专注模式和手机
+// 这个话题（任务）的采纳卡，整页一份：对话栏的那一条、「改动」页顶部、对话看不见时的那一条和手机
 // 上面板底部那一条读的都是它（见 provideAcceptCard）。
 const accept = provideAcceptCard({
   get topicId() {
@@ -215,40 +216,6 @@ const {
   memberNames,
 } = conversation
 
-// ---- 桌面：对话和工作面板是外壳布局区里的两格（layouts/pagePanels.ts）----
-// 这一页自己那一格只剩页头；对话和面板各自传送进外壳给的那一格，分隔线、宽度由布局区管。
-// 面板并排开着才占一格，收着或浮在对话上（窄档）时那一格藏起来，宽度留着。
-const docked = computed(() => !panelFloat.value && panelOpen.value)
-const roomReady = computed(() => !!selectedTopic.value && !(props.taskId && !currentTask.value))
-const panels = usePagePanels(() =>
-  mdAndUp.value
-    ? {
-        key: 'room',
-        panels: [
-          { id: 'conversation', minWidth: 480 },
-          { id: WORK_PANEL, minWidth: 360, hidden: !roomReady.value || !docked.value, alwaysRender: true },
-        ],
-        arrangement: {
-          direction: 'row',
-          // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给面板。
-          children: [
-            { panels: ['conversation'], size: window.innerWidth >= 1440 ? 45 : 50 },
-            { panels: [WORK_PANEL], size: window.innerWidth >= 1440 ? 55 : 50 },
-          ],
-        },
-      }
-    : null
-)
-const conversationTarget = computed(() => panels.outlet('conversation'))
-/** 对话那一格里的那一块：窄档的面板浮层就压在它上面。 */
-const conversationBox = ref<HTMLElement | null>(null)
-const panelTarget = computed(() => (panelFloat.value ? conversationBox.value : panels.outlet(WORK_PANEL)) ?? undefined)
-// ---- 专注模式：面板铺满整个布局区（见 useRoomFocus）----
-const { focusMode, canFocus, focusIcon, focusLabel, chatNews, noteChatNews, toggleFocus, leaveFocus } = useRoomFocus({
-  panels,
-  docked,
-})
-
 // ---- 这个房间此刻是不是活的（见 topicView/live.ts）----
 // 对话里 AI 队友提议的技能：卡片点开在右侧那一格读完再决定（WorkPanel 的 `#skill`），
 // 取数和保存在这一页。卡片属于提出它的那段对话。第一次点开一张卡才去读，读过之后
@@ -282,7 +249,7 @@ const live = useTopicLive({
   conversationId: () => conversationId.value,
   taskId: () => props.taskId,
   reloadTask: () => taskPage.load(true),
-  noteChatNews,
+  noteChatNews: () => room.noteChatNews(),
   reloadAccept,
   reloadSkills: () => {
     if (skillsRead.value) void skills.load()
@@ -307,6 +274,8 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   openTopic,
   me: AUTHOR,
   handIn: accept.handIn,
+  // 布局区那一份在下面才建（它要读打开的交付）；页头渲染时早已有了。
+  resetLayout: () => (room.panels.rearranged.value ? room.panels.reset : null),
 })
 // ---- 在频道里审阅的那件交付、右栏开着哪一格（见 topicView/delivery.ts）----
 const reviewReload = ref(0)
@@ -388,6 +357,50 @@ const deliveryTabsBinding = computed(() =>
       })
     : []
 )
+
+// ---- 桌面：对话和工作面板的每一格都是外壳布局区里的一块（见 roomLayout.ts）----
+// 这一页自己那一格只剩页头。频道页、任务页各记各的摆法。面板收着、或主区太窄成了浮层时，
+// 只装着工作面板的那几格藏起来；浮层那一档面板自己排页签。
+const docked = computed(() => !panelFloat.value && panelOpen.value)
+const roomReady = computed(() => !!selectedTopic.value && !(props.taskId && !currentTask.value))
+/** 工作面板此刻有哪几格：固定的几格（面板算好的名字和信号，没挂上时照表），打开的任务，打开的文件。 */
+function workTabs() {
+  const handle = panelRef.value as (WorkPanelHandle & { fixedMeta?: WorkTabMeta[]; fileMeta?: WorkTabMeta[] }) | null
+  const fixed =
+    handle?.fixedMeta ??
+    roomTabs({ withChat: false, review: false, task: !!props.taskId }).map((tab) => ({
+      key: tab.key,
+      title: tab.label,
+      icon: tab.icon,
+    }))
+  return [
+    ...fixed.map((tab) => ({ ...tab, alwaysRender: tab.key === 'preview' })),
+    ...deliveryTabsBinding.value.map((tab) => ({
+      key: `delivery:${tab.id}`,
+      title: tab.title || t('work.room.delivery.title'),
+      icon: 'mdi-file-eye-outline',
+      signal: tab.dot ? ({ kind: 'dot' } as const) : undefined,
+      transient: true,
+      alwaysRender: true,
+    })),
+    ...(handle?.fileMeta ?? []).map((tab) => ({ ...tab, transient: true, alwaysRender: true })),
+  ]
+}
+const room = useRoomLayout(usePagePanels, {
+  kind: () => (mdAndUp.value ? (props.taskId ? 'task' : 'room') : null),
+  tabs: workTabs,
+  workHidden: () => !roomReady.value || !docked.value,
+  floating: () => panelFloat.value,
+  hide: { label: () => closeLabel.value, run: () => closePanel() },
+  onActivated: (key) => (panelRef.value as { activated?: (key: string) => void } | null)?.activated?.(key),
+  onClose: (key) => (panelRef.value as { closeTab?: (key: string) => void } | null)?.closeTab?.(key),
+  onKeep: (key) => (panelRef.value as { keepTab?: (key: string) => void } | null)?.keepTab?.(key),
+})
+const conversationTarget = computed(() => room.panels.outlet(CONVERSATION))
+/** 对话那一格里的那一块：窄档的面板浮层就压在它上面。 */
+const conversationBox = ref<HTMLElement | null>(null)
+/** 对话看不见（被放大的那一格盖住、或收着）：采纳那一条贴到读者在看的那一格工作面板底下。 */
+const acceptElsewhere = computed(() => !room.conversationInSight.value)
 // 打开的这件任务看哪一种（对话 / 改动 / 预览）：主线上「查看改动」「预览」点名，人在
 // 那一栏里换了就跟着换。记着是哪件任务的：换一件任务从它的对话看起。
 const reviewView = ref<{ taskId: string; view: string } | null>(null)
@@ -519,7 +532,6 @@ function openSource(source: TaskSource) {
 const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } = useTopicActions({
   place: here,
   panel: { show: panelShow },
-  leaveFocus,
   onPanelTab: onWorkPanelTab,
   onReview,
   reloadAccept,
@@ -693,7 +705,7 @@ void openPlace()
               :member-names="memberNames"
               :composer-closed="composerClosed"
               :ask-closed="askClosed"
-              :accept-elsewhere="focusMode"
+              :accept-elsewhere="acceptElsewhere"
               :chapters="chapters.rows.value"
               :chapterable="canChapter"
               :chapter-ids="chapters.chapterIds.value"
@@ -713,15 +725,20 @@ void openPlace()
           </div>
         </Teleport>
 
-        <!-- 工作面板：并排时是布局区里右边那一格，窄档里是从右边拉进对话那一块的浮层（三档
-             见 useTopicPanel）。浮层收起时 visibility 一并藏掉，不进 tab 序和读屏的树。
-             手机上它就在这一排里，对话是它的第一个页签。 -->
-        <Teleport :to="panelTarget" :disabled="!mdAndUp || !panelTarget">
+        <!-- 工作面板：桌面上它的每一格各自传送进布局区里自己的那一块（WorkPanel 的 `layout`），
+             这一层留在原地、不占地方；窄档里它整个是从右边拉进对话那一块的浮层（三档见
+             useTopicPanel），浮层收起时 visibility 一并藏掉，不进 tab 序和读屏的树。手机上它就在
+             这一排里，对话是它的第一个页签。 -->
+        <Teleport :to="conversationBox ?? undefined" :disabled="!mdAndUp || !panelFloat || !conversationBox">
           <div
-            v-show="!mdAndUp || panelFloat || panelOpen"
+            v-show="!mdAndUp || panelFloat || panelOpen || !!room.workLayout.value"
             id="topic-panel"
             class="col col-doc panel-host"
-            :class="{ 'panel-host--sheet': panelFloat, 'panel-host--open': panelFloat && panelOpen }"
+            :class="{
+              'panel-host--sheet': panelFloat,
+              'panel-host--open': panelFloat && panelOpen,
+              'panel-host--cells': !!room.workLayout.value,
+            }"
             :style="panelFloat ? undefined : { flex: '1 1 0', minWidth: 0 }"
           >
             <WorkPanel
@@ -750,6 +767,7 @@ void openPlace()
               :compact="panelFloat || !panelOpen"
               :member-names="memberNames"
               :threads-new="channelThreads.hasNew.value"
+              :layout="room.workLayout.value"
               @open-topic="openTopic"
               @open-card="openTaskPage"
               @mention-click="handleMentionClick"
@@ -759,25 +777,14 @@ void openPlace()
               @locate="onLocate"
               @navigate="router.push($event)"
             >
-              <!-- 页签栏右端：铺满（专注模式）和收起面板。只在桌面上并排的时候有。铺满时对话
-                 让开了，有新回复就在退出铺满这颗按钮上带一个点。 -->
-              <template v-if="mdAndUp && docked" #tab-actions>
-                <span v-if="canFocus" class="focus-toggle">
-                  <BaseButton
-                    :icon="focusIcon"
-                    size="sm"
-                    :title="focusLabel"
-                    :aria-label="focusLabel"
-                    @click="toggleFocus"
-                  />
-                  <span v-if="focusMode && chatNews" class="focus-toggle__news" aria-hidden="true" />
-                </span>
-                <BaseButton
-                  icon="mdi-close"
-                  size="sm"
-                  :title="closeLabel"
-                  :aria-label="closeLabel"
-                  @click="closePanel"
+              <!-- 对话看不见时，采纳那一条贴在读者在看的那一格底下：要做的决定不能跟着消失。 -->
+              <template v-if="mdAndUp && acceptElsewhere && selectedTopic" #dock>
+                <TopicAcceptCard
+                  class="panel-accept"
+                  :topic-id="selectedTopic.id"
+                  :task-id="taskId ?? undefined"
+                  :topic-status="selectedTopic.status"
+                  @review="onReview"
                 />
               </template>
               <template #skill="{ id }">
@@ -954,10 +961,9 @@ void openPlace()
                 />
               </template>
             </WorkPanel>
-            <!-- 专注模式里对话让开了，采纳那一条跟着到面板底部：要做的决定不能跟着消失。
-               手机上对话和「改动」是两个页签，在「改动」页签里决定，这一条也在底部。 -->
+            <!-- 手机上对话和「改动」是两个页签，在「改动」页签里决定，采纳那一条在这一格底部。 -->
             <TopicAcceptCard
-              v-if="selectedTopic && ((mdAndUp && focusMode) || (!mdAndUp && panelTab === 'changes'))"
+              v-if="selectedTopic && !mdAndUp && panelTab === 'changes'"
               class="panel-accept"
               :topic-id="selectedTopic.id"
               :task-id="taskId ?? undefined"

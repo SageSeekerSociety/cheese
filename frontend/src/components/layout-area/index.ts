@@ -4,5 +4,5 @@
  */
 export type { LayoutArrangement, LayoutCell, LayoutNode, LayoutSplit, SplitDirection } from './arrangement'
 export { default as LayoutArea } from './LayoutArea.vue'
-export type { LayoutPanel, LayoutPanelWidth } from './types'
-export { rememberedWidth, rememberWidth } from './widths'
+export type { LayoutPanel, LayoutPanelAction, LayoutPanelSignal, LayoutPanelWidth } from './types'
+export { rememberedFold, rememberedWidth, rememberWidth } from './widths'

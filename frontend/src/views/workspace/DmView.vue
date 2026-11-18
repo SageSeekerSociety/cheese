@@ -31,7 +31,7 @@ import { agentsQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import DmViewView from '@/views/workspace/DmViewView.vue'
-import { useRoomFocus, WORK_PANEL } from '@/views/workspace/useRoomFocus'
+import { useRoomLayout } from '@/views/workspace/roomLayout'
 
 // 私聊 (飞书私聊): a normal 1:1 chat in the content area — no document, no PR
 // header, no accept box. `peer` is the URL's own word for who you are talking
@@ -167,27 +167,16 @@ useEscapeLayer(
 )
 // 桌面：对话和面板是外壳布局区里的两格，和频道页同一个摆法（同一个键：拖成的宽度两处共用）。
 const docked = computed(() => !panelFloat.value && panelOpen.value)
-const panels = usePagePanels(() =>
-  mdAndUp.value
-    ? {
-        key: 'room',
-        panels: [
-          { id: 'conversation', minWidth: 480 },
-          { id: WORK_PANEL, minWidth: 360, hidden: !topic.value || !docked.value, alwaysRender: true },
-        ],
-        arrangement: {
-          direction: 'row',
-          children: [
-            { panels: ['conversation'], size: window.innerWidth >= 1440 ? 45 : 50 },
-            { panels: [WORK_PANEL], size: window.innerWidth >= 1440 ? 55 : 50 },
-          ],
-        },
-      }
-    : null
-)
-const { focusMode, canFocus, focusIcon, focusLabel, chatNews, noteChatNews, toggleFocus } = useRoomFocus({
-  panels,
-  docked,
+// 对话和「文件」各是外壳布局区里的一块（见 roomLayout.ts），摆法按私聊这一种页面记。
+const room = useRoomLayout(usePagePanels, {
+  kind: () => (mdAndUp.value ? 'dm' : null),
+  tabs: () => [{ key: 'files', title: t('work.room.tabs.files'), icon: 'mdi-paperclip' }],
+  workHidden: () => !topic.value || !docked.value,
+  floating: () => panelFloat.value,
+  hide: { label: () => t('work.room.panel.closeFiles'), run: () => closePanel() },
+  onActivated: () => {},
+  onClose: () => {},
+  onKeep: () => {},
 })
 
 // 这段私聊里的文件：清单、正在看的那一份、保存到资料库（私聊里的东西只有这里的人看得到，
@@ -254,7 +243,7 @@ function openResource(resource: string, _turnId?: string, review?: DocReviewRequ
   if (page) void router.push(page)
 }
 function onTurnDone() {
-  noteChatNews()
+  room.noteChatNews()
   handleTurnDone()
   void files.load()
 }
@@ -271,14 +260,8 @@ function onTurnDone() {
     :docked="docked"
     :panel-open="panelOpen"
     :panel-float="panelFloat"
-    :can-focus="canFocus"
-    :focus-mode="focusMode"
-    :chat-news="chatNews"
-    :focus-label="focusLabel"
-    :focus-icon="focusIcon"
-    :conversation-target="panels.outlet('conversation')"
-    :work-target="panels.outlet(WORK_PANEL)"
-    @toggle-focus="toggleFocus"
+    :conversation-target="room.panels.outlet('conversation')"
+    :layout="room.workLayout.value"
     @close-panel="closePanel"
   >
     <template v-if="topic" #chat>

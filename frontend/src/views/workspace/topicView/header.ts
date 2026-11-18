@@ -41,6 +41,8 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
   me: string
   /** 人自己提交审阅：页头上的「有未提交的修改」和那颗提交按钮。 */
   handIn: HandInState
+  /** 读者挪过这一页的摆法时，⋯ 里「恢复默认摆法」做的事；没挪过是 null。 */
+  resetLayout: () => (() => void) | null
 }) {
   const store = useWorkspaceStore()
 
@@ -77,6 +79,7 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
       panelOpen: opts.panelOpen.value,
       unhanded: opts.handIn.unhanded.value,
       handIn: opts.handIn.action.value,
+      resetLayout: opts.resetLayout() ?? undefined,
       'onOpen-room': opts.backToRoom,
       'onHand-in': opts.handIn.openPanel,
       'onToggle-panel': opts.togglePanel,
@@ -91,6 +94,7 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
       me: opts.me,
       connected: opts.roomConnected.value,
       panelOpen: opts.panelOpen.value,
+      resetLayout: opts.resetLayout() ?? undefined,
       'onToggle-panel': opts.togglePanel,
       'onOpen-topic': opts.openTopic,
       onRename: (title: string) => store.renameTopic(opts.place().topicId, title),

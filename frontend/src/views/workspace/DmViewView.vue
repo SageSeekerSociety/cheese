@@ -1,13 +1,13 @@
 <script setup lang="ts">
-// 私聊页的画面：左边对话，右边面板（#3828）；面板可以收起、浮在对话上，或者铺满整个
-// 布局区。和频道页同一套（`topic-panes.css`）。
+// 私聊页的画面：左边对话，右边「文件」（#3828）；文件那一块可以收起，或者浮在对话上。
+// 和频道页同一套（`topic-panes.css`、views/workspace/roomLayout.ts）。
 //
-// 对话和面板是两个插槽，由页面（`DmView.vue`）放进来；这里只管怎么摆。桌面上两块各自
-// 传送进外壳布局区给的那一格（`conversationTarget` / `workTarget`，页面从
-// layouts/pagePanels.ts 拿到），分隔线和宽度归布局区；没有外壳时就并排在这里。开合、
-// 专注模式这些状态在页面那一层，这里收 props、往上报动作。手机上没有左右两栏：对话
-// 是面板页签栏的第一格，页面把它放在面板里，这里只画面板。
+// 对话和面板是两个插槽，由页面（`DmView.vue`）放进来；这里只管怎么摆。桌面上两块各是外壳
+// 布局区里的一块（`layout`，页面从 layouts/pagePanels.ts 拿到），页签、分隔线和宽度归布局区；
+// 没有外壳时就并排在这里。开合这些状态在页面那一层，这里收 props、往上报动作。手机上没有
+// 左右两栏：对话是面板页签栏的第一格，页面把它放在面板里，这里只画面板。
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
+import type { WorkLayout } from '@/components/work/workLayout'
 
 import { computed, ref } from 'vue'
 
@@ -27,21 +27,13 @@ const props = defineProps<{
   panelOpen: boolean
   /** 窄档：面板是从右边拉进来的浮层。 */
   panelFloat: boolean
-  /** 能铺满：外壳在给这一页排版，面板并排开着。 */
-  canFocus: boolean
-  /** 专注模式：面板铺满整个布局区。 */
-  focusMode: boolean
-  /** 铺满的时候对话有没有新回复。 */
-  chatNews: boolean
-  focusLabel: string
-  focusIcon: string
-  /** 外壳布局区里对话那一格、面板那一格；没有外壳时不给，两块就并排在这里。 */
+  /** 外壳布局区里对话那一块；没有外壳时不给，两块就并排在这里。 */
   conversationTarget?: HTMLElement
-  workTarget?: HTMLElement
+  /** 外壳布局区里「文件」那一块（`files`）；没有外壳、或浮层那一档时不给。 */
+  layout?: WorkLayout | null
 }>()
 
 const emit = defineEmits<{
-  'toggle-focus': []
   'close-panel': []
 }>()
 
@@ -62,7 +54,10 @@ const closeLabel = t('work.room.panel.closeFiles')
 const panes = ref<HTMLElement | null>(null)
 /** 对话那一块：窄档的面板浮层压在它上面。 */
 const conversationBox = ref<HTMLElement | null>(null)
-const panelTarget = computed(() => (props.panelFloat ? conversationBox.value : props.workTarget) ?? undefined)
+/** 「文件」那一块的落点：布局区给的那一块，浮层那一档是对话那一块，都没有就留在这里。 */
+const panelTarget = computed(
+  () => (props.panelFloat ? conversationBox.value : props.layout?.outlet('files')) ?? undefined
+)
 /** 页面在对话里点开一份文件时叫它：手机上切到「文件」那一格。 */
 function showFiles() {
   phoneTab.value = 'files'
@@ -92,7 +87,7 @@ defineExpose({ panes, showFiles })
       </Teleport>
       <Teleport :to="panelTarget" :disabled="!desktop || !panelTarget">
         <div
-          v-show="!desktop || panelFloat || panelOpen"
+          v-show="!desktop || panelFloat || panelOpen || !!layout"
           id="topic-panel"
           class="col col-doc panel-host"
           :class="{
@@ -102,18 +97,16 @@ defineExpose({ panes, showFiles })
           }"
           :style="panelFloat ? undefined : { flex: '1 1 0', minWidth: 0 }"
         >
-          <PanelTabs :tabs="tabs" :active="active" :phone="!desktop" panel-id="dm-panel-body" @select="select">
+          <!-- 布局区里这一块的页签条是布局区画的（收起在它的页签栏上），这里不再画一条。 -->
+          <PanelTabs
+            v-if="!layout"
+            :tabs="tabs"
+            :active="active"
+            :phone="!desktop"
+            panel-id="dm-panel-body"
+            @select="select"
+          >
             <template v-if="desktop && docked" #actions>
-              <span v-if="canFocus" class="focus-toggle">
-                <BaseButton
-                  :icon="focusIcon"
-                  size="sm"
-                  :title="focusLabel"
-                  :aria-label="focusLabel"
-                  @click="emit('toggle-focus')"
-                />
-                <span v-if="focusMode && chatNews" class="focus-toggle__news" aria-hidden="true" />
-              </span>
               <BaseButton
                 icon="mdi-close"
                 size="sm"

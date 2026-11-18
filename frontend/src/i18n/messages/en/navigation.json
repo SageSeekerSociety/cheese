@@ -17,6 +17,7 @@
     "tasks": "All tasks",
     "more": "More"
   },
+  "projects": "Projects",
   "spaces": "Spaces",
   "teams": "Teams",
   "term": {
@@ -142,6 +143,7 @@
   },
   "sidebar": {
     "resize": "Drag to resize",
+    "title": "sidebar",
     "expand": "Expand sidebar",
     "collapse": "Collapse sidebar"
   },

@@ -98,6 +98,19 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         expect: '99+',
       },
       {
+        name: '桌面首页列出我的项目',
+        note: '桌面首页侧栏把我的项目列在团队上面，各带等我处理的件数（和侧栏头切换列表里同一份数）；「待办」那一行这时由侧栏头下面的「首页」一行代替（`inbox` 为假）。手机上不给 `projects`，这一段不画。',
+        props: {
+          inbox: false,
+          projects: [
+            { id: 'p-open-day', name: '开放日官网', to: '/projects/open-day', awaiting: 2 },
+            { id: 'p-cachelab', name: 'CacheLab 2026', to: '/projects/cachelab' },
+          ],
+          newProjectLabel: '新建项目',
+        },
+        expect: '开放日官网',
+      },
+      {
         name: '自己名下那几个项目',
         note: '自己名下那一个（`personal`）不当团队说：以自己的昵称单独一行，摆在「团队」小标题之上，展开后没有「成员」也没有「额度」，更没有那一行的 ⋯。',
         props: { teams: [OWN, CREW], currentHandle: 'linxia' },

@@ -10,7 +10,5 @@
   "open": "Open the overview",
   "openFiles": "Open the files",
   "pickTopic": "Select a channel to see its document",
-  "split": "Show beside the previous tab",
-  "tabDetail": "{label} ({detail})",
-  "unsplit": "Back to one column"
+  "tabDetail": "{label} ({detail})"
 }

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { landBootSplash } from './desktopSplash'
 
 // index.html's boot splash covers the whole window in the desktop app; once the
-// app is up it must never be left covering it, whether or not there is a rail
+// app is up it must never be left covering it, whether or not there is a home mark
 // to land in.
 function splash() {
   document.body.insertAdjacentHTML(
@@ -14,9 +14,9 @@ function splash() {
   tile.getBoundingClientRect = () => new DOMRect(500, 300, 112, 112)
 }
 
-function railHomeSlot() {
-  document.body.insertAdjacentHTML('beforeend', '<a class="app-rail-item-cheese"></a>')
-  const slot = document.querySelector<HTMLElement>('.app-rail-item-cheese')!
+function homeSlot() {
+  document.body.insertAdjacentHTML('beforeend', '<span data-home-slot></span>')
+  const slot = document.querySelector<HTMLElement>('[data-home-slot]')!
   slot.getBoundingClientRect = () => new DOMRect(8, 40, 48, 48)
 }
 
@@ -31,14 +31,14 @@ afterEach(() => {
 })
 
 describe('landBootSplash', () => {
-  it('uncovers the app after landing the tile in the rail', async () => {
+  it('uncovers the app after landing the tile on the home mark', async () => {
     splash()
-    railHomeSlot()
+    homeSlot()
     await landBootSplash()
     expect(document.getElementById('boot-splash')).toBeNull()
   })
 
-  it('uncovers the app when there is no rail to land in', async () => {
+  it('uncovers the app when there is no home mark to land in', async () => {
     splash()
     await landBootSplash()
     expect(document.getElementById('boot-splash')).toBeNull()

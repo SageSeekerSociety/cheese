@@ -461,6 +461,11 @@ async def hand_in_route(
         # Ask the forge now rather than at the next tick: it answers for that
         # head within seconds, and the adoption completes on that answer.
         advance_soon(chat, card.id)
+    else:
+        # Handed in and adopted is one thing, recorded where the task came
+        # from once it lands; handed in for review is recorded now.
+        await hand_in.record_at_origin(db, svc, task, handed)
+        await db.commit()
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok({"card": await svc.describe(card), "adopting": adopting})
 
