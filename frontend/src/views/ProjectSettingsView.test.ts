@@ -105,7 +105,8 @@ describe('project settings', () => {
     try {
       const field = await vi.waitFor(() => {
         const el = document.body.querySelector<HTMLInputElement>('.page-section input[maxlength="200"]')
-        if (!el) throw new Error('name field not drawn yet')
+        // Read-only until the project read says this person may edit the settings.
+        if (!el || el.readOnly) throw new Error('name field not editable yet')
         return el
       })
       field.value = '毕业设计终稿'
@@ -123,8 +124,14 @@ describe('project settings', () => {
     const wrapper = await openSettings('profile')
     try {
       await navEntries(wrapper.element)
-      await vi.waitFor(() => expect(document.body.querySelector('.page-section')?.textContent).toContain('毕业设计'))
-      expect(document.body.querySelector('.page-section input')).toBeNull()
+      const field = await vi.waitFor(() => {
+        const el = document.body.querySelector<HTMLInputElement>('.page-section input[maxlength="200"]')
+        if (!el) throw new Error('name not drawn yet')
+        return el
+      })
+      expect(field.value).toBe('毕业设计')
+      expect(field.readOnly).toBe(true)
+      expect(document.body.querySelector('.page-section [role="group"]')).toBeNull()
     } finally {
       wrapper.unmount()
     }

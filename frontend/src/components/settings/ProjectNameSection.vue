@@ -13,7 +13,7 @@ const MAX = 200
 
 const props = defineProps<{
   name: string
-  /** 不能改设置的人：只显示名字。 */
+  /** 不能改设置的人：只读。 */
   readonly: boolean
   saving: boolean
   /** 上一次保存为什么没成。 */
@@ -31,23 +31,19 @@ const typed = computed(() => draft.value.trim())
 const savable = computed(() => !!typed.value && typed.value !== props.name && typed.value.length <= MAX)
 
 function save() {
-  if (savable.value && !props.saving) emit('save', typed.value)
+  if (!props.readonly && savable.value && !props.saving) emit('save', typed.value)
 }
 </script>
 
 <template>
   <section class="page-section">
-    <div class="page-section-head">
-      <v-icon size="14" class="c-faint">mdi-format-title</v-icon>
-      <span class="page-section-title">{{ t('work.projectSettings.name.label') }}</span>
-    </div>
     <div class="page-section-body">
-      <p v-if="readonly" class="t-body" data-user-content>{{ name }}</p>
       <!-- Top-aligned: when an error appears under the field, the button stays beside it. -->
-      <div v-else class="d-flex align-start" style="gap: 8px">
+      <div class="d-flex align-start" style="gap: 8px">
         <v-text-field
           v-model="draft"
           :label="t('work.projectSettings.name.label')"
+          :readonly="readonly"
           autocomplete="off"
           density="compact"
           variant="outlined"
@@ -55,9 +51,18 @@ function save() {
           :error-messages="error ? [error] : []"
           hide-details="auto"
           style="flex: 1"
+          data-user-content
           @keydown.enter="save"
         />
-        <BaseButton class="name-save" kind="primary" size="sm" :loading="saving" :disabled="!savable" @click="save">
+        <BaseButton
+          v-if="!readonly"
+          class="name-save"
+          kind="primary"
+          size="sm"
+          :loading="saving"
+          :disabled="!savable"
+          @click="save"
+        >
           {{ t('work.projectSettings.name.save') }}
         </BaseButton>
       </div>
