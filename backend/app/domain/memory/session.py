@@ -48,6 +48,7 @@ from app.domain.memory.files import (
     check_path,
     merge_view_index,
     parse_index,
+    parse_memory_file,
     policy_breach,
     scoped_prefix,
     talk_view,
@@ -216,20 +217,26 @@ async def read_tree(
     )
 
 
-async def talk_owners(
+async def talk_notes(
     session: AsyncSession, project_id: uuid.UUID, handles: list[str]
-) -> list[str]:
-    """``handles`` 里有 communication 记录的那几位，原序：多人地方里，只对他们说
-    「先读他的记录」（`prompts.talk_pointer`）。"""
+) -> dict[str, dict[str, str]]:
+    """``handles`` 里各位的 communication 记录（文件名 → 正文），原序；没有的人
+    不在结果里。多人地方里平台把它们随这一轮的输入给会话
+    （`prompts.talk_notes`），选哪几条按类型（`files.talk_view`），和铺进会话目录
+    的那一份是同一份。"""
     store = MemoryFileStore(session)
-    owners = []
+    notes: dict[str, dict[str, str]] = {}
     for handle in handles:
         rows = await store.list(project_id, MemoryFileScope.private, handle)
-        if any(
-            name != INDEX_NAME for name in talk_view({r.path: r.content for r in rows})
-        ):
-            owners.append(handle)
-    return owners
+        view = talk_view({r.path: r.content for r in rows})
+        bodies = {
+            name: parse_memory_file(content).body.strip()
+            for name, content in view.items()
+            if name != INDEX_NAME
+        }
+        if bodies:
+            notes[handle] = bodies
+    return notes
 
 
 #: 多人地方里新记的一条，和这个人一条没铺下去的记录同名。

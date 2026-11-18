@@ -252,3 +252,87 @@ def test_a_private_memory_file_the_session_reads_is_shown_only_to_its_owner(
     as_alice = _every_read(client, room, "alice")
     assert secret in as_alice[f"/topics/{room}/transcript"]
     assert secret in as_alice[f"/topics/{room}/session-records"]
+
+
+def test_a_members_notes_given_with_a_turn_are_shown_only_to_that_member(
+    client, tmp_path: Path
+):
+    """In a channel the platform gives the session the communication notes of
+    the member a turn answers, with that turn's input. Everyone in the room
+    reads the rest of the input; only that member reads the notes, by every
+    route and in search, in the input's echo and in the transcript's copy."""
+    notes = "alice-wants-short-replies-5291"
+    said = "alice-asked-for-the-form-5291"
+    _project, room = _room(client)
+
+    class Session(Runner):
+        """A runner whose agent process is a list: what it would have read."""
+
+        written: list[dict]
+
+        async def _write(self, message: dict) -> None:
+            self.written.append(message)
+
+    async def given() -> list[dict]:
+        """The input goes in as the runner writes it, and comes back as Claude
+        Code echoes it and as its transcript keeps it. On the portal's loop:
+        the runner's journal belongs to the thread that opened it."""
+        runner = Session(tmp_path / "state")
+        runner.written = []
+        runner.session_id = "session-alice"
+        await runner._put(
+            "input-1",
+            "work-1",
+            said,
+            [],
+            "send",
+            [{"owner": "alice", "text": f"alice 的记录：{notes}"}],
+        )
+        content = runner.written[0]["message"]["content"]
+        runner.observe(
+            {
+                "type": "user",
+                "isReplay": True,
+                "session_id": runner.session_id,
+                "uuid": "input-1",
+                "parent_tool_use_id": None,
+                "message": {"role": "user", "content": content},
+            }
+        )
+        runner.observe(
+            {
+                "type": "cheese_file",
+                "entry": {
+                    "type": "user",
+                    "session_id": runner.session_id,
+                    "uuid": "input-1",
+                    "message": {"role": "user", "content": content},
+                },
+            },
+            from_file=True,
+        )
+        return runner.journal.read(0)
+
+    records = client.portal.call(given)
+    author = room_agent_seat(client, room)
+
+    class Stream:
+        conversation_id = uuid.UUID(room)
+        agent_handle = author
+        harness = "claude_code"
+
+    client.portal.call(service.append, client.test_request_factory, Stream(), records)
+
+    as_bob = _every_read(client, room, "bob")
+    for path, text in as_bob.items():
+        assert notes not in text, path
+    assert said in as_bob[f"/topics/{room}/session-records"]
+    found = client.get(
+        f"/topics/{room}/session-records",
+        params={"q": notes},
+        headers=session_auth_headers("bob"),
+    )
+    assert found.status_code == 200, found.text
+    assert found.json()["data"]["items"] == []
+    as_alice = _every_read(client, room, "alice")
+    assert notes in as_alice[f"/topics/{room}/session-records"]

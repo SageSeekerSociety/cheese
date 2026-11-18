@@ -6,9 +6,10 @@ on a machine without the backend's dependencies.
 
 from app.domain.prompts.memory import (
     MEMORY_DIR,
+    TALK_TOLD,
     memory_block,
     private_index_pointer,
-    talk_pointer,
+    talk_notes,
 )
 from app.domain.prompts.notices import (
     HIDDEN_TYPES,
@@ -123,7 +124,8 @@ __all__ = [
     "strip_platform_notice",
     "task_opening_prompt",
     "task_section",
-    "talk_pointer",
+    "TALK_TOLD",
+    "talk_notes",
     "task_wrap_up",
     "teaching_section",
     "untitled_task",
