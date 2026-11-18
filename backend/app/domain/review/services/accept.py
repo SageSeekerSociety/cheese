@@ -173,6 +173,7 @@ async def _holds_uncommitted(self: pkg.AcceptService, card: AcceptCard) -> bool:
     if work is None or not work.branch_name:
         return False
     if self._uncommitted is None:
+        # i18n-exempt: a wiring fault in the platform's own code, never a refusal a reader sees
         raise RuntimeError("AcceptService merges a card without `uncommitted`")
     return await self._uncommitted(self._session, work)
 
