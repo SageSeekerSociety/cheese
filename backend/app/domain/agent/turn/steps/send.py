@@ -232,6 +232,8 @@ async def send_prepared(
     # (a failure there leaves no interval); the nonce binds the entry back.
     nonce = new_nonce()
     prompt_text = f"{prompt_text}\n{nonce}"
+    # Set once the session's runner took this turn's notes (`on_private`).
+    given: list[bool] = []
     await effects.open_interval(
         sessions,
         topic_id=topic_id,
@@ -303,6 +305,7 @@ async def send_prepared(
             opening_changes=opening_changes(opening, told),
             cold=prepared.cold,
             private=prepared.private,
+            on_private=lambda: given.append(True),
             model=model_kwargs.get("model"),
             env=model_kwargs.get("env"),
             acting=acting_agent,
@@ -326,7 +329,9 @@ async def send_prepared(
             agent_handle=prepared.agent_handle,
             harness=prepared.harness,
             digests=opening.digests(),
-            talk=dict(prepared.talk_told),
+            # Recorded only where the runner took them: one that could not
+            # stamp them was handed none, and the next turn gives them again.
+            talk=dict(prepared.talk_told) if given else {},
             resumed=resume_session_id,
             # A compaction that ended since `told` was read cleared it; this
             # turn told only the changes, so the clear stands.

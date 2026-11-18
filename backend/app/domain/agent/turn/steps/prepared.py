@@ -35,6 +35,7 @@ class SessionSender(Protocol):
         opening_changes: str = "",
         cold: ColdCompaction | None = None,
         private: tuple[PrivateText, ...] = (),
+        on_private: Callable[[], None] | None = None,
     ) -> bool: ...
 
 

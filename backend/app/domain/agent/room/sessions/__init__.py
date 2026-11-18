@@ -439,6 +439,7 @@ class RoomSessions:
         opening_changes: str = "",
         cold: ColdCompaction | None = None,
         private: tuple[PrivateText, ...] = (),
+        on_private: Callable[[], None] | None = None,
     ) -> bool:
         return await _speaking.send(
             self,
@@ -461,6 +462,7 @@ class RoomSessions:
             opening_changes=opening_changes,
             cold=cold,
             private=private,
+            on_private=on_private,
         )
 
     def _with_project_state(

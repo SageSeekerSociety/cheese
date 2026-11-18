@@ -7,11 +7,13 @@ time on the clock of the member who started it.
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.turn.store.session_inputs import forget_opening
+from app.domain.agent_session.models import AgentSession
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.writers import MemoryWriter
@@ -126,6 +128,38 @@ def test_a_member_s_notes_are_given_once_and_again_when_they_change(client, tmp_
     bobs = turn("bob", "@芝士 我来帮忙")
     assert BOBS in bobs
     assert ALICES_NOW not in bobs and ALICES not in bobs
+
+
+def test_a_compacted_conversation_is_given_the_notes_again(client, tmp_path):
+    """A compaction replaces the turns that carried the notes with a summary,
+    so the next turn answering the member carries them once more."""
+    _project, room = _channel(client)
+    turn = _turns(client, tmp_path, room)
+    assert ALICES in turn("alice", "@芝士 报名表做到哪了")
+
+    async def seat(session):
+        row = (
+            await session.execute(
+                select(AgentSession).where(
+                    AgentSession.conversation_id == uuid.UUID(room)
+                )
+            )
+        ).scalar_one()
+        return row.agent_handle, row.harness
+
+    handle, harness = _db(client, seat)
+
+    async def compacted():
+        await forget_opening(
+            client.test_request_factory,
+            conversation_id=uuid.UUID(room),
+            agent_handle=handle,
+            harness=harness,
+        )
+
+    client.portal.call(compacted)
+
+    assert ALICES in turn("alice", "@芝士 接着说")
 
 
 def test_a_turn_with_no_notes_carries_no_section(client, tmp_path):

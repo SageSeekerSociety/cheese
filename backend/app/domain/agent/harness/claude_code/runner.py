@@ -779,7 +779,12 @@ class Runner(runner.Runner[Journal]):
         self.last_frame_monotonic: float | None = None
         self.last_frame_work: str | None = None
 
-    capabilities = (runner.LONG_POLL, runner.LIVE, runner.COMPACT_IF_COLD)
+    capabilities = (
+        runner.LONG_POLL,
+        runner.LIVE,
+        runner.COMPACT_IF_COLD,
+        runner.PRIVATE_TEXT,
+    )
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -2134,17 +2139,20 @@ class Runner(runner.Runner[Journal]):
         A new turn on a cold conversation is compacted first
         (``compaction.when_cold``), and then says ``compact_if_cold['text']``.
         ``private`` (``{"owner", "text"}``) goes ahead of it, each as a block
-        only its owner may read in the records (``_private_texts``).
+        only its owner may read in the records (``_private_texts``); a
+        compacted conversation is told ``compact_if_cold['private']`` instead.
         """
         how = "steer" if steering else "send"
 
         async def submit() -> dict:
-            said = text
+            said, private_said = text, private
             if not steering and not self.working:
                 await self._catch_up()
                 if await compaction.when_cold(self, compact_if_cold):
                     said = compact_if_cold["text"]  # type: ignore[index]
-            await self._put(identifier, work_id, said, images or [], how, private)
+                    told = compact_if_cold.get("private")  # type: ignore[union-attr]
+                    private_said = told or private
+            await self._put(identifier, work_id, said, images or [], how, private_said)
             return {"input_id": identifier}
 
         return await self.accept(

@@ -268,6 +268,9 @@ class Prompt:
     #: Said ahead of ``text``, each as a block only its owner may read in the
     #: session's records (`PrivateText`).
     private: tuple[PrivateText, ...] = ()
+    #: What is said ahead of ``cold_text`` instead, when the conversation is
+    #: compacted first: every note it held, since a summary keeps none whole.
+    cold_private: tuple[PrivateText, ...] = ()
 
 
 @dataclass(frozen=True)
