@@ -129,5 +129,7 @@
   "deployFailedTo": "Deploying to {environment} failed",
   "taskFiledForReview": "\"{title}\" was submitted for review",
   "taskReturned": "{who} returned \"{title}\"",
-  "taskAdopted": "{who} accepted “{title}”"
+  "taskAdopted": "{who} accepted “{title}”",
+  "taskHandedInBy": "{who} submitted \"{title}\"; it awaits review",
+  "cardHandedInAgain": "{actor} submitted another version; it needs another look"
 }

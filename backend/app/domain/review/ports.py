@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.addressing import NAMES_NOBODY, Event
 from app.domain.block.models import Block
 from app.domain.delivery_events import DeliveryEvent
+from app.domain.room_task.models import Task
 
 
 class SweepCheckouts(Protocol):
@@ -167,3 +168,13 @@ class DispatchPending(Protocol):
     返回值不透明：那个实现答的是放出多少份。"""
 
     async def __call__(self) -> object: ...
+
+
+class Uncommitted(Protocol):
+    """这件任务的工作目录里有没有还没提交的修改。
+
+    答案在任务的环境里：醒着时问它，冻着或已释放时看平台替它留下的那一份
+    （`machine.hand_in.uncommitted`）。那一层在本包之上，所以由构造的人递进来。
+    采纳前问这一句：保存过、还没再提交一版的修改不在这一版里，采纳带不走它们。"""
+
+    async def __call__(self, session: AsyncSession, task: Task) -> bool: ...

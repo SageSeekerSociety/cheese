@@ -264,6 +264,22 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
         await thaw_preview_on_machine(bind, session_id=session_id, hub=hub)
 
 
+async def is_frozen(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    """Whether the sandbox holding a conversation's working copy is frozen: a
+    request sent to it would wait out its deadline, and asking costs no thaw."""
+    found = await db.scalar(
+        select(AgentSession.id)
+        .join(SandboxHome, SandboxHome.session_id == AgentSession.id)
+        .where(
+            AgentSession.conversation_id == conversation_id,
+            SandboxHome.frozen_at.is_not(None),
+            SandboxHome.stopped_at.is_(None),
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
 async def wake_preview_on_machine(
     bind, *, place: Place, session_id: uuid.UUID, hub=None
 ) -> bool:

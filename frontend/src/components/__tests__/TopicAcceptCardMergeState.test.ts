@@ -43,6 +43,7 @@ vi.mock('../../api', async () => {
     ...actual,
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
+    getHandInStanding: vi.fn().mockResolvedValue({ unhanded: false, waiting: false }),
     setAutoMerge: (...a: unknown[]) => setAutoMerge(...a),
     acceptCard: (...a: unknown[]) => acceptCard(...a),
     // 采纳之后组件会连带刷新话题行（store.refreshTopicRow）。它自己吞异常，

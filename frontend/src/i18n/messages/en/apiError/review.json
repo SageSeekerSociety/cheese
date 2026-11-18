@@ -130,5 +130,6 @@
   "verbMergeAnyway": "merge it anyway",
   "versionNotAFile": "What this version delivered isn't a file",
   "voidForbidden": "Only the assigned reviewer, the project owner or a team admin can void it",
-  "voidSignIn": "Sign in to void it"
+  "voidSignIn": "Sign in to void it",
+  "acceptUncommitted": "Can't accept: this task has changes that are not in this version. Submit another version first, then accept it"
 }

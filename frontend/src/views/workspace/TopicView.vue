@@ -24,6 +24,7 @@ import { useTopicLive } from './topicView/live'
 import { useTopicPanelState } from './topicView/panel'
 import { useSkillProposals } from './useSkillProposals'
 
+import HandInDialog from '@/components/accept/HandInDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
@@ -172,6 +173,9 @@ const accept = provideAcceptCard({
   get taskId() {
     return props.taskId ?? null
   },
+  get projectId() {
+    return props.projectId
+  },
 })
 function reloadAccept() {
   void accept.reload()
@@ -271,6 +275,7 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   togglePanel,
   openTopic,
   me: AUTHOR,
+  handIn: accept.handIn,
 })
 // ---- 在频道里审阅的那件交付、右栏开着哪一格（见 topicView/delivery.ts）----
 const reviewReload = ref(0)
@@ -538,6 +543,26 @@ void openPlace()
         </template>
         <TopicHeader v-else-if="topicHeaderBinding" v-bind="topicHeaderBinding" />
       </template>
+      <!-- The hand-in panel the task header's submit button opens, on both widths. -->
+      <HandInDialog
+        v-if="taskId"
+        :model-value="accept.handIn.open.value"
+        :again="accept.handIn.again.value"
+        :adopts="accept.handIn.adopts.value"
+        :files="accept.handIn.files.value"
+        :subject="accept.handIn.subject.value"
+        :body="accept.handIn.body.value"
+        :reviewer="accept.handIn.reviewer.value"
+        :reviewers="accept.handInReviewers.value"
+        :drafting="accept.handIn.drafting.value"
+        :submitting="accept.handIn.submitting.value"
+        :ready="accept.handIn.ready.value"
+        @update:model-value="(open: boolean) => !open && accept.handIn.closePanel()"
+        @update:subject="accept.handIn.touchSubject"
+        @update:body="accept.handIn.touchBody"
+        @update:reviewer="(value: string | null) => (accept.handIn.reviewer.value = value)"
+        @submit="accept.handIn.submit()"
+      />
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
          什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
