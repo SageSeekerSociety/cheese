@@ -51,6 +51,20 @@ describe('交给芝士：写进去的 @ 就是那一句上写着的那位', () =
     expect(hand('<@alice> 你看一下')).toBe(`<@${SEAT.handle}> <@alice> 你看一下`)
   })
 
+  // 手打名字也算：这一下写一个 @，发的时候再展开一个，同一条里就点了它两次。
+  it('手打的是这一位的名字：认得出它，不叠第二个 @', () => {
+    expect(hand(`@${SEAT.label} 正文`)).toBe(`<@${SEAT.handle}> 正文`)
+    expect(hand(`@${OTHER.label} 正文`)).toBe(`<@${SEAT.handle}> 正文`)
+  })
+
+  it('整条只有那一位队友：只剩下这一个 @，不带尾随空格', () => {
+    expect(hand(`<@${OTHER.handle}>`)).toBe(`<@${SEAT.handle}>`)
+  })
+
+  it('开头 @ 的人后面是换行：正文的换行原样留着', () => {
+    expect(hand('<@alice>\n正文')).toBe(`<@${SEAT.handle}> <@alice>\n正文`)
+  })
+
   // 开头的空白、或者开头先 @ 了个人，都不能挡住后面那位队友——它同样是这条交给的人。
   it('开头夹着空行时照样换掉那位队友', () => {
     expect(hand(`\n<@${OTHER.handle}> 正文`)).toBe(`<@${SEAT.handle}> 正文`)

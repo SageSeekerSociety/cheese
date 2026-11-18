@@ -46,28 +46,30 @@ export function handToMentions(
   named: boolean
 ): string {
   if (!seat) return text
+  // 认名字用的是发送那一刻同一份名单（座位在最前）：手打的「@芝士」也认得出是它，
+  // 不然这一下写一个、发的时候再展开一个，同一条里就点了它两次。
+  const roster = seat ? [seat, ...members] : members
   const summons = (handle: string) => mates.some((m) => m.handle === handle)
+  const expanded = expandMentions(text, roster, topics)
   if (!named) {
-    if (mates.some((m) => mentionsHandle(expandComposerMentions(text, seat, members, topics), m.handle))) return text
+    if (mates.some((m) => mentionsHandle(expanded, m.handle))) return text
     return `<@${seat.handle}> ${text}`
   }
-  // 开头的空白连着 @：队友的拿走，人的留着（那句话是说给他听的）。
+  // 只看开头那一段：跳过空白，看这里是不是一个 @，是队友的连它一起拿掉，是人的留着
+  // （那句话是说给他听的），接着看它后面还有没有队友。拿完之后剩下的正文逐字交回。
   const kept: string[] = []
   let cursor = 0
   for (;;) {
     const start = cursor + /^\s*/.exec(text.slice(cursor))![0].length
-    const span = mentionSpans(text.slice(start), members, topics).find((s) => s.start === 0)
+    const span = mentionSpans(text.slice(start), roster, topics).find((s) => s.start === 0)
     if (!span) break
-    const token = text.slice(start, start + span.end)
-    const handle = /^<@([\w-]+)>$/.exec(expandComposerMentions(token, seat, members, topics))?.[1]
-    if (handle && summons(handle)) {
-      cursor = start + span.end
-      continue
-    }
-    // 人的 @：原样留着，接着看他后面还有没有队友。
-    kept.push(token)
-    cursor = start + span.end
+    const at = start + span.end
+    const handle = /^<@([\w-]+)>$/.exec(expandMentions(text.slice(start, at), roster, topics))?.[1]
+    if (!handle || !summons(handle)) kept.push(text.slice(start, at))
+    cursor = at
   }
-  const rest = text.slice(cursor).trimStart()
-  return `<@${seat.handle}> ${[...kept, rest].filter(Boolean).join(' ')}`
+  const body = text.slice(cursor)
+  const head = kept.join(' ')
+  const joined = head ? head + body : body.trimStart()
+  return joined ? `<@${seat.handle}> ${joined}` : `<@${seat.handle}>`
 }
