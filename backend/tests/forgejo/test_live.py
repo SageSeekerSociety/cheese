@@ -38,6 +38,7 @@ from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.merge_state import compute_merge_state
 from app.domain.review.models import AcceptCard
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
@@ -809,12 +810,18 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             assert accepted.status.value == "accepted"
             merged_sha = accepted.pr_head_sha
             delivered = await session.get(Task, task.id)
-            # Its last step landed: the task stays open while its agent
-            # writes the summary, and is on its way to closing.
+            # The merge landed and the task goes on: it stays open for its
+            # teammate to judge whether it is done, on the next step's own
+            # branch. Neither the write-up window nor the deploy wait is
+            # opened by a merge — both come only when the teammate closes the
+            # task as done (`review.task_landing`).
             assert delivered.status == TaskStatus.open
-            assert delivered.closing_since is not None
+            assert delivered.closing_since is None
+            assert delivered.deploying_since is None
             assert delivered.accepted_by == "reviewer"
             assert delivered.delivered_head == latest
+            assert delivered.branch_name != "task/report"
+            assert delivered.pr_number is None
             assert (await session.get(Topic, room.id)).status.value == "active"
         assert (await publisher.client.pull_request_status(**args)).merged
         merged_commit = await client.get(
@@ -864,6 +871,18 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             )
             assert "+appendix" in await files.diff("committed")
             assert any(row["hash"] == merged_sha[:12] for row in await files.history())
+        # Its teammate judged what landed to be the whole task, and closed it
+        # (`review.task_landing`: a merge alone leaves the task open). The
+        # branch it came in on is deleted; what it delivered stays readable at
+        # the commit that merge left.
+        async with db_factory() as session:
+            await close_task(
+                session,
+                await session.get(Task, task.id),
+                None,
+                conclusion="写完了",
+            )
+            await session.commit()
         deleted = await client.delete(f"/repos/{binding.repo}/branches/task/report")
         assert deleted.status_code == 204
         async with db_factory() as session:

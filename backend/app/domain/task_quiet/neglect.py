@@ -15,8 +15,8 @@ Two sweeps, both safe to run as often as they like:
 - `close_neglected` closes the ones past their time. A task whose own teammate
   has a session running is left alone: something is being done in it.
 
-`settings.task_neglect_auto_close` is the kill switch; off, only the warning is
-sent.
+`settings.task_neglect_auto_close` is the switch; off, neither sweep does
+anything, since the warning promises a close that would not come.
 """
 
 from __future__ import annotations
@@ -92,6 +92,8 @@ async def _neglected(
 async def warn_neglected(sessions, *, now: datetime | None = None) -> int:
     """Warn the owners of tasks that have gone quiet enough to be closed soon.
     Returns how many were warned this tick."""
+    if not settings.task_neglect_auto_close:
+        return 0
     at = now or datetime.now(UTC)
     async with sessions() as session:
         warned = await _warn(session, at)
