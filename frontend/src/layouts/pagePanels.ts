@@ -49,11 +49,16 @@ export interface PagePanels {
   onClose?: (id: string) => void
   /** The reader double-clicked the tab of a temporary panel: keep it. */
   onKeep?: (id: string) => void
+  /** Height of the tab strips, when they sit beside a header of the page's own. */
+  tabStripHeight?: string
 }
 
 /** What the shell's layout area does for a page. */
 export interface PagePanelsArea {
   open: (id: string) => void
+  /** The reader has moved something away from the page's default arrangement. */
+  readonly rearranged: boolean
+  reset: () => void
 }
 
 interface Claim {
@@ -110,6 +115,10 @@ export interface PagePanelsHandle {
   visible: ComputedRef<ReadonlySet<string>>
   /** Shows a panel: brings it back if it was closed, opens its cell, makes it the visible tab. */
   show: (id: string) => void
+  /** The reader has moved the page's panels away from its default arrangement. */
+  rearranged: ComputedRef<boolean>
+  /** Back to the page's default arrangement. */
+  reset: () => void
 }
 
 /**
@@ -169,6 +178,10 @@ export function usePagePanels(spec: () => PagePanels | null): PagePanelsHandle {
       if (!host || !active.value) return
       if (host.area.value) host.area.value.open(id)
       else host.pendingShow.value = id
+    },
+    rearranged: computed(() => active.value && host!.area.value?.rearranged === true),
+    reset: () => {
+      if (host && active.value) host.area.value?.reset()
     },
   }
 }

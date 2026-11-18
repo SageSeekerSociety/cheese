@@ -2,12 +2,12 @@
 // 布局区（layouts/pagePanels.ts）。页签可以拖去和别的并排、拖进对话那一格，格子可以收起、
 // 放大，摆法按页面的种类（频道 / 任务 / 私聊）记在这台设备上。
 //
-// 对话那一块和工作面板固定的那几格不能关（只能挪）；工作面板那几格同属 `work` 这一组：新打开的一格（一件任务、
-// 一份文件）落到这一组所在的那一格里。「收起」（页签栏上的 ✕、页头的「概览」）收的是只装着
-// 这一组的那几格；挪进对话那一格的不跟着收。
+// 对话那一块和工作面板固定的那几格不能关（只能挪）；对话独占一格时不画页签栏。工作面板那几格
+// 同属 `work` 这一组：新打开的一格（一件任务、一份文件）落到这一组页签最多的那一格里，✕ 也只在
+// 那一格上。「收起」（✕、页头的「概览」）收的是只装着这一组的那几格；挪进对话那一格的不跟着收。
 //
-// 放大（每一格页签栏上的 ⤢）是布局层的；对话因此看不见的这段时间里有了新回复，那颗还原
-// 按钮上带一个点（对话这一块的信号）。
+// 放大（页签栏上的 ⤢）是布局层的；对话因此看不见的这段时间里有了新回复，那颗还原按钮上带一个
+// 点（对话这一块的信号）。挪过摆法之后，「恢复默认摆法」在页头 ⋯ 和命令面板里。
 import type { ComputedRef, Ref } from 'vue'
 import type { LayoutNode } from '@/components/layout-area'
 import type { WorkLayout, WorkTabMeta } from '@/components/work/workLayout'
@@ -101,6 +101,8 @@ export function useRoomLayout(
           title: t('work.room.tabs.chat'),
           icon: 'mdi-message-outline',
           minWidth: 480,
+          // 对话独占一格时不画页签栏：页面和今天一样；有别的页签拖进来才出现。
+          stripWhenShared: true,
           signal: chatNews.value ? { kind: 'dot' } : undefined,
         },
         ...work,
@@ -109,6 +111,8 @@ export function useRoomLayout(
       onActivated: (id) => id !== CONVERSATION && opts.onActivated(id),
       onClose: opts.onClose,
       onKeep: opts.onKeep,
+      // 私聊页没有页头那一行：对话自己的头和工作面板的页签栏并排，同高。
+      tabStripHeight: kind === 'dm' ? 'var(--app-page-header-height)' : undefined,
     }
   }
 
@@ -128,10 +132,14 @@ export function useRoomLayout(
   const maximizedNow = computed(() => panels.maximized.value)
   useCommands(() => {
     if (!workLayout.value) return []
+    const reset = panels.rearranged.value
+      ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: () => panels.reset() }]
+      : []
     const front = opts.tabs().find((tab) => panels.visible.value.has(tab.key))
-    if (!front && !maximizedNow.value) return []
+    if (!front && !maximizedNow.value) return reset
     const restore = !!maximizedNow.value
     return [
+      ...reset,
       {
         id: 'room.maximize',
         title: restore ? t('shell.layout.restore') : t('shell.layout.maximize'),

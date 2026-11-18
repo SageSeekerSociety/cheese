@@ -66,7 +66,7 @@
         :storage-key="areaKey"
         :version="AREA_VERSION"
         :narrow="false"
-        resettable
+        :tab-strip-height="pageClaim?.tabStripHeight"
         @visible="pageHost.visible.value = $event"
         @activated="pageClaim?.onActivated?.($event)"
         @close="pageClaim?.onClose?.($event)"
@@ -389,7 +389,19 @@ const areaPanels = computed<LayoutPanel[]>(() => [
 ])
 // 页面要「显示某一块」时找的是这个布局区。
 const areaRef = ref<InstanceType<typeof LayoutArea> | null>(null)
-watch(areaRef, (area) => (pageHost.area.value = area ? { open: (id) => area.open(id) } : null))
+watch(
+  areaRef,
+  (area) =>
+    (pageHost.area.value = area
+      ? {
+          open: (id) => area.open(id),
+          get rearranged() {
+            return area.rearranged
+          },
+          reset: () => area.reset(),
+        }
+      : null)
+)
 /** 收起侧栏（侧栏头上那颗按钮）：宽档里它是布局区的一格，收成一条，点那一条再展开。 */
 function foldSidebar() {
   areaRef.value?.fold('sidebar', true)
