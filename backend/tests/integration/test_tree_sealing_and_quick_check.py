@@ -24,6 +24,7 @@ from tests.support import git_store
 from tests.support.review_ports import (
     settle_card,
     task_teammate,
+    uncommitted,
 )
 
 
@@ -126,6 +127,7 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 record_instruction=record_task_instruction,
                 task_teammate=task_teammate,
                 roster_team=project_team,
+                uncommitted=uncommitted,
             )
             card = await service.create_card(
                 topic_id=room,
