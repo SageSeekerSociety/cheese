@@ -1,11 +1,33 @@
 import { test, expect, type Page } from '@playwright/test';
 import { apiLogin, openFirstProject } from './helpers';
 
+/** 对话那一块：读者看消息的那一栏。 */
+const conversation = (page: Page) => page.getByTestId('chat-scroll').first();
+
+/**
+ * 面板：页头「概览」那颗开关说它开合的那几块（`aria-controls`）里看得见的那一块。宽档里它是
+ * 布局区里工作面板的格子，窄档里是压在对话上的那张浮层，开关指着的始终是读者看到的那一块。
+ */
+async function panel(page: Page) {
+  const ids = ((await page.locator('[data-panel-toggle]').getAttribute('aria-controls')) ?? '').split(/\s+/).filter(Boolean);
+  expect(ids.length, '「概览」得说它开合的是哪一块').toBeGreaterThan(0);
+  return page.locator(ids.map((id) => `[id="${id}"]`).join(', '));
+}
+async function panelShown(page: Page) {
+  const blocks = await panel(page);
+  const n = await blocks.count();
+  for (let i = 0; i < n; i++) if (await blocks.nth(i).isVisible()) return true;
+  return false;
+}
+
 /** 面板并排开在对话右边（外壳布局区里的两格），不是压在对话上的浮层。 */
 async function besideConversation(page: Page) {
-  const chat = await page.locator('.room-conversation').first().boundingBox();
-  const panel = await page.locator('#topic-panel').boundingBox();
-  return !!chat && !!panel && panel.x >= chat.x + chat.width - 1;
+  const chat = await conversation(page).boundingBox();
+  const blocks = await panel(page);
+  const boxes = await blocks.evaluateAll((els) =>
+    els.map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0).map((r) => r.x)
+  );
+  return !!chat && boxes.length > 0 && boxes.every((x) => x >= chat.x + chat.width - 1);
 }
 
 // 平板横放那一档：960（Vuetify 的 mdAndUp）到 1180（COMPACT_DESKTOP_MAX_WIDTH）为止。
@@ -51,19 +73,19 @@ test.describe('平板横放（960–1180）', () => {
     // 主区不到 1000：面板默认收着，只剩对话。
     const panelToggle = page.locator('[data-panel-toggle]');
     await expect(panelToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.locator('#topic-panel')).toBeHidden();
+    await expect.poll(() => panelShown(page)).toBe(false);
 
     // 点「概览」：面板并排开在对话右边，不是浮层。
     await panelToggle.click();
     await expect(panelToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect.poll(() => panelShown(page)).toBe(true);
     await expect.poll(() => besideConversation(page)).toBe(true);
     await expect(page.locator('.panel-scrim')).toHaveCount(0);
 
     // 这是人的选择：刷新回来还开着。
     await page.reload();
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect.poll(() => panelShown(page)).toBe(true);
 
     // 二级侧栏那颗开关：点开，抽屉成 active；Esc 收起，焦点还回来。
     await sidebarToggle.click();
@@ -111,23 +133,23 @@ test.describe('平板横放（960–1180）', () => {
     const rows = await openFirstProject(page);
     await rows.first().click();
     await page.waitForURL(/\/channels\//);
-    const main = await page.locator('.room-conversation').first().boundingBox();
+    const main = await conversation(page).boundingBox();
     expect(main!.width, '这个用例要主区窄于 840').toBeLessThan(840);
 
     // 浮层默认收着。
     const panelToggle = page.locator('[data-panel-toggle]');
     await expect(panelToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.locator('#topic-panel')).toBeHidden();
+    await expect.poll(() => panelShown(page)).toBe(false);
 
     // 打开：浮在对话上，背后一层遮罩。
     await panelToggle.click();
-    await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect.poll(() => panelShown(page)).toBe(true);
     await expect(page.locator('.panel-scrim')).toBeVisible();
     expect(await besideConversation(page), '窄档里面板该浮在对话上').toBe(false);
 
     // Esc 收起浮层，焦点回到打开它的那颗开关。
     await page.keyboard.press('Escape');
-    await expect(page.locator('#topic-panel')).toBeHidden();
+    await expect.poll(() => panelShown(page)).toBe(false);
     await expect(panelToggle).toBeFocused();
   });
 
@@ -141,12 +163,12 @@ test.describe('平板横放（960–1180）', () => {
 
     // 落到平板横放：地址里没有 ?tab=，面板收着。
     await page.setViewportSize({ width: 980, height: 900 });
-    await expect(page.locator('#topic-panel')).toBeHidden();
+    await expect.poll(() => panelShown(page)).toBe(false);
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'false');
 
     // 别人发来的链接（?tab=）是「有人打开了这一格」，面板得跟着开。
     await page.goto(`${topicUrl}?tab=threads`);
-    await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect.poll(() => panelShown(page)).toBe(true);
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'true');
   });
 
@@ -162,7 +184,7 @@ test.describe('平板横放（960–1180）', () => {
     await page.waitForURL(/\/channels\//);
 
     // 对话和面板并排；「概览」开着。
-    await expect(page.locator('#topic-panel')).toBeVisible();
+    await expect.poll(() => panelShown(page)).toBe(true);
     await expect.poll(() => besideConversation(page)).toBe(true);
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-expanded', 'true');
   });

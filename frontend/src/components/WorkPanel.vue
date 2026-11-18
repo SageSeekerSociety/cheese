@@ -67,6 +67,7 @@ import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
+import { workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
 import TopicAcceptCard from './TopicAcceptCard.vue'
@@ -1081,13 +1082,19 @@ defineExpose({
           <div v-if="withChat || review" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
-          <WorkPane :target="target('overview')" :shown="shown('overview')" :pane-class="enterClass('overview')">
+          <WorkPane
+            :target="target('overview')"
+            :pane-id="workPaneId('overview')"
+            :shown="shown('overview')"
+            :pane-class="enterClass('overview')"
+          >
             <slot name="overview" />
             <template v-if="docked === 'overview'" #dock><slot name="dock" /></template>
           </WorkPane>
           <WorkPane
             v-if="!taskId && tabs.some((tab) => tab.key === 'threads')"
             :target="target('threads')"
+            :pane-id="workPaneId('threads')"
             :shown="shown('threads')"
             :pane-class="enterClass('threads')"
           >
@@ -1098,6 +1105,7 @@ defineExpose({
             <WorkPane
               v-if="mounted.has(deliveryKey(d.id))"
               :target="target(deliveryKey(d.id))"
+              :pane-id="workPaneId(deliveryKey(d.id))"
               :shown="shown(deliveryKey(d.id))"
               :pane-class="enterClass(deliveryKey(d.id))"
             >
@@ -1107,6 +1115,7 @@ defineExpose({
           <WorkPane
             v-if="mounted.has('site')"
             :target="target('site')"
+            :pane-id="workPaneId('site')"
             :shown="shown('site')"
             :pane-class="enterClass('site')"
           >
@@ -1131,6 +1140,7 @@ defineExpose({
           <WorkPane
             v-if="mounted.has('changes')"
             :target="target('changes')"
+            :pane-id="workPaneId('changes')"
             :shown="shown('changes')"
             :pane-class="enterClass('changes')"
           >
@@ -1148,6 +1158,7 @@ defineExpose({
           <WorkPane
             v-if="mounted.has('preview')"
             :target="target('preview')"
+            :pane-id="workPaneId('preview')"
             :shown="shown('preview')"
             :pane-class="enterClass('preview')"
           >
@@ -1174,6 +1185,7 @@ defineExpose({
           <WorkPane
             v-if="mounted.has('files')"
             :target="target('files')"
+            :pane-id="workPaneId('files')"
             :shown="shown('files')"
             :pane-class="enterClass('files')"
           >
@@ -1188,6 +1200,7 @@ defineExpose({
           <WorkPane
             v-if="mounted.has('routines')"
             :target="target('routines')"
+            :pane-id="workPaneId('routines')"
             :shown="shown('routines')"
             :pane-class="enterClass('routines')"
           >
@@ -1206,6 +1219,7 @@ defineExpose({
             <WorkPane
               v-if="mounted.has(fileKey(f.path))"
               :target="target(fileKey(f.path))"
+              :pane-id="workPaneId(fileKey(f.path))"
               :shown="shown(fileKey(f.path))"
               :pane-class="enterClass(fileKey(f.path))"
             >

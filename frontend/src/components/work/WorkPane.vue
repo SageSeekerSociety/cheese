@@ -9,6 +9,8 @@ defineProps<{
   shown: boolean
   /** 手机上换页签时进场那一下的类（`WorkPanel` 的 enterClass）。 */
   paneClass?: string
+  /** 这一块的元素 id（`workPaneId`）。 */
+  paneId?: string
 }>()
 
 defineSlots<{
@@ -20,7 +22,12 @@ defineSlots<{
 
 <template>
   <Teleport :to="target" :disabled="!target">
-    <div v-show="!!target || shown" class="work-pane" :class="[{ 'work-pane--cell': !!target }, paneClass]">
+    <div
+      v-show="!!target || shown"
+      :id="paneId"
+      class="work-pane"
+      :class="[{ 'work-pane--cell': !!target }, paneClass]"
+    >
       <div class="work-pane__body"><slot /></div>
       <slot name="dock" />
     </div>

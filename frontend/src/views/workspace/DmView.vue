@@ -288,7 +288,7 @@ function onTurnDone() {
         @open-resource="openResource"
       >
         <template #header-actions>
-          <PanelToggle :open="panelOpen" files @toggle="togglePanel" />
+          <PanelToggle :open="panelOpen" files :controls="room.panelControls.value" @toggle="togglePanel" />
         </template>
       </ChatPanel>
     </template>

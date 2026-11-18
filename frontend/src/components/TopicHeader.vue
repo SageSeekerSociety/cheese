@@ -52,6 +52,8 @@ const props = defineProps<{
   panelOpen?: boolean
   /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
   resetLayout?: () => void
+  /** 「概览」开合的那几块的 id（见 PanelToggle）。 */
+  panelControls?: string
 }>()
 
 const emit = defineEmits<{
@@ -267,7 +269,7 @@ useCommands(roomCommands)
     />
 
     <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
-    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
+    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
 
     <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
          看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。

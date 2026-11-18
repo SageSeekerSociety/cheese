@@ -8,6 +8,8 @@ const props = defineProps<{
   open: boolean
   /** 面板里只有「文件」一格（私聊）：开关就叫「文件」，不叫「概览」。 */
   files?: boolean
+  /** 它开合的那几块的 id；面板整个是一块时是它（`topic-panel`）。 */
+  controls?: string
 }>()
 const emit = defineEmits<{ (e: 'toggle'): void }>()
 </script>
@@ -20,7 +22,7 @@ const emit = defineEmits<{ (e: 'toggle'): void }>()
     class="panel-toggle tap-target"
     :class="{ 'panel-toggle--open': open }"
     :aria-expanded="open ? 'true' : 'false'"
-    aria-controls="topic-panel"
+    :aria-controls="props.controls ?? 'topic-panel'"
     :title="
       props.files
         ? t(open ? 'work.room.panel.closeFiles' : 'work.room.panel.openFiles')
