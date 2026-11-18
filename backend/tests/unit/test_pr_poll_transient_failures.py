@@ -37,6 +37,7 @@ from tests.support.review_ports import (
     record_task_instruction,
     settle_card,
     task_teammate,
+    uncommitted,
 )
 
 pytestmark = pytest.mark.anyio
@@ -49,6 +50,7 @@ _PORTS = {
     "record_instruction": record_task_instruction,
     "record_seat": record_seat_instruction,
     "task_teammate": task_teammate,
+    "uncommitted": uncommitted,
 }
 
 
@@ -86,6 +88,9 @@ def _poller(monkeypatch, failure: Exception) -> tuple[SimpleNamespace, dict]:
         yield _Session()
 
     class _AcceptService:
+        #: The forge always has its answer here.
+        merge_state_computing_for = None
+
         def __init__(self, _session, *, announce=None, **_ports) -> None: ...
 
         async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:
@@ -191,6 +196,9 @@ def _many_cards_poller(
         yield _Session()
 
     class _AcceptService:
+        #: The forge always has its answer here.
+        merge_state_computing_for = None
+
         def __init__(self, _session, *, announce=None, **_ports) -> None: ...
 
         async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:

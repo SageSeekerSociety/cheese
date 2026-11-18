@@ -195,6 +195,9 @@ async def _task_as_form(db, task, *, private: bool) -> dict:
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=private)
     model.update(await _task_requirements(service, task.id, teacher=private))
+    # 表单只用 name/mentors 的 handle/题面这些，`_enrich_task_models` 里
+    # 跟读的人有关的那几样（creator、admins、导师的 remark）到这儿都被裁掉了，
+    # 所以不传 viewer：传了只会白多一次备注查询。
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     await _enrich_task_topics(db, [model])
     await _enrich_task_knowledge_points(db, [model])

@@ -696,16 +696,22 @@ const quickOffered = computed(() => {
   line-height: var(--lh-14-loose);
   color: var(--faint);
 }
-/* 已读那一圈：在名字那一行的最右端；续话没有那一行，挂在这一行右上角、和第一行字齐平。 */
+/* 已读那一圈：在名字那一行的最右端；续话没有那一行，挂在这一行右上角、和第一行字齐平。
+   续话那一圈是**浮**在正文里的：它占着正文第一条行的一截，那一行的字绕开它排。以前它
+   是绝对定位在右上角，正文不知道它在那儿，一条写满的行直接把字排到圈底下——灰圈压在
+   字上就是这么来的。
+   浮动的元素本来一起画在未定位的那一层，而正文外面那层 `.fold`（styles/message-fold.css）
+   是 `position: relative`——它把整片正文抬到浮动之上，于是点在圈上命中的是字，圈点不开。
+   所以这一圈自己也要有一个定位层：relative 不挪位置，只把它抬回正文之上。 */
 .im-receipt {
   margin-left: auto;
   align-self: center;
 }
 .im-receipt--cont {
-  position: absolute;
+  position: relative;
   z-index: 1;
-  top: 6px;
-  right: 16px;
+  float: right;
+  margin: 2px 0 2px 8px;
 }
 /* 发件箱: 慢请求、断网或正在输入预览时淡一档，正常快发不闪灰。 */
 .im-row--dim .im-text,

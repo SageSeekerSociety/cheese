@@ -62,7 +62,6 @@ describe('右键 rail 上的项目', () => {
       type: 'item',
       title: 'P1',
       to: '/projects/p1',
-      img: 'data:image/svg+xml,<svg/>',
       projectId: 'p1',
       menu: [
         { key: 'copy', label: '复制链接', icon: 'mdi-link-variant', onSelect: copy },

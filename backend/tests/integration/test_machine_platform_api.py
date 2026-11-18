@@ -7,7 +7,9 @@ The rules, as a person would state them:
   and resource included), made for the request;
 - whatever the sandbox sent that would say who is calling is not what it is
   served as;
-- the model routes and the socket's own routes are not reached this way;
+- the model routes and the socket's own routes are not reached this way, nor
+  the forge relay, which would hand the sandbox the project's write
+  credential past its forge proxy;
 - what cannot go down the socket is handed the session's credential for a
   minute, asked for right before it is used;
 - nobody but the device link owner is anyone here.
@@ -221,3 +223,64 @@ async def test_sandbox_forge_token_on_socket_returns_placeholder_to_sandbox_and_
     )
     assert from_proxy.status_code == 200, from_proxy.text
     assert from_proxy.json()["data"]["token"] == "ghs_real_single_repo_token"
+
+
+async def test_the_forge_relay_is_not_reached_from_the_sandbox(client, monkeypatch):
+    """The relay that carries git to a GitHub-bound project's forge puts the
+    project's write credential on what it carries. A sandbox reaches its forge
+    only through the proxy outside it, which refuses what a session may not
+    write (a push to the default branch); asked on its socket, the relay would
+    carry that push past the proxy."""
+    from types import SimpleNamespace
+
+    import httpx
+
+    room = await _room(client, in_task=True)
+    binding = SimpleNamespace(
+        kind="github_app",
+        repo="acme/widgets",
+        url="https://github.com/acme/widgets.git",
+        api_url="https://api.github.com",
+        default_branch="main",
+    )
+
+    async def binding_for_project(_id, _session):
+        return binding
+
+    class Minter:
+        async def installation_token(self):
+            return "ghs_real_single_repo_token", "unused"
+
+        async def read_token(self):
+            return "ghs_real_single_repo_token", "unused"
+
+    async def tokens_for_project(_id, _session):
+        return Minter()
+
+    monkeypatch.setattr(
+        "app.domain.project.forge.binding_for_project", binding_for_project
+    )
+    monkeypatch.setattr(
+        "app.domain.project.forge.tokens_for_project", tokens_for_project
+    )
+    reached = []
+
+    async def forge(request):
+        reached.append((request, await request.aread()))
+        return httpx.Response(200, stream=httpx.ByteStream(b"0000"))
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        "app.api.routes.forge_token.httpx.AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(forge), **kwargs),
+    )
+    # A push starts by asking for the refs it may update.
+    answer = _ask(
+        client,
+        f"sandbox/forge/{room.project_id}/acme/widgets.git/info/refs"
+        "?service=git-receive-pack",
+        device=room.old_device,
+    )
+
+    assert answer.status_code == 403
+    assert reached == []

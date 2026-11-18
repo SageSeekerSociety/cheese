@@ -56,6 +56,7 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
         RecordInstruction,
         RecordSeatInstruction,
         TaskTeammate,
+        Uncommitted,
     )
 
 
@@ -71,6 +72,7 @@ class AcceptService:
         task_teammate: TaskTeammate | None = None,
         roster_team: ProjectTeam | None = None,
         executor: ExecutorCall | None = None,
+        uncommitted: Uncommitted | None = None,
     ):
         """``announce`` 是这个包说不了的那句话 —— 往房间里留一行（`ports.Announce`）。
 
@@ -88,6 +90,11 @@ class AcceptService:
         ``executor`` 是建卡时把交付物从那条任务的工作目录里读下来的那次机器调用
         （`repository.ports.ExecutorCall`），只在递卡带交付物时才用得上。同上一个
         道理：够不着（`repository` 在本包下面），谁构造谁给。
+
+        ``uncommitted`` 是合并前问的那一句：任务的工作目录里还有没再提交一版的
+        修改（`ports.Uncommitted`）。采纳、人工放行、轮询器合布防过的卡都问它
+        （`accept._holds_uncommitted`）；要合一张交合并的卡却没接这一个，当场炸掉，
+        不会不问就合。
         """
 
         self._session = session
@@ -98,6 +105,7 @@ class AcceptService:
         self._task_teammate = task_teammate
         self._roster_team = roster_team
         self._executor = executor
+        self._uncommitted = uncommitted
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False
@@ -109,6 +117,10 @@ class AcceptService:
         #: What the main line seat that adopted in this service's `accept`
         #: reads in that call's reply, when the merge landed inside it.
         self.for_adopter: str | None = None
+        #: The head whose merge state the forge was still working out when
+        #: this service's `advance_pr_card` read the card's PR; None when the
+        #: forge had answered, or the step read nothing (`pr_poll` asks again).
+        self.merge_state_computing_for: str | None = None
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)
@@ -160,6 +172,7 @@ class AcceptService:
         deliver: str | None = None,
         deliver_url: str | None = None,
         admits_reviewer: ReviewerAdmission,
+        handed_in_by: str | None = None,
     ) -> AcceptCard:
         return await cards.create_card(
             self,
@@ -175,6 +188,7 @@ class AcceptService:
             deliver=deliver,
             deliver_url=deliver_url,
             admits_reviewer=admits_reviewer,
+            handed_in_by=handed_in_by,
         )
 
     async def redeliver(
@@ -189,8 +203,12 @@ class AcceptService:
             self, task_id, actor=actor, deliver=deliver, deliver_url=deliver_url
         )
 
-    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
-        return await notices._announce_filed(self, topic=topic, card=card, task=task)
+    async def _announce_filed(
+        self, topic: Topic, card: AcceptCard, task: Task, *, by: str | None = None
+    ) -> None:
+        return await notices._announce_filed(
+            self, topic=topic, card=card, task=task, by=by
+        )
 
     async def _announce_new_artifact(
         self, topic: Topic, name: str, *, task_id: uuid.UUID
@@ -370,6 +388,13 @@ class AcceptService:
             head_sha=head_sha,
         )
 
+    async def adopt_when_ready(
+        self, *, card_id: uuid.UUID, decided_by: str, head_sha: str
+    ) -> AcceptCard:
+        return await merge_queue.adopt_when_ready(
+            self, card_id=card_id, decided_by=decided_by, head_sha=head_sha
+        )
+
     def _notify_merge_result(
         self,
         topic: Topic,
@@ -431,6 +456,9 @@ class AcceptService:
             )
         finally:
             self._adopting_seat = None
+
+    async def _holds_uncommitted(self, card: AcceptCard) -> bool:
+        return await _accept._holds_uncommitted(self, card)
 
     async def _accept_github(
         self,
@@ -647,6 +675,7 @@ class AcceptService:
         change_subject: str | None = None,
         change_body: str | None = None,
         focus: str | None = None,
+        recorded_by_caller: bool = False,
     ) -> AcceptCard:
         return await decisions.redescribe(
             self,
@@ -655,6 +684,7 @@ class AcceptService:
             change_subject=change_subject,
             change_body=change_body,
             focus=focus,
+            recorded_by_caller=recorded_by_caller,
         )
 
     async def push_fix(

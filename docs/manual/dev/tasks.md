@@ -77,7 +77,7 @@ covers:
 
 一条消息可以另开好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面。AI 队友在主线上用 `cheese_task(action=open)` 开的任务，记在要做这件事的那条主线消息上，`source_block_id` 也是它；主线把它画成队友那一轮回答的最后一条消息下面的一行（那一轮以那条消息命名，`turn_id`），只有任务名和负责人，不画状态（前端 `lib/channelTasks.teammateTaskLines`）。主线上没有原地转（`here`）。单独新建的任务才在主线上落一行 `task_created`。
 
-任务的一步交付被采纳、任务接着做时，任务的 AI 队友把这件事说回开出它的那段对话（`review/task_landing.tell_origin`）：出自主线的（`source_block_id` 在频道主线上）说在主线，出自支线的说在那条支线，支线原地转成的不说。交了一版去审阅、一版被退回、任务关闭，在同一处由平台记成事件行（`record_at_origin`，`event_type` 为 `task_filed` / `task_returned` / `task_ended`），不署 AI 队友的名；关闭那一行说它怎么结束的（`_how_it_ended`：写成的结论、采纳了没写总结、或者没有采纳就关了），每条关闭路径都经过 `tell_origin_ended`。
+任务的一步交付被采纳、任务接着做时，任务的 AI 队友把这件事说回开出它的那段对话（`review/task_landing.tell_origin`）：出自主线的（`source_block_id` 在频道主线上）说在主线，出自支线的说在那条支线，支线原地转成的不说。交了一版去审阅、一版被退回、任务关闭，在同一处由平台记成事件行（`record_at_origin`，`event_type` 为 `task_filed` / `task_returned` / `task_ended`），不署 AI 队友的名；关闭那一行说它怎么结束的（`_how_it_ended`：写成的结论、采纳了没写总结、或者没有采纳就关了），每条关闭路径都经过 `tell_origin_ended`。平台只记没人会说的事：频道主线上的 AI 队友开的任务，交了一版、主线代审阅人采纳、主线自己关闭（含等部署上线后按它的结论关闭），由那位队友在主线上用自己的话说，平台在主线上不记这几行（`tell_opener_filed` 告诉到了它才不记 `task_filed`；`_adopted_by_opener`；`tell_origin_ended` 的 `closed_by` / `concluded_by_opener`）。任务自己的对话照常记。人关闭、平台关闭、人点采纳，主线上照常记。
 
 出自主线、由 AI 队友用 `cheese_task(action=open)` 开的任务（`tasks.created_by` 是那位队友的席位，`created_by_assistant` 为假），交一版去审阅、交付被采纳落地和关闭时，平台还给主线上的那位队友留一条平台指令（`task_landing.wake_opener` → `delivery/agent.record_seat_instruction`，投递账本上 `conversation_id` 是频道），叫它用自己的话在主线上说一两句：它看不到任务里的东西，所以指令里写着任务名、第几版、审阅人、交付说明和审阅重点，或者任务怎么结束的。指令的事件 id 由这件事算出来（交一版、采纳落地按卡 id，关闭按任务 id 和 `closed_at`），同一件事只送一次，重开再关会再送一次；采纳落地在主线自己的采纳调用里时由回复告诉它，它自己关闭的不送。退回不送；人建的、转的、出自支线的任务不送；那个席位已经不在这个项目里也不送。主线的队友正在干活时，这条指令在它下一个工具调用的间隙并进去（`chat_live_input.join_running_session`）；没在干活就起一轮。
 
@@ -115,7 +115,11 @@ covers:
 
 ## 同步 {#sync}
 
-`cheese sync` 只推提交（`_sync_task`）。没提交的改动、未跟踪文件不上传，平台不替它们留底：沙箱一换，只有推上去的提交还在。
+`cheese sync` 只推提交（`_sync_task`）。没提交的改动（含未跟踪、未被忽略的文件）另存在项目仓库的 `refs/cheese/kept/<任务 id>`（`_keep_working_copy`）：一个提交，树是工作目录的文件，父提交是当时的 HEAD，不在任何分支上；每次另存替换它，没有改动时删掉它。它在临时索引（`GIT_INDEX_FILE`）里 `git add -A` 生成，不动真的索引和工作目录；单个文件超过 10 MB 或合计超过 80 MB 时这一次不存。`cheese sync`（每次提交的钩子）和 `cheese sync --all`（每轮的 checkpoint、离开机器前的 checkpoint）在推送之后各做一次；有人保存任务文件后执行器再做一次（`task_fs` 的 `keep_soon` 跑 `cheese keep`，十秒内的连续保存合成一次）。本机记着上次存的那一份（本地同名 ref），文件和 HEAD 都没变时不碰仓库。
+
+新机器第一次打开任务目录（`_open_from_forge` 新建 worktree）时，在取分支的同一次 fetch 里把它取到 `refs/remotes/origin/cheese-kept/<任务 id>`；父提交就是检出的 HEAD 时用 `git restore --worktree` 铺回去，索引留在 HEAD，原来未跟踪的文件仍是未跟踪（`_lay_back_kept`）。分支此后动过就不铺也不删，平台把这件事告诉 AI 队友（`session_work._lost_notice`）和打开任务文件的人（`taskSandboxReleasedKeptBranchMoved`），读的是仓库里这个提交的父提交和分支的头（`repository/kept_work.py`）。只有平台托管的 Forgejo 仓库这样做：连接 GitHub 的项目不往别人的仓库里写这种 ref，沙箱一换只有推上去的提交还在。
+
+成员自己提交审阅（`POST /topics/{任务}/hand-in`，`machine/hand_in.py`）走的也是这条推送：平台经执行器在任务的沙箱上跑一段固定的 shell（`commit_command`：`git add -A`，有暂存的改动就以这位成员为作者 `git commit`，跳过检出的钩子，再 `cheese sync --task`），回读分支头确认推上去了，然后和 AI 队友递卡一样走 `AcceptService.create_card`（`handed_in_by`：来处记「〈名字〉 提交了「任务名」，待审阅」，不叫醒开任务的那位）；已经有一版在等审阅时走 `push_fix` 把那张卡挪到新的头，换上新的说明和审阅人。只用 git 和已有的 `cheese sync`，旧版本的沙箱也能跑。AI 队友这一轮还在跑时拒绝；沙箱已经释放、又存着没提交的改动时说明改动的去向，不在服务端另造提交。「提交并采纳」（`accept=true`）不当场采纳：刚推上去的头，代码托管服务还没算出能不能合并，所以在这个头上布防（`AcceptService.adopt_when_ready`），由轮询器在合并态放行时以这位成员的名义合并，和「检查通过后自动合并」同一条路。每条合并路（采纳、人工放行、轮询器合布防的卡）合之前都问一句工作目录里还有没有没提交的修改（`accept._holds_uncommitted`，`ports.Uncommitted`：沙箱醒着问它，冻着或已释放看 `refs/cheese/kept/`），有就不合。页头的「有未提交的修改」（`GET /topics/{任务}/hand-in`）：分支头和最近一张卡的头一样不一样，加上同一个没提交修改的问法；不叫醒冻住的沙箱。醒着时只问已跟踪的文件，AI 队友留下的未跟踪文件不挡采纳。
 
 **推 HEAD**（`_deliver_task_branch`）：HEAD 已在本检出上次推送或 fetch 时记下的分支尖（`refs/remotes/origin/<branch>`）里，就不问托管平台、什么都不推：托管平台一时连不上时，问一句只会把它已经有的工作报成「没能推回」，而且每次 sync 都报一遍。否则先读托管平台上这条分支的尖。HEAD 已在其中——同一任务的另一个检出走得更远——就什么都不推；尖在 HEAD 的历史里就普通推送；两边分叉而那个尖是本检出自己在这条分支上有过、后来 amend/rebase 掉的提交，就以它为 lease 替换（`--force-with-lease`），整理本任务的提交（比如移除依赖）本来就是工作的一部分；尖里有本检出从没有过的提交就拒绝，替换会把别人的工作从 PR 上删掉。
 
@@ -154,7 +158,7 @@ covers:
 
 **关闭要有依据**（`review/close_grounds.py`）：其余任务自己的会话关任务，两样之一，否则 409：最后一次交付已落地（`Task.accepted_at`，且之后递的卡没有还开着或被退回的）并且步骤清单（`topic_progress`）全部勾完，没勾完的用 `unchecked_reason` 写理由、理由接在结论后面（`taskCloseChecklistOpen`）；或者负责人在这条任务里说过结束，关闭时带上那条消息的 id（`owner_message_id`，平台核对它在这条任务里、作者是负责人，`taskCloseOwnerMessageNotFound`）。两样都没有是 `taskCloseNeedsGrounds`。平台不读实况文档判断还剩什么：自由文字核不了。人关任务不要依据；写总结窗口里（`closing_since`，只在等部署之后出现）的关闭也不再查。
 
-**等部署**：部署会回报平台的项目（`review/deploy_scope.waits_for_deploy`），芝士判断做完、关闭时最后一次交付是一次合并的，接口不关任务，写 `Task.deploying_since`、回 `deploying: true`（`task_landing.wait_for_deploy`），等包含这次合并的部署上线（`deploy_wait.ship`）后由 `deploy_landed` 叫它写总结，写完再关。主线关它开的任务也一样等，结论先存在 `Task.held_conclusion`（`Task.conclusion` 留给关闭之后，界面上一律当成它怎么结束的来显示）；上线后 `deploy_landed` 直接按这句结论关闭，不叫任务的会话写总结，任务出自的那段对话照常记一行，主线也照常收到任务已结束（这次关闭不是它在那一轮做的）。等的时候任务里又有人要了新的东西，就接着做下一步，存着的结论作废，主线收到一句它没有按结论关闭的原因。等的时候再关一次照样等，主线再关会换掉存着的结论。中间的合并不等部署。
+**等部署**：部署会回报平台的项目（`review/deploy_scope.waits_for_deploy`），芝士判断做完、关闭时最后一次交付是一次合并的，接口不关任务，写 `Task.deploying_since`、回 `deploying: true`（`task_landing.wait_for_deploy`），等包含这次合并的部署上线（`deploy_wait.ship`）后由 `deploy_landed` 叫它写总结，写完再关。主线关它开的任务也一样等，结论先存在 `Task.held_conclusion`（`Task.conclusion` 留给关闭之后，界面上一律当成它怎么结束的来显示）；上线后 `deploy_landed` 直接按这句结论关闭，不叫任务的会话写总结；主线收到任务已结束（这次关闭不是它在那一轮做的），由它告诉成员，主线上不记平台那一行，叫不到它时才记。等的时候任务里又有人要了新的东西，就接着做下一步，存着的结论作废，主线收到一句它没有按结论关闭的原因。等的时候再关一次照样等，主线再关会换掉存着的结论。中间的合并不等部署。
 
 **一笔合并只落地一次**：`delivery_landed` 认这次合并落到分支上的那个提交（`Task.delivered_head`），已经落过的那一笔直接不做。几条路看到的是同一笔合并，而任务可能早换到下一步的分支上、或者已经被重开了 —— 第二次落地会把已经走过去的任务再换一次分支、再叫一次芝士。没有提交可认的交付（一份讨论、一份产物、一个网址）不受这条约束。
 
@@ -236,8 +240,8 @@ covers:
 
 - 转达（`POST /topics/{频道}/tasks/{编号}/tell`）：内容作为平台指令交给任务自己的会话。替别的成员转达的小请求带 `asker`，记在 `tasks.asker_handles` 上。
 - 查看（`GET /topics/{频道}/tasks/{编号}`）：平台事实的概要，和主线与这件任务之间的往来；任务里的对话、执行过的命令和改动，CLI 按任务 id 从各自的接口读。
-- 关闭、重新打开（`…/close`、`…/reopen`）：只限它自己开的任务；交付在等人审阅的任务不能关闭。成员要它关，或者交付采纳后、任务报告做完后它判断做完了，它就关（见[分步交付](#steps)）。它自己关的任务，平台不再为这次结束叫醒它（`tell_origin_ended` 的 `closed_by`），任务出自的那段对话照常记一行。
-- 代审阅人采纳（`…/accept`）：只在审阅人本人在这一轮说了要采纳时；合并在这次调用里落地的，回复里带着该怎么判断（`next`），进了合并队列的回 `pending`，落地时再叫醒它。
+- 关闭、重新打开（`…/close`、`…/reopen`）：只限它自己开的任务；交付在等人审阅的任务不能关闭。成员要它关，或者交付采纳后、任务报告做完后它判断做完了，它就关（见[分步交付](#steps)）。它自己关的任务，平台不再为这次结束叫醒它，主线上也不记平台的结束那一行（`tell_origin_ended` 的 `closed_by`）：关闭的回复叫它告诉成员结果。任务自己的对话照常记。
+- 代审阅人采纳（`…/accept`）：只在审阅人本人在这一轮说了要采纳时；合并在这次调用里落地的，回复里带着该怎么判断（`next`），进了合并队列的回 `pending`，落地时再叫醒它。主线上不记「代 X 采纳了」那一行，由它在回复里说。
 
 任务这一侧，主线开的任务用 `POST /topics/{任务}/report` 把要人回答的问题（`question`）、无法继续的情况（`blocked`）或做完了、没有要审阅的东西（`done`）报给开它的那位 AI 队友；提交审阅、交付被采纳和任务结束由平台报（`review.task_landing.tell_opener_filed`、`delivery_landed`、`tell_origin_ended`），报告里列出提过这件事的每位成员。这件任务做没做完由主线判断，任务自己的会话不关它，每一轮的「这个任务」一段这样告诉它（`prompts.task_section` 的 `coordinated`）。转达和报告都记在投递账本上（`eventType` 为 `task_told`、`task_report`，`delivery.agent.exchange_of` 读回），双方的现场里看得到各自的那一次调用。
 

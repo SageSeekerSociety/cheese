@@ -150,6 +150,57 @@ describe('in English', () => {
   })
 })
 
+describe('周报里写到的人按查看者的叫法', () => {
+  it('查看者给他设过备注时，正文里画的是备注', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    seedProjects([])
+    seedProject('p', {
+      topics: [],
+      members: [
+        {
+          user_handle: 'qingmo',
+          name: '秦老师公开昵称',
+          name_source: 'human',
+          remark: '我们叫他老王',
+          agent: false,
+          project_default: false,
+        },
+      ],
+      unread: {},
+      privateUnread: {},
+      notifyLevels: {},
+    })
+    const store = useWorkspaceStore()
+    store.openProject('p')
+    queryClient.setQueryData(keys.projectDocs('p', 'weeklies'), {
+      rootTopicId: 'root',
+      rootTopic: null,
+      overviewId: null,
+      weeklies: [
+        {
+          id: 'w1',
+          conversation_id: 'room-1',
+          kind: 'weekly',
+          content: '<@qingmo> 把提交口打开了。',
+          created_at: '2026-09-07T02:00:00Z',
+          meta: { since: '2026-08-31T00:00:00+00:00', until: '2026-09-06T23:59:59+00:00' },
+        },
+      ],
+      memoryEntries: [],
+    })
+
+    const view = render(ProjectDocsView, {
+      props: { projectId: 'p', kind: 'weeklies' },
+      global: { plugins: [createVuetify(), pinia] },
+    })
+    // 正文是异步组件画的，等它出来再断言。
+    await waitFor(() => expect(view.container.textContent).toContain('我们叫他老王'))
+    expect(view.container.textContent).not.toContain('秦老师公开昵称')
+    view.unmount()
+  })
+})
+
 describe('项目目标', () => {
   it('打开的是项目目标那一篇协同文档，谁在别处改的都在这儿', async () => {
     seedRoom('overview', '我们给高中生做算法课。')

@@ -161,6 +161,22 @@ def reviewer_changed(*, by: str | None, reviewer: str) -> str:
     return f"{who}这件任务的验收卡改由 @{reviewer} 审阅，卡照旧待审阅。"
 
 
+def member_handed_in(
+    *, by: str, subject: str, head: str | None, committed: bool, again: bool
+) -> str:
+    """A member handed the task's changes in themselves (`machine.hand_in`)."""
+    did = (
+        f"把任务目录里没提交的修改提交成了 {head[:12]}，推到了任务分支上，"
+        if committed and head
+        else ""
+    )
+    what = "再提交了一版" if again else "提交审阅"
+    return (
+        f"@{by} {did}{what}「{subject}」，现在待审阅。任务目录和分支已经是这一版："
+        "接着改之前先重新读要动的文件，不要用旧内容写回。"
+    )
+
+
 def accept_revoked(*, by: str, pr: int | None) -> str:
     what = f"PR #{pr} 的采纳记录" if pr is not None else "这次交付的采纳记录"
     return f"@{by} 撤回了{what}。撤回的只是记录，已经合并的代码没有撤。"

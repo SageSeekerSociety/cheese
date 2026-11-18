@@ -17,6 +17,7 @@ export type * from './types/market'
 
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'
+import type { ProjectAvatarSpec } from '@/utils/projectAvatar'
 
 export interface Project {
   id: string
@@ -42,6 +43,8 @@ export interface Project {
   pending_transfer?: { id: string; to_handle: string } | null
   /** 所有者归档这个项目的时间；没归档是 null。 */
   archived_at?: string | null
+  /** 项目格子画什么（ProjectAvatar）；kind 为 null 是从项目名取字的默认格子。 */
+  avatar?: ProjectAvatarSpec | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null

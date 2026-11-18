@@ -80,10 +80,14 @@ export function useDeliveryTab(opts: {
     tabs.value = tabs.value.filter((tab) => tab.taskId !== taskId)
   }
 
+  /** 已经为它打开过、或加过一格的那几版（卡的 id）：一版只动一次。 */
+  const handled = new Set<string>()
+
   /**
-   * 页面开着时频道主线上来了一行新交付。等的是我，右栏开着、停在「概览」时，直接打开它；
-   * 右栏开着但在别的页签时，把它那一格加进那一排、不选中，带一个点；右栏收着时不动它。
-   * 刷新时已经在主线上的旧交付不算（对话栏只报实时到的那一行）。
+   * 页面开着时频道主线上来了一行关于这件任务的新内容：平台记的「已提交审阅」，或者开这件任务的
+   * 队友带着它说的话。它有一版在等我审阅、右栏开着、停在「概览」时，直接打开它；右栏开着但在
+   * 别的页签时，把它那一格加进那一排、不选中，带一个点；右栏收着时不动它。同一版只这样做一次，
+   * 之后关于它的话不再打开。刷新时已经在主线上的旧内容不算（对话栏只报实时到的那一行）。
    */
   async function arrived(taskId: string) {
     if (!opts.desktop.value || opts.place().taskId) return
@@ -102,6 +106,8 @@ export function useDeliveryTab(opts: {
     const card = rows.find((row) => row.id === taskId)?.card
     const me = opts.me()
     if (!card || card.status !== 'pending' || !me || !(card.reviewer ?? '').split('、').includes(me)) return
+    if (handled.has(card.id)) return
+    handled.add(card.id)
     if (onOverview) return opts.openDelivery(taskId)
     // 正看着的那一件不带点。
     if (reviewTaskId === taskId) return

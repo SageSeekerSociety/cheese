@@ -63,6 +63,28 @@ it('a list row that records a status is not drawn as a tag', () => {
   expect(getComputedStyle(row).paddingLeft).not.toBe('6px')
 })
 
+it('正文里的下划线和删除线不躲开字母的下伸部分', () => {
+  const appStyle = document.createElement('style')
+  appStyle.textContent = styleCss
+  document.head.appendChild(appStyle)
+  try {
+    const host = document.createElement('div')
+    // 三套正文各一处：Markdown 阅读、富文本编辑器与只读、实况文档。
+    host.innerHTML =
+      '<div class="md-reader"><p><s>qqq</s><u>qqq</u></p></div>' +
+      '<div class="rt-content"><p><s>qqq</s><u>qqq</u></p></div>' +
+      '<div class="doc-prose"><p><s>qqq</s><u>qqq</u></p></div>'
+    document.body.appendChild(host)
+
+    for (const el of host.querySelectorAll('u, s')) {
+      // 浏览器默认会躲开 g j p q y 的尾巴，每躲一次断一截；正文里关掉它，线是一整条。
+      expect(getComputedStyle(el).getPropertyValue('text-decoration-skip-ink')).toBe('none')
+    }
+  } finally {
+    appStyle.remove()
+  }
+})
+
 it('a focusable reference chip keeps its colour over Vuetify’s later [role=button] { color: inherit } rule', () => {
   const appStyle = document.createElement('style')
   appStyle.textContent = styleCss

@@ -230,8 +230,12 @@ async def _announce_filed(
     task: Task,
     *,
     announce: Announce,
+    by: str | None = None,
 ) -> None:
     """递卡说一声，并通知等着这件事的两个人。
+
+    ``by`` 是自己提交这一版的成员（`machine.hand_in`）：这一行就是那次提交在任务里
+    留下的那一行，说是谁交的、交的是哪一版（它的标题）。
 
     卡的每一种结局在房间里都有一行 —— 驳回、作废、改描述、合了、卡住了 ——
     唯独等待的**开始**没有。而验收卡本身钉在对话末尾，不随时间线往上滚，所以
@@ -257,14 +261,20 @@ async def _announce_filed(
         if part
     )
     reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
+    reviewer = "、".join(f"<@{h}>" for h in reviewers)
     await announce(
         session,
         place_id=topic.id,
         task_id=task.id,
-        content=say(
-            "cardFiled",
-            task=task.title,
-            reviewer="、".join(f"<@{h}>" for h in reviewers),
+        content=(
+            say("cardFiled", task=task.title, reviewer=reviewer)
+            if by is None
+            else say(
+                "cardHandedIn",
+                who=f"<@{by}>",
+                title=card.change_subject or task.title,
+                reviewer=reviewer,
+            )
         ),
         meta=notice(
             EVENT_CARD_FILED,
@@ -389,7 +399,7 @@ async def _note_needs_human(
     moved."""
     note = (
         f"PR #{card.pr_number} 不会自动合并：{reason}。"
-        "可以由有权限的人人工放行，在 GitHub 上处理，或者作废这次审阅。"
+        "可以由有权限的人人工放行，在 PR 页面上处理，或者作废这次审阅。"
     )
     if card.note == note:
         return  # already said once — the 60s poll must not repeat it

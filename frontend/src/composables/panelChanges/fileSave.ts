@@ -8,6 +8,7 @@ import type { PanelChangesProps } from './types'
 import { ApiError, readFile, writeFile } from '../../api'
 
 import { t } from '@/i18n'
+import { noteSaved } from '@/lib/handIn'
 
 export interface FileSaveDeps {
   props: PanelChangesProps
@@ -72,6 +73,8 @@ export function usePanelFileSave(deps: FileSaveDeps) {
     errorMsg.value = null
     try {
       const res = await writeFile(pid, path, draft, tid ?? undefined, expected, task, base)
+      // 存下去的修改还没交进去：页头马上说「有未提交的修改」。
+      if (task) noteSaved(task)
       if (drafts.get(key)?.content === draft) drafts.delete(key)
       // The answer is only about the file that was open in the topic that was
       // open — anything else finished after a switch and must be dropped.

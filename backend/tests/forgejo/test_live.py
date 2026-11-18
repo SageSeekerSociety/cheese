@@ -48,6 +48,7 @@ from tests.support.review_ports import (
     record_task_instruction,
     settle_card,
     task_teammate,
+    uncommitted,
 )
 
 pytestmark = [
@@ -509,6 +510,7 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
                 record_seat=record_seat_instruction,
                 dispatch_pending=pumping(chat),
                 task_teammate=task_teammate,
+                uncommitted=uncommitted,
             )
         )
         async with asyncio.timeout(10):

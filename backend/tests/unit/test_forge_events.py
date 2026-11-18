@@ -25,6 +25,7 @@ from tests.support.review_ports import (
     record_task_instruction,
     settle_card,
     task_teammate,
+    uncommitted,
 )
 
 # `listen` 和 `forge_repository_changed` 够不着第 3 层的几个包，这三个口子由
@@ -35,6 +36,7 @@ _PORTS = {
     "record_instruction": record_task_instruction,
     "record_seat": record_seat_instruction,
     "task_teammate": task_teammate,
+    "uncommitted": uncommitted,
 }
 
 
@@ -563,6 +565,7 @@ async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatc
         record_seat,
         dispatch_pending,
         task_teammate,
+        uncommitted,
     ):
         refreshes.append(repo)
         await release.wait()

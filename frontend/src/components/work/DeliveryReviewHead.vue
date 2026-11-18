@@ -13,6 +13,8 @@ import { computed } from 'vue'
 import { injectAcceptCard } from '../../composables/useAcceptCard'
 import DeliveryHead from '../room/DeliveryHead.vue'
 
+import HandInPanelHost from './HandInPanelHost.vue'
+
 defineProps<{
   heading: string
   version?: number | null
@@ -44,8 +46,12 @@ const decide = computed(() => !!accept && !accept.gateCard.value && accept.decis
     :accept-label="accept?.acceptLabel.value ?? ''"
     :blocked-title="accept?.acceptBlockedTitle.value ?? null"
     :busy="accept?.acceptBusy.value ?? false"
+    :unhanded="accept?.handIn.unhanded.value ?? false"
+    :hand-in="accept?.handIn.action.value ?? null"
     @open-task="emit('open-task')"
     @accept="accept?.onAcceptCard()"
     @reject="accept && (accept.showRejectInput.value = true)"
+    @hand-in="accept?.handIn.openPanel()"
   />
+  <HandInPanelHost />
 </template>

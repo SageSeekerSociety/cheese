@@ -103,6 +103,11 @@ const multi = computed(() => askMultiSelect(first.value))
 .ask-fold:focus-visible {
   outline-offset: 2px;
 }
+/* 谁问谁、等没等到：这一行收起来时不许把整行撑宽。它们以前是 `flex: none` 且没有
+   上限，而在窄屏上一行只有三百来像素——答案里一个长名字或一句长回答就把这行撑到
+   容器外面（实测 290px 宽的一行被撑到 620px）。给它们一个能收的上限，长字形照常换行。
+   换行之后还要截住：一句长回答能占满四行，这一行也就不再是「一行」了，和最长的题目
+   一样留两行，点开才看全文。 */
 .ask-fold__who,
 .ask-fold__state,
 .ask-fold__multi {
@@ -110,6 +115,11 @@ const multi = computed(() => askMultiSelect(first.value))
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 /* 题目最多两行：窄屏上一行放不下，收起来的这一行也还是比整张卡矮得多。 */
 .ask-fold__title {
@@ -126,7 +136,7 @@ const multi = computed(() => askMultiSelect(first.value))
 }
 .ask-fold__state,
 .ask-fold__multi {
-  color: var(--muted);
+  color: var(--faint);
 }
 .ask-fold__chevron {
   flex: none;

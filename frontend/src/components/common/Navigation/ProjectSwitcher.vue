@@ -91,11 +91,10 @@
               @click="open = false"
             >
               <v-icon v-if="!query" class="switcher__grip" size="14" icon="mdi-drag-vertical" />
-              <UserAvatar
-                :avatar="row.item.img ?? ''"
+              <ProjectAvatar
+                :id="row.item.projectId ?? ''"
                 :name="row.item.title"
-                :seed="row.item.projectId"
-                kind="org"
+                :avatar="row.item.avatar"
                 :size="20"
               />
               <span class="switcher__label" :title="row.item.title" data-user-content>{{ row.item.title }}</span>
@@ -147,7 +146,7 @@ import RailItem from './RailItem.vue'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
