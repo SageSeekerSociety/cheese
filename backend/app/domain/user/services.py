@@ -1,10 +1,12 @@
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
+from typing import Protocol
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
 from app.core.content_review import TextKind, review_text
 from app.core.email import is_placeholder_email
@@ -98,6 +100,33 @@ async def usernames_by_ids(
     """用户 id -> handle, keyed, for callers that need to look each one up."""
     users = await UserRepository(session).get_by_ids(list(set(user_ids)))
     return {uid: user.username for uid, user in users.items()}
+
+
+class _Person(Protocol):
+    """Just enough of an account to read the viewer's remark for it."""
+
+    username: Mapped[str]
+
+
+async def remarks_for_viewer(
+    session: AsyncSession, viewer_id: int | None, users: Mapping[int, _Person]
+) -> dict[str, str]:
+    """The viewer's own private names for ``users`` (id -> handle), one query.
+
+    Lives here rather than beside the routes that first needed it: a remark is
+    a user-domain fact, and the domain's own cards (``author_dto.page_names``)
+    read it too — ``app.domain`` may not import ``app.api``.
+    """
+    if viewer_id is None or not users:
+        return {}
+    viewer = users.get(viewer_id)
+    if viewer is None:
+        viewer = await UserRepository(session=session).get_by_id(viewer_id)
+    if viewer is None:
+        return {}
+    return await remarks_by_handles(
+        session, viewer.username, (user.username for user in users.values())
+    )
 
 
 async def languages_by_ids(

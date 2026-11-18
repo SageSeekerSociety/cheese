@@ -12,10 +12,9 @@ face.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.user_remarks import remarks_for_viewer
 from app.domain.user.models import UserProfile
 from app.domain.user.repositories import UserRepository
-from app.domain.user.services import usernames_by_ids
+from app.domain.user.services import remarks_for_viewer, usernames_by_ids
 
 
 async def page_names(
@@ -55,7 +54,7 @@ def profile_to_author(
     """The card for ``profile``, or ``None`` when there is no profile.
 
     ``remark`` is the **reader's own** private name for this person, read for
-    the one page being answered (``api.user_remarks.remarks_for_viewer``). It
+    the one page being answered (``domain.user.services.remarks_for_viewer``). It
     is ``None`` when nobody is reading — an agent's read, an export — and the
     page then shows ``nickname``. ``username`` is the account, which is what
     identifies the person on screen and seeds their avatar colour; it is not
