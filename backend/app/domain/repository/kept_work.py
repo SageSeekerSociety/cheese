@@ -40,6 +40,21 @@ async def keeps_work(project_id: uuid.UUID, session: AsyncSession) -> bool:
     return binding is not None and binding.kind == "forgejo"
 
 
+async def has_kept(
+    project_id: uuid.UUID, session: AsyncSession, task_id: uuid.UUID
+) -> bool:
+    """Whether the task's checkout had uncommitted work when it was last kept:
+    the ref exists only while there is some (a clean checkout deletes it). One
+    forge read, and nothing on the sandbox, so it answers for a sandbox that
+    is frozen or gone. False on a project that keeps nothing."""
+    if not await keeps_work(project_id, session):
+        return False
+    data = await repository_data(
+        project_id, session, "/git/commits/" + quote(kept_ref(task_id), safe="")
+    )
+    return bool(data)
+
+
 @dataclass(frozen=True)
 class KeptWork:
     """A task's kept snapshot: the commit, when it was kept, and whether a new

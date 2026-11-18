@@ -97,6 +97,19 @@ async def accept(
     # decided_by is the caller's verified actor handle, never body-trusted.
     if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("acceptReviewerOnly"))
+    # 有人保存过、还没再提交一版的修改不在这一版里：采纳的得是改过的那一版。
+    if (
+        self._uncommitted is not None
+        and card.task_id is not None
+        and card.deliverable_kind == DeliverableKind.merge
+    ):
+        work = await TaskService(self._session).get(card.task_id)
+        if (
+            work is not None
+            and work.branch_name
+            and await self._uncommitted(self._session, work)
+        ):
+            raise ValidationError(say("acceptUncommitted"))
     topic = await self._topic_or_404(card.topic_id)
     # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
     seen_head = await self._seen_head_or_refresh(

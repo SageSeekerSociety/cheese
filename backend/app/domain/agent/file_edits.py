@@ -8,7 +8,8 @@ the teammate is told before its next tool call: re-read the file before
 touching it.
 
 The person who edited is also credited on the task: their part goes into the
-teammate's next commit, which names them as a co-author.
+teammate's next commit, which names them as a co-author, unless they hand it
+in themselves first (`machine.hand_in`), as a commit of their own.
 """
 
 import difflib
