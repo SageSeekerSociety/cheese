@@ -30,6 +30,8 @@
   "taskNothingCommitted": "这个任务还没有提交文件",
   "taskRequired": "请选择任务",
   "taskSandboxReleased": "任务的环境空闲后已释放；可以查看已提交版本",
+  "taskSandboxReleasedKept": "任务的环境空闲后已释放。没提交的改动已经保存，环境重新准备好后会放回；现在可以查看已提交版本",
+  "taskSandboxReleasedKeptBranchMoved": "任务的环境空闲后已释放。没提交的改动已经保存，但保存之后任务分支有了新提交，不会自动放回；现在可以查看已提交版本",
   "taskWithoutRepository": "这个项目没有代码仓库，任务没有工作目录",
   "taskWorkedInItsConversation": "这条任务由它自己对话里的 AI 队友来做，频道里的 AI 队友不能打开它的工作目录",
   "workTaskNotInProject": "这个项目里没有这条工作任务",

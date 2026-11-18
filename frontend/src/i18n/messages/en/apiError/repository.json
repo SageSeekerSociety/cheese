@@ -30,6 +30,8 @@
   "taskNothingCommitted": "This task hasn't committed any files yet",
   "taskRequired": "Choose a task",
   "taskSandboxReleased": "The task's environment was released after being idle. You can view the committed version",
+  "taskSandboxReleasedKept": "The task's environment was released after being idle. Its uncommitted changes were saved and come back when the environment is prepared again. You can view the committed version",
+  "taskSandboxReleasedKeptBranchMoved": "The task's environment was released after being idle. Its uncommitted changes were saved, but the task's branch has new commits since, so they will not be put back automatically. You can view the committed version",
   "taskWithoutRepository": "This project has no code repository, so the task has no working directory",
   "taskWorkedInItsConversation": "This task is worked by the AI teammate in its own conversation; the channel's AI teammate can't open its workspace",
   "workTaskNotInProject": "This work task isn't in this project",

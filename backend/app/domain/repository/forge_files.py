@@ -30,7 +30,8 @@ from app.domain.project.forge import (
     repository_data,
 )
 from app.domain.repository import merge3, task_rows
-from app.domain.repository.ports import CompareStatus, ExecutorCall
+from app.domain.repository.kept_work import kept_work
+from app.domain.repository.ports import CompareStatus, ExecutorCall, WakeWorkingCopy
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
     PREVIEW_TEXT_BYTES,
@@ -115,6 +116,7 @@ class ProjectFiles:
         release_session: bool = False,
         executor: ExecutorCall | None = None,
         compare_status: CompareStatus | None = None,
+        wake: WakeWorkingCopy | None = None,
     ):
         """``executor`` 是在任务那台机器上跑一次文件操作的东西（`ports.ExecutorCall`）；
         ``compare_status`` 是问托管方「这个提交交付过没有」那一次调用
@@ -129,6 +131,8 @@ class ProjectFiles:
         self.release_session = release_session
         self._executor = executor
         self._compare_status = compare_status
+        # 叫醒冻住的环境（`ports.WakeWorkingCopy`）；不给就不叫醒。
+        self._wake = wake
 
     async def _data(self, *args, **kwargs):
         if self.release_session:
@@ -214,11 +218,14 @@ class ProjectFiles:
             # Its cloud sandbox was destroyed with its home (idle, or given up
             # with its host), and the lease still names it until the task's
             # next tool call places it in a new one.
-            raise UpstreamUnavailableError(say("taskSandboxReleased"))
+            raise UpstreamUnavailableError(await self._released(task))
         if self._executor is None:  # pragma: no cover - 接线漏了才会走到
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("executor was not handed in")
         await self._release()
+        if self._wake is not None:
+            # Frozen while idle, it answers nothing until it is woken.
+            await self._wake(task.id)
         try:
             # Interactive file requests must not inherit the agent's 11-minute
             # command timeout; cancellation also cancels the pending device call.
@@ -248,6 +255,26 @@ class ProjectFiles:
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
         return result
+
+    async def _released(self, task: Any):
+        """What a person is told of a task whose sandbox is gone: what it had
+        not committed was kept (`kept_work`), and whether the next one lays it
+        back. A forge that cannot say leaves the plain sentence."""
+        try:
+            kept = (
+                await kept_work(
+                    self.project_id, self.session, task.id, task.branch_name
+                )
+                if task.branch_name
+                else None
+            )
+        except Exception:  # the sentence without it is still true
+            kept = None
+        if kept is None:
+            return say("taskSandboxReleased")
+        if kept.laid_back:
+            return say("taskSandboxReleasedKept")
+        return say("taskSandboxReleasedKeptBranchMoved")
 
     async def revision(self):
         task = await self.task()

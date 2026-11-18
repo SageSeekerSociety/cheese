@@ -24,6 +24,7 @@ from app.domain.agent_session.models import AgentSession
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.machine.models import SandboxHome
+from app.domain.repository.kept_work import keeps_work
 from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
 from app.domain.run_record.service import as_payload as run_record_payload
 from app.domain.run_record.service import record as keep_record
@@ -133,13 +134,20 @@ async def tell_replaced(
     )
 
 
+async def _kept(session: AsyncSession, home: SandboxHome) -> bool:
+    """Whether the sandbox's project keeps its task checkouts' uncommitted
+    work off the sandbox (`repository.kept_work`): there that work comes along
+    to the next one too, and the ``…Kept`` sentence says so."""
+    return home.project_id is not None and await keeps_work(home.project_id, session)
+
+
 async def tell_lost(session: AsyncSession, home: SandboxHome) -> dict | None:
     """The sandbox's host stopped answering and the pool gave up on it: the
-    session works in a new sandbox from what was pushed."""
+    session works in a new sandbox from what was kept."""
     return await _line(
         session,
         home,
-        say("sandboxLost"),
+        say("sandboxLostKept" if await _kept(session, home) else "sandboxLost"),
         {"event_type": "cloud_startup", "severity": "warn"},
     )
 
@@ -150,7 +158,10 @@ async def tell_released(
     return await _record(
         session,
         home,
-        say("sandboxReleased", minutes=minutes),
+        say(
+            "sandboxReleasedKept" if await _kept(session, home) else "sandboxReleased",
+            minutes=minutes,
+        ),
         {"event_type": "sandbox_asleep", "severity": "info"},
     )
 
@@ -159,7 +170,11 @@ async def tell_unpaid(session: AsyncSession, home: SandboxHome) -> dict | None:
     return await _line(
         session,
         home,
-        say("sandboxReleasedNoCredits"),
+        say(
+            "sandboxReleasedNoCreditsKept"
+            if await _kept(session, home)
+            else "sandboxReleasedNoCredits"
+        ),
         {"event_type": "sandbox_asleep", "severity": "warn"},
     )
 
