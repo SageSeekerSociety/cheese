@@ -379,3 +379,33 @@ describe('名单里的测试点', () => {
     expect(view.queryByText(t('tasks.judge.roster.col'))).toBeNull()
   })
 })
+
+describe('报名的人按查看者的叫法', () => {
+  const withRemark = {
+    ...claim(9, '公开昵称', 'APPROVED', 0),
+    member: { id: 109, name: '公开昵称', username: 'han', remark: '我们叫她小韩', intro: '', avatarId: null },
+  }
+
+  it('设了备注就画备注，头像底色仍跟着账号', async () => {
+    const view = mount({ participants: [withRemark] })
+    const tr = row(view, '我们叫她小韩')
+    expect(tr.textContent).toContain('我们叫她小韩')
+    expect(tr.textContent).not.toContain('公开昵称')
+    // 底色拿账号当种子，不跟着备注走：同一个人在哪一位查看者眼里都是同一个颜色。
+    const painted = (name: string, remark: string | null) => {
+      const one = {
+        ...claim(9, name, 'APPROVED', 0),
+        member: { id: 109, name, username: 'han', remark, intro: '', avatarId: null },
+      }
+      const v = mount({ participants: [one] })
+      const face = v.getAllByText(name)[0].closest('tr')?.querySelector('.v-avatar')
+      return (face as HTMLElement | null)?.style.backgroundColor
+    }
+    expect(painted('我们叫他老王', '我们叫他老王')).toBe(painted('公开昵称', null))
+  })
+
+  it('没设备注时仍是公开昵称', () => {
+    const view = mount({ participants: [claim(8, '林小满', 'APPROVED', 0)] })
+    expect(row(view, '林小满').textContent).toContain('林小满')
+  })
+})
