@@ -273,6 +273,7 @@ def test_adopting_ones_own_hand_in_completes_once_the_forge_says_it_merges(
     assert card.status == "pending"
     assert fake.merge_calls == []
 
+    _background_settled()
     del fake.mergeable_state_by_number[card.pr_number]
     _poll(client)
 
@@ -285,15 +286,49 @@ def test_adopting_ones_own_hand_in_completes_once_the_forge_says_it_merges(
     assert shown == "Hello from alice\n"
 
 
+def test_adopting_ones_own_hand_in_does_not_wait_for_the_next_tick(
+    client, world, app_world, monkeypatch
+):
+    """The forge says whether the handed-in head merges moments after the
+    push; the adoption completes on that answer, not a poll interval later."""
+    fake = app_world["fake"]
+    monkeypatch.setattr(pr_publish, "enabled", lambda: True)
+    seed = fake.seed_pr
+
+    def opened(number, *, head, **kwargs):
+        seed(number, head=head, **kwargs)
+        real = git_store.git(world.sandbox.repo, "rev-parse", head).strip()
+        fake.prs[number]["head_sha"] = real
+        fake.check_state_by_sha[real] = ("success", "全部通过")
+        fake.merge_sha_by_number[number] = "merge-sha-1"
+        return real
+
+    monkeypatch.setattr(fake, "seed_pr", opened)
+    _save(client, world, _note(world), "Hello from alice\n")
+
+    r = _hand_in(client, world, reviewer_handle="alice", accept=True)
+
+    assert r.status_code == 200, r.text
+    _background_settled()
+    card, _ = _card(client, r.json()["data"]["card"]["id"])
+    assert card.status == "accepted"
+    assert card.decided_by == "alice"
+
+
+def _background_settled() -> None:
+    """Wait for the work the last request sent off in the background."""
+    from app.core import background
+
+    for _ in range(250):
+        if not background.inflight_count():
+            return
+        time.sleep(0.02)
+
+
 def _settled_lines(client, task_id) -> list[str]:
     """The lines people read in the task's conversation, once the notices
     sent off in the background have landed."""
-    from app.core import background
-
-    for _ in range(200):
-        if not background.inflight_count():
-            break
-        time.sleep(0.02)
+    _background_settled()
     blocks = client.get(f"/topics/{task_id}/blocks").json()["data"]["data"]
     return [
         b["content"]
