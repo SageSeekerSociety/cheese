@@ -832,7 +832,14 @@ useComposerShortcut({
      has to be able to win. See the comment on the root element. */
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* 占满「剩下的」高度，不是列高的 100%。两者只在没有兄弟时才相等：频道页在
+     这一栏顶上多了一块「AI 现在在干什么」（TopicChatColumn 的 AgentNowStrip），
+     `height: 100%` 会让这一块和对话加起来比栏高出一块，输入区（`.chat` 的最后
+     一项）连同它被顶到窗口下沿外面，裁掉且没有滚动条。flex 收缩到剩余空间，
+     队友那块要占多高都行。`min-height: 0` 是同一件事的纵向版：不给它，这一项
+     的内容高就是下限，一样撑破。 */
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--surface);
 }
 /* 时间线的那一块：书签条要浮在它上面，而不是跟着消息滚走。 */

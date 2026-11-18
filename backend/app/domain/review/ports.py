@@ -120,7 +120,8 @@ class RecordSeatInstruction(Protocol):
 
     ``seat`` 是那位队友的席位 handle；这个项目里找不到它、或者它已经不在了，就什么
     也不记。同一个 ``event.id`` 对同一个席位只记一次，所以事件 id 要由那件事本身
-    算出来。"""
+    算出来。返回这位队友有没有被告知：找不到席位时为 False，同一件事已经记过一次
+    也算告知过。"""
 
     async def __call__(
         self,
@@ -131,7 +132,7 @@ class RecordSeatInstruction(Protocol):
         conversation_id: uuid.UUID,
         seat: str,
         content: str,
-    ) -> None: ...
+    ) -> bool: ...
 
 
 class TaskTeammate(Protocol):

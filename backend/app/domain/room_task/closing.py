@@ -1,7 +1,8 @@
 """A task being written up closes once its AI teammate has written it up.
 
 A merge never closes a task: its AI teammate judges it done and closes it
-(`review.task_landing`, `review.close_grounds`). In a project that waits for
+(`review.task_landing`, `review.close_grounds`), or, for a task the channel's
+main line opened, the main line does — and that one is never written up. In a project that waits for
 its deploy, that close leaves the task open until the merge is live, and then
 the task stays open, with `closing_since` set, while its AI teammate is told to
 bring the task document up to date, say what came of the task, and close it
@@ -348,8 +349,11 @@ async def close_task(
     down. Once ``session`` commits, whatever a teammate is still doing in it
     is stopped through ``work``: a closed task is work that is over, and a
     session left working in it goes on paying for the model while every write
-    it makes is refused. ``work`` is None only when the session that would be
-    stopped is the one closing the task.
+    it makes is refused. ``work`` is None when the session that would be
+    stopped is the one closing the task, or when the close is made where no
+    session is held (a deploy's report, `review.task_landing.deploy_landed`):
+    the session's holder stops it once the task has been closed a while
+    (`agent.turn_inputs.stop_work_in_closed_tasks`).
 
     ``machines`` goes to `after_close` unchanged: the call that reaches a
     machine to remove this room's closed checkouts (`ports.SweepCheckouts`).
@@ -367,6 +371,7 @@ async def close_task(
     # Nor for its deploy: closed by hand while it waited, it is over.
     task.deploying_since = None
     task.deploy_blocked_url = None
+    task.held_conclusion = None
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)

@@ -13,6 +13,7 @@ from app.domain.agent.queries import agent_for_seat
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block import message_reads
 from app.domain.project.services import ProjectService
+from app.domain.prompts import TALK_TOLD
 from app.domain.room_task.place import PlaceResolver
 
 logger = logging.getLogger(__name__)
@@ -32,13 +33,28 @@ async def remember_opening(
     harness: str,
     digests: dict[str, str],
     was: dict[str, str] | None,
+    talk: dict[str, str] | None = None,
+    resumed: str | None = None,
 ) -> None:
+    """Record what the conversation now holds: the opening's sections
+    (``digests``) and the `communication` notes of the people this turn
+    answered (``talk``, ``talk/<handle>`` → digest), beside those of people
+    earlier turns answered. A conversation other than the one this turn
+    resumed (``resumed``) was started afresh and holds only what this turn
+    gave it (`room.sessions.speaking.send` gives a new one every note)."""
     async with sessions() as session:
-        await AgentSessionService(session).remember_told(
+        service = AgentSessionService(session)
+        now = await service.conversation(topic_id, agent_handle, harness=harness)
+        kept = (
+            {k: v for k, v in (was or {}).items() if k.startswith(TALK_TOLD)}
+            if resumed is not None and now is not None and now[0] == resumed
+            else {}
+        )
+        await service.remember_told(
             conversation_id=topic_id,
             agent_handle=agent_handle,
             harness=harness,
-            told=digests,
+            told={**kept, **digests, **(talk or {})},
             was=was,
         )
         await session.commit()

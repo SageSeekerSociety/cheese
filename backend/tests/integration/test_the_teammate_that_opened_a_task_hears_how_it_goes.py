@@ -6,32 +6,30 @@ The rules, as a person would state them:
 - A task an AI teammate opened from something said in the channel's main line:
   when it hands a version in for review, that teammate is told, in the main
   line, which task, which version, who reviews it, what was handed in and what
-  to look at. Each version is told once; the next version is told again.
+  to look at. Each version is told once; the next version is told again. It
+  says the hand-in there itself, so the platform records no line for it in
+  the main line.
 - A version returned is not told to it.
-- When the task closes, that teammate is told how it ended — written up,
-  accepted with no write-up, or closed with nothing accepted — whichever way it
-  closed: by a person, by its own session after the write-up, by the platform
-  when the write-up never comes or never starts. Each end is told once; a task
-  reopened and closed again ends again.
+- When the task closes, that teammate is told how it ended — with its
+  conclusion, accepted with no write-up, or closed with nothing accepted — by
+  whoever closed it but itself (its own close, and the close once a deploy is
+  live, are in `test_the_main_line_judges_whether_its_task_is_done`). Each
+  end is told once; a task reopened and closed again ends again.
 - Nobody is told for a task a person made, or one that came from a 支线.
 - How the task ended is recorded where it came from as something that
   happened, under nobody's name, not as words of an AI teammate.
 """
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import select
 
-from app.api.deps import get_chat_service
-from app.domain.agent.announce import announce
 from app.domain.delivery.agent import record_seat_instruction
 from app.domain.delivery.models import Delivery
-from app.domain.delivery.timer import give_up_stale
 from app.domain.review.models import AcceptCard
 from app.domain.review.task_landing import tell_opener_filed
-from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task
 from app.domain.user.models import User, UserProfile
 from tests.delivery import delivery_headers, delivery_task
@@ -56,7 +54,6 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
-from tests.landing import time_passes, watch, written_up
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -150,7 +147,7 @@ def _close(client, task_id: uuid.UUID, conclusion: str | None = None):
 
 def test_each_version_handed_in_is_told_once_and_a_return_is_not(client, app_world):
     room = _make_topic(client, _make_project(client))
-    _opened(client, room)
+    task_id = _opened(client, room)
     _goes_by(client, "alice", "爱丽丝")
     focus_card = client.post(
         f"/topics/{delivery_task(client, room).id}/accept-card",
@@ -171,6 +168,11 @@ def test_each_version_handed_in_is_told_once_and_a_return_is_not(client, app_wor
     assert "爱丽丝" in told
     assert _SUBJECT in told and "报名表只留姓名和学号" in told
     assert "手机上看一眼表单" in told
+    assert not [
+        line
+        for line in _told(client, room, task_id)
+        if line["meta"].get("event_type") == "task_filed"
+    ]
 
     returned = client.post(
         f"/accept-cards/{first}/reject",
@@ -300,91 +302,20 @@ def _accepted_last_step(client, app_world) -> tuple[str, uuid.UUID]:
     return room, task_id
 
 
-def _judged_done_and_live(client, task_id: uuid.UUID) -> None:
-    """The task's teammate judged it done and the deploy of its merge went
-    live: the task is in its write-up window (`task_landing.deploy_landed`),
-    the one place left where the platform closes a task by itself."""
-    from app.domain.agent_instance.adapters import task_teammate
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.review.task_landing import deploy_landed
-    from app.domain.room_task.lock_order import lock_task_for_change
-
-    async def live():
-        async with client.test_factory() as session:
-            task = await lock_task_for_change(session, task_id)
-            assert task is not None
-            task.deploying_since = datetime.now(UTC)
-            await deploy_landed(
-                session,
-                task,
-                record_instruction=record_task_instruction,
-                task_teammate=task_teammate,
-            )
-            await session.commit()
-
-    client.portal.call(live)
-
-
-def test_a_task_its_session_wrote_up_is_told_with_its_conclusion(client, app_world):
+def test_a_task_a_person_closes_after_its_delivery_landed_is_told_with_its_conclusion(
+    client, app_world
+):
     room, task_id = _accepted_last_step(client, app_world)
-    assert len(_told_opener(client, room)) == 1  # the version handed in
+    # The version handed in, and its delivery adopted.
+    assert len(_told_opener(client, room)) == 2
 
-    written_up(client, str(task_id))
+    _close(client, task_id, "做完了")
 
     *_, ended = _told_opener(client, room)
-    assert len(_told_opener(client, room)) == 2
+    assert len(_told_opener(client, room)) == 3
     assert "交付已采纳" in ended
     assert "做完了" in ended
     # Recorded where it came from in each reader's language, under nobody's name.
     [line] = _endings(client, room, task_id)
     assert _happened(line)
     assert line["meta"]["i18n"]["content"]["key"] == "taskCompleted"
-
-
-def test_a_task_whose_write_up_never_comes_is_told_once(client, app_world):
-    room, task_id = _accepted_last_step(client, app_world)
-    _judged_done_and_live(client, task_id)
-
-    time_passes(client, str(task_id), minutes=60)
-    watch(client)
-    watch(client)
-
-    *_, ended = _told_opener(client, room)
-    assert len(_told_opener(client, room)) == 2
-    assert "交付已采纳" in ended
-    assert "总结没有写成" in ended
-
-
-def test_a_task_whose_write_up_never_starts_is_told_once(client, app_world):
-    room, task_id = _accepted_last_step(client, app_world)
-    _judged_done_and_live(client, task_id)
-    chat = client.app.dependency_overrides[get_chat_service]()
-
-    async def never_started():
-        async with client.test_factory() as session:
-            await session.execute(
-                update(Delivery)
-                .where(
-                    Delivery.conversation_id == task_id,
-                    Delivery.payload[CLOSES_TASK].as_boolean().is_(True),
-                )
-                .values(
-                    attempts=1,
-                    recorded_at=datetime.now(UTC) - timedelta(minutes=31),
-                )
-            )
-            await session.commit()
-
-    client.portal.call(never_started)
-    client.portal.call(
-        lambda: give_up_stale(client.test_factory, chat=chat, announce=announce)
-    )
-    client.portal.call(
-        lambda: give_up_stale(client.test_factory, chat=chat, announce=announce)
-    )
-
-    *_, ended = _told_opener(client, room)
-    assert len(_told_opener(client, room)) == 2
-    assert "总结没有写成" in ended
-    [line] = _endings(client, room, task_id)
-    assert _happened(line)

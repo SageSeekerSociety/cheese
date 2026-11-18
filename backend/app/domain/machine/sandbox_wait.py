@@ -38,6 +38,23 @@ SANDBOX_LOST = (
     "提交、依赖和缓存、/tmp、正在运行的进程都不在了，需要的重新做、重新安装、"
     "重新启动。"
 )
+# The same, in a project whose repository the platform hosts: what a task
+# checkout had not committed was kept off the sandbox (`repository.kept_work`)
+# and comes back with the checkout.
+SANDBOX_LOST_KEPT = (
+    "沙箱环境已换成新的。推上去的提交在任务分支上；任务目录里没提交的改动由平台"
+    '保存着，用 cd "$(cheese worktree <任务 id>)" 重新打开任务目录时会原样放回，'
+    "仍是没提交的改动。没推的提交、任务目录以外的文件、装过的依赖和缓存、/tmp、"
+    "正在运行的进程都不在了，需要的重新做、重新安装、重新启动。"
+)
+# Said after it when the kept changes were cut from a head the task's branch
+# has moved past: a new checkout leaves them out rather than guess a merge.
+KEPT_NOT_LAID_BACK = (
+    "{at} 保存的没提交的改动不会放回：保存时所在的提交已不是任务分支的最新提交"
+    "（之后分支有了新提交，或那个提交没推上去），平台没有替你合并。它们在 {ref}"
+    "（提交 {commit}），打开任务目录后用 git diff HEAD {commit} 查看，需要的对照"
+    "着重做。"
+)
 # The same, for a sandbox in no project (``holder.Personal``): nothing of it
 # was checkpointed, so nothing comes back.
 SANDBOX_REPLACED = (

@@ -265,7 +265,7 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
     return alice[0], hers, his, her_device, his_device
 
 
-LOST_LINE = str(say("sandboxLost"))
+LOST_LINE = str(say("sandboxLostKept"))
 
 
 def _warm_machine_ready(case: Case) -> str:

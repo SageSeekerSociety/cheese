@@ -81,6 +81,13 @@ describe('交付到了', () => {
     ])
   })
 
+  it('同一版只打开一次：之后关于它的话不再把它打开', async () => {
+    const { delivery, opened } = setup()
+    await delivery.arrived('k1')
+    await delivery.arrived('k1')
+    expect(opened).toEqual(['k1'])
+  })
+
   it('正开着的那一件又交了一版：它那一格重读', async () => {
     const { delivery, refreshed } = setup({ place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k1' } })
     await delivery.arrived('k1')

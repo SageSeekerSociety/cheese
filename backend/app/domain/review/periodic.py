@@ -56,6 +56,7 @@ def register_periodic_jobs(
             announce,
             settle_card=settle_card,
             record_instruction=record_instruction,
+            record_seat=record_seat,
             task_teammate=task_teammate,
         ),
         forge_bound=True,

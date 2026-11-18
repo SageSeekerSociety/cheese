@@ -261,7 +261,9 @@ async def conclude_task(
     """关闭任务：someone who works it — its owner or a contributor — or its
     own session says it is over. With a conclusion it is done; without one it
     was put down. A merge does not close a task (`review.task_landing`): its
-    teammate judges it done and closes it here.
+    teammate judges it done and closes it here — unless the channel's main
+    line opened it, which judges that and closes it from there
+    (`close_coordinated_task`); its own session's close is refused.
 
     Closing is not undone by reopening (its open cards are voided, its pull
     request closed), so it is kept to the people whose word the task's
@@ -279,6 +281,10 @@ async def conclude_task(
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
+        # Whether a task the channel's main line opened is done is the main
+        # line's call; the refusal tells the teammate what to do instead.
+        if await main_line_opener(db, task) is not None:
+            raise ConflictError(say("taskCoordinatedClosedByMainLine"))
         # Closing voids a delivery still waiting on a person (below), and whether
         # it is voided is that person's decision, made on the interface; the
         # refusal tells the teammate where the person clicks.
@@ -320,13 +326,19 @@ async def _close(
     *,
     own_session: bool,
     unchecked: str | None = None,
+    by_main_line: bool = False,
 ) -> dict:
     """Close ``task`` once who may has been settled: by a person who works it,
     by its own session (``own_session``: the turn that would be stopped ends
     by itself, and it read how it ended in the tool's reply), or by the AI
-    teammate that opened it from the channel's main line. ``unchecked``: the
-    checklist items its own session left undone, with its reason, appended to
-    the conclusion (`review.close_grounds`)."""
+    teammate that opened it from the channel's main line (``by_main_line``).
+    ``unchecked``: the checklist items its own session left undone, with its
+    reason, appended to the conclusion (`review.close_grounds`).
+
+    Its own session's close, and the main line's, after a merge in a project
+    that waits for its deploy leave the task open until that merge is live
+    (`task_landing.wait_for_deploy`); the main line's keeps its conclusion
+    for then."""
     tasks = TaskService(db)
     credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
     # Who reported it and who works it is the owner's to change (`update_task`);
@@ -363,10 +375,12 @@ async def _close(
         )
     if unchecked:
         conclusion = "\n\n".join(part for part in (conclusion, unchecked) if part)
-    # Its teammate judged it done, but in a project that waits for its deploy
-    # the task stays open until its last merge is live, and is written up then
-    # (`task_landing.wait_for_deploy`).
-    if own_session and await wait_for_deploy(db, task):
+    # Judged done, but in a project that waits for its deploy the task stays
+    # open until its last merge is live, and is written up, or closed with the
+    # main line's conclusion, then (`task_landing.wait_for_deploy`).
+    if (own_session or by_main_line) and await wait_for_deploy(
+        db, task, held=(conclusion or "") if by_main_line else None
+    ):
         out = await task_out(
             db,
             task,
@@ -392,8 +406,8 @@ async def _close(
     await close_cards_for_closed_task(
         db, task_id=task.id, by=actor.handle, settle_card=settle_card
     )
-    # The task's own conversation hears how it ended, and so does the
-    # discussion it came from; the channel's card for it updates in place.
+    # The task's own conversation records how it ended; the channel's card
+    # for it updates in place.
     ended = (
         say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
         if task.conclusion
@@ -412,10 +426,15 @@ async def _close(
             closed, heard.task_closed(by=actor.handle, conclusion=task.conclusion)
         ),
     )
-    # The conversation the task was made from records how it ended, and the AI
-    # teammate that opened it from the channel's main line is told to say so.
+    # The conversation the task was made from hears how it ended: from the
+    # main line's AI teammate when it closed the task itself, from the
+    # platform's line otherwise (`tell_origin_ended`).
     await tell_origin_ended(
-        db, task, announce=announce, record_seat=record_seat_instruction
+        db,
+        task,
+        announce=announce,
+        record_seat=record_seat_instruction,
+        closed_by=actor.handle,
     )
     out = await task_out(db, task, latest_card, me=actor.handle or "")
     await db.commit()
@@ -896,7 +915,8 @@ class TellIn(BaseModel):
 
 
 class ReportIn(BaseModel):
-    kind: Literal["question", "blocked"]
+    #: ``done``: the work is finished with nothing to hand in for review.
+    kind: Literal["question", "blocked", "done"]
     content: str = Field(min_length=1, max_length=20000)
 
 
@@ -908,9 +928,14 @@ class TaskNamed(BaseModel):
 
 class TaskAccepted(TaskNamed):
     #: Where the delivery stands after the adoption: `accepted` when it
-    #: landed, `conflict` when the merge met a conflict the task is now
-    #: resolving.
+    #: landed, `pending` when it waits in the forge's merge queue (the main
+    #: line is told when it lands), `conflict` when the merge met a conflict
+    #: the task is now resolving.
     status: str
+    #: What the main line is told once the delivery landed in this call: the
+    #: task is still open, and whether it is done is its to judge. None when
+    #: it did not land here, or the task goes on by itself.
+    next: str | None = None
 
 
 class ExchangeLine(BaseModel):
@@ -925,7 +950,7 @@ class TaskLook(TaskNamed):
 
 
 class ReportOut(BaseModel):
-    reported: Literal["question", "blocked"]
+    reported: Literal["question", "blocked", "done"]
 
 
 async def _coordinated(db, at: InChannel, ref: str):
@@ -1037,9 +1062,11 @@ async def close_coordinated_task(
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """The main line closes a task it opened, as its members asked. Not one
-    whose delivery waits on a person: closing would void it, which is that
-    person's decision."""
+    """The main line closes a task it opened: as its members asked, or once it
+    judges the task done after a delivery landed or the task reported it done.
+    Not one whose delivery waits on a person: closing would void it, which is
+    that person's decision. In a project that waits for its deploy, a close
+    after a merge waits for that merge to go live (``deploying: true``)."""
     task = await _coordinated(db, at, ref)
     _opened_by(task, at.actor)
     await lock_task_for_change(db, task.id)
@@ -1049,7 +1076,11 @@ async def close_coordinated_task(
         raise ConflictError(say("coordinateCloseWhileReviewWaits"))
     place = await PlaceResolver(db).task_place(task.id)
     assert place is not None
-    return ok(await _close(db, place, at.actor, task, body, chat, own_session=False))
+    return ok(
+        await _close(
+            db, place, at.actor, task, body, chat, own_session=False, by_main_line=True
+        )
+    )
 
 
 @router.post("/{topic_id}/tasks/{ref}/reopen", **typed_response(TaskOut))
@@ -1117,6 +1148,9 @@ async def accept_coordinated_task(
             "number": task.number,
             "title": task.title,
             "status": decided.status.value,
+            # The landing inside this call told the main line here, not by
+            # waking it (`task_landing.Landed`).
+            "next": service.for_adopter,
         }
     )
 
@@ -1130,8 +1164,10 @@ async def report_to_main_line(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """A task's own session reports to the AI teammate that opened it from the
-    channel's main line: a question it needs answered, or that it cannot go
-    on. Its hand-in and its end reach the main line by themselves."""
+    channel's main line: a question it needs answered, that it cannot go on,
+    or that it is done with nothing to hand in for review — whether the task
+    is then over is the main line's call. Its hand-in, an adopted delivery
+    and its end reach the main line by themselves."""
     task = at.place.task
     if task is None or resolver.credential_conversation() != task.id:
         raise ForbiddenError(say("reportFromOwnTask"))

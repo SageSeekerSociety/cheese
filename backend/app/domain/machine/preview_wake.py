@@ -238,6 +238,32 @@ async def thaw_preview_on_machine(bind, *, session_id: uuid.UUID, hub=None) -> b
         return False
 
 
+async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
+    """Thaw the frozen sandbox that holds a conversation's working copy before
+    a person's read or save reaches it (`repository.ports.WakeWorkingCopy`).
+
+    A frozen sandbox's executor is stopped with the rest of it, so the file
+    request would wait out its deadline and fail; opening or saving a task's
+    files is using the sandbox, as opening its preview is. Waited for, since
+    the request needs it awake; one that is not frozen costs one read. A
+    thaw that fails is logged (`thaw_preview_on_machine`) and the request
+    goes on to say the machine did not answer."""
+    async with AsyncSession(bind, expire_on_commit=False) as db:
+        frozen = list(
+            await db.scalars(
+                select(AgentSession.id)
+                .join(SandboxHome, SandboxHome.session_id == AgentSession.id)
+                .where(
+                    AgentSession.conversation_id == conversation_id,
+                    SandboxHome.frozen_at.is_not(None),
+                    SandboxHome.stopped_at.is_(None),
+                )
+            )
+        )
+    for session_id in frozen:
+        await thaw_preview_on_machine(bind, session_id=session_id, hub=hub)
+
+
 async def wake_preview_on_machine(
     bind, *, place: Place, session_id: uuid.UUID, hub=None
 ) -> bool:

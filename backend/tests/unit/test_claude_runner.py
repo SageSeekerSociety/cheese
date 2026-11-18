@@ -37,6 +37,7 @@ from app.domain.agent.harness.driven.runner import (
     reply_owed_path,
     socket_path,
 )
+from app.domain.session_record.privacy import for_reader
 from tests.pinned_claude import claude_binary
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
@@ -307,6 +308,32 @@ def test_a_send_is_written_read_and_its_work_goes_idle_in_order(screen, contract
     # The journal still carries what the session wrote, stamped with its work.
     echo = next(e for e in screen.records() if _echo_of(sent)(e["record"]))
     assert echo["record"]["cheese"]["work_id"] == work
+
+
+def test_words_only_one_member_may_read_reach_nobody_else_in_any_record(screen):
+    """A member's notes go into an input beside the turn's own words. The model
+    reads both; in every record the build writes of that input — its echo, the
+    transcript's copy, whatever else carries it — anyone but the member reads
+    the turn's words and not the notes."""
+    notes = "alice-wants-short-replies-5291"
+    work = str(uuid.uuid4())
+    screen.call(
+        "send",
+        {
+            "input_id": str(uuid.uuid4()),
+            "work_id": work,
+            "text": "hello",
+            "private": [{"owner": "alice", "text": f"alice 的记录：{notes}"}],
+        },
+    )
+    screen.wait_event(_status("idle", work))
+    records = [entry["record"] for entry in screen.records()]
+
+    as_bob = json.dumps([for_reader(r, "bob") for r in records], ensure_ascii=False)
+    as_alice = json.dumps([for_reader(r, "alice") for r in records], ensure_ascii=False)
+    assert notes not in as_bob
+    assert "hello" in as_bob
+    assert notes in as_alice
 
 
 def test_a_platform_call_is_told_the_run_by_the_event_that_began_it(screen):
