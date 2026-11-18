@@ -33,7 +33,7 @@ export function askTimelineProps(viewer = 'reader', long = false): Record<string
           {
             by: 'alice',
             kind: 'note',
-              note: '请保留完整回答与长名字，报告范围使用最近一个月，并把跨月的数据分别说明。'.repeat(3),
+            note: '请保留完整回答与长名字，报告范围使用最近一个月，并把跨月的数据分别说明。'.repeat(3),
             at: '2026-11-18T05:01:00Z',
           },
         ]
@@ -47,7 +47,7 @@ export function askTimelineProps(viewer = 'reader', long = false): Record<string
   ]
   const grouped = groupAskBlocks(blocks)
   return chatTimelineProps({
-    rows: blocks.filter((b) => !grouped.hidden.has(b.id)).map((b) => ({ block: b, notice: null, run: null })),
+    rows: blocks.filter((b) => !grouped.hidden.has(b.id)).map((b) => ({ block: b, notice: null, run: [b] })),
     askGroups: grouped.members,
     refs: { ...ROOM_REFS, mentionNames: { ...ROOM_REFS.mentionNames, ...names } },
     viewer,
