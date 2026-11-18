@@ -477,4 +477,16 @@ describe('根上有来路才画 ←', () => {
     const { container } = await mount(router)
     expect(container.querySelector('a, button')).not.toBeNull()
   })
+
+  // 桌面上团队页声明着 `backTo: 'HomeHub'`，而 `/home` 一落地就换成待办。于是
+  // 「团队页 → 待办」这一对在真实历史里是：待办身后是团队页，团队页的 ← 又指向
+  // 首页那一格——真点起来就是两页来回弹。这一颗不画。
+  it('桌面：从团队页落到待办不画 ←，团队页的 ← 会指回这一格', async () => {
+    const router = webRouter()
+    await router.push('/teams/crew-12')
+    // 侧栏「首页」那一格落的是 `/inbox`，桌面上它是待办本身。
+    await router.push('/inbox')
+    const { container } = await mount(router)
+    expect(container.querySelector('a, button')).toBeNull()
+  })
 })

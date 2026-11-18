@@ -148,6 +148,25 @@ const behind = computed(() => {
 })
 
 /**
+ * 对面那颗 ← 按下去，是不是站到这一页上。
+ *
+ * 路径一样当然是。还有一例路径看不出来：桌面上 `/home` 一落地就被换成待办，团队页
+ * 那颗 ← 指向 `/home`，按下去看到的却是待办——两边的路径对不上，地方是同一处，认
+ * 不出来就成了两颗箭头互指。手机上这两格是底栏里不同的格，不能这么认。
+ */
+function backLandsHere(landingPath: string): boolean {
+  const route = nav?.route
+  if (!route) return false
+  if (landingPath === route.path) return true
+  if (!mdAndUp.value || !nav || !isRootRoute(route)) return false
+  try {
+    return nav.router.resolve(landingPath).name === 'HomeHub'
+  } catch {
+    return false
+  }
+}
+
+/**
  * 身后那一页的 ← 正落在这一页上吗？
  *
  * 两边互相指着对方就成了一个死圈：它的 ← 指向这一页，这一页的 ← 又退到它，点多少次
@@ -173,10 +192,9 @@ const behindPointsHere = computed(() => {
     // 第二参是 vue-router 的 currentLocation：按名字解析时它只读 `params`，用来补
     // 目标路由缺的必填参数；但类型上它要求 `name` 非空，而 `resolve()` 的结果允许无名
     // 路由（`null`）。按住那一处的 `name` 重建一份，别的字段原样带过去。
-    return (
-      nav?.router.resolve({ name: landsOn.name, params: landsOn.params }, { ...from, name: from.name ?? '' }).path ===
-      route.path
-    )
+    const landing =
+      nav?.router.resolve({ name: landsOn.name, params: landsOn.params }, { ...from, name: from.name ?? '' }).path ?? ''
+    return backLandsHere(landing)
   } catch {
     return false
   }
