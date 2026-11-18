@@ -58,14 +58,11 @@ async def get_invitation_service(db=Depends(get_db)) -> QuestionInvitationServic
 async def get_trending_questions(
     limit: int = Query(default=10, ge=1, le=50),
     days: int = Query(default=7, ge=1, le=30),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    items = await service.get_trending_questions(
-        limit=limit,
-        days=days,
-        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
-    )
+    # 这个榜是公开的（`test_who_may_act_on_a_question` 钉着），没有读者可认，
+    # 所以按公开昵称列 —— 和未登录的人看到的题目板一致。
+    items = await service.get_trending_questions(limit=limit, days=days)
     return ok({"questions": items})
 
 
