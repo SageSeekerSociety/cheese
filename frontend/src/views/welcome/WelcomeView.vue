@@ -13,6 +13,7 @@ import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import { t } from '@/i18n'
 
 export type WorkRole = 'student' | 'highschool' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
@@ -355,7 +356,7 @@ function finish(skipAll = false) {
       <p class="t-eyebrow">{{ t('welcome.preview.title') }}</p>
       <div class="welcome__window">
         <div class="welcome__rail">
-          <span class="welcome__tile">{{ (step >= 2 ? projectName : fallbackName).slice(0, 1) }}</span>
+          <ProjectAvatar :id="projectId" :name="step >= 2 ? projectName : fallbackName" :size="28" />
         </div>
         <div class="welcome__side">
           <p class="t-title welcome__pname">{{ step >= 2 ? projectName : fallbackName }}</p>
@@ -592,17 +593,6 @@ function finish(skipAll = false) {
   padding: 12px 0;
   display: flex;
   justify-content: center;
-}
-.welcome__tile {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  background: var(--ink);
-  color: var(--surface);
-  display: grid;
-  place-items: center;
-  font-weight: 600;
-  font-size: 13px;
 }
 .welcome__side {
   border-right: 1px solid var(--line);

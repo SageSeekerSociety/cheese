@@ -1,0 +1,20 @@
+{
+  "color": "颜色",
+  "colorN": "颜色 {n}",
+  "default": "默认",
+  "emojiInvalid": "只能填一个表情",
+  "kinds": {
+    "emoji": "表情",
+    "icon": "图标",
+    "image": "图片",
+    "text": "文字"
+  },
+  "remove": "移除图片",
+  "replace": "更换图片",
+  "save": "保存",
+  "saveFailed": "保存失败",
+  "textInvalid": "最多 2 个汉字或 4 个字母、数字",
+  "title": "头像",
+  "upload": "上传图片",
+  "uploadFailed": "上传失败"
+}

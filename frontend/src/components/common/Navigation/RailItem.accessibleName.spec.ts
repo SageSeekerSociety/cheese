@@ -60,8 +60,6 @@ describe('RailItem 的可访问名称', () => {
       title: '知是 2.0 融合演示',
       projectId: 'p1',
       to: '/project/p1',
-      // 没挑过头像 → 格子退成首字母方块（img 是空串，不是一张真头像）。
-      img: '',
       shortcut: 2,
     })
 
@@ -141,7 +139,6 @@ describe('RailItem 的可访问名称', () => {
       type: 'item',
       title: '知是 2.0 融合演示',
       to: '/project/p1',
-      img: 'data:image/svg+xml,<svg/>',
       shortcut: 2,
     })
 
