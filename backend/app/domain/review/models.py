@@ -123,6 +123,10 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # columns): review/services.py falls back to the topic title.
     change_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     change_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The member who handed this version in themselves (`machine.hand_in`),
+    # filing it or moving the one waiting; NULL when the task's AI teammate
+    # did. Whoever is told what was adopted is told whose version it is.
+    handed_in_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 这次交付更新的是哪一项产物 (#1085 结论三). Declared when the card is filed;
     # the artifact's version moves when the card is accepted. NULL on cards that
     # predate the manifest, and on a card whose artifact the project later
