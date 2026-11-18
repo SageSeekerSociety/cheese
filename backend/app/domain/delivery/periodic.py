@@ -15,6 +15,7 @@ def register_periodic_jobs(
     sessions: SessionFactory,
     chat: Any,
     get_runner: Callable[[], Any],
+    announce: Any,
     machines: Any = None,
 ) -> None:
     jobs.register(
@@ -26,7 +27,11 @@ def register_periodic_jobs(
         "timed deliveries",
         30,
         lambda: timer.deliver_due(
-            sessions, chat=chat, runner=get_runner(), machines=machines
+            sessions,
+            chat=chat,
+            runner=get_runner(),
+            announce=announce,
+            machines=machines,
         ),
     )
     jobs.register(

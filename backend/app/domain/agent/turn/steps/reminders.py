@@ -39,12 +39,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.harness import HARNESSES
-from app.domain.agent.harness.prompt import (
-    silence_reminder,
-    stale_checklist_reminder,
-    stale_progress_reminder,
-    still_working_reminder,
-)
 from app.domain.agent.models import AgentTurn, TurnResume
 from app.domain.agent.session_state import reports_lifecycle
 from app.domain.block.authorship import participant_blocks
@@ -52,6 +46,13 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import names_a_person
 from app.domain.notice_meta import EVENT_TURN_FAILED
+from app.domain.prompts import (
+    NoticeType,
+    silence_reminder,
+    stale_checklist_reminder,
+    stale_progress_reminder,
+    still_working_reminder,
+)
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.reads import conversation_progress
 from app.domain.user.services import language_of
@@ -80,7 +81,12 @@ class SessionNotices(Protocol):
     # Returns `bool | InputReconciliationPending` on ChatService; only whether the
     # live session took it matters here（`delivered is True`）。
     async def notify_running_session(
-        self, topic_id: uuid.UUID, notice: str, *, recipient_seat: str | None = None
+        self,
+        topic_id: uuid.UUID,
+        notice: str,
+        *,
+        recipient_seat: str | None = None,
+        kind: NoticeType = NoticeType.change,
     ) -> object: ...
 
 
@@ -123,7 +129,6 @@ async def _asked(
                 read_at,
                 NativeInput.block_ids,
                 NativeInput.held_block_ids,
-                NativeInput.seen_block_ids,
             )
             .where(
                 NativeInput.conversation_id == conversation,
@@ -245,7 +250,7 @@ class QuietSessionReminders:
             # A blocked terminal must not hold up reminders in other rooms.
             async with asyncio.timeout(5):
                 delivered = await self._chat.notify_running_session(
-                    conversation, text, recipient_seat=acting
+                    conversation, text, recipient_seat=acting, kind=NoticeType.reminder
                 )
             # Which room, how long it had been still, and whether the session
             # took it: what tells 「the agent was reminded and stayed quiet」
@@ -367,7 +372,7 @@ class ProgressNotices(Protocol):
     def session_factory(self) -> async_sessionmaker: ...
 
     async def notify_running_session(
-        self, topic_id: uuid.UUID, notice: str
+        self, topic_id: uuid.UUID, notice: str, *, kind: NoticeType = NoticeType.change
     ) -> object: ...
 
 
@@ -477,7 +482,9 @@ class StaleProgressReminder:
             try:
                 async with asyncio.timeout(5):
                     delivered = await self._chat.notify_running_session(
-                        task_id, stale_progress_reminder(minutes, languages[task_id])
+                        task_id,
+                        stale_progress_reminder(minutes, languages[task_id]),
+                        kind=NoticeType.reminder,
                     )
                 logger.info(
                     "task state reminder task=%s stale_min=%s delivered=%s",

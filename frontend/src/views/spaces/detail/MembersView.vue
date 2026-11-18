@@ -15,6 +15,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { secondaryIdentity, userName } from '@/lib/agentNames'
 import { myHandle } from '@/me'
 
 export type Role = SpaceAdminRoleType | 'MEMBER'
@@ -22,7 +23,10 @@ export type Role = SpaceAdminRoleType | 'MEMBER'
 export interface Row {
   userId: number
   handle: string
+  /** 原名（昵称，缺了退账号）；下面 `remark` 有值时它是副行上的原名。 */
   name: string
+  /** 当前查看者给这个人设的私人称呼；没设过是 null。 */
+  remark?: string | null
   avatarId?: number | null
   role: Role
 }
@@ -67,10 +71,27 @@ const { t, locale } = useI18n()
 
 const keyword = ref('')
 
+/** 一行显示的名字：有个人备注用备注，否则原名。 */
+function rowName(row: Row): string {
+  return row.remark || row.name
+}
+
+/** 一行的副行身份（原名与账号）；昵称等于账号时只写一次。 */
+function rowIdentity(row: Row): string {
+  // 这一行原来就总写账号；有备注时再补上原名。没备注、且名字已经是账号本身时不再重复。
+  const identity = secondaryIdentity({ nickname: row.name, username: row.handle, remark: row.remark })
+  if (identity) return identity
+  return row.name === row.handle ? '' : row.handle
+}
+
+// 搜备注、原名和账号都算：设了备注的人被原来的名字找到，仍是同一个人。
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return props.rows
-  return props.rows.filter((r) => r.name.toLowerCase().includes(kw) || r.handle.toLowerCase().includes(kw))
+  return props.rows.filter(
+    (r) =>
+      rowName(r).toLowerCase().includes(kw) || r.name.toLowerCase().includes(kw) || r.handle.toLowerCase().includes(kw)
+  )
 })
 
 function roleLabel(role: Role): string {
@@ -91,7 +112,15 @@ const domainGroupsTarget = { name: 'SpacesDetailSettingsDomainGroups', params: {
 const showRequests = computed(() => !!props.joinLink?.approval || props.requests.length > 0 || props.requestsFailed)
 
 function requesterName(request: SpaceJoinRequest): string {
-  return request.user?.nickname || request.user?.username || String(request.userId)
+  return userName(request.user) || String(request.userId)
+}
+
+/** 申请人的副行身份（原名与账号），设了备注时才画。 */
+function requesterIdentity(request: SpaceJoinRequest): string {
+  const identity = secondaryIdentity(request.user)
+  if (identity) return identity
+  const handle = request.user?.username || ''
+  return handle && handle !== requesterName(request) ? handle : ''
 }
 
 function formatTime(at: number): string {
@@ -150,6 +179,9 @@ function formatTime(at: number): string {
           />
           <div class="mem__request-main">
             <div class="mem__name">{{ requesterName(request) }}</div>
+            <div v-if="requesterIdentity(request)" class="mem__muted">
+              {{ requesterIdentity(request) }}
+            </div>
             <div class="mem__muted">
               {{ t('spaces.members.requests.requestedAt', { time: formatTime(request.createdAt) }) }}
             </div>
@@ -213,13 +245,13 @@ function formatTime(at: number): string {
               <!-- getAvatarUrl 对 null / undefined / 0 一律回空串（不再回 /avatars/default），
                    所以这里直接交给它就行，不用再套一层真值判断；没头像时 UserAvatar 自己
                    走彩色首字母。seed 传 handle，颜色跟着人走、不跟昵称走。 -->
-              <UserAvatar :avatar="getAvatarUrl(row.avatarId)" :name="row.name" :seed="row.handle" size="28" />
+              <UserAvatar :avatar="getAvatarUrl(row.avatarId)" :name="rowName(row)" :seed="row.handle" size="28" />
               <div>
                 <div class="mem__name">
-                  {{ row.name }}
+                  {{ rowName(row) }}
                   <span v-if="row.handle === myHandle()" class="mem__muted">{{ t('spaces.members.you') }}</span>
                 </div>
-                <div class="mem__muted">{{ row.handle }}</div>
+                <div class="mem__muted">{{ rowIdentity(row) }}</div>
               </div>
             </div>
           </td>

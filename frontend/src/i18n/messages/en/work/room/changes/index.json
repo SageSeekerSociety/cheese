@@ -42,7 +42,7 @@
   "saveFailed": "Couldn't save",
   "searchFiles": "Search files",
   "sourceUnavailable": "Couldn't open this task. View another source",
-  "statusReadOnly": "{status} · Read-only",
+  "statusReadOnly": "{status}, read-only",
   "summary": "{count} files · +{added} −{removed}",
   "switchToCommitted": "Switch to the committed version",
   "tooLarge": "This file is too large to open in the browser",

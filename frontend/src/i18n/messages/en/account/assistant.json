@@ -98,7 +98,8 @@
       "whenLabel": "When",
       "goalRequired": "Fill in the goal — it is what Cheese works from.",
       "weekdaysRequired": "Pick at least one day of the week."
-    }
+    },
+    "runNow": "Run now"
   },
   "recent": {
     "title": "Recent actions",

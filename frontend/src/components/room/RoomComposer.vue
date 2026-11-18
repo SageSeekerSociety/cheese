@@ -396,17 +396,18 @@ const shownMates = computed<Mate[]>(() => {
   const agent = addressing.value?.agent
   return [agent ? mateOf(agent) : restingMate.value ?? { handle: '', label: props.agentName }]
 })
-// 任务负责人那里、交给过队友的支线里，每句都交给队友：头像常亮，是规则不是开关。支线这一条
-// 读后端的回答（`reason: 'thread'`），只 @ 了人时回答不交给，头像就照常闭眼、可点。和 AI
-// 队友私聊时没有这颗头像。
+// 任务负责人那里、交给过队友的支线里、项目里只有自己一个人时的频道主线上，每句都交给队友：
+// 头像常亮，是规则不是开关。后两条读后端的回答（`reason: 'thread'`、`'alone'`），只 @ 了人
+// 时回答不交给，头像就照常闭眼、可点。和 AI 队友私聊时没有这颗头像。
+const everyLine = (reason: string | null | undefined) => reason === 'thread' || reason === 'alone'
 const summonFixed = computed(
-  () => (props.alwaysSummon && props.handOff !== false) || addressing.value?.reason === 'thread'
+  () => (props.alwaysSummon && props.handOff !== false) || everyLine(addressing.value?.reason)
 )
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
 
-// 输入框空着时那句提示语说这条交给谁。交给过队友的支线里，每句都交给它，提示语就写
-// 「回复芝士…」；没交给过任何队友的支线照旧是房间给的那句（「在支线中回复」）。判据是后端
-// 对空草稿的回答（`reason: 'thread'`），和头像读的是同一个。记的是最近一次**空草稿**的回答：
+// 输入框空着时那句提示语说这条交给谁。交给过队友的支线里、只有自己一个人的项目的频道主线上，
+// 每句都交给它，提示语就写「回复芝士…」；没交给过任何队友的支线照旧是房间给的那句（「在支线中
+// 回复」）。判据是后端对空草稿的回答（`reason: 'thread'`、`'alone'`），和头像读的是同一个。记的是最近一次**空草稿**的回答：
 // 提示语只在空着时看得见，打字时的回答（只 @ 了人就不交给）不归它，清空之后也不用等一次来回。
 const emptyAnswer = ref<Addressing | null>(null)
 watch([addressing, addressingFresh], ([now, fresh]) => {
@@ -417,7 +418,8 @@ watch(
   () => (emptyAnswer.value = null)
 )
 const placeholderText = computed(() => {
-  const agent = emptyAnswer.value?.reason === 'thread' ? emptyAnswer.value.agent : null
+  const answer = emptyAnswer.value
+  const agent = answer && everyLine(answer.reason) ? answer.agent : null
   return agent ? t('work.room.composer.placeholderThread', { name: mateOf(agent).label }) : props.hint
 })
 const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)

@@ -266,7 +266,7 @@ function actionTestId(id: string): string | undefined {
           v-if="state"
           class="task-header__state"
           data-testid="task-phrase"
-          :title="progressTitle"
+          :title="progressTitle ?? (state.tip || undefined)"
           :state="state"
           :emphasis="task?.needs_my_action === true"
           :size="13"
@@ -278,6 +278,15 @@ function actionTestId(id: string): string | undefined {
           :data-user-content="progressNote ? '' : undefined"
           :title="progressTitle ?? state?.line"
           >{{ state?.line }}</span
+        >
+        <a
+          v-if="isOpen && task?.deploy_blocked_url"
+          class="task-header__run"
+          :href="task.deploy_blocked_url"
+          target="_blank"
+          rel="noopener"
+          data-testid="task-deploy-blocked-run"
+          >{{ t('work.taskState.blockedRun') }}</a
         >
         <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
           t('work.task.progress.left', { name: leftName })
@@ -620,6 +629,13 @@ function actionTestId(id: string): string | undefined {
   font-weight: 600;
 }
 /* 队友报状态时留的那一句：它的原话，可能很长，截在一行里，悬停看全（`title`）。 */
+.task-header__run {
+  flex: none;
+  color: var(--accent-ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+}
 .task-header__note {
   min-width: 0;
   max-width: 32ch;
@@ -674,7 +690,7 @@ function actionTestId(id: string): string | undefined {
   min-width: 0;
   overflow: hidden;
 }
-/* 手机顶栏里两行（和支线转成任务时的 ThreadHead 一个样子）：任务名独占第一行；状态和
+/* 手机顶栏里两行：任务名独占第一行；状态和
    负责人退到第二行，同一号字、同一种灰，各成一格，靠间距和小头像分开，不拿点号串。
    负责人那颗照旧点开任务信息，⋯ 竖跨两行贴右。 */
 .task-header--bar {

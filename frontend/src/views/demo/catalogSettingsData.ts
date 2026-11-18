@@ -219,28 +219,29 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
   {
     id: 'settings-default-model',
     title: 'ProjectDefaultModelSettings',
-    about: '项目默认模型：主线（房间聊天）用哪一档、分身用哪一档；改完保存才生效，也能恢复部署默认。',
+    about:
+      '项目主模型：没单独设置模型的 AI 队友用它；不设就是「自动」，第一项写明对话、任务、分身各用哪个模型。改完保存才生效，也能改回自动。',
     file: 'src/components/ProjectDefaultModelSettings.vue',
     component: ProjectDefaultModelSettings,
     needs: UI,
     states: [
       {
-        name: '跟着部署默认',
-        note: '项目没显式设过：主模型那一栏显示部署兜底算出来的那档，「恢复默认模型」不出现（没有可恢复的）。两个下拉都在，保存按钮灰着（没有改动）。',
+        name: '自动',
+        note: '项目没设主模型：下拉显示「自动（对话 Kimi K3，任务 DeepSeek Flash，分身 DeepSeek Flash）」，「改回自动」不出现（已经是自动）。保存按钮灰着（没有改动）。',
         props: { state: defaultModelState(), loadError: '', saving: false, saved: false, saveError: '' },
-        expect: '项目主模型',
+        expect: '自动（对话 Kimi K3',
       },
       {
-        name: '显式设过一档，可恢复',
-        note: '项目显式设过默认分身模型：主模型那栏换成选中的那档，「恢复默认模型」出现。',
+        name: '设了项目主模型，可改回自动',
+        note: '项目设了主模型：下拉换成选中的那个，「改回自动」出现。',
         props: {
-          state: defaultModelState({ model: 'deepseek-flash', subagent_model: 'deepseek-flash' }),
+          state: defaultModelState({ model: 'deepseek-flash' }),
           loadError: '',
           saving: false,
           saved: false,
           saveError: '',
         },
-        expect: '恢复默认模型',
+        expect: '改回自动',
       },
       {
         name: '模型要更贵的方案',
@@ -262,7 +263,7 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '保存中',
-        note: '一次保存还在路上：两个下拉和保存按钮都灰掉，旁边那行回执写「保存中…」。',
+        note: '一次保存还在路上：下拉和保存按钮都灰掉，旁边那行回执写「保存中…」。',
         props: {
           state: defaultModelState({ model: 'deepseek-flash' }),
           loadError: '',
@@ -286,9 +287,9 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '读失败',
-        note: '还没读到就是 null：两个下拉不画，只在上面留一句后端原话。',
-        props: { state: null, loadError: '加载默认模型失败', saving: false, saved: false, saveError: '' },
-        expect: '加载默认模型失败',
+        note: '还没读到就是 null：下拉不画，只在上面留一句后端原话。',
+        props: { state: null, loadError: '加载项目主模型失败', saving: false, saved: false, saveError: '' },
+        expect: '加载项目主模型失败',
       },
     ],
   },

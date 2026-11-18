@@ -140,15 +140,15 @@ def test_a_persons_message_is_live_for_the_room_and_wakes_who_it_names(
     # Everyone watching the room gets the same block, as a person's message.
     assert frames[0]["type"] == "user_block"
     assert frames[0]["block"]["id"] == stored["id"]
-    # The teammate it names is woken, answers, and marks it seen.
+    # The teammate it names is woken and reads it.
     assert "turn_started" in [f["type"] for f in frames]
     assert "看一下这个" in (stub_hooks.last_prompt or "")
-    seen = [f for f in frames if f["type"] == "reaction"]
-    assert seen and seen[0]["block_id"] == stored["id"]
 
 
 def test_a_message_that_names_nobody_wakes_nobody(client, stub_hooks):
-    _, topic_id = _room(client)
+    # With someone else in the project, the channel is people talking.
+    seed_user(client, "bob")
+    _, topic_id = _room(client, members=("bob",))
     with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "我们今晚开会"})
         frames = _until_done(ws)

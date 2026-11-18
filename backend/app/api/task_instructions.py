@@ -71,11 +71,30 @@ def teammate_source_text(teammate: str, summary: str, discussion) -> str:
     return f"{said}\n\n创建之前的讨论：\n{_lines(discussion)}"
 
 
-async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
+async def tell_task(
+    db,
+    task,
+    content: str,
+    *,
+    opening: bool = False,
+    event_type: str | None = None,
+    asker: str | None = None,
+    exchanged: tuple[str, str] | None = None,
+) -> None:
     """Keep an instruction for the task's own session; dispatched after commit
     (`dispatch`). ``opening`` marks the first one, which drafts the task's
-    document from where it came from (`agent/opening.py`)."""
+    document from where it came from (`agent/opening.py`). ``event_type``
+    marks what the channel's main line tells it (`delivery.agent.TASK_TOLD`),
+    with the member it passes the request on for (``asker``), and
+    ``exchanged``: who in the main line said it and its words as they said
+    them, which the task's 现场 shows (`api.task_exchange`)."""
     payload = {"projectId": str(task.project_id), "topicId": str(task.room_id)}
+    if event_type is not None:
+        payload.update(eventType=event_type, taskId=str(task.id))
+    if asker is not None:
+        payload["asker"] = asker
+    if exchanged is not None:
+        payload["from"], payload["said"] = exchanged
     if opening:
         payload[PURPOSE] = OPENING
     await record_task_instruction(

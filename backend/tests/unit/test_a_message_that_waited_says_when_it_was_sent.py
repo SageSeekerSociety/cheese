@@ -10,7 +10,7 @@ answers it as if nothing had happened since.
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from app.domain.agent.harness.prompt import prompt_line
+from app.domain.agent.harness.lines import prompt_line
 from app.domain.block.models import BlockKind
 
 

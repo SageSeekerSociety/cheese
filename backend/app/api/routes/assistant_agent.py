@@ -102,7 +102,7 @@ _REASON = {
     "reporter": "你提的需求已有交付",
     "asked": "待你回答",
     "checksFailed": "检查未通过",
-    "blocked": "卡住了",
+    "blocked": "待协助",
     "bounced": "已退回",
     "decide": "待你决定",
     "read": "变更提醒",

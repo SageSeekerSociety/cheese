@@ -47,7 +47,7 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
   }
 })
 
-// 谁看得到那些按钮，是拿登录的人跟 `space.admins` 对出来的（空间 store 的 `isManager`）。
+// 谁看得到那些按钮，看服务端说登录的人能做什么（`space.viewerPermissions`，空间 store 的 `isManager`）。
 vi.mock('@/services/account', () => ({
   default: { _user: { value: null as { id: number } | null } },
 }))
@@ -147,6 +147,11 @@ beforeEach(() => {
       admins: [{ user: { id: OWNER_ID, nickname: '林夏' }, role: 'OWNER' }],
       taskTemplates: '[]',
       classificationTopics: [],
+      // What the server says the signed-in reader may do here.
+      viewerPermissions:
+        AccountService._user.value?.id === OWNER_ID
+          ? ['view', 'publish', 'teach', 'edit_settings', 'announce', 'manage_admins']
+          : ['view', 'publish'],
     },
   }))
   listAnnouncements.mockImplementation(async () => ({ current: CURRENT, expired: EXPIRED, notifyCount: 3 }))
@@ -219,6 +224,19 @@ describe('公告页', () => {
     await mount()
 
     await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
+  })
+
+  // 空的时候这一页只剩那句「暂无公告」：它得落在内容区正中，不能贴左半边——
+  // 贴左看上去像右边还有东西没画出来（docs/design-system.md §3.12）。
+  it('一条公告都没有时，「暂无公告」落在内容区正中', async () => {
+    signIn(OWNER_ID)
+    listAnnouncements.mockImplementation(async () => ({ current: [], expired: [], notifyCount: 0 }))
+    await mount()
+
+    await waitFor(() => expect(document.querySelector('.bes')).toBeTruthy())
+    const block = document.querySelector('.bes') as HTMLElement
+    expect(block.classList.contains('bes--center')).toBe(true)
+    expect(block.classList.contains('bes--start')).toBe(false)
   })
 })
 

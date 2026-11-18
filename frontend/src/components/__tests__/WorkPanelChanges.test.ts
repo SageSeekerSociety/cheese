@@ -343,7 +343,7 @@ describe('文件面板', () => {
     })
     await fromMenu(container, '刷新')
     await flush()
-    expect(container.querySelector('.source-status')?.textContent).toBe('已采纳 · 只读')
+    expect(container.querySelector('.source-status')?.textContent).toBe('已完成，只读')
     expect(editor(container)!.readOnly).toBe(true)
     expect(editor(container)!.value).toBe('A 话题的内容\n')
     await fireEvent.update(editor(container)!, 'late edit')

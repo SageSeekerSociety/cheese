@@ -70,6 +70,7 @@ RULES = (
     ("cli/go.sum", frozenset({"go"})),
     ("frontend/pnpm-lock.yaml", frozenset({"pnpm"})),
     ("frontend/package.json", frozenset({"pnpm"})),
+    ("frontend/pnpm-workspace.yaml", frozenset({"pnpm"})),
 )
 
 # These change how the plan is made, not which dependency moved, so no reading

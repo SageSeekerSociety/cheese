@@ -31,6 +31,7 @@ from app.domain.team.models import (
     TeamVisibility,
     team_seq,
 )
+from app.domain.team.permissions import TEAM
 from app.domain.team.repositories import (
     TeamRepository,
     refuse_anyone_but_the_owner,
@@ -164,19 +165,28 @@ class TeamService:
     async def visible_team(self, team_id: int, user_id: int) -> Team:
         """The team as ``user_id`` may see it by id, or 404.
 
-        A member sees their team. Anyone else sees it only when it is a public,
-        shared team; a stealth or personal team answers exactly like a missing
-        one, so probing ids tells nobody which exist. The join link is the other
-        way in (:meth:`team_for_join_token`).
+        A member sees their team, and a platform admin every shared team
+        (``TEAM.sees``). Anyone else sees it only when it is a public, shared
+        team; a stealth or personal team answers exactly like a missing one, so
+        probing ids tells nobody which exist. The join link is the other way in
+        (:meth:`team_for_join_token`).
         """
         team = await self._repo.get_by_id(team_id)
-        if team is not None and (
-            team.open_to_all or await self._repo.is_team_member(team_id, user_id)
-        ):
+        if team is not None and await TEAM.sees(self._repo._session, team, user_id):
             return team
         raise NotFoundError(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
+
+    async def team_to_join(self, team_id: int, user_id: int) -> Team:
+        """The team ``user_id`` may ask to join by id, or 404: one they find by
+        who they are (``TEAM.visible``). A platform admin sees every shared
+        team, but oversight is not a way in — a stealth team stays reachable
+        only through its join link."""
+        team = await self._repo.get_by_id(team_id)
+        if team is not None and await TEAM.visible(self._repo._session, team, user_id):
+            return team
+        raise NotFoundError.for_resource("team", team_id)
 
     async def teams_of_seen_by(self, user_id: int, viewer_id: int | None) -> list[Team]:
         """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of

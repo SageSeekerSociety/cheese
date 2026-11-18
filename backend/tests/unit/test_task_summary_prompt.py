@@ -9,6 +9,6 @@ from app.domain.review.task_landing import task_summary_prompt
 
 
 def test_the_write_up_every_project_gets_asks_for_no_project_record():
-    text = task_summary_prompt(title="改动页默认折叠")
+    text = task_summary_prompt(title="改动页默认折叠", has_checkout=True)
 
     assert "留痕" not in text

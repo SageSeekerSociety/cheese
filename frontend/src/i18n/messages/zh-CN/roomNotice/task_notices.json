@@ -12,6 +12,8 @@
   "spaceTaskDeadlineMoved": "「{task}」的提交截止时间已调整",
   "spaceTaskDueInDays": "「{task}」距提交截止还有 3 天，尚未提交",
   "spaceTaskDueTomorrow": "「{task}」距提交截止不到 24 小时，尚未提交",
+  "spaceTaskJudgeFailed": "「{task}」的提交没能评测，这一版不扣分，等老师批改",
+  "spaceTaskJudged": "「{task}」的提交评测完了，测试点得分 {passed}/{total}",
   "spaceTaskMissed": "「{task}」有 {n} 人过了提交截止时间仍未提交",
   "spaceTaskRequirementsChanged": "「{task}」修改了提交内容或评分要点",
   "spaceTaskReviewFailed": "「{task}」的提交未通过，{score} 分",

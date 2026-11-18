@@ -33,12 +33,18 @@ const LIMIT = 7
  *  选不到。话题和文档还是各取几条——它们和人是两类东西，搜索时挤在一起更难看。 */
 export function peopleItems(pool: MentionPoolEntry[], query: string): RefItem[] {
   const q = query.toLowerCase()
-  const found = pool.filter((p) => p.label.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q))
+  const found = pool.filter(
+    (p) =>
+      p.label.toLowerCase().includes(q) ||
+      !!p.originalName?.toLowerCase().includes(q) ||
+      p.handle.toLowerCase().includes(q)
+  )
   return [...found.filter((p) => !p.agent), ...found.filter((p) => p.agent)].map((p) => ({
     label: p.label,
     kind: 'member',
     insert: p.handle,
-    sub: p.handle,
+    // 设了备注时副行保留原名 · 账号，菜单里也认得出是同一人。
+    sub: p.originalName && p.originalName !== p.label ? `${p.originalName} · ${p.handle}` : p.handle,
     agent: p.agent,
     external: !!p.external,
     handle: p.handle,

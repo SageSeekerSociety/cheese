@@ -26,7 +26,7 @@ import { useStartSteps } from '../composables/useStartSteps'
 import { useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
-import { taskLine, tasksByOrigin } from '../lib/channelTasks'
+import { taskLine, tasksByOrigin, teammateTaskLines } from '../lib/channelTasks'
 import { CHAT_IMAGE_ACTIONS, handOffImageTool, imagePaths } from '../lib/chatImages'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
@@ -110,6 +110,8 @@ const props = withDefaults(
     chapterIds?: ReadonlySet<string>
     /** 这段对话自己的状态（任务开着还是关了）：变了，输入框重问一次「交给谁」。 */
     placeState?: string | null
+    /** 正在就地采纳的那件任务。 */
+    adoptingTask?: string | null
   }>(),
   {
     alwaysSummon: false,
@@ -198,7 +200,6 @@ const panel = useChatPanel({
   column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
-  answersInThread: () => threadable.value,
   showComposer: () => props.showComposer,
   members: () => props.members,
   topicList: () => props.topicList,
@@ -266,10 +267,23 @@ const taskLines = computed(
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 const NO_TASKS: TaskLine[] = []
+// 频道主线上 AI 队友说到过的任务：它的话头上挂着这件任务的标签，点开就是它，消息下面不再
+// 另画一张任务卡或一行任务。支线原地转成的那件照旧画在支线那一块顶上。
+const taggedInMainLine = computed(() => {
+  const ids = new Set<string>()
+  if (!mainLine.value) return ids
+  for (const block of panel.timeline.messages.value) {
+    const id = (block.meta as Record<string, unknown> | null | undefined)?.task_tag
+    if (typeof id === 'string') ids.add(id)
+  }
+  return ids
+})
 const tasksByBlock = computed(() => {
   const map = new Map<string, TaskLine[]>()
   for (const [blockId, tasks] of taskOrigins.value) {
-    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    const lines = tasks
+      .filter((task) => task.from_thread || !taggedInMainLine.value.has(task.id))
+      .flatMap((task) => taskLines.value.get(task.id) ?? [])
     if (lines.length) map.set(blockId, lines)
   }
   return map
@@ -279,6 +293,21 @@ function taskOf(taskId: string): TaskLine | null {
 }
 function tasksUnder(blockId: string): TaskLine[] {
   return tasksByBlock.value.get(blockId) ?? NO_TASKS
+}
+// AI 队友在主线上开的任务：画在它那条回复下面的一行，只有任务名和负责人。
+const linesByBlock = computed(() => {
+  const map = new Map<string, TaskLine[]>()
+  if (!mainLine.value) return map
+  for (const [blockId, tasks] of teammateTaskLines(knownTasks.value, panel.timeline.messages.value)) {
+    const lines = tasks
+      .filter((task) => !taggedInMainLine.value.has(task.id))
+      .flatMap((task) => taskLines.value.get(task.id) ?? [])
+    if (lines.length) map.set(blockId, lines)
+  }
+  return map
+})
+function taskLinksUnder(blockId: string): TaskLine[] {
+  return linesByBlock.value.get(blockId) ?? NO_TASKS
 }
 
 const {
@@ -321,6 +350,7 @@ const {
   showReplyCue,
   fmtTime,
   isMine,
+  receiptFor,
   displayName,
   authorTitle,
   isExternal,
@@ -529,7 +559,10 @@ useComposerShortcut({
             :chapter-ids="chapterIds"
             :chapters="chapters"
             :task-of="taskOf"
+            :adopting-task="adoptingTask ?? null"
+            :main-line="mainLine"
             :tasks-under="tasksUnder"
+            :task-links-under="taskLinksUnder"
             :name-of="nameOf"
             :rows="rows"
             :ask-groups="askGroups"
@@ -569,6 +602,7 @@ useComposerShortcut({
             :content-ref="timelineRefs.contentRef"
             :is-agent-block="isAgentBlock"
             :is-mine="isMine"
+            :receipt-of="receiptFor"
             :is-external="isExternal"
             :avatar-of="avatarSrc"
             :display-name="displayName"
@@ -597,6 +631,7 @@ useComposerShortcut({
             @toggle-picker="togglePicker"
             @open-file="(path) => emit('open-file', path)"
             @open-card="emit('open-card', $event)"
+            @delivery="emit('delivery', $event)"
             @open-resource="
               (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
             "
@@ -687,7 +722,12 @@ useComposerShortcut({
       <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->
       <div class="composer-zone">
-        <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" />
+        <MemberActivity
+          v-if="showComposer"
+          v-guide-anchor="onProjectLine && activityLines.some((l) => l.kind !== 'typing') ? 'reply-coming' : ''"
+          class="composer-activity"
+          :lines="activityLines"
+        />
         <div v-if="showComposer && composerClosed" class="composer-closed">
           <div class="composer-closed__box t-body">
             <span class="composer-closed__text">{{ composerClosed }}</span>
@@ -700,7 +740,6 @@ useComposerShortcut({
           v-else-if="showComposer"
           ref="composerRef"
           v-model="draft"
-          v-guide-anchor="inThread ? 'thread-composer' : ''"
           :guided="onProjectLine"
           :topic="topic"
           :mention-pool="mentionPool"

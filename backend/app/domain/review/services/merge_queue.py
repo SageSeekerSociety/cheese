@@ -332,6 +332,9 @@ async def _merge_pr_for_accept(
         raise ValidationError(say("githubMergeRefused", pr=number, reason=reason))
 
     card.pr_merged_at = datetime.now(UTC)
+    # Who adopted it is on the card before the task hears it landed: the line
+    # its discussion hears names them (`task_landing._step_landed`).
+    card.decided_by = decided_by
     await self._mark_task_merged(card, delivered_head=seen)
     card.pr_head_sha = result.sha  # the merge commit, for the record
     return await self._conclude_pr_accept(card, topic, decided_by)
@@ -452,6 +455,7 @@ async def _merge_armed_card(
         return
     if result.queued:
         card.decided_by_assistant = False
+        card.decided_by_seat = None
         await self._record_queue_entry(card, armer)
         return
     if result.sha is None:
@@ -470,6 +474,7 @@ async def _merge_armed_card(
     await self._repo.add_approval(card.id, armer)
     card.decided_by = armer
     card.decided_by_assistant = False
+    card.decided_by_seat = None
     card.decided_at = datetime.now(UTC)
     await self._finish_pr_accept(card=card, topic=topic)
 

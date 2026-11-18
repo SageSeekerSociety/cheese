@@ -28,8 +28,6 @@ export function usePanelOutgoing(deps: {
   scrollToBottom: () => void
   errorMsg: Ref<string | null>
   awaitingReply: Ref<boolean>
-  /** 叫芝士的消息在这条主线上是不是在支线里回答。 */
-  answersInThread: () => boolean
   /** 我发的一条落了库（opts.onPosted）。 */
   onPosted?: (block: PostedMessage) => void
   timeline: ReturnType<typeof useTimeline>
@@ -139,10 +137,8 @@ export function usePanelOutgoing(deps: {
     )
     deps.composer().clearReply()
     // Local acceptance starts the waiting indicator, before delivery — where the
-    // answer comes. A summon in a channel's main line is answered in its 支线,
-    // whose turn frames this line never hears, so lit here nothing would put it
-    // out: the room would say it is working long after the answer landed.
-    if (summon && !deps.answersInThread()) deps.awaitingReply.value = true
+    // answer comes.
+    if (summon) deps.awaitingReply.value = true
     deps.scrollToBottom()
     return true
   }
@@ -154,7 +150,7 @@ export function usePanelOutgoing(deps: {
     deps.errorMsg.value = null
     deps.paging().backToNewest()
     deps.sentNow().add(enqueue({ content: text, replyTo: question.id }))
-    if (!deps.answersInThread()) deps.awaitingReply.value = true
+    deps.awaitingReply.value = true
     deps.scrollToBottom()
   }
 

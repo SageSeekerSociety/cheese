@@ -254,18 +254,17 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(container.querySelector('.ask-replies')?.textContent).toContain('已结束，不再等回答')
   })
 
-  it('芝士把题收回去了：选项收起，说它收回了', async () => {
-    history = [closedByAsker('t-taken-back', 'withdrawn')]
+  it('芝士把题收回去了：这一行整行不画', async () => {
+    // 撤回了的题不等人答、也没人答得上，留在频道里只是占地方。它那条消息本身还在
+    // （历史里查得到），频道这一栏不给它一行。
+    const before = { ...question('t-taken-back'), id: 'm-before', content: '我先问一句。', meta: {} } as Block
+    history = [before, closedByAsker('t-taken-back', 'withdrawn')]
     const { container, queryByRole } = await open('t-taken-back')
-    await waitFor(
-      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
-      { timeout: 5_000 }
-    )
+    await until(() => container.querySelectorAll('[data-mid]').length === 1)
+    expect(container.querySelectorAll('[data-mid]')).toHaveLength(1)
+    expect(container.textContent).not.toContain('预算按哪个口径统计？')
+    expect(container.querySelector('.ask-replies')).toBeNull()
     expect(queryByRole('button', { name: /按部门/ })).toBeNull()
-    expect(container.querySelector('.ask-replies__other')).toBeNull()
-    expect(container.querySelector('.ask-replies')?.textContent).toContain('芝士收回了这道题')
-    // 收起了就没人答得成：点不了，题上也不会多出一条答复。
-    expect(container.querySelector('.ask-replies__skip')).toBeNull()
   })
 
   it('题过了时效：还摆在下面，说它过期了，照样能答', async () => {
@@ -374,12 +373,62 @@ describe('卡有焦点时按数字键选选项', () => {
     expect(sent).toHaveLength(0)
   })
 
-  it('问的是别人：按数字键也不发', async () => {
+  it('问的是别人：点开之后按数字键也不发', async () => {
     history = [question('t-key-theirs', null, ['alice'])]
-    const { container } = await open('t-key-theirs')
+    const { container, getByRole } = await open('t-key-theirs')
+    await fireEvent.click(getByRole('button', { name: /问 alice/ }))
     await fireEvent.keyDown(container.querySelector('.ask-replies') as HTMLElement, { key: '1' })
     await settle()
     expect(sent).toHaveLength(0)
+  })
+})
+
+describe('问别人的题在频道里收成一行', () => {
+  it('没问到我：只留一行「谁问谁、题目、状态」，选项和输入框都不画', async () => {
+    history = [question('t-folded', null, ['alice'])]
+    const { container, getByRole, queryByRole } = await open('t-folded')
+    const line = container.querySelector('.ask-fold')!
+    expect(line.textContent).toContain('问 alice')
+    expect(line.textContent).toContain('预算按哪个口径统计？')
+    expect(line.textContent).toContain('还没有回答')
+    expect(container.querySelector('.ask-replies')).toBeNull()
+    expect(queryByRole('button', { name: /按部门/ })).toBeNull()
+    // 整行是一颗按钮：点开才把题卡放出来。
+    expect(getByRole('button', { name: /问 alice/ })).toBeTruthy()
+  })
+
+  it('点开就是那张卡，再点收起', async () => {
+    history = [question('t-fold-toggle', null, ['alice'])]
+    const { container, getByRole, queryByRole } = await open('t-fold-toggle')
+    const line = getByRole('button', { name: /问 alice/ })
+    expect(line.getAttribute('aria-expanded')).toBe('false')
+    await fireEvent.click(line)
+    expect(line.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('.ask-replies')).toBeTruthy()
+    expect(getByRole('button', { name: /按部门/ })).toBeTruthy()
+    await fireEvent.click(line)
+    expect(container.querySelector('.ask-replies')).toBeNull()
+    expect(queryByRole('button', { name: /按部门/ })).toBeNull()
+  })
+
+  it('问到我的题照旧整张卡，不折', async () => {
+    history = [question('t-fold-mine', null, ['me'])]
+    const { container } = await open('t-fold-mine')
+    expect(container.querySelector('.ask-fold')).toBeNull()
+    expect(container.querySelector('.ask-replies')).toBeTruthy()
+  })
+
+  it('问所有人的题也不折：频道里谁都答得上', async () => {
+    history = [question('t-fold-all', null, ['alice'], [], true)]
+    const { container } = await open('t-fold-all')
+    expect(container.querySelector('.ask-fold')).toBeNull()
+    expect(container.querySelector('.ask-replies')).toBeTruthy()
+  })
+
+  it('已经有人答了的，那一行写答案', async () => {
+    history = [question('t-fold-answered', 'alice', ['alice'])]
+    const { container } = await open('t-fold-answered')
+    expect(container.querySelector('.ask-fold')?.textContent).toContain('alice：按部门')
   })
 })
 
@@ -455,13 +504,16 @@ describe('被问的人可以跳过这道题', () => {
   it('题在等别人时没有 ✕', async () => {
     history = [question('t-not-mine', null, ['alice'])]
     const { getByRole, queryByRole } = await open('t-not-mine')
+    // 没问到我的题先收成一行；点开之后选项看得到，但没有 ✕。
+    await fireEvent.click(getByRole('button', { name: /问 alice/ }))
     expect(getByRole('button', { name: /按项目/ })).toBeTruthy()
     expect(queryByRole('button', { name: '跳过这道题' })).toBeNull()
   })
 
   it('别人跳过的题，看的人没有撤销', async () => {
     history = [question('t-their-skip', null, ['alice'], ['alice'])]
-    const { container, queryByRole } = await open('t-their-skip')
+    const { container, getByRole, queryByRole } = await open('t-their-skip')
+    await fireEvent.click(getByRole('button', { name: /问 alice/ }))
     expect(container.querySelector('.ask-replies__answers')?.textContent).toContain('已跳过')
     expect(queryByRole('button', { name: /撤销/ })).toBeNull()
   })
@@ -526,10 +578,12 @@ describe('题问了几个人', () => {
 })
 
 describe('只有被问到的人能点选项', () => {
-  it('问的是别人：选项看得到但点不动，末行也打不了字，没有 ✕', async () => {
+  it('问的是别人：点开之后选项看得到但点不动，末行也打不了字，没有 ✕', async () => {
     history = [question('t-chip-theirs', null, ['alice'])]
     const { container, getByRole, queryByRole } = await open('t-chip-theirs')
-    // 卡上那句「… 问 alice」说明了在等谁。
+    // 那一行「… 问 alice」说明了在等谁；点开才是那张卡。
+    expect(container.querySelector('.ask-fold')?.textContent).toContain('问 alice')
+    await fireEvent.click(getByRole('button', { name: /问 alice/ }))
     expect(container.querySelector('.ask-replies')?.textContent).toContain('问 alice')
     const option = getByRole('button', { name: /按项目/ }) as HTMLButtonElement
     const other = getByRole('textbox', { name: '其他回答' }) as HTMLTextAreaElement

@@ -24,6 +24,7 @@ from app.domain.agent.room.sessions.records import Live
 from app.domain.agent.room.stopwatch import timed
 from app.domain.agent.service import AgentSessionInfo
 from app.domain.agent.session_host.contract import (
+    ColdCompaction,
     Image,
     InputUnconfirmed,
     Prompt,
@@ -53,6 +54,7 @@ async def send(
     on_mark: Callable[[uuid.UUID], None],
     register_input: InputRegistrar,
     resume_token: str | None = None,
+    retired_token: str | None = None,
     model: str | None = None,
     env: dict[str, str] | None = None,
     acting: str | None = None,
@@ -62,9 +64,15 @@ async def send(
     owes_reply: bool = False,
     session_opening: str = "",
     opening_changes: str = "",
+    cold: ColdCompaction | None = None,
 ) -> bool:
     """Put a message into the seat's session, as work ``work_id``, starting
     the session if it has to be. True = the session's runner took it.
+
+    ``cold`` asks the runner to compact a conversation that goes on but has
+    gone cold before it reads the message (`ColdCompaction`). A compacted
+    conversation is told the whole opening again, not what changed, so the
+    runner is handed that message too and says it if it compacts.
 
     ``session_opening`` is the project state a new conversation is handed in
     front of its first message; ``opening_changes`` the part of it that
@@ -89,6 +97,7 @@ async def send(
             session,
             system_prompt=system_prompt,
             resume_token=resume_token,
+            retired_token=retired_token,
             model=model,
             env=env,
             acting=acting,
@@ -97,9 +106,16 @@ async def send(
             phases=mark.phases,
         )
         mark.lap()
+        said = message
         message = svc._with_project_state(
             seat, live, resume_token, session_opening, opening_changes, message
         )
+        # A new conversation has nothing to compact and is told the whole
+        # opening already.
+        fresh = live.conversation != resume_token
+        cold_text = f"{session_opening}\n\n{said}" if session_opening else said
+        if cold is None or fresh:
+            cold, cold_text = None, ""
         pictures = tuple(images or ())
         on_mark(work_id)
         await svc._consume(
@@ -143,7 +159,14 @@ async def send(
             await svc._submit(
                 live,
                 identity,
-                Prompt(work_id, message, images=pictures, owes_reply=owes_reply),
+                Prompt(
+                    work_id,
+                    message,
+                    images=pictures,
+                    owes_reply=owes_reply,
+                    cold=cold,
+                    cold_text=cold_text,
+                ),
                 steer=False,
                 register_input=register_input,
             )

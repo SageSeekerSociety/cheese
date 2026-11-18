@@ -13,6 +13,7 @@
 import type { Ref } from 'vue'
 import type TaskOverview from '@/components/task/TaskOverview.vue'
 import type { AgentControlState, Block } from '@/cx_types'
+import type { DeliveryAct } from '@/lib/channelTasks'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '@/lib/previewQuestion'
@@ -43,8 +44,9 @@ export function useTopicActions(opts: {
   /** 支线：打开一条、开任务页、把一条消息转成任务。 */
   opening: {
     onOpenThread: (block: Block) => void
-    onOpenCard: (taskId: string) => void
-    upgradeMessage: (messageId: string) => void
+    /** 对话里点开一件任务：频道主线上在右边审阅，别处去任务页。 */
+    openTask: (taskId: string) => void
+    upgradeInColumn: (messageId: string) => void
   }
   openTopic: (topicId: string) => void
   panelRef: Ref<WorkPanelHandle | null>
@@ -57,6 +59,8 @@ export function useTopicActions(opts: {
   handleTurnDone: () => void
   handleWorking: (now: boolean) => void
   handleStateChanged: (resource: string) => void
+  /** 主线上交付那几颗按钮（`adoptInPlace.ts`）。 */
+  onDelivery: (act: DeliveryAct) => void
 }) {
   const router = useRouter()
 
@@ -93,10 +97,11 @@ export function useTopicActions(opts: {
     'mention-click': handleMentionClick,
     'open-file': (path: string) => opts.panelRef.value?.openFile?.(path),
     'open-resource': handleOpenResource,
-    'upgrade-message': opts.opening.upgradeMessage,
+    'upgrade-message': opts.opening.upgradeInColumn,
     'open-thread': opts.opening.onOpenThread,
     'open-topic': opts.openTopic,
-    'open-card': opts.opening.onOpenCard,
+    'open-card': opts.opening.openTask,
+    delivery: opts.onDelivery,
     review: opts.onReview,
   }
 

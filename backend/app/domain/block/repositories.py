@@ -441,6 +441,23 @@ class BlockRepository(
         )
         return {row for row in (await self._session.scalars(stmt)).all() if row}
 
+    async def with_preview(
+        self, conversation_ids: Collection[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        """Which of these conversations have a preview to show: an artifact
+        block their AI teammate pointed at (`latest_artifact`)."""
+        if not conversation_ids:
+            return set()
+        stmt = (
+            select(Block.conversation_id)
+            .where(
+                Block.conversation_id.in_(list(conversation_ids)),
+                Block.kind == BlockKind.artifact,
+            )
+            .distinct()
+        )
+        return set(await self._session.scalars(stmt))
+
     async def latest_artifact(self, conversation_id: uuid.UUID) -> Block | None:
         """The topic's current preview (spec §9.1): the most recent artifact block
         芝士 pointed at. Newest wins — re-running `cheese show` repoints it."""

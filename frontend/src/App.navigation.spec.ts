@@ -156,11 +156,14 @@ it('keeps the room header usable when the app changes between desktop and mobile
   }
 })
 
-it('desktop rail opens 待办 from 首页, the first tile, with no separate 待办 tile', async () => {
+it('desktop sidebar head opens 待办 from the 首页 tile, with no separate 待办 tile', async () => {
   const app = await mountApp('/', 1280)
   try {
     expect(app.failures).toEqual([])
-    const rail = app.container.querySelector('.app-rail')
+    // 左边那一列方块栏拿掉了（Navigation/appNav.ts）：首页那一格住进侧栏头，侧栏看不见时住在顶栏。
+    expect(app.container.querySelector('.app-rail')).toBeNull()
+    const rail =
+      app.container.querySelector('[data-testid="sidebar-frame-top"]') ?? app.container.querySelector('.app-system-bar')
     expect(rail).not.toBeNull()
     // 首页那一格点开就是待办：桌面上到得了 /inbox，而且只有这一条路，不再多一格。
     const labels = Array.from(rail!.querySelectorAll('a[aria-label]')).map((a) => a.getAttribute('aria-label'))

@@ -547,6 +547,7 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
       lookingUp: false,
       lookupError: null,
       alreadyIn: false,
+      inviting: false,
       activeTab: 'members',
       isInviteDialogActive: false,
       inviteQuery: '',

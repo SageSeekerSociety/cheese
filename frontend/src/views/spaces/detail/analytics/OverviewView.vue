@@ -67,7 +67,7 @@
       </section>
     </template>
 
-    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.overview.empty')" />
+    <BaseEmptyState v-else-if="!loading" size="inline" align="center" :title="t('spaces.analytics.overview.empty')" />
   </div>
 </template>
 

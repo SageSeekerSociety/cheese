@@ -30,7 +30,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     launch as executor_launch,
 )
 from app.domain.agent.harness.claude_code.remote_execution import release
-from app.domain.agent.harness.claude_code.runner import LAUNCH
+from app.domain.agent.harness.claude_code.runner import LAUNCH, RETIRED_ENV
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
@@ -206,6 +206,7 @@ def launch_holes(
     system_prompt: str = "",
     ca_pem: str = "",
     resume_session_id: str | None = None,
+    retired_session_id: str | None = None,
     project_id: str | None = None,
     launch_name: str = "",
     seat: str = "",
@@ -635,6 +636,10 @@ CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" 
         # on the env for the same reason the tunnel vars are — a remote launch
         # is built entirely out of its environment.
         env["CHEESE_RESUME_SESSION"] = resume_session_id
+    if retired_session_id:
+        # The conversation the platform no longer continues: the runner does
+        # not take it up from its own record either (``runner.start``).
+        env[RETIRED_ENV] = retired_session_id
     if launch_name:
         # Which start of the runner this is, so a wait on it reads only what
         # this start left in the runner's log (``runner.LAUNCH``).
@@ -665,8 +670,10 @@ cheese_launch_phase credentials_selected
     # What a running session is compared against: the whole launch, written
     # without the two things that are not the platform's. The system prompt is
     # the room's and is rebuilt every turn; a live session keeps the one it
-    # started with. The resume offer names the conversation, which a relaunch
-    # continues, and the launch name is new on every turn. The helpers a
+    # started with. The resume offer and the retired conversation name the
+    # conversation, which a relaunch continues or replaces by its own rule
+    # (``ClaudeCodeDriver.launch``), and the launch name is new on every turn.
+    # The helpers a
     # release puts into a running session are left out too, since changing
     # one is a release and not a relaunch, and so is the installer of the
     # pinned build, which runs before the session starts and is not kept by
@@ -678,7 +685,9 @@ cheese_launch_phase credentials_selected
     # reach a live session as a new one.
     configured, prepared = holes("", release.launch_only(helper_sources), "")
     fixed_env = {
-        k: v for k, v in env.items() if k not in ("CHEESE_RESUME_SESSION", LAUNCH)
+        k: v
+        for k, v in env.items()
+        if k not in ("CHEESE_RESUME_SESSION", RETIRED_ENV, LAUNCH)
     }
     contract = hashlib.sha256(
         json.dumps(
@@ -778,6 +787,8 @@ class ClaudeLaunch:
     system_prompt: str
     model: str | None = None
     resume_session_id: str | None = None
+    # The conversation the platform no longer continues (``RETIRED_ENV``).
+    retired_session_id: str | None = None
     # Names this start of the runner (``runner.LAUNCH``); new on every turn,
     # so it is never part of what a live session is compared against.
     launch_name: str = ""
@@ -794,6 +805,7 @@ class ClaudeLaunch:
             # A screen is retired and reopened for reasons that say nothing
             # about the conversation, so every launch offers to continue it.
             resume_session_id=self.resume_session_id,
+            retired_session_id=self.retired_session_id,
             launch_name=self.launch_name,
         )
 
@@ -803,6 +815,7 @@ def on_machine(
     *,
     system_prompt: str,
     resume_session_id: str | None,
+    retired_session_id: str | None = None,
     launch_name: str = "",
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
@@ -816,6 +829,7 @@ def on_machine(
         system_prompt=system_prompt,
         ca_pem=place.ca_pem,
         resume_session_id=resume_session_id,
+        retired_session_id=retired_session_id,
         project_id=place.project_id,
         launch_name=launch_name,
         # Which seat this session is: the agent the place was opened for, in

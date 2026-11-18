@@ -18,28 +18,35 @@ import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { Receipt } from '../../lib/readReceipts'
 import type { RefNames } from '../../lib/refChip'
 import type { ChapterRow } from '../../types/chapters'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { vGuideAnchor } from '@/composables/useGuideAnchors'
+import { pointGuideAnchor, vGuideAnchor } from '@/composables/useGuideAnchors'
 
+import { askGroupFolds } from '../../lib/askGroups'
 import { replySnippet } from '../../lib/blockDisplay'
 import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
+import { deliveryOf } from '../../lib/deliveryLine'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
 import { rowKeys } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
+import AskFoldLine from '../ask/AskFoldLine.vue'
 import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
+import DeliveryActions from '../room/DeliveryActions.vue'
+import DeliveryCard from '../room/DeliveryCard.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
 import RoomNotice from '../room/RoomNotice.vue'
 import TaskCard from '../room/TaskCard.vue'
 import TaskCreatedPost from '../room/TaskCreatedPost.vue'
+import TaskLink from '../room/TaskLink.vue'
 import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
 
@@ -126,6 +133,8 @@ const props = defineProps<{
   /* Renderers that belong to the room, not to a row: names, avatars, times. */
   isAgentBlock: (b: Block) => boolean
   isMine: (m: Block) => boolean
+  /** 自己那条消息谁读了谁没读（chatPanel/receipts）；不给就不画那一圈。 */
+  receiptOf?: (m: Block) => Receipt | null
   isExternal: (handle: string) => boolean
   /** handle → 头像 URL（没挑过、名册里没这个人就是 null）。这一层不画头像，只把
       它转发给下面的 RoomMessage / ThreadLine，由它们的 UserAvatar 决定画脸还是画
@@ -159,6 +168,13 @@ const props = defineProps<{
   taskOf?: (taskId: string) => TaskLine | null
   /** 从这条消息（或它的支线）出来的任务，按创建的先后。 */
   tasksUnder?: (blockId: string) => TaskLine[]
+  /** AI 队友在主线上开的、画在这条回复下面的任务：一件一行，只有任务名和负责人。 */
+  taskLinksUnder?: (blockId: string) => TaskLine[]
+  /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
+  adoptingTask?: string | null
+  /** 这是频道的主线：交上来的一版记成一行「已提交审阅」，处理它的按钮挂在主线上关于这件
+   *  任务的最新那一条下面。别处（任务自己的对话、支线）照旧画交付卡。 */
+  mainLine?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -172,6 +188,7 @@ const emit = defineEmits<{
   (e: 'toggle-picker', blockId: string): void
   (e: 'open-file', path: string): void
   (e: 'open-card', taskId: string): void
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
@@ -194,6 +211,20 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+// 组头 id → 这一组现在点开了没有。一次问的几道题问到别人时收成一行，点开才是那张
+// 卡；点开只活在这一屏里，切走再回来又是收起的（和单题的折叠一样）。
+const openAskGroups = ref<Set<string>>(new Set())
+function toggleAskGroup(id: string) {
+  const next = new Set(openAskGroups.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  openAskGroups.value = next
+}
+/** 这一组收不收成一行（判据在 `lib/askGroups`）：没问到看的人，或整组已经答完。 */
+function askGroupForOthers(blocks: Block[]): boolean {
+  return askGroupFolds(blocks, props.viewer)
+}
 
 // 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
 // 来一条时，人点开的那一串不被换成一行新的、收起来的。上一次的名字只在这里读写，
@@ -238,6 +269,38 @@ function createdTask(row: NoticeRow): TaskLine | null {
   return typeof id === 'string' ? props.taskOf?.(id) ?? null : null
 }
 const createdTasks = computed(() => props.rows.map(createdTask))
+// 一条消息说它是关于哪件任务的（AI 队友发消息时带的 `task`）：消息头上挂这件任务的
+// 标签。同一件任务最新的那一条标签上再写状态词和在等谁，早先的只写任务名。
+function taggedTask(m: Block): string | null {
+  const id = (m.meta as Record<string, unknown> | null | undefined)?.task_tag
+  return typeof id === 'string' ? id : null
+}
+const latestTagged = computed(() => {
+  const latest = new Map<string, string>()
+  for (const { block } of props.rows) {
+    const id = taggedTask(block)
+    if (id) latest.set(id, block.id)
+  }
+  return new Set(latest.values())
+})
+function tagOf(m: Block): TaskLine | null {
+  const id = taggedTask(m)
+  return id ? props.taskOf?.(id) ?? null : null
+}
+// 交了一版去审阅的那一行（lib/deliveryLine）：主线上它就是平台记的那一行，别处画成一张交付卡。
+const deliveries = computed(() => props.rows.map((row) => (row.notice ? deliveryOf(row.block) : null)))
+// 主线上一件任务在等人审阅时，处理这一版的按钮挂在哪一行：交上来之后关于它的最新那一条——
+// 通常是队友说这件任务的话；交了之后队友没说话，就是「已提交审阅」那一行自己。
+const deliveryAnchors = computed(() => {
+  const at = new Map<string, string>()
+  if (!props.mainLine) return new Set<string>()
+  props.rows.forEach(({ block }, i) => {
+    const filed = deliveries.value[i]
+    const id = filed ? filed.taskId : taggedTask(block)
+    if (id && props.taskOf?.(id)?.delivery) at.set(id, block.id)
+  })
+  return new Set(at.values())
+})
 // 同一个人接连新建的几件，归在同一个名字下面：断开的条件和消息一样。
 const createdCont = computed(() =>
   createdTasks.value.map((task, i) => {
@@ -251,11 +314,36 @@ const createdCont = computed(() =>
   })
 )
 const NO_TASKS: TaskLine[] = []
+// 频道主线上 AI 队友最近的一条回复：新手引导指着它说「回复了」。按 id 找到那一行再登记，
+// 不在每一行上挂指令（`pointGuideAnchor`）。
+const newestAgentReply = computed(() => {
+  if (!props.threadable) return null
+  for (let i = props.rows.length - 1; i >= 0; i--) {
+    const block = props.rows[i].block
+    if (block.kind === 'message' && props.isAgentBlock(block)) return block.id
+  }
+  return null
+})
+let replyAnchor: HTMLElement | null = null
+watch(
+  newestAgentReply,
+  async (id) => {
+    await nextTick()
+    const el = id ? props.contentRef.value?.querySelector<HTMLElement>(`[data-row-id="${id}"]`) ?? null : null
+    pointGuideAnchor('agent-reply', el, replyAnchor)
+    replyAnchor = el
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => pointGuideAnchor('agent-reply', null, replyAnchor))
 function ownerName(task: TaskLine): string | null {
   return task.owner ? (props.nameOf ?? String)(task.owner) : null
 }
 function under(blockId: string): TaskLine[] {
   return props.tasksUnder?.(blockId) ?? NO_TASKS
+}
+function links(blockId: string): TaskLine[] {
+  return props.taskLinksUnder?.(blockId) ?? NO_TASKS
 }
 /** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
 function became(m: Block): TaskLine | undefined {
@@ -454,6 +542,7 @@ const rowLabels = computed(() =>
       return rowLabel(creator, block.created_at, `${t('work.room.taskCard.created')} ${task.title}`)
     }
     if (!notice) return ''
+    if (deliveries.value[i]) return rowLabel(null, block.created_at, noticeLine(block, notice, null, props.refs))
     const agent = agentOf(block, notice)?.name ?? null
     return rowLabel(agent, block.created_at, noticeLine(block, notice, agent, props.refs))
   })
@@ -586,6 +675,26 @@ const rowLabels = computed(() =>
               :aria-label="rowLabels[i]"
               @open="emit('open-card', $event)"
             />
+            <!-- Outside the main line, a task handed a version in for review is the platform's
+                 record of it, one card under nobody's name. In the main line it is the one line
+                 below, with what settles it hanging on the latest thing said about the task. -->
+            <div
+              v-else-if="deliveries[i] && !mainLine"
+              class="tl-delivery"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-label="rowLabels[i]"
+            >
+              <DeliveryCard
+                :task-id="deliveries[i]!.taskId"
+                :title="taskOf?.(deliveries[i]!.taskId)?.title || deliveries[i]!.title"
+                :version="deliveries[i]!.version"
+                @open="emit('open-card', $event)"
+              />
+            </div>
             <RoomNotice
               v-else-if="notice"
               :class="{ 'tl-arrive': arrived.has(m.id) }"
@@ -627,7 +736,32 @@ const rowLabels = computed(() =>
               tabindex="-1"
               :aria-label="rowLabels[i]"
             >
+              <!-- 问的是别人：整组收成一行，点开才是那张卡。问到我了就照整张卡画。 -->
+              <template v-if="askGroupForOthers(askGroups!.get(m.id)!)">
+                <AskFoldLine
+                  :blocks="askGroups!.get(m.id)!"
+                  :asker="displayName(m)"
+                  :names="refs.mentionNames"
+                  :refs="refs"
+                  :expanded="openAskGroups.has(m.id)"
+                  :closed="askClosed"
+                  :viewer="viewer"
+                  @toggle="toggleAskGroup(m.id)"
+                />
+                <AskGroupCard
+                  v-if="openAskGroups.has(m.id)"
+                  :blocks="askGroups!.get(m.id)!"
+                  :asker="displayName(m)"
+                  :names="refs.mentionNames"
+                  :viewer="viewer"
+                  :closed="askClosed"
+                  :busy="askGroupBusy"
+                  :failure="askGroupFailure"
+                  @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+                />
+              </template>
               <AskGroupCard
+                v-else
                 :blocks="askGroups!.get(m.id)!"
                 :asker="displayName(m)"
                 :names="refs.mentionNames"
@@ -650,9 +784,14 @@ const rowLabels = computed(() =>
               :block="m"
               :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
               :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
+              :task-tag="tagOf(m)"
+              :task-tag-full="latestTagged.has(m.id)"
+              :delivery-here="deliveryAnchors.has(m.id)"
+              :adopting="!!adoptingTask && tagOf(m)?.id === adoptingTask"
               :run-start="runEdges[i] !== 'cont'"
               :regroup="runEdges[i] === 'regroup'"
               :mine="isMine(m)"
+              :receipt="receiptOf?.(m) ?? null"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
               :author-title="authorTitle?.(m) ?? null"
@@ -682,6 +821,7 @@ const rowLabels = computed(() =>
               @animationend="settleRow"
               @open-file="emitOpenFile"
               @open-card="emit('open-card', $event)"
+              @delivery="emit('delivery', $event)"
               @react="emitReact"
               @ask-reply="emitAskReply"
               @ask-withdraw="emitAskWithdraw"
@@ -695,6 +835,20 @@ const rowLabels = computed(() =>
               @pin="emit('pin', $event)"
               @unpin="emit('unpin', $event)"
             />
+            <!-- The main line's 「已提交审阅」 line, when the teammate said nothing about the
+                 task after it: the buttons that settle this version hang here. -->
+            <div
+              v-if="notice && deliveries[i] && deliveryAnchors.has(m.id) && taskOf?.(deliveries[i]!.taskId)"
+              class="tl-thread tl-delivery-acts"
+              :data-feed-of="m.id"
+            >
+              <DeliveryActions
+                :task="taskOf!(deliveries[i]!.taskId)!"
+                :viewer="viewer"
+                :adopting="adoptingTask === deliveries[i]!.taskId"
+                @delivery="emit('delivery', $event)"
+              />
+            </div>
             <!-- 例行任务的一次执行：哪条规则、跑得怎么样、结果文件在哪，去看这次执行的支线。 -->
             <RoutineRunLine
               v-if="!notice && m.routine_run"
@@ -725,9 +879,6 @@ const rowLabels = computed(() =>
                   @open="emit('open-card', $event)"
                 />
                 <ThreadLine
-                  v-guide-anchor="
-                    replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'
-                  "
                   :summary="m.thread ?? null"
                   :replying="replyingFor?.(m) ?? null"
                   :replying-seats="replyingSeatsFor?.(m) ?? []"
@@ -748,6 +899,17 @@ const rowLabels = computed(() =>
                 :owner-avatar="task.owner ? avatarOf(task.owner) : undefined"
                 in-list
                 :lone="!(threadable && m.thread) && madeFrom(m).length === 1"
+                @open="emit('open-card', $event)"
+              />
+            </div>
+            <div v-if="!notice && links(m.id).length" class="tl-thread msg-links" :data-feed-of="m.id">
+              <TaskLink
+                v-for="task in links(m.id)"
+                :key="task.id"
+                v-guide-anchor="'task-card'"
+                :task-id="task.id"
+                :title="task.title"
+                :owner-name="ownerName(task)"
                 @open="emit('open-card', $event)"
               />
             </div>
@@ -873,6 +1035,19 @@ const rowLabels = computed(() =>
   margin-left: 54px;
   width: calc(100% - 70px);
 }
+/* 交了一版去审阅的那张卡：平台记下的事，不挂头像和名字，和消息正文同一条竖线。 */
+.tl-delivery {
+  margin: 8px 16px 8px 54px;
+}
+/* 主线上「已提交审阅」那一行下面的按钮：和那一行一样居中。 */
+.tl-delivery-acts {
+  margin: 0 16px 8px;
+  width: auto;
+}
+.tl-delivery-acts :deep(.delivery-acts) {
+  justify-content: center;
+  margin-top: 4px;
+}
 /* 消息下面那一块：支线和任务长在一起，同一个底色。支线那几行在上，转成任务时顶上多
    一行任务名；拆出去的任务一件一行，排在下面。 */
 .msg-work {
@@ -902,6 +1077,13 @@ const rowLabels = computed(() =>
 }
 .msg-work__talk > :deep(.task-card--head + .thread-line) {
   padding-top: 2px;
+}
+/* AI 队友在主线上开的任务：它那条回复下面一件一行。 */
+.msg-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
 .msg-work :deep(.thread-line),
 .msg-work :deep(.thread-line:hover) {

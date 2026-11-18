@@ -76,6 +76,10 @@ dependencies = [
     "alibabacloud-green20220302==2.20.4",
     "alibabacloud-tea-openapi==0.3.13",
     "oss2==2.19.1",
+    # 学情报告导出（app/domain/space/learning_class_export.py）的 Excel 与 Word 两种
+    # 格式；PDF 用已有的 pymupdf。仓库里此前没有能写 xlsx / docx 的库。
+    "openpyxl==3.1.5",
+    "python-docx==1.2.0",
 ]
 
 [dependency-groups]
@@ -104,7 +108,7 @@ constraint-dependencies = [
     "anyio==4.14.2",
     "cryptography==50.0.0",
     "multidict==6.9.1",
-    "soupsieve==2.9.0",
+    "soupsieve==4.1",
     "urllib3==2.8.0",
 ]
 

@@ -15,17 +15,28 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
+from app.domain.agent.carried_bodies import carried_bodies
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.queries import _session_agent
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.system_prompt import session_system_prompt
-from app.domain.agent.turn.intake.context import Launch, living_doc_text
+from app.domain.agent.room.system_prompt import (
+    session_env,
+    session_kind,
+    session_system_prompt,
+)
+from app.domain.agent.turn.intake.context import (
+    Launch,
+    carried_skills,
+    living_doc_text,
+)
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent_instance.own import current_role, owned_instance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.reads import load_project
+from app.domain.prompts import PROFILES
 from app.domain.room_task.place import PlaceResolver
+from app.domain.task import teaching as teaching_context
 from app.domain.topic.models import TopicStatus
 
 if TYPE_CHECKING:
@@ -80,6 +91,7 @@ async def launch_inputs(
         agents = AgentInstanceService(session)
         agent = await _session_agent(agents, topic, project, agent_handle)
         needs_place = not _is_dm(topic)
+        kind = session_kind(place, needs_place=needs_place)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
         role = await current_role(session, agent.instance_id) or (
             await agents.system_prompt(agent)
@@ -87,25 +99,44 @@ async def launch_inputs(
         harness, provider = await prep._backend_for(session, agent, project)
         if provider is None:
             return None
-        resume_token = await AgentSessionService(session).resume_token(
-            place.room_id, agent.handle, harness=harness
+        continuation = await AgentSessionService(session).continuation(
+            place.room_id,
+            agent.handle,
+            harness=harness,
+            generation=PROFILES[kind].generation,
+        )
+        # The skills the teammate carries, read as the turn reads them
+        # (`assembly`): a prewarmed session whose prompt lacked them would be
+        # replaced by the first turn, which is the work prewarming saves.
+        teaching = await teaching_context.for_project(session=session, project=project)
+        carried = await carried_bodies(
+            session,
+            topic,
+            carried_skills(agent, topic, teaching.teaching.skills if teaching else ()),
         )
     model_kwargs, _route = await prep.model_options(
-        project.id, provider, topic_id, agent=agent, acting_agent=acting
+        project.id,
+        provider,
+        topic_id,
+        agent=agent,
+        acting_agent=acting,
+        default_effort=PROFILES[kind].effort,
     )
+    model_kwargs["env"] = {**model_kwargs.get("env", {}), **session_env(kind)}
     return Launch(
         session=SessionRef(project.id, topic_id, agent.handle, harness=harness),
         runtime=provider,
         system_prompt=session_system_prompt(
             prep.base_prompt,
-            prep.skills,
-            needs_place=needs_place,
+            kind=kind,
             has_doc=doc_text is not None,
             role=role,
             harness=provider.harness,
             name=agent.display_name,
+            carried=carried,
         ),
-        resume_token=resume_token,
+        resume_token=continuation.resume,
+        retired_token=continuation.retired,
         model=model_kwargs.get("model"),
         env=model_kwargs.get("env"),
         needs_place=needs_place,

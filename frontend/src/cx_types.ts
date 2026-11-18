@@ -256,6 +256,18 @@ export interface ApiEnvelope<T> {
 }
 
 // Paginated list payload: {data: T[], total: number}
+/** 项目当前版本上的一次改动。`task` 只在平台采纳合并了它、而你看得到那件任务所在的
+ *  频道时才有；直接推上来的提交没有任务，只说是谁、什么时候。 */
+export interface ProjectChange {
+  sha: string
+  subject: string
+  /** 提交上写的名字。 */
+  author: string
+  /** ISO 时间。 */
+  at: string
+  task: { id: string; title: string; room_id: string } | null
+}
+
 export interface ListPayload<T> {
   data: T[]
   total: number
@@ -307,6 +319,7 @@ export interface RoomTask {
   created_by_assistant?: boolean // created_by 自己的芝士替他建的
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
+  teammate?: string | null // 实际做它的那位 AI 队友的席位（agent_handle 空时落到频道的那位），和它在消息上的署名相同
   document_id?: string | null // 实况文档；第一次打开任务时才建
   conclusion?: string | null
   // 做它的 AI 队友最后一次报的状态（后端 `room_task/progress.py`）：看板那一格已经按它
@@ -327,10 +340,15 @@ export interface RoomTask {
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
+  closed_reason?: string | null // 平台替人关掉它的原因：'neglect' = 很久没人理会；人或队友关的是 null
+  /** 最后一步已合并、在等部署上线（后端 `review/deploy_wait.py`）；没在等是 null。 */
+  deploying_since?: string | null
+  /** 等部署时挡住它的那次主干 CI 红（run 链接）；主干没红是 null。 */
+  deploy_blocked_url?: string | null
   upgraded_from_block_id?: string | null
   /** 它出自的那句话：主线消息本身，或支线里的一条回复。 */
   source_block_id?: string | null
-  /** 支线原地转成的任务：对话挂在主线那条消息下面，在频道页右半边打开，和支线一样。 */
+  /** 支线原地转成的任务：对话挂在主线那条消息下面，任务页上的对话从那条消息开头。 */
   from_thread?: boolean
   created_at: string
   updated_at: string
@@ -338,6 +356,9 @@ export interface RoomTask {
   awaits_me?: boolean // 有事需要本人关注，包括提需求人等结果；侧栏提醒读它
   needs_my_action?: boolean // 当前显示的下一步是否需要本人执行；“待你回答/审阅”等称谓读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
+  // 很久没人理会、已进「搁置」的活：什么时候自动关闭（项目级列表才带；会话在跑的、没到搁置的是 null）。
+  // 判据在后端 `presentation.neglect`：等人审阅/回答 3 天搁置、7 天关；别的 7 天搁置、14 天关。
+  neglect?: { close_at: string; since: string; waiting_on_someone: boolean } | null
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`
   // 的 `unresolved_failures`）：一条活停下来报错、五分钟还没人接手，画红灯
@@ -363,6 +384,8 @@ export interface RoomTask {
   opening?: 'drafting' | 'waiting' | 'failed' | null
   /** 这件任务里最后说的一句：频道概览上的「最新进展」。只在频道的任务列表里。 */
   last_message?: Block | null
+  /** 这件任务有东西可预览（队友在任务里摆出过一份）。只在频道的任务列表里。 */
+  has_preview?: boolean
 }
 
 /** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
@@ -379,7 +402,14 @@ export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'ar
 export type TaskProgressState = 'working' | 'waiting' | 'blocked'
 
 type BuildingPhrase = 'running' | 'waiting' | 'started' | 'idle' | 'draft'
-type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
+type DeliveringPhrase =
+  | 'gate_running'
+  | 'awaiting_checks'
+  | 'fixing_checks'
+  | 'resolving_conflict'
+  | 'updating_branch'
+  | 'deploying'
+  | 'deploy_blocked'
 type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer' | 'blocked'
 type DonePhrase = 'accepted' | 'completed' | 'closed' | 'archived'
 export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
@@ -404,6 +434,8 @@ export interface ThreadCard {
   subject?: string | null
   /** 这张卡递给谁审阅（可能已经改由别人审阅，和任务建时定的那位不同）。 */
   reviewer?: string | null
+  /** 谁采纳或退回了这张卡；还没定、或自动合并的是空。 */
+  decided_by?: string | null
 }
 
 export interface TopicProgress {
@@ -415,8 +447,10 @@ export interface TopicProgress {
 // backend also sends `live` frames, what it is writing meanwhile (live_frames.py).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
-  // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
+  // A block's reactions changed (someone toggled a reaction).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
+  // 已读：这位读的人新读到的几段编号（`[first, last]`），并进已有的那几段。
+  | { type: 'reads'; conversation_id: string; reader: string; ranges: [number, number][] }
   // A 分身's checklist, on its card's channel (the room's own list is a message).
   | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string; id?: string; project_ids?: string[] }
@@ -800,6 +834,10 @@ export interface AgentConfiguration {
   body: string
   skills: string[]
   model?: string | null
+  /** 任务里使用的模型；null 同 `model`。 */
+  task_model?: string | null
+  /** 分身使用的模型；null 同 `model`。 */
+  subagent_model?: string | null
   effort?: 'low' | 'medium' | 'high' | 'max' | null
   compact_percent?: number | null
 }

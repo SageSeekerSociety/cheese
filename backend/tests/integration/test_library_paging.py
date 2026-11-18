@@ -263,3 +263,20 @@ def test_documents_join_the_same_timeline(client):
         # 资料库这一串里没有文档；并起来之后文档落在它按时间该在的位置上
         assert "doc:文档甲" in merged
         assert [label for label in merged if label != "doc:文档甲"] == whole
+
+
+def test_code_files_have_a_kind_of_their_own(client):
+    """「代码」一栏：脚本和笔记本不再落在「其他」里。"""
+    project_id = _project(client)
+    _put_in(client, project_id, "统计.py", "分析")
+    _put_in(client, project_id, "探索.ipynb", "分析")
+    _put_in(client, project_id, "README")
+
+    url = f"/projects/{project_id}/library"
+    code = _pages(client, url, kind="code")
+    assert sorted(row["path"] for page in code for row in page) == [
+        "分析/探索.ipynb",
+        "分析/统计.py",
+    ]
+    other = _pages(client, url, kind="other")
+    assert [row["path"] for page in other for row in page] == ["README"]

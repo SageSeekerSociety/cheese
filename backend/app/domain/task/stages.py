@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BadRequestError
 from app.core.request_facts import recall, remember
 from app.core.sentences import say
+from app.domain.task.judging_models import TaskTestSuite
 from app.domain.task.models import (
     TaskMembership,
     TaskRubricItem,
@@ -274,6 +275,15 @@ async def replace_stages(
                 TaskRubricItem.stage.in_(gone),
             )
         )
+        # 测试套和提交项、评分要点一样按阶段跟着走：阶段被删掉时它那套测试点也
+        # 一并删（用例随 FK CASCADE）。``test_suite`` 那侧也按阶段整份替换，但
+        # 阶段的增删改名先发生在这里，所以这一句让它不会指着不存在的阶段。
+        await session.execute(
+            delete(TaskTestSuite).where(
+                TaskTestSuite.task_id == task_id,
+                TaskTestSuite.stage.in_(gone),
+            )
+        )
     for model, where, moves in (
         (TaskSubmission, _task_submissions(task_id), moved),
         (
@@ -282,6 +292,7 @@ async def replace_stages(
             rows_moved,
         ),
         (TaskRubricItem, TaskRubricItem.task_id == task_id, rows_moved),
+        (TaskTestSuite, TaskTestSuite.task_id == task_id, rows_moved),
     ):
         shifts = {o: n for o, n in moves.items() if o != n}
         if shifts:

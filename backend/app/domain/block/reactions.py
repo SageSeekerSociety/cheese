@@ -10,7 +10,6 @@
 """
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import (
     Uuid,
@@ -19,7 +18,6 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
@@ -91,47 +89,13 @@ class Reactions:
     async def add_reaction_if_absent(
         self, block_id: uuid.UUID, emoji: str, author: str
     ) -> bool:
-        """Idempotent add (never removes) — for platform receipts like 芝士's 👀
-        on the message that summoned it. Returns True when a row was created."""
+        """Idempotent add (never removes) — what an AI teammate's `chat_react`
+        does. Returns True when a row was created."""
         if await self._get_reaction(block_id, emoji, author) is not None:
             return False
         self._session.add(BlockReaction(block_id=block_id, emoji=emoji, author=author))
         await self._session.flush()
         return True
-
-    async def add_reactions_if_absent(
-        self, block_ids: list[uuid.UUID], emoji: str, author: str
-    ) -> list[uuid.UUID]:
-        """The batch form of `add_reaction_if_absent`: one statement for many
-        blocks, same rule — an existing (block, emoji, author) is left alone, a
-        missing one gets a row. Returns the blocks a row was created for.
-
-        A delivery's read receipt covers every block it carried, and those rows
-        land in its settlement transaction; writing them one block at a time
-        put N round trips in that transaction. ``ON CONFLICT DO NOTHING``
-        leaves the existing rows untouched instead of selecting them first."""
-        ids = list(dict.fromkeys(block_ids))
-        if not ids:
-            return []
-        stamp = datetime.now(UTC)
-        created = await self._session.scalars(
-            pg_insert(BlockReaction)
-            .values(
-                [
-                    {
-                        "id": uuid.uuid4(),
-                        "block_id": block_id,
-                        "emoji": emoji,
-                        "author": author,
-                        "created_at": stamp,
-                    }
-                    for block_id in ids
-                ]
-            )
-            .on_conflict_do_nothing(constraint="uq_block_reaction")
-            .returning(BlockReaction.block_id)
-        )
-        return list(created.all())
 
     async def reactions_for_blocks(
         self, block_ids: list[uuid.UUID]

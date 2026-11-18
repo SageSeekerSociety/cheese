@@ -96,18 +96,22 @@ EXPECTED_RAIL_TASK_KEYS = {
     "branch_name",
     "card",
     "closed_at",
+    "closed_reason",
     "conclusion",
     "contributor_handles",
     "created_at",
     "created_by",
     "created_by_assistant",
     "delivered_head",
+    "deploy_blocked_url",
+    "deploying_since",
     "document_id",
     "historical_delivery_id",
     "id",
     "incomplete_since",
     "last_activity_at",
     "moving",
+    "neglect",
     "needs_my_action",
     "number",
     "owner_handle",
@@ -1214,8 +1218,10 @@ def test_get_team_and_team_members_deduplicate_team_user_relation_queries(client
     assert _count(team_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 1, [
         s for s in team_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert len(team_sql) <= 5, (
-        f"expected <= 5 SQL statements on GET /teams/{{id}}, got {len(team_sql)}: {team_sql}"
+    # 6, not 5: the viewer's remark for the people listed is one more statement,
+    # fixed per request rather than per member.
+    assert len(team_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /teams/{{id}}, got {len(team_sql)}: {team_sql}"
     )
 
     with counting_sql(client) as mem_sql:
@@ -1224,8 +1230,9 @@ def test_get_team_and_team_members_deduplicate_team_user_relation_queries(client
     assert _count(mem_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 1, [
         s for s in mem_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert len(mem_sql) <= 5, (
-        f"expected <= 5 SQL statements on GET /teams/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
+    # Same remark statement as above: one per request, not one per member.
+    assert len(mem_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /teams/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
     )
 
 
@@ -1321,8 +1328,10 @@ def test_task_detail_and_task_list_skip_redundant_topic_and_thread_probes(client
     assert _count(task_sql, _THREADS_IN_SELECT) == 0, [
         s for s in task_sql if _THREADS_IN_SELECT.search(s)
     ]
-    assert len(task_sql) <= 11, (
-        f"expected <= 11 SQL statements on GET /topics/{{task}}/task, got {len(task_sql)}: {task_sql}"
+    # Three of them find the teammate working the task: the page names the
+    # model it runs the task on before the task has spent anything.
+    assert len(task_sql) <= 14, (
+        f"expected <= 14 SQL statements on GET /topics/{{task}}/task, got {len(task_sql)}: {task_sql}"
     )
 
     with counting_sql(client) as list_sql:

@@ -22,8 +22,9 @@ import { BASE } from './api'
 
 type WireError = { message: string; stack?: string; source?: string; page?: string }
 
-/** 一条待发项：错误本身，加上报错那一刻所在的项目和频道。 */
-type Pending = { projectId: string; topicId: string | null; error: WireError }
+/** 一条待发项：错误本身，加上报错那一刻所在的项目和频道。项目可以是空的：首页、
+ *  /teams 这些页面不在任何项目里，而它们上面的失败（建空间、建团队）同样得留下。 */
+type Pending = { projectId: string | null; topicId: string | null; error: WireError }
 
 const FLUSH_INTERVAL_MS = 10_000
 const COOLDOWN_MS = 60_000 // per-fingerprint client-side cooldown
@@ -66,17 +67,22 @@ function pathParams(pathname: string): Record<string, string> | null {
 /**
  * 报错时所在的项目和频道。地址上写的是给人看的短名和编号
  * （`/projects/helper/channels/7`，见 lib/addresses.ts），接口要 UUID，所以过一遍
- * 地址表——`routeIds` 就是页面拿 props 用的那条规则。表里还没有的短名/编号会原样
- * 返回，这里就当「不在项目里」：归不进任何地方的报错宁可不报，也不能拿短名冒充
- * UUID 让接口把这批整个 422 掉。
+ * 地址表——`routeIds` 就是页面拿 props 用的那条规则。
+ *
+ * 地址里**没有**项目段（首页、`/teams`、登录页）不是「换不出项目」，就是不在项目
+ * 里：这种失败照样上报，只不带归属。建空间和建团队都在首页那一下，从前它们落不进
+ * 任何地方，于是平台对最难查的两个入口一无所知。
+ *
+ * 地址里**有**项目段、但表里还没换出 UUID，是另一回事：那只是这一趟还没来得及记
+ * 下来，等一会儿就认得出。这时不报——拿短名冒充 UUID 会让接口把这批整个 422 掉。
  */
-function place(): { projectId: string | null; topicId: string | null } {
+function place(): { projectId: string | null; topicId: string | null } | null {
   const params = pathParams(location.pathname)
   if (!params) return { projectId: null, topicId: null }
   const ids = routeIds(params)
-  const projectId = isUuid(ids.projectId) ? ids.projectId : null
+  if (!isUuid(ids.projectId)) return null
   const topicId = ids.topicId && isUuid(ids.topicId) ? ids.topicId : null
-  return { projectId, topicId }
+  return { projectId: ids.projectId, topicId }
 }
 
 export function reportError(message: string, stack?: string, source?: string): void {
@@ -84,8 +90,9 @@ export function reportError(message: string, stack?: string, source?: string): v
     if (!message || isIgnorable(message) || sessionCount >= MAX_PER_SESSION) return
     // 归属在这里定下来，不在发送时再读一遍路径：队列是模块级的、最多等 10 秒，其间
     // 用户可能已经切走，那时按当前路径算就会把这条错误记到别人的名下。
-    const { projectId, topicId } = place()
-    if (!projectId) return
+    const where = place()
+    if (!where) return
+    const { projectId, topicId } = where
     const item: Pending = {
       projectId,
       topicId,
@@ -120,7 +127,7 @@ export function reportError(message: string, stack?: string, source?: string): v
 function takeBatches(): Pending[][] {
   const groups = new Map<string, Pending[]>()
   for (const item of queue.splice(0, MAX_BATCH)) {
-    const key = `${item.projectId}\n${item.topicId ?? ''}`
+    const key = `${item.projectId ?? ''}\n${item.topicId ?? ''}`
     const group = groups.get(key)
     if (group) group.push(item)
     else groups.set(key, [item])
@@ -128,9 +135,11 @@ function takeBatches(): Pending[][] {
   return [...groups.values()]
 }
 
+/** One batch: 不在项目里的那一批不带 `project_id`（接口认它是「没有归属」），
+ *  带项目的那一批照旧带上——服务端要靠它核对项目真的存在。 */
 function batchBody(group: Pending[]): string {
   return JSON.stringify({
-    project_id: group[0].projectId,
+    project_id: group[0].projectId ?? undefined,
     topic_id: group[0].topicId || undefined,
     errors: group.map((item) => item.error),
   })

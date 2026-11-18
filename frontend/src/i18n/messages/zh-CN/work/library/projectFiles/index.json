@@ -1,0 +1,22 @@
+{
+  "name": "项目文件",
+  "latestAccepted": "最近一次采纳",
+  "latestChanged": "最近一次改动",
+  "updated": "{when}更新",
+  "history": "改动记录",
+  "historyTitle": "项目文件的改动记录",
+  "fileHistoryTitle": "「{name}」的改动记录",
+  "historyLoading": "正在读取改动记录",
+  "historyFailed": "改动记录加载失败",
+  "historyEmpty": "暂无改动记录",
+  "openTask": "查看任务",
+  "note": "这里是项目当前的版本，任务里的修改采纳后才会出现在这里。",
+  "newTask": "新建任务来修改",
+  "search": "搜索文件名",
+  "noMatch": "暂无匹配的文件",
+  "empty": "暂无文件",
+  "loadError": "无法读取项目文件",
+  "openInLibrary": "在资料库打开",
+  "backToTree": "返回项目文件",
+  "taskTitle": "「{title}」"
+}

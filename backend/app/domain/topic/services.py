@@ -1080,11 +1080,10 @@ class TopicService:
         # 「两边骨架不同」这个问题在这里不存在。
         owner = await self._projects.get(target.project_id)
         harness = project_harness(owner.settings if owner else None)
-        source_sid = await sessions.resume_token(
-            source.id, source_handle, harness=harness
-        )
-        if not source_sid:
+        found = await sessions.conversation(source.id, source_handle, harness=harness)
+        if found is None:
             raise ValidationError(say("topicCloneNeverRan"))
+        source_sid, generation = found
         try:
             new_sid = fork(
                 source_session_dir=paths.session_dir(source.project_id, source.id),
@@ -1102,6 +1101,8 @@ class TopicService:
             agent_handle=target_handle,
             resume_token=new_sid,
             harness=harness,
+            # The copy carries the turns of the rules they were written under.
+            generation=generation,
         )
         return target
 

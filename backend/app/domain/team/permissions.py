@@ -9,6 +9,13 @@ these, whether from a route (``app.auth.can``) or from a service acting on a
 team's machines, documents or recruitment posts; the team's services keep only
 the team's own rules (a personal team is never disbanded, the owner changes
 hands only by transfer).
+
+The platform's admins manage every team without a seat on it
+(:attr:`TeamPolicy.overseen`): its people, roles, settings, recruitment,
+disbanding and handing over. Not its machines — devices, model connections and
+Claude sign-ins are credentials — and not its documents, which are its
+members' own work; and never a personal team, which is its owner's alone. They
+reach every seat but the owner's (:func:`may_remove`).
 """
 
 import enum
@@ -121,6 +128,10 @@ class TeamPolicy(SeatPolicy[Team, Permission, Seat]):
     path_param = "teamId"
     permissions = Permission
     grants = GRANTS
+    overseen = frozenset(Permission) - {
+        Permission.manage_machines,
+        Permission.manage_documents,
+    }
 
     async def load(self, session: AsyncSession, id: int) -> Team | None:
         team = await session.get(Team, id)
@@ -134,22 +145,30 @@ class TeamPolicy(SeatPolicy[Team, Permission, Seat]):
             )
         return await seat_of(session, obj.id, user_id)
 
-    async def sees(self, session: AsyncSession, obj: Team, user_id: int) -> bool:
-        """On the team, or it is a public shared team. Anyone else is answered
-        as if it did not exist."""
+    def overseeable(self, obj: Team) -> bool:
+        """A personal team is its owner's own: nobody else manages it."""
+        return obj.personal_owner_user_id is None
+
+    async def visible(self, session: AsyncSession, obj: Team, user_id: int) -> bool:
+        """On the team, or it is a public shared team. Anyone else but a
+        platform admin is answered as if it did not exist."""
         return obj.open_to_all or await self.seat(session, obj, user_id) is not None
 
 
 TEAM = TeamPolicy()
 
 
-def may_remove(actor: Seat | None, target: Seat, *, own: bool) -> bool:
+def may_remove(
+    actor: Seat | None, target: Seat, *, own: bool, oversees: bool = False
+) -> bool:
     """Whether someone in seat ``actor`` takes a ``target`` off the team.
-    ``own``: the target is the actor, leaving. The owner never leaves or is
-    removed; the team changes hands by transfer."""
+    ``own``: the target is the actor, leaving. ``oversees``: the actor is a
+    platform admin (``TEAM.overseen_by``), who stands above every seat
+    but the owner's. The owner never leaves or is removed; the team changes
+    hands by transfer."""
     if target is Seat.owner:
         return False
-    if own:
+    if own or oversees:
         return True
     return (
         actor is not None

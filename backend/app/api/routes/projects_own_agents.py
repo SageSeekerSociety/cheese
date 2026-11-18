@@ -16,6 +16,7 @@ from app.domain.agent.environment import STANDARD
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance.configuration import AgentConfiguration
+from app.domain.agent_instance.identical import refuse_identical
 from app.domain.agent_instance.own import (
     add,
     listing,
@@ -197,16 +198,24 @@ async def add_own_agent(
         if body.device_id in await devices.refusing_sandboxes([body.device_id]):
             raise ForbiddenError(say("environmentSpecNotOffered"))
     if body.connection_id == "platform":
+        configuration = AgentConfiguration(
+            model=body.model,
+            execution_device_id=body.device_id,
+            execution_spec=STANDARD if body.device_id is None else None,
+        )
+        await refuse_identical(
+            db,
+            project_id=project_id,
+            display_name=body.model,
+            configuration=configuration,
+            source=None,
+        )
         await AgentInstanceService(db, models=model_choices).create(
             project_id=project_id,
             handle=f"agent-{uuid.uuid4().hex[:8]}",
             type_name=None,
             display_name=body.model,
-            configuration=AgentConfiguration(
-                model=body.model,
-                execution_device_id=body.device_id,
-                execution_spec=STANDARD if body.device_id is None else None,
-            ),
+            configuration=configuration,
         )
     else:
         await add(

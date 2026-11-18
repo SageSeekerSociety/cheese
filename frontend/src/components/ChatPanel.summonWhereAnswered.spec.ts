@@ -1,9 +1,5 @@
-// 叫芝士的那条消息在哪儿被回答，「芝士在这儿干活」就只在哪儿亮。
-//
-// 频道主线上 @ 它，它在那条消息底下的支线里回答：那一轮的开工、收工只发给支线，
-// 主线听不到（主线上那条消息底下的一行说谁在回答）。主线要是在发出去的那一刻就
-// 自己亮起「在干活」，就没有任何一帧会把它关掉：回答早就落进支线了，主线还一直说
-// 它在跑 —— 跑过一分钟的提示（「这次运行时间可能较长」）就是这样在回答之后冒出来的。
+// 叫芝士的那条消息在哪儿被回答，「芝士在这儿干活」就在哪儿亮：消息在哪儿说的，就在哪儿
+// 回答 —— 频道主线、支线、任务、私聊都一样，发出去的那一刻那里就说它在干活。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
@@ -117,10 +113,10 @@ function saidWorking(view: Awaited<ReturnType<typeof summonFrom>>): boolean {
 beforeAll(loadMarkdownReader)
 
 describe('叫芝士之后，哪里说它在干活', () => {
-  it('频道主线上叫它，主线不说它在干活 —— 它在支线里回答', async () => {
+  it('频道主线上叫它，主线马上说它在干活 —— 它就在主线上回答', async () => {
     const view = await summonFrom({ topic: channel('main-line-summon') })
 
-    expect(saidWorking(view)).toBe(false)
+    expect(saidWorking(view)).toBe(true)
   })
 
   it('在支线或任务里叫它，那里马上说它在干活', async () => {
@@ -135,7 +131,7 @@ describe('叫芝士之后，哪里说它在干活', () => {
     expect(saidWorking(view)).toBe(true)
   })
 
-  it('已归档的频道不开支线：在那里叫它，回答（被拒）也在那里', async () => {
+  it('已归档的频道：在那里叫它，回答（被拒）也在那里', async () => {
     const view = await summonFrom({ topic: channel('archived-channel', { status: 'archived' }) })
 
     expect(saidWorking(view)).toBe(true)

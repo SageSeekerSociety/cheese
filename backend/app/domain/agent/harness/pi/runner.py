@@ -221,6 +221,11 @@ class Runner(runner.Runner[Journal]):
 
     # --- reading -------------------------------------------------------------
 
+    def noticed(self, text: str) -> str:
+        """``text`` as a platform notice, in the form the room's notices take
+        (`SessionSpec.notice`, a template with ``⟦slot:text⟧`` for the text)."""
+        return self.notice.replace("⟦slot:text⟧", text) if self.notice else text
+
     async def observe(self, event: dict) -> None:
         """Ring the doorbell; never answer it here.
 
@@ -899,7 +904,7 @@ class Runner(runner.Runner[Journal]):
         try:
             await self.client.request(
                 "prompt",
-                message=f"{self.notice}\n{text}" if self.notice else text,
+                message=self.noticed(text),
                 streamingBehavior=behavior,
             )
         except Exception as error:  # the record is in the log
@@ -1194,9 +1199,7 @@ class Runner(runner.Runner[Journal]):
         owner.update(work_id=str(uuid.uuid4()), unsolicited=True)
         self.journal.remember("owner", json.dumps(owner))
         try:
-            await self.client.request(
-                "prompt", message=f"{self.notice}\n{reason}" if self.notice else reason
-            )
+            await self.client.request("prompt", message=self.noticed(reason))
         except Exception as error:  # the turn ended; so be it
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.reply_settled()

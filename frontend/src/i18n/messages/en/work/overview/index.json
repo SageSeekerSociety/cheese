@@ -20,7 +20,7 @@
   "myDeadline": "Your deadline: {when}",
   "noDocument": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
   "noProgress": "No progress in the last two weeks",
-  "nobody": "No tasks in progress",
+  "nobody": "No open tasks",
   "people": "Who is doing what",
   "progress": "Recent progress",
   "progressFailed": "Unable to load recent progress",

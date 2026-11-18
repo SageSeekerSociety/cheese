@@ -52,6 +52,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'open-task': [taskId: string]
   download: []
+  /** 去资料库 › 项目文件里看这一份。 */
+  'open-in-library': []
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -67,6 +69,14 @@ const { mdAndUp } = useDisplay()
       <span class="project-file__source">{{
         t(props.inRoom ? 'work.room.projectFile.room' : 'work.room.projectFile.current')
       }}</span>
+      <BaseButton
+        v-if="!props.inRoom && !props.missing && !props.loading"
+        size="sm"
+        prepend-icon="mdi-folder-home-outline"
+        @click="emit('open-in-library')"
+      >
+        {{ t('work.library.projectFiles.openInLibrary') }}
+      </BaseButton>
     </div>
     <div v-if="props.loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />

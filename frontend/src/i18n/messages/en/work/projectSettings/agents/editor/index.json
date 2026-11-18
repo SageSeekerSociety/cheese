@@ -32,5 +32,8 @@
   "save": "Save",
   "saveFailed": "Couldn't save",
   "titleEdit": "Edit AI teammate",
-  "titleNew": "New AI teammate"
+  "titleNew": "New AI teammate",
+  "taskModel": "In tasks",
+  "subagentModel": "For subagents",
+  "sameAsModel": "Same as above"
 }

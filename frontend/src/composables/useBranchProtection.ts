@@ -21,6 +21,7 @@ import { computed, ref } from 'vue'
 
 import { getBranchProtection, setBranchProtection } from '@/api'
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { parseApprovalsInput, parseCheckPaths } from '@/lib/branchProtection'
 import { queryClient } from '@/query/client'
 import { membersQuery } from '@/query/project'
@@ -54,8 +55,8 @@ export function useBranchProtection(projectId: () => string) {
     bpMembers.value
       .filter((m) => !m.agent)
       .map((m) => ({
-        title: m.name
-          ? t('work.projectSettings.merge.memberOption', { name: m.name, handle: m.user_handle })
+        title: memberName(m)
+          ? t('work.projectSettings.merge.memberOption', { name: memberName(m), handle: m.user_handle })
           : m.user_handle,
         value: m.user_handle,
       }))

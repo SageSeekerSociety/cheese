@@ -5,6 +5,7 @@
  * 动作、动作報的是**那一条**、没读到就不画成「暂无申请」；驳回框要一句理由，理由空着
  * 时那颗主操作点不动；只有一页时不留一排灰按钮。
  */
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -139,5 +140,23 @@ describe('空间申请', () => {
     const emitted = view.emitted().page as unknown[][]
     expect(emitted[0][0]).toBe(-50)
     expect(emitted[1][0]).toBe(50)
+  })
+
+  it('通过了的空间，点名字就进那块板；还在等审的新建申请没有地方可进', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { render: () => null } },
+        { path: '/spaces/:spaceId', name: 'SpacesDetail', component: { render: () => null } },
+      ],
+    })
+    const [pending, approved] = APPLICATIONS
+    const view = render(AdminSpacesPageView, {
+      props: { ...base, status: 'APPROVED', items: [pending, approved] },
+      global: { plugins: [createVuetify({ components, directives }), i18n, router] },
+    })
+
+    expect(view.getByRole('link', { name: approved.name }).getAttribute('href')).toBe(`/spaces/${approved.id}`)
+    expect(view.queryByRole('link', { name: pending.name })).toBeNull()
   })
 })

@@ -42,14 +42,17 @@ const props = withDefaults(
     panelId?: string
     /** 并排时右边那一格：页签下面一道虚线，看得出它也在屏幕上。 */
     side?: string | null
+    /** 固定区右边那几格能关的页签（频道里打开的任务，一件一格）。 */
+    closables?: PanelTab[]
   }>(),
-  { files: () => [], phone: false, panelId: undefined, side: null }
+  { files: () => [], phone: false, panelId: undefined, side: null, closables: () => [] }
 )
 
 const emit = defineEmits<{
   (e: 'select', key: string): void
   (e: 'close-file', path: string): void
   (e: 'pin-file', path: string): void
+  (e: 'close-tab', key: string): void
 }>()
 
 function fileKey(path: string): string {
@@ -130,7 +133,7 @@ function placeInk() {
   if (!inkMoves.value) requestAnimationFrame(() => (inkMoves.value = true))
 }
 watch(
-  [() => props.active, () => props.files.length, tabbarRef],
+  [() => props.active, () => props.files.length, () => props.closables.length, tabbarRef],
   () =>
     void nextTick(() => {
       placeInk()
@@ -204,6 +207,35 @@ const inkStyle = computed(() =>
             >{{ tab.signal.count }}</span
           >
         </button>
+        <!-- The closable tabs right of the fixed ones, one per task opened in the channel.
+             Each close button is a sibling, for the same reason as the free zone's below. -->
+        <span v-if="closables.length" class="tabbar__sep" aria-hidden="true" />
+        <div v-for="closable in closables" :key="closable.key" class="tabbar__file">
+          <button
+            type="button"
+            role="tab"
+            class="tabbar__tab"
+            :class="{ 'tabbar__tab--on': active === closable.key, 'tabbar__tab--side': side === closable.key }"
+            :aria-selected="active === closable.key"
+            :aria-controls="panelId"
+            :title="closable.title ?? closable.label"
+            @click="emit('select', closable.key)"
+          >
+            <v-icon size="16">{{ closable.icon }}</v-icon>
+            <span class="tabbar__name">{{ closable.label }}</span>
+            <span v-if="closable.signal?.kind === 'dot'" class="tabbar__dot" />
+          </button>
+          <button
+            type="button"
+            class="tabbar__close"
+            data-testid="panel-tab-close"
+            :aria-label="t('work.room.tabs.close', { name: closable.label })"
+            :title="t('work.room.tabs.close', { name: closable.label })"
+            @click="emit('close-tab', closable.key)"
+          >
+            <v-icon size="14">mdi-close</v-icon>
+          </button>
+        </div>
         <!-- 自由区。关闭钮和页签是兄弟，不是它的孩子：按钮里套按钮不合法，读屏也会把
          两者念成一个东西。 -->
         <span v-if="files.length" class="tabbar__sep" aria-hidden="true" />

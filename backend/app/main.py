@@ -61,6 +61,7 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.ownership import keep_holding
+from app.core.policy import oversee_with
 from app.core.process_role import is_api_pool
 from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
@@ -72,6 +73,7 @@ from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.admin.services import is_platform_admin
 from app.domain.agent import gateway_catalog
 from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub import machine as machine_streams
@@ -1100,6 +1102,11 @@ async def app_version() -> dict:
 # itself; with a connection owner, the owner relays them here over HTTP.
 if not settings.device_connection_url:
     machine_streams.serve(machine_relay.in_process(app))
+
+# The platform's admins manage every space and team (app/core/policy.py): the
+# policies cannot import the admin domain that knows who they are, so it is
+# named to them here, at import, before any request is judged.
+oversee_with(is_platform_admin)
 
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).

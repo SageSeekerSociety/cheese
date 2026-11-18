@@ -503,6 +503,7 @@ class StubChannel(SeatChannel):
         self.sessions: dict[tuple[uuid.UUID, str], ScriptedSession] = {}
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
+        self.last_retired_session_id: str | None = None
         self.last_prompt: str | None = None
         self.reply = "Hello world"
         self._alive = True
@@ -549,6 +550,7 @@ class StubChannel(SeatChannel):
         """The seat's runner, started the first time the seat starts."""
         self.last_system_prompt = launch.system_prompt
         self.last_resume_session_id = launch.resume_session_id
+        self.last_retired_session_id = launch.retired_session_id
         key = (session.conversation_id, agent)
         runner = self.sessions.get(key)
         if runner is None:
@@ -1302,7 +1304,6 @@ def stub_project_forge(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
 
-    default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
     remote_status = forge_clients.compare_status
@@ -1337,9 +1338,7 @@ def stub_project_forge(monkeypatch, tmp_path):
 
     async def read_default_branch(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
-        if binding is None:
-            return await default_branch(project_id, session)
-        return binding.default_branch
+        return None if binding is None else binding.default_branch
 
     async def test_repository(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
@@ -1392,7 +1391,9 @@ def stub_project_forge(monkeypatch, tmp_path):
             revision = route.removeprefix("/git/commits/").removesuffix(".diff")
             return git_store.git(repo, "show", "--format=", revision)
 
-        def commits(revision):
+        def commits(revision, *, limit=50, only=None):
+            # As GitHub: `path` keeps the commits that changed that file.
+            scope = ["--", only] if only else []
             return [
                 {
                     "sha": sha,
@@ -1402,18 +1403,28 @@ def stub_project_forge(monkeypatch, tmp_path):
                                 repo, "show", "-s", "--format=%an", sha
                             ).strip()
                         },
+                        "committer": {
+                            "date": git_store.git(
+                                repo, "show", "-s", "--format=%cI", sha
+                            ).strip()
+                        },
                         "message": git_store.git(
                             repo, "show", "-s", "--format=%B", sha
                         ).strip(),
                     },
                 }
                 for sha in git_store.git(
-                    repo, "rev-list", "--max-count=50", revision
+                    repo, "rev-list", f"--max-count={limit}", revision, *scope
                 ).splitlines()
             ]
 
         if route == "/commits":
-            return commits(parse_qs(urlsplit(path).query)["sha"][0])
+            query = parse_qs(urlsplit(path).query)
+            return commits(
+                query["sha"][0],
+                limit=int(query.get("per_page", ["50"])[0]),
+                only=query.get("path", [None])[0],
+            )
         if route.startswith("/pulls/") and route.endswith(".diff"):
             from sqlalchemy import select
 
@@ -1480,6 +1491,17 @@ def stub_project_forge(monkeypatch, tmp_path):
                 ["git", "-C", str(repo), "cat-file", "blob", oid]
             )
             return {"encoding": "base64", "content": base64.b64encode(data).decode()}
+        if route.startswith("/branches/"):
+            # As Forgejo: what the branch points at now; 404 (None) when there
+            # is no such branch. `forge.branch_head` reads `commit.id` here (the
+            # binding kind is forgejo), the same shape `branch_head` above uses.
+            branch = route.removeprefix("/branches/")
+            result = git_store.run(
+                ["git", "rev-parse", "--verify", branch], repo, 20, None
+            )
+            if result.returncode != 0:
+                return None
+            return {"commit": {"id": result.stdout.strip()}}
         if not route.startswith("/compare/"):
             return await remote_data(project_id, session, path, **kwargs)
         base, head = route.removeprefix("/compare/").split("...")
@@ -1507,8 +1529,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge, "prepare_repository", prepare_repository)
     monkeypatch.setattr(forge, "starter_remote", starter_remote)
     monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
-    monkeypatch.setattr(forge, "default_branch", read_default_branch)
-    monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
+    monkeypatch.setattr(forge, "default_branch_if_any", read_default_branch)
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)

@@ -22,6 +22,7 @@ from app.api.task_deps import (
 )
 from app.api.task_serialization import (
     _enrich_task_attachment_counts,
+    _enrich_task_knowledge_points,
     _enrich_task_models,
     _enrich_task_submission_schema,
     _enrich_task_topics,
@@ -315,12 +316,13 @@ async def get_task(
                 )
             )
 
-    # 阶段、提交表单与评分要点。评分要点：批改的人（出题人、空间管理员）总能读到；
-    # 别人只在它公开时读到。
-    requirements = await _task_requirements(service, task_id)
+    # 阶段、提交表单、评分要点与测试点。评分要点：批改的人（出题人、空间管理员）
+    # 总能读到；别人只在它公开时读到。测试点：批改的人读到每个用例的输入与期望输出；
+    # 别人读到隐藏用例的名称、分值和通过与否（可能的情形），拿不到字节。
     may_grade = auth_user.user_id > 0 and await task_seats.teaches(
         db, task, auth_user.user_id
     )
+    requirements = await _task_requirements(service, task_id, teacher=may_grade)
     if not (task.rubric_public or may_grade):
         requirements["rubric"] = []
     task_dict.update(requirements)
@@ -352,6 +354,11 @@ async def get_task(
     enriched_task = (
         await _enrich_task_models(db, [task_dict], space_id=task.space_id)
     )[0]
+    # 这道题涉及的知识点（§ learning analysis, step 1）：详情的「涉及的知识点」那一格
+    # 读它；板没开学情分析时不查。
+    await _enrich_task_knowledge_points(
+        db, [enriched_task], shown_in_space=task.space_id
+    )
 
     return ok(
         {
@@ -455,8 +462,10 @@ async def get_tasks(
         sort_by = "createdAt"
         sort_order = "asc"
 
-    # 权限检查：查询未审批任务需要是空间管理员
-    is_space_admin = await space_seats.runs(db, space, auth_user.user_id)
+    # 权限检查：查询未审批任务需要教这块板（所有者、管理员与平台管理员）
+    is_space_admin = await space_seats.SPACE.allows(
+        db, space, auth_user.user_id, space_seats.Permission.teach
+    )
     if approved_value == 2 and not is_space_admin:  # NONE = 未审批
         raise ForbiddenError("Only space admins can view unapproved tasks")
     viewer_email_domain = await resolve_user_email_domain(db, auth_user.user_id)
@@ -516,6 +525,10 @@ async def get_tasks(
     # so undefined-checks behave consistently.
     if queryTopics:
         await _enrich_task_topics(db, items)
+
+    # 知识点与被点名的 topics 同一条件：卡片和清单也读 task.knowledgePoints，未点名
+    # 时也填一个空数组，undefined 判断才一致（§ learning analysis, step 1）。
+    await _enrich_task_knowledge_points(db, items)
 
     # Per-user state — joined / submittable / userDeadline / participationEligibility.
     # Only run when the frontend explicitly asks (queryJoined / querySubmittability /

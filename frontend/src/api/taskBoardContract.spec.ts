@@ -149,6 +149,17 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
     },
   },
   {
+    label: 'createSubmission with the code version shown',
+    name: 'createSubmission',
+    test: {
+      method: 'POST',
+      path: '/tasks/42/participants/11/submissions',
+      args: [42, 11, [{ text: '答案' }], null, 'abc123'],
+      query: [['codeSha', 'abc123']],
+      body: [{ text: '答案' }],
+    },
+  },
+  {
     label: 'updateSubmission',
     name: 'updateSubmission',
     test: {

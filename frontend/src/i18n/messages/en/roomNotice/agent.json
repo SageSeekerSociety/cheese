@@ -92,8 +92,9 @@
   "memoryDreamChanged": "Memory cleanup: shared project memory entries changed: {count}",
   "memoryDreamRefused": "Memory cleanup was skipped this time: it would have deleted more entries than the limit allows",
   "memoryDreamRefusedDetail": "When one cleanup would delete more than half of a scope's memories and more than 3 of them, the platform treats it as something gone wrong rather than a cleanup: nothing was written this time, and no memory was lost. Record ID `{run_id}`",
+  "memoryDropped": "Not saved: {count}",
   "memoryRefused": "Some changes were overwritten by the platform's version; reread before writing again",
-  "memoryRejected": "Over the length limit and not written: {count}",
+  "memoryRejected": "Not written: {count}",
   "memoryScopePrivate": "Your private",
   "memoryScopeTeam": "Shared project",
   "mentionUnknownMember": "Could not notify {member}: not a member of this project",
@@ -188,5 +189,7 @@
   "roomFileEditorSavedAside": "{path} had changed when {who} saved, so this copy was saved as {aside}, and {agent} was told",
   "ownAgentRoomConsent": "I was added to {room} (room ID: {room_id}). May I participate? I will wait for your approval before acting there.",
   "ownAgentRoomYes": "Yes",
-  "ownAgentRoomNo": "No"
+  "ownAgentRoomNo": "No",
+  "conversationAbandoned": "This conversation could not be compacted, so the platform carried on in a new one. Not a message in the channel is missing; details that were only ever said in the conversation, and reached neither a file nor a task, do not carry over",
+  "actedByTeammate": "{agent} on behalf of {person}"
 }

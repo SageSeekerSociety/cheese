@@ -494,7 +494,12 @@ class AgentInstanceService:
         writers that read the same version would both pass a comparison made
         here (``living_doc.repositories.set_content`` takes the same stand).
         """
-        await self._validate_model(instance.project_id, config, instance.id)
+        await self._validate_model(
+            instance.project_id,
+            config,
+            instance.id,
+            saved=AgentConfiguration.model_validate(instance.configuration or {}),
+        )
         dumped = config.model_dump()
         now = datetime.now(UTC)
         if expected_version is None:
@@ -535,24 +540,57 @@ class AgentInstanceService:
         config.body = "\n\n".join(part for part in (config.body, text) if part)
         await self.configure(instance, config)
 
+    async def seed_task_model(self, instance: AgentInstance, model: str) -> None:
+        """What this teammate runs on in tasks, from the 资源包 a project took
+        (``adapters.default_teammate``): only while it chose nothing there.
+
+        Not checked against the catalogue as a person's pick is: the 题目's
+        publisher named it, and a task on a model the project cannot run is
+        refused by name when it runs (``binding.resolve``)."""
+        config = AgentConfiguration.model_validate(instance.configuration or {})
+        if config.task_model is None:
+            config.task_model = model
+            instance.configuration = config.model_dump()
+            instance.version = instance.version + 1
+            instance.updated_at = datetime.now(UTC)
+
     async def _validate_model(
         self,
         project_id: uuid.UUID,
         config: AgentConfiguration,
         instance_id: uuid.UUID | None = None,
+        saved: AgentConfiguration | None = None,
     ) -> None:
+        """``saved`` is the configuration being replaced: its task and subagent
+        models are judged only when this write changes them, so a write that
+        leaves them as they were (a skill added, a persona appended) is not
+        refused for a model somebody else put there (``seed_task_model``)."""
         project = await self._session.get(Project, project_id)
         if project is None:
             raise NotFoundError(say("projectNotFound"))
+        scene_models = [
+            chosen
+            for chosen, was in (
+                (config.task_model, saved.task_model if saved else None),
+                (config.subagent_model, saved.subagent_model if saved else None),
+            )
+            if chosen != was
+        ]
         if config.execution_device_id:
             device = await self._session.get(DeviceRow, config.execution_device_id)
             if device is None or device.team_id != project.team_id:
                 raise ValidationError(say("deviceNotInProject"))
+        own = await self._session.get(OwnAgent, instance_id) if instance_id else None
+        if own is not None and (config.task_model or config.subagent_model):
+            # 自己的队友跑在成员自己的账号上，用的是它自己那一个模型：任务里、
+            # 分身另配的是项目额度上的模型，到不了那里。
+            raise ValidationError(say("teamConnectionModelRefused"))
         if config.model is None:
             # 这次保存没碰模型（只改了技能之类）：没有要校验的选择，自己的队友
             # 也一样 —— 「保留原来的模型」不该被当成「选了一个不被允许的模型」。
+            # 任务里、分身另配的那两个改了的照样各自校验。
+            await self._validate_choices(project, scene_models)
             return
-        own = await self._session.get(OwnAgent, instance_id) if instance_id else None
         if own is not None:
             if own.account_connection_id:
                 table, field, connection_id = (
@@ -595,13 +633,24 @@ class AgentInstanceService:
             if config.model not in models:
                 raise ValidationError(say("teamConnectionModelRefused"))
             return
+        await self._validate_choices(project, [config.model, *scene_models])
+
+    async def _validate_choices(
+        self, project: Project, chosen: list[str | None]
+    ) -> None:
+        """Each model named in ``chosen`` is one this project offers and its
+        team's plan allows; None names none."""
+        named = [model for model in chosen if model is not None]
+        if not named:
+            return
         choices = self._models(project.settings) if self._models else []
-        choice = next((c for c in choices if c["id"] == config.model), None)
         access = await UsageService(self._session).model_access(project.team_id)
-        if choice is None or not access.shows(choice):
-            raise ValidationError(say("modelUnavailable"))
-        if not access.allows(choice):
-            raise ValidationError(say("modelNotInPlan", label=choice["label"]))
+        for model in named:
+            choice = next((c for c in choices if c["id"] == model), None)
+            if choice is None or not access.shows(choice):
+                raise ValidationError(say("modelUnavailable"))
+            if not access.allows(choice):
+                raise ValidationError(say("modelNotInPlan", label=choice["label"]))
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
         """What this agent is called. Its ``handle`` is deliberately untouched:

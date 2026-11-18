@@ -194,15 +194,18 @@ export function askClosedByAsker(block: Block): AskClosed | null {
 export function askAnswers(block: Block): AskAnswer[] {
   const log = (block.meta as Record<string, unknown> | null)?.answer_log
   if (!Array.isArray(log)) return []
-  return (log as Record<string, unknown>[])
-    .filter((entry) => entry.kind !== 'withdrawn' && entry.kind !== 'expired')
-    .map((entry: Record<string, unknown>) => ({
-      by: String(entry.by ?? ''),
-      // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。
-      text:
-        entry.kind === 'reject'
-          ? t('ask.replies.noneOfThese')
-          : String((entry.kind === 'note' ? entry.note : entry.option) ?? ''),
-      skipped: entry.kind === 'skipped',
-    }))
+  return (
+    (log as Record<string, unknown>[])
+      // `pending`：打字回复还没被提问方确认成答案，题照旧开着，不算回答。
+      .filter((entry) => !['withdrawn', 'expired', 'pending'].includes(String(entry.kind)))
+      .map((entry: Record<string, unknown>) => ({
+        by: String(entry.by ?? ''),
+        // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。
+        text:
+          entry.kind === 'reject'
+            ? t('ask.replies.noneOfThese')
+            : String((entry.kind === 'note' ? entry.note : entry.option) ?? ''),
+        skipped: entry.kind === 'skipped',
+      }))
+  )
 }

@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -23,6 +23,7 @@ from app.domain.project.models import (
     ProjectStarterPush,
 )
 from app.domain.project.ports import (
+    AcceptedTerms,
     Claim,
     ComputeCredits,
     DefaultTeammate,
@@ -183,6 +184,7 @@ class ProjectService:
         display_name: str | None = None,
         type_name: str | None = None,
         pack_prompt: str | None = None,
+        task_model: str | None = None,
     ) -> None:
         """这个项目的那一位芝士：没有就播一个，人设按调用方说的落上去。
 
@@ -197,6 +199,7 @@ class ProjectService:
             display_name=display_name,
             type_name=type_name,
             pack_prompt=pack_prompt,
+            task_model=task_model,
         )
 
     async def _has_earmark(self, project: Project, task_id: int) -> bool:
@@ -745,13 +748,47 @@ class ProjectService:
         terms = await terms_port.terms(task_id)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
+        # The pack's model is what the publisher's credits do the work on: the
+        # default teammate's model in tasks. The project main model stays
+        # unset (「自动」), so conversation runs on the platform's pick.
         await self._seed_default_teammate(
-            project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
+            project,
+            type_name=terms.default_role,
+            pack_prompt=terms.pack_prompt,
+            task_model=terms.model,
         )
-        if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
+        if terms.compute_credits > 0 and await self._earmark_due(
+            project, task_id, terms
+        ):
             await self._grant_earmark(
                 project, task_id, credits_total=terms.compute_credits
             )
+
+    async def _earmark_due(
+        self, project: Project, task_id: int, terms: AcceptedTerms
+    ) -> bool:
+        """Whether this project should get the 题目's pack now: never twice for
+        one project, and for a once-per-person pack never when the person's
+        team already holds one from any 题目 that shares it. A personal claim's
+        projects all sit on the claimant's personal team, so asking the team is
+        asking the person, and a deleted project's pack still counts."""
+        if await self._has_earmark(project, task_id):
+            return False
+        if not terms.shared_with:
+            return True
+        if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("compute_credits was not handed in")
+        # The claim lock is per (题目, team), so one person starting two
+        # starters at once holds two different locks; this one, per team and
+        # to the end of the transaction, makes the check and the grant one step.
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"once-per-person-pack:{project.team_id}"},
+        )
+        return not await self._compute_credits.team_has_earmark(
+            project.team_id, terms.shared_with
+        )
 
     async def activate_participation(self, *, task: TaskBrief, claim: Claim) -> None:
         """Release the task's resources to its workspace after approval."""

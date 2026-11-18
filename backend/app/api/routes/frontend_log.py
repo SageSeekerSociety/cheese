@@ -20,7 +20,9 @@ async def report_frontend_errors(
     happen in the intake — a dropped duplicate still returns 200, so the
     reporting client never retries."""
     # The intake is in the bottom layer and reads no project table, so this is
-    # where a batch for a project that does not exist is refused.
-    await ProjectService(db).get_or_404(body.project_id)
+    # where a batch for a project that does not exist is refused. A batch with
+    # no project at all — a page outside every project — has nothing to check.
+    if body.project_id is not None:
+        await ProjectService(db).get_or_404(body.project_id)
     origin = request.headers.get("origin")
     return ok(await frontend_log.record(db, body, origin=origin))

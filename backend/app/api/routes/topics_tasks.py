@@ -29,6 +29,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
 
+from app.api.accept_service import accept_service
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
@@ -64,39 +65,54 @@ from app.auth.project_roles import may
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
+    NotFoundError,
     UnprocessableEntityError,
 )
 from app.core.sentences import say
 from app.domain.agent import checkout_sweep
-from app.domain.agent.announce import announce
+from app.domain.agent.announce import announce, open_turn_of, word_that_started
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
-from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
 from app.domain.agent.own_calls import ask_owner_to_join, owner_chats_to_ask
+from app.domain.agent.room.thread_context import member, task_summary
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent.turn.intake.rooms import room_roster
 from app.domain.agent_instance.adapters import (
     project_team,
     seat_project,
-    task_teammate,
 )
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.delivery.agent import (
+    TASK_TOLD,
+    exchange_of,
+    record_seat_instruction,
+    record_task_report,
+)
 from app.domain.delivery.ledger import settle_card
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
+from app.domain.project.address import Numbered, things_by_ref
 from app.domain.project_permissions import Permission
+from app.domain.prompts import piece, task_opening_prompt
 from app.domain.review.archive import OPEN_CARD_STATUSES, close_cards_for_closed_task
-from app.domain.review.services import AcceptService
-from app.domain.review.task_landing import tell_origin
+from app.domain.review.close_grounds import grounds_to_close
+from app.domain.review.services import AcceptService, deliverable_revision
+from app.domain.review.task_landing import (
+    main_line_opener,
+    task_named,
+    tell_origin_ended,
+    wait_for_deploy,
+)
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.lock_order import lock_task_for_change
-from app.domain.room_task.place import place_or_404
+from app.domain.room_task.place import PlaceResolver, place_or_404
 from app.domain.room_task.progress import RUN_HEADER, parse_run, set_progress
 from app.domain.room_task.schemas import ProgressIn, TaskOut
 from app.domain.room_task.services import TaskService, said_title
@@ -243,21 +259,23 @@ async def conclude_task(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """关闭任务：someone who works it — its owner or a contributor — or its
-    own session says it is over. With a conclusion it is done — the work did
-    not end in a merge (research, a decision); without one it was put down.
-    Delivered work closes by itself when its change is accepted.
+    own session says it is over. With a conclusion it is done; without one it
+    was put down. A merge does not close a task (`review.task_landing`): its
+    teammate judges it done and closes it here.
 
     Closing is not undone by reopening (its open cards are voided, its pull
     request closed), so it is kept to the people whose word the task's
     teammate acts on (`TaskService.takes_part`); reopening is wider. Its own
     session may not close it while a delivery on it waits on a person: that
-    close would void the delivery, which is the person's decision.
+    close would void the delivery, which is the person's decision. Nor
+    without grounds the platform can check (`review.close_grounds`). In a
+    project that waits for its deploy, its own session's close after a merge
+    leaves it open, waiting for that merge to go live (``deploying: true``).
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     # Before anything else is locked: the task lock order (`lock_order`); the
     # task read above is read again under it.
     await lock_task_for_change(db, task.id)
-    tasks = TaskService(db)
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
@@ -268,6 +286,48 @@ async def conclude_task(
             raise ConflictError(say("taskCloseWhileDeliveryWaits"))
     elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
+    grounds = (
+        await grounds_to_close(
+            db,
+            task,
+            owner_message=body.owner_message_id,
+            unchecked_reason=body.unchecked_reason,
+        )
+        if actor.via == "cheese"
+        else None
+    )
+    return ok(
+        await _close(
+            db,
+            place,
+            actor,
+            task,
+            body,
+            chat,
+            own_session=actor.via == "cheese",
+            unchecked=grounds.unchecked if grounds is not None else None,
+        )
+    )
+
+
+async def _close(
+    db,
+    place,
+    actor,
+    task,
+    body: ConclusionIn,
+    chat: ChatService,
+    *,
+    own_session: bool,
+    unchecked: str | None = None,
+) -> dict:
+    """Close ``task`` once who may has been settled: by a person who works it,
+    by its own session (``own_session``: the turn that would be stopped ends
+    by itself, and it read how it ended in the tool's reply), or by the AI
+    teammate that opened it from the channel's main line. ``unchecked``: the
+    checklist items its own session left undone, with its reason, appended to
+    the conclusion (`review.close_grounds`)."""
+    tasks = TaskService(db)
     credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
     # Who reported it and who works it is the owner's to change (`update_task`);
     # a contributor closing the task does not get to rewrite that.
@@ -301,12 +361,26 @@ async def conclude_task(
                 else task.contributor_handles
             ),
         )
+    if unchecked:
+        conclusion = "\n\n".join(part for part in (conclusion, unchecked) if part)
+    # Its teammate judged it done, but in a project that waits for its deploy
+    # the task stays open until its last merge is live, and is written up then
+    # (`task_landing.wait_for_deploy`).
+    if own_session and await wait_for_deploy(db, task):
+        out = await task_out(
+            db,
+            task,
+            (await AcceptService(db).latest_by_task([task.id])).get(task.id),
+            me=actor.handle or "",
+        )
+        await db.commit()
+        return {**out, "deploying": True}
     # Its own session closing it is the turn that would be stopped, and it
     # ends by itself.
     task = await close_task(
         db,
         task,
-        None if actor.via == "cheese" else chat,
+        None if own_session else chat,
         conclusion=conclusion,
         machines=checkout_sweep.sweep,
     )
@@ -333,17 +407,20 @@ async def conclude_task(
         content=ended,
         # Its own session closing it read that in the tool's reply.
         meta=closed
-        if actor.via == "cheese"
+        if own_session
         else heard.informing(
             closed, heard.task_closed(by=actor.handle, conclusion=task.conclusion)
         ),
     )
-    # The 支线 line under the message the task was made from is said by its AI
-    # teammate, so whose teammate it is comes in here too.
-    await tell_origin(db, task, ended, task_teammate=task_teammate)
+    # The conversation the task was made from records how it ended, and the AI
+    # teammate that opened it from the channel's main line is told to say so.
+    await tell_origin_ended(
+        db, task, announce=announce, record_seat=record_seat_instruction
+    )
     out = await task_out(db, task, latest_card, me=actor.handle or "")
     await db.commit()
-    return ok(out)
+    await dispatch(chat)
+    return out
 
 
 @router.put(
@@ -416,6 +493,11 @@ async def reopen_task(
         db, place.project_id, actor.handle, Permission.tasks
     ):
         raise ForbiddenError(say("taskOwnSessionReopens"))
+    return ok(await _reopen(db, place, actor, task))
+
+
+async def _reopen(db, place, actor, task) -> dict:
+    """Reopen ``task`` once who may has been settled."""
     # The same test `reopen` moves a task onto a new branch by.
     new_branch = task.branch_name is not None and task.delivered_head is not None
     task = await TaskService(db).reopen(task)
@@ -433,7 +515,7 @@ async def reopen_task(
     )
     out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
-    return ok(out)
+    return out
 
 
 # —— 创建、转交 ——————————————————————————————————————————————————
@@ -630,6 +712,9 @@ class TeammateTaskIn(BaseModel):
     #: new task being made from it.
     here: bool = False
     source_message_id: uuid.UUID | None = None
+    #: The AI teammate that works it, when a member named another one for it;
+    #: left out, the one opening it.
+    teammate: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/{topic_id}/teammate-tasks", dependencies=[ROUTE_DECIDES])
@@ -642,8 +727,10 @@ async def create_teammate_task(
 ) -> dict:
     """An AI teammate makes a task (`cheese_task(action=open)`) on someone's word, from the
     conversation it is in: the 支线 itself (``here``), or a new task that hangs
-    under the message the 支线 is under. A teammate whose own idea it is asks
-    first (`cheese_ask`), and the person who answers is who it does it for."""
+    under the message the 支线 is under. In a channel's main line it is always
+    a new task, hanging under the message that asked for it. A teammate whose
+    own idea it is asks first (`cheese_ask`), and the person who answers is who
+    it does it for."""
     place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
@@ -696,16 +783,12 @@ async def create_teammate_task(
     ):
         prior = await idem.stored_result(db, key)
         return ok(prior or {"skipped": True})
-    origin = (
-        await BlockRepository(db).get(place.thread.root_block_id)
-        if place.thread is not None
-        else None
-    )
     named = (body.owner_handle or "").strip().lstrip("@")
     if named and named not in await TopicMemberService(db).project_people(
         place.project_id, team=project_team
     ):
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
+    main_line = place.thread is None and place.task is None
     # What the person said that this turn answers is where the task came from;
     # in a 支线 that is usually a reply, not the message the 支线 hangs under.
     # The owner's word may have been given in their private chat with the
@@ -720,8 +803,23 @@ async def create_teammate_task(
         db,
         place.conversation_id,
         actor.handle,
-        main_line=place.thread is None and place.task is None,
+        main_line=main_line,
     )
+    origin = (
+        await BlockRepository(db).get(place.thread.root_block_id)
+        if place.thread is not None
+        else asked
+        if main_line
+        else None
+    )
+    teammate = (body.teammate or "").strip().lstrip("@") or actor.handle
+    if teammate != actor.handle:
+        # Another teammate takes the task only on a member's word: the message
+        # the task is for names it (`<@seat>`, as it is stored).
+        if asked is None or f"<@{teammate}>" not in (asked.content or ""):
+            raise UnprocessableEntityError(
+                say("teammateTaskNotNamed", teammate=teammate)
+            )
     owner = (
         named
         or (source.author if source is not None else None)
@@ -751,7 +849,7 @@ async def create_teammate_task(
         created_by=actor.handle,
         title=body.title,
         owner_handle=owner,
-        teammate=actor.handle,
+        teammate=teammate,
         named_by_teammate=True,
         origin_block_id=origin.id if origin is not None else None,
         source_block_id=asked.id if asked is not None else None,
@@ -768,6 +866,8 @@ async def create_teammate_task(
             source=teammate_source_text(actor.handle, body.summary, blocks),
             materials=materials_text(materials(blocks)),
             reviewer=task.reviewer_handle,
+            has_checkout=task.branch_name is not None,
+            reports_to_main_line=main_line,
         ),
         opening=True,
     )
@@ -777,3 +877,280 @@ async def create_teammate_task(
     await db.commit()
     await dispatch(chat)
     return ok(out)
+
+
+# —— 频道主线统筹任务 ——————————————————————————————————————————————
+#
+# A channel's main line opens tasks and coordinates them: tells one what a
+# member added, looks into one, closes or reopens one it opened. A task it
+# opened reports back to it (`report`). What passes between them is in no
+# conversation: it is kept as deliveries (`delivery.agent.exchange_of`), read by
+# `look`, and each side's 现场 shows the call it made.
+
+
+class TellIn(BaseModel):
+    content: str = Field(min_length=1, max_length=20000)
+    #: The member the request is passed on for, when it is not the task's own
+    #: proposer: kept on the task, and told when the task is handed in or ends.
+    asker: str | None = Field(default=None, max_length=64)
+
+
+class ReportIn(BaseModel):
+    kind: Literal["question", "blocked"]
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class TaskNamed(BaseModel):
+    id: str
+    number: int | None
+    title: str
+
+
+class TaskAccepted(TaskNamed):
+    #: Where the delivery stands after the adoption: `accepted` when it
+    #: landed, `conflict` when the merge met a conflict the task is now
+    #: resolving.
+    status: str
+
+
+class ExchangeLine(BaseModel):
+    at: str
+    kind: str | None
+    content: str
+
+
+class TaskLook(TaskNamed):
+    summary: str
+    exchange: list[ExchangeLine]
+
+
+class ReportOut(BaseModel):
+    reported: Literal["question", "blocked"]
+
+
+async def _coordinated(db, at: InChannel, ref: str):
+    """The task of this channel that ``ref`` names (its number or id), asked
+    from the channel's main line."""
+    place = at.place
+    if place.inner_id is not None:
+        raise ForbiddenError(say("coordinateFromMainLine"))
+    ref = ref.strip()
+    found = (await things_by_ref(db, place.project_id, Numbered.task, [ref])).get(ref)
+    if found is None or found.room_id != place.room_id:
+        raise NotFoundError(say("chatTaskUnknown", task=ref))
+    task = await TaskService(db).get(found.id)
+    if task is None:
+        raise NotFoundError(say("chatTaskUnknown", task=ref))
+    return task
+
+
+def _opened_by(task, actor) -> None:
+    """Only the AI teammate that opened a task from the main line closes or
+    reopens it from there."""
+    if task.created_by != actor.handle:
+        raise ForbiddenError(say("coordinateOwnTasksOnly"))
+
+
+@router.get("/{topic_id}/tasks/{ref}", **typed_response(TaskLook))
+async def look_into_task(
+    ref: str,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    db: DbSession,
+) -> dict:
+    """A task of this channel as the main line looks into it: its platform
+    facts (`summary`), and what passed between them (`exchange`). Its
+    conversation, commands and changes are read by its id from the routes that
+    serve them (`/topics/{id}/history`, `/session-records`, `/git/diff`)."""
+    task = await _coordinated(db, at, ref)
+    roster = await room_roster(db, at.place.project_id, at.place.room)
+    names = {m["handle"]: m["name"] for m in roster}
+    exchange = [
+        {
+            "at": row.recorded_at.isoformat(),
+            "kind": row.payload.get("eventType"),
+            "content": row.payload.get("content") or "",
+        }
+        for row in await exchange_of(db, task.id)
+    ]
+    return ok(
+        {
+            "id": str(task.id),
+            "number": task.number,
+            "title": task.title,
+            "summary": await task_summary(db, task, names),
+            "exchange": exchange,
+        }
+    )
+
+
+@router.post("/{topic_id}/tasks/{ref}/tell", **typed_response(TaskNamed))
+async def tell_coordinated_task(
+    ref: str,
+    body: TellIn,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """The main line passes something on to a task: what a member added, an
+    answer to its question. With ``asker``, a member's request passed on for
+    them: kept on the task, so they are told when it is handed in or ends."""
+    task = await _coordinated(db, at, ref)
+    if TaskService.is_closed(task):
+        raise ConflictError(say("coordinateTellClosed"))
+    asker = (body.asker or "").strip().lstrip("@") or None
+    if asker is not None:
+        if asker not in await TopicMemberService(db).project_people(
+            at.place.project_id, team=project_team
+        ):
+            raise UnprocessableEntityError(say("taskOwnerNotInProject"))
+        if asker != (task.reporter_handle or task.owner_handle):
+            await TaskService(db).add_asker(task, asker)
+    names = {
+        m["handle"]: m["name"]
+        for m in await room_roster(db, at.place.project_id, at.place.room)
+    }
+    await tell_task(
+        db,
+        task,
+        piece(
+            "main_line/told",
+            sender=member(at.actor.handle, names),
+            asker=piece("main_line/told_asker", asker=member(asker, names))
+            if asker
+            else "",
+            text=body.content.strip(),
+        ),
+        event_type=TASK_TOLD,
+        asker=asker,
+        exchanged=(at.actor.handle, body.content.strip()),
+    )
+    await db.commit()
+    await dispatch(chat)
+    return ok({"id": str(task.id), "number": task.number, "title": task.title})
+
+
+@router.post("/{topic_id}/tasks/{ref}/close", **typed_response(TaskOut))
+async def close_coordinated_task(
+    ref: str,
+    body: ConclusionIn,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """The main line closes a task it opened, as its members asked. Not one
+    whose delivery waits on a person: closing would void it, which is that
+    person's decision."""
+    task = await _coordinated(db, at, ref)
+    _opened_by(task, at.actor)
+    await lock_task_for_change(db, task.id)
+    if TaskService.is_closed(task):
+        raise ConflictError(say("coordinateAlreadyClosed"))
+    if await AcceptService(db).waiting_card(task.id) is not None:
+        raise ConflictError(say("coordinateCloseWhileReviewWaits"))
+    place = await PlaceResolver(db).task_place(task.id)
+    assert place is not None
+    return ok(await _close(db, place, at.actor, task, body, chat, own_session=False))
+
+
+@router.post("/{topic_id}/tasks/{ref}/reopen", **typed_response(TaskOut))
+async def reopen_coordinated_task(
+    ref: str,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    db: DbSession,
+) -> dict:
+    """The main line reopens a task it opened."""
+    task = await _coordinated(db, at, ref)
+    _opened_by(task, at.actor)
+    await lock_task_for_change(db, task.id)
+    place = await PlaceResolver(db).task_place(task.id)
+    assert place is not None
+    return ok(await _reopen(db, place, at.actor, task))
+
+
+@router.post("/{topic_id}/tasks/{ref}/accept", **typed_response(TaskAccepted))
+async def accept_coordinated_task(
+    ref: str,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    db: DbSession,
+) -> dict:
+    """The main line adopts a task's delivery on its reviewer's word: the
+    reviewer said so in the message that started this turn, and the AI
+    teammate adopts for them, recorded as such (`decided_by_assistant`).
+
+    Only then. The delivery is the one waiting on that very person, handed in
+    before they spoke, and what is adopted is what the platform holds for it
+    (the head on the card, the deliverable's current version) — the caller
+    names no version. The ordinary acceptance service does the rest, so its
+    gates, merge, PR and what follows are the ones a click goes through."""
+    task = await _coordinated(db, at, ref)
+    service = accept_service(db)
+    card = await service.waiting_card(task.id)
+    if card is None:
+        raise ConflictError(say("coordinateAcceptNothingWaiting"))
+    reviewers = (await service.reviewer_handles_for_cards([card.id])).get(card.id, [])
+    roster = await room_roster(db, at.place.project_id, at.place.room)
+    names = {m["handle"]: m["name"] for m in roster}
+    waiting_on = "、".join(member(handle, names) for handle in reviewers)
+    turn = await open_turn_of(
+        db, at.place.project_id, at.place.conversation_id, at.actor.handle
+    )
+    reviewer = turn.author if turn is not None else None
+    if reviewer is None or reviewer not in reviewers:
+        raise ForbiddenError(
+            say("coordinateAcceptReviewerWordOnly", reviewer=waiting_on)
+        )
+    assert turn is not None
+    said = await word_that_started(db, turn)
+    if said is None or card.created_at > said.created_at:
+        raise ConflictError(say("coordinateAcceptNewerDelivery", reviewer=waiting_on))
+    decided = await service.accept(
+        card_id=card.id,
+        decided_by=reviewer,
+        head_sha=card.pr_head_sha,
+        deliverable_revision=deliverable_revision(task.project_id, card),
+        by_assistant=True,
+        by_seat=at.actor.handle,
+    )
+    return ok(
+        {
+            "id": str(task.id),
+            "number": task.number,
+            "title": task.title,
+            "status": decided.status.value,
+        }
+    )
+
+
+@router.post("/{topic_id}/report", **typed_response(ReportOut))
+async def report_to_main_line(
+    body: ReportIn,
+    at: Annotated[InChannel, Can(Permission.coordinate_tasks, at="topic_id")],
+    resolver: ActorResolverDep,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """A task's own session reports to the AI teammate that opened it from the
+    channel's main line: a question it needs answered, or that it cannot go
+    on. Its hand-in and its end reach the main line by themselves."""
+    task = at.place.task
+    if task is None or resolver.credential_conversation() != task.id:
+        raise ForbiddenError(say("reportFromOwnTask"))
+    opener = await main_line_opener(db, task)
+    if opener is None:
+        raise ConflictError(say("reportNotOpenedByMainLine"))
+    await record_task_report(
+        db,
+        task,
+        seat=opener,
+        kind=body.kind,
+        sender=at.actor.handle,
+        said=body.content.strip(),
+        content=piece(
+            f"main_line/report_{body.kind}",
+            task=task_named(task),
+            text=body.content.strip(),
+        ),
+    )
+    await db.commit()
+    await dispatch(chat)
+    return ok({"reported": body.kind})
