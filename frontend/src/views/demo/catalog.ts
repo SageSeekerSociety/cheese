@@ -53,6 +53,7 @@ import { DOC_BLOCK_ENTRIES } from './catalogDoc'
 import { DOC_LINE_ENTRIES } from './catalogDocLine'
 import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import { HOME_ENTRIES } from './catalogHome'
+import { LAYOUT_AREA_ENTRIES } from './catalogLayoutArea'
 import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
 import { MODELS_ENTRIES } from './catalogModels'
@@ -205,6 +206,8 @@ export const CATALOG: CatalogEntry[] = [
   ...HOME_ENTRIES,
   // 项目总览上的现状和起草那一小块在自己的文件里：`catalogOverview.ts`。
   ...OVERVIEW_ENTRIES,
+  // 布局层（还没有产品页面用它）的试验台在自己的文件里：`catalogLayoutArea.ts`。
+  ...LAYOUT_AREA_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
