@@ -8,6 +8,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends time \
     && rm -rf /var/lib/apt/lists/* \
     && (getent passwd 1000 >/dev/null || useradd --uid 1000 --user-group --create-home --shell /bin/sh judge)
-ENV LANG=C.UTF-8
+# Test scripts (kind SCRIPT) run offline, so the test framework is baked in:
+# pytest and what it needs, every wheel pinned by version and hash.
+RUN printf '%s\n' \
+      'pytest==8.3.4 --hash=sha256:50e16d954148559c9a74109af1eaf0c945ba2d8f30f0a3d3335edde19788b6f6' \
+      'iniconfig==2.0.0 --hash=sha256:b6a85871a79d2e3b22d2d1b94ac2824226a63c6b741c88f7ae975f18b6778374' \
+      'packaging==24.2 --hash=sha256:09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759' \
+      'pluggy==1.5.0 --hash=sha256:44e1ad92c8ca002de6377e165f3e0f1be63266ab4d554740532335b9d75ea669' \
+      > /tmp/judge-requirements.txt \
+    && pip install --no-cache-dir --no-deps --only-binary=:all: --require-hashes -r /tmp/judge-requirements.txt \
+    && rm /tmp/judge-requirements.txt
+ENV LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1
 USER 1000:1000
 WORKDIR /code

@@ -8,6 +8,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends time \
     && rm -rf /var/lib/apt/lists/* \
     && (getent passwd 1000 >/dev/null || useradd --uid 1000 --user-group --create-home --shell /bin/sh judge)
+# Test scripts (kind SCRIPT) run offline, so gotestsum is built in at a pinned
+# version (the Go checksum database vouches for it) and writes JUnit XML:
+#   gotestsum --junitfile "$JUDGE_REPORT" -- ./...
+RUN GOBIN=/usr/local/bin GOFLAGS= go install gotest.tools/gotestsum@v1.12.0 \
+    && rm -rf /root/go /root/.cache
 ENV LANG=C.UTF-8 GOTOOLCHAIN=local GOFLAGS=-buildvcs=false
 USER 1000:1000
 WORKDIR /code
