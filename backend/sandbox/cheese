@@ -1354,6 +1354,52 @@ PLATFORM_TOOLS = ToolTable(
             ["title"],
         ),
         _object(
+            "cheese_hand_in",
+            "替成员向项目所来自的题目提交",
+            {
+                "prepare": _verb(
+                    "第一步：为题目一个阶段的每个提交项指定要交的内容，平台按题目页提交时的"
+                    "规则检查并记下这一份，不会提交。文件项写项目里的文件：代码仓库默认分支上"
+                    "已提交的路径，或 library/<名字> 表示资料库里的一份；文字项写文字。只在能为"
+                    "这道题目提交的成员发消息要求时调用，准备的是给他的。同一阶段再准备一次会"
+                    "替换上一份。",
+                    {
+                        "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "description": "这个阶段的每个提交项各一条",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "item": {
+                                        "type": "integer",
+                                        "description": "提交项在题目说明「提交内容」里的序号",
+                                    },
+                                    "file": _text(
+                                        "文件项：仓库里的路径，或 library/<名字>"
+                                    ),
+                                    "text": _text("文字项：要交的文字"),
+                                },
+                                "required": ["item"],
+                            },
+                        },
+                    },
+                    ["items"],
+                ),
+                "confirm": _verb(
+                    "第二步：成员看过准备好的内容并发消息同意后，以他的名义提交。只在他本人"
+                    "回复同意的这一轮里调用；准备之后项目的文件变了会被拒绝，要重新准备。",
+                    {
+                        "stage": {
+                            "type": "integer",
+                            "description": "确认哪个阶段的那一份，写题目阶段的序号；"
+                            "省略为在这里最近准备的一份",
+                        },
+                    },
+                ),
+            },
+        ),
+        _object(
             "cheese_web",
             "网页",
             {
@@ -3044,6 +3090,18 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {
             "method": "POST",
             "path": here + "/tasks/" + _task_ref(args) + "/accept",
+        }
+    if tool == "cheese_hand_in.prepare":
+        return {
+            "method": "POST",
+            "path": here + "/hand-in/prepare",
+            "body": {"items": args["items"]},
+        }
+    if tool == "cheese_hand_in.confirm":
+        return {
+            "method": "POST",
+            "path": here + "/hand-in/confirm",
+            "body": _given(args, "stage"),
         }
     if tool == "cheese_task.report":
         return {
@@ -5891,6 +5949,47 @@ def _say_documents(args, data, env) -> str:
     )
 
 
+def _hand_in_size(size) -> str:
+    size = int(size or 0)
+    if size < 1024:
+        return f"{size} 字节"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _say_hand_in_prepared(args, data, env) -> str:
+    """What was prepared, item by item, and what the member has to do."""
+    data = data or {}
+    person = f"<@{data.get('person')}>"
+    stage = f"「{data['stage']}」阶段" if data.get("stage") else ""
+    revision = str(data.get("revision") or "")[:7]
+    lines = [
+        f"已为 {person} 准备好向题目「{data.get('task')}」{stage}提交的内容，还没有提交："
+    ]
+    for item in data.get("items") or []:
+        if item.get("kind") == "TEXT":
+            what = f"文字「{item.get('text')}」"
+        elif item.get("source") == "library":
+            what = (
+                f"资料库里的「{item.get('path')}」第 {item.get('libraryVersion')} 版"
+                f"（{_hand_in_size(item.get('bytes'))}）"
+            )
+        else:
+            what = (
+                f"代码仓库默认分支上的 {item.get('path')}"
+                f"（{_hand_in_size(item.get('bytes'))}，提交 {revision}）"
+            )
+        lines.append(f"{item.get('number')}. {item.get('name')}：{what}")
+    if revision:
+        lines.append(f"这一版记下的代码版本是提交 {revision}。")
+    lines.append(
+        f"把每一项要交什么如实告诉 {person}，等他本人回复同意后再用 "
+        "cheese_hand_in(action=confirm) 提交；他要改，就照他说的重新准备。"
+    )
+    return "\n".join(lines)
+
+
 def _say_chat_send(args, data, env) -> str:
     return json.dumps(data, ensure_ascii=False)
 
@@ -6062,6 +6161,11 @@ _SAY = {
         "已报告给频道主线。任务做没做完由频道主线判断，等它关闭任务或告诉你下一步。"
         if (d or {}).get("reported") == "done"
         else "已报告给频道主线。"
+    ),
+    "cheese_hand_in.prepare": _say_hand_in_prepared,
+    "cheese_hand_in.confirm": lambda a, d, e: (
+        f"已代 <@{(d or {}).get('person')}> 向题目「{(d or {}).get('task')}」"
+        f"提交了第 {(d or {}).get('version')} 版。"
     ),
     "cheese_task.accept": _say_task_accepted,
     "chat_send": _say_chat_send,

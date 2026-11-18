@@ -116,5 +116,22 @@
   "testSuiteSelfTestRange": "Self-test runs must be a whole number from {low} to {high}, or off",
   "submissionCodeMoved": "Your project's default branch has moved; look at the code this version will be judged on before submitting",
   "lineScoreRange": "This line's score must be a whole number from 0 to {points}",
-  "lineScoreNeedsReason": "A hand-adjusted test score needs a reason; the student sees it"
+  "lineScoreNeedsReason": "A hand-adjusted test score needs a reason; the student sees it",
+  "submissionNotResubmittable": "This challenge takes one submission per stage, and this stage has been handed in",
+  "handInNoTask": "This project was not made from a challenge, so there is nothing to hand in to",
+  "handInNoClaim": "This project was not made for a claim of the challenge “{task}”, so nothing can be handed in from here",
+  "handInAskedByMember": "A hand-in can be prepared only when a member who may hand in to “{task}” asks for it in a message",
+  "handInItemUnknown": "The challenge “{task}” has no submission item {item}",
+  "handInItemTwice": "Item {item} was given more than once",
+  "handInItemsAcrossStages": "These items belong to different stages; prepare a hand-in for one stage at a time",
+  "handInItemMissing": "Some items of this stage have nothing to hand in yet: {items}",
+  "handInWantsText": "Item {item} “{name}” takes text, not a file",
+  "handInWantsFile": "Item {item} “{name}” takes a file; give the path of a file in the project",
+  "handInRepoFileNotFound": "{path} is not in the latest commit of the repository's default branch",
+  "handInLibraryFileNotFound": "The library has no “{name}”",
+  "handInFileTooLarge": "{path} is {mb} MB, over the {max} MB limit for a submitted file",
+  "handInNothingPrepared": "Nothing is prepared to hand in. Prepare it, tell the member what will be handed in, and wait for their yes",
+  "handInMemberWordOnly": "You can hand in for {person} only in a turn they started by agreeing to it. Tell {person} what is prepared and wait for their reply",
+  "handInWordBeforePrepare": "{person} sent this message before the hand-in was prepared, so it does not agree to this one. Tell {person} what is prepared and wait for their reply",
+  "handInFilesChanged": "The project's files changed after the hand-in was prepared, so it is not what {person} agreed to. Prepare it again and ask {person} to confirm"
 }
