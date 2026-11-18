@@ -57,11 +57,6 @@ function mount(initial: TaskRubricLine[] = [], suites: TaskTestSuite[] = []) {
   return { rubric, testSuite }
 }
 
-async function openAddMenu() {
-  await fireEvent.click(screen.getByTestId('task-form-add-line'))
-  await screen.findByTestId('task-form-add-tests')
-}
-
 const testsLine = (points = 60): TaskRubricLine => ({
   item: '正确性',
   points,
