@@ -131,6 +131,7 @@
   "taskReturned": "{who} returned \"{title}\"",
   "taskAdopted": "{who} accepted “{title}”",
   "taskHandedInBy": "{who} submitted \"{title}\"; it awaits review",
+  "taskHandedInAndAdopted": "{who} submitted and accepted “{title}”",
   "cardHandedInAgain": "{actor} submitted another version, “{title}”; it needs another look",
   "mergeWithheldUncommitted": "This task has saved changes that are not committed, and this version does not include them",
   "mergeWithheldUncommittedWhy": "Merging it would leave those changes out. Submit another version, and the new one is reviewed as usual.",

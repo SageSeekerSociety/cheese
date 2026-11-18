@@ -476,7 +476,7 @@ async def tell_room_undelivered(
     the task closed, that work was stopped, and what it was. One line for the
     room, however many turns were stopped; each of those turns keeps a run
     record under its own number in `closing` (where the close is written).
-    Best effort, like `task_landing.tell_origin`."""
+    Best effort, like `task_landing.record_at_origin`."""
     if not closed.undelivered:
         return
     try:

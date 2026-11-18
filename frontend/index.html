@@ -211,11 +211,24 @@
           // is wide enough (useWorkspaceLayout PANEL_OPEN_MIN).
           var pane = window.innerWidth - 64 - side
           var panel = typeof layout.panelOpen === 'boolean' ? layout.panelOpen : pane >= 1000
-          if (panel)
-            html.style.setProperty(
-              '--sx-chat-w',
-              (Number(layout.chatPct) || (window.innerWidth >= 1440 ? 45 : 50)) + '%'
-            )
+          // The conversation's share of the room: the arrangement the layout area keeps for
+          // it (AppShell's `cheesex.area.room`, cells `conversation` and `work`), else the
+          // room's default (TopicView).
+          var chat = window.innerWidth >= 1440 ? 45 : 50
+          var cells = {}
+          var walk = function (node) {
+            if (!node) return
+            if (node.children) node.children.forEach(walk)
+            else if (node.panels)
+              node.panels.forEach(function (id) {
+                cells[id] = node.size
+              })
+          }
+          var area = json('cheesex.area.room')
+          if (area && area.v === 1) walk(area.root)
+          if (cells.conversation > 0 && cells.work > 0)
+            chat = (cells.conversation / (cells.conversation + cells.work)) * 100
+          if (panel) html.style.setProperty('--sx-chat-w', chat + '%')
         } catch (e) {
           // Whatever went wrong, the generic frame is never wrong for long.
         }

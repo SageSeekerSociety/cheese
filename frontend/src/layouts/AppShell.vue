@@ -14,8 +14,15 @@
       <!-- 左边那一列方块栏拿掉了（2026-11-16）：首页和项目进侧栏头，问芝士和头像进侧栏底，
            没有侧栏时进顶栏。格子还在这里算，交给它们画（Navigation/appNav.ts）。 -->
 
-      <!-- 二级导航：通过路由渲染 -->
-      <router-view name="sidebar" />
+      <!-- 二级导航：通过路由渲染。宽档里它是布局区的第一格（传送进去）；窄档（960–1180）
+           里是浮层抽屉，留在这里。 -->
+      <Teleport :to="outlets.sidebar" :disabled="!sidebarInArea || !outlets.sidebar">
+        <!-- 格子里的抽屉登记在自己这一层 v-layout 上：占满这一格，不去推内容区。 -->
+        <v-layout v-if="sidebarInArea" class="app-sidebar-layout h-100">
+          <router-view name="sidebar" />
+        </v-layout>
+        <router-view v-else name="sidebar" />
+      </Teleport>
     </template>
     <template v-else>
       <!-- 二级导航：通过路由渲染 -->
@@ -44,12 +51,36 @@
       }"
       tabindex="-1"
     >
+      <!-- 桌面上整块是一个布局区（components/layout-area）：侧栏一格、页面一格；页面要是
+           不止一块（对话加工作面板），它把那几块交给这里（layouts/pagePanels.ts），排在
+           页面自己那一格（页头）下面。拖动只改宽度，不能拖页签改摆法。 -->
+      <LayoutArea
+        v-if="$vuetify.display.mdAndUp"
+        v-model:maximized="pageHost.maximized.value"
+        class="app-area"
+        :class="{ 'app-area--edge': !sidebarInArea, 'app-area--alone': !hasSidebar }"
+        :panels="areaPanels"
+        :default-arrangement="areaDefault"
+        :storage-key="areaKey"
+        :version="AREA_VERSION"
+        :narrow="false"
+        locked
+      >
+        <template #panel="{ id }">
+          <div :ref="outletRef(id)" class="app-outlet" :data-page-panel="id" />
+        </template>
+      </LayoutArea>
       <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
            左边那条线就是侧栏和内容的分界；没有侧栏的页面，这块面挨着一级导航，左上角
-           拐成和侧栏一样的圆角。 -->
-      <div class="app-pane h-100 overflow-hidden" :class="{ 'app-pane--alone': !hasSidebar }">
-        <div id="app-scrollable" ref="contentRef" class="app-content h-100" @animationend="endPageMotion">
-          <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
+           拐成和侧栏一样的圆角。桌面上它是布局区里页面那一格的内容（传送进去），手机上
+           就在这里；同一个实例，跨过断点也不重挂页面。 -->
+      <Teleport :to="outlets.page" :disabled="!outlets.page || !$vuetify.display.mdAndUp">
+        <div
+          class="app-pane h-100 overflow-hidden"
+          :class="{ 'app-pane--alone': !hasSidebar, 'app-pane--in-area': $vuetify.display.mdAndUp }"
+        >
+          <div id="app-scrollable" ref="contentRef" class="app-content h-100" @animationend="endPageMotion">
+            <!-- 保活是白名单，不是黑名单。缓存一个页面组件等于把它的表单、它的
                「上一个人是谁」一起留在内存里 —— 登录/注册/OAuth 回调/验证码那
                几页要是被留下来，退出后再登录会看到上一个账号的填写状态。所以
                这里只点名那些「进过一次就该立刻回来」的项目内页面，其余一律照
@@ -65,13 +96,14 @@
                之前，先看 App.keepAlive.spec.ts：那三条用例分别钉住「白名单里的
                页面被保活」「登录页不被保活」「切路由确实换页」，把 v-memo 挪进
                下面这个 <component> 三条会一起变红。 -->
-          <router-view v-slot="{ Component }" v-memo="[]">
-            <keep-alive :include="keptAlivePages" :max="5">
-              <component :is="Component" />
-            </keep-alive>
-          </router-view>
+            <router-view v-slot="{ Component }" v-memo="[]">
+              <keep-alive :include="keptAlivePages" :max="5">
+                <component :is="Component" />
+              </keep-alive>
+            </router-view>
+          </div>
         </div>
-      </div>
+      </Teleport>
     </v-main>
 
     <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里。
@@ -157,17 +189,20 @@
 // 这个框会随着在门口页面和应用之间来回而卸下、重挂，所以它装上的路由钩子和命令都在
 // 卸下时摘掉，免得来回一趟多一份。
 import type { NavSources } from '@/components/common/Navigation/destinations'
+import type { LayoutArrangement, LayoutPanel } from '@/components/layout-area'
 import type { Project } from '@/cx_types'
 
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useElementSize } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
 import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
+import { SIDEBAR_CELL_WIDTH, SIDEBAR_WIDTH } from '@/composables/sidebarWidth'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { useBetaNotice } from '@/composables/useBetaNotice'
 import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
@@ -176,6 +211,7 @@ import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProje
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
 import { resolveGuideStep, useProjectTour } from '@/composables/useProjectTour'
+import { useSidebarCollapse } from '@/composables/useSidebarCollapse'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
@@ -200,8 +236,10 @@ import ProjectSwitcher from '@/components/common/Navigation/ProjectSwitcher.vue'
 import SidebarFrameFoot from '@/components/common/Navigation/SidebarFrameFoot.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import { LayoutArea } from '@/components/layout-area'
 import { t } from '@/i18n'
 import AgentHost from '@/layouts/AgentHost.vue'
+import { providePagePanels } from '@/layouts/pagePanels'
 import { routeIds } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { rememberRailCount } from '@/lib/bootShape'
@@ -303,6 +341,50 @@ const loggedIn = computed(() => AccountService.loggedIn)
 const hideTabs = computed(() => currentRoute.meta.hideTabs === true)
 /** 这一页有没有侧栏：侧栏是路由上的 `sidebar` 命名视图，渲染它的是上面那个 router-view。 */
 const hasSidebar = computed(() => currentRoute.matched.some((record) => record.components?.sidebar))
+
+// ---- 桌面的布局区：侧栏一格、页面一格，页面交来的几块排在页面那一格下面 ----
+// 侧栏在宽档里是钉住的一格，宽度是它自己的（拖过就记住，四处侧栏共用一个数）；窄档
+// （960–1180）里它是浮层抽屉，这一格藏起来。页面交来的那几块见 layouts/pagePanels.ts。
+const pageHost = providePagePanels()
+const { compact: compactDesktop } = useSidebarCollapse()
+const sidebarInArea = computed(() => display.mdAndUp.value && !compactDesktop.value && hasSidebar.value)
+const outlets = pageHost.outlets
+const { width: sidebarCellWidth } = useElementSize(computed(() => outlets.sidebar ?? null))
+provide(SIDEBAR_CELL_WIDTH, sidebarCellWidth)
+const outletRefs = new Map<string, (element: unknown) => void>()
+function outletRef(id: string) {
+  let fn = outletRefs.get(id)
+  if (!fn) {
+    fn = (element: unknown) => {
+      if (element instanceof HTMLElement) outlets[id] = element
+      else delete outlets[id]
+    }
+    outletRefs.set(id, fn)
+  }
+  return fn
+}
+/** 布局区记住摆法用的版本：格子的种类或默认摆法变了就加一，旧的摆法不再读。 */
+const AREA_VERSION = 1
+const pageClaim = computed(() => pageHost.claim.value?.spec ?? null)
+const areaKey = computed(() => `cheesex.area.${pageClaim.value?.key ?? 'page'}`)
+const areaPanels = computed<LayoutPanel[]>(() => [
+  {
+    id: 'sidebar',
+    bare: true,
+    pinned: true,
+    hidden: !sidebarInArea.value,
+    width: SIDEBAR_WIDTH,
+  },
+  { id: 'page', bare: true, pinned: true, fitHeight: pageClaim.value !== null },
+  ...(pageClaim.value?.panels ?? []).map((panel) => ({ ...panel, bare: true, pinned: true })),
+])
+const areaDefault = computed<LayoutArrangement>(() => {
+  const claim = pageClaim.value
+  const page = claim
+    ? { direction: 'column' as const, children: [{ panels: ['page'] }, claim.arrangement] }
+    : { panels: ['page'] }
+  return { root: { direction: 'row', children: [{ panels: ['sidebar'] }, page] } }
+})
 
 // Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
@@ -657,6 +739,47 @@ onBeforeUnmount(
   transform: none;
 }
 
+/* 布局区每一格里的落点：页面（或侧栏）传送进来的那一块占满这一格。页头那一格按内容
+   定高，这里的 100% 那时就是内容的高。 */
+.app-outlet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+/* 侧栏和页面那一格的底是外框的 canvas：侧栏左上角、没有侧栏时页面左上角那个圆角外面
+   露出来的是它（§1.4），不是格子的 surface。 */
+.app-outlet[data-page-panel='sidebar'],
+.app-outlet[data-page-panel='page'] {
+  background: var(--canvas);
+}
+.app-outlet > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* 桌面上内容区左边那条线不再由页面那一格画：它要从页头一直贯到对话和面板底下。侧栏在
+   布局区里时，那条线就是布局区的分隔线（也是拖它的地方）；侧栏收着（960–1180）或这一页
+   没有侧栏时，布局区自己画，没有侧栏时连同上沿和左上角那个圆角。 */
+.app-pane.app-pane--in-area {
+  border-left: 0;
+}
+.app-area--edge {
+  border-left: 1px solid var(--line);
+}
+.app-area--alone {
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  border-top-left-radius: 12px;
+}
+.app-area--alone .app-pane--in-area {
+  border-top: 0;
+  border-top-left-radius: 0;
+}
+/* 格子里的侧栏宽度跟着格子，拖分隔线时每一帧都在变：不走抽屉自带的 0.2 秒宽度过渡，
+   不然这一栏永远缓在半路上、追不上指针。 */
+.app-sidebar-layout :deep(.v-navigation-drawer) {
+  transition: none;
+}
 .app-content {
   min-height: 0;
   overflow: auto;

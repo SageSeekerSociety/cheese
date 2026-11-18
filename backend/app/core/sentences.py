@@ -242,6 +242,11 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         # still hold 「「…」已采纳 · PR #n」.
         "taskLanded",
         "taskStepLanded",
+        # A member's own hand-in was recorded where the task came from by the
+        # task's name; it now names the version and its reviewer
+        # (``cardHandedIn``), or, adopted in the same go, is one line when it
+        # lands (``taskHandedInAndAdopted``). Old main lines still hold it.
+        "taskHandedInBy",
         # A 题目's takers heard 「修改了提交内容或评分要点」 on every change to
         # what it asks; the notice now says which thing changed
         # (``spaceTaskChanged``), and old notifications still carry the key.
