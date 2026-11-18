@@ -219,4 +219,37 @@ describe('主线上来了一行交付', () => {
     await settle()
     expect(emitted()['delivery-arrived']).toEqual([['t-new']])
   })
+
+  // A task the main line's teammate opened has no platform line for its hand-in: the
+  // teammate's own message about the task is what arrives.
+  it('开任务的队友带着任务说的话实时到了，也报这件任务', async () => {
+    history = []
+    const { emitted } = render(Column, {
+      props: { topic, members: [], topicList: [] },
+      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
+    })
+    await settle()
+    await settle()
+    sockets.at(-1)?.onopen?.()
+    sockets.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'user_block',
+        block: {
+          id: 'said-1',
+          project_id: 'p1',
+          conversation_id: topic.id,
+          kind: 'message',
+          author_type: 'participant',
+          author: 'cheese-0a1b2c3d4e5f',
+          content: '报名表做好了，等你审阅',
+          reply_to: null,
+          refs: [],
+          meta: { task_tag: 't-tagged' },
+          created_at: new Date().toISOString(),
+        },
+      }),
+    })
+    await settle()
+    expect(emitted()['delivery-arrived']).toEqual([['t-tagged']])
+  })
 })
