@@ -854,9 +854,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
     # Close a task nobody has touched for long enough (`room_task.presentation.neglect`:
-    # waiting on someone 7 days, otherwise 14). The kill switch if it ever closes the
-    # wrong ones: off, the sweep only reminds.
-    task_neglect_auto_close: bool = True
+    # waiting on someone 7 days, otherwise 14). Off, nothing of it runs: no task is
+    # closed, no owner is told one will be, and no row is marked dormant — the
+    # warning and the mark both say when the task closes, which would be untrue.
+    # Off by default: the clock counts from a task's last word, not from the day
+    # this is turned on, so the first sweep closes every task already past it.
+    task_neglect_auto_close: bool = False
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
     # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.

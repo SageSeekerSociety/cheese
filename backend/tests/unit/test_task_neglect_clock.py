@@ -102,6 +102,17 @@ async def test_the_kill_switch_stops_the_close_before_anything_is_read(monkeypat
     assert closed == 0
 
 
+async def test_switched_off_nobody_is_told_a_task_will_close(monkeypatch):
+    from unittest.mock import Mock
+
+    from app.core.config import settings
+    from app.domain.task_quiet import neglect
+
+    monkeypatch.setattr(settings, "task_neglect_auto_close", False)
+    sessions = Mock(side_effect=AssertionError("the sweep opened a session"))
+    assert await neglect.warn_neglected(sessions) == 0
+
+
 def test_a_row_carries_neglect_only_once_the_task_is_dormant():
     from app.api.room_task_rows import _neglect_json
 
