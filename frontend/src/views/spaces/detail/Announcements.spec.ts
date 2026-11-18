@@ -55,6 +55,7 @@ vi.mock('@/services/account', () => ({
 import Announcements from './Announcements.vue'
 
 import DialogContainer from '@/components/common/DialogContainer.vue'
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import i18n, { setLocale } from '@/i18n'
 import { dialogs } from '@/plugins/dialog'
 import AccountService from '@/services/account'
@@ -92,16 +93,27 @@ function signIn(userId: number) {
 }
 
 const Blank = defineComponent({ render: () => h('div') })
-const Page = defineComponent({ render: () => h('div', [h(Announcements), h(DialogContainer)]) })
+/** 这一页和它弹的确认框（真的树里确认框由根上的 DialogContainer 画）。
+ *  套上兜底就是真的空间页：某块崩了，`views/spaces/Detail.vue` 会把那一块换成一句话
+ *  加一颗「重试」。 */
+function page(guarded: boolean): Component {
+  return defineComponent({
+    render: () =>
+      h('div', [
+        guarded ? h(ErrorBoundary, null, { default: () => h(Announcements) }) : h(Announcements),
+        h(DialogContainer),
+      ]),
+  })
+}
 
-async function mount() {
+async function mount(guarded = false) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: Blank as Component }],
   })
   await router.push(`/spaces/${SPACE_ID}/announcements`)
   await router.isReady()
-  const utils = render(Page, {
+  const utils = render(page(guarded), {
     global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] },
   })
   await waitFor(() => expect(listAnnouncements).toHaveBeenCalled())
@@ -224,6 +236,27 @@ describe('公告页', () => {
     await mount()
 
     await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
+  })
+
+  // 取消是一句「不删」，不是一次失败：确认框取消时 `wait()` 会 reject（`CancelError`），
+  // 没人接它就一路冒到空间页的兜底上，整页换成「无法显示这块内容」——点一下取消就
+  // 得重试才能接着看公告。
+  it('点删除再取消，公告原样留着，页面也不进兜底', async () => {
+    signIn(OWNER_ID)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await mount(true)
+
+    await waitFor(() => expect(cardTitled('普通的公告')).toBeDefined())
+
+    await fireEvent.click(buttonLabelled(cardTitled('普通的公告')!, '删除')!)
+    await waitFor(() => expect(buttonLabelled(document, '取消')).toBeDefined())
+    await fireEvent.click(buttonLabelled(document, '取消')!)
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(deleteAnnouncement).not.toHaveBeenCalled()
+    expect(cardTitled('普通的公告')).toBeDefined()
+    expect(document.querySelector('.error-boundary')).toBeNull()
+    spy.mockRestore()
   })
 
   // 空的时候这一页只剩那句「暂无公告」：它得落在内容区正中，不能贴左半边——
