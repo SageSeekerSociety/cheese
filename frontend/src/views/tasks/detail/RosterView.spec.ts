@@ -374,8 +374,23 @@ describe('名单里的测试点', () => {
     })
   })
 
+  it('表下「重新评测全部最新提交」：先在确认框里确认，再往上报', async () => {
+    const view = mountTests(new Map())
+    await fireEvent.click(view.getByTestId('roster-rejudge'))
+    expect(view.emitted('rejudge')).toBeUndefined()
+    const dialog = await waitFor(() => {
+      const el = document.querySelector('.v-overlay--active .v-card') as HTMLElement | null
+      expect(el).not.toBeNull()
+      return el!
+    })
+    expect(dialog.textContent).toContain(t('tasks.judge.rejudge.title'))
+    await fireEvent.click(within(dialog).getByRole('button', { name: t('tasks.judge.rejudge.confirm') }))
+    expect(view.emitted('rejudge')).toEqual([[]])
+  })
+
   it('没挂测试点的题不画这一列', () => {
     const view = mount({ participants: [claim(1, '林小满', 'APPROVED', 1)] })
     expect(view.queryByText(t('tasks.judge.roster.col'))).toBeNull()
+    expect(view.queryByTestId('roster-rejudge')).toBeNull()
   })
 })

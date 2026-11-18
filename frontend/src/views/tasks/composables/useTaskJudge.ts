@@ -9,6 +9,8 @@ import type {
   TaskCodeVersion,
   TaskJudgeRun,
   TaskJudgeSummary,
+  TaskRejudgeCounts,
+  TaskSelfTestView,
   TaskTestSuite,
   TaskTestTrial,
   TaskTestTrialFile,
@@ -167,4 +169,9 @@ export function provideTestTrial(spaceId: () => number) {
     run: (suite: TaskTestSuite, files: TaskTestTrialFile[]) => runner.run(spaceId(), suite, files),
   })
   return runner
+}
+
+/** 重新评测全部最新提交（只给能批改的人）：不给阶段就是每个挂着测试点的阶段。 */
+export function rejudgeLatest(taskId: number, stage?: string | null): Promise<TaskRejudgeCounts> {
+  return TaskJudgeApi.rejudge(taskId, stage)
 }
