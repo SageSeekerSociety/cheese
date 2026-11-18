@@ -1,23 +1,7 @@
-/* 话题页和私聊页的两块：对话那一块、工作面板的外壳和它的浮层、铺满时的未读点。桌面上
- * 两块是外壳布局区里的两格，分隔线和宽度归布局区。TopicView 和 DmView 都用
- * `scoped src` 引这一份（和 accept-card.css 同一个办法）。 */
+/* 话题页和私聊页的几块：对话那一块、工作面板的外壳和它的浮层。桌面上对话和工作面板的每一格
+ * 都是外壳布局区里的一块，页签、分隔线和宽度归布局区（roomLayout.ts）。TopicView 和 DmView
+ * 都用 `scoped src` 引这一份（和 accept-card.css 同一个办法）。 */
 
-/* 专注模式（面板铺满整个布局区）里对话有了新回复：退出铺满那颗按钮右上角一个未读点
-   （琥珀只给未读，§1.6）。 */
-.focus-toggle {
-  display: inline-flex;
-  position: relative;
-}
-.focus-toggle__news {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  pointer-events: none;
-}
 /* 对话那一格里的那一块：对话本身，和窄档里压在它上面的面板浮层、遮罩。浮层整块被推到
    右边外面时不让这一块横向滚（见下面 .panes 那条的理由）。 */
 .room-conversation {
@@ -53,14 +37,19 @@
 .panes {
   overflow-x: clip;
 }
-/* 工作面板的外壳（里面就是 WorkPanel 本身）：并排时是普通的 flex 子项，窄档里被
-   下面的 --sheet 改成一只浮层。 */
+/* 工作面板的外壳（里面就是 WorkPanel 本身）：没有外壳的布局区时是普通的 flex 子项，窄档里
+   被下面的 --sheet 改成一只浮层。 */
 .panel-host {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+/* 桌面上各格都传送进了布局区：外壳留在页头那一格里，不占地方。 */
+.panel-host--cells {
+  height: 0;
+  overflow: hidden;
 }
 
 /* 面板浮层：从对话右边拉进来的一张纸。收起时走进屏幕右侧并藏掉 visibility（不占

@@ -9,14 +9,16 @@
  * component, with the page's provides and state. A page that says nothing is one panel,
  * and needs nothing from this module.
  *
- * The page never learns which cell a panel is in. It can ask for one panel to fill the
- * area (maximize) and give the space back, and it can hide a panel for now.
+ * The page never learns which cell a panel is in. It can ask for a panel to be shown (its
+ * cell opens and it becomes the visible tab there), for one panel's cell to fill the area
+ * (maximize) and give the space back, and it can hide a panel for now. It hears which tab
+ * the reader picked, which panels are on screen, and a transient tab closed or kept.
  *
  * Where no shell provides this (phone and tablet layouts, a component mounted on its
  * own), `active` is false and the page lays its panels out in place.
  */
 import type { ComputedRef, InjectionKey, Ref, ShallowRef } from 'vue'
-import type { LayoutNode } from '@/components/layout-area'
+import type { LayoutNode, LayoutPanel } from '@/components/layout-area'
 
 import {
   computed,
@@ -32,15 +34,8 @@ import {
   watch,
 } from 'vue'
 
-export interface PagePanel {
-  id: string
-  /** Its cell never gets narrower than this, in px. */
-  minWidth?: number
-  /** Out of sight for now; it keeps its place and size for when it is shown again. */
-  hidden?: boolean
-  /** Keep its DOM laid out while it is out of sight (an iframe would reload otherwise). */
-  alwaysRender?: boolean
-}
+/** A page's panel, as the layer takes it (titles, signals, closing, groups…), less what the shell owns. */
+export type PagePanel = Omit<LayoutPanel, 'component' | 'props' | 'width' | 'fitHeight' | 'foldKey' | 'pinned'>
 
 export interface PagePanels {
   /** Pages under the same key share the arrangement the reader dragged into shape. */
@@ -48,6 +43,17 @@ export interface PagePanels {
   panels: PagePanel[]
   /** How the page's panels sit by default, below the page's own head. */
   arrangement: LayoutNode
+  /** The reader picked this panel's tab. */
+  onActivated?: (id: string) => void
+  /** The reader closed the tab of a transient panel: drop it. */
+  onClose?: (id: string) => void
+  /** The reader double-clicked the tab of a temporary panel: keep it. */
+  onKeep?: (id: string) => void
+}
+
+/** What the shell's layout area does for a page. */
+export interface PagePanelsArea {
+  open: (id: string) => void
 }
 
 interface Claim {
@@ -62,6 +68,12 @@ export interface PagePanelsHost {
   outlets: Record<string, HTMLElement | undefined>
   /** The panel whose cell fills the area, or null. Not remembered. */
   maximized: Ref<string | null>
+  /** The panels on screen now. */
+  visible: Ref<string[]>
+  /** The shell's layout area, while it is mounted. */
+  area: ShallowRef<PagePanelsArea | null>
+  /** A panel a page asked to show before the area was mounted. */
+  pendingShow: Ref<string | null>
 }
 
 const HOST: InjectionKey<PagePanelsHost> = Symbol('pagePanels')
@@ -72,7 +84,16 @@ export function providePagePanels(): PagePanelsHost {
     claim: shallowRef(null),
     outlets: reactive({}),
     maximized: ref(null),
+    visible: ref([]),
+    area: shallowRef(null),
+    pendingShow: ref(null),
   }
+  // The area mounts after the page has started asking: what it asked for is shown then.
+  watch(host.area, (area) => {
+    if (!area || !host.pendingShow.value) return
+    area.open(host.pendingShow.value)
+    host.pendingShow.value = null
+  })
   provide(HOST, host)
   return host
 }
@@ -85,6 +106,10 @@ export interface PagePanelsHandle {
   maximized: ComputedRef<string | null>
   maximize: (id: string) => void
   restore: () => void
+  /** The page's panels on screen now (the visible tab of each cell in sight). */
+  visible: ComputedRef<ReadonlySet<string>>
+  /** Shows a panel: brings it back if it was closed, opens its cell, makes it the visible tab. */
+  show: (id: string) => void
 }
 
 /**
@@ -136,6 +161,14 @@ export function usePagePanels(spec: () => PagePanels | null): PagePanelsHandle {
     },
     restore: () => {
       if (host && active.value) host.maximized.value = null
+    },
+    visible: computed(
+      () => new Set(active.value ? host!.visible.value.filter((id) => declared.value.includes(id)) : [])
+    ),
+    show: (id) => {
+      if (!host || !active.value) return
+      if (host.area.value) host.area.value.open(id)
+      else host.pendingShow.value = id
     },
   }
 }

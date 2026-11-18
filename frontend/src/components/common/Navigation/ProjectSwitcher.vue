@@ -130,6 +130,18 @@
         </router-link>
       </div>
     </v-menu>
+    <!-- 宽档里侧栏能收成一条（布局区那一格），收起之后点那一条展开。 -->
+    <BaseButton
+      v-if="foldSidebar"
+      kind="ghost"
+      size="sm"
+      icon="mdi-page-layout-sidebar-left"
+      class="frame-top__fold"
+      :title="t('navigation.sidebar.collapse')"
+      :aria-label="t('navigation.sidebar.collapse')"
+      data-sidebar-fold
+      @click="foldSidebar()"
+    />
   </div>
 </template>
 
@@ -145,6 +157,7 @@ import { railShortcut } from './destinations'
 import RailItem from './RailItem.vue'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
@@ -156,6 +169,7 @@ const nav = useAppNav()
 const navigation = useNavigation()
 
 const items = computed(() => nav?.items.value ?? [])
+const foldSidebar = computed(() => nav?.foldSidebar.value ?? null)
 const homeItem = computed(() => homeItemOf(items.value))
 const addItem = computed(() => addItemOf(items.value))
 const projectItems = computed(() => projectItemsOf(items.value))

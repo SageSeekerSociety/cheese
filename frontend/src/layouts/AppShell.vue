@@ -52,10 +52,12 @@
       tabindex="-1"
     >
       <!-- 桌面上整块是一个布局区（components/layout-area）：侧栏一格、页面一格；页面要是
-           不止一块（对话加工作面板），它把那几块交给这里（layouts/pagePanels.ts），排在
-           页面自己那一格（页头）下面。拖动只改宽度，不能拖页签改摆法。 -->
+           不止一块（对话、工作面板的各页签），它把那几块交给这里（layouts/pagePanels.ts），
+           排在页面自己那一格（页头）下面。页签可以拖去分屏、拖进别的格子，格子可以收起、
+           放大，摆法按页面的种类记在这台设备上；侧栏和页头不动，侧栏能收成一条。 -->
       <LayoutArea
         v-if="$vuetify.display.mdAndUp"
+        ref="areaRef"
         v-model:maximized="pageHost.maximized.value"
         class="app-area"
         :class="{ 'app-area--edge': !sidebarInArea, 'app-area--alone': !hasSidebar }"
@@ -64,7 +66,11 @@
         :storage-key="areaKey"
         :version="AREA_VERSION"
         :narrow="false"
-        locked
+        resettable
+        @visible="pageHost.visible.value = $event"
+        @activated="pageClaim?.onActivated?.($event)"
+        @close="pageClaim?.onClose?.($event)"
+        @keep="pageClaim?.onKeep?.($event)"
       >
         <template #panel="{ id }">
           <div :ref="outletRef(id)" class="app-outlet" :data-page-panel="id" />
@@ -202,7 +208,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
-import { SIDEBAR_CELL_WIDTH, SIDEBAR_WIDTH } from '@/composables/sidebarWidth'
+import { SIDEBAR_CELL_WIDTH, SIDEBAR_FOLD_KEY, SIDEBAR_WIDTH } from '@/composables/sidebarWidth'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { useBetaNotice } from '@/composables/useBetaNotice'
 import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
@@ -364,20 +370,30 @@ function outletRef(id: string) {
   return fn
 }
 /** 布局区记住摆法用的版本：格子的种类或默认摆法变了就加一，旧的摆法不再读。 */
-const AREA_VERSION = 1
+const AREA_VERSION = 2
 const pageClaim = computed(() => pageHost.claim.value?.spec ?? null)
 const areaKey = computed(() => `cheesex.area.${pageClaim.value?.key ?? 'page'}`)
 const areaPanels = computed<LayoutPanel[]>(() => [
   {
     id: 'sidebar',
+    title: t('navigation.sidebar.title'),
+    icon: 'mdi-page-layout-sidebar-left',
     bare: true,
     pinned: true,
     hidden: !sidebarInArea.value,
     width: SIDEBAR_WIDTH,
+    foldKey: SIDEBAR_FOLD_KEY,
   },
   { id: 'page', bare: true, pinned: true, fitHeight: pageClaim.value !== null },
-  ...(pageClaim.value?.panels ?? []).map((panel) => ({ ...panel, bare: true, pinned: true })),
+  ...(pageClaim.value?.panels ?? []),
 ])
+// 页面要「显示某一块」时找的是这个布局区。
+const areaRef = ref<InstanceType<typeof LayoutArea> | null>(null)
+watch(areaRef, (area) => (pageHost.area.value = area ? { open: (id) => area.open(id) } : null))
+/** 收起侧栏（侧栏头上那颗按钮）：宽档里它是布局区的一格，收成一条，点那一条再展开。 */
+function foldSidebar() {
+  areaRef.value?.fold('sidebar', true)
+}
 const areaDefault = computed<LayoutArrangement>(() => {
   const claim = pageClaim.value
   const page = claim
@@ -554,6 +570,7 @@ provideAppNav({
   reorder: reorderRail,
   loggedIn,
   frame: { top: ProjectSwitcher, foot: SidebarFrameFoot },
+  foldSidebar: computed(() => (sidebarInArea.value ? foldSidebar : null)),
 })
 
 // rail 的悬停浮层写着第 N 格的快捷键；这里是它真正被绑上的地方。浏览器里是 G 然后 N，

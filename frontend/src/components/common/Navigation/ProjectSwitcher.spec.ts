@@ -87,6 +87,7 @@ async function mount(path: string, reorder = vi.fn()) {
         reorder,
         loggedIn: computed(() => true),
         frame: { top: ProjectSwitcher, foot: ProjectSwitcher },
+        foldSidebar: computed(() => null),
       })
       return () => h(ProjectSwitcher)
     },
