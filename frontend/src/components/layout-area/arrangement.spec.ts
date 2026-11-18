@@ -1,4 +1,4 @@
-import type { LayoutArrangement } from './arrangement'
+import type { LayoutArrangement, LayoutCell } from './arrangement'
 
 import { describe, expect, it } from 'vitest'
 
@@ -215,5 +215,53 @@ describe('dockview layout round trip', () => {
     expect(left.size).toBe(200)
     const rawLeft = (layout.grid.root.data as Array<{ size?: number }>)[0]
     expect(rawLeft.size).toBe(STRIP_SIZE)
+  })
+})
+
+describe('cells with a width of their own, and hidden cells', () => {
+  const panelState = (id: string) => ({ id, contentComponent: 'host', title: id })
+  const box = { width: 1200, height: 800 }
+  const ROOM: LayoutArrangement = withCellIds({
+    root: {
+      direction: 'row',
+      children: [
+        { id: 'nav', panels: ['nav'], size: 900 },
+        { id: 'chat', panels: ['chat'], size: 1 },
+        { id: 'files', panels: ['files'], size: 3 },
+      ],
+    },
+  })
+  type Leaf = { size: number; visible?: boolean; data: { id: string; priority?: string } }
+  const leaves = (load: ReturnType<typeof toDockview>) => load.layout.grid.root.data as Leaf[]
+  const fixedNav = (cell: LayoutCell) => (cell.id === 'nav' ? { fixed: 280 } : {})
+  const hiddenFiles = (cell: LayoutCell) =>
+    cell.id === 'nav' ? { fixed: 280 } : cell.id === 'files' ? { hidden: true } : {}
+
+  it('a fixed cell gets its own width whatever its weight; the others share the rest by weight', () => {
+    const load = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
+    expect(leaves(load).map((leaf) => leaf.size)).toEqual([280, 230, 690])
+  })
+
+  it('a fixed cell is the one that keeps its width when the area resizes', () => {
+    const load = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
+    expect(leaves(load).map((leaf) => leaf.data.priority)).toEqual(['low', undefined, undefined])
+  })
+
+  it('a hidden cell takes no space now and keeps the share it comes back with', () => {
+    const [nav, chat, files] = leaves(toDockview({ root: ROOM.root! }, box, panelState, hiddenFiles))
+    expect([nav.size, chat.size]).toEqual([280, 920])
+    expect(files.visible).toBe(false)
+    expect(files.size).toBe(690)
+  })
+
+  it('reading a layout back while a cell is hidden leaves the weights of the others as they were', () => {
+    const ratio = (load: ReturnType<typeof toDockview>) => {
+      const cells = cellsOf(fromDockview(load.layout, new Set(), new Map()))
+      const size = (id: string) => cells.find((cell) => cell.id === id)!.size!
+      return size('chat') / size('files')
+    }
+    const shown = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
+    const hidden = toDockview({ root: ROOM.root! }, box, panelState, hiddenFiles)
+    expect(ratio(hidden)).toBeCloseTo(ratio(shown), 2)
   })
 })
