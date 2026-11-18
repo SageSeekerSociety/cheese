@@ -14,7 +14,6 @@
     <BaseEmptyState
       v-if="!outline.sections.length"
       size="inline"
-      align="center"
       class="outline-card__empty"
       :title="t('spaces.analytics.learning.outline.empty')"
     />

@@ -18,7 +18,7 @@
       </div>
     </div>
 
-    <BaseEmptyState v-else size="inline" align="center" :title="t('spaces.analytics.chart.noDistribution')" />
+    <BaseEmptyState v-else size="inline" :title="t('spaces.analytics.chart.noDistribution')" />
   </v-card>
 </template>
 

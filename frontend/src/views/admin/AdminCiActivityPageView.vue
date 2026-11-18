@@ -402,12 +402,7 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
 
         <section class="aci__block">
           <h2 class="aci__block-title">{{ t('ciActivity.runners.title') }}</h2>
-          <BaseEmptyState
-            v-if="board && !board.runners.length"
-            size="inline"
-            align="center"
-            :title="t('ciActivity.runners.empty')"
-          />
+          <BaseEmptyState v-if="board && !board.runners.length" size="inline" :title="t('ciActivity.runners.empty')" />
           <table v-else class="aci__table">
             <thead>
               <tr>
@@ -451,7 +446,7 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
             </button>
           </h2>
           <p v-if="jobsLoading && !jobs.length" class="aci__note t-meta-read">{{ t('ciActivity.state.loading') }}</p>
-          <BaseEmptyState v-else-if="!jobs.length" size="inline" align="center" :title="t('ciActivity.jobs.empty')" />
+          <BaseEmptyState v-else-if="!jobs.length" size="inline" :title="t('ciActivity.jobs.empty')" />
           <table v-else class="aci__table" :class="{ 'aci__table--busy': jobsLoading }">
             <thead>
               <tr>

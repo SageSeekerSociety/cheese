@@ -263,7 +263,6 @@ async function onRemove(handle: string) {
       <BaseEmptyState
         v-else-if="!members.length && !shownError"
         size="inline"
-        align="center"
         class="roster__empty"
         :title="t('work.room.roster.empty')"
       />

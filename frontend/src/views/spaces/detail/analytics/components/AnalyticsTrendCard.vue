@@ -20,7 +20,7 @@
       </div>
     </div>
 
-    <BaseEmptyState v-else size="inline" align="center" :title="t('spaces.analytics.chart.noTrend')" />
+    <BaseEmptyState v-else size="inline" :title="t('spaces.analytics.chart.noTrend')" />
   </v-card>
 </template>
 

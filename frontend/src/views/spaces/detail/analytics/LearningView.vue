@@ -46,7 +46,6 @@
             <BaseEmptyState
               v-if="!queues.reviewFlag.items.length"
               size="inline"
-              align="center"
               class="lr__gap"
               :title="t('spaces.analytics.learning.queue.noFlagged')"
             />
@@ -67,12 +66,7 @@
             @update:checked="(value) => emit('setSelected', point.example.blockId, value)"
           />
         </div>
-        <BaseEmptyState
-          v-else-if="queues"
-          size="inline"
-          align="center"
-          :title="t('spaces.analytics.learning.queue.noStuck')"
-        />
+        <BaseEmptyState v-else-if="queues" size="inline" :title="t('spaces.analytics.learning.queue.noStuck')" />
       </section>
 
       <section class="lr__block">
@@ -89,12 +83,7 @@
             @update:checked="(value) => emit('setSelected', question.blockId, value)"
           />
         </div>
-        <BaseEmptyState
-          v-else-if="!loading"
-          size="inline"
-          align="center"
-          :title="t('spaces.analytics.learning.questions.empty')"
-        />
+        <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.learning.questions.empty')" />
       </section>
 
       <div class="an-card lr__actions">
