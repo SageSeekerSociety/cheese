@@ -48,6 +48,7 @@ from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.services import remarks_by_handles, usernames_by_ids
 
 
 def _ms(moment: datetime | None) -> int | None:
@@ -191,7 +192,19 @@ async def _enrich_task_models(
     task_models: list[dict],
     *,
     space_id: int,
+    viewer_id: int | None = None,
+    viewer_handle: str | None = None,
 ) -> list[dict]:
+    """Fill in the names, avatars and counts a task's response carries.
+
+    ``viewer_id`` (or ``viewer_handle``, for a caller that already has it) is
+    the account this response is for, when there is one: a personal remark
+    (``UserTeammateRemark``) is private to whoever set it, so each name here
+    also carries that person's remark beside it (``remark``), and the page
+    shows the remark instead of the public nickname. Without either — an
+    agent's read, a batch nobody browsed — the names stay public, which is what
+    anything shared or exported has to show.
+    """
     if not task_models:
         return task_models
 
@@ -229,6 +242,18 @@ async def _enrich_task_models(
     space = await space_repo.get_by_id(space_id)
     space_name = space.name if space is not None else "Unknown Space"
 
+    # The page's own remarks, one query for everyone it names. Handles, not ids:
+    # a remark is stored against the account's handle. Empty when nobody is
+    # browsing (an agent's read), and then every name below stays public.
+    reader = viewer_handle
+    if reader is None and viewer_id is not None:
+        reader = (await usernames_by_ids(db, [viewer_id])).get(viewer_id, "")
+    remarks = (
+        await remarks_by_handles(db, reader, [user.username for user in users.values()])
+        if reader
+        else {}
+    )
+
     role_name_map = {0: "OWNER", 1: "ADMIN"}
     admins_payload: list[dict] = []
     for rel in admin_relations:
@@ -244,6 +269,7 @@ async def _enrich_task_models(
                 "id": user.id,
                 "username": user.username,
                 "nickname": nickname,
+                "remark": remarks.get(user.username),
                 "avatarId": avatar_id,
                 "intro": intro,
                 "question_count": 0,
@@ -306,6 +332,7 @@ async def _enrich_task_models(
                 "id": user.id,
                 "username": user.username,
                 "nickname": nickname,
+                "remark": remarks.get(user.username),
                 "avatarId": avatar_id,
                 "intro": intro,
             }
@@ -360,6 +387,13 @@ async def _enrich_task_models(
         if mentor_users
         else {}
     )
+    # 备注只按 handle 查，而上面那一批是替 creator 和空间管理员查的；导师是另外几个人，
+    # 这里补一次（一个人也没有就不查）。``mentor_users`` 自己就是按 handle 索引的。
+    mentor_remarks = (
+        await remarks_by_handles(db, reader, mentor_users.keys())
+        if reader and mentor_users
+        else {}
+    )
     for task_model in task_models:
         task_model["mentors"] = [
             {
@@ -371,6 +405,7 @@ async def _enrich_task_models(
                     and mentor_profiles[mentor_users[handle].id].nickname
                     else handle
                 ),
+                "remark": mentor_remarks.get(handle),
             }
             for handle in mentors_of.get(task_model["id"], [])
         ]
@@ -643,6 +678,7 @@ def _build_participant_user_info(
     profile_map: dict | None = None,
     team_map: dict | None = None,
     avatar_map: dict | None = None,
+    remarks: dict[str, str] | None = None,
 ) -> dict:
     """Build the user or team identity displayed on a registration.
 
@@ -651,11 +687,16 @@ def _build_participant_user_info(
     ``profile.avatar_id``：每个注册路径都往那一列写死了全局默认（默认头像是哪一行因
     环境而异），直接回它等于给所有没挑过头像的人同一张脸。没挑过的人不在映射里，这里
     回 None，前端 ``RosterView`` 据此画彩色首字母。
+
+    ``remarks`` 是**这个查看者**给报名的人设的私人备注（handle → 备注），由调用方按
+    读的人批量查一次。附在 ``remark`` 上，页面照名册的规矩先看它；不给（名单是被
+    程序读的、或者没人登录）就只有公开昵称。
     """
     user_map = user_map or {}
     profile_map = profile_map or {}
     team_map = team_map or {}
     avatar_map = avatar_map or {}
+    remarks = remarks or {}
     if membership.is_team and membership.member_id in team_map:
         return team_summary(
             team_map[membership.member_id], fallback_id=membership.member_id
@@ -673,6 +714,7 @@ def _build_participant_user_info(
             "username": user.username,
             "nickname": nickname,
             "name": nickname,
+            "remark": remarks.get(user.username),
             "avatarId": avatar_map.get(membership.member_id),
             "intro": profile.intro if profile else "",
         }

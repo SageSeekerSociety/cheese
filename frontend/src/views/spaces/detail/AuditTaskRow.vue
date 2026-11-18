@@ -9,6 +9,7 @@ import dayjs from 'dayjs'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import TaskDescription from '@/components/tasks/TaskDescription.vue'
+import { userName } from '@/lib/agentNames'
 
 /** `showSpace`：几个空间的题排在一起时（平台管理员的待审核题目），每行写上它在哪个空间。 */
 const props = defineProps<{ task: Task; open: boolean; showSpace?: boolean }>()
@@ -17,7 +18,7 @@ defineEmits<{ toggle: []; approve: []; reject: [] }>()
 const { t } = useI18n()
 
 const date = (at: number) => dayjs(at).format('MM-DD HH:mm')
-const publisher = computed(() => props.task.creator.nickname || props.task.creator.username)
+const publisher = computed(() => userName(props.task.creator) || props.task.creator.username)
 const bodyId = computed(() => `audit-task-${props.task.id}`)
 
 /** 这道题的几项设置，一项一句，排成一行。 */

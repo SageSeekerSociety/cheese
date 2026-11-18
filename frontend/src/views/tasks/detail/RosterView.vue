@@ -292,6 +292,7 @@ import { compareBy } from '@/components/base/tableSort'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { memberName as rosterName } from '@/lib/agentNames'
 import { calendarDaysAgo, clockTime, dayTimeText } from '@/lib/dateText'
 import { vRovingTabs } from '@/lib/rovingTabs'
 import { fmtNum } from '@/lib/usageFormat'
@@ -372,9 +373,11 @@ const { t } = useI18n()
 const rowMenu = useRowMenu<number>()
 
 function displayName(m: TaskMembership): string {
+  // 实名那一栏要的是老师点名的那个真名，不是查看者私下怎么叫这个人。
   if (props.taskData?.requireRealName && m.realNameInfo?.realName) return m.realNameInfo.realName
+  // 其余照名册的规矩：设了个人备注就是备注，否则是他的公开名字。
   return (
-    m.member?.name ||
+    rosterName(m.member) ||
     (props.taskData?.submitterType === 'TEAM' ? t('tasks.roster.unknownTeam') : t('tasks.roster.unknownUser'))
   )
 }
