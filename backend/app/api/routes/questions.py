@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 from app.api.deps import get_discussion_service
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES, Can
-from app.auth.checker import get_auth_user, require_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
@@ -58,17 +58,13 @@ async def get_invitation_service(db=Depends(get_db)) -> QuestionInvitationServic
 async def get_trending_questions(
     limit: int = Query(default=10, ge=1, le=50),
     days: int = Query(default=7, ge=1, le=30),
-    viewer: AuthUserInfo = Depends(get_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    # 这个榜对谁都开着（未登录也读，`test_who_may_act_on_a_question` 钉着），
-    # 所以用的是可选的 `get_auth_user` 而不是 `require_auth_user`：登录了就按他
-    # 自己的叫法列，没登录就按公开昵称。
-    items = await service.get_trending_questions(
-        limit=limit,
-        days=days,
-        viewer_id=viewer.user_id or None,
-    )
+    # 这个榜是公开的：未登录也读（`test_who_may_act_on_a_question` 钉着），而且
+    # agent 的凭据打到这里不认读者（`get_auth_user` 对限在某项目/房间上的票会
+    # 403），一个坏票又会被静默当成访客。它没有可靠的读者可认，就按公开昵称列
+    # —— 和任何一个未登录的人看到的一致。
+    items = await service.get_trending_questions(limit=limit, days=days)
     return ok({"questions": items})
 
 
