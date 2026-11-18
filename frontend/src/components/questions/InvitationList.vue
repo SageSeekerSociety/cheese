@@ -1,9 +1,9 @@
 <template>
   <v-list>
-    <v-list-item v-for="user in people" :key="user.id" :title="user.nickname" :subtitle="user.intro">
+    <v-list-item v-for="user in people" :key="user.id" :title="nameOf(user)" :subtitle="user.intro">
       <template #prepend>
         <!-- 种子用 handle(username)：颜色跟着人走，不跟昵称走，改昵称不换色（契约 §3.14）。 -->
-        <user-avatar :avatar="getAvatarUrl(user.avatarId)" :name="user.nickname" :seed="user.username" />
+        <user-avatar :avatar="getAvatarUrl(user.avatarId)" :name="nameOf(user)" :seed="user.username" />
       </template>
       <template #append>
         <BaseButton
@@ -36,6 +36,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import UserAvatar from '../common/UserAvatar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { userName } from '@/lib/agentNames'
 
 const { t } = useI18n()
 
@@ -51,4 +52,7 @@ const emit = defineEmits<{
 }>()
 
 const isInvited = (user: User): boolean => props.invitedIds.includes(user.id)
+
+/** 这一位在这块屏幕上叫什么：查看者给他设过备注就是备注，否则是公开昵称。 */
+const nameOf = (user: User): string => userName(user) || user.nickname
 </script>

@@ -1,5 +1,7 @@
 from collections.abc import Sequence
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.answers.repositories import AnswerRepository
@@ -10,7 +12,7 @@ from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
 )
-from app.domain.user.author_dto import profile_to_author
+from app.domain.user.author_dto import page_names, profile_to_author
 from app.domain.user.repositories import UserProfileRepository
 
 
@@ -45,11 +47,14 @@ class QuestionsService:
         topic_repo: QuestionTopicRepository,
         answer_repo: AnswerRepository | None = None,
         profile_repo: UserProfileRepository | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
         self._repo = repo
         self._topic_repo = topic_repo
         self._answer_repo = answer_repo
         self._profile_repo = profile_repo
+        # 读的人自己的备注要按页批量查一次；没有 session（agent 的读取）就不查。
+        self._session = session
 
     async def search_questions(
         self,
@@ -59,6 +64,7 @@ class QuestionsService:
         page_start: int | None,
         sort_by: str,
         sort_order: str,
+        viewer_id: int | None = None,
     ) -> tuple[list[dict], dict]:
         offset = max(0, page_start) if page_start is not None else 0
         rows, total = await self._repo.search(
@@ -68,7 +74,7 @@ class QuestionsService:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        items = await self._enrich_question_list(rows)
+        items = await self._enrich_question_list(rows, viewer_id=viewer_id)
         returned = len(items)
         has_more = offset + returned < total
         next_start = offset + returned if has_more and returned > 0 else None
@@ -119,7 +125,9 @@ class QuestionsService:
         dto["topicIds"] = topic_ids
         return dto
 
-    async def _enrich_question_list(self, rows: Sequence[Question]) -> list[dict]:
+    async def _enrich_question_list(
+        self, rows: Sequence[Question], *, viewer_id: int | None = None
+    ) -> list[dict]:
         """Build list-shaped DTOs with bulk-fetched authors and topics.
 
         Frontend Question type expects `topics: Topic[]` and `author: User`;
@@ -141,6 +149,7 @@ class QuestionsService:
             if self._profile_repo and author_ids
             else {}
         )
+        names = await page_names(self._session, viewer_id, author_ids)
         items: list[dict] = []
         for row in rows:
             dto = _question_to_dto(row, include_content=False)
@@ -149,6 +158,7 @@ class QuestionsService:
             dto["author"] = profile_to_author(
                 profiles_by_id.get(row.created_by_id),
                 chosen_by_id.get(row.created_by_id),
+                **names.get(row.created_by_id, {}),
             ) or {"id": row.created_by_id}
             items.append(dto)
         return items
@@ -173,7 +183,11 @@ class QuestionsService:
             else {}
         )
         dto["author"] = profile_to_author(
-            author_profile, author_chosen.get(question.created_by_id)
+            author_profile,
+            author_chosen.get(question.created_by_id),
+            **(
+                await page_names(self._session, viewer_id, [question.created_by_id])
+            ).get(question.created_by_id, {}),
         ) or {"id": question.created_by_id}
 
         follow_count = await self._repo.count_followers(question_id)
@@ -237,7 +251,13 @@ class QuestionsService:
                     "question_id": accepted.question_id,
                     "content": accepted.content,
                     "author": profile_to_author(
-                        accepted_author, accepted_chosen.get(accepted.created_by_id)
+                        accepted_author,
+                        accepted_chosen.get(accepted.created_by_id),
+                        **(
+                            await page_names(
+                                self._session, viewer_id, [accepted.created_by_id]
+                            )
+                        ).get(accepted.created_by_id, {}),
                     )
                     or {"id": accepted.created_by_id},
                     "created_at": int(accepted.created_at.timestamp() * 1000)
@@ -476,14 +496,21 @@ class QuestionInvitationService:
         question_repo: QuestionRepository,
         profile_repo: UserProfileRepository,
         answer_repo: AnswerRepository | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
         self._repo = repo
         self._question_repo = question_repo
         self._profile_repo = profile_repo
         self._answer_repo = answer_repo
+        self._session = session
 
     async def list_invitations(
-        self, *, question_id: int, page_start: int | None, page_size: int
+        self,
+        *,
+        question_id: int,
+        page_start: int | None,
+        page_size: int,
+        viewer_id: int | None = None,
     ) -> tuple[list[dict], dict]:
         await self._ensure_question_exists(question_id)
         offset = page_start or 0
@@ -495,11 +522,16 @@ class QuestionInvitationService:
         # 一次问清这批被邀请人各自挑没挑过头像（契约 §3.14）。
         chosen_by_id = await self._profile_repo.chosen_avatar_ids(list(user_ids))
         answered_map = await self._get_answered_map(question_id, user_ids)
+        names = await page_names(self._session, viewer_id, list(user_ids))
         items = []
         for row in rows:
             profile = profiles.get(row.user_id)
             user_dto = (
-                profile_to_author(profile, chosen_by_id.get(row.user_id))
+                profile_to_author(
+                    profile,
+                    chosen_by_id.get(row.user_id),
+                    **names.get(row.user_id, {}),
+                )
                 if profile
                 else None
             )
@@ -537,18 +569,33 @@ class QuestionInvitationService:
             user_id=invitee_id,
         )
         chosen = await self._profile_repo.chosen_avatar_ids([invitee_id])
-        user_dto = profile_to_author(profile, chosen.get(invitee_id))
+        user_dto = profile_to_author(
+            profile,
+            chosen.get(invitee_id),
+            # 回给邀请他的人：他给这个人设的备注就是这里该显示的名字。
+            **(await page_names(self._session, inviter_id, [invitee_id])).get(
+                invitee_id, {}
+            ),
+        )
         return {
             "invitation_id": invitation.id,
             "invitation": _invitation_to_dto(invitation, user=user_dto),
         }
 
-    async def get_invitation(self, *, question_id: int, invitation_id: int) -> dict:
+    async def get_invitation(
+        self, *, question_id: int, invitation_id: int, viewer_id: int | None = None
+    ) -> dict:
         invitation = await self._invitation_in_question(question_id, invitation_id)
         profile = await self._profile_repo.get_profile_by_user_id(invitation.user_id)
         chosen = await self._profile_repo.chosen_avatar_ids([invitation.user_id])
         user_dto = (
-            profile_to_author(profile, chosen.get(invitation.user_id))
+            profile_to_author(
+                profile,
+                chosen.get(invitation.user_id),
+                **(
+                    await page_names(self._session, viewer_id, [invitation.user_id])
+                ).get(invitation.user_id, {}),
+            )
             if profile
             else None
         )
@@ -600,17 +647,30 @@ class QuestionInvitationService:
             raise NotFoundError("Invitation not found", data={"id": invitation_id})
         return invitation
 
-    async def get_recommendations(self, *, question_id: int, limit: int) -> list[dict]:
+    async def get_recommendations(
+        self, *, question_id: int, limit: int, viewer_id: int | None = None
+    ) -> list[dict]:
+        """Who this reader may invite: a page of people, named the way they call them."""
         await self._ensure_question_exists(question_id)
         all_profiles = await self._profile_repo.list_profiles(limit=limit, offset=0)
         # 这批被推荐的人各自挑没挑过头像，一次问清（契约 §3.14）。
         chosen_by_id = await self._profile_repo.chosen_avatar_ids(
             [p.user_id for p in all_profiles]
         )
-        result = []
+        names = await page_names(
+            self._session, viewer_id, [p.user_id for p in all_profiles]
+        )
+        cards: list[dict] = []
         for profile in all_profiles:
-            result.append(profile_to_author(profile, chosen_by_id.get(profile.user_id)))
-        return result
+            # ``list_profiles`` 只持有人，所以卡片一定造得出来。
+            card = profile_to_author(
+                profile,
+                chosen_by_id.get(profile.user_id),
+                **names.get(profile.user_id, {}),
+            )
+            if card is not None:
+                cards.append(card)
+        return cards
 
     async def _ensure_question_exists(self, question_id: int) -> None:
         await ensure_question_exists(self._question_repo, question_id)

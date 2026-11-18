@@ -33,6 +33,7 @@ async def get_questions_service(db=Depends(get_db)) -> QuestionsService:
         topic_repo=topic_repo,
         answer_repo=answer_repo,
         profile_repo=profile_repo,
+        session=db,
     )
 
 
@@ -46,6 +47,7 @@ async def get_invitation_service(db=Depends(get_db)) -> QuestionInvitationServic
         question_repo=question_repo,
         profile_repo=profile_repo,
         answer_repo=answer_repo,
+        session=db,
     )
 
 
@@ -97,13 +99,13 @@ async def search_questions(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    _ = auth_user
     items, page = await service.search_questions(
         keyword=q,
         page_size=page_size,
         page_start=page_start,
         sort_by="createdAt",
         sort_order="desc",
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"questions": items, "page": page})
 
@@ -556,6 +558,7 @@ async def list_question_invitations(
         question_id=question_id,
         page_start=page_start,
         page_size=page_size,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"invitations": items, "page": page})
 
@@ -604,7 +607,11 @@ async def get_invitation_recommendations(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
-    users = await service.get_recommendations(question_id=question_id, limit=limit)
+    users = await service.get_recommendations(
+        question_id=question_id,
+        limit=limit,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
+    )
     return ok({"users": users})
 
 
@@ -619,7 +626,9 @@ async def get_invitation_detail(
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     invitation = await service.get_invitation(
-        question_id=question_id, invitation_id=invitation_id
+        question_id=question_id,
+        invitation_id=invitation_id,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"invitation": invitation})
 

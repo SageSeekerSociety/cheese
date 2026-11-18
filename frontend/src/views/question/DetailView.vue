@@ -50,11 +50,11 @@
             <div class="d-flex align-center mb-2">
               <user-avatar
                 :avatar="authorAvatarUrl"
-                :name="questionData.author.nickname"
+                :name="authorName"
                 :seed="questionData.author.username"
                 :size="24"
               />
-              <span class="ms-2">{{ questionData.author.nickname }}</span>
+              <span class="ms-2">{{ authorName }}</span>
             </div>
             <div class="d-flex align-center flex-wrap" style="gap: 8px">
               <v-tooltip v-if="questionData.bounty && questionData.bounty > 0" bottom>
@@ -269,6 +269,7 @@
 import type EditorJS from '@editorjs/editorjs'
 import type { Question, User } from '@/types'
 
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
@@ -283,8 +284,9 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import InvitationList from '@/components/questions/InvitationList.vue'
 import { NewAttitudeType } from '@/constants'
+import { userName } from '@/lib/agentNames'
 
-withDefaults(
+const viewProps = withDefaults(
   defineProps<{
     /** 读失败了：整张卡片换成错误块，不是一直停在骨架上。 */
     loadFailed: boolean
@@ -333,6 +335,11 @@ const addBountyInput = defineModel<number>('addBountyInput', { required: true })
 const inviteDialog = defineModel<boolean>('inviteDialog', { required: true })
 
 const { t } = useI18n()
+
+// 提问的人按查看者的叫法：设了个人备注就是备注，否则是公开昵称。
+const authorName = computed(
+  () => userName(viewProps.questionData?.author) || viewProps.questionData?.author?.nickname || ''
+)
 </script>
 
 <style lang="scss">
