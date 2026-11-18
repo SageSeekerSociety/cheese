@@ -285,12 +285,11 @@ function pickActiveMention(): boolean {
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
 // module so this stays identical to the backend's backstop.
 function expandMentions(text: string): string {
-  return expandComposerMentions(
-    text,
-    props.agentSeat,
-    props.mentionPool,
-    props.topicList.filter((t) => t.kind !== 'root')
-  )
+  return expandComposerMentions(text, props.agentSeat, props.mentionPool, topicsForLinks())
+}
+/** 这根栏里的 @ 名单（话题那一侧的排除根话题，理由见上面 expandMentions）。 */
+function topicsForLinks() {
+  return props.topicList.filter((t) => t.kind !== 'root')
 }
 
 // 图片输入: paste (screenshot) or pick images; they upload to the topic's
@@ -482,7 +481,7 @@ function askRecipient(now: Addressing | null) {
 // 动。所以这几个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
 // 也不要一个点了不算数的入口。
 function withAgentMention(text: string, mate: Mate | null = restingMate.value): string {
-  return handToMentions(text, mate, mates.value, expandMentions, false)
+  return handToMentions(text, mate, mates.value, props.mentionPool, topicsForLinks(), false)
 }
 
 // 摘掉正文里对这位的第一处 @。只摘第一处：正文里别处还提着它（「照 @芝士 说的改」）
@@ -698,7 +697,8 @@ defineExpose({
     // 叫的人指定了谁，就写谁；找不着（名册刚换过、那一位已经不在这间房了）**什么都不写**，
     // 不退回「平时交给的那位」——那一退正是这次要消灭的错：屏幕上说着一个人，@ 出来另一个。
     const mate = handle ? mates.value.find((m) => m.handle === handle) ?? null : restingMate.value
-    if (mate) draft.value = handToMentions(draft.value, mate, mates.value, expandMentions, !!handle)
+    if (mate)
+      draft.value = handToMentions(draft.value, mate, mates.value, props.mentionPool, topicsForLinks(), !!handle)
     void nextTick(() => composerInput.value?.focus?.())
   },
   askRecipient,

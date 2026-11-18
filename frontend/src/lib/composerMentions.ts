@@ -1,6 +1,6 @@
 import type { MentionMember, MentionTopic } from './expandMentions'
 
-import { expandMentions, mentionsHandle } from './expandMentions'
+import { expandMentions, mentionsHandle, mentionSpans } from './expandMentions'
 
 type AgentSeat = { handle: string; label: string } | null
 type Member = MentionMember & { agent?: boolean }
@@ -24,9 +24,14 @@ export function withAgentMention(text: string, seat: AgentSeat, pool: Member[], 
 /** Hand the draft to `seat`, replacing whoever the draft was already addressed to.
  *
  * Only the mentions IN FRONT are swapped: that run is the sentence's "to whom". A
- * teammate named inside the sentence is being talked about ("照 @芝士 说的改"), and
- * an earlier @ on a person is a sentence addressed to them — both stay, for the same
- * reason the avatar's toggle only removes the one @ it added.
+ * teammate named inside the sentence is being talked about ("照 @芝士 说的改") and
+ * stays, for the same reason the avatar's toggle only removes the one @ it added.
+ * An @ on a person at the front is a sentence addressed to them: it keeps its place,
+ * but a teammate behind it is still someone the draft hands work to, so it goes too.
+ *
+ * The rest of the draft comes back exactly as typed: this walks the raw text, so a
+ * hand-typed "@某人" further down neither turns into a chip nor moves, and a trailing
+ * newline survives.
  *
  * `named` says the caller named the teammate ("交给芝士" does). Without a name, a
  * draft that already summons someone keeps them: the avatar does not rewrite a @ the
@@ -36,19 +41,33 @@ export function handToMentions(
   text: string,
   seat: AgentSeat,
   mates: { handle: string }[],
-  expand: (text: string) => string,
+  members: Member[],
+  topics: MentionTopic[],
   named: boolean
 ): string {
   if (!seat) return text
-  const expanded = expand(text)
   const summons = (handle: string) => mates.some((m) => m.handle === handle)
   if (!named) {
-    if (mates.some((m) => expanded.includes(`<@${m.handle}>`))) return text
+    if (mates.some((m) => mentionsHandle(expandComposerMentions(text, seat, members, topics), m.handle))) return text
     return `<@${seat.handle}> ${text}`
   }
-  let rest = expanded
-  for (let at = /^<@([\w-]+)>\s*/.exec(rest); at && summons(at[1]); at = /^<@([\w-]+)>\s*/.exec(rest)) {
-    rest = rest.slice(at[0].length)
+  // 开头的空白连着 @：队友的拿走，人的留着（那句话是说给他听的）。
+  const kept: string[] = []
+  let cursor = 0
+  for (;;) {
+    const start = cursor + /^\s*/.exec(text.slice(cursor))![0].length
+    const span = mentionSpans(text.slice(start), members, topics).find((s) => s.start === 0)
+    if (!span) break
+    const token = text.slice(start, start + span.end)
+    const handle = /^<@([\w-]+)>$/.exec(expandComposerMentions(token, seat, members, topics))?.[1]
+    if (handle && summons(handle)) {
+      cursor = start + span.end
+      continue
+    }
+    // 人的 @：原样留着，接着看他后面还有没有队友。
+    kept.push(token)
+    cursor = start + span.end
   }
-  return `<@${seat.handle}> ${rest}`.trimEnd()
+  const rest = text.slice(cursor).trimStart()
+  return `<@${seat.handle}> ${[...kept, rest].filter(Boolean).join(' ')}`
 }

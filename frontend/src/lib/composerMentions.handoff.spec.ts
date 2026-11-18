@@ -10,7 +10,6 @@
 import { describe, expect, it } from 'vitest'
 
 import { handToMentions } from './composerMentions'
-import { expandMentions } from './expandMentions'
 
 const SEAT = { handle: 'cheese-t1', label: '芝士' }
 const OTHER = { handle: 'cheese-t2', label: '芝士O' }
@@ -21,10 +20,9 @@ const POOL = [
 const MATES = [SEAT, OTHER]
 const TOPICS: { id: string; title: string }[] = []
 
-const hand = (text: string) =>
-  handToMentions(text, SEAT, MATES, (t) => expandMentions(t, [...MATES, ...POOL], TOPICS), true)
-const handAnon = (text: string) =>
-  handToMentions(text, SEAT, MATES, (t) => expandMentions(t, [...MATES, ...POOL], TOPICS), false)
+const MEMBERS = [...MATES, ...POOL]
+const hand = (text: string) => handToMentions(text, SEAT, MATES, MEMBERS, TOPICS, true)
+const handAnon = (text: string) => handToMentions(text, SEAT, MATES, MEMBERS, TOPICS, false)
 
 describe('交给芝士：写进去的 @ 就是那一句上写着的那位', () => {
   it('空草稿：写开头一个 @', () => {
@@ -51,6 +49,20 @@ describe('交给芝士：写进去的 @ 就是那一句上写着的那位', () =
 
   it('开头 @ 的是人：那是说给他听的，不拿掉，@ 加在人后面', () => {
     expect(hand('<@alice> 你看一下')).toBe(`<@${SEAT.handle}> <@alice> 你看一下`)
+  })
+
+  // 开头的空白、或者开头先 @ 了个人，都不能挡住后面那位队友——它同样是这条交给的人。
+  it('开头夹着空行时照样换掉那位队友', () => {
+    expect(hand(`\n<@${OTHER.handle}> 正文`)).toBe(`<@${SEAT.handle}> 正文`)
+  })
+
+  it('开头先 @ 了人、后面跟着队友：人留着，队友换成这一位', () => {
+    expect(hand(`<@alice> <@${OTHER.handle}> 正文`)).toBe(`<@${SEAT.handle}> <@alice> 正文`)
+  })
+
+  // 只在开头那一段上动手：句子后面打的字原样交回，不会被顺手展开成标签。
+  it('句子后面的 @ 和结尾的换行原样留着', () => {
+    expect(hand(`<@${OTHER.handle}> 照 @alice 说的改\n`)).toBe(`<@${SEAT.handle}> 照 @alice 说的改\n`)
   })
 
   it('没人指定是谁（头像的老调用）时，草稿里已有的队友不动', () => {
