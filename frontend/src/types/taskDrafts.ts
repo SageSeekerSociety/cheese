@@ -1,6 +1,7 @@
 // 题目草稿（`/task-drafts`）：写到一半的新题目，或对一道已发布题目还没保存的修改。
 // 草稿存在服务端：发布页、改题页边写边存进去，芝士答题时也写进同一份。
 import type { SpaceTeaching } from './spaces'
+import type { TaskTestSuite } from './taskJudge'
 import type {
   TaskRubricLine,
   TaskStage,
@@ -39,6 +40,7 @@ export interface TaskDraftFields {
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  testSuite?: TaskTestSuite[]
   stages?: TaskStage[]
   attachmentIds?: number[]
   /** 附件的名字和大小，页面列附件用；发布时不带。 */
@@ -104,6 +106,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'submissionSchema',
   'rubric',
   'rubricPublic',
+  'testSuite',
   'stages',
   'attachmentIds',
   'attachmentFiles',

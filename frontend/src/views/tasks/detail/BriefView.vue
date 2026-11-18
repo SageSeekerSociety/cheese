@@ -58,7 +58,7 @@
               <tr v-for="(line, index) in group.rows" :key="index">
                 <td>
                   <!-- 自动算分那一行的名称是平台给的，不是出题人写的，不当作用户内容。 -->
-                  <span v-if="isAuto(line)">{{ line.item }}</span>
+                  <span v-if="line.kind === 'usage'">{{ line.item }}</span>
                   <span v-else data-user-content>{{ line.item }}</span>
                 </td>
                 <td class="tb__pts t-num">{{ line.points }}</td>
@@ -70,6 +70,39 @@
           </table>
         </div>
       </template>
+    </section>
+
+    <!-- 自动评测：挂了测试点的阶段，几个用例、什么环境和限额，以及样例的输入输出（隐藏用例
+         学生读到的没有输入输出，这里只数它）。 -->
+    <section v-if="suiteGroups.length" class="tb__sec" data-testid="task-brief-tests">
+      <h2 class="tb__h t-title">{{ t('tasks.judge.brief.title') }}</h2>
+      <div v-for="group in suiteGroups" :key="group.key" class="tb__suite">
+        <h3 v-if="group.title" class="tb__stage t-eyebrow-read" data-user-content>{{ group.title }}</h3>
+        <p class="tb__suite-meta t-meta-read">
+          {{
+            t('tasks.judge.brief.summary', {
+              n: group.suite.caseCount ?? group.suite.cases.length,
+              samples: group.samples.length,
+              runtime: t(`tasks.judge.runtime.${group.suite.runtime.replace('.', '_')}`),
+              ms: group.suite.timeLimitMs,
+              mb: group.suite.memoryMb,
+            })
+          }}
+        </p>
+        <div v-for="(entry, index) in group.samples" :key="index" class="tb__sample">
+          <span class="tb__sample-name" data-user-content>{{ entry.name }}</span>
+          <div class="tb__sample-io">
+            <div>
+              <span class="t-meta-read">{{ t('tasks.judge.result.input') }}</span>
+              <pre class="tb__pre">{{ entry.input }}</pre>
+            </div>
+            <div>
+              <span class="t-meta-read">{{ t('tasks.judge.result.expected') }}</span>
+              <pre class="tb__pre">{{ entry.expected }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Materials: the list is the server's, and so is whether they download. No section without materials. -->
@@ -131,11 +164,25 @@ function grouped<T extends { stage?: string | null }>(rows: T[]) {
 const itemGroups = computed(() => grouped(props.taskData?.submissionSchema ?? []))
 const lineGroups = computed(() => grouped(props.taskData?.rubric ?? []))
 
-/** 这一行是不是平台自动算分的（额度用量）；老题的评分要点都是手动行。 */
+/** 各阶段挂的测试点，和其中学生看得到输入输出的样例。 */
+const suiteGroups = computed(() =>
+  (props.taskData?.testSuite ?? []).map((suite, at) => {
+    const index = stages.value.findIndex((stage) => stage.id === settledStage(stages.value, suite.stage))
+    return {
+      key: suite.stage ?? `none-${at}`,
+      title: index >= 0 ? t('tasks.stages.numbered', { n: index + 1, name: stages.value[index].name }) : null,
+      suite,
+      samples: suite.cases.filter((entry) => entry.visibility === 'SAMPLE' && entry.input != null),
+    }
+  })
+)
+
+/** 这一行是不是平台自动算分的（额度用量、测试点）；老题的评分要点都是手动行。 */
 const isAuto = (line: { kind?: string }) => (line.kind ?? 'manual') !== 'manual'
 
 /** 自动算分那一行怎么给分，和出题表单、后端 `rubric.automatic_rule` 说的是同一件事。 */
 function autoRule(line: TaskRubricLine): string {
+  if (line.kind === 'tests') return t('tasks.judge.brief.rule')
   // 缺省的起点和后端给的那一份相同（按阈值 0–100），读回来缺设置时也不用到处判空。
   const config: TaskRubricLineConfig = line.config ?? { mode: 'threshold', full: 0, zero: 100 }
   if (config.mode === 'rank') return t('tasks.brief.rubricRuleRank')
@@ -146,6 +193,41 @@ function autoRule(line: TaskRubricLine): string {
 <style scoped>
 .tb {
   max-width: 680px;
+}
+
+.tb__suite {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tb__suite-meta {
+  margin: 0;
+}
+
+.tb__sample-name {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tb__sample-io {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.tb__pre {
+  margin: 4px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .tb__sec + .tb__sec {

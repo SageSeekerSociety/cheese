@@ -15,5 +15,7 @@
   "judgeTrialTooManyFiles": "参考代码最多 {max} 个文件",
   "judgeTrialUploadTooLarge": "参考代码最多 {mb} MB",
   "judgeUnavailable": "评测暂不可用：平台还没有接入评测主机，老师可以手动给测试分",
-  "judgeUnpriced": "评测暂不可用：平台还没有设定评测的价格，老师可以手动给测试分"
+  "judgeUnpriced": "评测暂不可用：平台还没有设定评测的价格，老师可以手动给测试分",
+  "judgeSummaryBadIds": "查评测摘要的提交编号格式不对",
+  "judgeSummaryTooMany": "一次最多查 {max} 版提交的评测摘要"
 }
