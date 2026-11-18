@@ -48,7 +48,7 @@ from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
-from app.domain.user.services import remarks_by_handles, usernames_by_ids
+from app.domain.user.services import remarks_by_handles
 
 
 def _ms(moment: datetime | None) -> int | None:
@@ -225,7 +225,12 @@ async def _enrich_task_models(
 
     admin_relations = await admin_repo.list_admins(space_id)
     admin_user_ids = [rel.user_id for rel in admin_relations]
-    all_user_ids = list({*creator_ids, *admin_user_ids})
+    # 读的人也并进这一批：他的 handle 要从 id 认出来，而这一批本来就要查，
+    # 单为他再发一条就是这一页多出来的一次查询（`test_problem_pages_read_once`
+    # 数着这条线）。
+    all_user_ids = list(
+        {*creator_ids, *admin_user_ids, *([viewer_id] if viewer_id is not None else [])}
+    )
 
     users = await user_repo.get_by_ids(all_user_ids)
     # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了全局
@@ -247,7 +252,9 @@ async def _enrich_task_models(
     # browsing (an agent's read), and then every name below stays public.
     reader = viewer_handle
     if reader is None and viewer_id is not None:
-        reader = (await usernames_by_ids(db, [viewer_id])).get(viewer_id, "")
+        # Already in this batch (``all_user_ids``): no query of its own.
+        viewer = users.get(viewer_id)
+        reader = viewer.username if viewer is not None else ""
     remarks = (
         await remarks_by_handles(db, reader, [user.username for user in users.values()])
         if reader
