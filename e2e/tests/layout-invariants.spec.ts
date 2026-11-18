@@ -103,6 +103,47 @@ test.describe('sidebar channel row geometry', () => {
     await page.evaluate(() => document.fonts.ready);
   }
 
+  for (const theme of ['light', 'dark']) {
+    for (const width of [390, 1100]) {
+      test(`chat ask geometry stays in the message column (${theme}, ${width})`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 1000 });
+        for (const state of ['题组与正文对齐', '自己要回答的题组', '题组的长名字与长回答']) {
+          await catalogFrame(page, 'chat-timeline', state, theme);
+          const timeline = page.locator('.tl-feed');
+          const ordinary = timeline.locator('[data-row-id="ask-after"] .im-main');
+          const question = timeline.locator('[data-row-id="ask-first"]');
+          await question.scrollIntoViewIfNeeded();
+          const textBox = await boxOf(ordinary);
+          const checkBounds = async () => {
+            for (const content of await question.locator('.ask-fold, .ask-group').all()) {
+              const box = await boxOf(content);
+              expect(Math.abs(box.x - textBox.x), 'questions align with ordinary message text').toBeLessThanOrEqual(1);
+              expect(box.x + box.width, 'questions stay within the text column').toBeLessThanOrEqual(textBox.x + textBox.width + 1);
+            }
+            for (const part of await question.locator('.ask-fold__who, .ask-fold__state').all()) {
+              const box = await boxOf(part);
+              expect(box.x + box.width, 'long names and answers wrap inside the column').toBeLessThanOrEqual(textBox.x + textBox.width + 1);
+            }
+            expect(await timeline.evaluate(el => el.scrollWidth - el.clientWidth), 'no horizontal timeline overflow').toBeLessThanOrEqual(1);
+          };
+          await checkBounds();
+          const fold = question.getByRole('button', { expanded: false });
+          if (await fold.count()) {
+            await fold.click();
+            await expect(question.getByRole('button', { expanded: true })).toBeVisible();
+            await checkBounds();
+            await question.getByRole('button', { expanded: true }).click();
+            await expect(fold).toBeVisible();
+          } else {
+            const answer = question.getByRole('radio').first();
+            await answer.check();
+            await expect(answer).toBeChecked();
+          }
+        }
+      });
+    }
+  }
+
   // Give the standalone frame the same constrained width as a sidebar rather than a
   // whole desktop viewport.
   async function narrowFrame(page: Page) {
