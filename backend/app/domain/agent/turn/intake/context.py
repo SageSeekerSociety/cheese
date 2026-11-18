@@ -195,10 +195,14 @@ class TurnContext:
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
     # `prompts/pieces/memory/`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
-    # 多人的地方里，这一轮答的人中有 communication 记录的那几位（handle、名字）：
-    # 这一轮先读他们的记录（`prompts.talk_pointer`）。私聊里是空的——那里的整棵
-    # private 在 `memory` 里指着。
+    # 多人的地方里，这一轮答的人中有 communication 记录的那几位（handle、名字、
+    # 文件名 → 正文）：这段对话还没拿到、或拿到之后改过的，随这一轮的输入给它
+    # （`prompts.talk_notes`）。私聊里是空的——那里的整棵 private 在 `memory`
+    # 里指着。
     talk_for: list[dict]
+    # 这一轮说日期用的时区（`notification.preferences.local_time`）：叫起这一轮
+    # 的那位成员报上来的；None 是没报过，按默认的北京时间说。
+    clock_zone: str | None
     prior_progress: list[dict]
     #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
     #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：

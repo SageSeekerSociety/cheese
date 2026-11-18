@@ -135,6 +135,16 @@ CALLS = {
         f"/topics/{TOPIC}/accept-card/redeliver",
     ),
     "cheese_card.ready": ({"action": "ready"}, "POST", f"/topics/{TOPIC}/ready"),
+    "cheese_hand_in.prepare": (
+        {"action": "prepare", "items": [{"item": 1, "file": "csim.c"}]},
+        "POST",
+        f"/topics/{TOPIC}/hand-in/prepare",
+    ),
+    "cheese_hand_in.confirm": (
+        {"action": "confirm"},
+        "POST",
+        f"/topics/{TOPIC}/hand-in/confirm",
+    ),
     "cheese_room.rename": (
         {"action": "rename", "text": "推荐原型"},
         "POST",

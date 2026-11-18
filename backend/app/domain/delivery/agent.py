@@ -258,14 +258,15 @@ async def record_seat_instruction(
     conversation_id: uuid.UUID,
     seat: str,
     content: str,
-) -> None:
+) -> bool:
     """Keep an instruction for the AI teammate seated as ``seat`` in the
     conversation ``conversation_id``, like `record_agent`, naming it by its
     seat. A seat this project has no active teammate for gets nothing: there
-    is nobody to tell, and no other seat is guessed in its place."""
+    is nobody to tell, and no other seat is guessed in its place. Says whether
+    the teammate is told (one already told the same event counts)."""
     agent = await instance_for_seat(session, project_id, seat)
     if agent is None or not agent.is_active:
-        return
+        return False
     await record_agent(
         session,
         event,
@@ -273,6 +274,7 @@ async def record_seat_instruction(
         instance_id=agent.id,
         content=content,
     )
+    return True
 
 
 async def record_task_instruction(

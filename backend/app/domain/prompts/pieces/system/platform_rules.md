@@ -7,6 +7,7 @@
 ⟦piece:system/rule_data⟧
 ⟦piece:system/shared_checkout⟧
 ⟦piece:system/rule_tasks⟧
+⟦piece:system/rule_hand_in⟧
 ⟦piece:system/rule_credits⟧
 ⟦piece:system/rule_attribution⟧
 ⟦piece:system/rule_help⟧

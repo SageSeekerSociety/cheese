@@ -23,6 +23,7 @@ export * from './api/docApps'
 export * from './api/environment'
 export * from './api/feedback'
 export * from './api/forge'
+export * from './api/handIn'
 export {
   ApiError,
   authToken,

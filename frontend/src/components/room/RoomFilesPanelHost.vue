@@ -13,6 +13,7 @@ import PanelRoomFiles from '../panels/PanelRoomFiles.vue'
 import KeepToLibraryConfirm from './KeepToLibraryConfirm.vue'
 
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
@@ -30,12 +31,20 @@ const { rows, truncated, loading, error, keeping, load, keep } = useConversation
 
 const app = getCurrentInstance()?.appContext.config.globalProperties
 const workspace = app?.$pinia ? useWorkspaceStore() : null
-/** handle → 名字，署名用：和「定时与触发」那一格一样从工作区的名册里查。 */
-const names = computed(() =>
-  Object.fromEntries(
-    (workspace?.members ?? []).map((m) => [m.user_handle, m.name]).filter((e): e is [string, string] => Boolean(e[1]))
-  )
-)
+/** handle → 名字，署名用：和「定时与触发」那一格一样从工作区的名册里查。
+ *  一个人的每个 handle（队友的座位和它自己的）都指到同一行，且用同一条姓名解析：
+ *  有个人备注用备注，否则原名。 */
+const names = computed(() => {
+  const rows = workspace?.members ?? []
+  const out: Record<string, string> = {}
+  for (const m of rows) {
+    const name = memberName(m)
+    if (!name) continue
+    out[m.user_handle] = name
+    if (m.instance_handle) out[m.instance_handle] = name
+  }
+  return out
+})
 
 const asking = ref<ConversationFile | null>(null)
 const { people, projectPeople } = useKeepAudience(

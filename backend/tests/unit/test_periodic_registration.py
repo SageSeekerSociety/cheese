@@ -18,7 +18,7 @@ from app.domain.delivery.agent import (
 )
 from app.domain.delivery.ledger import settle_card
 from app.periodic_jobs import periodic_jobs
-from tests.support.review_ports import task_teammate
+from tests.support.review_ports import task_teammate, uncommitted
 
 pytestmark = pytest.mark.anyio
 
@@ -35,6 +35,7 @@ _EXPECTED_PORTS = {
     "record_seat": record_seat_instruction,
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
+    "uncommitted": uncommitted,
     "machines": checkout_sweep.sweep,
     "chat": ANY,
     "announce_to_origin": announce,
@@ -51,7 +52,9 @@ _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
         "record_instruction",
+        "record_seat",
         "task_teammate",
+        "uncommitted",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
     "task closing": (
@@ -541,6 +544,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("feishu authorization renewal", 3600),
         ("task deadline sweep", 116),
         ("starter code pushes", 10),
+        ("judge runs", 5),
         ("memory dream", 117),
         ("memory history retention", 3600),
         ("platform model roles refresh", 121),

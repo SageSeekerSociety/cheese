@@ -28,6 +28,42 @@ beforeEach(() => {
   setLocale('zh-CN')
 })
 
+describe('改动栏对应的 PR', () => {
+  function renderCard(card: AcceptCard) {
+    return render(ChangesReviewHead as unknown as Component, {
+      props: acceptHeadProps({ card }),
+      global: { plugins: [createVuetify({ components, directives })], stubs: ['router-link'] },
+    })
+  }
+
+  it('打开当前审阅的 PR，不离开任务页面', () => {
+    const card = { ...ACCEPT_ONE, pr_number: 5289, pr_url: 'https://forge.example/repo/pull/5289' }
+    const { getByRole } = renderCard(card)
+    const link = getByRole('link', { name: 'PR #5289' })
+    expect(link.getAttribute('href')).toBe(card.pr_url)
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')?.split(/\s+/)).toContain('noopener')
+  })
+
+  it('换一张审阅卡后，链接和编号都跟随新的 PR', async () => {
+    const { getByRole, queryByRole, rerender } = renderCard({
+      ...ACCEPT_ONE,
+      pr_number: 5289,
+      pr_url: 'https://forge.example/repo/pull/5289',
+    })
+    await rerender({
+      card: { ...ACCEPT_ONE, pr_number: 3559, pr_url: 'https://forge.example/repo/pull/3559' },
+    })
+    expect(queryByRole('link', { name: 'PR #5289' })).toBeNull()
+    expect(getByRole('link', { name: 'PR #3559' }).getAttribute('href')).toBe('https://forge.example/repo/pull/3559')
+  })
+
+  it('卡片没有 PR 地址时不提供空跳转', () => {
+    const { queryByRole } = renderCard({ ...ACCEPT_ONE, pr_number: null, pr_url: null })
+    expect(queryByRole('link', { name: /PR #/ })).toBeNull()
+  })
+})
+
 describe('审阅重点', () => {
   it('交付的人自己写了编号时，不再编第二遍', () => {
     expect(focusShown('1. 迁移会改通知表\n2、回执落点改成了任务\n（3）旧卡照旧能读')).toEqual([

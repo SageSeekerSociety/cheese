@@ -31,6 +31,41 @@ export function memberName(
   return row.remark || memberOriginalName(row)
 }
 
+/**
+ * 一个 `User` 形状的人（团队成员的 `member.user`、空间成员的 `user`、申请里的
+ * `user`/`initiator`/`processedBy`）叫什么：有个人备注用备注，否则用昵称，再退账号。
+ * 这些接口的字段名是 `nickname`，不是名册上的 `name`，所以在这里转一次，别每处各写一遍。
+ */
+export function userName(
+  user: { nickname?: string | null; username?: string | null; remark?: string | null } | null | undefined
+): string {
+  if (!user) return ''
+  return memberName({ name: user.nickname || user.username || '', remark: user.remark })
+}
+
+/** 同上，但拿的是原名（不含个人备注），供副行与悬停用。 */
+export function userOriginalName(
+  user: { nickname?: string | null; username?: string | null } | null | undefined
+): string {
+  return user ? user.nickname || user.username || '' : ''
+}
+
+/**
+ * 设了个人备注时，名字下面那行要补的身份：原名与账号。没设备注时返回空串 —— 那
+ * 一行的名字和账号本来就写在别处。原名和账号是同一串时只写一次（没档案的人后端
+ * 把昵称填成账号）。
+ */
+export function secondaryIdentity(
+  user: { nickname?: string | null; username?: string | null; remark?: string | null } | null | undefined
+): string {
+  if (!user?.remark) return ''
+  const original = userOriginalName(user)
+  const handle = user.username || ''
+  if (!original) return handle
+  if (!handle || original === handle) return original
+  return `(${original}) · ${handle}`
+}
+
 /** 设了备注时悬停看到的原名与 @handle；没设备注返回 null。 */
 export function memberHoverTitle(
   row: { name?: string | null; name_source?: string | null; remark?: string | null } | null | undefined,

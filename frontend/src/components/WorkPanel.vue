@@ -197,6 +197,9 @@ const reviewCard = props.review
       get taskId() {
         return props.taskId
       },
+      get projectId() {
+        return props.topic?.project_id ?? null
+      },
     })
   : null
 watch(

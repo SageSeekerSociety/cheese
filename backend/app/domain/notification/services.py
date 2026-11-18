@@ -7,7 +7,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -25,7 +25,14 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
-from app.domain.notification.names import names_for, with_names
+from app.domain.notification.names import (
+    names_and_referents,
+    names_with_referents,
+    referents_for,
+    snapshot_id_swaps,
+    with_names,
+    with_snapshot_names,
+)
 from app.domain.notification.ports import DecisionLine
 from app.domain.notification.preferences import in_app_allowed
 from app.domain.notification.preferences_models import PreferencesRepository
@@ -281,6 +288,8 @@ class NotificationQueryService:
         *,
         resolved_entities: dict[str, ResolvedEntityInfoDTO | None] | None = None,
         names: Mapping[str, str] | None = None,
+        viewer_id: int | None = None,
+        referents: Mapping[int, str] | None = None,
     ) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata.
 
@@ -290,11 +299,30 @@ class NotificationQueryService:
         """
         metadata_map = _metadata_map_of(notification)
         # A row names people by name, not by the room's <@handle> token
-        # (`names.py`). ``names`` is the page's, read once for every row.
-        if names is None and self._session is not None:
-            names = await names_for(self._session, metadata_map)
+        # (`names.py`). Both halves may be the page's, read once for every row;
+        # whatever the caller already handed in is kept and only the missing
+        # half is read here, so a page never falls back to per-row lookups
+        # because of which of the two it happened to supply.
+        if self._session is not None:
+            if names is None:
+                if referents is None:
+                    names, referents = await names_and_referents(
+                        self._session, metadata_map, viewer_id=viewer_id
+                    )
+                else:
+                    names = await names_with_referents(
+                        self._session,
+                        referents,
+                        metadata_map,
+                        viewer_id=viewer_id,
+                    )
+            elif referents is None:
+                referents = await referents_for(self._session, metadata_map)
         if names:
             metadata_map = with_names(metadata_map, names)
+            metadata_map = with_snapshot_names(
+                metadata_map, names, snapshot_id_swaps(names, referents or {})
+            )
 
         if resolved_entities is None:
             entities = (
@@ -304,6 +332,8 @@ class NotificationQueryService:
             )
         else:
             entities = resolved_entities
+        if names:
+            entities = _named_entities(entities, names)
 
         return NotificationDTO.from_notification(
             notification=notification,
@@ -312,25 +342,58 @@ class NotificationQueryService:
         )
 
     async def build_notification_dtos(
-        self, notifications: Sequence[Notification]
+        self, notifications: Sequence[Notification], *, viewer_id: int | None = None
     ) -> list[NotificationDTO]:
-        """整页 DTO，实体解析每类只发一次查询。列表端点走这里。"""
+        """整页 DTO，实体解析每类只发一次查询。列表端点走这里。
+
+        ``viewer_id`` 是这一页给谁看：设了个人备注的人在这里用备注，和名册一致。
+        """
         if not notifications:
             return []
         resolved_pages = await self.resolve_entities_for_notifications(notifications)
-        names = (
-            await names_for(self._session, *map(_metadata_map_of, notifications))
-            if self._session is not None
-            else {}
-        )
+        # Names and referenced people are read once for the whole page: a row
+        # that names someone only through an entity reference must get their
+        # remark too, and doing that per row would be a query per row.
+        if self._session is not None:
+            names, referents = await names_and_referents(
+                self._session,
+                *map(_metadata_map_of, notifications),
+                viewer_id=viewer_id,
+            )
+        else:
+            names, referents = {}, {}
         return [
             await self.build_notification_dto(
-                notification, resolved_entities=resolved_entities, names=names
+                notification,
+                resolved_entities=resolved_entities,
+                names=names,
+                referents=referents,
             )
             for notification, resolved_entities in zip(
                 notifications, resolved_pages, strict=True
             )
         ]
+
+
+def _named_entities(
+    entities: dict[str, ResolvedEntityInfoDTO | None], names: Mapping[str, str]
+) -> dict[str, ResolvedEntityInfoDTO | None]:
+    """A person entity's name, read the way the reader calls them.
+
+    ``names`` already carries the reader's own remarks over the public nickname
+    (``names.py``); a resolved entity is the same person the metadata tokens
+    name, so it gets the same label instead of a chip showing the public name
+    beside a remark elsewhere on the row.
+    """
+    renamed: dict[str, ResolvedEntityInfoDTO | None] = {}
+    for key, entity in entities.items():
+        handle = getattr(entity, "handle", None)
+        name = names.get(handle) if handle else None
+        if entity is None or not name or name == entity.name:
+            renamed[key] = entity
+        else:
+            renamed[key] = replace(entity, name=name)
+    return renamed
 
 
 def asks_for_decision(notification: Notification) -> bool:

@@ -317,6 +317,8 @@ export type SpaceMember = {
     id: number
     username: string
     nickname?: string
+    /** 当前查看者给这个人设的私人称呼；没设过是 null/缺省。 */
+    remark?: string | null
     avatarId?: number | null
     intro?: string
   }

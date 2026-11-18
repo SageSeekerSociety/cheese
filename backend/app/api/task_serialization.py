@@ -48,6 +48,7 @@ from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.services import remarks_by_handles
 
 
 def _ms(moment: datetime | None) -> int | None:
@@ -191,7 +192,19 @@ async def _enrich_task_models(
     task_models: list[dict],
     *,
     space_id: int,
+    viewer_id: int | None = None,
+    viewer_handle: str | None = None,
 ) -> list[dict]:
+    """Fill in the names, avatars and counts a task's response carries.
+
+    ``viewer_id`` (or ``viewer_handle``, for a caller that already has it) is
+    the account this response is for, when there is one: a personal remark
+    (``UserTeammateRemark``) is private to whoever set it, so each name here
+    also carries that person's remark beside it (``remark``), and the page
+    shows the remark instead of the public nickname. Without either — an
+    agent's read, a batch nobody browsed — the names stay public, which is what
+    anything shared or exported has to show.
+    """
     if not task_models:
         return task_models
 
@@ -212,7 +225,13 @@ async def _enrich_task_models(
 
     admin_relations = await admin_repo.list_admins(space_id)
     admin_user_ids = [rel.user_id for rel in admin_relations]
-    all_user_ids = list({*creator_ids, *admin_user_ids})
+    # 读的人也并进这一批：他的 handle 要从 id 认出来，而这一批本来就要查，
+    # 单为他再发一条就是这一页多出来的一次查询（`test_problem_pages_read_once`
+    # 数着这条线）。
+    all_user_ids: list[int] = [*creator_ids, *admin_user_ids]
+    if viewer_id is not None:
+        all_user_ids.append(viewer_id)
+    all_user_ids = list(set(all_user_ids))
 
     users = await user_repo.get_by_ids(all_user_ids)
     # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了全局
@@ -229,6 +248,40 @@ async def _enrich_task_models(
     space = await space_repo.get_by_id(space_id)
     space_name = space.name if space is not None else "Unknown Space"
 
+    # The mentors who join every claimer's project (#3830), with the name the
+    # claim notice says them by.
+    mentors_of = await TaskMentorRepository(db).for_tasks(task_ids)
+    mentor_users = (
+        await user_repo.get_by_handles(
+            [h for handles in mentors_of.values() for h in handles]
+        )
+        if mentors_of
+        else {}
+    )
+    mentor_profiles = (
+        await profile_repo.get_profiles_by_user_ids(
+            [u.id for u in mentor_users.values()]
+        )
+        if mentor_users
+        else {}
+    )
+
+    # Who is reading, as a handle: a remark is stored against it. Empty when
+    # nobody is browsing (an agent's read), and then every name stays public.
+    reader = viewer_handle
+    if reader is None and viewer_id is not None:
+        # Already in this batch (``all_user_ids``): no query of its own.
+        viewer = users.get(viewer_id)
+        reader = viewer.username if viewer is not None else ""
+    # The page's own remarks for everyone it names — creators, the space's
+    # admins, the mentors and the reader — in one query. Handles, not ids: a
+    # remark is stored against the account's handle. Asking a second time for
+    # the mentors alone would cost a page with mentors one more statement, and
+    # `test_problem_pages_read_once` counts exactly that.
+    named_handles = [user.username for user in users.values()]
+    named_handles += list(mentor_users.keys())
+    remarks = await remarks_by_handles(db, reader, named_handles) if reader else {}
+
     role_name_map = {0: "OWNER", 1: "ADMIN"}
     admins_payload: list[dict] = []
     for rel in admin_relations:
@@ -244,6 +297,7 @@ async def _enrich_task_models(
                 "id": user.id,
                 "username": user.username,
                 "nickname": nickname,
+                "remark": remarks.get(user.username),
                 "avatarId": avatar_id,
                 "intro": intro,
                 "question_count": 0,
@@ -306,6 +360,7 @@ async def _enrich_task_models(
                 "id": user.id,
                 "username": user.username,
                 "nickname": nickname,
+                "remark": remarks.get(user.username),
                 "avatarId": avatar_id,
                 "intro": intro,
             }
@@ -343,23 +398,6 @@ async def _enrich_task_models(
         }
         task_model["categoryId"] = category_id
 
-    # The mentors who join every claimer's project (#3830), with the name the
-    # claim notice says them by.
-    mentors_of = await TaskMentorRepository(db).for_tasks(task_ids)
-    mentor_users = (
-        await user_repo.get_by_handles(
-            [h for handles in mentors_of.values() for h in handles]
-        )
-        if mentors_of
-        else {}
-    )
-    mentor_profiles = (
-        await profile_repo.get_profiles_by_user_ids(
-            [u.id for u in mentor_users.values()]
-        )
-        if mentor_users
-        else {}
-    )
     for task_model in task_models:
         task_model["mentors"] = [
             {
@@ -371,6 +409,7 @@ async def _enrich_task_models(
                     and mentor_profiles[mentor_users[handle].id].nickname
                     else handle
                 ),
+                "remark": remarks.get(handle),
             }
             for handle in mentors_of.get(task_model["id"], [])
         ]
@@ -643,6 +682,7 @@ def _build_participant_user_info(
     profile_map: dict | None = None,
     team_map: dict | None = None,
     avatar_map: dict | None = None,
+    remarks: dict[str, str] | None = None,
 ) -> dict:
     """Build the user or team identity displayed on a registration.
 
@@ -651,11 +691,16 @@ def _build_participant_user_info(
     ``profile.avatar_id``：每个注册路径都往那一列写死了全局默认（默认头像是哪一行因
     环境而异），直接回它等于给所有没挑过头像的人同一张脸。没挑过的人不在映射里，这里
     回 None，前端 ``RosterView`` 据此画彩色首字母。
+
+    ``remarks`` 是**这个查看者**给报名的人设的私人备注（handle → 备注），由调用方按
+    读的人批量查一次。附在 ``remark`` 上，页面照名册的规矩先看它；不给（名单是被
+    程序读的、或者没人登录）就只有公开昵称。
     """
     user_map = user_map or {}
     profile_map = profile_map or {}
     team_map = team_map or {}
     avatar_map = avatar_map or {}
+    remarks = remarks or {}
     if membership.is_team and membership.member_id in team_map:
         return team_summary(
             team_map[membership.member_id], fallback_id=membership.member_id
@@ -673,6 +718,7 @@ def _build_participant_user_info(
             "username": user.username,
             "nickname": nickname,
             "name": nickname,
+            "remark": remarks.get(user.username),
             "avatarId": avatar_map.get(membership.member_id),
             "intro": profile.intro if profile else "",
         }

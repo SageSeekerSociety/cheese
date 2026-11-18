@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // 频道里打开一件任务时的页头：任务名、状态词和在等谁、第几版、「退回」「采纳」，再是「打开任务」。审阅人
-// 已经决定了的，按钮的位置写决定的结果（已采纳 / 已退回）。桌面上画在交付那一格顶上；
+// 已经决定了的，按钮的位置写决定的结果（已采纳 / 已退回）。有人保存过、还没交进去的修改时
+// 写「有未提交的修改」，给「提交审阅」；一版在等审阅时是「再提交一版」，那一版不给采纳。桌面上画在交付那一格顶上；
 // 手机上那是一整页，这一行交给顶栏（TopicView 用 useScreenHeader），只有任务名和「打开
 // 任务」，决定在页面底部那一条上。
+import type { HandInAction } from '@/lib/handIn'
 import type { TaskState } from '@/lib/taskState'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
@@ -31,6 +33,10 @@ withDefaults(
     busy?: boolean
     /** 画在手机顶栏里：顶栏自己有高度和底线，这一行不再带。 */
     bar?: boolean
+    /** 有不在最近那一版里的修改。 */
+    unhanded?: boolean
+    /** 给哪颗提交按钮；null 不给。 */
+    handIn?: HandInAction
   }>(),
   {
     state: null,
@@ -41,6 +47,8 @@ withDefaults(
     blockedTitle: null,
     busy: false,
     bar: false,
+    unhanded: false,
+    handIn: null,
   }
 )
 
@@ -48,6 +56,7 @@ const emit = defineEmits<{
   (e: 'open-task'): void
   (e: 'accept'): void
   (e: 'reject'): void
+  (e: 'hand-in'): void
 }>()
 </script>
 
@@ -60,6 +69,9 @@ const emit = defineEmits<{
         <span v-if="state?.waits" class="delivery-head__waits t-meta">{{ state.waits }}</span>
         <span v-if="version" class="delivery-head__version t-meta">{{
           t('work.room.delivery.version', { n: version })
+        }}</span>
+        <span v-if="unhanded" class="delivery-head__unhanded t-meta" data-testid="delivery-unhanded">{{
+          t('work.room.accept.handIn.unhanded')
         }}</span>
       </span>
     </div>
@@ -87,6 +99,9 @@ const emit = defineEmits<{
         </BaseButton>
       </span>
     </template>
+    <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="delivery-hand-in" @click="emit('hand-in')">
+      {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
+    </BaseButton>
     <BaseButton
       v-guide-anchor="'review-open-task'"
       kind="secondary"
@@ -155,7 +170,8 @@ const emit = defineEmits<{
 .delivery-head__waits {
   color: var(--muted);
 }
-.delivery-head__version {
+.delivery-head__version,
+.delivery-head__unhanded {
   flex: none;
   color: var(--muted);
 }

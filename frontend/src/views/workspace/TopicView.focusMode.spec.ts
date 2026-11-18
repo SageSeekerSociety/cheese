@@ -1,11 +1,13 @@
-/** 专注模式：面板铺满工作区，对话收成左边一条窄边。
+/** 专注模式：工作面板铺满外壳的整个布局区，对话和侧栏都让开；再按一下回到原来的摆法。
  *
  * 对话让开了，可这件事里等人做的决定不能跟着消失：采纳那一条跟到面板底部，同一时刻
- * 只有一份。入口在面板页签栏右端，出口在那里和对话窄边上各一个。
+ * 只有一份。入口和出口是面板页签栏右端同一颗按钮。铺满是外壳的事（layouts/pagePanels），
+ * 这里用一个只记「谁被铺满」的外壳。
  */
 import type { Component } from 'vue'
+import type { PagePanelsHost } from '@/layouts/pagePanels'
 
-import { h, ref } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -52,7 +54,6 @@ vi.mock('@/stores/workspace', async () => {
     members: [],
     projects: [],
     unreadMap: {},
-    chatPct: 50,
     agentName: '芝士',
     agentHandle: 'cheese',
     loadingTopics: false,
@@ -66,7 +67,6 @@ vi.mock('@/stores/workspace', async () => {
     markRead: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
-    setChatPct: vi.fn(),
     describe: vi.fn(),
     reportError: vi.fn(),
   })
@@ -129,6 +129,7 @@ vi.mock('@/components/WorkPanel.vue', () => ({
 import TopicView from './TopicView.vue'
 
 import { setLocale } from '@/i18n'
+import { providePagePanels } from '@/layouts/pagePanels'
 
 const View = TopicView as unknown as Component
 
@@ -138,11 +139,28 @@ beforeEach(() => {
   if (held.store) held.store.panelPref = true
 })
 
+let shell: PagePanelsHost
+
 function mountView() {
-  return render(View, { props: { projectId: 'p1', topicId: 't1' } })
+  const Shell = defineComponent({
+    setup() {
+      shell = providePagePanels()
+      return () => h(View, { projectId: 'p1', topicId: 't1' })
+    },
+  })
+  return render(Shell)
 }
 
 describe('专注模式', () => {
+  it('铺满的是工作面板', async () => {
+    const { getByTitle } = mountView()
+    await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
+
+    await fireEvent.click(getByTitle('专注模式'))
+
+    expect(shell.maximized.value).toBe('work')
+  })
+
   it('铺满之后，采纳那一条还在，而且只有一份', async () => {
     const { getByTitle, findAllByTestId } = mountView()
     await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
@@ -153,14 +171,25 @@ describe('专注模式', () => {
     await waitFor(async () => expect(await findAllByTestId('accept')).toHaveLength(1))
   })
 
-  it('对话那条窄边能回到并排', async () => {
-    const { getByTitle, getAllByTitle, queryAllByTitle } = mountView()
+  it('同一颗按钮回到原来的摆法', async () => {
+    const { getByTitle, queryByTitle } = mountView()
     await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
     await fireEvent.click(getByTitle('专注模式'))
-    await waitFor(() => expect(getAllByTitle('退出专注模式').length).toBe(2))
+    await waitFor(() => expect(getByTitle('退出专注模式')).toBeTruthy())
 
-    await fireEvent.click(getAllByTitle('退出专注模式')[0])
+    await fireEvent.click(getByTitle('退出专注模式'))
 
-    await waitFor(() => expect(queryAllByTitle('退出专注模式')).toHaveLength(0))
+    await waitFor(() => expect(queryByTitle('退出专注模式')).toBeNull())
+    expect(shell.maximized.value).toBeNull()
+  })
+
+  it('面板收起，铺满也就不在了', async () => {
+    const { getByTitle } = mountView()
+    await waitFor(() => expect(getByTitle('专注模式')).toBeTruthy())
+    await fireEvent.click(getByTitle('专注模式'))
+
+    await fireEvent.click(getByTitle('收起概览'))
+
+    await waitFor(() => expect(shell.maximized.value).toBeNull())
   })
 })

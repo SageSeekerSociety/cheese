@@ -55,7 +55,7 @@ import Members from './Members.vue'
 
 import { ApiError } from '@/api'
 import { TeamsApi } from '@/api/teams'
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 beforeAll(() => {
@@ -110,13 +110,61 @@ function mount(overrides: Partial<Team>) {
   } as unknown as Team)
   const view = render(Members as unknown as Component, {
     global: {
-      plugins: [createVuetify({ components, directives })],
+      plugins: [createVuetify({ components, directives }), i18n],
       provide: { [teamDataInjectionKey as symbol]: team },
     },
   })
   // 注入的那一份就是页头读的那一份：团队被改过没有，看它。
   return { ...view, team }
 }
+
+describe('personal remarks in team people', () => {
+  it('shows a member’s private label while retaining their public identity', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({
+      members: [
+        { role: 'MEMBER', user: { id: 2, username: 'reader', nickname: 'Public member', remark: 'My teammate' } },
+      ],
+    } as never)
+    mount({ role: 'OWNER' })
+    expect(await screen.findByText('My teammate')).toBeTruthy()
+    expect(screen.getByText(/Public member.*reader/)).toBeTruthy()
+  })
+
+  it('uses each nested person’s remark in applications, invitations and processed-by', async () => {
+    const requester = { id: 3, username: 'requester', nickname: 'Public requester', remark: 'My applicant' }
+    const processor = { id: 4, username: 'processor', nickname: 'Public processor', remark: 'My approver' }
+    vi.mocked(TeamsApi.listTeamJoinRequests).mockResolvedValue({
+      applications: [
+        {
+          id: 8,
+          type: 'REQUEST',
+          status: 'APPROVED',
+          user: requester,
+          initiator: requester,
+          processedBy: processor,
+          createdAt: 0,
+        },
+      ],
+    } as never)
+    vi.mocked(TeamsApi.listTeamInvitations).mockResolvedValue({
+      invitations: [
+        {
+          id: 9,
+          type: 'INVITATION',
+          status: 'PENDING',
+          user: { id: 5, username: 'invitee', nickname: 'Public invitee', remark: 'My invitee' },
+          createdAt: 0,
+        },
+      ],
+    } as never)
+    mount({ role: 'OWNER' })
+    expect(await screen.findByText('My applicant')).toBeTruthy()
+    expect(await screen.findByText('My invitee')).toBeTruthy()
+    expect(await screen.findByText('My approver')).toBeTruthy()
+    expect(screen.getByText(/Public requester.*requester/)).toBeTruthy()
+    expect(screen.getByText(/Public invitee.*invitee/)).toBeTruthy()
+  })
+})
 
 describe('the invite shortcut from the sidebar (?invite=1)', () => {
   it('opens the invite box once the full team says the owner may invite', async () => {
@@ -558,5 +606,65 @@ describe('inviting someone by name', () => {
     await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
 
     expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
+  })
+})
+
+describe('个人备注', () => {
+  const remarked = {
+    user: { id: 9, nickname: 'qinmo', username: 'qinmo', remark: '秦老师' },
+    role: 'MEMBER',
+  }
+
+  it('成员行显示备注，原名与账号仍认得出这个人', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [remarked] } as never)
+    mount({ role: 'ADMIN' })
+
+    expect(await screen.findByText('秦老师')).toBeTruthy()
+    // 昵称和账号是同一串时不重复写两遍。
+    expect(screen.getByText('qinmo')).toBeTruthy()
+    expect(screen.queryByText('(qinmo) · qinmo')).toBeNull()
+  })
+
+  it('原名和账号不同时两样都写', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({
+      members: [{ user: { id: 9, nickname: '秦末', username: 'qinmo', remark: '秦老师' }, role: 'MEMBER' }],
+    } as never)
+    mount({ role: 'ADMIN' })
+
+    expect(await screen.findByText('秦老师')).toBeTruthy()
+    expect(screen.getByText('(秦末) · qinmo')).toBeTruthy()
+  })
+
+  it('没设备注的人仍显示昵称', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({
+      members: [{ user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER' }],
+    } as never)
+    mount({ role: 'ADMIN' })
+
+    expect(await screen.findByText('qinmo')).toBeTruthy()
+    expect(screen.queryByText('(qinmo) · qinmo')).toBeNull()
+  })
+
+  it('加入申请里的申请人显示备注与原名', async () => {
+    vi.mocked(TeamsApi.listTeamJoinRequests).mockResolvedValue({
+      applications: [{ id: 31, status: 'PENDING', createdAt: Date.now(), user: remarked.user }],
+    } as never)
+    route.query = { tab: 'requests' }
+    mount({ role: 'OWNER' })
+
+    await screen.findByRole('button', { name: /批准/ })
+    expect(screen.getAllByText('秦老师').length).toBeGreaterThan(0)
+    expect(screen.queryByText('(qinmo) · qinmo')).toBeNull()
+  })
+
+  it('已发送邀请里的受邀人显示备注', async () => {
+    vi.mocked(TeamsApi.listTeamInvitations).mockResolvedValue({
+      invitations: [{ id: 41, status: 'PENDING', createdAt: Date.now(), user: remarked.user }],
+    } as never)
+    route.query = { tab: 'invitations' }
+    mount({ role: 'OWNER' })
+
+    await screen.findByRole('button', { name: '撤回' })
+    expect(screen.getAllByText('秦老师').length).toBeGreaterThan(0)
   })
 })

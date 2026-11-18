@@ -248,6 +248,59 @@ def test_merge_refused_lands_as_one_line_event(client, app_world):
     assert "405" not in event["content"]
 
 
+def _on_the_platforms_own_forge(client, app_world, tid, monkeypatch) -> None:
+    """The project's repository is on the platform's own forge, which answers
+    as the same fake does."""
+    import asyncio
+    import uuid
+
+    from sqlalchemy import select, update
+
+    from app.domain.project import forge as project_forge
+    from app.domain.project.models import ProjectForge
+    from app.domain.review import forge_clients
+    from app.domain.topic.models import Topic
+    from tests.integration.test_accept_pr import _FakeTokens
+
+    async def rebind() -> None:
+        async with client.test_factory() as s:
+            project_id = await s.scalar(
+                select(Topic.project_id).where(Topic.id == uuid.UUID(tid))
+            )
+            await s.execute(
+                update(ProjectForge)
+                .where(ProjectForge.project_id == project_id)
+                .values(kind="forgejo")
+            )
+            await s.commit()
+
+    asyncio.run(rebind())
+    monkeypatch.setattr(project_forge, "ForgejoTokens", lambda *a, **k: _FakeTokens())
+    monkeypatch.setattr(
+        forge_clients, "ForgejoClient", lambda *a, **k: app_world["fake"]
+    )
+
+
+def test_a_refused_accept_says_the_merge_was_refused_without_naming_a_forge(
+    client, app_world, monkeypatch
+):
+    """On the platform's own forge a refused merge says it was refused, and
+    never puts the refusal in the mouth of a product the project does not use
+    (2026-11-18 on dev: 「GitHub 拒绝合并」 on a Forgejo project)."""
+    fake, tid, cid, number = _pr_card(client, app_world)
+    _on_the_platforms_own_forge(client, app_world, tid, monkeypatch)
+    fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+    fake.merge_blocked_by_number[number] = "the forge said no"
+
+    refused = _accept(client, cid)
+
+    assert refused.status_code == 422, refused.text
+    assert "GitHub" not in refused.json()["message"]
+    event = _wait_for_event(client, tid, "merge_refused")
+    assert "GitHub" not in event["content"]
+    assert "GitHub" not in str(event["meta"].get("detail_label") or "")
+
+
 # --------------------------------------------------------------------------
 # 已采纳的 PR 离开合并队列但没合并
 # --------------------------------------------------------------------------

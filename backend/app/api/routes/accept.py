@@ -3,23 +3,33 @@
 import asyncio
 import logging
 import uuid
+from functools import partial
 from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.accept_service import accept_service
+from app.api.accept_service import accept_service, advance_soon
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.core.db import release_read_session
-from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sentences import say
+from app.domain.agent import execution
+from app.domain.agent import hand_in_draft as hand_in_draft_mod
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.delivery.agent import (
@@ -27,6 +37,8 @@ from app.domain.delivery.agent import (
 )
 from app.domain.identity.actor import Actor, acted_by
 from app.domain.library import service as library
+from app.domain.machine import hand_in
+from app.domain.machine.preview_wake import wake_for_files
 from app.domain.notice_meta import (
     EVENT_CARD_REJECTED,
     SEVERITY_WARN,
@@ -43,7 +55,7 @@ from app.domain.review.comments import instruction as comment_instruction
 from app.domain.review.comments import summary as comment_summary
 from app.domain.review.forge_clients import proposal_client
 from app.domain.review.github_pr import GitHubPRError
-from app.domain.review.models import DeliverableKind
+from app.domain.review.models import AcceptStatus, DeliverableKind
 from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptCardDescribe,
@@ -59,7 +71,7 @@ from app.domain.review.schemas import (
 )
 from app.domain.review.services import ReviewerAdmission
 from app.domain.room_task import heard, naming
-from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
@@ -222,6 +234,235 @@ async def push_fix(
     result = await accept_service(db).push_fix(task_id, drop_dependency=drop_dependency)
     await db.commit()
     return ok(result)
+
+
+#: Handing a task's changes in is changing its files: whoever may edit them
+#: (`workspace.write_file` asks the same).
+HandsIn = Annotated[InChannel, Can(Permission.edit_content, at="topic_id")]
+
+
+def _handing_in(at: InChannel) -> tuple[Actor, Task]:
+    """The member and the task a hand-in route acts on."""
+    if at.place.task is None:
+        raise NotFoundError(say("taskNotFound"))
+    if not at.actor.authenticated:
+        raise AuthenticationRequiredError()
+    if at.actor.via == "cheese":
+        raise ForbiddenError(say("handInPeopleOnly"))
+    return at.actor, at.place.task
+
+
+class HandInStandingOut(BaseModel):
+    unhanded: bool
+    waiting: bool
+
+
+class HandInFileOut(BaseModel):
+    path: str
+    additions: int
+    deletions: int
+
+
+class HandInPanelOut(BaseModel):
+    files: list[HandInFileOut]
+    again: bool
+    subject: str | None
+    body: str | None
+    reviewers: list[str]
+
+
+class HandInDraftOut(BaseModel):
+    subject: str
+    body: str
+    drafted: bool
+
+
+class HandedInOut(BaseModel):
+    card: AcceptCardOut
+    #: 「提交并采纳」: the adoption of this head is armed, and the version is
+    #: merged under this person's name once the forge says it merges.
+    adopting: bool
+
+
+@router.get("/topics/{topic_id}/hand-in", **typed_response(HandInStandingOut))
+async def hand_in_standing(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Whether the task holds changes not in its latest handed-in version
+    (「有未提交的修改」), and whether a version is waiting on its reviewer.
+    Read from the forge alone: a frozen sandbox is not woken for it."""
+    place = await place_or_404(db, topic_id)
+    await _reader(place, db, resolver)
+    if place.task is None:
+        raise NotFoundError(say("taskNotFound"))
+    found = await hand_in.standing(db, place.task)
+    return ok({"unhanded": found.unhanded, "waiting": found.waiting})
+
+
+@router.get("/topics/{topic_id}/hand-in/panel", **typed_response(HandInPanelOut))
+async def hand_in_panel(
+    topic_id: uuid.UUID,
+    at: HandsIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """What the hand-in panel shows: the files handing in now would put in
+    the project, with their added and removed lines; the reviewers it goes to
+    unless the person picks others (the waiting version's, else the ladder
+    every hand-in climbs); and, when a version is waiting, its 说明. Refused,
+    as the hand-in itself is, while the task's teammate is at work."""
+    _actor, task = _handing_in(at)
+    if await chat.has_running_turn(task.id):
+        raise ConflictError(say("handInWhileWorking"))
+    svc = accept_service(db)
+    waiting = await svc.waiting_card(task.id)
+    if waiting is not None:
+        reviewers = await svc.reviewer_handles_for_cards([waiting.id])
+        chosen = list(reviewers.get(waiting.id, []))
+    else:
+        try:
+            chosen = await svc._reviewers_or_project_default(
+                await ProjectService(db).get(task.project_id), None, from_work=[task]
+            )
+        except ValidationError:  # nobody named anywhere: the person picks
+            chosen = []
+    diff = await hand_in.live_diff(
+        db, task, executor=execution.call, wake=partial(wake_for_files, db.bind)
+    )
+    return ok(
+        {
+            "files": [
+                {"path": f.path, "additions": f.additions, "deletions": f.deletions}
+                for f in hand_in.file_changes(diff)
+            ],
+            "again": waiting is not None,
+            "subject": waiting.change_subject if waiting is not None else None,
+            "body": waiting.change_body if waiting is not None else None,
+            "reviewers": chosen,
+        }
+    )
+
+
+@router.post("/topics/{topic_id}/hand-in/draft", **typed_response(HandInDraftOut))
+async def hand_in_draft(
+    topic_id: uuid.UUID,
+    at: HandsIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """The 说明 drafted from the change: the project's task model reads what
+    handing in now would put in the project. A model that is not reached in
+    time leaves a line made from the changed files (``drafted`` false).
+    Nothing is asked while the hand-in would be refused."""
+    _actor, task = _handing_in(at)
+    if await chat.has_running_turn(task.id):
+        raise ConflictError(say("handInWhileWorking"))
+    diff = await hand_in.live_diff(
+        db, task, executor=execution.call, wake=partial(wake_for_files, db.bind)
+    )
+    written = await hand_in_draft_mod.draft(
+        db,
+        project_id=task.project_id,
+        task_title=task.title,
+        diff=diff,
+        files=[f.path for f in hand_in.file_changes(diff)],
+        recent_subjects=await hand_in.recent_subjects(db, task.project_id),
+        models=chat,
+    )
+    await db.commit()
+    return ok(
+        {"subject": written.subject, "body": written.body, "drafted": written.drafted}
+    )
+
+
+class HandInBody(BaseModel):
+    subject: str
+    body: str | None = None
+    reviewer_handle: str | None = None
+    #: The person reviews it themselves and adopts it in the same go
+    #: (「提交并采纳」): merged under their name once the forge says it merges.
+    accept: bool = False
+
+
+@router.post("/topics/{topic_id}/hand-in", **typed_response(HandedInOut))
+async def hand_in_route(
+    topic_id: uuid.UUID,
+    body: HandInBody,
+    at: HandsIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+) -> dict:
+    """A member hands the task's working copy in as a new version: what it
+    has not committed is committed under their name and pushed, and the
+    version is filed as a teammate's is, or moves the one waiting.
+
+    ``accept`` adopts it when the person is its only reviewer: the adoption
+    of the head they handed in is armed, and the poller merges it once the
+    forge and the project's rules let it, as it merges any armed version;
+    ``adopting`` says whether it was armed."""
+    actor, task = _handing_in(at)
+    svc = accept_service(db)
+    handed = await hand_in.hand_in(
+        db,
+        svc,
+        task=task,
+        who=actor.handle,
+        subject=body.subject,
+        body=body.body,
+        reviewers=[body.reviewer_handle] if body.reviewer_handle else None,
+        admits_reviewer=_reviewer_admission(actor, resolver),
+        working=await chat.has_running_turn(task.id),
+        wake=partial(wake_for_files, db.bind),
+    )
+    card = handed.card
+    await db.commit()
+    naming.nudge(task.id, "signal")
+    reviewers = await svc.reviewer_handles_for_cards([card.id])
+    adopting = body.accept and list(reviewers.get(card.id, [])) == [actor.handle]
+    if pr_publish.enabled() and not handed.again:
+        if adopting:
+            # Adopting in the same go: the PR has to exist first, and the head
+            # it shows is read onto the card as a new commit's is (`push_fix`).
+            # That head is what this person just handed in from the panel that
+            # listed it, with no teammate at work to move it since.
+            pr = await pr_publish.open_pr_for_card(
+                db, card_id=card.id, topic_id=task.room_id, project_id=task.project_id
+            )
+            if pr is not None:
+                await pr_publish.record_pr(chat.session_factory, card_id=card.id, pr=pr)
+                await db.refresh(card)
+                await svc.push_fix(task.id)
+                await db.commit()
+                card = await svc._card_or_404(card.id)
+        else:
+            pr_publish.dispatch(
+                chat.session_factory,
+                card_id=card.id,
+                topic_id=task.room_id,
+                project_id=task.project_id,
+            )
+    # Only the head this person handed in is adopted: a card showing any other
+    # moved since, and waits to be looked at. The forge has not said yet
+    # whether a head pushed a moment ago merges, so the adoption is armed and
+    # completes when it does (`AcceptService.adopt_when_ready`).
+    adopting = (
+        adopting
+        and card.status == AcceptStatus.pending
+        and card.pr_number is not None
+        and card.pr_head_sha == handed.head
+    )
+    if adopting:
+        card = await svc.adopt_when_ready(
+            card_id=card.id, decided_by=actor.handle, head_sha=handed.head or ""
+        )
+        await db.commit()
+        # Ask the forge now rather than at the next tick: it answers for that
+        # head within seconds, and the adoption completes on that answer.
+        advance_soon(chat, card.id)
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
+    return ok({"card": await svc.describe(card), "adopting": adopting})
 
 
 @router.post("/topics/{topic_id}/ready", dependencies=[ROUTE_DECIDES])

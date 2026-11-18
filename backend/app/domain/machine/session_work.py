@@ -74,7 +74,9 @@ from app.domain.machine.sandbox_wait import (
     DISK_FULL,
     DISK_FULL_NOTICE,
     EXECUTOR_SETUP_FAILED,
+    KEPT_NOT_LAID_BACK,
     SANDBOX_LOST,
+    SANDBOX_LOST_KEPT,
     SANDBOX_PREPARING,
     SANDBOX_REPLACED,
     SANDBOX_RESUMED,
@@ -93,6 +95,7 @@ from app.domain.notification.models import NotificationType
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
+from app.domain.repository.kept_work import keeps_work, kept_ref, kept_work
 from app.domain.room_task.models import Task
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.team.protocol import TeamMemberRole
@@ -295,10 +298,11 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
     """One best-effort checkpoint on the machine a session is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
-    --all``): every task checkout's unpushed commits go to its branch. What is
-    not committed is not kept. Whatever happens — the machine is away, the
+    --all``): every task checkout's unpushed commits go to its branch, and
+    what it has not committed is kept beside the branch
+    (``repository.kept_work``). Whatever happens — the machine is away, the
     command fails or outlasts ``PUSH_WAIT_S`` — the caller goes on: what a lost
-    checkpoint loses is what was committed since the last turn's push. Answers
+    checkpoint loses is what changed since the last turn's checkpoint. Answers
     whether it ran to the end, for the log.
 
     The session's executor runs only while the session is in use, so ``start``
@@ -1637,7 +1641,13 @@ async def _install(
             return _Preparing(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
-        lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
+        lost_notice = (
+            await _lost_notice(db, holder.project_id, conversation_id)
+            if holder.project_id and lost
+            else SANDBOX_LOST
+            if holder.project_id
+            else SANDBOX_REPLACED
+        )
         notices = [lost_notice] * bool(lost) + [SANDBOX_RESUMED] * bool(resumed)
         if root_notice:
             notices.append(root_notice)
@@ -1654,6 +1664,38 @@ async def _install(
             "token": execution_token,
             **({"notice": "\n".join(notices)} if notices else {}),
         }
+
+
+async def _lost_notice(db, project_id: uuid.UUID, conversation_id: uuid.UUID) -> str:
+    """What a session of a project is told on its first call in a new sandbox:
+    whether its task's uncommitted work comes back with the checkout
+    (`repository.kept_work`), and when it does not, where it is. A forge that
+    cannot say is not asked again: the notice says what is kept as a rule."""
+    try:
+        if not await keeps_work(project_id, db):
+            return SANDBOX_LOST
+        task = (
+            await db.execute(
+                select(Task.branch_name, Task.base_branch).where(
+                    Task.id == conversation_id
+                )
+            )
+        ).first()
+        kept = (
+            await kept_work(project_id, db, conversation_id, task[0], task[1])
+            if task is not None and task[0]
+            else None
+        )
+    except Exception:  # the notice goes out without what it could not read
+        logger.warning(
+            "reading the kept work of %s failed", conversation_id, exc_info=True
+        )
+        return SANDBOX_LOST_KEPT
+    if kept is None or kept.laid_back:
+        return SANDBOX_LOST_KEPT
+    return SANDBOX_LOST_KEPT + KEPT_NOT_LAID_BACK.format(
+        at=kept.stamp(), ref=kept_ref(conversation_id), commit=kept.commit[:12]
+    )
 
 
 async def _another_attempt() -> bool:

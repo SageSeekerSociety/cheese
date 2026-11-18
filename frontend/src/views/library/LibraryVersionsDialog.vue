@@ -57,7 +57,12 @@ function restore() {
   >
     <BaseLoadError v-if="failed" :title="t('work.library.versionsFailed')" :error="failed" @retry="emit('retry')" />
     <p v-else-if="loading" class="lv__loading t-meta">{{ t('work.library.versionsLoading') }}</p>
-    <BaseEmptyState v-else-if="!versions.length" size="inline" :title="t('work.library.versionsEmpty')" />
+    <BaseEmptyState
+      v-else-if="!versions.length"
+      size="inline"
+      align="center"
+      :title="t('work.library.versionsEmpty')"
+    />
     <ol v-else class="lv__list" :aria-label="t('work.library.versionsTitle', { name: path ?? '' })">
       <li v-for="v in versions" :key="v.id" class="lv__row">
         <div class="lv__main">

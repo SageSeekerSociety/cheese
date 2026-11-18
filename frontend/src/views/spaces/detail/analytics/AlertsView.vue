@@ -9,7 +9,7 @@
       @retry="emit('load')"
     />
     <AnalyticsAlertGrid v-else-if="alerts" :alerts="alerts" @open="emit('openTasks', $event)" />
-    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.alerts.empty')" />
+    <BaseEmptyState v-else-if="!loading" size="inline" align="center" :title="t('spaces.analytics.alerts.empty')" />
   </div>
 </template>
 

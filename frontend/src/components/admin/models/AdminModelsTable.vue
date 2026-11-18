@@ -62,13 +62,29 @@ function rateTitle(row: ModelRow): string {
   if (!row.usage.requests) return ''
   return t('models.table.failRate', { rate: failRate(row).text })
 }
+
+/** 名字格的悬停提示：显示名 · 网关真名（没给显示名时只有真名）。
+ *
+ *  名字列再宽也只有 300px 上下，长名字照样要截断 —— 完整的那一份只能在悬停里拿到。 */
+function nameTitle(row: ModelRow): string {
+  return row.label && row.label !== row.name ? `${row.label} · ${row.name}` : row.name
+}
+
+/** 第二行画不画：网关给了 `label` 就画。
+ *
+ *  两行说的**不是同一件事** —— 上行的显示名是给人读的称呼，下行的 `name` 是网关里
+ *  的路由键，改配置时要照着它写。两者碰巧相同时也照画：读的人分不清「只画了一行」
+ *  是因为它们一样，还是因为这行本来就没有真名。 */
+function nameHasSlug(row: ModelRow): boolean {
+  return !!row.label
+}
 </script>
 
 <template>
   <div class="amd__gridwrap">
     <BaseTable
       :label="t('models.table.label')"
-      :cols="[null, '96px', '150px', '150px', '96px', '210px', '180px', '110px', '140px']"
+      :cols="[null, '112px', '150px', '150px', '96px', '210px', '136px', '110px', '168px']"
       :bone-widths="['64%', '54%', '70%', '60%', '40%', '58%', '62%', '50%', '46%']"
       :loading="props.loading && !props.models"
       :skeleton-rows="6"
@@ -110,14 +126,17 @@ function rateTitle(row: ModelRow): string {
         <td class="amd__cell" data-card="primary">
           <!-- 名字本身是打开详情的入口：整行只有一个可聚焦的东西，读屏不会在一行里
            听两遍同一个目的地。 -->
-          <button type="button" class="amd__name" @click="emit('detail', row)">
+          <button type="button" class="amd__name" :title="nameTitle(row)" @click="emit('detail', row)">
             <span class="amd__nameMain">{{ displayName(row) }}</span>
-            <span v-if="row.label" class="amd__nameSlug t-meta-read">{{ row.name }}</span>
+            <span v-if="nameHasSlug(row)" class="amd__nameSlug t-meta-read">{{ row.name }}</span>
           </button>
         </td>
         <td class="amd__cell" :data-label="t('models.table.column.origin')">
           <span class="amd__usage">
-            <span class="amd__tag">{{ t(originKey(row)) }}</span>
+            <!-- 胶囊自己收住：这一列只有 96px，中文「运行时新增」要 68px、英文
+                 「Added at runtime」更宽，放不下时字会从灰底里冒出来。截的是胶囊里的
+                 字，完整那句挂 title。 -->
+            <span class="amd__tag amd__tag--clip" :title="t(originKey(row))">{{ t(originKey(row)) }}</span>
             <!-- 不止一条线路时说一声：哪几条、谁先谁后在详情抽屉里。 -->
             <span v-if="(row.sources?.length ?? 0) > 1" class="t-meta-read amd__dim">{{
               t('models.source.count', { n: row.sources?.length ?? 0 })
@@ -179,13 +198,22 @@ function rateTitle(row: ModelRow): string {
             <span v-if="row.blocked" class="amd__tag amd__tag--off">{{ t('models.table.blocked') }}</span>
             <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
             <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
-            <!-- 消费上限用到八成起在这里标一下：上限是终身累计的，窗口里的花费看不出离顶多远。 -->
-            <span v-if="capOf(row)?.level === 'over'" class="amd__tag amd__tag--off" data-testid="model-cap">{{
-              t('models.table.capOver')
-            }}</span>
-            <span v-else-if="capOf(row)?.level === 'warn'" class="amd__tag amd__tag--warn" data-testid="model-cap">{{
-              t('models.table.capWarn', { pct: capPct(row) })
-            }}</span>
+            <!-- 消费上限用到八成起在这里标一下：上限是终身累计的，窗口里的花费看不出离顶多远。
+                 上限那句话在英文里比这一列宽（「78% of spend cap used」），胶囊内省略、全句挂 title。 -->
+            <span
+              v-if="capOf(row)?.level === 'over'"
+              class="amd__tag amd__tag--off"
+              data-testid="model-cap"
+              :title="t('models.table.capOver')"
+              >{{ t('models.table.capOver') }}</span
+            >
+            <span
+              v-else-if="capOf(row)?.level === 'warn'"
+              class="amd__tag amd__tag--warn"
+              data-testid="model-cap"
+              :title="t('models.table.capWarn', { pct: capPct(row) })"
+              >{{ t('models.table.capWarn', { pct: capPct(row) }) }}</span
+            >
             <span
               v-if="!row.offered && blockedReasonText(row)"
               class="t-meta-read amd__dim amd__reason"
@@ -267,12 +295,25 @@ function rateTitle(row: ModelRow): string {
   white-space: nowrap;
 }
 
-/* 这一格里的三颗图标按钮（编辑 / 封禁 / 删除）28px 一颗。触屏上每颗把能点的范围
-   撑到 44×44（BaseButton 的 ::before），挨着排的话靠右那两颗的撑开部分会盖住中间
-   那颗的右半边 —— 相邻中心要隔开 42px 才互不打架，28 + 16 = 44，所以留 16px（和
-   房间输入框那一行同一个数）。 */
+/* 这一格里的三颗图标按钮（编辑 / 封禁 / 删除）。
+
+   宽度**按真渲染量**，不按 28px 的图标算：`BaseButton` 的 sm 图标按钮实际占 **40px**
+   （28px 的图标加 Vuetify 的内边距）。三颗本来要 120px，间隔 8px 后是 136px，加两侧
+   各 16px 内距正好 168px —— 这就是 `cols` 里给这一列的宽度。
+
+   这 28px 与来源列那 16px 都从上架列挪来（180 → 136）：不是把表整体撑宽。名字列是
+   唯一的自适应列，定宽列合计一旦变大，它就在窄窗口里被挤成「gp…」。合计保持 1132
+   就守住了这一点，`.spec.ts` 里有一条断言钉着。
+
+   上架列收到 136 之后仍然够用：那一列里最长的是「上限已用 90%」（90px）和
+   「已达消费上限」（88px），可用宽是 136 - 32 = 104。英文那两条会长到 104px，
+   正好顶到边界，所以它们也挂了 title。
+
+   间隔是 8 而不是设计系统别处的 16：触屏上每颗把能点的范围撑到 44×44，两颗中心
+   隔开 40 + 8 = 48 已经超过 44，撑开的范围不会重叠。列窄于 168 时最后一颗会被
+   裁掉，浏览器在裁掉的位置补一个「…」，看着像一个点了没反应的按钮。 */
 .amd__cell--actions :deep(.base-btn + .base-btn) {
-  margin-left: 16px;
+  margin-left: 8px;
 }
 
 /* 名字是按钮：清掉按钮外观，让它读起来像一行标题而不是一个控件 —— 但它在 Tab 顺序里，
@@ -313,14 +354,31 @@ function rateTitle(row: ModelRow): string {
   color: var(--muted);
 }
 
+/* 胶囊贴着文字，不被父级 flex 拉满整列。
+   `.amd__usage` 是 `flex-direction: column`，子元素默认 `align-self: stretch`：放在
+   上架那一列（136px）里，「已上架」三个字会占满一整条灰底，看着像一块很长的胶囊；
+   放在改名前的来源那一列（96px，扣掉内距 64px）里，胶囊被拉到 64px，而「运行时
+   新增」要 80px，字就从灰底里冒出去。`align-self: flex-start` 让胶囊只占文字那么宽。 */
 .amd__tag {
   display: inline-block;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
   padding: 2px 8px;
   background: var(--fill);
   border-radius: var(--radius-sm);
   color: var(--muted);
   font-size: 12px;
   line-height: var(--lh-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 会跟着语言变长的胶囊（来源那一格）：放不下时在胶囊**自己里面**省略，而不是让
+   字冲出灰底被格子的 `overflow: hidden` 切一截。完整那句挂在 title 上。
+   `vertical-align` 收掉 inline-block 基线下沉带来的 1px 错位。 */
+.amd__tag--clip {
+  vertical-align: bottom;
 }
 
 /* 「已上架 / 已停用」是页面里**唯一**需要一眼分辨的状态，所以只有这两处用状态三件套

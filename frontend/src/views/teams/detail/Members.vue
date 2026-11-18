@@ -28,6 +28,7 @@ import { ApiError } from '@/api'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { userName } from '@/lib/agentNames'
 import { onInboxChange } from '@/lib/inboxLive'
 import { teamAllows } from '@/lib/teamPermissions'
 import { toast } from '@/lib/toast'
@@ -323,7 +324,8 @@ const removeMember = async (userId: number) => {
   }
 
   // 移出后他不再能进这个团队，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
-  const name = teamMembers.value.find((member) => member.user.id === userId)?.user.nickname ?? ''
+  // 确认框里叫他什么，和行上是同一套：有个人备注用备注，否则昵称。
+  const name = userName(teamMembers.value.find((member) => member.user.id === userId)?.user)
   const confirmed = await dialog
     .confirm(t('teams.members.removeBody'), {
       title: t('teams.members.removeTitle', { name }),

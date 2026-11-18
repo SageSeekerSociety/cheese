@@ -55,7 +55,6 @@ vi.mock('@/stores/workspace', async () => {
     members: [],
     projects: [],
     unreadMap: {},
-    chatPct: 50,
     agentName: '芝士',
     agentHandle: 'cheese',
     loadingTopics: false,
@@ -69,7 +68,6 @@ vi.mock('@/stores/workspace', async () => {
     markRead: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
-    setChatPct: vi.fn(),
     describe: vi.fn(),
     reportError: vi.fn(),
   })

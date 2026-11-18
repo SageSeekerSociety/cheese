@@ -8,6 +8,7 @@
 // 拼好：任务那一半（这件任务和能对它做的事）来自任务页那一份，另一半——在哪个房间、
 // 谁在场、面板开没开——是这一页的。
 import type { ComputedRef, Ref } from 'vue'
+import type { HandInState } from '@/composables/acceptCard/handIn'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { TopicPlace } from './shared'
 
@@ -38,6 +39,8 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
   openTopic: (topicId: string) => void
   /** 自己是谁：页头上「我」那一位。 */
   me: string
+  /** 人自己提交审阅：页头上的「有未提交的修改」和那颗提交按钮。 */
+  handIn: HandInState
 }) {
   const store = useWorkspaceStore()
 
@@ -72,7 +75,10 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
       ),
       connected: opts.roomConnected.value,
       panelOpen: opts.panelOpen.value,
+      unhanded: opts.handIn.unhanded.value,
+      handIn: opts.handIn.action.value,
       'onOpen-room': opts.backToRoom,
+      'onHand-in': opts.handIn.openPanel,
       'onToggle-panel': opts.togglePanel,
     }
   })

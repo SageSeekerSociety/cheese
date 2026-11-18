@@ -226,12 +226,26 @@ def test_one_case_is_only_for_who_may_grade(
 def test_a_judge_result_of_another_submission_is_not_shown(
     api_client: TestClient, user_client: UserCreator, db_session, _portal
 ):
-    """别的提交的评测结果不在这一版上：读的是这个问题里这一版的那一次。"""
-    board, task_id, participant, submission_id, token = _setup(api_client, user_client)
-    resp = _judge(api_client, task_id, participant, submission_id, token)
+    """别的提交的评测结果不在这一版上：读的是这一版自己的那一次。"""
+    board, task_id, participant, first, token = _setup(api_client, user_client)
+    _seed_run(db_session, _portal, task_id=task_id, submission_id=first)
+    second = api_client.post(
+        f"/tasks/{task_id}/participants/{participant}/submissions",
+        json=[{"text": "又交了一版"}],
+        headers=_auth(token),
+    )
+    assert second.status_code == 200, second.text
+    resp = _judge(
+        api_client,
+        task_id,
+        participant,
+        second.json()["data"]["submission"]["id"],
+        token,
+    )
     assert resp.status_code == 200, resp.text
-    # 没有评测过：null，而不是别人的。
-    assert resp.json()["data"]["judge"] is None
+    # 这一版自己那一次还在排队（或没排过），不是上一版那份已出的结果。
+    judge = resp.json()["data"]["judge"]
+    assert judge is None or judge["state"] == "queued"
 
 
 def test_a_case_of_another_task_is_not_this_task_s(
@@ -254,3 +268,69 @@ def test_a_case_of_another_task_is_not_this_task_s(
         f"/tasks/{mine}/judge/cases/{case_id}", headers=_auth(board["creator_token"])
     )
     assert resp.status_code == 404, resp.text
+
+
+def test_the_roster_reads_each_latest_version_s_judge_summary(
+    api_client: TestClient, user_client: UserCreator, db_session, _portal
+):
+    """参与者列表那一列「测试点」：能批改的人一次问几版，各自最近一次评测通过几个。"""
+    board, task_id, participant, submission_id, token = _setup(api_client, user_client)
+    _seed_run(db_session, _portal, task_id=task_id, submission_id=submission_id)
+
+    resp = api_client.get(
+        f"/tasks/{task_id}/judge/summaries",
+        params={"submissionIds": f"{submission_id},999999"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 200, resp.text
+    summaries = resp.json()["data"]["summaries"]
+    # 没评测过（或不存在）的提交不在结果里。
+    assert summaries == [
+        {
+            "submissionId": submission_id,
+            "state": "done",
+            "passedCases": 1,
+            "caseCount": 2,
+            "passedPoints": 60,
+            "totalPoints": 100,
+        }
+    ]
+
+    # 学生不是能批改的人：读不到。
+    denied = api_client.get(
+        f"/tasks/{task_id}/judge/summaries",
+        params={"submissionIds": str(submission_id)},
+        headers=_auth(token),
+    )
+    assert denied.status_code == 403, denied.text
+
+
+def test_a_summary_of_another_task_s_submission_is_left_out(
+    api_client: TestClient, user_client: UserCreator, db_session, _portal
+):
+    """问的提交属于别的题时不报它：摘要只说这道题自己的提交。"""
+    board, task_id, participant, submission_id, _ = _setup(api_client, user_client)
+    _seed_run(db_session, _portal, task_id=task_id, submission_id=submission_id)
+    other = _create_task(api_client, board, name="另一道题", testSuite=SUITE)
+
+    resp = api_client.get(
+        f"/tasks/{other}/judge/summaries",
+        params={"submissionIds": str(submission_id)},
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["summaries"] == []
+
+
+def test_summary_ids_that_are_no_submission_id_are_refused(
+    api_client: TestClient, user_client: UserCreator
+):
+    """「①」「²」过得了 isdigit 却不是数；大过 BIGINT 的数指不到任何一行。都答 400，不是 500。"""
+    board, task_id, _, _, _ = _setup(api_client, user_client)
+    for given in ("①", "²", "9" * 30, "1,abc"):
+        resp = api_client.get(
+            f"/tasks/{task_id}/judge/summaries",
+            params={"submissionIds": given},
+            headers=_auth(board["creator_token"]),
+        )
+        assert resp.status_code == 400, (given, resp.text)

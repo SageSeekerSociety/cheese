@@ -29,6 +29,7 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.domain.addressing import Event, address
 from app.domain.agent.model_catalog import Scene, catalog, shown_model
 from app.domain.agent.opening import opening_state
@@ -492,11 +493,16 @@ async def project_task_rows(
                 "last_activity_at": last_activity.isoformat(),
                 # 很久没人理会、已经进了「搁置」（等人审阅的是催过）的活：什么时候自动
                 # 关闭。None = 不在搁置（会话在跑的也不算）。判据一份，在
-                # `presentation.neglect`，自动关闭的那一拍读的是同一个函数。
-                "neglect": _neglect_json(
-                    presentation.neglect(shown, last_activity=last_activity),
-                    now,
-                    running=is_running(task.id),
+                # `presentation.neglect`，自动关闭的那一拍读的是同一个函数。自动关闭没开
+                # 时不标：那个日期不会到来。
+                "neglect": (
+                    _neglect_json(
+                        presentation.neglect(shown, last_activity=last_activity),
+                        now,
+                        running=is_running(task.id),
+                    )
+                    if settings.task_neglect_auto_close
+                    else None
                 ),
                 "card": card_row(
                     card,
