@@ -41,6 +41,8 @@ _AGENTS_ONLY = {
     ("POST", "/topics/{topic_id}/tasks/{ref}/reopen", "can coordinate_tasks"),
     ("POST", "/topics/{topic_id}/tasks/{ref}/accept", "can coordinate_tasks"),
     ("POST", "/topics/{topic_id}/report", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/hand-in/prepare", "can hand_in_for_members"),
+    ("POST", "/topics/{topic_id}/hand-in/confirm", "can hand_in_for_members"),
 }
 
 
