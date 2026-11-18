@@ -6147,8 +6147,8 @@ def _say_task_accepted(args, data, env) -> str:
         return f"{said}\n{d['next']}" if d.get("next") else said
     if status == "pending":
         return (
-            f"已代审阅人采纳{named}的交付，正在等合并队列合并。合并后平台会告诉你；"
-            "在那之前不要关闭任务，关闭会关掉这次交付的 PR。"
+            f"已代审阅人采纳{named}的交付，正在等合并队列合并。现在告诉审阅人你采纳了、正在合并；"
+            "合并后平台会告诉你。在那之前不要关闭任务，关闭会关掉这次交付的 PR。"
         )
     return f"{named}的交付合并时有冲突，没有采纳成；任务会先解决冲突，解决后要审阅人再采纳一次。"
 
@@ -6181,6 +6181,11 @@ _SAY = {
         else f"「{(d or {}).get('title')}」做完了，最后一次合并还没上线，任务先开着等部署；"
         "上线后平台会叫你更新实况文档、发总结、再关闭，现在不用写。"
         if (d or {}).get("deploying")
+        # The main line's own close: no platform line says it in the channel.
+        else f"「{(d or {}).get('title')}」关好了，结论记为："
+        f"{(d or {}).get('conclusion') or '（没有写）'}。"
+        "现在用你自己的话告诉提过这件事的成员结果。"
+        if a.get("task")
         else f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),

@@ -12,13 +12,19 @@ The rules, as a person would state them:
 - The task's own teammate cannot close such a task; it hands work in for
   review, or reports to the main line that it is done. A task nobody
   coordinates is closed by its teammate as before.
-- The main line closes it with a conclusion: the task closes, the discussion
-  it came from records the end, and the main line is not woken about an end it
-  caused itself.
+- The main line closes it with a conclusion: the task closes, its own
+  conversation records how it ended, and the main line says the result itself
+  — the platform records no end line where the task came from, and the main
+  line is not woken about an end it caused itself. A person closing it is
+  recorded there as before.
+- When the main line adopts on the reviewer's word, the platform records no
+  adoption line where the task came from: the main line says it. A person's
+  own click is recorded there as before.
 - In a project whose deploy reports back, the main line's close after a merge
   waits until that merge is live, then the task closes with the conclusion the
   main line gave, its teammate is not asked to write it up, and the main line
-  is told the task ended.
+  is told the task ended to say so; the platform records no end line where the
+  task came from.
 - A task closed after its merge landed can be reopened by the main line and
   worked on again.
 - A teammate that finished with nothing to hand in reports so, and the main
@@ -155,6 +161,22 @@ def _task(client, task_id: uuid.UUID) -> dict:
     ).json()["data"]
 
 
+def _blocks(client, conversation: uuid.UUID) -> list[dict]:
+    return client.get(
+        f"/topics/{conversation}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+
+
+def _lines_of(client, room: str, task_id: uuid.UUID, event_type: str) -> list[dict]:
+    """The platform's lines of ``event_type`` about the task where it came
+    from."""
+    return [
+        line
+        for line in _told(client, room, task_id)
+        if (line.get("meta") or {}).get("event_type") == event_type
+    ]
+
+
 def _filed_with_a_pr(client, app_world, room: str) -> str:
     fake = app_world["fake"]
     card = _file(client, room)
@@ -253,6 +275,18 @@ def test_the_main_line_adopting_reads_it_in_its_reply_and_is_not_woken(
     assert "任务还开着" in data["next"]
     # Only the version handed in waits for it: the landing was its reply.
     assert len(_told_opener(client, room)) == 1
+    # It says the adoption itself; where the task came from records no line
+    # for it, and the task itself shows its delivery adopted.
+    assert not _lines_of(client, room, task_id, "task_landed")
+    assert _task(client, task_id)["card"]["status"] == "accepted"
+
+
+def test_a_person_adopting_is_recorded_where_the_task_came_from(client, app_world):
+    room, task_id = _adopted(client, app_world)
+
+    [landed] = _lines_of(client, room, task_id, "task_landed")
+    assert _happened(landed)
+    assert landed["content"].startswith("<@alice>")
 
 
 def test_its_own_teammate_cannot_close_a_task_the_main_line_coordinates(
@@ -294,13 +328,29 @@ def test_the_main_line_closes_it_and_is_not_woken_about_its_own_close(
     task = _task(client, task_id)
     assert task["status"] == "closed"
     assert task["conclusion"] == "报名表只留姓名和学号"
-    [ending] = [
-        line
-        for line in _told(client, room, task_id)
-        if line["meta"].get("event_type") == "task_ended"
-    ]
-    assert _happened(ending)
+    # The main line says the result; the platform records no end line there.
+    assert not _lines_of(client, room, task_id, "task_ended")
     assert len(_told_opener(client, room)) == told
+    # The task's own conversation records how it ended.
+    assert any(
+        (b.get("meta") or {}).get("action") == "task_closed"
+        and "报名表只留姓名和学号" in b["content"]
+        for b in _blocks(client, task_id)
+    )
+
+
+def test_a_person_closing_it_is_recorded_where_the_task_came_from(client, app_world):
+    room, task_id = _adopted(client, app_world)
+
+    closed = client.post(
+        f"/topics/{task_id}/close",
+        json={"conclusion": "改用纸质表"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert closed.status_code == 200, closed.text
+    [ending] = _lines_of(client, room, task_id, "task_ended")
+    assert _happened(ending)
 
 
 def test_a_close_after_a_merge_waits_for_its_deploy_then_ends_with_that_conclusion(
@@ -328,10 +378,12 @@ def test_a_close_after_a_merge_waits_for_its_deploy_then_ends_with_that_conclusi
     assert not [
         told for told in _told_the_task(client, task_id) if told.get(CLOSES_TASK)
     ]
-    # The main line did not cause this moment, and hears the end once.
+    # The main line did not cause this moment, and hears the end once, to say
+    # it; the platform records no end line where the task came from.
     *_, ended = _told_opener(client, room)
     assert len(_told_opener(client, room)) == told + 1
     assert "报名表只留姓名和学号" in ended
+    assert not _lines_of(client, room, task_id, "task_ended")
     assert _ship(client, [{"sha": "a2", "message": "feat: x (#7)"}]) == []
     assert len(_told_opener(client, room)) == told + 1
 
