@@ -320,26 +320,28 @@ async def create_card(
     # reported before it is over.
     progress.clear(task)
     await self._announce_filed(topic, card, task)
-    # Where the task came from records that a version is in for review: the card
-    # it filed, as filed. The card's state is told elsewhere.
-    await record_at_origin(
-        self._session,
-        task,
-        EVENT_TASK_FILED,
-        say("taskFiledForReview", title=said_title(task)),
-        announce=_announce_of(self),
-        refers={"delivery": {"card_id": str(card.id), "version": len(existing) + 1}},
-    )
     # The AI teammate that opened the task from the channel's main line is
-    # told what was handed in, to say so there in its own words.
-    await tell_opener_filed(
+    # told what was handed in, to say so there in its own words; where nobody
+    # is told, the place the task came from records that a version is in for
+    # review: the card it filed, as filed. The card's state is told elsewhere.
+    if not await tell_opener_filed(
         self._session,
         task,
         card,
         version=len(existing) + 1,
         reviewers=reviewers,
         record_seat=self._record_seat,
-    )
+    ):
+        await record_at_origin(
+            self._session,
+            task,
+            EVENT_TASK_FILED,
+            say("taskFiledForReview", title=said_title(task)),
+            announce=_announce_of(self),
+            refers={
+                "delivery": {"card_id": str(card.id), "version": len(existing) + 1}
+            },
+        )
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)

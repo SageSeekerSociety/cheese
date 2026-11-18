@@ -22,7 +22,9 @@ task is done depends on who coordinates it:
   is allowed is the close route's to check (`close_grounds`): the platform
   does not read the task document, it checks facts.
 
-Either way the discussion the task came from hears what landed.
+Either way the discussion the task came from hears what landed: from the
+main line in its own words when it adopted the delivery on the reviewer's
+word, from the platform's line otherwise (`delivery_landed`).
 
 A merge nobody filed a card for — a PR merged on the forge by hand — leaves
 the task open as well; its AI teammate is not woken, and the owner is told in
@@ -144,8 +146,11 @@ async def delivery_landed(
     A delivery someone adopted is recorded where the task came from as one
     platform line naming who adopted it (`_step_landed`, ``announce``), not
     said by the teammate: the reviewer's decision is something that happened,
-    not anyone's words. A door that hands in no ``announce``, and a merge
-    nobody adopted, have the teammate say that it landed (`tell_origin`).
+    not anyone's words. Unless the channel's main line that opened the task
+    adopted it on the reviewer's word (`_adopted_by_opener`): it says so
+    itself, and the platform records nothing there. A door that hands in no
+    ``announce``, and a merge nobody adopted, have the teammate say that it
+    landed (`tell_origin`).
 
     Whether the task is done is then judged by the channel's main line that
     opened it, when one did, and by the task's own teammate otherwise (module
@@ -223,8 +228,12 @@ async def delivery_landed(
             record_instruction=record_instruction,
         )
     await session.flush()
-    if goes_on:
-        adopted_by = by if handed_over is not None else None
+    adopted_by = by if handed_over is not None else None
+    if goes_on and await _adopted_by_opener(session, task, adopted_by):
+        # The main line adopted it on the reviewer's word, and says so in its
+        # own reply; the task's own conversation keeps the card's record.
+        pass
+    elif goes_on:
         line = await _step_landed(session, task, adopted_by)
         if announce is not None and adopted_by is not None:
             await record_at_origin(
@@ -311,9 +320,10 @@ async def deploy_landed(
 ) -> bool:
     """A deploy containing the merge ``task`` waits for is live: the task
     stops waiting. One the channel's main line closed closes now with the
-    conclusion it gave (`Task.held_conclusion`), and the main line hears the
-    end like any other (`tell_origin_ended`) — it did not cause this moment;
-    its AI teammate is not woken to write it up. Otherwise its AI teammate —
+    conclusion it gave (`Task.held_conclusion`), and the main line is woken
+    to tell the end in its own words (`tell_origin_ended`) — it did not cause
+    this moment, so its close's reply could not have told it; the task's AI
+    teammate is not woken to write it up. Otherwise its AI teammate —
     who already judged it done (`wait_for_deploy`) — writes it up and closes
     it. Unless it was asked for more while it waited: then that work goes on as
     the next step, as it does for a merge that lands while such work runs
@@ -361,6 +371,7 @@ async def deploy_landed(
             session,
             task,
             conclusion=held or None,
+            by_opener=held is not None,
             announce=announce,
             record_seat=record_seat,
         )
@@ -377,12 +388,15 @@ async def _close_as_concluded(
     task: Task,
     *,
     conclusion: str | None,
+    by_opener: bool,
     announce: Announce | None,
     record_seat: RecordSeatInstruction | None,
 ) -> None:
     """Close ``task`` with the conclusion the channel's main line gave it,
-    once the merge it waited for is live. Its conversation hears how it ended,
-    and so does the discussion it came from (`tell_origin_ended`). A session
+    once the merge it waited for is live. Its conversation records how it
+    ended; the discussion it came from hears it from the main line, told to
+    say it, when the main line closed it (``by_opener``), and from the
+    platform otherwise (`tell_origin_ended`). A session
     still at work in it is stopped by the session's holder once the task has
     been closed a while (`room_task.closing.close_task`): nothing here holds a
     running session."""
@@ -406,7 +420,13 @@ async def _close_as_concluded(
             heard.task_closed_deployed(conclusion=task.conclusion),
         ),
     )
-    await tell_origin_ended(session, task, announce=announce, record_seat=record_seat)
+    await tell_origin_ended(
+        session,
+        task,
+        announce=announce,
+        record_seat=record_seat,
+        concluded_by_opener=by_opener,
+    )
 
 
 async def _step_landed(session: AsyncSession, task: Task, by: str | None) -> str:
@@ -427,26 +447,31 @@ async def tell_origin_ended(
     announce: Announce,
     record_seat: RecordSeatInstruction | None,
     closed_by: str | None = None,
+    concluded_by_opener: bool = False,
 ) -> None:
-    """Record at ``task``'s origin how it ended, once it is closed: its
-    write-up when it has one; that it was accepted, when its last delivery
-    landed and nobody wrote it up (the write-up was given up on, or ran out of
-    time); otherwise that it was closed. Every path that closes a task calls
-    this, so the conversation the task came from always hears the end.
+    """Tell the conversation ``task`` came from how it ended, once it is
+    closed: its write-up when it has one; that it was accepted, when its last
+    delivery landed and nobody wrote it up (the write-up was given up on, or
+    ran out of time); otherwise that it was closed. Every path that closes a
+    task calls this, so the conversation the task came from always hears the
+    end.
 
-    It is the platform's line (`record_at_origin`), not the teammate's words:
-    the AI teammate that opened the task from the channel's main line is told
-    the same facts and says the result in its own words (`wake_opener`), and a
-    line under its name would say it twice. Unless it closed the task itself
-    (``closed_by``, the seat that closed it): the reply of its own close
-    already told it, and it is not woken about an end it caused."""
+    An end the AI teammate that opened the task from the channel's main line
+    brought about is said by it, in its own words, and the platform records
+    nothing there: its own close (``closed_by`` is its seat), which it read in
+    the close's reply and is not woken about; and the close with the
+    conclusion it gave once the merge it waited for is live
+    (``concluded_by_opener``), which it is woken to tell — the platform's line
+    is recorded only if it could not be. Any other end — a person's close, the
+    task's own teammate's, one the platform made — is the platform's line
+    (`record_at_origin`), and the opener, if any, is also told the same facts
+    to say the result (`wake_opener`)."""
     line, facts = _how_it_ended(task)
-    await record_at_origin(session, task, EVENT_TASK_ENDED, line, announce=announce)
     if closed_by is not None and closed_by == await main_line_opener(session, task):
         return
     names = await names_by_handles(session, _askers(task))
     closed_at = task.closed_at.astimezone(UTC).isoformat() if task.closed_at else ""
-    await wake_opener(
+    told = await wake_opener(
         session,
         task,
         # A task reopened and closed again ends again: its close time tells
@@ -456,6 +481,8 @@ async def tell_origin_ended(
         content=task_ended_opener_prompt(task, facts=facts, names=names),
         record_seat=record_seat,
     )
+    if not (concluded_by_opener and told):
+        await record_at_origin(session, task, EVENT_TASK_ENDED, line, announce=announce)
 
 
 async def _adopted_by(
@@ -481,6 +508,29 @@ async def _adopted_by(
     if card.decided_by_seat is not None:
         return say("actedByTeammate", agent=f"<@{card.decided_by_seat}>", person=person)
     return acted_by(by, by_assistant=True)
+
+
+async def _adopted_by_opener(session: AsyncSession, task: Task, by: str | None) -> bool:
+    """Whether ``task``'s delivery that ``by`` adopted was adopted for them by
+    the AI teammate that opened the task from the channel's main line, on
+    their word (the card's `decided_by_seat`), whether it lands in that call
+    or later."""
+    if by is None:
+        return False
+    opener = await main_line_opener(session, task)
+    if opener is None:
+        return False
+    card = await session.scalar(
+        select(AcceptCard)
+        .where(AcceptCard.task_id == task.id, AcceptCard.decided_by == by)
+        .order_by(AcceptCard.created_at.desc())
+        .limit(1)
+    )
+    return (
+        card is not None
+        and card.decided_by_assistant
+        and card.decided_by_seat == opener
+    )
 
 
 def _how_it_ended(task: Task) -> tuple[str, str]:
@@ -518,13 +568,15 @@ async def tell_opener_filed(
     version: int,
     reviewers: list[str],
     record_seat: RecordSeatInstruction | None,
-) -> None:
+) -> bool:
     """``task`` handed ``card`` in as its ``version``-th version: the AI
     teammate that opened it from the channel's main line is told what was
     handed in and who reviews it, so it can say so there (`wake_opener`).
-    Each card is one version, so each is told once."""
+    Each card is one version, so each is told once. Says whether it was told:
+    when it was, it says the hand-in itself, and the platform records no line
+    for it there."""
     names = await names_by_handles(session, [*reviewers, *_askers(task)])
-    await wake_opener(
+    return await wake_opener(
         session,
         task,
         key=f"{EVENT_TASK_FILED}:{card.id}",
@@ -550,7 +602,7 @@ async def wake_opener(
     event_type: str,
     content: str,
     record_seat: RecordSeatInstruction | None,
-) -> None:
+) -> bool:
     """Tell ``content`` to the AI teammate that opened ``task`` from something
     said in its channel's main line, in that main line, as a platform
     instruction it reads on its next turn (or in the work it is doing).
@@ -564,18 +616,20 @@ async def wake_opener(
     ``key`` names the happening; the instruction's identity is derived from
     it, so the same happening is told once however often it is reported.
 
-    Best effort, as `record_at_origin`: telling never undoes what it tells.
-    ``record_seat`` missing where someone is to be told is a door that did not
-    hand it in (`review.ports.RecordSeatInstruction`), and fails loudly."""
+    Says whether it was told: a caller that leaves the saying to it records
+    the platform's line only when nobody was. Best effort, as
+    `record_at_origin`: telling never undoes what it tells. ``record_seat``
+    missing where someone is to be told is a door that did not hand it in
+    (`review.ports.RecordSeatInstruction`), and fails loudly."""
     opener = await main_line_opener(session, task)
     if opener is None:
-        return
+        return False
     if record_seat is None:  # pragma: no cover - 接线漏了才会走到
         # i18n-exempt: developer miswiring, not a refusal a reader can act on
         raise RuntimeError("record_seat was not handed in")
     try:
         async with session.begin_nested():
-            await record_seat(
+            return await record_seat(
                 session,
                 DeliveryEvent(
                     id=event_id_for(NotificationType.ROOM_NOTICE, key),
@@ -596,6 +650,7 @@ async def wake_opener(
             )
     except Exception:  # telling never undoes what it tells
         logger.warning("could not tell task %s's opener", task.id, exc_info=True)
+        return False
 
 
 async def go_on_while_working(
