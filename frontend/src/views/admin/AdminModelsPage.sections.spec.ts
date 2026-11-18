@@ -309,6 +309,74 @@ describe('模型管理 · 模型那一段', () => {
     }
   })
 
+  it('label 与 name 相同时两行都画：上行的称呼和下行的路由键不是一件事', async () => {
+    getGatewayModels.mockResolvedValue(
+      modelsPayload([model({ name: 'gpt-5.2-codex', label: 'gpt-5.2-codex', origin: 'runtime' })])
+    )
+    const page = mountPage()
+    // 两行是同一个串，`findByText` 会同时命中两个元素 —— 等第一行长出来就够了。
+    await waitFor(() => expect(page.container.querySelector('.amd__nameMain')).toBeTruthy())
+
+    const row = page.container.querySelector('.amd__gridwrap tbody tr')!
+    // 两个串一样时读者会以为是重复，但它们各自回答一个问题：给人看的是哪一行、
+    // 改 config.yaml 时要照抄的是哪一行。藏掉第二行就分不清了。
+    expect(row.querySelector('.amd__nameMain')!.textContent).toBe('gpt-5.2-codex')
+    expect(row.querySelector('.amd__nameSlug')!.textContent).toBe('gpt-5.2-codex')
+  })
+
+  it('网关没给 label 时只画一行：没有第二件事可说', async () => {
+    getGatewayModels.mockResolvedValue(modelsPayload([model({ name: 'qwen3-local', label: '', origin: 'runtime' })]))
+    const page = mountPage()
+    await page.findByText('qwen3-local')
+
+    const row = page.container.querySelector('.amd__gridwrap tbody tr')!
+    expect(row.querySelectorAll('.amd__nameSlug')).toHaveLength(0)
+  })
+
+  it('label 与 name 不同时两行都画，第二行是网关里的真名', async () => {
+    const page = await mountLoaded()
+
+    const row = page.container.querySelector('.amd__gridwrap tbody tr')!
+    expect(row.querySelector('.amd__nameMain')!.textContent).toBe('GLM 4.7')
+    expect(row.querySelector('.amd__nameSlug')!.textContent).toBe('glm-4.7-runtime')
+  })
+
+  it('来源页的胶囊带着完整那句做悬停提示', async () => {
+    const page = await mountLoaded()
+
+    // 这一列窄，中文刚好放得下、英文放不下；放不下时在胶囊内省略，完整那句挂 title。
+    // 「胶囊不被列宽拉满」是 CSS 的事（`.amd__tag` 的 align-self），jsdom 不算样式，
+    // 那一条靠真渲染核：量到下架胶囊 52px 而列内容区 120px。
+    const tag = page.container.querySelector('.amd__gridwrap tbody .amd__tag--clip') as HTMLElement
+    expect(tag).toBeTruthy()
+    expect(tag.getAttribute('title')).toBe(tag.textContent!.trim())
+  })
+
+  it('操作列放得下三颗按钮，加宽的部分从上架列挪，定宽列合计不变', async () => {
+    const page = await mountLoaded()
+
+    // 三颗 sm 图标按钮各 40px、相邻 8px（见 `.amd__cell--actions` 的注释：40 是
+    // 真渲染量出来的，不是图标的 28）。列窄到扣掉内距后放不下 136px 时最后一颗会被
+    // 裁掉，浏览器在裁掉处画一个「…」—— 看着像一个点了没反应的按钮。
+    // 页上不止这一张表（额度那一段也挂着同一个类名），只数模型表那一张的 colgroup。
+    const grid = page.container.querySelector('.amd__gridwrap')!
+    const cols = [...grid.querySelectorAll('table > colgroup > col')]
+    expect(cols).toHaveLength(9)
+    expect((cols[8] as HTMLElement).style.width).toBe('168px')
+
+    // 名字列是唯一的自适应列，定宽列每多占 1px 它就少 1px。
+    //
+    // 两处加宽都是**内部调换**，不是把表撑宽：
+    //   - 操作列 140 → 168，上架列 180 → 152（三颗按钮放得下）
+    //   - 来源列 96 → 112（「运行时新增」这个胶囊要 80px），这 16px 仍从上架列出
+    //     （152 → 136）：那一列放的是几个短语，用户也说过它占着空白；用量列要装
+    //     「$38.19 358 次调用」加折线，不动它。
+    // 合计仍是 1132 —— 名字列拿到的宽度和改动前一模一样，不会出现「修好一处、
+    // 另一处更窄」。
+    const fixed = [112, 150, 150, 96, 210, 136, 110, 168].reduce((a, b) => a + b, 0)
+    expect(fixed).toBe(1132)
+  })
+
   it('config 来源的行只读：那一格是「只读 · 查看改法」，不是三个死按钮', async () => {
     getGatewayModels.mockResolvedValue(
       modelsPayload([model({ origin: 'config', name: 'mimo-v2.6-pro', label: 'MiMo' })])
