@@ -44,13 +44,14 @@ export function projectInitials(name?: string | null): string {
   const text = (name ?? '').trim()
   const words = text.match(WORD) ?? []
   if (!words.length) return graphemes(text)[0] ?? '·'
-  const [first, second] = words
-  const head = [...first]
-  if (isWide(head[0])) return head[0]
-  if (second && !isWide(second[0])) return (head[0] + [...second][0]).toUpperCase()
+  const [first = '', second = ''] = words
+  const lead = [...first][0] ?? '·'
+  if (isWide(lead)) return lead
+  const next = [...second][0]
+  if (next && !isWide(next)) return (lead + next).toUpperCase()
   // 一个词里拉丁字母接着汉字（「AI助手」）：只取汉字之前那一段。
-  const latin = head.slice(0, 2).filter((ch, i) => i === 0 || !isWide(ch))
-  return latin[0].toUpperCase() + (latin[1] ?? '')
+  const after = [...first][1]
+  return lead.toUpperCase() + (after && !isWide(after) ? after : '')
 }
 
 /** 文字占几格。 */

@@ -97,6 +97,39 @@ async function openSettings(section?: string) {
 }
 
 describe('project settings', () => {
+  it('opens on the name and avatar page, where a renamed project shows its new name at once', async () => {
+    asRole('owner', ALL)
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
+    vi.mocked(api.renameProject).mockResolvedValue({ id: 'project', name: '毕业设计终稿' })
+    const wrapper = await openSettings()
+    try {
+      const field = await vi.waitFor(() => {
+        const el = document.body.querySelector<HTMLInputElement>('.page-section input[maxlength="200"]')
+        if (!el) throw new Error('name field not drawn yet')
+        return el
+      })
+      field.value = '毕业设计终稿'
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await vi.waitFor(() => expect(document.body.textContent).toContain('毕业设计终稿'))
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('shows a member who may not edit settings the name without a way to change it', async () => {
+    asRole('member', [])
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
+    const wrapper = await openSettings('profile')
+    try {
+      await navEntries(wrapper.element)
+      await vi.waitFor(() => expect(document.body.querySelector('.page-section')?.textContent).toContain('毕业设计'))
+      expect(document.body.querySelector('.page-section input')).toBeNull()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it.each([
     ['owner', true],
     ['admin', false],
@@ -232,14 +265,14 @@ describe('project settings', () => {
   })
 
   // 每一栏只放一类事：人一次只为一件事来（换队友 / 调机器 / 定合并规则 / 接仓库）。
-  // 「角色和权限」人人看得到，排第一；「频道」「项目地址」各看各的权限；归档只给所有者。
+  // 「名称和头像」「角色和权限」人人看得到，排前两个；「频道」「项目地址」各看各的权限；归档只给所有者。
   const REST = ['AI 队友', '任务命名', '环境', '合并规则', '仓库与署名', 'MCP 服务器', '导出项目']
   it.each([
-    ['owner', ALL, ['角色和权限', '频道', '项目地址', ...REST, '归档项目']],
-    ['admin', ALL, ['角色和权限', '频道', '项目地址', ...REST]],
-    ['member', [], ['角色和权限', ...REST]],
-    ['member', ['manage_channels'], ['角色和权限', '频道', ...REST]],
-    ['member', ['edit_settings'], ['角色和权限', '项目地址', ...REST]],
+    ['owner', ALL, ['名称和头像', '角色和权限', '频道', '项目地址', ...REST, '归档项目']],
+    ['admin', ALL, ['名称和头像', '角色和权限', '频道', '项目地址', ...REST]],
+    ['member', [], ['名称和头像', '角色和权限', ...REST]],
+    ['member', ['manage_channels'], ['名称和头像', '角色和权限', '频道', ...REST]],
+    ['member', ['edit_settings'], ['名称和头像', '角色和权限', '项目地址', ...REST]],
   ] as const)('lists the sections a %s with %j may use, in order', async (role, permissions, expected) => {
     asRole(role, [...permissions])
     seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])

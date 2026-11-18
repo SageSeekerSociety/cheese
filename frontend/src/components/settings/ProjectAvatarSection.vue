@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 项目头像：左边是格子现在的样子，右边挑画什么（图标、表情、文字、图片）和底色。点图标、
+// 项目头像（项目设置「名称和头像」那一页）：左边是格子现在的样子，右边挑画什么（图标、表情、文字、图片）和底色。点图标、
 // 点颜色立刻生效；表情和文字按保存（或回车）生效。保存和上传由页面去做
 // （`composables/useProjectAvatar.ts`），这里只说用户挑了什么。
 import { computed, ref, watch } from 'vue'
@@ -25,6 +25,8 @@ const props = defineProps<{
   projectId: string
   name: string
   avatar: ProjectAvatarSpec | null
+  /** 不能改设置的人：只显示格子。 */
+  readonly: boolean
   saving: boolean
   /** 上一次保存或上传为什么没成。 */
   error: string
@@ -115,7 +117,7 @@ function onFile(event: Event) {
     </div>
     <div class="page-section-body pav">
       <ProjectAvatar :id="projectId" :name="name" :avatar="preview" :size="64" class="pav__preview" />
-      <div class="pav__body">
+      <div v-if="!readonly" class="pav__body">
         <v-btn-toggle
           v-model="tab"
           mandatory

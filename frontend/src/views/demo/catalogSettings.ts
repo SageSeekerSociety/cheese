@@ -49,6 +49,7 @@ import BranchProtectionSection from '@/components/settings/BranchProtectionSecti
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import ProjectAvatarSection from '@/components/settings/ProjectAvatarSection.vue'
+import ProjectNameSection from '@/components/settings/ProjectNameSection.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 
 /** 这几件都吃 vuetify；读当前 locale 的（`relTime` 之类）再多一样 i18n。 */
@@ -453,11 +454,11 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     id: 'settings-project-avatar',
     title: 'ProjectAvatarSection',
     about:
-      '项目头像：项目设置「项目地址」那一栏最上面。左边是格子现在的样子，右边挑图标、表情、文字或图片和底色；保存和上传由页面做，这一件只把挑的报上去。',
+      '项目头像：项目设置「名称和头像」那一页，名称下面。左边是格子现在的样子，右边挑图标、表情、文字或图片和底色；保存和上传由页面做，这一件只把挑的报上去。',
     file: 'src/components/settings/ProjectAvatarSection.vue',
     component: ProjectAvatarSection,
     needs: UI_I18N,
-    args: { projectId: 'p-avatar-demo', name: '数据结构课程设计', saving: false, error: '' },
+    args: { projectId: 'p-avatar-demo', name: '数据结构课程设计', readonly: false, saving: false, error: '' },
     states: [
       {
         name: '没挑过',
@@ -484,6 +485,25 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         note: '服务端的原话写在下面。',
         props: { avatar: null, error: '文字最多 2 个汉字或 4 个字母、数字' },
       },
+      {
+        name: '不能改设置的人',
+        note: '只看得到格子。',
+        props: { avatar: { kind: 'icon', glyph: 'flask-outline', hue: 205, image_id: null }, readonly: true },
+      },
+    ],
+  },
+  {
+    id: 'settings-project-name',
+    title: 'ProjectNameSection',
+    about: '项目名称：项目设置「名称和头像」那一页最上面。改名不动地址里的短名；保存由页面做，这一件只把新名字报上去。',
+    file: 'src/components/settings/ProjectNameSection.vue',
+    component: ProjectNameSection,
+    needs: UI_I18N,
+    args: { name: '数据结构课程设计', readonly: false, saving: false, error: '' },
+    states: [
+      { name: '能改', note: '名字没改时保存按钮不可点。', props: {} },
+      { name: '不能改设置的人', note: '只显示名字。', props: { readonly: true } },
+      { name: '保存被拒', note: '服务端的原话写在输入框下面。', props: { error: '保存失败' } },
     ],
   },
   {

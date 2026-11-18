@@ -80,6 +80,14 @@ export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
 
+/** 给项目改名（能改设置的人才行）。地址里的短名不跟着变。 */
+export function renameProject(projectId: string, name: string): Promise<{ id: string; name: string }> {
+  return request<{ id: string; name: string }>(`/projects/${encodeURIComponent(projectId)}/name`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  })
+}
+
 /** 换项目格子画的东西（项目设置里能改设置的人才行）。kind 为 null 回到从项目名取字的默认格子。 */
 export function setProjectAvatar(projectId: string, avatar: ProjectAvatarSpec): Promise<ProjectAvatarSpec> {
   return request<ProjectAvatarSpec>(`/projects/${encodeURIComponent(projectId)}/avatar`, {

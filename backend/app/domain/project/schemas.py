@@ -68,6 +68,12 @@ class ProjectAvatarOut(BaseModel):
         )
 
 
+class ProjectNameIn(BaseModel):
+    """A new name for a project, held to what a new project's name is."""
+
+    name: str = Field(min_length=1, max_length=200)
+
+
 class ProjectAvatarIn(BaseModel):
     """Replace a project's avatar; every field left out goes back to the default."""
 
