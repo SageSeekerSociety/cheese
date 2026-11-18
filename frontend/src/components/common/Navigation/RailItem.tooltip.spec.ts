@@ -29,7 +29,6 @@ const tile: NavGenericItem = {
   type: 'item',
   title: '测试',
   to: '/project/t',
-  img: 'data:image/svg+xml,<svg/>',
   projectId: 't',
   shortcut: 4,
 }

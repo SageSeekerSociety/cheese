@@ -56,6 +56,7 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
         RecordInstruction,
         RecordSeatInstruction,
         TaskTeammate,
+        Uncommitted,
     )
 
 
@@ -71,6 +72,7 @@ class AcceptService:
         task_teammate: TaskTeammate | None = None,
         roster_team: ProjectTeam | None = None,
         executor: ExecutorCall | None = None,
+        uncommitted: Uncommitted | None = None,
     ):
         """``announce`` 是这个包说不了的那句话 —— 往房间里留一行（`ports.Announce`）。
 
@@ -88,6 +90,10 @@ class AcceptService:
         ``executor`` 是建卡时把交付物从那条任务的工作目录里读下来的那次机器调用
         （`repository.ports.ExecutorCall`），只在递卡带交付物时才用得上。同上一个
         道理：够不着（`repository` 在本包下面），谁构造谁给。
+
+        ``uncommitted`` 是采纳前问的那一句：任务的工作目录里还有没再提交一版的
+        修改（`ports.Uncommitted`）。不给就不问 —— 不替人决定的那几条路（轮询器
+        合布防过的卡）用不上它。
         """
 
         self._session = session
@@ -98,6 +104,7 @@ class AcceptService:
         self._task_teammate = task_teammate
         self._roster_team = roster_team
         self._executor = executor
+        self._uncommitted = uncommitted
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False
@@ -160,6 +167,7 @@ class AcceptService:
         deliver: str | None = None,
         deliver_url: str | None = None,
         admits_reviewer: ReviewerAdmission,
+        handed_in_by: str | None = None,
     ) -> AcceptCard:
         return await cards.create_card(
             self,
@@ -175,6 +183,7 @@ class AcceptService:
             deliver=deliver,
             deliver_url=deliver_url,
             admits_reviewer=admits_reviewer,
+            handed_in_by=handed_in_by,
         )
 
     async def redeliver(

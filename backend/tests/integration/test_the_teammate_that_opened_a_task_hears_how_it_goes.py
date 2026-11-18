@@ -6,7 +6,9 @@ The rules, as a person would state them:
 - A task an AI teammate opened from something said in the channel's main line:
   when it hands a version in for review, that teammate is told, in the main
   line, which task, which version, who reviews it, what was handed in and what
-  to look at. Each version is told once; the next version is told again.
+  to look at. Each version is told once; the next version is told again. It
+  says the hand-in there itself, so the platform records no line for it in
+  the main line.
 - A version returned is not told to it.
 - When the task closes, that teammate is told how it ended — with its
   conclusion, accepted with no write-up, or closed with nothing accepted — by
@@ -145,7 +147,7 @@ def _close(client, task_id: uuid.UUID, conclusion: str | None = None):
 
 def test_each_version_handed_in_is_told_once_and_a_return_is_not(client, app_world):
     room = _make_topic(client, _make_project(client))
-    _opened(client, room)
+    task_id = _opened(client, room)
     _goes_by(client, "alice", "爱丽丝")
     focus_card = client.post(
         f"/topics/{delivery_task(client, room).id}/accept-card",
@@ -166,6 +168,11 @@ def test_each_version_handed_in_is_told_once_and_a_return_is_not(client, app_wor
     assert "爱丽丝" in told
     assert _SUBJECT in told and "报名表只留姓名和学号" in told
     assert "手机上看一眼表单" in told
+    assert not [
+        line
+        for line in _told(client, room, task_id)
+        if line["meta"].get("event_type") == "task_filed"
+    ]
 
     returned = client.post(
         f"/accept-cards/{first}/reject",

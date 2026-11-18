@@ -80,7 +80,12 @@ from app.domain.agent.room.sessions.records import Live as Live
 from app.domain.agent.room.sessions.records import Outdated
 from app.domain.agent.room.sessions.records import _home as _home
 from app.domain.agent.service import AgentResult
-from app.domain.agent.session_host.contract import ColdCompaction, Image, Prompt
+from app.domain.agent.session_host.contract import (
+    ColdCompaction,
+    Image,
+    PrivateText,
+    Prompt,
+)
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.delivery.input_identity import (
     InputIdentity,
@@ -433,6 +438,8 @@ class RoomSessions:
         session_opening: str = "",
         opening_changes: str = "",
         cold: ColdCompaction | None = None,
+        private: tuple[PrivateText, ...] = (),
+        on_private: Callable[[], None] | None = None,
     ) -> bool:
         return await _speaking.send(
             self,
@@ -454,6 +461,8 @@ class RoomSessions:
             session_opening=session_opening,
             opening_changes=opening_changes,
             cold=cold,
+            private=private,
+            on_private=on_private,
         )
 
     def _with_project_state(

@@ -52,7 +52,6 @@ const tile = (id: string): NavGenericItem => ({
   type: 'item',
   title: id.toUpperCase(),
   to: `/projects/${id}`,
-  img: 'data:image/svg+xml,<svg/>',
   projectId: id,
 })
 

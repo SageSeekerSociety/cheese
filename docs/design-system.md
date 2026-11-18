@@ -588,6 +588,8 @@ const { saving, saved, dirty, error, run } = useSaveState({
 
 全平台画头像只有一个组件：`components/common/UserAvatar.vue`。形状照 GitHub 的规则 —— 人是圆（`kind="person"`，默认），团队、空间、项目这些是圆角方块（`kind="org"`）。AI 队友不走这里，用 `CheeseAvatar`（§2.7）。
 
+项目格子一律走 `components/common/ProjectAvatar.vue`（它里面画的还是 `UserAvatar`）。项目可以挑图标、表情、文字或图片，再挑一个底色；没挑过就从项目名取字：跳过开头的标点和括号，汉字取一个，拉丁字母两个词取两个首字母、一个词取前两个字母（`utils/projectAvatar.ts`）。别在调用处自己拿项目名喂 `UserAvatar`，那会退回成单个首字母。
+
 | 这一格该画什么 | 画成 |
 |---|---|
 | 这个人**自己挑过**头像 | 他挑的那张图 |

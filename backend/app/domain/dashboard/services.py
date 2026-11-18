@@ -35,6 +35,7 @@ from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project.schemas import ProjectAvatarOut
 from app.domain.space.repositories import SpaceRepository
 from app.domain.team.services import team_service
 from app.domain.team.summary import team_summary
@@ -401,6 +402,7 @@ class DashboardService:
                 {
                     "project_id": str(project.id),
                     "name": project.name,
+                    "avatar": ProjectAvatarOut.of(project).model_dump(mode="json"),
                     # Same precedence as the roster: owner, then team, then
                     # external; an AI teammate is the project's agent.
                     "source": (

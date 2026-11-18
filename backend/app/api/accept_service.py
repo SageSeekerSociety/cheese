@@ -15,6 +15,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.delivery.agent import record_seat_instruction, record_task_instruction
 from app.domain.delivery.ledger import settle_card
+from app.domain.machine import hand_in
 from app.domain.review.services import AcceptService
 
 
@@ -29,4 +30,5 @@ def accept_service(db: AsyncSession) -> AcceptService:
         task_teammate=task_teammate,
         roster_team=project_team,
         executor=execution.call,
+        uncommitted=hand_in.uncommitted,
     )

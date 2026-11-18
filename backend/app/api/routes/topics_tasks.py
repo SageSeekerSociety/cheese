@@ -406,8 +406,8 @@ async def _close(
     await close_cards_for_closed_task(
         db, task_id=task.id, by=actor.handle, settle_card=settle_card
     )
-    # The task's own conversation hears how it ended, and so does the
-    # discussion it came from; the channel's card for it updates in place.
+    # The task's own conversation records how it ended; the channel's card
+    # for it updates in place.
     ended = (
         say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
         if task.conclusion
@@ -426,8 +426,9 @@ async def _close(
             closed, heard.task_closed(by=actor.handle, conclusion=task.conclusion)
         ),
     )
-    # The conversation the task was made from records how it ended, and the AI
-    # teammate that opened it from the channel's main line is told to say so.
+    # The conversation the task was made from hears how it ended: from the
+    # main line's AI teammate when it closed the task itself, from the
+    # platform's line otherwise (`tell_origin_ended`).
     await tell_origin_ended(
         db,
         task,

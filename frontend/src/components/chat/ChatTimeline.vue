@@ -172,8 +172,8 @@ const props = defineProps<{
   taskLinksUnder?: (blockId: string) => TaskLine[]
   /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
   adoptingTask?: string | null
-  /** 这是频道的主线：交上来的一版记成一行「已提交审阅」，处理它的按钮挂在主线上关于这件
-   *  任务的最新那一条下面。别处（任务自己的对话、支线）照旧画交付卡。 */
+  /** 这是频道的主线：处理交上来的一版的按钮挂在主线上关于这件任务的最新那一条下面（平台记的
+   *  「已提交审阅」，或队友说这件任务的话）。别处（任务自己的对话、支线）照旧画交付卡。 */
   mainLine?: boolean
 }>()
 
@@ -289,8 +289,9 @@ function tagOf(m: Block): TaskLine | null {
 }
 // 交了一版去审阅的那一行（lib/deliveryLine）：主线上它就是平台记的那一行，别处画成一张交付卡。
 const deliveries = computed(() => props.rows.map((row) => (row.notice ? deliveryOf(row.block) : null)))
-// 主线上一件任务在等人审阅时，处理这一版的按钮挂在哪一行：交上来之后关于它的最新那一条——
-// 通常是队友说这件任务的话；交了之后队友没说话，就是「已提交审阅」那一行自己。
+// 主线上一件任务在等人审阅时，处理这一版的按钮挂在哪一行：关于它的最新那一条——通常是
+// 队友说这件任务的话。主线队友开的任务交上来时平台不记那一行，队友的话还没到时就挂在它
+// 之前说这件任务的那一条下面；别的任务交了之后队友没说话，就是「已提交审阅」那一行自己。
 const deliveryAnchors = computed(() => {
   const at = new Map<string, string>()
   if (!props.mainLine) return new Set<string>()
@@ -1034,6 +1035,13 @@ const rowLabels = computed(() =>
 .tl-thread {
   margin-left: 54px;
   width: calc(100% - 70px);
+}
+/* 一次问的几道题：不是带头像的一行，是这一列里的一件事，和支线、交付卡一样落在正文
+   那条竖线上（左 16 + 头像 28 + 间距 10）。以前它没有这条规则，一个块级 section 就
+   从 .tl-content 的左缘铺满整栏——比它上面消息的头像还往左 54px，于是「问完之后」的
+   东西看着向左顶格。右缘留 16，和消息正文的右缘同一条线。 */
+.tl-ask-group {
+  margin: 4px 16px 4px 54px;
 }
 /* 交了一版去审阅的那张卡：平台记下的事，不挂头像和名字，和消息正文同一条竖线。 */
 .tl-delivery {
