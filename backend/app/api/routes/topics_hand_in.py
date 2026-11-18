@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.task_claims import project_of_claim
 from app.api.task_deps import get_task_submission_service
 from app.api.task_hand_in import hand_in_version, refuse_closed, refuse_used_up
@@ -90,6 +90,39 @@ class HandInItemIn(BaseModel):
 
 class PrepareIn(BaseModel):
     items: list[HandInItemIn] = Field(min_length=1, max_length=100)
+
+
+class PreparedItemOut(BaseModel):
+    number: int
+    name: str
+    #: ``FILE`` or ``TEXT``, as the 题目's form asks.
+    kind: str
+    text: str | None = None
+    #: Where a file was read from: ``repository`` or ``library``.
+    source: str | None = None
+    path: str | None = None
+    bytes: int | None = None
+    #: The blob it was read at (repository) or the library version's id.
+    version: str | None = None
+    #: The library version's number, as the library lists it.
+    libraryVersion: int | None = None
+
+
+class PreparedOut(BaseModel):
+    task: str
+    stage: str | None
+    stageNumber: int | None
+    #: The member it is prepared for, by handle.
+    person: str
+    revision: str
+    items: list[PreparedItemOut]
+
+
+class HandedInOut(BaseModel):
+    task: str
+    person: str
+    version: int
+    submission: int
 
 
 class ConfirmIn(BaseModel):
@@ -188,6 +221,7 @@ def _wanted(form, given: list[HandInItemIn], task) -> tuple[int, list, dict]:
 @router.post(
     "/{topic_id}/hand-in/prepare",
     summary="Prepare A Hand-In For A Member",
+    **typed_response(PreparedOut),
 )
 async def prepare_hand_in(
     body: PrepareIn,
@@ -301,7 +335,7 @@ async def prepare_hand_in(
             "task": task.name,
             "stage": stages[stage].name if stage < len(stages) else None,
             "stageNumber": stage + 1 if stages else None,
-            "for": kept.for_handle,
+            "person": kept.for_handle,
             "revision": revision,
             "items": items,
         }
@@ -311,6 +345,7 @@ async def prepare_hand_in(
 @router.post(
     "/{topic_id}/hand-in/confirm",
     summary="Hand In What Was Prepared, On The Member's Word",
+    **typed_response(HandedInOut),
 )
 async def confirm_hand_in(
     body: ConfirmIn,
@@ -423,7 +458,7 @@ async def confirm_hand_in(
     return ok(
         {
             "task": task.name,
-            "for": kept.for_handle,
+            "person": kept.for_handle,
             "version": submission["version"],
             "submission": int(submission["id"]),
         }

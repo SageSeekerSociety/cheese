@@ -5935,7 +5935,7 @@ def _hand_in_size(size) -> str:
 def _say_hand_in_prepared(args, data, env) -> str:
     """What was prepared, item by item, and what the member has to do."""
     data = data or {}
-    person = f"<@{data.get('for')}>"
+    person = f"<@{data.get('person')}>"
     stage = f"「{data['stage']}」阶段" if data.get("stage") else ""
     revision = str(data.get("revision") or "")[:7]
     lines = [
@@ -6116,7 +6116,7 @@ _SAY = {
     "cheese_task.report": lambda a, d, e: "已报告给频道主线。",
     "cheese_hand_in.prepare": _say_hand_in_prepared,
     "cheese_hand_in.confirm": lambda a, d, e: (
-        f"已代 <@{(d or {}).get('for')}> 向题目「{(d or {}).get('task')}」"
+        f"已代 <@{(d or {}).get('person')}> 向题目「{(d or {}).get('task')}」"
         f"提交了第 {(d or {}).get('version')} 版。"
     ),
     "cheese_task.accept": lambda a, d, e: (
