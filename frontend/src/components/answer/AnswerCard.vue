@@ -65,10 +65,8 @@ import UserAvatar from '../common/UserAvatar.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { NewAttitudeType } from '@/constants'
 import { userName } from '@/lib/agentNames'
-const { t } = useI18n()
 
-// 作者按查看者的叫法：设了个人备注就是备注，否则是公开昵称。
-const authorName = computed(() => userName(props.answer.author) || props.answer.author.nickname)
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -84,6 +82,9 @@ const props = withDefaults(
     defaultAvatarId: null,
   }
 )
+
+// 作者按查看者的叫法：设了个人备注就是备注，否则是公开昵称（`userName` 已经兜到账号）。
+const authorName = computed(() => userName(props.answer.author))
 
 const emit = defineEmits<{
   accept: [answer: Answer]

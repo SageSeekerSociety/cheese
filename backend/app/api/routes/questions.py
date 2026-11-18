@@ -58,9 +58,14 @@ async def get_invitation_service(db=Depends(get_db)) -> QuestionInvitationServic
 async def get_trending_questions(
     limit: int = Query(default=10, ge=1, le=50),
     days: int = Query(default=7, ge=1, le=30),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    items = await service.get_trending_questions(limit=limit, days=days)
+    items = await service.get_trending_questions(
+        limit=limit,
+        days=days,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
+    )
     return ok({"questions": items})
 
 
@@ -168,6 +173,7 @@ async def list_followed_questions(
         user_id=auth_user.user_id,
         page_size=pageSize,
         page_start=pageStart,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"questions": items, "page": page})
 

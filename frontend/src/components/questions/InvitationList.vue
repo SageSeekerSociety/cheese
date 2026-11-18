@@ -54,5 +54,5 @@ const emit = defineEmits<{
 const isInvited = (user: User): boolean => props.invitedIds.includes(user.id)
 
 /** 这一位在这块屏幕上叫什么：查看者给他设过备注就是备注，否则是公开昵称。 */
-const nameOf = (user: User): string => userName(user) || user.nickname
+const nameOf = (user: User): string => userName(user)
 </script>

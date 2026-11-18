@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.user.models import UserProfile
 from app.domain.user.repositories import UserRepository
-from app.domain.user.services import remarks_for_viewer, usernames_by_ids
+from app.domain.user.services import remarks_for_viewer
 
 
 async def page_names(
@@ -34,13 +34,16 @@ async def page_names(
     """
     if session is None or not user_ids:
         return {}
-    handles = await usernames_by_ids(session, user_ids)
-    if viewer_id is None:
-        return {uid: {"username": h, "remark": None} for uid, h in handles.items()}
+    # One read of these people; the accounts and the remarks both come off it.
     people = await UserRepository(session=session).get_by_ids(user_ids)
+    if viewer_id is None:
+        return {
+            uid: {"username": u.username, "remark": None} for uid, u in people.items()
+        }
     remarks = await remarks_for_viewer(session, viewer_id, people)
     return {
-        uid: {"username": h, "remark": remarks.get(h)} for uid, h in handles.items()
+        uid: {"username": u.username, "remark": remarks.get(u.username)}
+        for uid, u in people.items()
     }
 
 

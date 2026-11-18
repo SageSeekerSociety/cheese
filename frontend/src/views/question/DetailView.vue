@@ -200,10 +200,7 @@
           <template #title>
             <i18n-t scope="global" keypath="questions.detail.acceptedAnswerTitle" tag="span">
               <template #user>
-                <UserRef
-                  :handle="questionData.accepted_answer.author.username"
-                  :name="questionData.accepted_answer.author.nickname"
-                />
+                <UserRef :handle="questionData.accepted_answer.author.username" :name="acceptedAuthorName" />
               </template>
             </i18n-t>
           </template>
@@ -337,9 +334,9 @@ const inviteDialog = defineModel<boolean>('inviteDialog', { required: true })
 const { t } = useI18n()
 
 // 提问的人按查看者的叫法：设了个人备注就是备注，否则是公开昵称。
-const authorName = computed(
-  () => userName(viewProps.questionData?.author) || viewProps.questionData?.author?.nickname || ''
-)
+const authorName = computed(() => userName(viewProps.questionData?.author))
+// 采纳的那条回答、署名也是同一个人：同一页两处名字不能一个带备注一个不带。
+const acceptedAuthorName = computed(() => userName(viewProps.questionData?.accepted_answer?.author))
 </script>
 
 <style lang="scss">

@@ -286,12 +286,17 @@ class QuestionsService:
         )
 
     async def list_followed(
-        self, *, user_id: int, page_size: int, page_start: int | None
+        self,
+        *,
+        user_id: int,
+        page_size: int,
+        page_start: int | None,
+        viewer_id: int | None = None,
     ) -> tuple[list[dict], dict]:
         rows, total = await self._repo.list_followed(
             user_id=user_id, limit=page_size, offset=page_start or 0
         )
-        items = await self._enrich_question_list(rows)
+        items = await self._enrich_question_list(rows, viewer_id=viewer_id)
         offset = page_start or 0
         returned = len(items)
         has_more = offset + returned < total
@@ -384,10 +389,10 @@ class QuestionsService:
         }
 
     async def get_trending_questions(
-        self, *, limit: int = 10, days: int = 7
+        self, *, limit: int = 10, days: int = 7, viewer_id: int | None = None
     ) -> list[dict]:
         questions = await self._repo.get_trending_questions(limit=limit, days=days)
-        return await self._enrich_question_list(questions)
+        return await self._enrich_question_list(questions, viewer_id=viewer_id)
 
     async def get_stats(self) -> dict:
         return await self._repo.get_stats()

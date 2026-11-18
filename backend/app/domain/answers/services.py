@@ -279,6 +279,11 @@ class AnswersService:
         question = await self._question_repo.get_by_id(answer.question_id)
         question_dto = None
         if question:
+            # 提问的人按这位读者的叫法：显式取那两格，不走 `**` 解包（它把
+            # `page_names` 的键名和这张卡的关键字参数绑在运行期）。
+            asked_named = (
+                await page_names(self._session, user_id, [question.created_by_id])
+            ).get(question.created_by_id, {})
             author_profile = await self._profile_repo.get_profile_by_user_id(
                 question.created_by_id
             )
@@ -307,11 +312,8 @@ class AnswersService:
                 "author": profile_to_author(
                     author_profile,
                     author_chosen.get(question.created_by_id),
-                    **(
-                        await page_names(
-                            self._session, user_id, [question.created_by_id]
-                        )
-                    ).get(question.created_by_id, {}),
+                    username=asked_named.get("username"),
+                    remark=asked_named.get("remark"),
                 ),
                 "createdAt": created_at_ms,
                 "updatedAt": updated_at_ms,
@@ -327,18 +329,15 @@ class AnswersService:
         chosen = await self._profile_repo.chosen_avatar_ids([updated.created_by_id])
         # Only the answer's own author may edit it, so there is no third reader
         # whose remark could apply: the card carries the account, no remark.
+        handle = None
+        if self._session is not None:
+            handle = (
+                await usernames_by_ids(self._session, [updated.created_by_id])
+            ).get(updated.created_by_id)
         return _answer_to_dto(
             updated,
             author=profile_to_author(
-                profile,
-                chosen.get(updated.created_by_id),
-                username=(
-                    (
-                        await usernames_by_ids(self._session, [updated.created_by_id])
-                    ).get(updated.created_by_id)
-                    if self._session is not None
-                    else None
-                ),
+                profile, chosen.get(updated.created_by_id), username=handle
             ),
         )
 

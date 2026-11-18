@@ -1,12 +1,11 @@
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Mapped
 
 from app.core.content_review import TextKind, review_text
 from app.core.email import is_placeholder_email
@@ -103,9 +102,14 @@ async def usernames_by_ids(
 
 
 class _Person(Protocol):
-    """Just enough of an account to read the viewer's remark for it."""
+    """Just enough of an account to read the viewer's remark for it.
 
-    username: Mapped[str]
+    ``Any`` because both shapes reach here: an ORM row (``Mapped[str]``, which
+    is the descriptor at the class level) and a DTO or test fake holding a plain
+    ``str``. What is read is always the value.
+    """
+
+    username: Any
 
 
 async def remarks_for_viewer(
