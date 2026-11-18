@@ -94,6 +94,7 @@
                 :size="22"
                 :kind="row.teamSize ? 'org' : 'person'"
                 :name="row.name"
+                :seed="row.m.member?.username ?? ''"
                 :avatar="row.m.member?.avatarId != null ? getAvatarUrl(row.m.member.avatarId) : ''"
               />
               <span class="rs__name">{{ row.name }}</span>

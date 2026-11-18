@@ -248,19 +248,39 @@ async def _enrich_task_models(
     space = await space_repo.get_by_id(space_id)
     space_name = space.name if space is not None else "Unknown Space"
 
-    # The page's own remarks, one query for everyone it names. Handles, not ids:
-    # a remark is stored against the account's handle. Empty when nobody is
-    # browsing (an agent's read), and then every name below stays public.
+    # The mentors who join every claimer's project (#3830), with the name the
+    # claim notice says them by.
+    mentors_of = await TaskMentorRepository(db).for_tasks(task_ids)
+    mentor_users = (
+        await user_repo.get_by_handles(
+            [h for handles in mentors_of.values() for h in handles]
+        )
+        if mentors_of
+        else {}
+    )
+    mentor_profiles = (
+        await profile_repo.get_profiles_by_user_ids(
+            [u.id for u in mentor_users.values()]
+        )
+        if mentor_users
+        else {}
+    )
+
+    # Who is reading, as a handle: a remark is stored against it. Empty when
+    # nobody is browsing (an agent's read), and then every name stays public.
     reader = viewer_handle
     if reader is None and viewer_id is not None:
         # Already in this batch (``all_user_ids``): no query of its own.
         viewer = users.get(viewer_id)
         reader = viewer.username if viewer is not None else ""
-    remarks = (
-        await remarks_by_handles(db, reader, [user.username for user in users.values()])
-        if reader
-        else {}
-    )
+    # The page's own remarks for everyone it names — creators, the space's
+    # admins, the mentors and the reader — in one query. Handles, not ids: a
+    # remark is stored against the account's handle. Asking a second time for
+    # the mentors alone would cost a page with mentors one more statement, and
+    # `test_problem_pages_read_once` counts exactly that.
+    named_handles = [user.username for user in users.values()]
+    named_handles += list(mentor_users.keys())
+    remarks = await remarks_by_handles(db, reader, named_handles) if reader else {}
 
     role_name_map = {0: "OWNER", 1: "ADMIN"}
     admins_payload: list[dict] = []
@@ -378,30 +398,6 @@ async def _enrich_task_models(
         }
         task_model["categoryId"] = category_id
 
-    # The mentors who join every claimer's project (#3830), with the name the
-    # claim notice says them by.
-    mentors_of = await TaskMentorRepository(db).for_tasks(task_ids)
-    mentor_users = (
-        await user_repo.get_by_handles(
-            [h for handles in mentors_of.values() for h in handles]
-        )
-        if mentors_of
-        else {}
-    )
-    mentor_profiles = (
-        await profile_repo.get_profiles_by_user_ids(
-            [u.id for u in mentor_users.values()]
-        )
-        if mentor_users
-        else {}
-    )
-    # 备注只按 handle 查，而上面那一批是替 creator 和空间管理员查的；导师是另外几个人，
-    # 这里补一次（一个人也没有就不查）。``mentor_users`` 自己就是按 handle 索引的。
-    mentor_remarks = (
-        await remarks_by_handles(db, reader, mentor_users.keys())
-        if reader and mentor_users
-        else {}
-    )
     for task_model in task_models:
         task_model["mentors"] = [
             {
@@ -413,7 +409,7 @@ async def _enrich_task_models(
                     and mentor_profiles[mentor_users[handle].id].nickname
                     else handle
                 ),
-                "remark": mentor_remarks.get(handle),
+                "remark": remarks.get(handle),
             }
             for handle in mentors_of.get(task_model["id"], [])
         ]

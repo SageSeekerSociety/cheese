@@ -101,7 +101,8 @@ useAgentSurface(() => ({
 /** 简介里那一段「出处」（`〔…〕`）是老库把来源写进 `intro` 的约定，`splitOrigin` 把
  *  它摘出来。摘要与出处是同一段文本的两半，所以两个都由它给，不各填各的。 */
 const intro = computed(() => splitOrigin(taskData.value?.intro ?? ''))
-const publisherName = computed(() => userName(taskData.value?.creator) || taskData.value?.creator.username || '')
+// `userName` 已经退到账号（`nickname || username || ''`），不再另加兜底。
+const publisherName = computed(() => userName(taskData.value?.creator))
 const publishedOn = computed(() => {
   const at = taskData.value?.createdAt
   return at ? dayjs(at).format(t('tasks.page.dateFormat')) : ''

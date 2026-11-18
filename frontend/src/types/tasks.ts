@@ -131,7 +131,12 @@ export type TaskClaimStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED
 
 export interface Task {
   /** 加入每个领取者项目的导师（#3830）；没有就是空。 */
-  mentors?: { handle: string; nickname: string }[]
+  mentors?: {
+    handle: string
+    nickname: string
+    /** 当前查看者给他设的个人备注；没设是 null，界面退回公开昵称。 */
+    remark?: string | null
+  }[]
   id: number
   name: string
   intro: string
