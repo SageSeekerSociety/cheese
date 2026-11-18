@@ -21,7 +21,6 @@ import type {
   DockviewReadyEvent,
   DockviewTheme,
   GroupviewPanelState,
-  IDisposable,
   IDockviewHeaderActionsProps,
   IDockviewPanel,
   IDockviewPanelHeaderProps,
@@ -276,7 +275,10 @@ function hostRef(id: string) {
   return fn
 }
 
-const visibility = new Map<string, IDisposable>()
+/** What a dockview event subscription returns. */
+type Disposable = { dispose(): void }
+
+const visibility = new Map<string, Disposable>()
 function watchVisibility(panel: IDockviewPanel) {
   if (visibility.has(panel.id)) return
   visibility.set(
@@ -295,7 +297,7 @@ const collapsedCellOf = (id: string) => {
 
 // ---------------------------------------------------------------- wiring
 
-const disposables: IDisposable[] = []
+const disposables: Disposable[] = []
 
 function onReady(event: DockviewReadyEvent) {
   const dock = markRaw(event.api)
