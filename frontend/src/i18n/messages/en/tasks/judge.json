@@ -236,8 +236,7 @@
     "remaining": "{left} self-tests left today ({limit} a day)",
     "usedUp": "All {limit} self-tests used today; resets {when}",
     "pastDue": "Past the deadline; self-tests are closed",
-    "ran": "This run used {sha}",
-    "none": "No self-test yet"
+    "ran": "This run used {sha}"
   },
   "rejudge": {
     "button": "Re-judge every latest submission",

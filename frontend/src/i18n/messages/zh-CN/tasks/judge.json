@@ -236,8 +236,7 @@
     "remaining": "今天还能自测 {left} 次（每天 {limit} 次）",
     "usedUp": "今天的 {limit} 次自测用完了，{when} 重置",
     "pastDue": "已过截止时间，不能再自测",
-    "ran": "这一次跑的是 {sha}",
-    "none": "还没自测过"
+    "ran": "这一次跑的是 {sha}"
   },
   "rejudge": {
     "button": "重新评测全部最新提交",
