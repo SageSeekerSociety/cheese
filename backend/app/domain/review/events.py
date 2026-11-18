@@ -21,6 +21,7 @@ from app.domain.review.ports import (
     Announce,
     DispatchPending,
     RecordInstruction,
+    RecordSeatInstruction,
     TaskTeammate,
 )
 
@@ -95,6 +96,7 @@ class _Refreshes:
         *,
         settle_card: SettleCard,
         record_instruction: RecordInstruction,
+        record_seat: RecordSeatInstruction,
         dispatch_pending: DispatchPending,
         task_teammate: TaskTeammate,
     ) -> None:
@@ -102,6 +104,7 @@ class _Refreshes:
         self._announce = announce
         self._settle_card = settle_card
         self._record_instruction = record_instruction
+        self._record_seat = record_seat
         self._dispatch_pending = dispatch_pending
         self._task_teammate = task_teammate
         self._waiting: dict[tuple, dict] = {}
@@ -147,6 +150,7 @@ class _Refreshes:
                     self._announce,
                     settle_card=self._settle_card,
                     record_instruction=self._record_instruction,
+                    record_seat=self._record_seat,
                     task_teammate=self._task_teammate,
                 )
             else:
@@ -155,6 +159,7 @@ class _Refreshes:
                     announce=self._announce,
                     settle_card=self._settle_card,
                     record_instruction=self._record_instruction,
+                    record_seat=self._record_seat,
                     dispatch_pending=self._dispatch_pending,
                     task_teammate=self._task_teammate,
                     **event,
@@ -170,6 +175,7 @@ async def listen(
     *,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
 ):
@@ -178,6 +184,7 @@ async def listen(
         announce,
         settle_card=settle_card,
         record_instruction=record_instruction,
+        record_seat=record_seat,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
     )

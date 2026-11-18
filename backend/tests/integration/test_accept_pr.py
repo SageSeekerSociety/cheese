@@ -23,6 +23,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
@@ -220,6 +221,7 @@ def _poll(client) -> dict:
             announce,
             settle_card=settle_card,
             record_instruction=record_task_instruction,
+            record_seat=record_seat_instruction,
             task_teammate=task_teammate,
         )
     )

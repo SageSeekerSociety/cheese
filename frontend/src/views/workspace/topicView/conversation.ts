@@ -160,7 +160,12 @@ export function useTopicConversation(opts: {
   // 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
   // 名册上那个座位，所以给的就是名册。
   const roomAgents = computed<TopicMemberRow[]>(() => roomMembers.value.filter((m) => m.agent))
+  // 认名字的表要盖住**项目**名册，不只这间房：任务负责人/协作者的候选是全项目的人，
+  // 表里缺了频道外的人，那一行就退成账号。项目名册先说，房间名册和队友补在上面。
   const memberNames = computed<Record<string, string>>(() => ({
+    ...Object.fromEntries(
+      store.members.filter((m) => !m.agent).map((m) => [m.user_handle, memberName(m) || m.user_handle])
+    ),
     ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
     ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
   }))

@@ -1,7 +1,9 @@
 """What a task's own AI teammate needs before it may close the task.
 
 A merge no longer closes a task (`task_landing`): the teammate judges whether
-the task is done and closes it itself. A close it gets wrong is the one thing
+the task is done and closes it itself — unless the channel's main line opened
+the task, which judges that and closes it, and whose task's own session may not
+close it at all (`conclude_task`). A close it gets wrong is the one thing
 that ends a task its owner still wants to work in — a prototype shown and the
 task closed, a PR merged that was one step of several — so the close route asks
 it for one of two grounds the platform can check, and refuses it without one:

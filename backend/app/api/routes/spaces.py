@@ -15,6 +15,7 @@ from app.api.space_deps import (
     require_reviewed_space,
 )
 from app.api.space_payloads import (
+    SpaceAdminRelationRow,
     TeachingRequest,
     _admin_to_api_model,
     _build_full_space_payload,
@@ -156,6 +157,8 @@ async def _hydrate_members(
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
+    db,
+    viewer_id: int | None,
 ) -> list[dict]:
     """Roster rows, with the people batched into one lookup: a per-row lookup
     makes rendering a board cost grow with the class."""
@@ -163,6 +166,8 @@ async def _hydrate_members(
         [member.user_id for member in members],
         user_repo=user_repo,
         profile_repo=profile_repo,
+        db=db,
+        viewer_id=viewer_id,
     )
     return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
@@ -253,19 +258,31 @@ async def get_spaces(
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
 
+    # People are hydrated once for the whole page, not once per space: the
+    # viewer's remark is one query per page instead of one per space. The
+    # relations themselves are still read per space — that debt predates this
+    # change and `tests/integration/test_list_endpoints_do_not_scale.py` tracks it.
+    admins_by_space: dict[int, Sequence[SpaceAdminRelationRow]] = {
+        s.id: await service.list_admins(s.id) for s in spaces
+    }
+    everyone = [rel.user_id for rels in admins_by_space.values() for rel in rels]
+    # Users, profiles, avatars and the viewer's remarks are each one query for
+    # the page, not one per space.
+    people = await _hydrate_people(
+        everyone,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        db=db,
+        viewer_id=auth_user.user_id,
+    )
+
     items: list[dict] = []
     for s in spaces:
         dto = _space_to_api_model(s)
         if queryMyRank:
             dto["myRank"] = await service.get_user_rank(s.id, viewer_id)
 
-        admin_relations = await service.list_admins(s.id)
-        # 一次取齐所有管理员的人；头像判据（挑过没有）也在 _hydrate_people 里。
-        people = await _hydrate_people(
-            [rel.user_id for rel in admin_relations],
-            user_repo=user_repo,
-            profile_repo=profile_repo,
-        )
+        admin_relations = admins_by_space.get(s.id, [])
         dto["admins"] = [
             _admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations
         ]
@@ -433,6 +450,8 @@ async def list_space_members(
         members,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
+        db=db,
+        viewer_id=auth_user.user_id,
     )
     return ok({"members": items})
 
@@ -472,6 +491,8 @@ async def add_space_member(
         [member],
         user_repo=user_repo,
         profile_repo=UserProfileRepository(session=db),
+        db=db,
+        viewer_id=auth_user.user_id,
     )
     return ok({"member": items[0]})
 

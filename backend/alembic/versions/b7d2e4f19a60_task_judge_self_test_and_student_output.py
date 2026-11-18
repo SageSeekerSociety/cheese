@@ -11,7 +11,7 @@
 再把约束收回去。
 
 辨认 ID: b7d2e4f19a60
-Revises: 342495d871e3
+Revises: cf5d978e2f7d
 Create Date: 2026-11-17
 """
 
@@ -23,7 +23,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "b7d2e4f19a60"
-down_revision: str | Sequence[str] | None = "342495d871e3"
+down_revision: str | Sequence[str] | None = "cf5d978e2f7d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

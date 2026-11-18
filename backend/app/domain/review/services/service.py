@@ -35,6 +35,7 @@ from app.domain.review.services._shared import (
     TopicRepository,
     _GitHubCredentials,
 )
+from app.domain.review.task_landing import Landed
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 
@@ -100,6 +101,14 @@ class AcceptService:
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False
+        # Set only while `accept` runs for a channel's main line adopting on
+        # its reviewer's word (``by_seat``): a merge that lands inside that
+        # call is told to that seat in its reply, not by waking it
+        # (`task_landing.Landed`).
+        self._adopting_seat: str | None = None
+        #: What the main line seat that adopted in this service's `accept`
+        #: reads in that call's reply, when the merge landed inside it.
+        self.for_adopter: str | None = None
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)
@@ -408,15 +417,20 @@ class AcceptService:
         by_assistant: bool = False,
         by_seat: str | None = None,
     ) -> AcceptCard:
-        return await _accept.accept(
-            self,
-            card_id=card_id,
-            decided_by=decided_by,
-            head_sha=head_sha,
-            deliverable_revision=deliverable_revision,
-            by_assistant=by_assistant,
-            by_seat=by_seat,
-        )
+        self._adopting_seat = by_seat if by_assistant else None
+        self.for_adopter = None
+        try:
+            return await _accept.accept(
+                self,
+                card_id=card_id,
+                decided_by=decided_by,
+                head_sha=head_sha,
+                deliverable_revision=deliverable_revision,
+                by_assistant=by_assistant,
+                by_seat=by_seat,
+            )
+        finally:
+            self._adopting_seat = None
 
     async def _accept_github(
         self,
@@ -614,7 +628,7 @@ class AcceptService:
 
     async def _mark_task_merged(
         self, card: AcceptCard, *, delivered_head: str | None = None
-    ) -> bool:
+    ) -> Landed | None:
         return await polling._mark_task_merged(
             self, card=card, delivered_head=delivered_head
         )

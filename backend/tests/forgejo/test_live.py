@@ -44,6 +44,7 @@ from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
 from tests.support.review_ports import (
     pumping,
+    record_seat_instruction,
     record_task_instruction,
     settle_card,
     task_teammate,
@@ -505,6 +506,7 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
                 announce,
                 settle_card=settle_card,
                 record_instruction=record_task_instruction,
+                record_seat=record_seat_instruction,
                 dispatch_pending=pumping(chat),
                 task_teammate=task_teammate,
             )
