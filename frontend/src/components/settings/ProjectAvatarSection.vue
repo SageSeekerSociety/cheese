@@ -50,6 +50,13 @@ watch(
 )
 
 const emojiOk = computed(() => isOneEmoji(emojiDraft.value))
+// 框里的就是存着的那个：保存按钮不可点。
+const emojiSaved = computed(() => current.value.kind === 'emoji' && current.value.glyph === emojiDraft.value.trim())
+const textSaved = computed(() =>
+  textDraft.value.trim()
+    ? current.value.kind === 'text' && current.value.glyph === textDraft.value.trim()
+    : current.value.kind === null
+)
 const textOk = computed(() => !textDraft.value.trim() || fitsTile(textDraft.value))
 const emojiError = computed(() =>
   emojiDraft.value.trim() && !emojiOk.value ? t('work.projectSettings.avatar.emojiInvalid') : ''
@@ -82,10 +89,11 @@ function pickHue(next: number | null) {
   emit('save', { ...current.value, hue: next })
 }
 function saveEmoji() {
-  if (emojiOk.value) emit('save', { ...DEFAULT, kind: 'emoji', glyph: emojiDraft.value.trim(), hue: hue.value })
+  if (emojiOk.value && !emojiSaved.value)
+    emit('save', { ...DEFAULT, kind: 'emoji', glyph: emojiDraft.value.trim(), hue: hue.value })
 }
 function saveText() {
-  if (!textOk.value) return
+  if (!textOk.value || textSaved.value) return
   const text = textDraft.value.trim()
   emit('save', text ? { ...DEFAULT, kind: 'text', glyph: text, hue: hue.value } : { ...DEFAULT, hue: hue.value })
 }
@@ -173,7 +181,7 @@ function onFile(event: Event) {
             size="sm"
             class="pav__save"
             :loading="saving"
-            :disabled="!emojiOk"
+            :disabled="!emojiOk || emojiSaved"
             @click="saveEmoji"
           >
             {{ t('work.projectSettings.avatar.save') }}
@@ -200,7 +208,7 @@ function onFile(event: Event) {
             size="sm"
             class="pav__save"
             :loading="saving"
-            :disabled="!textOk"
+            :disabled="!textOk || textSaved"
             @click="saveText"
           >
             {{ t('work.projectSettings.avatar.save') }}
