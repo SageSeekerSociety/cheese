@@ -48,7 +48,7 @@ export function handToMentions(
   if (!seat) return text
   // 认名字用的是发送那一刻同一份名单（座位在最前）：手打的「@芝士」也认得出是它，
   // 不然这一下写一个、发的时候再展开一个，同一条里就点了它两次。
-  const roster = seat ? [seat, ...members] : members
+  const roster = [seat, ...members]
   const summons = (handle: string) => mates.some((m) => m.handle === handle)
   const expanded = expandMentions(text, roster, topics)
   if (!named) {
@@ -68,8 +68,10 @@ export function handToMentions(
     if (!handle || !summons(handle)) kept.push(text.slice(start, at))
     cursor = at
   }
+  // 拿掉的队友可能正好是人和正文之间那道空格（「<@alice> <@芝士O>正文」）：人那位和
+  // 接着的正文之间补回一个，不然两截粘成一串。
   const body = text.slice(cursor)
   const head = kept.join(' ')
-  const joined = head ? head + body : body.trimStart()
+  const joined = head ? head + (/^\S/.test(body) ? ` ${body}` : body) : body.trimStart()
   return joined ? `<@${seat.handle}> ${joined}` : `<@${seat.handle}>`
 }

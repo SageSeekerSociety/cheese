@@ -74,6 +74,12 @@ describe('交给芝士：写进去的 @ 就是那一句上写着的那位', () =
     expect(hand(`<@alice> <@${OTHER.handle}> 正文`)).toBe(`<@${SEAT.handle}> <@alice> 正文`)
   })
 
+  // 拿掉的那位正好是人名和正文之间那道空格时，两截不能粘成一句。
+  it('人和正文之间紧贴着被拿掉的队友：补回一个空格', () => {
+    expect(hand(`<@alice> <@${OTHER.handle}>正文`)).toBe(`<@${SEAT.handle}> <@alice> 正文`)
+    expect(hand(`<@alice> @${OTHER.label}改一下`)).toBe(`<@${SEAT.handle}> <@alice> 改一下`)
+  })
+
   // 只在开头那一段上动手：句子后面打的字原样交回，不会被顺手展开成标签。
   it('句子后面的 @ 和结尾的换行原样留着', () => {
     expect(hand(`<@${OTHER.handle}> 照 @alice 说的改\n`)).toBe(`<@${SEAT.handle}> 照 @alice 说的改\n`)
