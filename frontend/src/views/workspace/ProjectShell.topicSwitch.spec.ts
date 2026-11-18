@@ -125,7 +125,6 @@ function setup() {
     topics: [TOPIC_A, TOPIC_B],
     members: [],
     unreadMap: {},
-    chatPct: 50,
     rememberPlace: vi.fn(),
     loadingTopics: false,
     accessDenied: null,
@@ -138,7 +137,6 @@ function setup() {
     openProject: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
-    setChatPct: vi.fn(),
   })
   pendingB.members = deferred()
   pendingB.proposals = deferred()

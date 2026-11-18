@@ -16,7 +16,8 @@ The rules, as a person would state them:
   conversation records how it ended, and the main line says the result itself
   — the platform records no end line where the task came from, and the main
   line is not woken about an end it caused itself. A person closing it is
-  recorded there as before.
+  recorded there as before; the main line is not woken for it, and reads it
+  in its next input.
 - When the main line adopts on the reviewer's word, the platform records no
   adoption line where the task came from: the main line says it. A person's
   own click is recorded there as before.
@@ -69,6 +70,7 @@ from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
 from tests.integration.test_the_teammate_that_opened_a_task_hears_how_it_goes import (
+    _next_input_of_the_main_line,
     _opened,
     _told_opener,
 )
@@ -339,8 +341,14 @@ def test_the_main_line_closes_it_and_is_not_woken_about_its_own_close(
     )
 
 
-def test_a_person_closing_it_is_recorded_where_the_task_came_from(client, app_world):
+def test_a_person_closing_it_is_recorded_and_the_main_line_reads_it_unwoken(
+    client, app_world
+):
+    """A person who closes the task said so by clicking: the platform records
+    the end where the task came from, and the main line is not woken to say
+    it again — it reads who closed it and how in its next input."""
     room, task_id = _adopted(client, app_world)
+    told = len(_told_opener(client, room))
 
     closed = client.post(
         f"/topics/{task_id}/close",
@@ -351,6 +359,13 @@ def test_a_person_closing_it_is_recorded_where_the_task_came_from(client, app_wo
     assert closed.status_code == 200, closed.text
     [ending] = _lines_of(client, room, task_id, "task_ended")
     assert _happened(ending)
+    assert len(_told_opener(client, room)) == told
+    [heard] = [
+        said
+        for said in _next_input_of_the_main_line(client, room)
+        if "关闭了任务" in said
+    ]
+    assert "alice" in heard and "改用纸质表" in heard
 
 
 def test_a_close_after_a_merge_waits_for_its_deploy_then_ends_with_that_conclusion(
