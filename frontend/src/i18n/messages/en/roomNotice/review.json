@@ -77,8 +77,8 @@
   "labelCiLog": "{stage} log",
   "labelDeliveryNote": "About this delivery",
   "labelForceMergeRecord": "Override record",
-  "labelGithubReason": "Reason for the refusal",
-  "labelGithubReply": "The code host's reply",
+  "labelGithubReason": "GitHub's reason",
+  "labelGithubReply": "GitHub's reply",
   "labelNextStep": "Next step",
   "labelReason": "Reason",
   "labelRejectReason": "Reason for sending back",
@@ -88,9 +88,9 @@
   "labelWhyVoided": "Why they were dismissed",
   "lines": "{items}",
   "mergeQueueLeft": "PR #{pr} left the merge queue without merging",
-  "mergeRefused": "Merging PR #{pr} was refused",
+  "mergeRefused": "GitHub refused to merge PR #{pr}",
   "mergeRefusedDetail": "{reason}\n{url}",
-  "mergeRefusedOnAccept": "Accept not completed: merging PR #{pr} was refused",
+  "mergeRefusedOnAccept": "Accept not completed: GitHub refused to merge PR #{pr}",
   "mergeWithheld": "The platform will not merge PR #{pr} automatically",
   "mergeWithheldBehind": "The branch keeps falling behind main (still behind after 3 automatic rebases); main may be moving too fast or the rebase is not taking effect, so a person needs to handle it",
   "mergeWithheldBehindWhy": "The platform's automatic branch updates cannot keep up with main.",
@@ -134,5 +134,9 @@
   "cardHandedInAgain": "{actor} submitted another version, “{title}”; it needs another look",
   "mergeWithheldUncommitted": "This task has saved changes that are not committed, and this version does not include them",
   "mergeWithheldUncommittedWhy": "Merging it would leave those changes out. Submit another version, and the new one is reviewed as usual.",
-  "cardHandedIn": "{who} submitted a version, “{title}”, waiting for {reviewer} to review"
+  "cardHandedIn": "{who} submitted a version, “{title}”, waiting for {reviewer} to review",
+  "mergeRefusedPlatform": "Merging PR #{pr} was refused",
+  "mergeRefusedOnAcceptPlatform": "Accept not completed: merging PR #{pr} was refused",
+  "labelRefusalReason": "Reason for the refusal",
+  "labelRefusalReply": "The code host's reply"
 }
