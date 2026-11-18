@@ -106,7 +106,10 @@ const multi = computed(() => askMultiSelect(first.value))
 .ask-fold__who,
 .ask-fold__state,
 .ask-fold__multi {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 /* 题目最多两行：窄屏上一行放不下，收起来的这一行也还是比整张卡矮得多。 */
 .ask-fold__title {
@@ -123,7 +126,7 @@ const multi = computed(() => askMultiSelect(first.value))
 }
 .ask-fold__state,
 .ask-fold__multi {
-  color: var(--faint);
+  color: var(--muted);
 }
 .ask-fold__chevron {
   flex: none;

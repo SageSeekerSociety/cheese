@@ -23,6 +23,8 @@ import {
   WANG_EDITING_ROW,
 } from './catalogFixtures'
 
+import { askTimelineProps } from './catalogFixtures/askTimeline'
+
 import ChatErrorToast from '@/components/chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from '@/components/chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from '@/components/chat/ChatPanelHeader.vue'
@@ -143,6 +145,24 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
         note: '整段由 props 摆出来：行、每行的分组关系、日期线都在外面算好。这一格是预览站里唯一能看到「一整屏对话」长什么样的地方。',
         props: chatTimelineProps(),
         expect: '王长鑫',
+      },
+      {
+        name: '题组与正文对齐',
+        note: '旁观者先看到折叠提示，点开后题卡仍和前后正文对齐。日期线在题组上方。',
+        props: askTimelineProps(),
+        expect: '最近',
+      },
+      {
+        name: '自己要回答的题组',
+        note: '收件人直接看到题卡，左边线和前后消息正文一致。',
+        props: askTimelineProps('alice'),
+        expect: '最近',
+      },
+      {
+        name: '题组的长名字与长回答',
+        note: '长姓名和完整回答在窄栏内换行，不把题组挤出对话区域。',
+        props: askTimelineProps('reader', true),
+        expect: '完整回答',
       },
       {
         name: '正在改一条消息：@ 候选开着',

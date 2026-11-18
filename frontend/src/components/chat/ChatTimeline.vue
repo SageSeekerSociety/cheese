@@ -728,28 +728,46 @@ const rowLabels = computed(() =>
             <!-- 一次问的几道题：收成一张卡画（`lib/askGroups` 把同组的行并到组头）。 -->
             <section
               v-else-if="!notice && askGroups?.get(m.id)"
-              class="tl-ask-group"
-              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              class="tl-ask-group im-row"
+              :class="{
+                'tl-arrive': arrived.has(m.id),
+                'im-row--cont': runEdges[i] === 'cont',
+                'im-row--regroup': runEdges[i] === 'regroup',
+              }"
               :data-row-id="m.id"
               :data-feed-item="m.id"
               role="article"
               tabindex="-1"
               :aria-label="rowLabels[i]"
             >
-              <!-- 问的是别人：整组收成一行，点开才是那张卡。问到我了就照整张卡画。 -->
-              <template v-if="askGroupForOthers(askGroups!.get(m.id)!)">
-                <AskFoldLine
-                  :blocks="askGroups!.get(m.id)!"
-                  :asker="displayName(m)"
-                  :names="refs.mentionNames"
-                  :refs="refs"
-                  :expanded="openAskGroups.has(m.id)"
-                  :closed="askClosed"
-                  :viewer="viewer"
-                  @toggle="toggleAskGroup(m.id)"
-                />
+              <!-- Keep grouped questions on the same text axis as every message. -->
+              <div class="im-gutter" aria-hidden="true" />
+              <div class="im-main">
+                <template v-if="askGroupForOthers(askGroups!.get(m.id)!)">
+                  <AskFoldLine
+                    :blocks="askGroups!.get(m.id)!"
+                    :asker="displayName(m)"
+                    :names="refs.mentionNames"
+                    :refs="refs"
+                    :expanded="openAskGroups.has(m.id)"
+                    :closed="askClosed"
+                    :viewer="viewer"
+                    @toggle="toggleAskGroup(m.id)"
+                  />
+                  <AskGroupCard
+                    v-if="openAskGroups.has(m.id)"
+                    :blocks="askGroups!.get(m.id)!"
+                    :asker="displayName(m)"
+                    :names="refs.mentionNames"
+                    :viewer="viewer"
+                    :closed="askClosed"
+                    :busy="askGroupBusy"
+                    :failure="askGroupFailure"
+                    @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+                  />
+                </template>
                 <AskGroupCard
-                  v-if="openAskGroups.has(m.id)"
+                  v-else
                   :blocks="askGroups!.get(m.id)!"
                   :asker="displayName(m)"
                   :names="refs.mentionNames"
@@ -759,18 +777,7 @@ const rowLabels = computed(() =>
                   :failure="askGroupFailure"
                   @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
                 />
-              </template>
-              <AskGroupCard
-                v-else
-                :blocks="askGroups!.get(m.id)!"
-                :asker="displayName(m)"
-                :names="refs.mentionNames"
-                :viewer="viewer"
-                :closed="askClosed"
-                :busy="askGroupBusy"
-                :failure="askGroupFailure"
-                @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
-              />
+              </div>
             </section>
             <!-- message row -->
             <RoomMessage
