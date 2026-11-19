@@ -39,7 +39,7 @@ export function useAppNav(): AppNav | null {
   return inject(KEY, null)
 }
 
-/** 首页那一格（侧栏上「首页」那一行）。 */
+/** 首页那一格（项目切换器菜单最上面那一行「首页」）。侧栏头上那一行 2026-11-19 删了。 */
 export function homeItemOf(items: NavGenericItem[]): NavItem | null {
   return (items.find((i) => i.type === 'item' && i.icon === 'cheese') as NavItem | undefined) ?? null
 }

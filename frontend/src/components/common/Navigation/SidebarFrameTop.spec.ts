@@ -1,5 +1,5 @@
 // 侧栏最上面：侧栏头写你在哪儿（项目里是这个项目，首页一带是「首页」），点开是项目列表；
-// 下面「首页」一行带等你处理的总件数，从哪儿都由它回首页。
+// 下面一整条搜索。原来「首页」那一行 2026-11-19 删了，回首页走切换器菜单里那一行。
 import type { Project } from '@/cx_types'
 import type { NavGenericItem } from './types'
 
@@ -143,15 +143,24 @@ describe('侧栏头写你在哪儿', () => {
   })
 })
 
-describe('「首页」那一行', () => {
-  it('带等你处理的总件数，点它回首页', async () => {
+describe('侧栏头上没有「首页」那一行', () => {
+  // 2026-11-19 蔡松洋定：侧栏头下面那一行「首页」四处侧栏一起删，顶栏那一处也去掉。
+  // 回首页走项目切换器菜单里的「首页」，命令面板也搜得到「待办」。这一条钉住「删干净了」，
+  // 免得它从别处又长回来。
+  it('项目页的侧栏头只有头、搜索，没有去 /inbox 的一行', async () => {
     const view = await mount('/projects/p1/topics/t1')
-    const row = view.getByTestId('sidebar-home')
-    expect(row.textContent).toContain('首页')
-    expect(row.textContent).toContain('5')
-    expect(row.getAttribute('aria-current')).toBeNull()
-    await fireEvent.click(row)
-    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/inbox'))
-    expect(view.getByTestId('sidebar-home').getAttribute('aria-current')).toBe('page')
+    expect(view.getByTestId('project-switcher')).not.toBeNull()
+    expect(view.getByTestId('sidebar-search')).not.toBeNull()
+    expect(view.queryByTestId('sidebar-home')).toBeNull()
+    expect(view.container.querySelector('a[href="/inbox"]')).toBeNull()
+  })
+
+  it('首页一带也一样：入口在切换器菜单里，不在侧栏头上', async () => {
+    const view = await mount('/teams/ruc')
+    expect(view.queryByTestId('sidebar-home')).toBeNull()
+    expect(view.container.querySelector('a[href="/inbox"]')).toBeNull()
+    await fireEvent.click(view.getByTestId('project-switcher'))
+    const row = await screen.findByRole('link', { name: /首页/ })
+    expect(row.getAttribute('href')).toBe('/inbox')
   })
 })
