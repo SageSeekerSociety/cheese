@@ -20,6 +20,7 @@ from app.api.task_serialization import (
     _ms,
     _task_to_api_model,
 )
+from app.api.user_remarks import remarks_for_viewer
 from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -148,6 +149,8 @@ async def get_task_participants(
     started = await started_at_of(db, [m.id for m in memberships])
     # 每份领题用掉的额度，题目有额度那一行时再加它的分（`usage_score`）。
     usage = await usage_score.usage_of_claims(db, task, [m.id for m in memberships])
+    # 这一页给谁看：他给这些报名的人设的私人备注，一次查完，每行附上。
+    remarks = await remarks_for_viewer(db, auth_user.user_id, user_map)
     participants = []
     for m in memberships:
         participant_info = _build_participant_user_info(
@@ -156,6 +159,7 @@ async def get_task_participants(
             profile_map=profile_map,
             team_map=team_map,
             avatar_map=avatar_map,
+            remarks=remarks,
         )
         model = _membership_to_api_model(
             m,
@@ -220,6 +224,7 @@ async def get_task_participant(
         profile_map=profile_map,
         team_map=team_map,
         avatar_map=avatar_map,
+        remarks=await remarks_for_viewer(db, auth_user.user_id, user_map),
     )
     return ok(
         {

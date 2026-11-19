@@ -1,4 +1,4 @@
-import type { LayoutArrangement } from './arrangement'
+import type { LayoutArrangement, LayoutCell } from './arrangement'
 
 import { describe, expect, it } from 'vitest'
 
@@ -6,10 +6,16 @@ import {
   acceptsDrop,
   canCollapse,
   cellsOf,
+  defaultWeights,
+  hidesTabs,
+  homeCell,
   placedPanels,
+  placeInGroup,
   placePanel,
   reconcile,
+  resetSizes,
   restoreArrangement,
+  sameArrangement,
   serializeArrangement,
   setCollapsed,
   unplacedPanels,
@@ -18,7 +24,7 @@ import {
 import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 
 const DECLARED = ['nav', 'chat', 'files', 'preview', 'terminal']
-const OPTIONS = { version: 3, declared: DECLARED, pinned: ['nav'] }
+const OPTIONS = { version: 3, declared: DECLARED, required: ['nav', 'chat'] }
 
 const DEFAULT: LayoutArrangement = {
   root: {
@@ -72,7 +78,7 @@ describe('saving and restoring an arrangement', () => {
         root: { direction: 'row', children: [{ panels: ['nav'] }, { panels: ['nav', 'chat'] }] },
       }),
     ],
-    ['the pinned panel missing', JSON.stringify({ v: 3, root: { panels: ['chat'] } })],
+    ['a panel that cannot be closed missing', JSON.stringify({ v: 3, root: { panels: ['chat'] } })],
   ])('is ignored when it is %s, so the page starts from its default', (_case, raw) => {
     expect(restoreArrangement(raw, OPTIONS)).toBeNull()
   })
@@ -215,5 +221,209 @@ describe('dockview layout round trip', () => {
     expect(left.size).toBe(200)
     const rawLeft = (layout.grid.root.data as Array<{ size?: number }>)[0]
     expect(rawLeft.size).toBe(STRIP_SIZE)
+  })
+})
+
+describe('a panel that appears while the area is open', () => {
+  const groups: Record<string, string> = { files: 'work', preview: 'work', 'file:a': 'work', chat: 'talk' }
+  const groupOf = (id: string) => groups[id]
+
+  it('goes to the cell where the other panels of its group are, behind its visible tab', () => {
+    const area = withCellIds(DEFAULT)
+    const next = placeInGroup(area, 'file:a', groupOf)
+    const cell = cellsOf(next).find((c) => c.panels.includes('file:a'))!
+    expect(cell.id).toBe('top')
+    expect(cell.active).toBe('preview')
+  })
+
+  it('goes to the cell with most of its group when the group is spread over several', () => {
+    // One work panel dragged next to the chat; the rest of the group stays together.
+    const spread = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files'] },
+          { id: 'work', panels: ['preview', 'file:b'] },
+        ],
+      },
+    })
+    const next = placeInGroup(spread, 'file:a', (id) => (id === 'chat' ? 'talk' : 'work'))
+    expect(cellsOf(next).find((c) => c.panels.includes('file:a'))?.id).toBe('work')
+  })
+
+  it('goes where any closed panel would when its group has no cell yet', () => {
+    const lonely = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'a', panels: ['nav'] },
+          { id: 'b', panels: ['chat'] },
+        ],
+      },
+    })
+    const next = placeInGroup(lonely, 'file:a', groupOf)
+    expect(cellsOf(next).find((c) => c.panels.includes('file:a'))?.id).toBe('a')
+  })
+
+  it('stays where it is once placed', () => {
+    const area = withCellIds(DEFAULT)
+    expect(placeInGroup(area, 'chat', groupOf)).toBe(area)
+  })
+})
+
+describe("a group's home cell", () => {
+  it('is the cell holding most of the group, and moves when most of the group does', () => {
+    const groupOf = (id: string) => (id === 'chat' ? undefined : 'work')
+    const area = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files'] },
+          { id: 'work', panels: ['preview', 'terminal'] },
+        ],
+      },
+    })
+    expect(homeCell(area, 'work', groupOf)?.id).toBe('work')
+    const moved = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'talk', panels: ['chat', 'files', 'preview'] },
+          { id: 'work', panels: ['terminal'] },
+        ],
+      },
+    })
+    expect(homeCell(moved, 'work', groupOf)?.id).toBe('talk')
+    expect(homeCell(area, undefined, groupOf)).toBeUndefined()
+  })
+})
+
+describe("a cell's tab strip", () => {
+  it('is absent while a panel that wants one only when shared is alone, and back once another joins', () => {
+    const conversation = { stripWhenShared: true }
+    expect(hidesTabs([conversation])).toBe(true)
+    expect(hidesTabs([conversation, {}])).toBe(false)
+  })
+
+  it('is absent over bare panels, present over ordinary ones', () => {
+    expect(hidesTabs([{ bare: true }])).toBe(true)
+    expect(hidesTabs([{}])).toBe(false)
+    expect(hidesTabs([])).toBe(false)
+  })
+})
+
+describe('whether the reader has moved anything', () => {
+  it('ignores sizes, the visible tab and cell ids', () => {
+    const resized = reconcile(DEFAULT, DECLARED)
+    const other = JSON.parse(JSON.stringify(resized)) as LayoutArrangement
+    const top = cellsOf(other).find((cell) => cell.id === 'top')!
+    top.active = 'files'
+    top.size = 7
+    delete top.id
+    expect(sameArrangement(resized, other)).toBe(true)
+  })
+
+  it('counts a tab moved to another cell, a reordered tab and a folded cell', () => {
+    const base = reconcile(DEFAULT, DECLARED)
+    expect(
+      sameArrangement(base, placePanel(reconcile(DEFAULT, ['nav', 'chat', 'files', 'terminal']), 'preview', 'chat'))
+    ).toBe(false)
+    const reordered = JSON.parse(JSON.stringify(base)) as LayoutArrangement
+    cellsOf(reordered)
+      .find((cell) => cell.id === 'top')!
+      .panels.reverse()
+    expect(sameArrangement(base, reordered)).toBe(false)
+    expect(sameArrangement(base, setCollapsed(base, 'bottom', true))).toBe(false)
+  })
+})
+
+describe('a double-clicked divider gives its split the default sizes back', () => {
+  const PAGE_DEFAULT: LayoutArrangement = {
+    root: {
+      direction: 'row',
+      children: [
+        { panels: ['nav'] },
+        {
+          direction: 'column',
+          children: [
+            { panels: ['head'] },
+            {
+              direction: 'row',
+              children: [
+                { panels: ['chat'], size: 45 },
+                { panels: ['files'], size: 55 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  it('finds the default weights of the split those panels sit in, wherever it is nested', () => {
+    expect(defaultWeights(PAGE_DEFAULT, [['chat'], ['files']])).toEqual([45, 55])
+    expect(defaultWeights(PAGE_DEFAULT, [['nav'], ['head', 'chat', 'files']])).toEqual([1, 1])
+  })
+
+  it('has nothing to give back for a split the default never had', () => {
+    expect(defaultWeights(PAGE_DEFAULT, [['files'], ['chat']])).toBeNull()
+    expect(defaultWeights(PAGE_DEFAULT, [['chat'], ['nav']])).toBeNull()
+  })
+
+  it('the cells share the space they fill now by their default weights', () => {
+    expect(resetSizes(1000, [45, 55], [undefined, undefined])).toEqual([450, 550])
+  })
+
+  it('a cell with a width of its own goes back to its initial width, the rest takes what is left', () => {
+    expect(resetSizes(1440, [1, 1], [280, undefined])).toEqual([280, 1160])
+    expect(resetSizes(200, [1, 1], [280, undefined])).toEqual([200, 0])
+  })
+})
+
+describe('cells with a width of their own, and hidden cells', () => {
+  const panelState = (id: string) => ({ id, contentComponent: 'host', title: id })
+  const box = { width: 1200, height: 800 }
+  const ROOM: LayoutArrangement = withCellIds({
+    root: {
+      direction: 'row',
+      children: [
+        { id: 'nav', panels: ['nav'], size: 900 },
+        { id: 'chat', panels: ['chat'], size: 1 },
+        { id: 'files', panels: ['files'], size: 3 },
+      ],
+    },
+  })
+  type Leaf = { size: number; visible?: boolean; data: { id: string; priority?: string } }
+  const leaves = (load: ReturnType<typeof toDockview>) => load.layout.grid.root.data as Leaf[]
+  const fixedNav = (cell: LayoutCell) => (cell.id === 'nav' ? { fixed: 280 } : {})
+  const hiddenFiles = (cell: LayoutCell) =>
+    cell.id === 'nav' ? { fixed: 280 } : cell.id === 'files' ? { hidden: true } : {}
+
+  it('a fixed cell gets its own width whatever its weight; the others share the rest by weight', () => {
+    const load = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
+    expect(leaves(load).map((leaf) => leaf.size)).toEqual([280, 230, 690])
+  })
+
+  it('a fixed cell is the one that keeps its width when the area resizes', () => {
+    const load = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
+    expect(leaves(load).map((leaf) => leaf.data.priority)).toEqual(['low', undefined, undefined])
+  })
+
+  it('a hidden cell takes no space now and keeps the share it comes back with', () => {
+    const [nav, chat, files] = leaves(toDockview({ root: ROOM.root! }, box, panelState, hiddenFiles))
+    expect([nav.size, chat.size]).toEqual([280, 920])
+    expect(files.visible).toBe(false)
+    expect(files.size).toBe(690)
+  })
+
+  it('reading a layout back while a cell is hidden leaves the weights of the others as they were', () => {
+    const ratio = (load: ReturnType<typeof toDockview>) => {
+      const cells = cellsOf(fromDockview(load.layout, new Set(), new Map()))
+      const size = (id: string) => cells.find((cell) => cell.id === id)!.size!
+      return size('chat') / size('files')
+    }
+    const shown = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
+    const hidden = toDockview({ root: ROOM.root! }, box, panelState, hiddenFiles)
+    expect(ratio(hidden)).toBeCloseTo(ratio(shown), 2)
   })
 })

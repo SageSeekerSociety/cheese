@@ -165,7 +165,7 @@ def test_a_missing_code_directory_is_a_runtime_error_not_a_crash(fake_docker):
 
 
 def test_a_kind_it_cannot_judge_yet_is_said_not_guessed(fake_docker):
-    reply = runner.judge(_job("sh main.sh", [], kind="SCRIPT"))
+    reply = runner.judge(_job("sh main.sh", [], kind="NOTEBOOK"))
     assert reply["ok"] is False and reply["error"] == "unsupported"
 
 

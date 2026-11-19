@@ -250,6 +250,117 @@ export function placePanel(arrangement: LayoutArrangement, panelId: string, near
   })
 }
 
+/**
+ * Places a panel that has just appeared in the cell where the other panels of its group
+ * are — the cell holding most of them, the first such in reading order on a tie — behind
+ * that cell's visible tab. With no such cell it goes where `placePanel` would put it. A
+ * panel already placed stays put.
+ */
+export function placeInGroup(
+  arrangement: LayoutArrangement,
+  panelId: string,
+  groupOf: (id: string) => string | undefined
+): LayoutArrangement {
+  if (placedPanels(arrangement).includes(panelId)) return arrangement
+  const home = homeCell(arrangement, groupOf(panelId), groupOf)
+  if (!home) return placePanel(arrangement, panelId)
+  return mapCells(arrangement, (cell) => (cell === home ? { ...cell, panels: [...cell.panels, panelId] } : cell))
+}
+
+/** A group's home: the cell holding most of its panels (the first such, in reading order). */
+export function homeCell(
+  arrangement: LayoutArrangement,
+  group: string | undefined,
+  groupOf: (id: string) => string | undefined
+): LayoutCell | undefined {
+  if (!group) return undefined
+  const members = (cell: LayoutCell) => cell.panels.filter((id) => groupOf(id) === group).length
+  return cellsOf(arrangement).reduce<LayoutCell | undefined>(
+    (best, cell) => (members(cell) > (best ? members(best) : 0) ? cell : best),
+    undefined
+  )
+}
+
+/** What a cell's panels say about its tab strip. */
+export interface StripPanel {
+  bare?: boolean
+  stripWhenShared?: boolean
+}
+
+/**
+ * A cell shows no tab strip when its panels are all bare, or when it holds one panel that
+ * asks for a strip only once it shares the cell: there is nothing to pick between.
+ */
+export function hidesTabs(panels: readonly StripPanel[]): boolean {
+  if (!panels.length) return false
+  return panels.every((panel) => panel.bare) || (panels.length === 1 && panels[0].stripWhenShared === true)
+}
+
+/**
+ * The same arrangement for the reader: the same cells, splits, tab order and folds.
+ * Sizes, the visible tab and cell ids do not count.
+ */
+export function sameArrangement(a: LayoutArrangement, b: LayoutArrangement): boolean {
+  const shape = (node: LayoutNode | null): unknown =>
+    !node
+      ? null
+      : isSplit(node)
+        ? { d: node.direction, c: node.children.map(shape) }
+        : { p: node.panels, f: !!node.collapsed }
+  return JSON.stringify(shape(a.root)) === JSON.stringify(shape(b.root))
+}
+
+// ---------------------------------------------------------------- back to the default sizes
+
+function panelsUnder(node: LayoutNode): string[] {
+  return isSplit(node) ? node.children.flatMap(panelsUnder) : node.panels
+}
+
+const sameSet = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n')
+
+/**
+ * The weights the page's default gives a split whose children hold these panels (one
+ * list per child, in order), or null when the default has no such split — the reader
+ * has arranged those panels in a way the page never offered.
+ */
+export function defaultWeights(defaults: LayoutArrangement, children: readonly (readonly string[])[]): number[] | null {
+  const walk = (node: LayoutNode): number[] | null => {
+    if (!isSplit(node)) return null
+    const matches =
+      node.children.length === children.length && node.children.every((c, i) => sameSet(panelsUnder(c), children[i]))
+    if (matches) return weights(node.children)
+    for (const child of node.children) {
+      const inner = walk(child)
+      if (inner) return inner
+    }
+    return null
+  }
+  return defaults.root ? walk(defaults.root) : null
+}
+
+/**
+ * The sizes a split's children go back to, in px out of the `total` they fill now: a
+ * child with a size of its own gets it (never more than the total leaves room for), the
+ * others share the rest by their default weights.
+ */
+export function resetSizes(
+  total: number,
+  weights: readonly number[],
+  fixed: readonly (number | undefined)[]
+): number[] {
+  let free = total
+  const out = weights.map((_, i) => {
+    const own = fixed[i]
+    if (own === undefined) return 0
+    const size = Math.max(0, Math.min(own, free))
+    free -= size
+    return size
+  })
+  const shared = weights.reduce((sum, w, i) => sum + (fixed[i] === undefined ? w : 0), 0)
+  return out.map((size, i) => (fixed[i] === undefined && shared > 0 ? Math.round((weights[i] / shared) * free) : size))
+}
+
 // ---------------------------------------------------------------- persistence
 
 export interface RestoreOptions {
@@ -257,8 +368,8 @@ export interface RestoreOptions {
   version: number
   /** Every panel the page declares. */
   declared: readonly string[]
-  /** Panels that must be placed: a saved arrangement without one of them is ignored. */
-  pinned: readonly string[]
+  /** Panels that must be placed (they cannot be closed): a saved arrangement without one is ignored. */
+  required: readonly string[]
 }
 
 export function serializeArrangement(arrangement: LayoutArrangement, version: number): string {
@@ -299,8 +410,8 @@ function readNode(value: unknown): LayoutNode | null {
 
 /**
  * What was saved, or null when it cannot be used as it is: not JSON, another version,
- * a shape this code does not write, an undeclared panel, a panel twice, or a pinned panel
- * missing. The caller then starts from the page's default; nothing is half-applied.
+ * a shape this code does not write, an undeclared panel, a panel twice, or a panel that
+ * cannot be closed missing. The caller then starts from the page's default; nothing is half-applied.
  */
 export function restoreArrangement(raw: string | null, options: RestoreOptions): LayoutArrangement | null {
   if (!raw) return null
@@ -319,6 +430,6 @@ export function restoreArrangement(raw: string | null, options: RestoreOptions):
   const arrangement: LayoutArrangement = { root }
   if (hasPlacementFault(arrangement, options.declared)) return null
   const placed = new Set(placedPanels(arrangement))
-  if (options.pinned.some((id) => !placed.has(id))) return null
+  if (options.required.some((id) => !placed.has(id))) return null
   return reconcile(arrangement, options.declared)
 }

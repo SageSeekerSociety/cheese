@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.accept_service import accept_service
+from app.api.accept_service import accept_service, advance_soon
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.doc_access import require_role
@@ -457,6 +457,14 @@ async def hand_in_route(
         card = await svc.adopt_when_ready(
             card_id=card.id, decided_by=actor.handle, head_sha=handed.head or ""
         )
+        await db.commit()
+        # Ask the forge now rather than at the next tick: it answers for that
+        # head within seconds, and the adoption completes on that answer.
+        advance_soon(chat, card.id)
+    else:
+        # Handed in and adopted is one thing, recorded where the task came
+        # from once it lands; handed in for review is recorded now.
+        await hand_in.record_at_origin(db, svc, task, handed)
         await db.commit()
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok({"card": await svc.describe(card), "adopting": adopting})

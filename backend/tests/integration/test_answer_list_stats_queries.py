@@ -335,7 +335,15 @@ def test_answer_list_reads_stats_in_one_query_at_any_page_size(client):
 
     items = response.json()["data"]["answers"]
     assert len(items) == 10
-    author = {"id": author_id, "nickname": "答案作者", "avatarId": None, "intro": ""}
+    # 卡片带账号（界面靠它认人、上色）和这个查看者给他的备注（没设就是 None）。
+    author = {
+        "id": author_id,
+        "nickname": "答案作者",
+        "username": AUTHOR_HANDLE,
+        "remark": None,
+        "avatarId": None,
+        "intro": "",
+    }
     index_by_id = {answer_id: i for i, answer_id in enumerate(first_ids)}
     for item in items:
         expected = _expected_item(

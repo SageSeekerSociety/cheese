@@ -5,11 +5,17 @@ import { describe, it } from 'vitest'
 
 import { type ContractCase, contractEnvironment, contractRequest } from './requestContract.spec.helper'
 
-import { newTestSuite } from '@/lib/taskTestSuite'
+import { newTestSuite, switchKind } from '@/lib/taskTestSuite'
 
 contractEnvironment()
 
 const suite = { ...newTestSuite(null), stage: undefined }
+const commandSuite = {
+  ...switchKind(newTestSuite(null), 'COMMAND'),
+  stage: undefined,
+  commands: ['python3 grade.py'],
+  protectedFiles: [{ path: 'tests/check.py', content: 'assert True' }],
+}
 
 const cases: { label: string; name: string; test: ContractCase }[] = [
   {
@@ -43,6 +49,51 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
     },
   },
   { label: 'trial', name: 'trial', test: { method: 'GET', path: '/tasks/test-trials/5', args: [5] } },
+  {
+    label: 'createTrial (command suite)',
+    name: 'createTrial',
+    test: {
+      method: 'POST',
+      path: '/spaces/7/test-trials',
+      args: [7, commandSuite, []],
+      body: { testSuite: commandSuite, files: [] },
+    },
+  },
+  {
+    label: 'selfTest',
+    name: 'selfTest',
+    test: {
+      method: 'POST',
+      path: '/tasks/42/participants/11/self-tests',
+      args: [42, 11, 's2'],
+      query: [['stage', 's2']],
+    },
+  },
+  {
+    label: 'selfTest without stage',
+    name: 'selfTest',
+    test: { method: 'POST', path: '/tasks/42/participants/11/self-tests', args: [42, 11, null] },
+  },
+  {
+    label: 'latestSelfTest',
+    name: 'latestSelfTest',
+    test: {
+      method: 'GET',
+      path: '/tasks/42/participants/11/self-tests/latest',
+      args: [42, 11, 's2'],
+      query: [['stage', 's2']],
+    },
+  },
+  {
+    label: 'rejudge',
+    name: 'rejudge',
+    test: { method: 'POST', path: '/tasks/42/judge/rejudge', args: [42, 's1'], query: [['stage', 's1']] },
+  },
+  {
+    label: 'rejudge every stage',
+    name: 'rejudge',
+    test: { method: 'POST', path: '/tasks/42/judge/rejudge', args: [42] },
+  },
 ]
 
 describe('题目测试点 browser contract', () => {

@@ -33,7 +33,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { pastedTextName } from '../../lib/attachments'
-import { expandComposerMentions, mentionsAgent as containsAgentMention } from '../../lib/composerMentions'
+import { expandComposerMentions, handToMentions, mentionsAgent as isAgentMention } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
 import { PENDING_NOTES, sendableCount as countSendable } from '../../lib/pendingNotes'
@@ -285,12 +285,11 @@ function pickActiveMention(): boolean {
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
 // module so this stays identical to the backend's backstop.
 function expandMentions(text: string): string {
-  return expandComposerMentions(
-    text,
-    props.agentSeat,
-    props.mentionPool,
-    props.topicList.filter((t) => t.kind !== 'root')
-  )
+  return expandComposerMentions(text, props.agentSeat, props.mentionPool, topicsForLinks())
+}
+/** 这根栏里的 @ 名单（话题那一侧的排除根话题，理由见上面 expandMentions）。 */
+function topicsForLinks() {
+  return props.topicList.filter((t) => t.kind !== 'root')
 }
 
 // 图片输入: paste (screenshot) or pick images; they upload to the topic's
@@ -312,7 +311,7 @@ function expandMentions(text: string): string {
 // 就是开这一轮的那位（不在房间里的会被请进来）。只认座位那一位时，@ 第二位队友
 // 发出去，那颗按钮不亮，看起来就像只有芝士叫得动。
 function mentionsAgent(expanded: string): boolean {
-  return containsAgentMention(expanded, props.agentSeat, props.mentionPool)
+  return isAgentMention(expanded, props.agentSeat, props.mentionPool)
 }
 
 // 这条草稿发出去交给谁：问后端（`useAddressing`）。问的就是发送时会发出去的那一份——展开
@@ -482,8 +481,7 @@ function askRecipient(now: Addressing | null) {
 // 动。所以这几个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
 // 也不要一个点了不算数的入口。
 function withAgentMention(text: string, mate: Mate | null = restingMate.value): string {
-  if (!mate || mentionsAgent(expandMentions(text))) return text
-  return `<@${mate.handle}> ${text}`
+  return handToMentions(text, mate, mates.value, props.mentionPool, topicsForLinks(), false)
 }
 
 // 摘掉正文里对这位的第一处 @。只摘第一处：正文里别处还提着它（「照 @芝士 说的改」）
@@ -689,18 +687,18 @@ defineExpose({
   focus() {
     void nextTick(() => composerInput.value?.focus?.())
   },
-  /** 在正文前面 @ 上想说这句话的那位（仅你可见那一句的「交给芝士」）。已经 @ 了队友就不动。
+  /** 在正文前面 @ 上想说这句话的那位（仅你可见那一句的「交给芝士」）。
    *
    *  **写哪位由叫的人说**，不是这里挑「平时交给的那位」：那一句上写着谁的名字，@ 出来的
-   *  就得是谁。头像平时画的是我最近 @ 过的那位，这个房间交给的却是另一位队友时，照头像
-   *  写就成了屏幕上说交给芝士、发出去交给别人。 */
+   *  就得是谁。草稿里已经 @ 着别人也一样——那是上一次留下的，这一下点的是「交给这一位」，
+   *  换掉它（只换开头那几位，正文里说到的人不动，见 handToMentions）。 */
   addAgentMention(handle?: string) {
     if (!summonReady.value) return
     // 叫的人指定了谁，就写谁；找不着（名册刚换过、那一位已经不在这间房了）**什么都不写**，
     // 不退回「平时交给的那位」——那一退正是这次要消灭的错：屏幕上说着一个人，@ 出来另一个。
-    // 只有叫的人没说时（没传 handle）才按发送框平时的选择写。
     const mate = handle ? mates.value.find((m) => m.handle === handle) ?? null : restingMate.value
-    if (mate) draft.value = withAgentMention(draft.value, mate)
+    if (mate)
+      draft.value = handToMentions(draft.value, mate, mates.value, props.mentionPool, topicsForLinks(), !!handle)
     void nextTick(() => composerInput.value?.focus?.())
   },
   askRecipient,

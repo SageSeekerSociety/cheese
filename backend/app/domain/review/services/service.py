@@ -117,6 +117,10 @@ class AcceptService:
         #: What the main line seat that adopted in this service's `accept`
         #: reads in that call's reply, when the merge landed inside it.
         self.for_adopter: str | None = None
+        #: The head whose merge state the forge was still working out when
+        #: this service's `advance_pr_card` read the card's PR; None when the
+        #: forge had answered, or the step read nothing (`pr_poll` asks again).
+        self.merge_state_computing_for: str | None = None
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)

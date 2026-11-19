@@ -25,6 +25,10 @@ from app.domain.review import pr_publish
 from app.domain.review.repositories import AcceptCardRepository
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_a_delivery_is_told_where_the_task_came_from import (
+    _happened,
+    _told,
+)
 from tests.integration.test_accept_pr import (
     _accept,
     _arm,
@@ -38,6 +42,11 @@ from tests.integration.test_accept_pr import (
 )
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
+)
+from tests.integration.test_the_teammate_that_opened_a_task_hears_how_it_goes import (
+    _next_input_of_the_main_line,
+    _opened,
+    _told_opener,
 )
 from tests.support import git_store
 
@@ -273,6 +282,7 @@ def test_adopting_ones_own_hand_in_completes_once_the_forge_says_it_merges(
     assert card.status == "pending"
     assert fake.merge_calls == []
 
+    _background_settled()
     del fake.mergeable_state_by_number[card.pr_number]
     _poll(client)
 
@@ -285,15 +295,49 @@ def test_adopting_ones_own_hand_in_completes_once_the_forge_says_it_merges(
     assert shown == "Hello from alice\n"
 
 
+def test_adopting_ones_own_hand_in_does_not_wait_for_the_next_tick(
+    client, world, app_world, monkeypatch
+):
+    """The forge says whether the handed-in head merges moments after the
+    push; the adoption completes on that answer, not a poll interval later."""
+    fake = app_world["fake"]
+    monkeypatch.setattr(pr_publish, "enabled", lambda: True)
+    seed = fake.seed_pr
+
+    def opened(number, *, head, **kwargs):
+        seed(number, head=head, **kwargs)
+        real = git_store.git(world.sandbox.repo, "rev-parse", head).strip()
+        fake.prs[number]["head_sha"] = real
+        fake.check_state_by_sha[real] = ("success", "全部通过")
+        fake.merge_sha_by_number[number] = "merge-sha-1"
+        return real
+
+    monkeypatch.setattr(fake, "seed_pr", opened)
+    _save(client, world, _note(world), "Hello from alice\n")
+
+    r = _hand_in(client, world, reviewer_handle="alice", accept=True)
+
+    assert r.status_code == 200, r.text
+    _background_settled()
+    card, _ = _card(client, r.json()["data"]["card"]["id"])
+    assert card.status == "accepted"
+    assert card.decided_by == "alice"
+
+
+def _background_settled() -> None:
+    """Wait for the work the last request sent off in the background."""
+    from app.core import background
+
+    for _ in range(250):
+        if not background.inflight_count():
+            return
+        time.sleep(0.02)
+
+
 def _settled_lines(client, task_id) -> list[str]:
     """The lines people read in the task's conversation, once the notices
     sent off in the background have landed."""
-    from app.core import background
-
-    for _ in range(200):
-        if not background.inflight_count():
-            break
-        time.sleep(0.02)
+    _background_settled()
     blocks = client.get(f"/topics/{task_id}/blocks").json()["data"]["data"]
     return [
         b["content"]
@@ -352,3 +396,81 @@ def test_an_ai_teammate_does_not_hand_in_on_a_members_road(client, world):
     )
 
     assert r.status_code == 403, r.text
+
+
+# —— where the task came from, and the main line that opened it ——————————————
+
+
+def _merges_on_hand_in(app_world, world, monkeypatch) -> None:
+    """The forge opens the PR on the head handed in and merges it at once."""
+    fake = app_world["fake"]
+    monkeypatch.setattr(pr_publish, "enabled", lambda: True)
+    seed = fake.seed_pr
+
+    def opened(number, *, head, **kwargs):
+        seed(number, head=head, **kwargs)
+        real = git_store.git(world.sandbox.repo, "rev-parse", head).strip()
+        fake.prs[number]["head_sha"] = real
+        fake.check_state_by_sha[real] = ("success", "全部通过")
+        fake.merge_sha_by_number[number] = "merge-sha-1"
+        return real
+
+    monkeypatch.setattr(fake, "seed_pr", opened)
+
+
+def test_a_version_handed_in_for_review_is_recorded_by_its_title_and_reviewer(
+    client, world
+):
+    """Where the task came from, a member's hand-in is one line naming the
+    version and whom it waits on. The main line that opened the task is not
+    woken for it, and reads it in its next input."""
+    _opened(client, world.tid)
+    _save(client, world, _note(world), "Hello from alice\n")
+
+    r = _hand_in(client, world, reviewer_handle="alice")
+
+    assert r.status_code == 200, r.text
+    [line] = _told(client, world.tid, world.task_id)
+    assert _happened(line)
+    assert line["content"] == (
+        "<@alice> 提交了一版「Say hello in the delivery note」，待 <@alice> 审阅"
+    )
+    assert _told_opener(client, world.tid) == []
+    [heard] = _next_input_of_the_main_line(client, world.tid)
+    assert "alice" in heard and "自己提交" in heard
+    assert "Say hello in the delivery note" in heard
+
+
+def test_a_version_handed_in_and_adopted_is_one_line_and_the_main_line_hears_whose(
+    client, world, app_world, monkeypatch
+):
+    """「提交并采纳」 is one thing where the task came from: one platform line,
+    when it lands, naming the version — nothing under the teammate's name.
+    The main line that opened the task is told which version was adopted and
+    that a member, not the task's teammate, handed it in."""
+    _opened(client, world.tid)
+    _merges_on_hand_in(app_world, world, monkeypatch)
+    _save(client, world, _note(world), "Hello from alice\n")
+
+    r = _hand_in(
+        client,
+        world,
+        subject="Fill in the three functions",
+        body="The skeleton's TODOs are done.",
+        reviewer_handle="alice",
+        accept=True,
+    )
+
+    assert r.status_code == 200, r.text
+    _background_settled()
+    _poll(client)
+    lines = _told(client, world.tid, world.task_id)
+    assert [line["content"] for line in lines] == [
+        "<@alice> 提交并采纳了「Fill in the three functions」"
+    ]
+    assert all(_happened(line) for line in lines)
+    [landed] = _told_opener(client, world.tid)
+    assert "alice" in landed and "采纳" in landed
+    assert "Fill in the three functions" in landed
+    assert "The skeleton's TODOs are done." in landed
+    assert "自己提交" in landed

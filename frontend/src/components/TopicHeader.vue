@@ -50,6 +50,10 @@ const props = defineProps<{
   connected: boolean
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
+  /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
+  resetLayout?: () => void
+  /** 「概览」开合的那几块的 id（见 PanelToggle）。 */
+  panelControls?: string
 }>()
 
 const emit = defineEmits<{
@@ -115,7 +119,15 @@ function roomCommands() {
   if (!nav) return []
   return topicActions(props.topic, nav.router, { rename: startRename, remove: () => (deleteOpen.value = true) })
 }
-const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
+// 「恢复默认摆法」只在 ⋯ 里：命令面板里那一条是页面登记的（views/workspace/roomLayout.ts）。
+const roomActions = computed<MenuAction[]>(() =>
+  [
+    ...roomCommands(),
+    ...(props.resetLayout
+      ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: props.resetLayout }]
+      : []),
+  ].map(menuActionOf)
+)
 
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
@@ -257,7 +269,7 @@ useCommands(roomCommands)
     />
 
     <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
-    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
+    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
 
     <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
          看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。

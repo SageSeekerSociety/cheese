@@ -1,10 +1,13 @@
 // 题目测试点的评测（`backend/app/api/routes/tasks/judging.py`）：提交页那块「将要评测的
 // 代码」、一版提交的评测结果、参与者列表的评测摘要，以及出题人试跑。老师展开隐藏用例不另
-// 取：能批改的人读到的评测结果里已经带着每个用例的输入和期望输出。
+// 取：能批改的人读到的评测结果里已经带着每个用例的输入和期望输出。另有学生自测样例、
+// 老师改题后重新评测全部最新提交。
 import type {
   TaskCodeVersion,
   TaskJudgeRun,
   TaskJudgeSummary,
+  TaskRejudgeCounts,
+  TaskSelfTestView,
   TaskTestSuite,
   TaskTestTrial,
   TaskTestTrialFile,
@@ -47,4 +50,33 @@ export namespace TaskJudgeApi {
   /** 读一次试跑的结果。 */
   export const trial = (runId: number) =>
     axiosRequest<{ trial: TaskTestTrial }>({ url: `/tasks/test-trials/${runId}`, method: 'GET' }, true)
+
+  /** 学生自测：拿默认分支现在的代码只跑这一阶段的样例。`stage` 是阶段 id，不分阶段不传。 */
+  export const selfTest = (taskId: number, participantId: number, stage?: string | null) =>
+    axiosRequest<TaskSelfTestView>(
+      {
+        url: `/tasks/${taskId}/participants/${participantId}/self-tests`,
+        method: 'POST',
+        params: stage ? { stage } : undefined,
+      },
+      true
+    )
+
+  /** 这个参与者在这一阶段最近一次自测和今天的次数。 */
+  export const latestSelfTest = (taskId: number, participantId: number, stage?: string | null) =>
+    axiosRequest<TaskSelfTestView>(
+      {
+        url: `/tasks/${taskId}/participants/${participantId}/self-tests/latest`,
+        method: 'GET',
+        params: stage ? { stage } : undefined,
+      },
+      true
+    )
+
+  /** 把每个参与者最新的那一版按现在这一版测试再评一次；不给阶段就是每个挂着测试点的阶段。 */
+  export const rejudge = (taskId: number, stage?: string | null) =>
+    axiosRequest<TaskRejudgeCounts>(
+      { url: `/tasks/${taskId}/judge/rejudge`, method: 'POST', params: stage ? { stage } : undefined },
+      true
+    )
 }

@@ -13,8 +13,9 @@ The rules, as a person would state them:
 - When the task closes, that teammate is told how it ended — with its
   conclusion, accepted with no write-up, or closed with nothing accepted — by
   whoever closed it but itself (its own close, and the close once a deploy is
-  live, are in `test_the_main_line_judges_whether_its_task_is_done`). Each
-  end is told once; a task reopened and closed again ends again.
+  live, are in `test_the_main_line_judges_whether_its_task_is_done`). A
+  person's close does not wake it: it reads who closed it and how in its next
+  input. Each end is told once; a task reopened and closed again ends again.
 - Nobody is told for a task a person made, or one that came from a 支线.
 - How the task ended is recorded where it came from as something that
   happened, under nobody's name, not as words of an AI teammate.
@@ -26,6 +27,8 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from app.domain.block.models import AGENT_NOTICE_META_KEY
+from app.domain.block.queries import notices_after
 from app.domain.delivery.agent import record_seat_instruction
 from app.domain.delivery.models import Delivery
 from app.domain.review.models import AcceptCard
@@ -95,6 +98,29 @@ def _told_opener(client, room: str) -> list[str]:
             )
 
     return client.portal.call(read)
+
+
+def _next_input_of_the_main_line(client, room: str) -> list[str]:
+    """The platform notices the channel's main line reads in its next input,
+    oldest first (`block.queries.notices_after`)."""
+
+    async def read():
+        async with client.test_factory() as session:
+            return [
+                str((b.meta or {})[AGENT_NOTICE_META_KEY])
+                for b in await notices_after(session, uuid.UUID(room), after=None)
+            ]
+
+    return client.portal.call(read)
+
+
+def _closes_read(client, room: str) -> list[str]:
+    """What the main line reads in its next input about a person's close."""
+    return [
+        said
+        for said in _next_input_of_the_main_line(client, room)
+        if "关闭了任务" in said
+    ]
 
 
 def _goes_by(client, handle: str, nickname: str) -> None:
@@ -264,7 +290,9 @@ def test_a_task_closed_by_a_person_is_told_once_and_again_after_a_reopen(
     task_id = _opened(client, room)
 
     _close(client, task_id, "改用纸质表")
-    [ended] = _told_opener(client, room)
+    # The person said it by clicking: the opener is not woken, and reads it.
+    assert _told_opener(client, room) == []
+    [ended] = _closes_read(client, room)
     assert "Test delivery" in ended
     assert "改用纸质表" in ended
     # Nothing was accepted, and the words say so rather than that it was done.
@@ -275,7 +303,7 @@ def test_a_task_closed_by_a_person_is_told_once_and_again_after_a_reopen(
     )
     assert reopened.status_code == 200, reopened.text
     _close(client, task_id)
-    told = _told_opener(client, room)
+    told = _closes_read(client, room)
     assert len(told) == 2
     assert "也没有写结论" in told[1]
 
@@ -311,8 +339,8 @@ def test_a_task_a_person_closes_after_its_delivery_landed_is_told_with_its_concl
 
     _close(client, task_id, "做完了")
 
-    *_, ended = _told_opener(client, room)
-    assert len(_told_opener(client, room)) == 3
+    assert len(_told_opener(client, room)) == 2
+    [ended] = _closes_read(client, room)
     assert "交付已采纳" in ended
     assert "做完了" in ended
     # Recorded where it came from in each reader's language, under nobody's name.

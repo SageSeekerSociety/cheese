@@ -243,6 +243,7 @@ import TaskInheritance from './TaskInheritance.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import TaskMentorNotice from '@/components/tasks/TaskMentorNotice.vue'
+import { userName } from '@/lib/agentNames'
 
 const { t } = useI18n()
 
@@ -294,7 +295,7 @@ const said = computed(() =>
       }
 )
 
-const mentorNames = computed(() => (props.taskData?.mentors ?? []).map((m) => m.nickname).join('、'))
+const mentorNames = computed(() => (props.taskData?.mentors ?? []).map((m) => userName(m) || m.handle).join('、'))
 const verifyInfoDialogOpen = ref(false)
 const startDialogOpen = ref(false)
 const privacyDialogOpen = ref(false)

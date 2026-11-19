@@ -2,6 +2,8 @@
   "add": "Add comment",
   "addAt": "Comment on line {line}",
   "addHere": "Comment; hold Shift and click another line to select a range",
+  "adoptCancel": "Cancel adopting",
+  "adoptWhenChecksPass": "{who} adopts this once checks pass",
   "answer": "{agent}: {note}",
   "autoMergeOff": "Turn off auto-merge",
   "autoMergeOn": "{who} turned on auto-merge when checks pass",

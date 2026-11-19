@@ -835,7 +835,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 });
 
-// 侧栏顶上那一条（桌面上是老鼠图标加项目切换器，见 ProjectSwitcher.vue；左边那一列
+// 侧栏顶上那一条（桌面上是项目切换器，写你在哪儿，见 ProjectSwitcher.vue；左边那一列
 // 方块栏 2026-11-16 拿掉之前是项目名那一行），和右边内容区的页头是同一条线：一样高、
 // 顶在同一处，两条底线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
 // 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
@@ -1381,11 +1381,11 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
   });
 });
 
-// 工作面板的每一格都住在 `tabbody` 里，而 `tabbody` 是一条 flex 行（`WorkPanel.vue`）：
+// 桌面上工作面板的每一格是布局区里的一块（`WorkPane`，`WorkPanel.vue`），里面是一条 flex 行：
 // 没写 `flex` 的那一格会按内容收缩——内容多宽它就多宽，右边空着。规则那一格就是这样：
 // 空状态那两行字多宽，面板就多宽，「新建」右侧的刷新键停在半路。判据因此不是「内容有多
-// 宽」而是**它住的那条 flex 行有多宽**。vitest 量不到坐标，typecheck / stylelint 也不
-// 看这个，只有屏幕上量得出来。
+// 宽」而是**它住的那一格有多宽**。vitest 量不到坐标，typecheck / stylelint 也不看这个，
+// 只有屏幕上量得出来。
 test('房间面板的「例行事务」那一格铺满整条面板', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
@@ -1396,17 +1396,17 @@ test('房间面板的「例行事务」那一格铺满整条面板', async ({ pa
   // 它们会收进溢出菜单——点不到不代表这一格不存在。
   await page.goto(`${new URL(page.url()).pathname}?tab=routines`);
 
-  const pane = page.locator('.tabbody .routine-panel');
+  const pane = page.locator('.work-pane .routine-panel');
   await expect(pane).toBeVisible();
   const widths = await pane.evaluate((el) => {
-    const body = el.closest('.tabbody');
+    const body = el.closest('.work-pane');
     return {
       pane: el.getBoundingClientRect().width,
       body: body ? body.getBoundingClientRect().width : 0,
     };
   });
   // 量不到那条行就是范围选错了：空范围永远返回「没有缺陷」，所以这里炸掉而不是放过。
-  expect(widths.body, '这一格没住在 .tabbody 里，这条断言等于没做').toBeGreaterThan(0);
+  expect(widths.body, '这一格没住在 .work-pane 里，这条断言等于没做').toBeGreaterThan(0);
   expect(widths.pane, '这一格没画出来').toBeGreaterThan(0);
   // 1px 容差：亚像素与取整。
   expect(

@@ -197,6 +197,40 @@ describe('谁也没交给、看起来在等队友的一条：仅你可见的一�
     view.unmount()
   })
 
+  // 报上来的那条截图就是这个样子：回复时输入框里先带着 `@芝士O`（上一次留着的一位），
+  // 屏幕上这一句写着交给芝士，点完却仍是芝士O。草稿里已经有 @ 时，得把它换成这一位。
+  it('草稿里已经 @ 着另一位队友：换成这一句写的那位', async () => {
+    roster.push({ id: '3', member_handle: OTHER, name: '芝士O', role: 'member', agent: true })
+    history = [
+      {
+        id: 'earlier',
+        project_id: 'p1',
+        conversation_id: 't1',
+        turn_id: 'earlier',
+        kind: 'message',
+        author_type: 'participant',
+        author: 'me',
+        content: `<@${OTHER}> 1`,
+        reply_to: null,
+        refs: [],
+        created_at: new Date().toISOString(),
+      } as unknown as Block,
+    ]
+    server.answer = 'alone'
+    const view = await openAndSend('帮我列个下周的计划')
+    // 人手上又点了一下头像：正文开头多了上一次交给的那位。
+    await fireEvent.click(view.container.querySelector<HTMLButtonElement>('.summon__btn')!)
+    await settle()
+    expect(composerText(view.box)).toContain(`<@${OTHER}>`)
+
+    await fireEvent.click(view.getByRole('button', { name: '交给芝士' }))
+    await settle()
+
+    expect(composerText(view.box)).toContain(`<@${SEAT}>`)
+    expect(composerText(view.box)).not.toContain(`<@${OTHER}>`)
+    view.unmount()
+  })
+
   it('「不用了」收起，正文不动', async () => {
     server.answer = 'after_agent'
     const view = await openAndSend('再加上回滚')

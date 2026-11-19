@@ -70,7 +70,7 @@ const props = defineProps<{
   composerClosed?: string | null
   /** 这里的提问已经不再等回答，见 ChatPanel。 */
   askClosed?: boolean
-  /** 采纳那一条此刻挂在别处（专注模式里它在面板底部），这里不再放一份。 */
+  /** 采纳那一条此刻挂在别处（对话看不见时它贴在工作面板底部），这里不再放一份。 */
   acceptElsewhere?: boolean
   /** 手机上：采纳那一条只放「审阅」，决定在「改动」页底部。 */
   acceptReviewButton?: boolean

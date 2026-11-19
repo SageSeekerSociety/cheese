@@ -352,7 +352,9 @@ async def get_task(
     )
 
     enriched_task = (
-        await _enrich_task_models(db, [task_dict], space_id=task.space_id)
+        await _enrich_task_models(
+            db, [task_dict], space_id=task.space_id, viewer_id=auth_user.user_id
+        )
     )[0]
     # 这道题涉及的知识点（§ learning analysis, step 1）：详情的「涉及的知识点」那一格
     # 读它；板没开学情分析时不查。
@@ -511,7 +513,9 @@ async def get_tasks(
         sort_order=sort_order,
     )
     items = [_task_to_api_model(t) for t in tasks]
-    items = await _enrich_task_models(db, items, space_id=space)
+    items = await _enrich_task_models(
+        db, items, space_id=space, viewer_id=auth_user.user_id
+    )
     # 卡片上那格「附件 N」要的数。跟每次列表一起给：它是卡片的一部分，不是可选的
     # 附加信息 —— 只有被点名才带的话，卡片就得为它多等一次请求。
     await _enrich_task_attachment_counts(db, items)

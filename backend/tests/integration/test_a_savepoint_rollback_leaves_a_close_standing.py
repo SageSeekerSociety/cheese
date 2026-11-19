@@ -2,8 +2,8 @@
 
 `close_task` stages the stop of a closed task's work on the session's commit
 (`room_task.closing._stop_after_commit`). The same request then says something
-it can do without: `review.task_landing.tell_origin` wraps the courtesy line in
-`begin_nested()`, and a line that cannot be said rolls that savepoint back.
+it can do without: `review.task_landing.record_at_origin` wraps the record in
+`begin_nested()`, and a line that cannot be recorded rolls that savepoint back.
 Rolling a savepoint back undoes none of the close — the task row is still
 closed and the request goes on to commit — so the stop has to survive it.
 

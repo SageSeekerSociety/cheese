@@ -18,6 +18,7 @@ import KeepToLibraryConfirm from '@/components/room/KeepToLibraryConfirm.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
 import PrivateChatFiles from '@/components/room/PrivateChatFiles.vue'
 import { t } from '@/i18n'
+import { usePagePanels } from '@/layouts/pagePanels'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
 import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
@@ -30,7 +31,7 @@ import { agentsQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import DmViewView from '@/views/workspace/DmViewView.vue'
-import { useTopicPanes } from '@/views/workspace/useTopicPanes'
+import { useRoomLayout } from '@/views/workspace/roomLayout'
 
 // 私聊 (飞书私聊): a normal 1:1 chat in the content area — no document, no PR
 // header, no accept box. `peer` is the URL's own word for who you are talking
@@ -164,9 +165,19 @@ useEscapeLayer(
   computed(() => panelFloat.value && panelOpen.value),
   closePanel
 )
-const panes = useTopicPanes({ panelOpen, panelFloat, desktop: mdAndUp })
-const { focusMode, focusIcon, focusLabel, docked, chatNews, noteChatNews, toggleFocus, chatStyle } = panes
-const { freezeChatWidth, startPaneDrag } = panes
+// 桌面：对话和面板是外壳布局区里的两格，和频道页同一个摆法（同一个键：拖成的宽度两处共用）。
+const docked = computed(() => !panelFloat.value && panelOpen.value)
+// 对话和「文件」各是外壳布局区里的一块（见 roomLayout.ts），摆法按私聊这一种页面记。
+const room = useRoomLayout(usePagePanels, {
+  kind: () => (mdAndUp.value ? 'dm' : null),
+  tabs: () => [{ key: 'files', title: t('work.room.tabs.files'), icon: 'mdi-paperclip' }],
+  workHidden: () => !topic.value || !docked.value,
+  floating: () => panelFloat.value,
+  hide: { label: () => t('work.room.panel.closeFiles'), run: () => closePanel() },
+  onActivated: () => {},
+  onClose: () => {},
+  onKeep: () => {},
+})
 
 // 这段私聊里的文件：清单、正在看的那一份、保存到资料库（私聊里的东西只有这里的人看得到，
 // 保存之前先问）。
@@ -232,7 +243,7 @@ function openResource(resource: string, _turnId?: string, review?: DocReviewRequ
   if (page) void router.push(page)
 }
 function onTurnDone() {
-  noteChatNews()
+  room.noteChatNews()
   handleTurnDone()
   void files.load()
 }
@@ -249,16 +260,9 @@ function onTurnDone() {
     :docked="docked"
     :panel-open="panelOpen"
     :panel-float="panelFloat"
-    :focus-mode="focusMode"
-    :chat-news="chatNews"
-    :focus-label="focusLabel"
-    :focus-icon="focusIcon"
-    :chat-style="chatStyle"
-    @toggle-focus="toggleFocus"
+    :conversation-target="room.panels.outlet('conversation')"
+    :layout="room.workLayout.value"
     @close-panel="closePanel"
-    @start-drag="startPaneDrag"
-    @reset-split="store.resetChatPct()"
-    @freeze-chat="freezeChatWidth"
   >
     <template v-if="topic" #chat>
       <ChatPanel
@@ -284,7 +288,7 @@ function onTurnDone() {
         @open-resource="openResource"
       >
         <template #header-actions>
-          <PanelToggle :open="panelOpen" files @toggle="togglePanel" />
+          <PanelToggle :open="panelOpen" files :controls="room.panelControls.value" @toggle="togglePanel" />
         </template>
       </ChatPanel>
     </template>

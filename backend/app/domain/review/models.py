@@ -123,6 +123,10 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # columns): review/services.py falls back to the topic title.
     change_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     change_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The member who handed this version in themselves (`machine.hand_in`),
+    # filing it or moving the one waiting; NULL when the task's AI teammate
+    # did. Whoever is told what was adopted is told whose version it is.
+    handed_in_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 这次交付更新的是哪一项产物 (#1085 结论三). Declared when the card is filed;
     # the artifact's version moves when the card is accepted. NULL on cards that
     # predate the manifest, and on a card whose artifact the project later
@@ -254,6 +258,11 @@ class AcceptCard(UuidPk, Timestamps, Base):
     auto_merge_armed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     auto_merge_armed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # 布防来自「提交并采纳」（`merge_queue.adopt_when_ready`）：审阅人采纳了自己
+    # 刚交的这一版，而不是打开了「检查通过后自动合并」。只在布防时有意义。
+    auto_merge_adopts: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
     )
     # PR 回流的去重账本 (review/pr_signals.py)：每一类回流（CI 失败 / 评审意见 /
     # 合并冲突）各记「发到哪个内容签名」和「发过几轮」。

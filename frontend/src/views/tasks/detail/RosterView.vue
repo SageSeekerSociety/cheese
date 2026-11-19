@@ -94,6 +94,7 @@
                 :size="22"
                 :kind="row.teamSize ? 'org' : 'person'"
                 :name="row.name"
+                :seed="row.m.member?.username ?? ''"
                 :avatar="row.m.member?.avatarId != null ? getAvatarUrl(row.m.member.avatarId) : ''"
               />
               <span class="rs__name">{{ row.name }}</span>
@@ -219,6 +220,27 @@
     <p v-if="!loading && !denied && !failed && visible.length" class="rs__note rs__usage-note">
       {{ t('tasks.roster.usageNote') }}
     </p>
+    <!-- 挂了测试点的题：改了测试点以后，把每人最新那一版按现在这一版再评一次。 -->
+    <div v-if="hasTests && !loading && !denied && !failed && rows.length" class="rs__rejudge">
+      <BaseButton
+        kind="secondary"
+        size="sm"
+        prepend-icon="mdi-refresh"
+        :loading="rejudging"
+        data-testid="roster-rejudge"
+        @click="rejudgeOpen = true"
+        >{{ t('tasks.judge.rejudge.button') }}</BaseButton
+      >
+    </div>
+    <ConfirmDialog
+      v-model="rejudgeOpen"
+      :title="t('tasks.judge.rejudge.title')"
+      :confirm-label="t('tasks.judge.rejudge.confirm')"
+      :loading="rejudging"
+      @confirm="confirmRejudge"
+    >
+      {{ t('tasks.judge.rejudge.body') }}
+    </ConfirmDialog>
 
     <AdaptiveDialog
       v-model="deadlineOpen"
@@ -288,10 +310,12 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { compareBy } from '@/components/base/tableSort'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { memberName as rosterName } from '@/lib/agentNames'
 import { calendarDaysAgo, clockTime, dayTimeText } from '@/lib/dateText'
 import { vRovingTabs } from '@/lib/rovingTabs'
 import { fmtNum } from '@/lib/usageFormat'
@@ -358,6 +382,8 @@ const props = defineProps<{
   failureReason: string | null
   /** 正在批准的那一行。 */
   busyId: number | null
+  /** 正在排「重新评测全部最新提交」。 */
+  rejudging?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -366,15 +392,25 @@ const emit = defineEmits<{
   deadline: [id: number, at: number]
   review: [who: { id: number; name: string }]
   retry: []
+  rejudge: []
 }>()
+
+const rejudgeOpen = ref(false)
+/** 确认了就往上报、关掉确认框；排的时候表下那颗按钮转圈。 */
+function confirmRejudge() {
+  emit('rejudge')
+  rejudgeOpen.value = false
+}
 
 const { t } = useI18n()
 const rowMenu = useRowMenu<number>()
 
 function displayName(m: TaskMembership): string {
+  // 实名那一栏要的是老师点名的那个真名，不是查看者私下怎么叫这个人。
   if (props.taskData?.requireRealName && m.realNameInfo?.realName) return m.realNameInfo.realName
+  // 其余照名册的规矩：设了个人备注就是备注，否则是他的公开名字。
   return (
-    m.member?.name ||
+    rosterName(m.member) ||
     (props.taskData?.submitterType === 'TEAM' ? t('tasks.roster.unknownTeam') : t('tasks.roster.unknownUser'))
   )
 }
@@ -809,5 +845,10 @@ function saveDeadline() {
 .rs__dialog-lead {
   margin: 0 0 12px;
   color: var(--text);
+}
+.rs__rejudge {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 </style>

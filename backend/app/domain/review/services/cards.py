@@ -162,8 +162,9 @@ async def create_card(
     """File a version of the task's delivery for review.
 
     ``handed_in_by`` is the member who handed it in themselves
-    (`machine.hand_in`), not the task's AI teammate: the place the task came from
-    records that person's line, and nobody is woken to say it again."""
+    (`machine.hand_in`), not the task's AI teammate: the card keeps it, the
+    hand-in records that person's line where the task came from, and nobody is
+    woken to say it again."""
     focus = clean_focus(focus)
     topic = await self._topic_or_404(topic_id)
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
@@ -306,6 +307,7 @@ async def create_card(
         ),
         deliverable_name=snapshot[0] if snapshot else None,
         deliverable_url=(deliver_url or "").strip() or None,
+        handed_in_by=handed_in_by,
     )
     if snapshot is not None:
         await asyncio.to_thread(
@@ -330,9 +332,9 @@ async def create_card(
     # told what was handed in, to say so there in its own words; where nobody
     # is told, the place the task came from records that a version is in for
     # review: the card it filed, as filed. The card's state is told elsewhere.
-    # A member who handed it in did it where people see it: the place records
-    # who, and the teammate there has nothing of its own to say.
-    if handed_in_by is not None or not await tell_opener_filed(
+    # A version a member handed in is recorded there by its hand-in, which
+    # knows whether they adopt it in the same go (`machine.hand_in`).
+    if handed_in_by is None and not await tell_opener_filed(
         self._session,
         task,
         card,
@@ -344,11 +346,7 @@ async def create_card(
             self._session,
             task,
             EVENT_TASK_FILED,
-            say("taskFiledForReview", title=said_title(task))
-            if handed_in_by is None
-            else say(
-                "taskHandedInBy", who=f"<@{handed_in_by}>", title=said_title(task)
-            ),
+            say("taskFiledForReview", title=said_title(task)),
             announce=_announce_of(self),
             refers={
                 "delivery": {"card_id": str(card.id), "version": len(existing) + 1}
@@ -927,6 +925,8 @@ async def _render(
         "armed_at": (
             card.auto_merge_armed_at.isoformat() if card.auto_merge_armed_at else None
         ),
+        # 布防的人采纳了这一版（「提交并采纳」），不是打开了自动合并。
+        "adopting": bool(card.auto_merge_armed_by and card.auto_merge_adopts),
     }
     # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
     # red one has to be in front of the person about to accept. A check

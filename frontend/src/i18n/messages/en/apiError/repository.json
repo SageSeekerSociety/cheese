@@ -24,7 +24,6 @@
   "taskFilePathOutside": "The file path must be inside the task's working directory",
   "taskFileReadBeforeSave": "Load the file before saving changes",
   "taskFinishedFilesReadOnly": "The task has ended, so its files are read-only",
-  "taskMachineFailed": "The task's environment couldn't complete this: {error}. You can view the committed version",
   "taskMachineNotResponding": "The task's environment isn't responding right now. Load the file again before continuing, or view the committed version",
   "taskNoOwnFileVersion": "The task has no file version of its own",
   "taskNothingCommitted": "This task hasn't committed any files yet",

@@ -2,8 +2,22 @@
 // 评测结果和试跑。形状照后端 `app/domain/task/test_suite.py` 与
 // `app/api/routes/tasks/judging.py`。
 
-/** 测试点的形态。第一版只做输入/输出用例；测试脚本、命令判分在后面一步。 */
-export type TaskTestSuiteKind = 'IO'
+/** 测试点的形态：输入/输出用例、测试脚本（出题人的测试文件 + JUnit XML 报告）、命令判分
+ *  （按顺序跑几条命令，读 `SCORE: x/y` 或 score.json）。 */
+export const TASK_TEST_KINDS = ['IO', 'SCRIPT', 'COMMAND'] as const
+export type TaskTestSuiteKind = (typeof TASK_TEST_KINDS)[number]
+
+/** 命令判分的分从哪读：最后一行 `SCORE: x/y`，或仓库根的 score.json。 */
+export type TaskTestScoreSource = 'LINE' | 'JSON'
+
+/** 测试脚本的测试文件、命令判分的判分文件与保护文件：相对路径加字节。能按 UTF-8 读的
+ *  给 `content`，读不了的给 `base64`；读回来另带 `bytes`。送回读到的那一份就是「没改」。 */
+export interface TaskTestFile {
+  path: string
+  content?: string
+  base64?: string
+  bytes?: number
+}
 
 /** 五个固定运行环境（`app/domain/judge/runtimes.py`）。 */
 export const TASK_TEST_RUNTIMES = ['python3.12', 'cpp17', 'java21', 'node22', 'go1.23'] as const
@@ -22,6 +36,8 @@ export interface TaskTestCase {
   visibility: TaskTestVisibility
   input?: string
   expected?: string
+  /** 测试脚本：这一条给分的测试叫什么（`classname::name` 或只写 `name`）。 */
+  testId?: string
 }
 
 /** 一个阶段上的一套测试点。写出去时 `stage` 是阶段的 id（不分阶段是 null）。 */
@@ -39,6 +55,22 @@ export interface TaskTestSuite {
   showHiddenNames: boolean
   selfTestDaily?: number | null
   cases: TaskTestCase[]
+  /** 测试脚本、命令判分：整轮时限（秒，30–600）。 */
+  totalTimeLimitS?: number | null
+  /** 测试脚本、命令判分：判分失败时学生能看程序输出的前几行（0 = 不给看）。 */
+  studentLogLines?: number
+  /** 装依赖要联网，这一步后端一律拒；表单不提供，读回来总是 false。 */
+  installDeps?: boolean
+  /** 测试脚本的测试文件、命令判分的判分文件（只有出题人读得到）。 */
+  testFiles?: TaskTestFile[]
+  /** 命令判分：按顺序跑的命令（只有出题人读得到）。 */
+  commands?: string[]
+  scoreSource?: TaskTestScoreSource
+  /** 命令判分：每次评测前用出题人的原版覆盖的文件（只有出题人读得到字节）。 */
+  protectedFiles?: TaskTestFile[]
+  /** 读回来才有：保护文件的路径（学生也读得到）、测试文件几份。 */
+  protectedPaths?: string[]
+  testFileCount?: number
   /** 读回来才有：第几版、几个用例、用例分合计。 */
   revision?: number
   caseCount?: number
@@ -68,6 +100,17 @@ export interface TaskJudgeCase {
   expected?: string | null
   actual?: string | null
   stderr?: string | null
+  /** 测试脚本：报告里的测试名与失败信息（学生只看得到样例那几条的信息）。 */
+  testId?: string | null
+  message?: string | null
+  /** 命令判分：这一项的得分与满分（可以是小数）。 */
+  score?: number | null
+  maxScore?: number | null
+  /** 测试脚本：被跳过（算没过）、报告里有但出题人没配分。 */
+  skipped?: boolean | null
+  unscored?: boolean | null
+  /** 命令判分：score.json 里 `visible: false` 的那一项，只有老师读得到。 */
+  private?: boolean | null
 }
 
 export type TaskJudgeState = 'queued' | 'running' | 'done' | 'failed'
@@ -87,6 +130,10 @@ export interface TaskJudgeRun {
   /** 失败原因：后端文案的 key 和参数（`NoticeText.descriptor`）。 */
   error?: { key: string; params?: Record<string, unknown> } | null
   compileOutput?: string | null
+  /** 出题人允许学生看的程序输出（前 `studentLogLines` 行）。 */
+  studentOutput?: string | null
+  /** 判分失败：跑完了但报告或分数读不出来，两个分数不算数，老师手动给分。 */
+  scoreFailed?: boolean
   cases?: TaskJudgeCase[]
   passedCases?: number
   caseCount?: number
@@ -122,4 +169,21 @@ export interface TaskJudgeSummary {
 export interface TaskTestTrialFile {
   path: string
   content: string
+}
+
+/** 学生自测：最近一次（没自测过是 null）和今天的次数。`dailyLimit` 是出题人给的每天
+ *  次数，`resetsAt`（毫秒）是下一次清零。 */
+export interface TaskSelfTestView {
+  selfTest: TaskJudgeRun | null
+  dailyLimit: number | null
+  usedToday: number
+  resetsAt: number
+}
+
+/** 重新评测排了多少：新排上的、直接复用的、已经在这一版上的、跳过的。 */
+export interface TaskRejudgeCounts {
+  queued: number
+  reused: number
+  unchanged: number
+  skipped: number
 }

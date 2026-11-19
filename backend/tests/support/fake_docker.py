@@ -2,7 +2,8 @@
 
 It understands what the runner asks of docker and nothing more: ``run`` executes
 the command after the image with ``sh -c`` on this machine, in the bind-mounted
-directory, and reports the way GNU time and ``docker inspect`` would; ``kill``
+directory (every ``--mount`` target, in the workdir and in ``--env`` values,
+is read as its source on this machine), and reports the way GNU time and ``docker inspect`` would; ``kill``
 stops it; ``inspect``, ``rm``, ``image inspect`` and ``pull`` answer from a
 state directory. None of the container's limits are real here — the real ones
 are held by ``scripts/remote_execution/judge_acceptance.py`` on a real docker.
@@ -35,12 +36,33 @@ def _option(args: list[str], flag: str) -> str | None:
     return None
 
 
+def _options(args: list[str], flag: str) -> list[str]:
+    """Every value ``flag`` was given, before the image."""
+    end = args.index(TIME_PROGRAM)
+    return [args[i + 1] for i in range(end - 1) if args[i] == flag]
+
+
+def _here(path: str, binds: list[tuple[str, str]]) -> str:
+    """A container path as the same place on this machine."""
+    for target, source in binds:
+        if path == target or path.startswith(target + "/"):
+            return source + path[len(target) :]
+    return path
+
+
 def _run(args: list[str]) -> int:
     name = _option(args, "--name") or "unnamed"
-    mount = _option(args, "--mount") or ""
-    fields = dict(part.split("=", 1) for part in mount.split(",") if "=" in part)
-    source, target = fields.get("source", "."), fields.get("target", "/code")
-    workdir = (_option(args, "--workdir") or target).replace(target, source, 1)
+    binds: list[tuple[str, str]] = []
+    for mount in _options(args, "--mount"):
+        fields = dict(part.split("=", 1) for part in mount.split(",") if "=" in part)
+        binds.append((fields.get("target", "/code"), fields.get("source", ".")))
+    binds.sort(key=lambda bind: -len(bind[0]))
+    workdir = _here(_option(args, "--workdir") or "/code", binds)
+    env = dict(os.environ)
+    for pair in _options(args, "--env"):
+        key, _, value = pair.partition("=")
+        if key not in ("HOME", "LANG"):
+            env[key] = _here(value, binds)
     at = args.index(TIME_PROGRAM)
     time_format = args[at + 2]
     command = args[at + 3 :]
@@ -51,7 +73,7 @@ def _run(args: list[str]) -> int:
             json.dumps({"OOMKilled": True, "ExitCode": 137})
         )
         return 137
-    child = subprocess.Popen(command, cwd=workdir, start_new_session=True)
+    child = subprocess.Popen(command, cwd=workdir, env=env, start_new_session=True)
     (STATE / f"{name}.pid").write_text(str(child.pid))
     _, status, usage = os.wait4(child.pid, 0)
     code = os.waitstatus_to_exitcode(status)
