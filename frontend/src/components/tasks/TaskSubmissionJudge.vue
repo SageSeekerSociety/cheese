@@ -48,6 +48,7 @@ const seconds = computed(() =>
       :line-points="linePoints"
       :samples="suite?.cases ?? []"
       :suite-revision="suite?.revision ?? null"
+      :kind="suite && suite.revision === run.suiteRevision ? suite.kind : null"
     >
       <template v-if="waitingPoints" #aside>
         <span class="tsj__waiting t-meta-read">{{ t('tasks.judge.history.waiting', { points: waitingPoints }) }}</span>

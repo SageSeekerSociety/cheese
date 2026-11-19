@@ -9,6 +9,8 @@ import type {
   TaskCodeVersion,
   TaskJudgeRun,
   TaskJudgeSummary,
+  TaskRejudgeCounts,
+  TaskSelfTestView,
   TaskTestSuite,
   TaskTestTrial,
   TaskTestTrialFile,
@@ -167,4 +169,52 @@ export function provideTestTrial(spaceId: () => number) {
     run: (suite: TaskTestSuite, files: TaskTestTrialFile[]) => runner.run(spaceId(), suite, files),
   })
   return runner
+}
+
+/** 重新评测全部最新提交（只给能批改的人）：不给阶段就是每个挂着测试点的阶段。 */
+export function rejudgeLatest(taskId: number, stage?: string | null): Promise<TaskRejudgeCounts> {
+  return TaskJudgeApi.rejudge(taskId, stage)
+}
+
+/** 学生自测样例：读这一阶段最近一次自测和今天的次数，排一次，还在跑时每隔几秒再读。
+ *  这一阶段没有测试点（读出来 404）或读不到时不再读，`view` 留空。 */
+export function useSelfTest(ids: { taskId: () => number; participantId: () => number; stage: () => string | null }) {
+  const view = ref<TaskSelfTestView | null>(null)
+  const starting = ref(false)
+  /** 排不上时后端说的那句话（次数用完、过了截止……）。 */
+  const error = ref('')
+
+  const { start, stop } = poller(async () => {
+    if (!ids.taskId() || !ids.participantId()) return false
+    try {
+      view.value = await TaskJudgeApi.latestSelfTest(ids.taskId(), ids.participantId(), ids.stage())
+    } catch {
+      return false
+    }
+    return inFlight(view.value?.selfTest)
+  }, POLL_MS)
+
+  function load() {
+    view.value = null
+    error.value = ''
+    start()
+  }
+
+  async function run() {
+    if (starting.value) return
+    stop()
+    error.value = ''
+    starting.value = true
+    try {
+      view.value = await TaskJudgeApi.selfTest(ids.taskId(), ids.participantId(), ids.stage())
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e)
+      return
+    } finally {
+      starting.value = false
+    }
+    if (inFlight(view.value?.selfTest)) start()
+  }
+
+  return { view, starting, error, load, run, stop }
 }

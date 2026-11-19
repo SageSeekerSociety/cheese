@@ -1,16 +1,16 @@
 """一道题的测试点（方案 §出题人：配测试点、§数据结构）。
 
 这一条走完整的 HTTP 路：出题表单把 ``testSuite`` 一起发上来就存下了，读的时候按看的
-人裁；改题整份替换它（改到它是新的一版）；第 1 步只放输入/输出用例（``IO``）进来，
-``SCRIPT``/``COMMAND`` 表结构留好但到这里就拒。
+人裁；改题整份替换它（改到它是新的一版）。测试脚本和命令判分另见
+``test_task_judge_suites``。
 
 三条断言各钉一件事：
 
 1. 出题人给的一套测试点，读回来就是它（含每个用例的输入与期望输出）；
 2. 学生读到隐藏用例的名称、分值和可见性，但拿不到它的输入与期望输出 —— 那两格在他
    的响应里根本不存在；
-3. 第 1 步只收 ``IO``：``SCRIPT``/``COMMAND`` 被拒（文案键 ``testSuiteKindLater``），
-   别的形态拒（``testSuiteKindUnknown``）。
+3. 测试脚本与命令判分这一步只能离线跑：要装依赖的被拒（``testSuiteInstallDepsLater``），
+   三种以外的形态拒（``testSuiteKindUnknown``）。
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ def test_a_student_reads_a_hidden_case_without_its_bytes(
     assert "expected" not in hidden
 
 
-def test_only_io_cases_come_in_step_one(
+def test_installing_dependencies_is_refused_while_judging_is_offline(
     api_client: TestClient, user_client: UserCreator
 ):
     board = _new_board(user_client, api_client)
@@ -114,11 +114,19 @@ def test_only_io_cases_come_in_step_one(
         resp = _post_task(
             api_client,
             board,
-            name=f"第 1 步不收的形态 {kind}",
-            testSuite=[{**SUITE[0], "kind": kind}],
+            name=f"要装依赖的 {kind}",
+            testSuite=[
+                {
+                    **SUITE[0],
+                    "kind": kind,
+                    "installDeps": True,
+                    "commands": ["true"],
+                    "testFiles": [{"path": "t.py", "content": ""}],
+                }
+            ],
         )
         assert resp.status_code == 400, resp.text
-        assert resp.json()["error"]["i18n"]["key"] == "testSuiteKindLater"
+        assert resp.json()["error"]["i18n"]["key"] == "testSuiteInstallDepsLater"
     # 形态根本不是三种之一：另一句话。
     resp = _post_task(
         api_client,

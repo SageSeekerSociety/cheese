@@ -6,6 +6,9 @@
 不进任何资料库），``space_id`` 记下算力记在哪个空间的所有者头上。之后它和学生提交的
 评测走同一条队列、同一台评测主机、同一份计费。
 
+三种形态都能试跑：测试脚本的测试文件、命令判分的判分文件与保护文件也写进同一处私有存储
+（``test_files.store_files``），派出去时和题目里那一套走同一段代码（``dispatch._prepare``）。
+
 参考代码两种给法：几份文本文件 ``[{path, content}]``，或一个小 zip（base64）。zip 里
 的绝对路径、``..``、链接都不收。
 """
@@ -25,9 +28,11 @@ from app.core import blob_store
 from app.core.config import settings
 from app.core.errors import BadRequestError
 from app.core.sentences import say
+from app.domain.task import test_files
 from app.domain.task.judge_queue import run_to_api
 from app.domain.task.judging_models import TaskJudgeRun
-from app.domain.task.test_suite import SuiteLine
+from app.domain.task.test_files import FileLine
+from app.domain.task.test_suite import IO, SuiteLine, suite_settings
 
 #: A zip or a set of files the setter sends with one trial, before unpacking.
 UPLOAD_MAX_BYTES = 2 * 1024 * 1024
@@ -109,20 +114,6 @@ def code_archive(files: list[dict] | None, zip_base64: str | None) -> bytes:
     return _tar(picked)
 
 
-def _settings(line: SuiteLine) -> dict:
-    return {
-        "kind": line.kind,
-        "runtime": line.runtime,
-        "codeDir": line.code_dir,
-        "compileCmd": line.compile_cmd,
-        "runCmd": line.run_cmd,
-        "timeLimitMs": line.time_limit_ms,
-        "memoryMb": line.memory_mb,
-        "compare": line.compare,
-        "tolerance": line.tolerance,
-    }
-
-
 async def create_trial(
     session: AsyncSession,
     *,
@@ -137,18 +128,18 @@ async def create_trial(
     base = f".judge-blobs/trials/{uuid.uuid4()}"
     cases: list[dict] = []
     for index, case in enumerate(line.cases):
-        input_key, expected_key = f"{base}/{index}/in", f"{base}/{index}/out"
-        await store.put(input_key, case.input.encode())
-        await store.put(expected_key, case.expected.encode())
-        cases.append(
-            {
-                "name": case.name,
-                "points": case.points,
-                "visibility": case.visibility,
-                "inputKey": input_key,
-                "expectedKey": expected_key,
-            }
-        )
+        entry: dict = {
+            "name": case.name,
+            "points": case.points,
+            "visibility": case.visibility,
+            "testId": case.test_id,
+        }
+        if line.kind == IO:
+            input_key, expected_key = f"{base}/{index}/in", f"{base}/{index}/out"
+            await store.put(input_key, case.input.encode())
+            await store.put(expected_key, case.expected.encode())
+            entry.update(inputKey=input_key, expectedKey=expected_key)
+        cases.append(entry)
     code_key = f"{base}/code.tar"
     await store.put(code_key, code)
     run = TaskJudgeRun(
@@ -158,8 +149,9 @@ async def create_trial(
         space_id=space_id,
         purpose="TRIAL",
         trial_spec={
-            "suite": _settings(line),
+            "suite": suite_settings(line),
             "cases": cases,
+            "files": await test_files.store_files(base, line.files),
             "location": store.location,
             "codeKey": code_key,
         },
@@ -179,6 +171,7 @@ class Material:
     suite: dict
     cases: list[dict]
     code: bytes
+    files: list[FileLine]
 
 
 async def material(spec: dict) -> Material:
@@ -186,21 +179,23 @@ async def material(spec: dict) -> Material:
     store = blob_store.store(str(spec.get("location") or ""))
     cases: list[dict] = []
     for index, case in enumerate(spec.get("cases") or []):
-        cases.append(
-            {
-                "index": index,
-                "id": None,
-                "name": case.get("name") or "",
-                "points": int(case.get("points") or 0),
-                "visibility": case.get("visibility") or "SAMPLE",
-                "input": (await store.get(case["inputKey"])).decode(),
-                "expected": (await store.get(case["expectedKey"])).decode(),
-            }
-        )
+        entry = {
+            "index": index,
+            "id": None,
+            "name": case.get("name") or "",
+            "points": int(case.get("points") or 0),
+            "visibility": case.get("visibility") or "SAMPLE",
+            "testId": case.get("testId"),
+        }
+        if case.get("inputKey"):
+            entry["input"] = (await store.get(case["inputKey"])).decode()
+            entry["expected"] = (await store.get(case["expectedKey"])).decode()
+        cases.append(entry)
     return Material(
         suite=dict(spec.get("suite") or {}),
         cases=cases,
         code=await store.get(str(spec.get("codeKey") or "")),
+        files=await test_files.read_files(spec.get("files")),
     )
 
 

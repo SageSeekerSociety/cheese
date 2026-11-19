@@ -15,6 +15,10 @@
 * 不是平台的原因（GitHub 项目、代码太大、空间没有所有者、所有者没额度、形态暂不支持）
   当场标失败，带那句话，不重试。
 * 跑出来了就是「完成」，编译失败、全错也是；结果和那一笔算力在同一个事务里写下。
+  测试脚本没写出报告、判分命令没给出分也是「完成」，只是标着判分失败、分数留空
+  （``scoring``）—— 学生不按 0 分算。
+* 三种用途走同一条路：``SUBMISSION`` 跑这一阶段的测试套，``TRIAL`` 跑出题人试跑时的
+  那一份（``trials``），``SELF_TEST`` 跑这一阶段的测试套里的样例用例（只有 ``IO``）。
 
 设备连接每次现取（``agent.device_hub.device_hub``），测试换成假的 hub 就行。
 """
@@ -43,13 +47,23 @@ from app.core.device_failures import (
 )
 from app.core.errors import BaseError
 from app.core.sentences import NoticeText, say
-from app.domain.judge import billing, code, trials
+from app.domain.judge import billing, code, scoring, trials
 from app.domain.judge.runtimes import image_of
 from app.domain.judge.script import RUNNER_SRC
+from app.domain.task import test_files
 from app.domain.task.judge_queue import DONE, FAILED, QUEUED, RUNNING
 from app.domain.task.judging_models import TaskJudgeRun, TaskTestSuite
 from app.domain.task.models import Task
-from app.domain.task.test_suite import cases_with_text
+from app.domain.task.test_files import FileLine
+from app.domain.task.test_suite import (
+    COMMAND,
+    IO,
+    SAMPLE,
+    SCRIPT,
+    cases_of,
+    cases_with_text,
+    suite_settings,
+)
 from app.domain.usage.compute import ComputeRefused
 
 log = logging.getLogger(__name__)
@@ -62,8 +76,8 @@ MAX_ATTEMPTS = 2
 RETRY_AFTER = timedelta(seconds=30)
 #: A run still waiting for a judge host this long after it was queued fails.
 QUEUE_LIMIT = timedelta(hours=1)
-#: Inputs and expected outputs kept on a result row for the graders' view.
-KEPT_TEXT = 4096
+#: The folder a test script's files go to, next to the student's code.
+TESTS_DIR = "tests"
 
 #: Told once a judging of a submission is settled (done or failed), with its
 #: run id, so the student hears the result.
@@ -204,31 +218,44 @@ class _Job:
     suite_revision: int
 
 
-async def _prepare(
-    session: AsyncSession, run: TaskJudgeRun, fetch_code: FetchCode
-) -> _Job:
-    """Everything the judge host needs, after the payer is admitted."""
-    trial_code: bytes | None = None
-    if run.purpose == "TRIAL":
-        found = await trials.material(run.trial_spec or {})
-        suite, cases, space_id, revision = found.suite, found.cases, run.space_id, 0
-        trial_code = found.code
-    else:
-        row = await session.get(TaskTestSuite, run.suite_id) if run.suite_id else None
-        task = await session.get(Task, run.task_id) if run.task_id else None
-        if row is None or task is None:
-            raise _Refused(say("judgeSuiteGone"))
-        suite = {
-            "kind": row.kind,
-            "runtime": row.runtime,
-            "codeDir": row.code_dir,
-            "compileCmd": row.compile_cmd,
-            "runCmd": row.run_cmd,
-            "timeLimitMs": row.time_limit_ms,
-            "memoryMb": row.memory_mb,
-            "compare": row.compare,
-            "tolerance": row.tolerance,
+def _placed_path(suite: dict, path: str) -> str:
+    """Where one of the setter's files lands, from the repository root: a test
+    script's under ``tests/`` next to the code (``codeDir``), a grading
+    command's where the setter named it. Climbing parts of ``codeDir`` are
+    dropped the way ``container.workdir_of`` drops them."""
+    if suite.get("kind") != SCRIPT:
+        return path
+    parts = [
+        p
+        for p in str(suite.get("codeDir") or "").replace("\\", "/").split("/")
+        if p not in ("", ".")
+    ]
+    if ".." in parts:
+        parts = []
+    return "/".join([*parts, TESTS_DIR, path])
+
+
+def _files_payload(suite: dict, files: list[FileLine]) -> list[dict]:
+    return [
+        {
+            "path": _placed_path(suite, f.path),
+            "data": base64.b64encode(f.data).decode(),
         }
+        for f in files
+    ]
+
+
+async def _suite_material(
+    session: AsyncSession, run: TaskJudgeRun
+) -> tuple[dict, list[dict], list[FileLine], int, int]:
+    """A task's suite as the run judges it: settings, cases, files, the space
+    that pays and the suite's revision."""
+    row = await session.get(TaskTestSuite, run.suite_id) if run.suite_id else None
+    task = await session.get(Task, run.task_id) if run.task_id else None
+    if row is None or task is None:
+        raise _Refused(say("judgeSuiteGone"))
+    suite = suite_settings(row)
+    if row.kind == IO:
         cases = [
             {
                 "index": case.index,
@@ -241,7 +268,39 @@ async def _prepare(
             }
             for case, given, wanted in await cases_with_text(session, row.id)
         ]
-        space_id, revision = task.space_id, row.revision
+    else:
+        cases = [
+            {
+                "index": case.index,
+                "id": case.id,
+                "name": case.name,
+                "points": case.points,
+                "visibility": case.visibility,
+                "testId": case.test_id,
+            }
+            for case in (await cases_of(session, [row.id])).get(row.id, [])
+        ]
+    if run.purpose == "SELF_TEST":
+        # 自测只跑样例：隐藏用例的结果哪怕只是「过没过」，反复自测也能一点点试出来。
+        if row.kind != IO:
+            raise _Refused(say("judgeSelfTestIoOnly"))
+        cases = [c for c in cases if c["visibility"] == SAMPLE]
+    files = await test_files.read_files(row.test_files)
+    return suite, cases, files, task.space_id, row.revision
+
+
+async def _prepare(
+    session: AsyncSession, run: TaskJudgeRun, fetch_code: FetchCode
+) -> _Job:
+    """Everything the judge host needs, after the payer is admitted."""
+    trial_code: bytes | None = None
+    if run.purpose == "TRIAL":
+        found = await trials.material(run.trial_spec or {})
+        suite, cases, files = found.suite, found.cases, found.files
+        space_id, revision = run.space_id, 0
+        trial_code = found.code
+    else:
+        suite, cases, files, space_id, revision = await _suite_material(session, run)
 
     owner_id = await billing.space_owner(session, space_id)
     if owner_id is None:
@@ -255,7 +314,7 @@ async def _prepare(
         ) from exc
 
     image = image_of(str(suite.get("runtime") or ""))
-    if image is None:
+    if image is None or suite.get("kind") not in (IO, SCRIPT, COMMAND):
         raise _Refused(say("judgeKindUnsupported"))
     if trial_code is not None:
         archive = trial_code
@@ -275,7 +334,9 @@ async def _prepare(
         "cases": [
             {"index": c["index"], "input": c["input"], "expected": c["expected"]}
             for c in cases
+            if suite.get("kind") == IO
         ],
+        "files": _files_payload(suite, files),
     }
     return _Job(
         payload=payload,
@@ -321,40 +382,6 @@ async def _run_on_host(device_id: str, job: _Job) -> dict:
     raise _Platform(why)
 
 
-def _results(job: _Job, reply: dict) -> tuple[list[dict], int, int]:
-    """The result rows: each case as the setter wrote it, with what it did."""
-    did = {
-        entry.get("index"): entry
-        for entry in reply.get("cases") or []
-        if isinstance(entry, dict)
-    }
-    rows: list[dict] = []
-    passed = total = 0
-    for case in job.cases:
-        ran = did.get(case["index"]) or {}
-        status = str(ran.get("status") or "runtime_error")
-        total += case["points"]
-        passed += case["points"] if status == "ok" else 0
-        row = {
-            "index": case["index"],
-            "caseId": case["id"],
-            "name": case["name"],
-            "visibility": case["visibility"],
-            "points": case["points"],
-            "status": status,
-            "ms": ran.get("ms"),
-            "memoryKb": ran.get("memoryKb"),
-            "input": case["input"][:KEPT_TEXT],
-            "expected": case["expected"][:KEPT_TEXT],
-        }
-        if ran.get("actual") is not None:
-            row["actual"] = ran["actual"]
-        if ran.get("stderr"):
-            row["stderr"] = ran["stderr"]
-        rows.append(row)
-    return rows, passed, total
-
-
 @dataclass
 class _Outcome:
     reply: dict | None = None
@@ -385,19 +412,20 @@ async def _record(
         run.lease_until = None
         if outcome.reply is not None and outcome.job is not None:
             job, reply = outcome.job, outcome.reply
-            rows, passed, total = _results(job, reply)
-            compiled = reply.get("compile") or {}
-            run.state = DONE
-            run.error = None
-            run.results = rows
-            run.passed_points = passed
-            run.total_points = total
-            run.suite_revision = job.suite_revision
-            run.compile_output = (
-                str(compiled.get("output") or "")[:KEPT_TEXT]
-                if compiled.get("status") not in (None, "ok")
-                else None
+            result_of = scoring.scored(
+                str(job.payload.get("kind") or ""), job.cases, reply, job.payload
             )
+            run.state = DONE
+            # 判分失败也是「完成」：机器跑过了，照扣；分数留空，``error`` 说是哪一种。
+            run.error = (
+                result_of.error.descriptor() if result_of.error is not None else None
+            )
+            run.results = result_of.rows
+            run.passed_points = result_of.passed
+            run.total_points = result_of.total
+            run.suite_revision = job.suite_revision
+            run.compile_output = result_of.log
+            run.student_output = result_of.student_log
             machine_ms = int(reply.get("machineMs") or 0)
             run.machine_ms = machine_ms
             run.finished_at = now

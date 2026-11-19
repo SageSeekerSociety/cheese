@@ -2,9 +2,9 @@
 
 后端用设备连接把它派到评测主机上：``python3 -I -c <源码>``，任务从标准输入读进来
 （一份 JSON），结果一份精简的 JSON 写到标准输出。发过去的源码是 ``compare``、
-``container`` 和这个文件按这个顺序拼成的一整段（``dispatch.RUNNER_SRC``），所以这三份
-都只用标准库、都不写 ``from __future__``；在后端里被 import 时，下面那句 ``if
-__package__`` 才去取另外两份。主机上要有 docker 和 Python 3.10 以上（``tarfile`` 的
+``container``、``reports`` 和这个文件按这个顺序拼成的一整段（``script.RUNNER_SRC``），
+所以这几份都只用标准库、都不写 ``from __future__``；在后端里被 import 时，下面那句
+``if __package__`` 才去取另外几份。主机上要有 docker 和 Python 3.10 以上（``tarfile`` 的
 ``filter="data"``）。
 
 一次评测：
@@ -20,9 +20,12 @@ __package__`` 才去取另外两份。主机上要有 docker 和 Python 3.10 以
    4 KB，用例多时再按总量往下压；
 7. 不论成败，临时目录在 ``finally`` 里删掉。
 
-只认 ``kind = "IO"``（输入/输出用例）。别的形态（第 2 步的测试脚本、命令判分）回
-``{"ok": false, "error": "unsupported"}``，由后端标「暂不支持」；接上时在 ``KINDS``
-里加一项即可。
+测试脚本（``SCRIPT``）和命令判分（``COMMAND``）是另一种跑法（``judge_script``、
+``judge_command``）：整轮只起**一个**容器，墙钟和 CPU 时间都按出题人给的整轮时限，代码
+那份拷贝挂成可写（测试框架要写缓存、判分命令要写 score.json）；出题人的文件在起容器前
+就放好（``_place``），学生的同名文件被覆盖。跑完读报告或分数（``reports``），读不出来
+就回 ``scoreError``（一个短代码），后端标「判分失败」而不是 0 分（``judge.scoring``）。
+不认得的形态回 ``{"ok": false, "error": "unsupported"}``，由后端标「暂不支持」。
 """
 
 import base64
@@ -44,10 +47,20 @@ if __package__:
     # On the judge host these names were defined by the two files sent ahead.
     from app.domain.judge.compare import same_output
     from app.domain.judge.container import (
+        REPORT_DIR,
+        REPORT_FILE,
         TIME_MARK,
         cpu_seconds,
         run_args,
         workdir_of,
+    )
+    from app.domain.judge.reports import (
+        REPORT_MAX_BYTES,
+        SCORE_JSON_MAX_BYTES,
+        ReportError,
+        parse_junit,
+        parse_score_json,
+        parse_score_line,
     )
 
 #: Statuses of one case, as the result rows store them.
@@ -429,9 +442,253 @@ def judge_io(job, work):
     }
 
 
-#: Each kind of suite the runner knows how to judge. The second step's
-#: test scripts and grading commands join here.
-KINDS = {"IO": judge_io}
+#: What a whole run's program output keeps for the teacher: this many first
+#: lines, at most this many bytes. The student sees a head of it, if the setter
+#: allows (``studentLogLines``).
+LOG_LINES = 200
+LOG_BYTES = 16 * 1024
+#: A test's failure message is cut to this many bytes, less when there are many.
+MESSAGE_BYTES = 1024
+#: A file the setter's files are placed over; a student's own ``conftest.py``
+#: outside them is removed before a test script runs (``_drop_conftests``).
+CONFTEST = "conftest.py"
+#: score.json, at the repository root.
+SCORE_JSON = "score.json"
+
+
+def _place(root, rel, data):
+    """Write one of the setter's files at ``rel`` under ``root``, over whatever
+    the student had there.
+
+    Nothing the student put in the way is followed: a link or a plain file
+    where a directory should be is removed, and so is a link or a directory
+    where the file goes — writing through a student's link would land the
+    setter's bytes somewhere else and leave the student's file in place."""
+    parts = [p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or ".." in parts:
+        why = f"bad file path: {rel[:200]}"
+        raise PlatformError(why)
+    here = root
+    for part in parts[:-1]:
+        here = os.path.join(here, part)
+        if os.path.islink(here) or (os.path.lexists(here) and not os.path.isdir(here)):
+            os.remove(here)
+        if not os.path.isdir(here):
+            os.mkdir(here)
+            os.chmod(here, 0o777)
+    target = os.path.join(here, parts[-1])
+    if os.path.isdir(target) and not os.path.islink(target):
+        shutil.rmtree(target)
+    elif os.path.lexists(target):
+        os.remove(target)
+    with open(target, "wb") as out:
+        out.write(data)
+    os.chmod(target, 0o666)
+    return "/".join(parts)
+
+
+def _place_all(code, files):
+    """Every file of the job in place; returns the paths written."""
+    placed = set()
+    for entry in files or []:
+        data = base64.b64decode(str(entry.get("data") or ""))
+        placed.add(_place(code, str(entry.get("path") or ""), data))
+    return placed
+
+
+def _drop_conftests(code, keep):
+    """Remove every ``conftest.py`` the setter did not put there.
+
+    pytest loads a ``conftest.py`` it finds on the way to the tests (the
+    root, ``tests/``, any directory above a test file) before any test runs,
+    and a hook in one can mark every test passed. ``--noconftest`` would drop
+    the setter's own ``tests/conftest.py`` too, and it only helps when the
+    setter remembers to pass it; removing the student's files works whatever
+    the run command says. ``os.walk`` does not follow links, so a linked
+    directory is not searched — and a linked ``conftest.py`` is removed like
+    any other."""
+    for root, _dirs, files in os.walk(code):
+        for name in files:
+            if name != CONFTEST:
+                continue
+            path = os.path.join(root, name)
+            if os.path.relpath(path, code).replace(os.sep, "/") not in keep:
+                os.remove(path)
+
+
+def _head_lines(text, lines, limit):
+    kept = "\n".join(text.splitlines()[:lines])
+    return kept.encode()[:limit].decode("utf-8", "ignore")
+
+
+def _whole_run(job, image, code, work, command, mounts=(), env=()):
+    """One container for the whole run, under the suite's total time limit.
+    Returns what it did, what it printed on stdout, and the log the teacher
+    reads (the first lines of stdout, then of stderr)."""
+    name = f"cheese-judge-{uuid.uuid4().hex}"
+    total_s = int(job.get("totalTimeLimitS") or 120)
+    out_path = os.path.join(work, "run.out")
+    ran = _run(
+        run_args(
+            name=name,
+            image=image,
+            code_dir=code,
+            workdir=workdir_of(job.get("codeDir") or ""),
+            command=command,
+            memory_mb=int(job["memoryMb"]),
+            cpu_limit_s=total_s,
+            code_writable=True,
+            mounts=mounts,
+            env=env,
+        ),
+        name,
+        b"",
+        total_s + STARTUP_S,
+        out_path,
+    )
+    with open(out_path, "rb") as out:
+        stdout = out.read().decode("utf-8", "replace")
+    os.remove(out_path)
+    log = stdout.rstrip("\n")
+    stderr = _stderr_text(ran).strip()
+    if stderr:
+        log = (log + "\n" + stderr).strip("\n")
+    return ran, stdout, _head_lines(log, LOG_LINES, LOG_BYTES)
+
+
+def _stopped(ran):
+    """Why the run was cut short, if it was: a limit, never the exit code."""
+    if ran.oom:
+        return MEMORY
+    if ran.timed_out:
+        return TIMEOUT
+    if ran.truncated:
+        return OUTPUT_LIMIT
+    return None
+
+
+def _whole_reply(ran, log):
+    return {
+        "ok": True,
+        "stopped": _stopped(ran),
+        "exitCode": ran.exit_code,
+        "log": log,
+    }
+
+
+def _no_code_dir(job):
+    return {
+        "ok": True,
+        "scoreError": "code_dir_missing",
+        "stopped": None,
+        "exitCode": None,
+        "log": f"code directory not found: {job.get('codeDir') or '.'}",
+    }
+
+
+def _code_dir_exists(job, code):
+    workdir = workdir_of(job.get("codeDir") or "")
+    return os.path.isdir(os.path.join(code, os.path.relpath(workdir, "/code")))
+
+
+def judge_script(job, work):
+    """A test script: the setter's tests next to the student's code, one run
+    command that writes a JUnit XML report to ``$JUDGE_REPORT``, every test
+    read out of the report."""
+    image = job["image"]
+    code = os.path.join(work, "code")
+    _unpack(job.get("code"), code)
+    _ensure_image(image)
+    if not _code_dir_exists(job, code):
+        return _no_code_dir(job)
+    placed = _place_all(code, job.get("files"))
+    _drop_conftests(code, placed)
+    report_dir = os.path.join(work, "report")
+    os.makedirs(report_dir)
+    os.chmod(report_dir, 0o777)
+    ran, _, log = _whole_run(
+        job,
+        image,
+        code,
+        work,
+        job["runCmd"],
+        mounts=((report_dir, REPORT_DIR),),
+        env=(("JUDGE_REPORT", REPORT_FILE),),
+    )
+    reply = _whole_reply(ran, log)
+    report = os.path.join(report_dir, os.path.basename(REPORT_FILE))
+    try:
+        if not os.path.isfile(report) or os.path.islink(report):
+            raise ReportError("report_missing")
+        if os.path.getsize(report) > REPORT_MAX_BYTES:
+            raise ReportError("report_too_large")
+        with open(report, "rb") as found:
+            data = found.read(REPORT_MAX_BYTES + 1)
+        tests, truncated = parse_junit(data, MESSAGE_BYTES)
+        if not tests:
+            raise ReportError("report_empty")
+    except ReportError as exc:
+        reply["scoreError"] = exc.code
+        return reply
+    room = max(128, min(MESSAGE_BYTES, REPLY_BUDGET // 2 // max(len(tests), 1)))
+    for test in tests:
+        test["message"] = test["message"].encode()[:room].decode("utf-8", "ignore")
+    reply["tests"] = tests
+    reply["testsTruncated"] = truncated
+    return reply
+
+
+def _commands_script(commands):
+    """The commands as one shell script that stops at the first that fails,
+    saying which one did on stdout."""
+    steps = []
+    for number, command in enumerate(commands, 1):
+        steps.append(
+            "(\n" + command + "\n) || { s=$?; "
+            f'echo "[command {number} exited $s]"; exit $s; }}'
+        )
+    return "\n".join(steps)
+
+
+def judge_command(job, work):
+    """Grading commands: the setter's protected and grader files put back,
+    the commands run in order, the score read from the last ``SCORE: x/y``
+    line or from score.json at the repository root."""
+    image = job["image"]
+    code = os.path.join(work, "code")
+    _unpack(job.get("code"), code)
+    _ensure_image(image)
+    if not _code_dir_exists(job, code):
+        return _no_code_dir(job)
+    _place_all(code, job.get("files"))
+    score_json = os.path.join(code, SCORE_JSON)
+    # A score.json the student committed is not a score: only one the
+    # commands write during this run counts.
+    if os.path.isdir(score_json) and not os.path.islink(score_json):
+        shutil.rmtree(score_json)
+    elif os.path.lexists(score_json):
+        os.remove(score_json)
+    ran, stdout, log = _whole_run(
+        job, image, code, work, _commands_script(job.get("commands") or [])
+    )
+    reply = _whole_reply(ran, log)
+    try:
+        if str(job.get("scoreSource") or "LINE") == "JSON":
+            if not os.path.isfile(score_json) or os.path.islink(score_json):
+                raise ReportError("score_missing")
+            with open(score_json, "rb") as found:
+                score = parse_score_json(found.read(SCORE_JSON_MAX_BYTES + 1))
+        else:
+            score = parse_score_line(stdout)
+    except ReportError as exc:
+        reply["scoreError"] = exc.code
+        return reply
+    reply["score"] = score
+    return reply
+
+
+#: Each kind of suite the runner knows how to judge.
+KINDS = {"IO": judge_io, "SCRIPT": judge_script, "COMMAND": judge_command}
 
 
 def judge(job):

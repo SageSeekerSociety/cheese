@@ -9,10 +9,12 @@
     :failed="failed"
     :failure-reason="failureReason"
     :busy-id="busyId"
+    :rejudging="rejudging"
     @approve="approve"
     @reject="reject"
     @deadline="setDeadline"
     @retry="load"
+    @rejudge="rejudge"
     @review="events.emit('review-participant', $event)"
   />
 </template>
@@ -36,7 +38,7 @@ import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { toast } from '@/lib/toast'
-import { readJudgeSummaries } from '@/views/tasks/composables/useTaskJudge'
+import { readJudgeSummaries, rejudgeLatest } from '@/views/tasks/composables/useTaskJudge'
 import { useEvents } from '@/views/tasks/events'
 
 const props = defineProps<{
@@ -146,6 +148,24 @@ async function setDeadline(id: number, at: number) {
     events.emit('participation-changed')
   } catch {
     toast.error(t('tasks.roster.deadlineFailed'))
+  }
+}
+
+const rejudging = ref(false)
+/** 重新评测全部最新提交：排上几版、复用几版说一声，再重读「测试点」那一列。 */
+async function rejudge() {
+  const task = props.taskData
+  if (!task || rejudging.value) return
+  rejudging.value = true
+  try {
+    const counts = await rejudgeLatest(task.id)
+    if (counts.queued + counts.reused === 0) toast.info(t('tasks.judge.rejudge.nothing'))
+    else toast.success(t('tasks.judge.rejudge.done', { queued: counts.queued, reused: counts.reused }))
+    await load()
+  } catch (e) {
+    toast.error(axiosErrorMessage(e, t('tasks.judge.rejudge.failed')))
+  } finally {
+    rejudging.value = false
   }
 }
 
