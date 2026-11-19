@@ -242,10 +242,14 @@ def _change_the_card(client, card_id: str, dance) -> None:
     asyncio.run(_run())
 
 
-_ACCEPT_AND_TASKS = [
-    {"type": "state", "resource": "accept"},
-    {"type": "state", "resource": "tasks"},
-]
+def _card_frames(room: str) -> list[tuple[str, dict]]:
+    # A card's state changes the project sidebar's channel row as well as its
+    # own pages. All three notifications obey the same transaction boundary.
+    return [
+        (room, {"type": "state", "resource": "topics", "id": room}),
+        (room, {"type": "state", "resource": "accept"}),
+        (room, {"type": "state", "resource": "tasks"}),
+    ]
 
 
 def test_a_released_savepoint_waits_for_the_card_s_commit(signed_in, published):
@@ -260,7 +264,7 @@ def test_a_released_savepoint_waits_for_the_card_s_commit(signed_in, published):
         assert published.frames == [], "a released savepoint is not a commit"
 
     _change_the_card(signed_in, card_id, scenario)
-    assert published.frames == [(room, frame) for frame in _ACCEPT_AND_TASKS]
+    assert published.frames == _card_frames(room)
 
 
 def test_another_savepoint_s_rollback_leaves_the_card_s_pages(signed_in, published):
@@ -276,9 +280,7 @@ def test_another_savepoint_s_rollback_leaves_the_card_s_pages(signed_in, publish
         await other.rollback()
 
     _change_the_card(signed_in, card_id, scenario)
-    assert published.frames == [(room, frame) for frame in _ACCEPT_AND_TASKS], (
-        "一次无关的回滚把帧带走了"
-    )
+    assert published.frames == _card_frames(room), "一次无关的回滚把帧带走了"
 
 
 def test_a_rolled_back_savepoint_s_card_change_tells_nobody(signed_in, published):
@@ -308,4 +310,4 @@ def test_a_card_staged_in_two_savepoints_tells_its_pages_once(signed_in, publish
         await session.flush()
 
     _change_the_card(signed_in, card_id, scenario)
-    assert published.frames == [(room, frame) for frame in _ACCEPT_AND_TASKS]
+    assert published.frames == _card_frames(room)
