@@ -94,6 +94,16 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
     name: 'rejudge',
     test: { method: 'POST', path: '/tasks/42/judge/rejudge', args: [42] },
   },
+  {
+    label: 'stats of a stage',
+    name: 'stats',
+    test: { method: 'GET', path: '/tasks/42/judge/stats', args: [42, 's2'], query: [['stage', 's2']] },
+  },
+  {
+    label: 'stats of the first stage',
+    name: 'stats',
+    test: { method: 'GET', path: '/tasks/42/judge/stats', args: [42] },
+  },
 ]
 
 describe('题目测试点 browser contract', () => {

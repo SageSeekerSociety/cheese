@@ -5,6 +5,7 @@
 import type {
   TaskCodeVersion,
   TaskJudgeRun,
+  TaskJudgeStatsView,
   TaskJudgeSummary,
   TaskRejudgeCounts,
   TaskSelfTestView,
@@ -77,6 +78,13 @@ export namespace TaskJudgeApi {
   export const rejudge = (taskId: number, stage?: string | null) =>
     axiosRequest<TaskRejudgeCounts>(
       { url: `/tasks/${taskId}/judge/rejudge`, method: 'POST', params: stage ? { stage } : undefined },
+      true
+    )
+
+  /** 「数据」页签的测试点数据（只给能批改的人）：用例通过率、测试分分布、累计额度。 */
+  export const stats = (taskId: number, stage?: string | null) =>
+    axiosRequest<TaskJudgeStatsView>(
+      { url: `/tasks/${taskId}/judge/stats`, method: 'GET', params: stage ? { stage } : undefined },
       true
     )
 }

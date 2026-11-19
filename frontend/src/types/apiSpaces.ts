@@ -529,6 +529,10 @@ export type LearningClassTaskDifficulty = {
   avgHours: number | null
   stuckRate: number | null
   answerSeekers: number | null
+  /** 挂着测试点的题：每人每阶段最新那一版提交的测试平均通过率（0–1）与读得出分的份数；
+   *  没有测试点、或不足 3 份时为 null。 */
+  testPassRate?: number | null
+  testJudged?: number | null
 }
 
 export type LearningClassTasks = { enabled: boolean; minPeople: number; tasks: LearningClassTaskDifficulty[] }

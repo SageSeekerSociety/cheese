@@ -275,6 +275,10 @@ class TaskDifficultyOut(BaseModel):
     avg_hours: float | None = Field(alias="avgHours")
     stuck_rate: float | None = Field(alias="stuckRate")
     answer_seekers: int | None = Field(alias="answerSeekers")
+    #: 挂着测试点的题：每人每阶段最新那一版提交的测试平均通过率（0–1），和读得出分的
+    #: 份数；没有测试点、或不足 3 份时为 null。
+    test_pass_rate: float | None = Field(default=None, alias="testPassRate")
+    test_judged: int | None = Field(default=None, alias="testJudged")
 
 
 class LearningClassTasksOut(BaseModel):
