@@ -859,6 +859,41 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
   }
 });
 
+// 侧栏头里团队名那根链接（「知是」那一行）只该占字本身那么宽。这一列是 flex column，
+// 链接默认被 stretch 拉成整列宽，名字右边那一大片空白也成了链接的一部分——点在那儿进
+// 了团队页，报上来是「点空白跳回首页」。这个错只有渲染出来的盒子看得见，vitest 量不到。
+test("侧栏头的团队名链接只盖住字，右侧空白交给切换器", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await apiLogin(page);
+  await openFirstProject(page);
+
+  const team = page.getByTestId("project-switcher").locator("a.frame-top__team");
+  await expect(team).toBeVisible();
+  const box = await team.boundingBox();
+  expect(box, "the team link must have a rendered box").not.toBeNull();
+
+  // 链接里那段字自己占多宽：和链接的盒子比，拉成整列就会宽出一大截。
+  const textWidth = await team.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getBoundingClientRect().width;
+  });
+  expect(box!.width - textWidth, "链接盒子不该比自己的字宽出一截（拉成整列就是那个 bug）").toBeLessThan(8);
+
+  // 字右边同一行的空白处，指针落在切换器按钮里、而不是那根链接：点它开的是项目列表。
+  const hit = await page.evaluate(
+    ({ right, y }) => {
+      const el = document.elementFromPoint(right, y);
+      if (!el) return "nothing";
+      const inLink = el.closest("a.frame-top__team") ? "team-link" : "other";
+      const inSwitcher = el.closest('[data-testid="project-switcher"]') ? "switcher" : "outside";
+      return `${inLink}/${inSwitcher}`;
+    },
+    { right: box!.x + box!.width + 8, y: box!.y + box!.height / 2 }
+  );
+  expect(hit).toBe("other/switcher");
+});
+
 // 设置是盖在整个窗口上的一层（SettingsOverlay），它里面的下拉菜单和对话框却由 Vuetify
 // 挂在 body 下另一层里。两层 z-index 一样时，DOM 里靠后的画在上面；而 Vuetify 那一层
 // 在页面加载时就被提示气泡建好了，排在设置层前面，于是菜单打开了却画在设置层底下，

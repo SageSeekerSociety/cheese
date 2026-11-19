@@ -332,7 +332,12 @@ function clearDrag() {
   white-space: nowrap;
 }
 
+/* 团队名那行是个 <a>：这一列是 flex column，默认 stretch，它就被拉成整列宽，名字右边
+   那一大片空白也成了链接的一部分——点在那儿进了团队页，看着像「点空白跳回首页」。按
+   内容宽，空白留给外面那颗切换器按钮（点它开项目列表）。 */
 .frame-top__team {
+  align-self: flex-start;
+  max-width: 100%;
   overflow: hidden;
   font-size: 12px;
   line-height: 1.3;
