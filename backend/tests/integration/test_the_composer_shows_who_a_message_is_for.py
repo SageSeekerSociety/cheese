@@ -32,9 +32,11 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake import human
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.models import AgentBinding
 from app.domain.room_task.closing import close_after_summary
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -460,6 +462,31 @@ def test_a_draft_that_names_nobody_still_lists_the_teammate_it_calls(
     drafted = _for_whom(client, room, content="明天几点开会？")
 
     assert drafted["agent"]["handle"] == seat
+    assert [mate["handle"] for mate in drafted["teammates"]] == [seat]
+
+
+def test_a_seat_without_an_instance_is_not_listed(client, stub_hooks):
+    """名册上坐着、项目里却没有实例的席位叫不起来（`record_mentions` 跳过它），列进
+    名单就是说这条会交给一个不会醒的队友：老房间还挂着共用 `cheese` 席位时就是这样。"""
+    project, _, room = _channel(client)
+    seat = room_agent_seat(client, room)
+
+    async def seat_a_stranger() -> None:
+        async with client.test_factory() as session:
+            user = await UserRepository(session).create_user(
+                username="cheese-legacy", email="legacy@example.com"
+            )
+            session.add(AgentBinding(user_id=user.id))
+            await session.flush()
+            await TopicMemberService(session).ensure_agent_seat(
+                uuid.UUID(room), "cheese-legacy"
+            )
+            await session.commit()
+
+    client.portal.call(seat_a_stranger)
+
+    drafted = _for_whom(client, room, content=f"<@{seat}> 照 <@cheese-legacy> 说的改")
+
     assert [mate["handle"] for mate in drafted["teammates"]] == [seat]
 
 

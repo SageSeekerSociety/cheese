@@ -30,6 +30,7 @@ from app.domain.agent.turn.store.human import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
+from app.domain.delivery.agent import instances_for_seats
 from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import (
     looks_like_agent_handle,
@@ -255,8 +256,25 @@ async def preview_addressing(
     ]
     # 名字取自这封信自己已经读过的那张名册（`person_mentions` 为每个被 @ 到的席位都写了
     # 一行）：这里是输入框每次停顿都会问一次的地方，再读一遍实例表就是白读。
+    #
+    # 只列**这个项目里真有实例**的席位（`named_seats` 就是那张表）：还挂着共用 `cheese`
+    # 席位的老房间、或者只坐在名册上却没有实例的座位，`record_mentions` 叫不起来，列进来
+    # 就是说这条会交给一个不会醒的队友。私聊里名册是空的（`person_mentions` 不给），那时
+    # 名字从实例表补——不拿 handle 顶，那是人看不到的一串。
     names = {row["handle"]: row["name"] for row in prepared.roster}
-    teammates = [{"handle": seat, "name": names.get(seat) or seat} for seat in seats]
+    missing = [
+        seat for seat in seats if seat in prepared.named_seats and seat not in names
+    ]
+    if missing:
+        for seat, instance in (
+            await instances_for_seats(session, project.id, seats)
+        ).items():
+            names.setdefault(seat, instance.display_name)
+    teammates = [
+        {"handle": seat, "name": names.get(seat, seat)}
+        for seat in seats
+        if seat in prepared.named_seats
+    ]
     agent = None
     if recipient["mentioned"] and may_summon:
         instance = await AgentInstanceService(session).get_in_project(
