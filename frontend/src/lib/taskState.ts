@@ -64,7 +64,7 @@ export interface TaskState {
   tone: TaskStateTone
   /** 状态词（`work.taskState.label.<status>`）。 */
   label: string
-  /** 记号在转：只给「在做」且会话真的在跑的那一刻。 */
+  /** 记号在转：「在做」或修复交付，且会话真的在跑。交付链路本身不算运行。 */
   live: boolean
   /** 第一次看到时要闪一下的那件事的钥匙；不闪是 null。见 `firstSight`。 */
   attention: string | null
@@ -209,9 +209,9 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
     >
   >
 
-/** 做它的 AI 队友此刻是不是真的在跑。频道的任务列表和单个任务带 `session_running`；
- *  项目级列表和侧栏行只带 `moving`（会话在跑，或卡走在交付链路上）—— 「在做」的时候
- *  没有卡在链路上，所以那边 `moving` 就是会话在跑。 */
+/** 任务会话是不是真的在跑，各处列表与任务页都带 `session_running`。
+ *  没有这个字段时，`moving` 只在「在做」格等价于运行；修复交付不能用它推断，
+ *  因为卡走在交付链路上也会让 `moving` 为真。 */
 export function sessionRunning(row: Pick<StateRow, 'session_running' | 'moving'>): boolean {
   return row.session_running ?? row.moving === true
 }
@@ -263,7 +263,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   const nameOf = ctx.nameOf ?? ((handle: string) => handle)
   const note = (row.progress_note ?? '').trim()
   const repairing = phrase === 'fixing_checks' || phrase === 'resolving_conflict' || phrase === 'updating_branch'
-  const live = (kind === 'running' || repairing) && sessionRunning(row)
+  const live = kind === 'running' ? sessionRunning(row) : repairing && row.session_running === true
   const waitsOn = (handle: string | null | undefined, mine: boolean): string | null =>
     mine ? t('work.taskState.waitsOnYou') : handle ? t('work.taskState.waitsOn', { name: nameOf(handle) }) : null
   let icon = look.icon

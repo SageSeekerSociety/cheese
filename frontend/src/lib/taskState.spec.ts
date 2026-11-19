@@ -31,7 +31,7 @@ describe('进行中', () => {
     expect(idle.icon).not.toBe(live.icon)
   })
 
-  it('只有 moving 的行（侧栏、项目级列表）照 moving 判', () => {
+  it('缺少运行字段时，进行中可按 moving 判断', () => {
     expect(taskState(task('running', { moving: true }), ctx).live).toBe(true)
     expect(taskState(task('running', { moving: false }), ctx).live).toBe(false)
   })
@@ -170,6 +170,17 @@ describe('退回后的当前交付步骤', () => {
     expect(state.live).toBe(true)
     expect(taskState(task(phrase, { session_running: false }), ctx).live).toBe(false)
   })
+
+  it.each(['fixing_checks', 'resolving_conflict', 'updating_branch'] as const)(
+    '%s 不把交付链路误当作正在修复',
+    (phrase) => {
+      for (const session_running of [undefined, false]) {
+        const state = taskState(task(phrase, { moving: true, session_running }), ctx)
+        expect(state.live).toBe(false)
+        expect(state.icon).toBe('mdi-progress-clock')
+      }
+    }
+  )
 
   it('当前检查失败仍有红色警示', () => {
     const state = taskState(task('checks_failed'), ctx)

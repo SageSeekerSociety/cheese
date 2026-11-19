@@ -8,7 +8,12 @@ and be at work.
 
 import uuid
 
-from tests.integration.conftest import open_task, post_project, room_agent_seat
+from tests.integration.conftest import (
+    open_task,
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 
 def test_the_room_task_list_says_which_tasks_have_a_session_running(client):
@@ -35,6 +40,20 @@ def test_the_room_task_list_says_which_tasks_have_a_session_running(client):
     rows = {row["id"]: row for row in listed.json()["data"]["data"]}
     assert rows[working["id"]]["session_running"] is True
     assert rows[quiet["id"]]["session_running"] is False
+
+    # The project list and sidebar must not infer this from 'moving': that
+    # flag is also true for a card waiting on the delivery chain.
+    headers = session_auth_headers("alice")
+    project_rows = client.get(
+        f"/projects/{project['id']}/tasks", headers=headers
+    ).json()["data"]["data"]
+    rail_rows = client.get(f"/topics/{room}", headers=headers).json()["data"][
+        "my_tasks"
+    ]["shown"]
+    for listed_rows in (project_rows, rail_rows):
+        by_id = {row["id"]: row for row in listed_rows}
+        assert by_id[working["id"]]["session_running"] is True
+        assert by_id[quiet["id"]]["session_running"] is False
 
 
 def test_a_task_page_says_whether_its_session_is_running(client):
