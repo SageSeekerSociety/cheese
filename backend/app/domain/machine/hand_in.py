@@ -34,6 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import release_read_session
+from app.core.device_failures import DeviceCallError, DeviceOffline
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -297,6 +298,11 @@ async def _commit_on_sandbox(
             commit_command(task.id, author=author, message=message),
             seconds=HAND_IN_S,
         )
+    except (DeviceCallError, DeviceOffline, TimeoutError) as exc:
+        # The machine's own words name its sockets and paths: they go to the
+        # log, and the person is told what they can act on.
+        logger.warning("hand-in of task %s on its sandbox failed: %s", task.id, exc)
+        raise GatewayUnavailableError(say("handInMachineNotResponding")) from exc
     except Exception as exc:
         raise GatewayUnavailableError(
             say("handInFailed", error=exception_text(exc) or type(exc).__name__)

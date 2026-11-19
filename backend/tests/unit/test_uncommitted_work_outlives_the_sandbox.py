@@ -179,8 +179,9 @@ def forge_reads(monkeypatch, platform):
 
 
 async def what_a_person_reads(monkeypatch, platform) -> str:
-    """What a person opening the task's files is told while its sandbox is
-    gone and no new one has taken the task up yet."""
+    """What a person saving the task's files is told while its sandbox is
+    gone and no new one has taken the task up yet (opening them reads the
+    forge, `test_task_files_on_its_own_machine`)."""
     task = SimpleNamespace(
         id=uuid.UUID(platform.task_id),
         room_id=uuid.uuid4(),
@@ -201,7 +202,7 @@ async def what_a_person_reads(monkeypatch, platform) -> str:
         AsyncMock(return_value=({"kind": "device"}, True)),
     )
     with pytest.raises(UpstreamUnavailableError) as raised:
-        await files.live("read", path="report.txt")
+        await files.live("write", path="report.txt", content="x\n", version="0")
     return str(raised.value)
 
 

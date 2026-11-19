@@ -169,6 +169,7 @@
   "handInSandboxReleasedKept": "The task's environment was released after being idle. Its uncommitted changes were saved and come back the next time the AI teammate works in this task; submit for review after that",
   "handInSandboxReleasedKeptBranchMoved": "The task's environment was released after being idle. Its uncommitted changes were saved, but the task's branch has new commits since, so they will not come back on their own and can't be submitted for review now",
   "handInFailed": "Submitting for review failed: {error}. Your saved changes are still there; try again later",
+  "handInMachineNotResponding": "Submitting for review failed: the task's environment did not respond in time. Your saved changes are still there; try again later",
   "handInPushUnconfirmed": "Submitting for review failed: the changes were committed, but reaching the project's repository could not be confirmed. Your saved changes are still there; try again later",
   "handInPeopleOnly": "This is for members handing in their own changes; an AI teammate submits for review with cheese_card(action=request)"
 }
