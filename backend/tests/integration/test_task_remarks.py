@@ -187,3 +187,32 @@ def test_the_roster_names_a_participant_by_the_readers_own_remark(
     )
     assert row["member"]["remark"] == REMARK, row["member"]
     assert row["member"]["name"] == "报名人的公开昵称", row["member"]
+
+
+def test_another_teacher_saving_the_task_reads_it_in_their_own_names(
+    user_client: UserCreator, api_client: TestClient, published_task: dict
+):
+    """A space manager may edit a task they did not set (``task_roles.teaches``),
+    and the answer they get back replaces the page they were on — so it has to
+    name people the way that manager calls them, not publicly."""
+    creator = published_task["creator"]
+    manager = user_client.create_user(nickname="改题的管理员")
+    manager.token = user_client.login(api_client, manager.username, manager.password)
+    added = api_client.post(
+        f"/spaces/{published_task['space_id']}/managers",
+        json={"userId": manager.user_id, "role": "ADMIN"},
+        headers={"Authorization": f"Bearer {creator.token}"},
+    )
+    assert added.status_code == 201, added.text
+
+    # 管理员给出题人起了个自己的叫法。
+    _set_remark(api_client, manager.token, creator.username, REMARK)
+
+    resp = api_client.patch(
+        f"/tasks/{published_task['task_id']}",
+        json={"intro": "管理员改了一句"},
+        headers={"Authorization": f"Bearer {manager.token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    task = resp.json()["data"]["task"]
+    assert task["creator"]["remark"] == REMARK, task["creator"]
