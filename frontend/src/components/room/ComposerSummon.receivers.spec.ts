@@ -2,11 +2,11 @@
 // 头像只叠得下两位、那句话却得说全：少列一位就是承诺一件不会发生的事。
 import type { Component } from 'vue'
 
-import { describe, expect, it } from 'vitest'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
+import { describe, expect, it } from 'vitest'
 
 import ComposerSummon from './ComposerSummon.vue'
 
