@@ -61,18 +61,28 @@ const failureReason = computed(() => loadFailureReason(loadError.value))
 const forbidden = computed(() => isForbidden(loadError.value))
 
 const judgeStats = ref<TaskJudgeStatsView | null>(null)
+/** 测试点那一块现在是哪道题、哪个阶段的：换题时清掉，重试时沿用老师选的阶段。 */
+let judgeFor: { taskId: number; stage: string | null } | null = null
+/** 最后发出去的那一次：先发后到的回答不许盖掉后发的（快速切阶段、换题）。 */
+let judgeTicket = 0
 
 /** 测试点那一块单独取：它读不到不该让整页显示「加载失败」。换阶段时也走这里。 */
 async function loadJudgeStats(stage?: string | null) {
   const taskId = props.taskData?.id
+  const ticket = ++judgeTicket
   if (!taskId || !(props.isCreator || props.isAdmin)) {
     judgeStats.value = null
+    judgeFor = null
     return
   }
+  if (judgeFor?.taskId !== taskId) judgeStats.value = null
+  const wanted = stage !== undefined ? stage : judgeFor?.taskId === taskId ? judgeFor.stage : null
+  judgeFor = { taskId, stage: wanted }
   try {
-    judgeStats.value = await TaskJudgeApi.stats(taskId, stage)
+    const got = await TaskJudgeApi.stats(taskId, wanted)
+    if (ticket === judgeTicket) judgeStats.value = got
   } catch {
-    judgeStats.value = null
+    if (ticket === judgeTicket) judgeStats.value = null
   }
 }
 
