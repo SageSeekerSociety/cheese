@@ -1,0 +1,8 @@
+{
+  "changed": "已修改",
+  "deleteTitle": "删除 {name}？",
+  "name": "名称",
+  "newFile": "新建文件",
+  "newFolder": "新建文件夹",
+  "preparing": "正在准备环境"
+}

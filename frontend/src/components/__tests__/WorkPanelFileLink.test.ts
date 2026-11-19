@@ -255,18 +255,18 @@ describe('点一个文件，落在它真的在的那一格', () => {
     expect(readFile).not.toHaveBeenCalled()
   })
 
-  it('工作树里的源文件 → 照旧开在改动上', async () => {
+  it('工作树里的源文件 → 开在任务的「文件」那一格', async () => {
     docSays('详见 <&src/b.ts>\n')
 
     const { container } = mountPanel()
     await flush()
     await clickChip(container, 'src/b.ts')
 
-    expect(visible(container, '.panel-changes')).toBe(true)
+    expect(visible(container, '.task-files')).toBe(true)
     // 任务页上，文件就是这件任务工作树上的那一份。
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', 'task-1', 'live')
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', null, 'task-1', 'live')
     // 预览现在也画得出源码，所以先问一次房间里有没有这一份（替身按「没有」答），
-    // 没有才照旧落在改动那一格。
+    // 没有才落在「文件」那一格。
     expect(readPreviewFile).toHaveBeenCalledWith('topic-A', 'src/b.ts')
   })
 
@@ -335,8 +335,8 @@ describe('点一个文件，落在它真的在的那一格', () => {
     expect(container.querySelector('[data-testid="project-file"]')).toBeTruthy()
   })
 
-  it('仓库树里的 .html 去「改动」：那是源码，不是房间里的那一份', async () => {
-    // 这一支的工作副本里有它：.html 在那边是源码，该开在改动那格看 diff，不是当网页画。
+  it('仓库树里的 .html 去「文件」：那是源码，不是房间里的那一份', async () => {
+    // 这一支的工作副本里有它：.html 在那边是源码，该开在「文件」那格，不是当网页画。
     listFiles.mockResolvedValue({ data: [{ path: 'site/index.html', bytes: 40 }], total: 1 })
     docSays('源码见 <&site/index.html>\n')
 
@@ -345,8 +345,8 @@ describe('点一个文件，落在它真的在的那一格', () => {
     await clickChip(container, 'site/index.html')
 
     // 房间里没有它（读取失败），所以它落在树上。
-    expect(visible(container, '.panel-changes')).toBe(true)
-    expect(selectedTab(container)).toContain('改动')
+    expect(visible(container, '.task-files')).toBe(true)
+    expect(selectedTab(container)).toContain('文件')
   })
 })
 

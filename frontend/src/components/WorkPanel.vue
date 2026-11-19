@@ -67,6 +67,7 @@ import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
+import TaskFilesHost from './work/TaskFilesHost.vue'
 import { workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
@@ -463,7 +464,7 @@ function enterClass(key: string) {
   return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
 }
 
-const changesRef = ref<InstanceType<typeof PanelChangesHost> | null>(null)
+const codeRef = ref<InstanceType<typeof TaskFilesHost> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
 // 这一面板读的那段对话：任务页上是任务，否则是房间自己。
@@ -562,7 +563,7 @@ function pollThreads() {
 }
 
 function hasContent(key: TabKey): boolean {
-  if (key === 'chat' || key === 'overview' || key === 'threads' || key === 'files') return true
+  if (key === 'chat' || key === 'overview' || key === 'threads' || key === 'files' || key === 'code') return true
   // 「例行事务」也是永远有得看的一格：没有例行事务时它写的是「还没有例行事务，点新建」——
   // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
   // 关着的时候不该为此多打一个请求。
@@ -705,6 +706,7 @@ const fixedMeta = computed<WorkTabMeta[]>(() =>
     faint: tab.empty,
     hint: tab.title,
     signal: asSignal(tab.signal),
+    closable: tab.key === 'code',
   }))
 )
 /** 自由区每一份：它们随读者打开、关掉而来去。 */
@@ -834,7 +836,7 @@ async function openFile(path: string) {
     openFileTab(want)
     return
   }
-  // 剩下的都是源文件，分两处：这件任务的工作副本里有它，就开在「改动」那一格；没有，
+  // 剩下的都是源文件，分两处：这件任务的工作副本里有它，就开在「文件」那一格；没有，
   // 就退回项目当前版本那一格只读地开它——频道里没有这一格，任务还没有分支（没有电脑
   // 打开过它）也算没有。一枚 chip 是读者指名要看的一份文件，不该因为没归到这件任务就
   // 点不开；当前版本里也没有它时，那一格自己会说，并列出改过它的任务。
@@ -847,13 +849,19 @@ async function openFile(path: string) {
       return
     }
     // 这一步是用户点了一份文件，该走守卫问一句。问不到「可以走」就当场收手：`setTab`
-    // 停在原地，「改动」那一格要么是空的、要么指向一份没露面的「改动」——再往下走就是
-    // 一次没有落地、也没人知道的假动作。
-    if (!(await setTab('changes'))) return
+    // 停在原地，再往下走就是一次没有落地、也没人知道的假动作。
+    if (!(await setTab('code'))) return
     await nextTick()
-    if (await changesRef.value?.openFile(want)) return
+    if (await codeRef.value?.openFile(want)) return
   }
   await openFileTab(want, { lines: at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null })
+}
+
+/** 「改动」里的「编辑」：在任务的「文件」那一格打开这份文件。 */
+async function openInFiles(path: string) {
+  if (!(await setTab('code'))) return
+  await nextTick()
+  await codeRef.value?.openFile(path)
 }
 
 // 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。
@@ -1145,15 +1153,38 @@ defineExpose({
             :pane-class="enterClass('changes')"
           >
             <PanelChangesHost
-              ref="changesRef"
               :topic-id="topicId"
               :task-id="taskId"
               :read-only="changesReadOnly"
               :project-id="projectId"
               :active="shown('changes')"
               :refresh-tick="refreshTick"
+              :can-edit="!review && tabs.some((tab) => tab.key === 'code')"
+              @edit-file="openInFiles"
             />
             <template v-if="docked === 'changes'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <!-- 任务的工作副本：人在这里浏览、编辑芝士干活的那一份文件。读者打开它（页签「+」、
+               点一个文件链接、「改动」里的「编辑」）才摆出来。 -->
+          <WorkPane
+            v-if="mounted.has('code')"
+            :target="target('code')"
+            :pane-id="workPaneId('code')"
+            :shown="shown('code')"
+            :pane-class="enterClass('code')"
+          >
+            <TaskFilesHost
+              ref="codeRef"
+              :project-id="projectId"
+              :task-id="taskId"
+              :read-only="changesReadOnly"
+              :active="shown('code')"
+              :refresh-tick="refreshTick"
+              :changed="summary.changedFiles"
+              :phone="withChat"
+              :agent-name="agentName"
+            />
+            <template v-if="docked === 'code'" #dock><slot name="dock" /></template>
           </WorkPane>
           <WorkPane
             v-if="mounted.has('preview')"

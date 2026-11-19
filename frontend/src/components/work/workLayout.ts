@@ -27,4 +27,6 @@ export interface WorkTabMeta {
   signal?: LayoutPanelSignal
   /** 自由区单击打开的那一格：下一次打开会换掉它，双击留下。 */
   temporary?: boolean
+  /** 读者打开时才摆出来、能关的一格（任务的文件）：默认摆法里没有它，关了列在「+」里。 */
+  closable?: boolean
 }

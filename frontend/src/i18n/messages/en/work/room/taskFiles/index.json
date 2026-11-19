@@ -1,0 +1,8 @@
+{
+  "changed": "Changed",
+  "deleteTitle": "Delete {name}?",
+  "name": "Name",
+  "newFile": "New file",
+  "newFolder": "New folder",
+  "preparing": "Preparing the environment"
+}

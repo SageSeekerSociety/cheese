@@ -68,15 +68,15 @@ beforeAll(() => {
   vuetify = createVuetify({ components, directives })
 })
 
-// 桩要替真身答一句「这一支里有没有这份文件」：开到了才回 true，`WorkPanel.openFile`
-// 拿它判断是留在「改动」这一格，还是退到「项目当前版本」那一格。
-const changes = { openFile: vi.fn<(path: string) => Promise<boolean>>(async () => true) }
+// 桩要替真身答一句「这件任务的工作副本里有没有这份文件」：开到了才回 true，
+// `WorkPanel.openFile` 拿它判断是留在「文件」这一格，还是退到「项目当前版本」那一格。
+const files = { openFile: vi.fn<(path: string) => Promise<boolean>>(async () => true) }
 
-const PanelChangesStub = defineComponent({
-  name: 'PanelChanges',
+const TaskFilesStub = defineComponent({
+  name: 'TaskFilesHost',
   setup(_, { expose }) {
-    expose({ openFile: (path: string) => changes.openFile(path) })
-    return () => h('div', { class: 'stub-changes' })
+    expose({ openFile: (path: string) => files.openFile(path) })
+    return () => h('div', { class: 'stub-files' })
   },
 })
 
@@ -107,7 +107,7 @@ function harness() {
     global: {
       plugins: [vuetify, i18n],
       stubs: {
-        PanelChanges: PanelChangesStub,
+        TaskFilesHost: TaskFilesStub,
         PanelSiteHost: true,
         PanelPreview: true,
         RoutinePanelHost: true,
@@ -123,7 +123,7 @@ async function flush() {
 
 beforeEach(() => {
   confirmDiscard.mockReset()
-  changes.openFile.mockReset()
+  files.openFile.mockReset()
 })
 
 describe('后台掀开总览不弹框', () => {
@@ -147,18 +147,18 @@ describe('后台掀开总览不弹框', () => {
 })
 
 describe('开文件被拦下时不装作开了', () => {
-  it('被拦 → 留在原地，也不去动那份没露面的「改动」', async () => {
+  it('被拦 → 留在原地，也不去动那份没露面的「文件」', async () => {
     confirmDiscard.mockResolvedValue(true)
     const { ui, panel, currentTab } = harness()
     await flush()
-    // 先让「改动」挂上（去过一次，它就一直是挂着的）——正是这样，才可能被偷偷去动。
-    await fireEvent.click(await ui.findByRole('tab', { name: /改动/ }))
-    await waitFor(() => expect(currentTab()).toBe('changes'))
+    // 先让「文件」挂上（去过一次，它就一直是挂着的）——正是这样，才可能被偷偷去动。
+    await fireEvent.click(await ui.findByRole('tab', { name: /文件/ }))
+    await waitFor(() => expect(currentTab()).toBe('code'))
     await fireEvent.click(await ui.findByRole('tab', { name: /现场/ }))
     await waitFor(() => expect(currentTab()).toBe('site'))
 
     // 用户点了一份文件，而此刻有人在标注 → 守卫问一句后说「保留」。
-    changes.openFile.mockClear()
+    files.openFile.mockClear()
     confirmDiscard.mockClear()
     confirmDiscard.mockResolvedValue(false)
     await panel().openFile('src/a.ts')
@@ -166,24 +166,24 @@ describe('开文件被拦下时不装作开了', () => {
 
     expect(confirmDiscard).toHaveBeenCalledTimes(1)
     expect(currentTab()).toBe('site')
-    expect(changes.openFile).not.toHaveBeenCalled()
+    expect(files.openFile).not.toHaveBeenCalled()
   })
 
-  it('没被拦 → 切到改动并把文件交给它', async () => {
+  it('没被拦 → 切到「文件」并把文件交给它', async () => {
     confirmDiscard.mockResolvedValue(true)
     const { ui, panel, currentTab } = harness()
     await flush()
-    // 让「改动」先挂上，再看它这一步有没有真的把文件交过去。
-    await fireEvent.click(await ui.findByRole('tab', { name: /改动/ }))
-    await waitFor(() => expect(currentTab()).toBe('changes'))
+    // 让「文件」先挂上，再看它这一步有没有真的把文件交过去。
+    await fireEvent.click(await ui.findByRole('tab', { name: /文件/ }))
+    await waitFor(() => expect(currentTab()).toBe('code'))
     await fireEvent.click(await ui.findByRole('tab', { name: /现场/ }))
     await waitFor(() => expect(currentTab()).toBe('site'))
-    changes.openFile.mockClear()
+    files.openFile.mockClear()
 
     await panel().openFile('src/a.ts')
     await flush()
 
-    expect(currentTab()).toBe('changes')
-    expect(changes.openFile).toHaveBeenCalledWith('src/a.ts')
+    expect(currentTab()).toBe('code')
+    expect(files.openFile).toHaveBeenCalledWith('src/a.ts')
   })
 })

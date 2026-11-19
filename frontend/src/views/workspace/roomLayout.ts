@@ -80,13 +80,14 @@ export function useRoomLayout(
       transient: tab.transient,
       alwaysRender: tab.alwaysRender,
       group: WORK_GROUP,
-      // 固定的几格和今天一样不能关（挪去哪都行）；能关的是打开的任务和文件。
-      closable: !!tab.transient,
+      // 固定的几格不能关（挪去哪都行）；能关的是打开的任务和文件，以及任务的「文件」那一格。
+      closable: !!tab.transient || !!tab.closable,
       minWidth: 360,
       hidden: opts.workHidden(),
       actions: [hideAction],
     }))
-    const fixed = work.filter((panel) => !panel.transient).map((panel) => panel.id)
+    // 默认摆法里只有不能关的那几格：「文件」由读者打开（「+」、点一个文件链接）。
+    const fixed = work.filter((panel) => !panel.closable).map((panel) => panel.id)
     // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给工作面板。
     const wide = window.innerWidth >= 1440
     const arrangement: LayoutNode = {
