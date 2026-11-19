@@ -12,8 +12,8 @@
 
 * ``GET .../participants/{participantId}/code-version`` —— 提交页那块「将要评测的代
   码」：默认分支现在指着的那个 commit，带最后一次提交的说明和推送时间。读得到它的
-  人和读这版提交的人一样（``claim.read``）；项目没有、连的是 GitHub、或者托管方这一
-  刻读不出来时 ``codeVersion`` 是 ``null``，提交页据此留空（``code_version``）。
+  人和读这版提交的人一样（``claim.read``）；项目没有仓库、或者托管方（平台托管的仓
+  库或 GitHub）这一刻读不出来时 ``codeVersion`` 是 ``null``，提交页据此留空（``code_version``）。
 * ``GET .../submissions/{submissionId}/judge`` —— 这一版提交最近一次评测的结果，按看
   的人裁剪。没有评测过时是 ``null``。它**不是评审**：只写着评测结果，老师的评审另存
   （``task_submission_review``），所以「只出了评测结果、老师还没批改」时这一版仍然
@@ -84,7 +84,7 @@ class TaskCodeVersion(BaseModel):
 
 
 class TaskCodeVersionOut(BaseModel):
-    #: 读不出来（项目没有仓库、连的是 GitHub、托管方这一刻读不出来）时是 null。
+    #: 读不出来（项目没有仓库、托管方或 GitHub 这一刻读不出来）时是 null。
     codeVersion: TaskCodeVersion | None
 
 

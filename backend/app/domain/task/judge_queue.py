@@ -89,7 +89,7 @@ async def enqueue_for_submission(
 ) -> TaskJudgeRun | None:
     """Queue the judging of a version just handed in; None when there is
     nothing to judge — the stage carries no 测试点, or no code version was
-    recorded (a GitHub project, a forge that did not answer).
+    recorded (no repository, a forge that did not answer).
 
     The same code judged by the same revision of the same suite has one
     answer, so a version whose commit was already judged done gets that

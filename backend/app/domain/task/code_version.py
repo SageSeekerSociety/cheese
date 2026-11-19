@@ -8,8 +8,7 @@
 读不到就给 ``None`` —— 交作业不该因为托管方慢而交不上来：
 
 * 项目还没有仓库（本地没配 Forgejo 的开发档）；
-* 项目连的是自己的 GitHub：第 1 步只评平台托管的项目，这一版留空（方案 §分步计划），
-  等另一件任务补上只读凭据；
+* 项目连的是自己的 GitHub、而 GitHub App 这一刻读不出来（安装被收回、配额用完）；
 * 分支还不存在（仓库是空的，学生还没推过），或者托管方这一刻读不出来。
 
 留空不是「没有代码」：评测时它会报「运行出错」，老师照样能手动打分（方案 §边界情况）。
@@ -27,8 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import GatewayUnavailableError
 from app.domain.project import forge
 
-#: 平台托管的仓库（``ProjectForge.kind``）。连了 GitHub 的项目这一版不记录。
+#: 读得出默认分支的两种仓库（``ProjectForge.kind``）：平台托管的，和经平台的
+#: GitHub App 连上的 GitHub 仓库（用那个安装的令牌读，``forge.branch_commit``）。
 HOSTED = "forgejo"
+GITHUB = "github_app"
+READABLE = (HOSTED, GITHUB)
 
 
 @dataclass(frozen=True)
@@ -61,9 +63,13 @@ async def for_project(
     """
     try:
         binding = await forge.binding_for_project(project_id, session)
-        if binding is None or binding.kind != HOSTED:
+        if binding is None or binding.kind not in READABLE:
             return None
-        branch = binding.default_branch or "main"
+        branch = binding.default_branch
+        if not branch and binding.kind == GITHUB:
+            # 连上 GitHub 时没记下默认分支（老的绑定）：问一次，记在绑定上。
+            branch = await forge.default_branch_if_any(project_id, session)
+        branch = branch or "main"
         sha = await forge.branch_commit(project_id, session, branch)
     except GatewayUnavailableError:
         # 托管方读不出来（仓库还没建、超时、额度用完）不等于学生没交作业：这一版留空，
