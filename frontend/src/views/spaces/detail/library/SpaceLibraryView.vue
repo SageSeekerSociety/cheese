@@ -320,8 +320,13 @@ const pane = usePaneWidth('cheese.library.previewShare', detailRef)
     @confirm="submitUpload"
   >
     <div class="slib-upload">
+      <!-- `active` 一打开就挂着：「文件」一直骑在边框上，不在点下去时往上飞。
+           这个框不收打字，只有选好的文件名，框里空着不碍事。点下去那一下同时会叫出
+           系统的选文件面板，面板开着时页面不往前走，飞标签的动画会停在半道 —— 看上去
+           就是抖两下、没上去，关掉面板才落位。 -->
       <v-file-input
         v-model="pickedFile"
+        active
         autocomplete="off"
         density="compact"
         variant="outlined"
