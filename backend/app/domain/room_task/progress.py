@@ -63,8 +63,8 @@ def clear(task: Task) -> None:
 
 
 def back_to_work(task: Task, *, at: datetime) -> None:
-    """The card was returned or voided: the task is back in its teammate's
-    hands (在做). Nobody reported it, so nobody is named as having said so and
+    """The card was voided: the task is back in its teammate's hands (在做).
+    Nobody reported it, so nobody is named as having said so and
     nobody's session is being watched (``progress_set_by`` stays empty): the
     mark that sat beside the report the card cleared went with it."""
     task.progress_state = TaskProgress.working

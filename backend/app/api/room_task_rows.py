@@ -163,7 +163,12 @@ def _task_markers(
     )
     return {
         "awaits_me": attention is not None,
-        "needs_my_action": bool(me) and (waiting == me or owner == me),
+        "needs_my_action": bool(me)
+        and (
+            waiting == me
+            or owner == me
+            or (shown.phrase == presentation.NeedsYou.awaiting_review and me in handles)
+        ),
     }
 
 

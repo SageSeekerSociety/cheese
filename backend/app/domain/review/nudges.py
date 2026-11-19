@@ -209,7 +209,9 @@ async def _review_nudge(
         detail=body,
         detail_label=say("labelReviewComments"),
         note=f"{head}（{len(signals)} 条）",
-        note_code=notes.NoteCode.accept_pr_stalled,
+        # A COMMENTED review (including useful inline feedback) is a notice,
+        # not a rejection. Only an explicit request for changes blocks the card.
+        note_code=notes.NoteCode.accept_pr_stalled if asked else None,
         event_type=EVENT_PR_REVIEW,
     )
 

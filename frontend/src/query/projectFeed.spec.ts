@@ -50,6 +50,7 @@ const { queryClient } = await import('@/query/client')
 const { keys } = await import('@/query/keys')
 const { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } = await import('@/query/project')
 const { useProjectFeed } = await import('@/query/projectFeed')
+const { taskState } = await import('@/lib/taskState')
 
 const ME = 'me'
 const row = (id: string, at: string) => ({ id, title: id, last_activity_at: at }) as unknown as Topic
@@ -127,6 +128,48 @@ describe('项目推送', () => {
     expect(rows.map((topic) => topic.id)).toEqual(['b', 'a'])
     expect(queryClient.getQueryData(keys.projectUnread('p', ME))).toEqual({ b: { count: 1, new: true, messages: 1 } })
     scope.stop()
+  })
+
+  it('退回后的修复、检查、决策和再次退回按项目推送更新，不需要刷新', async () => {
+    serve()
+    const { scope, channel } = await watchProject()
+    try {
+      const cases = [
+        ['bounced', 'mdi-undo-variant', 'danger'],
+        ['running', 'mdi-timelapse', 'ok'],
+        ['awaiting_checks', 'mdi-timer-sand', 'neutral'],
+        ['awaiting_review', 'mdi-help-circle', 'warn'],
+        ['awaiting_answer', 'mdi-help-circle', 'warn'],
+        ['bounced', 'mdi-undo-variant', 'danger'],
+      ] as const
+      for (const [phrase, icon, tone] of cases) {
+        api.getTopic.mockResolvedValue({
+          ...row('a', '2026-10-09T10:00:00Z'),
+          my_tasks: {
+            open: 1,
+            shown: [
+              {
+                id: 'task-a',
+                presentation: { column: 'needs_you', phrase },
+                session_running: phrase === 'running',
+                needs_my_action: phrase === 'awaiting_review' || phrase === 'awaiting_answer',
+                card: { id: 'card-a', status: phrase === 'bounced' ? 'rejected' : 'pending' },
+              },
+            ],
+          },
+        })
+        tell(channel, { resource: 'topics', id: 'a' })
+        await flush()
+        const topic = queryClient
+          .getQueryData<{ data: Topic[] }>(keys.projectTopics('p'))!
+          .data.find((t) => t.id === 'a')!
+        const state = taskState(topic.my_tasks!.shown[0], { viewer: ME, agentName: '芝士S' })
+        expect(state.icon).toBe(icon)
+        expect(state.tone).toBe(tone)
+      }
+    } finally {
+      scope.stop()
+    }
   })
 
   it('消息一条接一条地来：未读不跟着每一条问，几秒里的并成一次', async () => {

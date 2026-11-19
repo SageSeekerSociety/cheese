@@ -262,7 +262,8 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   const now = ctx.now ?? Date.now()
   const nameOf = ctx.nameOf ?? ((handle: string) => handle)
   const note = (row.progress_note ?? '').trim()
-  const live = kind === 'running' && sessionRunning(row)
+  const repairing = phrase === 'fixing_checks' || phrase === 'resolving_conflict' || phrase === 'updating_branch'
+  const live = (kind === 'running' || repairing) && sessionRunning(row)
   const waitsOn = (handle: string | null | undefined, mine: boolean): string | null =>
     mine ? t('work.taskState.waitsOnYou') : handle ? t('work.taskState.waitsOn', { name: nameOf(handle) }) : null
   let icon = look.icon
@@ -311,11 +312,25 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       break
     case 'asking': {
       const mine = row.needs_my_action === true
+      if (!mine) tone = 'neutral'
       line = waitsOn(row.waiting_on, mine) ?? ''
       waits = line
       break
     }
     case 'review': {
+      if (phrase === 'gate_running' || phrase === 'awaiting_checks') {
+        icon = LOOK.waiting.icon
+        tone = LOOK.waiting.tone
+      } else if (repairing) {
+        icon = live ? LOOK.running.icon : RUNNING_IDLE_ICON
+        tone = LOOK.running.tone
+      } else if (phrase === 'checks_failed') {
+        icon = LOOK.blocked.icon
+        tone = 'danger'
+      } else if (phrase === 'awaiting_review' && row.needs_my_action === true) {
+        icon = LOOK.asking.icon
+        tone = LOOK.asking.tone
+      }
       // 只有卡真在等人审阅（`awaiting_review`）时才写在等谁，名字取卡上的审阅人：任务
       // 建时定的那位可能已经改由别人审阅。跑检查、修检查、解冲突时写的是那一步，下一步
       // 在平台和队友手上，检查没过时在负责人手上，都不是在等谁审阅。
