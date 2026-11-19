@@ -35,6 +35,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine.preview_wake import wake_for_files
+from app.domain.machine.task_machine import prepare_for_write
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
@@ -277,6 +278,8 @@ async def write_file(
         release_session=True,
         executor=execution.call,
         wake=partial(wake_for_files, db.bind),
+        # A save brings the task's machine back when none holds its copy.
+        prepare=partial(prepare_for_write, db.bind, actor),
     ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":

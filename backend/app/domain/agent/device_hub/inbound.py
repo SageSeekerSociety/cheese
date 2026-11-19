@@ -21,6 +21,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from app.core.device_failures import EXECUTOR_UNREACHABLE
 from app.domain.agent import device_link
 from app.domain.agent.device_contract import DeviceCallError, HubScreen, ViewerTransport
 from app.domain.agent.device_hub import machine
@@ -113,7 +114,10 @@ async def on_device_message(
                     msg.id,
                     time.monotonic_ns(),
                 )
-                raise DeviceCallError(msg.error)
+                # The connector could not carry the call to the executor and
+                # back (no state directory, no socket, a connection cut): the
+                # executor itself answered nothing.
+                raise DeviceCallError(msg.error, failure_code=EXECUTOR_UNREACHABLE)
             else:
                 logger.debug(
                     "execution_timing stage=device_complete trace=%s mono_ns=%d",

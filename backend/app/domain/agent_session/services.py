@@ -14,8 +14,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import (
-    LOST_KEY,
-    PARKED_KEY,
+    RELEASED,
     AgentSession,
     SessionPlace,
 )
@@ -24,6 +23,13 @@ from app.domain.agent_session.repositories import (
     AgentSessionRepository,
     Continuation,
 )
+
+
+def lease_released(lease: dict | None) -> bool:
+    """Whether ``lease``'s sandbox was destroyed or parked since it was placed
+    (``RELEASED``): it names where the session's machine was, and nothing
+    there answers."""
+    return bool(lease) and lease.get("status") == RELEASED
 
 
 class AgentSessionService:
@@ -254,9 +260,9 @@ class AgentSessionService:
     ) -> tuple[dict, bool] | None:
         """The machine lease holding this task's (or 支线's) working copy on the
         room's current ``generation``, and whether nothing on it answers for
-        that copy now: its cloud sandbox was destroyed (``LOST_KEY``), or
-        parked with its processes stopped (``PARKED_KEY``). Either way the
-        session's next tool call places it again.
+        that copy now: its sandbox was destroyed or parked and nothing has
+        placed it again since (``RELEASED``). Whether its agent has been told
+        is another fact (``LOST_KEY``), and does not enter into this.
 
         Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
@@ -284,10 +290,7 @@ class AgentSessionService:
                     or lease.get("home")
                 )
             ):
-                request = row.execution_request or {}
-                return lease, bool(
-                    request.get(LOST_KEY) or request.get(PARKED_KEY) is not None
-                )
+                return lease, lease_released(lease)
         return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:

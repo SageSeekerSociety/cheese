@@ -247,8 +247,28 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
     files is using the sandbox, as opening its preview is. Waited for, since
     the request needs it awake; one that is not frozen costs one read. A
     thaw that fails is logged (`thaw_preview_on_machine`) and the request
-    goes on to say the machine did not answer."""
+    goes on to say the machine did not answer.
+
+    A person reading or saving the files is using the sandbox as its teammate
+    does: its idle clock moves to now (at most once per ``ACTIVE_STEP``), so
+    the idle sweep does not take it away under somebody editing in it."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
+        now = datetime.now(UTC)
+        await db.execute(
+            update(SandboxHome)
+            .where(
+                SandboxHome.session_id.in_(
+                    select(AgentSession.id).where(
+                        AgentSession.conversation_id == conversation_id
+                    )
+                ),
+                SandboxHome.stopped_at.is_(None),
+                SandboxHome.frozen_at.is_(None),
+                SandboxHome.active_at <= now - ACTIVE_STEP,
+            )
+            .values(active_at=now)
+        )
+        await db.commit()
         frozen = list(
             await db.scalars(
                 select(AgentSession.id)

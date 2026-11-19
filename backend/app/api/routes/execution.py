@@ -33,6 +33,7 @@ from app.domain.agent.device_hub import (
     DeviceUnreachable,
 )
 from app.domain.agent.task_checkout import checkout_steps
+from app.domain.agent_session.services import lease_released
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine import session_work
@@ -186,11 +187,14 @@ async def execute(
         owned = await owner_reads.legacy_execution(db, topic_id)
         session_id = owned.id if owned is not None else None
     lease = owned.work_lease if owned is not None else None
+    # Its sandbox was destroyed or parked since (`RELEASED`): the lease is
+    # still this session's, and nothing on it answers.
+    released = lease_released(lease)
     if (
         owned is None
         or not lease
         or lease.get("kind") != "device"
-        or lease.get("status", "ready") != "ready"
+        or (lease.get("status", "ready") != "ready" and not released)
         or (
             lease_generation is not None
             and lease.get("generation") != str(lease_generation)
@@ -200,6 +204,13 @@ async def execute(
         or claims.get("r") != str(resource_id)
         or place_resource != resource_id
     ):
+        raise ConflictError("Execution generation is no longer current")
+    if released:
+        if _checkpoints(payload.method, payload.params):
+            # The turn ended after its sandbox went while idle: there is
+            # nothing on a machine to push, and what it held was pushed by the
+            # checkpoint of the turn that last used it, or kept.
+            return {}
         raise ConflictError("Execution generation is no longer current")
     if payload.method not in {
         "ping",

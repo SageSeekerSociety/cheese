@@ -41,6 +41,7 @@ from app.domain.agent_session.models import (
     LOST_KEY,
     THAW_KEY,
     AgentSession,
+    released_lease,
 )
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
@@ -733,6 +734,7 @@ class HostPool(PoolSweep):
             and lease.get("device_id") == host.device_id
         ):
             row.execution_request = {**(row.execution_request or {}), LOST_KEY: True}
+            row.work_lease = released_lease(row.work_lease)
         await self.leave(session_id)
         return True
 

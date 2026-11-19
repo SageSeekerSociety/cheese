@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.db import release_read_session
-from app.core.device_failures import DeviceCallError, DeviceOffline
+from app.core.device_failures import (
+    EXECUTOR_UNREACHABLE,
+    DeviceCallError,
+    DeviceOffline,
+)
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -32,7 +36,12 @@ from app.domain.project.forge import (
 )
 from app.domain.repository import merge3, task_rows
 from app.domain.repository.kept_work import kept_work
-from app.domain.repository.ports import CompareStatus, ExecutorCall, WakeWorkingCopy
+from app.domain.repository.ports import (
+    CompareStatus,
+    ExecutorCall,
+    PrepareWorkingCopy,
+    WakeWorkingCopy,
+)
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
     PREVIEW_TEXT_BYTES,
@@ -105,6 +114,13 @@ _WHOLE_COPY = ("tree", "diff")
 #: The operations that only read the task's files: answered from the forge
 #: while no machine holds them.
 _READS = ("tree", "diff", "read")
+#: The operations that change the task's files: a person's save.
+_WRITES = ("write", "write_bytes")
+
+
+class _ExecutorAbsent(Exception):
+    """No executor answered on the machine holding the task's copy: the
+    connector found no state directory or socket for it (`EXECUTOR_UNREACHABLE`)."""
 
 
 class _NoWorkingCopy(NotFoundError):
@@ -123,6 +139,7 @@ class ProjectFiles:
         executor: ExecutorCall | None = None,
         compare_status: CompareStatus | None = None,
         wake: WakeWorkingCopy | None = None,
+        prepare: PrepareWorkingCopy | None = None,
     ):
         """``executor`` 是在任务那台机器上跑一次文件操作的东西（`ports.ExecutorCall`）；
         ``compare_status`` 是问托管方「这个提交交付过没有」那一次调用
@@ -139,6 +156,10 @@ class ProjectFiles:
         self._compare_status = compare_status
         # 叫醒冻住的环境（`ports.WakeWorkingCopy`）；不给就不叫醒。
         self._wake = wake
+        # Brings the task's copy onto a machine for a person's write
+        # (`ports.PrepareWorkingCopy`); without it a write goes only to a
+        # machine that holds the copy already.
+        self._prepare = prepare
         # The task's laid-back kept snapshot, once asked (`_laid_back`).
         self._kept: tuple[str] | None = None
 
@@ -260,6 +281,8 @@ class ProjectFiles:
         task = await self.task()
         if task is None:
             raise ValidationError(say("taskRequired"))
+        if operation in _WRITES and self._prepare is not None:
+            return await self._write(task, operation, params)
         found = await self._working_copy(task)
         if (
             found is not None
@@ -267,16 +290,66 @@ class ProjectFiles:
             and (operation not in _READS or not await self._pushed(task))
         ):
             # Its sandbox was destroyed with its home (idle, or given up with
-            # its host) or parked with its processes stopped, and the lease
-            # still names it until the task's next tool call places it again.
-            # What it held is read from the forge; nothing is written to it,
-            # and a task with nothing there is told what became of its work.
+            # its host) or parked with its processes stopped, and its lease
+            # says so until a placement replaces it. What it held is read from
+            # the forge; a task with nothing there is told what became of its
+            # work.
             raise UpstreamUnavailableError(await self._released(task))
         if found is None or found[1]:
             # No machine holds a working copy of it: the same as a machine
             # without one.
             return await self._without_working_copy(task, operation)
-        target = found[0]
+        try:
+            result = await self._on_machine(task, found[0], operation, params)
+        except _ExecutorAbsent as exc:
+            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+        if result.get("error") == "not_found":
+            if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
+                return await self._without_working_copy(task, operation)
+            raise NotFoundError(say("taskFileNotOnMachine"))
+        return result
+
+    async def _write(self, task: Any, operation: str, params: dict):
+        """A person's write, to the machine holding the task's copy.
+
+        A copy no machine holds yet — none was ever placed, its sandbox was
+        destroyed or parked, or the machine has no checkout of the task — and
+        an executor that is not there to answer (it stopped for sitting idle)
+        are all the same to the person: the copy is brought onto a machine
+        for them first (`ports.PrepareWorkingCopy`), and then written. Bringing
+        it takes a while; one not ready within the time a save waits is
+        answered as a machine still being prepared, which the save can be
+        sent again after."""
+        assert self._prepare is not None
+        found = await self._working_copy(task)
+        if found is not None and not found[1]:
+            try:
+                result = await self._on_machine(task, found[0], operation, params)
+                if result.get("missing") != "worktree":
+                    return self._written(result)
+            except _ExecutorAbsent:
+                pass
+        await self._release()
+        await self._prepare(task.id)
+        found = await self._working_copy(task)
+        if found is None or found[1]:
+            raise UpstreamUnavailableError(await self._released(task))
+        try:
+            result = await self._on_machine(task, found[0], operation, params)
+        except _ExecutorAbsent as exc:
+            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+        return self._written(result)
+
+    def _written(self, result: dict) -> dict:
+        if result.get("error") == "not_found":
+            raise NotFoundError(say("taskFileNotOnMachine"))
+        return result
+
+    async def _on_machine(
+        self, task: Any, target: dict, operation: str, params: dict
+    ) -> dict:
+        """One file operation on the task's copy, on the machine ``target``
+        names. Raises ``_ExecutorAbsent`` when no executor there answered it."""
         if self._executor is None:  # pragma: no cover - 接线漏了才会走到
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("executor was not handed in")
@@ -308,11 +381,9 @@ class ProjectFiles:
             logger.warning(
                 "task %s: %s on its machine failed: %s", task.id, operation, exc
             )
+            if exc.failure_code == EXECUTOR_UNREACHABLE:
+                raise _ExecutorAbsent from exc
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
-        if result.get("error") == "not_found":
-            if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
-                return await self._without_working_copy(task, operation)
-            raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
         return result
