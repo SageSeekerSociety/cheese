@@ -20,7 +20,7 @@
   "summonOffMany": "交给{name}（⌘/Ctrl+Enter），右键换一位队友",
   "summonOffManyTouch": "交给{name}，长按换一位队友",
   "summonOn": "这条会交给{name}，点一下取消",
-  "summonOnMany": "这条会交给{names}",
+  "summonOnMany": "这条会交给{names}，每位各起一轮",
   "summonPeopleOnly": "这句只说给 {'@'} 到的人",
   "summonPicker": "交给哪位队友",
   "summonPickerBusy": "正在忙",

@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 
@@ -30,6 +30,7 @@ from app.domain.agent.turn.store.human import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
+from app.domain.delivery.agent import instances_for_seats
 from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import (
     looks_like_agent_handle,
@@ -175,6 +176,10 @@ class Addressing:
     people: list[str]
     place: str
     task_status: str | None
+    #: 这条消息会叫起来的**全部**队友，第一位是 `agent`（有的话），按正文里点到的
+    #: 先后排。一条消息给点到的每一位队友各记一条投递（`delivery/mention.py`），不只
+    #: 第一位，所以输入框要说“会交给谁”就得说全：只说第一位，屏幕上就少了一位。
+    teammates: list[dict] = field(default_factory=list)
 
     def as_json(self) -> dict:
         return {
@@ -183,6 +188,7 @@ class Addressing:
             "people": self.people,
             "place": self.place,
             "task_status": self.task_status,
+            "teammates": self.teammates,
         }
 
 
@@ -240,6 +246,22 @@ async def preview_addressing(
                 if f"<@{admission.addressed}>" in prepared.content
                 else "reply"
             )
+    # 这条会叫起来的全部队友：正文里点到、又在这间房的每一个席位各记一条投递
+    # （`delivery/mention.py` 的 `named_seats`），所以名单按正文里点到的先后排，同一位
+    # 只算一次。第一位同时是 `agent`（为它开一轮的那位）；`record_mentions` 会跳过它。
+    seats = [
+        h
+        for h in dict.fromkeys(mentioned_handles(prepared.content))
+        if h in set(prepared.agent_handles) and h != author
+    ]
+    teammates: list[dict] = []
+    if may_summon and seats:
+        instances = await instances_for_seats(session, project.id, seats)
+        teammates = [
+            {"handle": seat, "name": instances[seat].display_name}
+            for seat in seats
+            if seat in instances
+        ]
     agent = None
     if recipient["mentioned"] and may_summon:
         instance = await AgentInstanceService(session).get_in_project(
@@ -266,6 +288,7 @@ async def preview_addressing(
             else "channel"
         ),
         task_status=place.task.status.value if place.task is not None else None,
+        teammates=teammates,
     )
 
 

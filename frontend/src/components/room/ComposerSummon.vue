@@ -34,6 +34,9 @@ const props = defineProps<{
   mates: SummonMate[]
   /** 头像上画的那几位：正文里 @ 到的，没有就是点一下会交给的那一位。最多叠两位。 */
   shown: SummonMate[]
+  /** 这条发出去**会叫到的全部队友**，按点到的先后、同一位只算一次。头像只叠得下两位，
+   *  说的不能只说两位：少列一位，就是在承诺一件不会发生的事。不给就跟 `shown`。 */
+  receivers?: SummonMate[]
   /** 这条消息会不会交给队友（读的是正文）。 */
   on: boolean
   /** 规则常亮（任务负责人）：点了只说明，不改正文。 */
@@ -63,14 +66,15 @@ const canPick = computed(() => !props.fixed && props.ready && props.mates.length
 const isBusy = computed(() => !!lead.value && props.busy.includes(lead.value.handle))
 /** 这条发出去：交给它（on）、它正在跑一轮会接着看（busy）、谁也不交（off）。 */
 const face = computed<'on' | 'busy' | 'off'>(() => (props.on ? 'on' : isBusy.value ? 'busy' : 'off'))
-const names = computed(() => props.shown.map((m) => m.label).join(t('work.room.composer.summonJoin')))
+const all = computed(() => props.receivers ?? props.shown)
+const names = computed(() => all.value.map((m) => m.label).join(t('work.room.composer.summonJoin')))
 
 const tip = computed(() => {
   const name = lead.value?.label ?? ''
   if (props.fixed)
     return props.on ? t('work.room.composer.summonRule', { name }) : t('work.room.composer.summonPeopleOnly')
   if (face.value === 'on')
-    return props.shown.length > 1
+    return all.value.length > 1
       ? t('work.room.composer.summonOnMany', { names: names.value })
       : t('work.room.composer.summonOn', { name })
   if (face.value === 'busy') return t('work.room.composer.summonBusy', { name })

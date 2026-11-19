@@ -46,8 +46,12 @@ export function useAddressing(options: {
     try {
       const addressing = await previewAddressing(ask.place, ask.draft, controller.signal)
       // 只认一份说得出「在哪、交给谁」的回答；别的（测试里兜底的假响应之类）当作没问到。
-      if (mine === asked && typeof addressing?.place === 'string' && Array.isArray(addressing.people))
+      if (mine === asked && typeof addressing?.place === 'string' && Array.isArray(addressing.people)) {
+        // 老后端不返回 `teammates`：留成 undefined（「还没答上来」），读它的地方退回
+        // 正文里看得到的 @；答了一个空表才是「谁也不叫」。
+        if (!Array.isArray(addressing.teammates)) addressing.teammates = undefined as never
         answered.value = { key: keyOf(ask), addressing }
+      }
     } catch {
       // 问不到（断线、刚切走）：留着上一次的答案，下一次改草稿或状态变了再问。
     } finally {

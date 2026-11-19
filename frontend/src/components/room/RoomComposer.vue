@@ -33,7 +33,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { pastedTextName } from '../../lib/attachments'
-import { expandComposerMentions, handToMentions, mentionsAgent as isAgentMention } from '../../lib/composerMentions'
+import { expandComposerMentions, handToMentions, isAgentIn, receiversOf } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
 import { PENDING_NOTES, sendableCount as countSendable } from '../../lib/pendingNotes'
@@ -310,9 +310,7 @@ function topicsForLinks() {
 // 名册到了之后，@ 名单上别的 AI 队友也算叫：一个话题可以 @ 好几位，@ 到的那位
 // 就是开这一轮的那位（不在房间里的会被请进来）。只认座位那一位时，@ 第二位队友
 // 发出去，那颗按钮不亮，看起来就像只有芝士叫得动。
-function mentionsAgent(expanded: string): boolean {
-  return isAgentMention(expanded, props.agentSeat, props.mentionPool)
-}
+const mentionsAgent = (expanded: string) => isAgentIn(expanded, props.agentSeat, props.mentionPool)
 
 // 这条草稿发出去交给谁：问后端（`useAddressing`）。问的就是发送时会发出去的那一份——展开
 // 成 <@handle> 之后的正文、回复对象、有没有正文——所以它说的就是发出去之后会发生的事。
@@ -388,10 +386,11 @@ watch(
 const restingMate = computed<Mate | null>(
   () => mates.value.find((m) => m.handle === preferred.value) ?? mates.value[0] ?? null
 )
-// 名册还没到时头像照样画出来（按名字配色、灰着、点不动），这一行不会因为它晚到而跳一下。
-// 没 @ 谁、却交给了一位（回复了它、任务里不用 @）：画的是那一位。
+// 名册还没到时头像照样画出来（按名字配色、灰着、点不动），不会因为它晚到而跳一下。
+// 正文里 @ 了谁就画**后端说的全部接收者**：一条消息给点到的每一位各记一条投递。
+const receivers = computed<Mate[]>(() => receiversOf(addressing.value?.teammates, draftMates.value, mateOf))
 const shownMates = computed<Mate[]>(() => {
-  if (draftMates.value.length) return draftMates.value.slice(0, 2)
+  if (receivers.value.length) return receivers.value.slice(0, 2)
   const agent = addressing.value?.agent
   return [agent ? mateOf(agent) : restingMate.value ?? { handle: '', label: props.agentName }]
 })
@@ -849,6 +848,7 @@ defineExpose({
             :guided="!!guided"
             :mates="mates"
             :shown="shownMates"
+            :receivers="receivers"
             :on="summonOn"
             :fixed="summonFixed"
             :ready="summonReady"
