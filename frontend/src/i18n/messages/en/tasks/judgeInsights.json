@@ -1,0 +1,18 @@
+{
+  "title": "Test points",
+  "subtitle": "Judging results of each participant's latest submission in this stage",
+  "stageN": "Stage {n}",
+  "average": "Average test score",
+  "averageHint": "{judged} judged of {total} latest submissions",
+  "credits": "Credits spent on judging",
+  "creditsHint": "Submissions {submissions} · self-tests {selfTests} · {minutes} machine min; trial runs not included",
+  "outdated": "{n} were judged against an older version of the test points; re-judge to see results for the current one",
+  "casesTitle": "Pass rate per case (worst first)",
+  "hidden": "Hidden",
+  "passedOf": "{passed} / {judged} passed",
+  "topFailure": "{n} × {status}",
+  "allPassed": "All passed",
+  "noCases": "No judged submissions yet",
+  "spreadTitle": "Test score distribution",
+  "spreadNote": "{judged} judged; not shown: {scoreFailed} score failed, {failed} judging failed, {inFlight} in progress, {notJudged} not judged"
+}

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 「数据」页签的画面：这一道题有多少人领、他们走到哪一步、卡在哪儿、什么时候动的。
 // 数字全部从 props 里的名单和提交算出来，取数在 `Insights.vue`。
-import type { Task, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
+import type { Task, TaskJudgeStatsView, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -13,6 +13,7 @@ import MetricCard from '@/components/spaces/MetricCard.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import SplitBar from '@/components/spaces/SplitBar.vue'
 import TrendChart from '@/components/spaces/TrendChart.vue'
+import TaskJudgeInsights from '@/components/tasks/TaskJudgeInsights.vue'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 
 const { t } = useI18n()
@@ -36,9 +37,16 @@ const props = defineProps<{
   forbidden: boolean
   /** 每个阶段上的进度；分了阶段的题，按阶段画全体的分布。 */
   progress?: TaskProgress | null
+  /** 测试点数据（只有能批改的人读得到）；没有测试点、读不到时不画那一块。 */
+  judgeStats?: TaskJudgeStatsView | null
 }>()
 
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{ retry: []; judgeStage: [stage: string | null] }>()
+
+/** 阶段 id → 阶段名，测试点那一块切阶段时用。 */
+const stageNames = computed(() =>
+  Object.fromEntries((props.task?.stages ?? []).filter((s) => s.id).map((s) => [s.id as string, s.name]))
+)
 
 /** 参与者是申请通过了的人：还在等批准的不算在做，被拒的更不算。 */
 const claimedRoster = computed(() => props.roster.filter((r) => r.approved === 'APPROVED'))
@@ -174,6 +182,14 @@ const claimTrend = computed(() => {
         >
           <TaskStageTimeline :stages="task.stages" :counts="progress.distribution" />
         </PanelCard>
+
+        <TaskJudgeInsights
+          v-if="judgeStats?.stages.length"
+          class="ins__span2"
+          :data="judgeStats"
+          :stage-names="stageNames"
+          @stage="(stage) => emit('judgeStage', stage)"
+        />
 
         <PanelCard
           class="ins__span2"

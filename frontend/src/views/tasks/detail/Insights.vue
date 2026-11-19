@@ -9,7 +9,9 @@
     :failure-reason="failureReason"
     :forbidden="forbidden"
     :progress="progress ?? null"
+    :judge-stats="judgeStats"
     @retry="load"
+    @judge-stage="loadJudgeStats"
   />
 </template>
 
@@ -23,7 +25,9 @@
 // 数据来自两个真接口，没有一个数字是本地编的：
 // - `GET /tasks/{id}/participants` —— 领取名单（含每人加入时刻，走势图就从它算）
 // - `GET /spaces/{id}/submissions?taskId=…` —— 这道题的所有提交（含判没判、判过没过）
-import type { Task, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
+// - `GET /tasks/{id}/judge/stats` —— 挂着测试点的题：用例通过率、测试分分布、评测累计额度。
+//   只有能批改的人读得到；读不到（或没有测试点）就不画那一块，不拖累上面的数。
+import type { Task, TaskJudgeStatsView, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -32,6 +36,7 @@ import InsightsView from './InsightsView.vue'
 
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
+import { TaskJudgeApi } from '@/api/taskJudge'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 
 const props = defineProps<{
@@ -55,12 +60,29 @@ const failed = computed(() => loadError.value !== null)
 const failureReason = computed(() => loadFailureReason(loadError.value))
 const forbidden = computed(() => isForbidden(loadError.value))
 
+const judgeStats = ref<TaskJudgeStatsView | null>(null)
+
+/** 测试点那一块单独取：它读不到不该让整页显示「加载失败」。换阶段时也走这里。 */
+async function loadJudgeStats(stage?: string | null) {
+  const taskId = props.taskData?.id
+  if (!taskId || !(props.isCreator || props.isAdmin)) {
+    judgeStats.value = null
+    return
+  }
+  try {
+    judgeStats.value = await TaskJudgeApi.stats(taskId, stage)
+  } catch {
+    judgeStats.value = null
+  }
+}
+
 async function load() {
   const taskId = props.taskData?.id
   if (!taskId) return
   loading.value = true
   // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
   loadError.value = null
+  void loadJudgeStats()
   try {
     const [rosterRes, subsRes] = await Promise.all([
       TaskBoardApi.getParticipants(taskId),
