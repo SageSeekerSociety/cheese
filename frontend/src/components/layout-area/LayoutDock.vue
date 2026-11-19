@@ -404,7 +404,7 @@ const cellCount = computed(() => cellsOf(model.value).length)
 const groupOf = (id: string) => info.value.get(id)?.group
 /**
  * The page's buttons for a cell: those its visible tab declares, in its group's home cell
- * only. A cell split off from the home offers collapse instead.
+ * only. Every cell offers collapse and maximize besides, in the same places.
  */
 function actionsOf(cellId: string) {
   const active = info.value.get(activeOf[cellId] ?? '')
@@ -736,7 +736,7 @@ const noContextMenu = () => []
         <div class="layout-actions">
           <LayoutAddMenu v-if="unplaced.length && !locked" :panels="unplaced" @pick="addTo(scope.group, $event)" />
           <BaseButton
-            v-if="!maximizedGroup && !actionsOf(scope.group.id).length && canCollapse(model, scope.group.id)"
+            v-if="!maximizedGroup && canCollapse(model, scope.group.id)"
             kind="ghost"
             size="sm"
             :icon="
