@@ -26,6 +26,8 @@
 * ``POST .../participants/{participantId}/self-tests`` 与 ``GET .../self-tests/latest``
   —— 学生自测：拿默认分支现在的代码只跑这一阶段的样例用例，不计分，每人每天有次数
   （``judge_queue.enqueue_self_test``）。这一步只有输入/输出用例能自测。
+* ``GET /tasks/{taskId}/judge/stats`` —— 「数据」页签那几块：每个用例的通过率、测试分
+  分布、这道题评测一共花的额度（``judge_stats``）。只给能批改的人。
 * ``POST /tasks/{taskId}/judge/rejudge`` —— 老师改了测试点以后，把每个参与者最新的那一
   版提交按现在这一版测试再评一次（``judge_queue.rejudge_stage``）。
 """
@@ -55,7 +57,7 @@ from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.judge import trials
 from app.domain.space.permissions import Permission as SpacePermission
-from app.domain.task import code_version, judge_queue, test_suite
+from app.domain.task import code_version, judge_queue, judge_stats, test_suite
 from app.domain.task.access import bind_review_path
 from app.domain.task.services import (
     TaskMembershipService,
@@ -619,3 +621,105 @@ async def post_task_rejudge(
             totals[key] += value
     await db.commit()
     return ok(totals)
+
+
+class TaskJudgeCaseFailure(BaseModel):
+    """没过的那几份里最常见的状态（``timeout``、``wrong`` ……）和份数。"""
+
+    status: str
+    count: int
+
+
+class TaskJudgeCaseRate(BaseModel):
+    """一个用例：跑完的几份里过了几份（按用例名归在一起）。"""
+
+    name: str
+    visibility: str
+    judged: int
+    passed: int
+    #: passed / judged，0–1；没有一份时为 null。
+    rate: float | None
+    topFailure: TaskJudgeCaseFailure | None
+
+
+class TaskJudgeStageStats(BaseModel):
+    """一个阶段的测试点数据，读的是每个参与者在这一阶段最新那一版提交的最近一次评测。
+
+    ``judged`` 是跑完、读得出分的份数，``buckets`` 把它们的测试分（通过分 ÷ 总分）按
+    0–9%、10–19% …… 90–100% 分成十档；``scoreFailed``、``failed``、``inFlight``、
+    ``notJudged`` 是不在分布里的那几份。``outdated``：算进来、却是按旧版测试评的几份。
+    """
+
+    kind: str
+    submissions: int
+    judged: int
+    scoreFailed: int
+    failed: int
+    inFlight: int
+    notJudged: int
+    outdated: int
+    averageRate: float | None
+    buckets: list[int]
+    cases: list[TaskJudgeCaseRate]
+
+
+class TaskJudgeCredits(BaseModel):
+    """这道题的评测一共花了多少额度：学生提交的评测（含重评）与学生自测；出题人在表单
+    里的试跑不挂在题目上，不在这里。``machineMs`` 是评测主机上的总时长。"""
+
+    total: float
+    submissions: float
+    selfTests: float
+    machineMs: int
+    chargedRuns: int
+
+
+class TaskJudgeStatsOut(BaseModel):
+    #: 挂着测试点的阶段（阶段 id；不分阶段的题是 ``[null]``，没有测试点是空表）。
+    stages: list[str | None]
+    #: 这份数据是哪个阶段的；没有测试点时为 null。
+    stage: str | None
+    stats: TaskJudgeStageStats | None
+    credits: TaskJudgeCredits
+
+
+@router.get(
+    "/{taskId}/judge/stats",
+    summary="Test Point Statistics of a Task",
+    **typed_response(TaskJudgeStatsOut),
+    dependencies=[Can(TaskPermission.teach)],
+)
+async def get_task_judge_stats(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    stage: str | None = Query(default=None, max_length=16),
+    task_service: TaskService = Depends(get_task_service),
+    db=Depends(get_db),
+) -> dict:
+    """「数据」页签的测试点数据（方案 §第⑤步）：每个用例的通过率（最差的在前，带没过的
+    那几份最常见的状态）、测试分分布，和这道题评测累计花的额度。
+
+    只给能批改的人（``Can(teach)``）：出题人和空间管理员。不给 ``stage`` 就是第一个挂着
+    测试点的阶段。读法有界，不随参与者数多发查询（``judge_stats`` 模块开头）。
+    """
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    keys = await task_service.stage_keys(task_id)
+
+    def key_of(at: int) -> str | None:
+        return keys[at] if at < len(keys) else None
+
+    with_suite = sorted(await test_suite.suite_stages(db, task_id))
+    if stage is not None:
+        at: int | None = stage_index(stage, keys)
+    else:
+        at = with_suite[0] if with_suite else None
+    stats = await judge_stats.stage_stats(db, task_id, at) if at is not None else None
+    return ok(
+        {
+            "stages": [key_of(i) for i in with_suite],
+            "stage": key_of(at) if stats is not None and at is not None else None,
+            "stats": stats,
+            "credits": await judge_stats.credits_of_task(db, task_id),
+        }
+    )
