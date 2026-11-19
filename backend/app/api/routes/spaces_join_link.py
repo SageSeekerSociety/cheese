@@ -163,7 +163,9 @@ async def list_space_join_requests(
     db=Depends(get_db),
 ) -> dict:
     requests = await service.list_join_requests(space_id=space_id)
-    people = await people_by_ids([r.user_id for r in requests], db=db)
+    people = await people_by_ids(
+        [r.user_id for r in requests], db=db, viewer_id=auth_user.user_id
+    )
     return ok(
         {
             "requests": [

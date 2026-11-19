@@ -6,14 +6,19 @@
 //
 // 它站在 `components/panels/` 之外，理由同 `AcceptReviewHead`：面板是场景，场景不读会取数的
 // 东西。
+import type { TaskState } from '../../lib/taskState'
+
 import { computed } from 'vue'
 
 import { injectAcceptCard } from '../../composables/useAcceptCard'
 import DeliveryHead from '../room/DeliveryHead.vue'
 
+import HandInPanelHost from './HandInPanelHost.vue'
+
 defineProps<{
   heading: string
   version?: number | null
+  state?: TaskState | null
 }>()
 
 const emit = defineEmits<{ (e: 'open-task'): void }>()
@@ -34,14 +39,19 @@ const decide = computed(() => !!accept && !accept.gateCard.value && accept.decis
 <template>
   <DeliveryHead
     :heading="heading"
+    :state="state ?? null"
     :version="version ?? null"
     :decided="decided"
     :decide="decide"
     :accept-label="accept?.acceptLabel.value ?? ''"
     :blocked-title="accept?.acceptBlockedTitle.value ?? null"
     :busy="accept?.acceptBusy.value ?? false"
+    :unhanded="accept?.handIn.unhanded.value ?? false"
+    :hand-in="accept?.handIn.action.value ?? null"
     @open-task="emit('open-task')"
     @accept="accept?.onAcceptCard()"
     @reject="accept && (accept.showRejectInput.value = true)"
+    @hand-in="accept?.handIn.openPanel()"
   />
+  <HandInPanelHost />
 </template>

@@ -20,7 +20,12 @@
       @load-more="emit('loadMore')"
     >
       <template #empty>
-        <BaseEmptyState size="inline" class="audit__empty" :title="t('spaces.detail.auditTasks.noTasks')" />
+        <BaseEmptyState
+          size="inline"
+          align="center"
+          class="audit__empty"
+          :title="t('spaces.detail.auditTasks.noTasks')"
+        />
       </template>
       <AuditTaskRow
         v-for="task in tasks"

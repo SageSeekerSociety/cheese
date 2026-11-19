@@ -553,6 +553,7 @@ defineExpose({
             :loading="loading"
             :connection="connection"
             :peers="peers"
+            :name-of="nameOf"
             :editable="editable"
             :read-only="readOnly"
             :last-edit="lastEdit"

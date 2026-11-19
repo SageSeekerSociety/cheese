@@ -57,6 +57,20 @@ describe('审核题目', () => {
     view.unmount()
   })
 
+  // 队列空的时候这一页只剩那句「暂无待审核的题目」：它得落在内容区正中，不能贴
+  // 左半边——贴左看上去像右边还有东西没画出来（docs/design-system.md §3.12）。
+  it('队列空着时，「暂无待审核的题目」落在内容区正中', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useSpaceStore()
+    const view = render(AuditTask, { global: { plugins: [pinia, createVuetify()], stubs: { TipTapViewer: true } } })
+    store.currentSpaceId = 8
+
+    await waitFor(() => expect(view.container.querySelector('.bes--center')).toBeTruthy())
+    expect(view.container.querySelector('.bes--start')).toBeNull()
+    view.unmount()
+  })
+
   it('审核队列里看得见作者要求交什么', async () => {
     // 这个假接口照真接口的规矩回话：**不点名要就不带那张表单**。所以这条用例
     // 既验「要求显示出来了」，也验「页面确实去要了」—— 页面不点名，这里就会

@@ -76,8 +76,11 @@ async def accept(
     head_sha: str | None = None,
     deliverable_revision: str | None = None,
     by_assistant: bool = False,
+    by_seat: str | None = None,
 ) -> AcceptCard:
-    """``by_assistant``: the reviewer's own 芝士 accepts for them; the card
+    """``by_seat``: the project AI teammate's seat that accepts for the
+    reviewer (a channel's main line on their word), kept on the card so the
+    line recording it names that teammate. ``by_assistant``: the reviewer's own 芝士 accepts for them; the card
     and the lines announcing it say so (``AcceptCard.decided_by_assistant``)."""
     card = await self._card_or_404(card_id)
     # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
@@ -94,6 +97,8 @@ async def accept(
     # decided_by is the caller's verified actor handle, never body-trusted.
     if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("acceptReviewerOnly"))
+    if await self._holds_uncommitted(card):
+        raise ValidationError(say("acceptUncommitted"))
     topic = await self._topic_or_404(card.topic_id)
     # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
     seen_head = await self._seen_head_or_refresh(
@@ -142,6 +147,7 @@ async def accept(
     # Everything below that records the decision records ``decided_by``'s: this
     # is whose hand it was.
     card.decided_by_assistant = by_assistant
+    card.decided_by_seat = by_seat if by_assistant else None
     if (
         card.pr_number is None
         and not card.delivered_task_ids
@@ -152,6 +158,24 @@ async def accept(
         return await self._accept_discussion(card, topic, decided_by)
     forge = await self._resolve_forge(topic.project_id, card=card)
     return await forge.accept(self, card, topic, decided_by, seen_head=seen_head)
+
+
+async def _holds_uncommitted(self: pkg.AcceptService, card: AcceptCard) -> bool:
+    """Whether the task's working copy holds saved changes this version does
+    not: merging it would leave them out, so nothing merges it — not a
+    person's accept, not their merge-anyway, not the poller merging the
+    version they armed. Every road that merges a card asks here, so they
+    cannot disagree; a service built for one without the port says so
+    rather than merging unasked."""
+    if card.task_id is None or card.deliverable_kind != DeliverableKind.merge:
+        return False
+    work = await TaskService(self._session).get(card.task_id)
+    if work is None or not work.branch_name:
+        return False
+    if self._uncommitted is None:
+        # i18n-exempt: a wiring fault in the platform's own code, never a refusal a reader sees
+        raise RuntimeError("AcceptService merges a card without `uncommitted`")
+    return await self._uncommitted(self._session, work)
 
 
 async def _accept_github(
@@ -509,7 +533,7 @@ async def _void_closed_pr_card(
     with a new card.
     """
     headline = (
-        f"{VOIDED_PREFIX}：PR #{card.pr_number} 已在 GitHub 关闭且没有合并，"
+        f"{VOIDED_PREFIX}：PR #{card.pr_number} 已被关闭且没有合并，"
         "平台自动作废了这次审阅。要继续交付，重新提交审阅。"
     )
     card.status = AcceptStatus.revoked
@@ -641,7 +665,7 @@ async def _stop_accept_pr_unavailable(
     why = reason or say("acceptStoppedPrStalled", pr=card.pr_number)
     card_id = card.id
     note = (
-        f"{_ACCEPT_PR_STALLED_PREFIX}（{why}）。绑定 GitHub 的项目采纳只通过"
+        f"{_ACCEPT_PR_STALLED_PREFIX}（{why}）。有 PR 的改动采纳只通过"
         "合并 PR 完成，平台不会绕过 PR 直推上游；处理后重试采纳。"
     )
     self._notify_merge_result(
@@ -797,7 +821,7 @@ async def _stop_accept_title_disagrees(
         ),
     )
     note = (
-        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和提交审阅时的标题"
+        f"采纳未完成：PR #{number} 的标题（{shown}）和提交审阅时的标题"
         f"（{subject}）不一致。现在合并会把一行仓库检查没看过的标题写进历史，所以"
         "停下了；两个标题改成同一行、检查通过后再采纳。"
     )

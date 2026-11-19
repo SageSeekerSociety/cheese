@@ -101,9 +101,11 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
     await db.commit()
 
     task_model = _task_to_api_model(task, include_private_teaching=True)
-    task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
-        0
-    ]
+    task_model = (
+        await _enrich_task_models(
+            db, [task_model], space_id=task.space_id, viewer_id=user_id
+        )
+    )[0]
     await _enrich_task_knowledge_points(db, [task_model])
 
     return {"task": task_model}
@@ -430,7 +432,9 @@ async def update_task(
     task_response = _task_to_api_model(task, include_private_teaching=True)
     task_response.update(await _task_requirements(service, task.id, teacher=True))
     task_response = (
-        await _enrich_task_models(db, [task_response], space_id=task.space_id)
+        await _enrich_task_models(
+            db, [task_response], space_id=task.space_id, viewer_id=user_id
+        )
     )[0]
     await _enrich_task_knowledge_points(db, [task_response])
 

@@ -397,6 +397,13 @@ class SessionHost:
     def answers(self, ref: SessionRef) -> bool | None:
         return speaking.answers(self, ref)
 
+    def takes(self, ref: SessionRef, capability: str) -> bool:
+        """Whether the runner this process holds for ``ref`` said it takes
+        ``capability``: a runner an earlier release started may not."""
+        running = self._running.get(ref)
+        launched = running.launched if running is not None else None
+        return launched is not None and capability in launched.capabilities
+
     async def stop(
         self, ref: SessionRef, *, host: str | None = None, epoch: int = 0
     ) -> bool:

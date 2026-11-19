@@ -6,11 +6,21 @@
 //
 // 版式照可点原型 xueqing/demo.html 的 `vMe()`：左边一栏是「最该补的」一个知识点（一句话
 // 归纳、依据摘录、标记不准）和「全部知识点」三档条；右边一栏是「这一页从哪来」和「我常问
-// 的」。「生成巩固题」「复习提醒」是第 4 步的事，这一页不摆。
+// 的」。第 4 步加了三样：「最该补的」下面的「生成 3 道巩固题」「先看一段讲解」、没做完的
+// 几组（「待做的巩固题」，老师推送的也在这里），以及右栏的「复习提醒」。做题的弹层在
+// `LearningPracticeDialog.vue`，由容器摆。
 //
 // 四种状态各自一个样子，不混：读不出来（错误 + 重试）、这块板没开学情分析、开着但还没有
 // 分析结果（空状态，右栏照样说清这一页会读什么）、有结果。
-import type { LearningInsightPoint, LearningLevel, LearningQuestionKind, MyLearningInsight } from '@/types'
+import type {
+  LearningExplanation,
+  LearningInsightPoint,
+  LearningLevel,
+  LearningPracticeSource,
+  LearningQuestionKind,
+  MyLearningInsight,
+  MyLearningPractice,
+} from '@/types'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -29,11 +39,23 @@ const props = defineProps<{
   failed: boolean
   /** 正在标「不准」的那条判断。 */
   disputing?: number | null
+  /** 巩固练习一览（第 4 步）：没做完的几组、复习提醒、今天还能要几次。没读到是 null。 */
+  practice?: MyLearningPractice | null
+  /** 正在出题的知识点。 */
+  starting?: number | null
+  /** 「先看一段讲解」读回来的那一段，和正在读讲解的知识点。 */
+  explanation?: LearningExplanation | null
+  explaining?: number | null
 }>()
 
 const emit = defineEmits<{
   dispute: [judgmentId: number]
   retry: []
+  /** 对一个知识点出一组（复习提醒里是 `review`）。 */
+  practice: [pointId: number, source: Exclude<LearningPracticeSource, 'pushed'>]
+  /** 打开没做完的一组。 */
+  openPractice: [practiceId: number, pointId: number]
+  explain: [pointId: number]
 }>()
 
 const { t, locale } = useI18n()
@@ -76,6 +98,29 @@ function levelLabel(level: LearningLevel): string {
 
 function kindLabel(kind: LearningQuestionKind): string {
   return t(`spaces.learningAnalysis.insight.kinds.${kind}`)
+}
+
+const practiceLeft = computed(() => {
+  const practice = props.practice
+  return practice ? Math.max(practice.dailyLimit - practice.usedToday, 0) : null
+})
+
+const focusExplanation = computed(() =>
+  props.explanation && focus.value && props.explanation.knowledgePointId === focus.value.id
+    ? props.explanation.text
+    : null
+)
+
+/** 平台日历的一天（YYYY-MM-DD）按读者语言写成「11月16日」/「11/16」。 */
+function shortDate(day: string): string {
+  const [year, month, date] = day.split('-').map(Number)
+  return new Intl.DateTimeFormat(locale.value, { month: 'numeric', day: 'numeric' }).format(
+    new Date(year, month - 1, date)
+  )
+}
+
+function sourceLabel(source: LearningPracticeSource): string {
+  return t(`spaces.learningAnalysis.practice.sources.${source}`)
 }
 
 const whoRows = computed(() => [
@@ -156,8 +201,69 @@ const whoRows = computed(() => [
                     {{ t('spaces.learningAnalysis.insight.dispute') }}
                   </BaseButton>
                 </p>
+                <p v-if="focus.judgment.practice" class="mli__muted" data-testid="insight-focus-practice">
+                  {{
+                    t('spaces.learningAnalysis.practice.lastScore', {
+                      correct: focus.judgment.practice.correct,
+                      total: focus.judgment.practice.total,
+                    })
+                  }}
+                </p>
+                <div v-if="practice?.enabled" class="mli__actions">
+                  <BaseButton
+                    kind="primary"
+                    size="sm"
+                    :loading="starting === focus.id"
+                    :disabled="starting != null || practiceLeft === 0"
+                    data-testid="insight-practice"
+                    @click="emit('practice', focus.id, 'self')"
+                  >
+                    {{ t('spaces.learningAnalysis.practice.start') }}
+                  </BaseButton>
+                  <BaseButton
+                    kind="secondary"
+                    size="sm"
+                    :loading="explaining === focus.id"
+                    :disabled="explaining != null"
+                    data-testid="insight-explain"
+                    @click="emit('explain', focus.id)"
+                  >
+                    {{ t('spaces.learningAnalysis.practice.explain') }}
+                  </BaseButton>
+                  <span v-if="practiceLeft !== null" class="mli__muted">
+                    {{ t('spaces.learningAnalysis.practice.left', { n: practiceLeft }) }}
+                  </span>
+                </div>
+                <p v-if="focusExplanation" class="mli__lecture" data-testid="insight-explanation">
+                  <span data-user-content>{{ focusExplanation }}</span>
+                </p>
               </template>
               <p v-else class="mli__muted">{{ t('spaces.learningAnalysis.insight.focusNone') }}</p>
+            </section>
+
+            <!-- Practice sets not finished yet, the ones a teacher pushed among them. -->
+            <section v-if="practice?.open.length" class="mli__card" data-testid="insight-open-practice">
+              <h2 class="mli__card-title">{{ t('spaces.learningAnalysis.practice.openTitle') }}</h2>
+              <div v-for="item in practice.open" :key="item.id" class="mli__row" data-testid="insight-open-row">
+                <span class="mli__row-label">
+                  <span data-user-content>{{ item.knowledgePointName }}</span>
+                  · {{ sourceLabel(item.source) }}
+                </span>
+                <span class="mli__muted">{{
+                  item.ready
+                    ? t('spaces.learningAnalysis.practice.progress', { answered: item.answered, total: item.total })
+                    : t('spaces.learningAnalysis.practice.preparing')
+                }}</span>
+                <BaseButton
+                  kind="ghost"
+                  size="sm"
+                  :loading="starting === item.knowledgePointId"
+                  :disabled="starting != null"
+                  @click="emit('openPractice', item.id, item.knowledgePointId)"
+                >
+                  {{ t('spaces.learningAnalysis.practice.go') }}
+                </BaseButton>
+              </div>
             </section>
 
             <!-- 全部知识点：清单顺序，每条一行三档条；没涉及的说一句。 -->
@@ -223,6 +329,44 @@ const whoRows = computed(() => [
               <v-chip size="small" variant="tonal">{{ row.value }}</v-chip>
             </div>
             <p class="mli__muted mli__foot">{{ t('spaces.learningAnalysis.insight.sourceFoot') }}</p>
+          </section>
+
+          <!-- Review reminders: what is due, or when the next one comes. -->
+          <section v-if="practice?.enabled" class="mli__card" data-testid="insight-review">
+            <h3 class="mli__card-title">{{ t('spaces.learningAnalysis.practice.reviewTitle') }}</h3>
+            <template v-if="practice.due.length">
+              <div
+                v-for="item in practice.due"
+                :key="item.knowledgePointId"
+                class="mli__row"
+                data-testid="insight-review-due"
+              >
+                <span class="mli__row-label">
+                  <span data-user-content>{{ item.knowledgePointName }}</span>
+                  <span class="mli__muted">
+                    · {{ t('spaces.learningAnalysis.practice.dueOn', { date: shortDate(item.dueOn) }) }}</span
+                  >
+                </span>
+                <BaseButton
+                  kind="ghost"
+                  size="sm"
+                  :loading="starting === item.knowledgePointId"
+                  :disabled="starting != null || practiceLeft === 0"
+                  @click="emit('practice', item.knowledgePointId, 'review')"
+                >
+                  {{ t('spaces.learningAnalysis.practice.reviewAgain') }}
+                </BaseButton>
+              </div>
+            </template>
+            <p v-else-if="practice.upcoming" class="mli__muted">
+              {{
+                t('spaces.learningAnalysis.practice.reviewNext', {
+                  date: shortDate(practice.upcoming.dueOn),
+                  name: practice.upcoming.knowledgePointName,
+                })
+              }}
+            </p>
+            <p v-else class="mli__muted">{{ t('spaces.learningAnalysis.practice.reviewNone') }}</p>
           </section>
 
           <!-- 我常问的：按「知识点 × 提问类型」数次数。 -->
@@ -342,6 +486,24 @@ const whoRows = computed(() => [
   gap: 4px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.mli__actions {
+  display: flex;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mli__lecture {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--fill-2);
+  color: var(--text);
+  font-size: 14px;
+  white-space: pre-wrap;
 }
 
 .mli__muted {

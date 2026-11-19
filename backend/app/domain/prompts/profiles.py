@@ -33,6 +33,7 @@ ROOM_TOOLS = frozenset(
         "cheese_canvas",
         "cheese_task",
         "cheese_card",
+        "cheese_hand_in",
         "cheese_notify",
         "cheese_web",
         "cheese_help",
@@ -63,6 +64,8 @@ ROOM_TOOLS = frozenset(
 #: held to `~/.cheese/memory/` by the platform). `cheese_doc` reads and edits
 #: the project's goals, which its opening shows. `cheese_find` finds what was
 #: said weeks ago or in another channel, which a session living for weeks needs.
+#: `cheese_hand_in` hands the project's work in to its 题目 for the member who
+#: asks there, once they agree.
 MAIN_LINE_TOOLS = frozenset(
     {
         "chat_send",
@@ -75,6 +78,7 @@ MAIN_LINE_TOOLS = frozenset(
         "cheese_task.accept",
         "cheese_task.close",
         "cheese_task.reopen",
+        "cheese_hand_in",
         "cheese_doc.get",
         "cheese_doc.edit",
         "cheese_library",

@@ -18,6 +18,14 @@ in place of such a call's arguments there. A person's private index is not in
 any input the session is given (`prompts.memory.private_index_pointer`):
 the session reads it, and that read is stamped like any other.
 
+In a multi-person place the platform does put one class of a person's private
+memory into an input: their `communication` notes (`prompts.talk_notes`). It
+hands them to the runner apart from the rest of the input
+(`session_host.contract.PrivateText`), the runner writes each as a text block
+of its own and stamps every record that carries it with the block's index and
+owner (``cheese.private_text``), and anyone else reads `HIDDEN` in that
+block's place; the rest of the turn's input reads as it was.
+
 This package is the bottom layer: the runner that stamps the calls imports it,
 never the other way round. The runner's archive carries this module
 (`claude_code.bundle`), so it is stdlib only.
@@ -38,17 +46,27 @@ def hidden_input(owner: str) -> dict:
 def for_reader(record: dict, reader: str | None) -> dict:
     """``record`` as ``reader`` (a handle) may read it: the calls and results
     stamped as someone else's (``cheese.private``) emptied — a call keeps its
-    tool's name, a result its call's id, and both say whose they were.
+    tool's name, a result its call's id, and both say whose they were — and
+    so are the input blocks stamped as someone else's (``cheese.private_text``).
     ``None`` is the platform reading for itself, never for a person, and gets
     the record as stored. The record handed in is the stored one, so what
     changes is copied."""
     if reader is None:
         return record
-    stamp = (record.get("cheese") or {}).get("private")
-    if not isinstance(stamp, dict):
-        return record
-    others = {str(call): str(owner) for call, owner in stamp.items() if owner != reader}
-    if not others:
+    stamps = record.get("cheese") or {}
+    stamp = stamps.get("private")
+    texts = stamps.get("private_text")
+    others = {
+        str(call): str(owner)
+        for call, owner in (stamp.items() if isinstance(stamp, dict) else ())
+        if owner != reader
+    }
+    blocks = {
+        str(index): str(owner)
+        for index, owner in (texts.items() if isinstance(texts, dict) else ())
+        if owner != reader
+    }
+    if not others and not blocks:
         return record
     nested = record.get("type") == "cheese_file" and isinstance(
         record.get("entry"), dict
@@ -59,8 +77,10 @@ def for_reader(record: dict, reader: str | None) -> dict:
         return record
     shown: list = []
     answered = False
-    for block in body["content"]:
-        if isinstance(block, dict) and block.get("type") == "tool_use":
+    for index, block in enumerate(body["content"]):
+        if (owner := blocks.get(str(index))) is not None and isinstance(block, dict):
+            block = {**block, "text": HIDDEN.format(owner=owner)}
+        elif isinstance(block, dict) and block.get("type") == "tool_use":
             owner = others.get(str(block.get("id")))
             if owner is not None:
                 block = {**block, "input": hidden_input(owner)}

@@ -422,10 +422,14 @@ async def lifespan(application: FastAPI):
             from app.domain.agent_instance.adapters import task_teammate
             from app.domain.delivery.agent import (  # deferred-import: startup cost
                 dispatch_pending,
+                record_seat_instruction,
                 record_task_instruction,
             )
             from app.domain.delivery.ledger import (  # deferred-import: startup cost
                 settle_card,
+            )
+            from app.domain.machine import (  # deferred-import: startup cost
+                hand_in,
             )
             from app.domain.review.events import (  # deferred-import: startup cost
                 listen,
@@ -446,8 +450,10 @@ async def lifespan(application: FastAPI):
                         announce,
                         settle_card=settle_card,
                         record_instruction=record_task_instruction,
+                        record_seat=record_seat_instruction,
                         dispatch_pending=pump_pending,
                         task_teammate=task_teammate,
+                        uncommitted=hand_in.uncommitted,
                     ),
                     name="forge events",
                 )

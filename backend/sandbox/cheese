@@ -1092,7 +1092,8 @@ PLATFORM_TOOLS = ToolTable(
                     "要拆的是**另一件**活时 here 不填。",
                     {
                         "title": _text(
-                            f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次"
+                            f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次。"
+                            "要做的事分几步时，标题概括整件事，不只写第一步"
                         ),
                         "brief": _text(
                             "另开任务时必填：要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
@@ -1156,12 +1157,15 @@ PLATFORM_TOOLS = ToolTable(
                 ),
                 "report": _verb(
                     "在频道主线开的任务里，向开它的频道主线报告：question 是需要人回答的问题，"
-                    "blocked 是无法继续及原因。提交审阅和任务结束平台会告诉主线，不用报。",
+                    "blocked 是无法继续及原因，done 是做完了、没有要审阅的交付（调研结论、答复、"
+                    "已经摆出来的方案），写明做成了什么。任务做没做完由频道主线判断，它会关闭任务"
+                    "或告诉你下一步。提交审阅、交付被采纳和任务结束平台会告诉主线，不用报。",
                     {
                         "kind": {
                             "type": "string",
-                            "enum": ["question", "blocked"],
-                            "description": "question 要人回答；blocked 无法继续",
+                            "enum": ["question", "blocked", "done"],
+                            "description": "question 要人回答；blocked 无法继续；"
+                            "done 做完了、没有要审阅的交付",
                         },
                         "content": _text("报告内容"),
                     },
@@ -1190,16 +1194,20 @@ PLATFORM_TOOLS = ToolTable(
                     ["state"],
                 ),
                 "close": _verb(
-                    "在频道主线时，task 写这个频道里你开的那件任务，按成员的要求关闭；"
-                    "等待审阅的任务不能关闭。在任务里时，不写 task："
-                    "任务做完了，或者负责人说结束、放弃时，写明结论关闭。交付合并后任务不会自己关，"
+                    "在频道主线时，task 写这个频道里你开的那件任务：成员要求关闭，或者交付采纳后、"
+                    "任务报告做完后你判断它做完了，写明结论关闭；等待审阅的任务不能关闭。"
+                    "项目要等部署时，合并之后的关闭先等这次合并上线，上线后平台按你写的结论关闭。"
+                    "在任务里时，不写 task；频道主线开的任务不由你关闭，做完了就提交审阅，"
+                    "或用 report 报告 done。其他任务"
+                    "做完了，或者负责人说结束、放弃时，写明结论关闭。交付合并后任务不会自己关，"
                     "平台叫你对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：做完了"
                     "就更新实况文档、发一条总结，再用它关闭，结论写一句结果。"
                     "方案、原型、demo、调研摆出来后不关，报「等你看」，负责人要改或接着做就在同一个任务里做。"
                     "关闭要有依据，两样之一，否则平台拒绝：最后一次交付已合并、且步骤清单全部"
                     "勾完（不做的项用 unchecked_reason 写理由，理由写进结论）；或者负责人在任务里"
                     "说过结束，用 owner_message 带上他那条消息的 id。项目要等部署时，关闭后任务"
-                    "先等这次合并上线，上线后平台再叫你写总结关闭。" + DELIVERY_IS_DECIDED_IN_THE_UI,
+                    "先等这次合并上线，上线后平台再叫你写总结关闭。"
+                    + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "task": _TASK_REF,
                         "conclusion": _text("关闭原因或最终说明"),
@@ -1230,7 +1238,8 @@ PLATFORM_TOOLS = ToolTable(
                     "不进主干也不上产物清单，用 cheese show 摆出预览后报「等你看」、等负责人回话，"
                     "不提交进 git、不递卡，也不关任务。交合并时任务分支上要有改动了文件的提交，"
                     "空提交会被打回；交独立文件（deliver）或地址（deliver_url）且没有仓库改动时直接留快照或记指针，不开 PR。"
-                    "任务可以分几步交付，每一步做完就递；采纳合并后任务不会自己关，平台叫你"
+                    "任务可以分几步交付，每一步做完就递；采纳合并后任务不会自己关。频道主线开的任务"
+                    "由频道主线判断做没做完，它会告诉你下一步；其他任务平台叫你"
                     "对照任务目标、实况文档、步骤清单和负责人的话判断做没做完：没完就从最新代码"
                     "接着做下一步，做完了写总结、用 cheese_task 的 close 关闭。"
                     "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
@@ -1344,6 +1353,52 @@ PLATFORM_TOOLS = ToolTable(
                 },
             },
             ["title"],
+        ),
+        _object(
+            "cheese_hand_in",
+            "替成员向项目所来自的题目提交",
+            {
+                "prepare": _verb(
+                    "第一步：为题目一个阶段的每个提交项指定要交的内容，平台按题目页提交时的"
+                    "规则检查并记下这一份，不会提交。文件项写项目里的文件：代码仓库默认分支上"
+                    "已提交的路径，或 library/<名字> 表示资料库里的一份；文字项写文字。只在能为"
+                    "这道题目提交的成员发消息要求时调用，准备的是给他的。同一阶段再准备一次会"
+                    "替换上一份。",
+                    {
+                        "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "description": "这个阶段的每个提交项各一条",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "item": {
+                                        "type": "integer",
+                                        "description": "提交项在题目说明「提交内容」里的序号",
+                                    },
+                                    "file": _text(
+                                        "文件项：仓库里的路径，或 library/<名字>"
+                                    ),
+                                    "text": _text("文字项：要交的文字"),
+                                },
+                                "required": ["item"],
+                            },
+                        },
+                    },
+                    ["items"],
+                ),
+                "confirm": _verb(
+                    "第二步：成员看过准备好的内容并发消息同意后，以他的名义提交。只在他本人"
+                    "回复同意的这一轮里调用；准备之后项目的文件变了会被拒绝，要重新准备。",
+                    {
+                        "stage": {
+                            "type": "integer",
+                            "description": "确认哪个阶段的那一份，写题目阶段的序号；"
+                            "省略为在这里最近准备的一份",
+                        },
+                    },
+                ),
+            },
         ),
         _object(
             "cheese_web",
@@ -3037,6 +3092,18 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": here + "/tasks/" + _task_ref(args) + "/accept",
         }
+    if tool == "cheese_hand_in.prepare":
+        return {
+            "method": "POST",
+            "path": here + "/hand-in/prepare",
+            "body": {"items": args["items"]},
+        }
+    if tool == "cheese_hand_in.confirm":
+        return {
+            "method": "POST",
+            "path": here + "/hand-in/confirm",
+            "body": _given(args, "stage"),
+        }
     if tool == "cheese_task.report":
         return {
             "method": "POST",
@@ -3819,9 +3886,15 @@ def _task_look(args: dict, host) -> str:
             + f"　{row['at'][:16].replace('T', ' ')}\n{row['content']}"
             for row in looked["exchange"]
         ]
-        said = _chat_page("cheese_chat.list")({"topic": looked["id"], "limit": 30}, host)
+        said = _chat_page("cheese_chat.list")(
+            {"topic": looked["id"], "limit": 30}, host
+        )
         return "\n\n".join(
-            [*(["你与这件任务之间的往来：", *told] if told else []), "任务里的对话：", said]
+            [
+                *(["你与这件任务之间的往来：", *told] if told else []),
+                "任务里的对话：",
+                said,
+            ]
         )
     if view == "commands":
         rows = host.request(
@@ -3839,28 +3912,40 @@ def _task_look(args: dict, host) -> str:
         if q:
             commands = [c for c in commands if q.lower() in c.lower()]
         if not commands:
-            return "没有执行过的命令。" if not q else f"执行过的命令中没有包含「{q}」的。"
+            return (
+                "没有执行过的命令。" if not q else f"执行过的命令中没有包含「{q}」的。"
+            )
         return "\n".join(f"- {c}" for c in commands[-80:])
     if view == "diff":
         project = host.environ.get("CHEESE_PROJECT", "")
-        diff = host.request(
-            {
-                "method": "GET",
-                "path": f"/projects/{project}/git/diff?task={looked['id']}&source=committed",
-            }
-        )["data"].get("diff") or ""
+        diff = (
+            host.request(
+                {
+                    "method": "GET",
+                    "path": f"/projects/{project}/git/diff?task={looked['id']}&source=committed",
+                }
+            )["data"].get("diff")
+            or ""
+        )
         text = diff if isinstance(diff, str) else json.dumps(diff, ensure_ascii=False)
         path = str(args.get("path") or "").strip()
         if path:
-            parts = [p for p in text.split("diff --git ") if path in p.split("\n", 1)[0]]
+            parts = [
+                p for p in text.split("diff --git ") if path in p.split("\n", 1)[0]
+            ]
             text = "".join("diff --git " + p for p in parts)
         if q:
-            text = "\n".join(line for line in text.splitlines() if q.lower() in line.lower())
+            text = "\n".join(
+                line for line in text.splitlines() if q.lower() in line.lower()
+            )
         if not text.strip():
             return "没有符合条件的改动。"
         lines = text.splitlines()
         if len(lines) > 400:
-            return "\n".join(lines[:400]) + f"\n……（共 {len(lines)} 行，用 path 或 q 缩小范围）"
+            return (
+                "\n".join(lines[:400])
+                + f"\n……（共 {len(lines)} 行，用 path 或 q 缩小范围）"
+            )
         return text
     if view == "file":
         return _task_file(looked, args, q, host)
@@ -3884,9 +3969,9 @@ def _task_file(looked: dict, args: dict, q: str, host) -> str:
     query = urllib.parse.urlencode(
         {"task": looked["id"], "path": path, "source": "committed"}
     )
-    data = host.request(
-        {"method": "GET", "path": f"/projects/{project}/file?{query}"}
-    )["data"]
+    data = host.request({"method": "GET", "path": f"/projects/{project}/file?{query}"})[
+        "data"
+    ]
     if data.get("too_large"):
         return f"{path} 太大，无法整份读出；用 view=diff 加 path 看它的改动。"
     if data.get("binary") or data.get("content") is None:
@@ -5865,6 +5950,47 @@ def _say_documents(args, data, env) -> str:
     )
 
 
+def _hand_in_size(size) -> str:
+    size = int(size or 0)
+    if size < 1024:
+        return f"{size} 字节"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _say_hand_in_prepared(args, data, env) -> str:
+    """What was prepared, item by item, and what the member has to do."""
+    data = data or {}
+    person = f"<@{data.get('person')}>"
+    stage = f"「{data['stage']}」阶段" if data.get("stage") else ""
+    revision = str(data.get("revision") or "")[:7]
+    lines = [
+        f"已为 {person} 准备好向题目「{data.get('task')}」{stage}提交的内容，还没有提交："
+    ]
+    for item in data.get("items") or []:
+        if item.get("kind") == "TEXT":
+            what = f"文字「{item.get('text')}」"
+        elif item.get("source") == "library":
+            what = (
+                f"资料库里的「{item.get('path')}」第 {item.get('libraryVersion')} 版"
+                f"（{_hand_in_size(item.get('bytes'))}）"
+            )
+        else:
+            what = (
+                f"代码仓库默认分支上的 {item.get('path')}"
+                f"（{_hand_in_size(item.get('bytes'))}，提交 {revision}）"
+            )
+        lines.append(f"{item.get('number')}. {item.get('name')}：{what}")
+    if revision:
+        lines.append(f"这一版记下的代码版本是提交 {revision}。")
+    lines.append(
+        f"把每一项要交什么如实告诉 {person}，等他本人回复同意后再用 "
+        "cheese_hand_in(action=confirm) 提交；他要改，就照他说的重新准备。"
+    )
+    return "\n".join(lines)
+
+
 def _say_chat_send(args, data, env) -> str:
     return json.dumps(data, ensure_ascii=False)
 
@@ -6010,17 +6136,39 @@ def _say_skills_read(args, data, env) -> str:
     )
 
 
+def _say_task_accepted(args, data, env) -> str:
+    """What the channel's main line reads after adopting a delivery: landed
+    here (with what the platform tells it next), waiting in the forge's merge
+    queue, or stopped on a conflict."""
+    d = data or {}
+    named = f"任务 #{d.get('number')}「{d.get('title')}」"
+    status = d.get("status")
+    if status == "accepted":
+        said = f"已代审阅人采纳{named}的交付。"
+        return f"{said}\n{d['next']}" if d.get("next") else said
+    if status == "pending":
+        return (
+            f"已代审阅人采纳{named}的交付，正在等合并队列合并。现在告诉审阅人你采纳了、正在合并；"
+            "合并后平台会告诉你。在那之前不要关闭任务，关闭会关掉这次交付的 PR。"
+        )
+    return f"{named}的交付合并时有冲突，没有采纳成；任务会先解决冲突，解决后要审阅人再采纳一次。"
+
+
 _SAY = {
     "cheese_task.tell": lambda a, d, e: (
         f"已转给任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」。"
     ),
-    "cheese_task.report": lambda a, d, e: "已报告给频道主线。",
-    "cheese_task.accept": lambda a, d, e: (
-        f"已代审阅人采纳任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付。"
-        if (d or {}).get("status") == "accepted"
-        else f"任务 #{(d or {}).get('number')}「{(d or {}).get('title')}」的交付合并时有冲突，"
-        "没有采纳成；任务会先解决冲突，解决后要审阅人再采纳一次。"
+    "cheese_task.report": lambda a, d, e: (
+        "已报告给频道主线。任务做没做完由频道主线判断，等它关闭任务或告诉你下一步。"
+        if (d or {}).get("reported") == "done"
+        else "已报告给频道主线。"
     ),
+    "cheese_hand_in.prepare": _say_hand_in_prepared,
+    "cheese_hand_in.confirm": lambda a, d, e: (
+        f"已代 <@{(d or {}).get('person')}> 向题目「{(d or {}).get('task')}」"
+        f"提交了第 {(d or {}).get('version')} 版。"
+    ),
+    "cheese_task.accept": _say_task_accepted,
     "chat_send": _say_chat_send,
     "chat_react": lambda a, d, e: "已回应。",
     "cheese_chat.edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
@@ -6028,9 +6176,17 @@ _SAY = {
     "cheese_task.open": _say_task,
     "cheese_task.reopen": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
     "cheese_task.close": lambda a, d, e: (
-        f"「{(d or {}).get('title')}」做完了，最后一次合并还没上线，任务先开着等部署；"
+        f"「{(d or {}).get('title')}」最后一次合并还没上线，任务先开着等部署；"
+        "上线后平台按你写的结论关闭它，并告诉你。"
+        if (d or {}).get("deploying") and a.get("task")
+        else f"「{(d or {}).get('title')}」做完了，最后一次合并还没上线，任务先开着等部署；"
         "上线后平台会叫你更新实况文档、发总结、再关闭，现在不用写。"
         if (d or {}).get("deploying")
+        # The main line's own close: no platform line says it in the channel.
+        else f"「{(d or {}).get('title')}」关好了，结论记为："
+        f"{(d or {}).get('conclusion') or '（没有写）'}。"
+        "现在用你自己的话告诉提过这件事的成员结果。"
+        if a.get("task")
         else f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
@@ -7233,7 +7389,16 @@ def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
     # refspec matches nothing without failing, and `--prune` drops a copy of
     # one the forge no longer has, so whether it is there is read off the
     # tracking ref afterwards.
+    #
+    # The task's kept working copy (`_keep_working_copy`) comes in the same
+    # fetch, as a pattern for the same reason: a task with nothing uncommitted
+    # has none.
     base, branch = data["base"], data["branch"]
+    kept = (
+        [f"+{_kept_ref(data['task_id'])}*:{_kept_copy(data['task_id'])}*"]
+        if _keeps_work(data)
+        else []
+    )
     _git_task(
         repo,
         "fetch",
@@ -7242,6 +7407,7 @@ def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
         "origin",
         f"+refs/heads/{base}:refs/remotes/origin/{base}",
         f"+refs/heads/{branch}*:refs/remotes/origin/{branch}*",
+        *kept,
     )
     try:
         _git_task(repo, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}")
@@ -7254,8 +7420,14 @@ def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
     create = [] if existing else ["-b", data["branch"]]
     remote_start = data["branch"] if exists_on_forge else data["base"]
     start = data["branch"] if existing else f"refs/remotes/origin/{remote_start}"
+    if not existing and not exists_on_forge:
+        # A task with nothing pushed yet starts from its base; one whose
+        # sandbox kept uncommitted work starts where that work was cut, as long
+        # as that is still the base's history, so it can be laid back.
+        start = _kept_start(repo, data) or start
     _git_task(repo, "worktree", "prune")
     _git_task(repo, "worktree", "add", *create, str(task_dir), start)
+    _lay_back_kept(task_dir, data)
 
 
 def _follow_task_branch(worktree: Path, data: dict) -> None:
@@ -7420,8 +7592,8 @@ def _tell_room(content: str) -> bool:
 
 
 def _sync_task(task_id: str) -> None:
-    """Deliver one task's commits. What it has not committed stays on this
-    machine only: the platform keeps nothing but what was pushed."""
+    """Deliver one task's commits. What it has not committed is not delivered;
+    `_keep_working_copy` keeps it beside the branch."""
     task_id = str(uuid.UUID(task_id))
     worktree = _task_root() / task_id
     if not (worktree / ".git").exists():
@@ -7695,7 +7867,9 @@ def _has_work_to_sync(worktree: Path) -> bool:
 
     Nothing, when its commit is already its branch on the forge as this
     checkout last pushed or fetched it: the push would be a no-op. Files not
-    committed are not delivered, so they do not count. Answered from the checkout alone, with no network call, because
+    committed are not delivered, so they do not count here; they are kept
+    (`_keep_working_copy`) whatever this answers. Answered from the checkout
+    alone, with no network call, because
     `sync --all` asks it of every task the room ever opened and a room keeps
     them all (56 in one room on dev): pushing each one again made a switch's
     push outlast its two minutes once a room was old enough. Anything this
@@ -7738,16 +7912,248 @@ def _sync_all_tasks() -> None:
     for worktree in sorted(root.iterdir()):
         if not (worktree / ".git").exists():
             continue
-        if not _has_work_to_sync(worktree):
-            continue
         try:
-            _sync_task(worktree.name)
+            if _has_work_to_sync(worktree):
+                _sync_task(worktree.name)
         except (Exception, SystemExit) as exc:
             failed.append(worktree.name)
             # The platform logs these lines (`session_work.checkpoint`).
             print(f"[cheese] 任务 {worktree.name} 同步失败：{exc}", file=sys.stderr)
+        finally:
+            # After the push, so a snapshot is cut from the head the branch
+            # has; and whether or not it went through, since what was not
+            # pushed is exactly what a snapshot keeps the files of.
+            _keep_quietly(worktree)
     if failed:
         raise SystemExit(1)
+
+
+#: Where the platform keeps a task checkout's uncommitted work on the project's
+#: forge: one ref per task, outside `refs/heads` and `refs/tags`, so no branch,
+#: pull request, release or CI run ever names it, and replacing it rewrites
+#: nobody's history. It is the platform's own; nothing else writes it.
+KEPT_REFS = "refs/cheese/kept/"
+#: Where a checkout fetches it to: under the remote's own refs, apart from
+#: `KEPT_REFS` here, which names only a snapshot this checkout pushed or laid
+#: back. A fetched one this checkout did not lay back is not its to delete.
+KEPT_COPIES = "refs/remotes/origin/cheese-kept/"
+#: The largest file a snapshot takes, and the most it adds in all: a file
+#: bigger than a person may save in a task (`task_fs`), or more than a
+#: delivery may carry, is a build output nobody ignored, not work in progress.
+KEPT_FILE_MAX_BYTES = 10 * 1024 * 1024
+KEPT_TOTAL_MAX_BYTES = 80 * 1024 * 1024
+#: Who a snapshot commit is by. It is never a commit of the task: it only
+#: carries the files.
+_KEPT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "Cheese",
+    "GIT_AUTHOR_EMAIL": "kept@cheese.invalid",
+    "GIT_COMMITTER_NAME": "Cheese",
+    "GIT_COMMITTER_EMAIL": "kept@cheese.invalid",
+}
+
+
+def _kept_ref(task_id: str) -> str:
+    return KEPT_REFS + str(uuid.UUID(task_id))
+
+
+def _kept_copy(task_id: str) -> str:
+    return KEPT_COPIES + str(uuid.UUID(task_id))
+
+
+def _keeps_work(data: dict) -> bool:
+    """Whether a task's uncommitted work is kept on its forge: a repository the
+    platform hosts. A project bound to GitHub keeps only what it pushed — a
+    snapshot there would put files nobody committed into someone else's
+    repository, readable by everyone who can read it."""
+    return data.get("forge_kind") == "forgejo"
+
+
+class _TooLargeToKeep(RuntimeError):
+    pass
+
+
+def _task_marker(worktree: Path) -> dict | None:
+    """The task a checkout is of, as `cheese worktree` wrote it there."""
+    try:
+        marker = Path(
+            _git_task(worktree, "rev-parse", "--git-path", "cheese-task.json")
+        )
+        if not marker.is_absolute():
+            marker = worktree / marker
+        return json.loads(marker.read_text())
+    except (RuntimeError, OSError, ValueError):
+        return None
+
+
+def _working_tree(worktree: Path) -> str | None:
+    """The tree the checkout's files make, tracked or not and ignored files
+    left out, written without touching its index; None when it is the tree
+    of its HEAD (nothing uncommitted)."""
+    listed = _git_task(
+        worktree,
+        "ls-files",
+        "-z",
+        "--modified",
+        "--others",
+        "--exclude-standard",
+        raw=True,
+    )
+    total = 0
+    for name in set(filter(None, listed.split("\0"))):
+        try:
+            size = (worktree / name).lstat().st_size
+        except OSError:
+            continue  # deleted: adds nothing
+        if size > KEPT_FILE_MAX_BYTES:
+            raise _TooLargeToKeep(f"{name} 有 {size // (1024 * 1024)} MB")
+        total += size
+    if total > KEPT_TOTAL_MAX_BYTES:
+        raise _TooLargeToKeep(f"没提交的文件共 {total // (1024 * 1024)} MB")
+    git_dir = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+    index = git_dir / "index"
+    scratch = git_dir / f"cheese-kept-index-{uuid.uuid4().hex}"
+    env = {"GIT_INDEX_FILE": str(scratch)}
+    try:
+        # A copy of the checkout's own index, for what it knows of each file:
+        # `add` then reads only what changed since, not the whole tree.
+        if index.exists():
+            scratch.write_bytes(index.read_bytes())
+        else:
+            _git_task(worktree, "read-tree", "HEAD", extra_env=env)
+        _git_task(worktree, "add", "-A", "--", ":/", extra_env=env)
+        tree = _git_task(worktree, "write-tree", extra_env=env)
+    finally:
+        scratch.unlink(missing_ok=True)
+    return None if tree == _git_task(worktree, "rev-parse", "HEAD^{tree}") else tree
+
+
+def _keep_working_copy(worktree: Path) -> None:
+    """Keep what a task checkout has not committed on the project's forge, at
+    the task's `KEPT_REFS` ref: one commit whose tree is the checkout's files
+    and whose parent is its HEAD. Not on any branch, so the task's history has
+    no commit for it; the next snapshot replaces it, and a checkout with
+    nothing uncommitted has none.
+
+    A new checkout of the task lays it back (`_lay_back_kept`): this is what
+    lets a sandbox be destroyed without taking with it the edits a person
+    saved or the work the teammate had not committed yet.
+
+    Nothing reaches the forge when this checkout's last snapshot (the local
+    `KEPT_REFS` ref) is the same files on the same HEAD, so a checkpoint over
+    every task of a room costs a forge call only for the ones that changed."""
+    marker = _task_marker(worktree)
+    if marker is None or not _keeps_work(marker):
+        return
+    admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+    with (admin / "cheese-keep.lock").open("a") as lock:
+        # A commit's hook, a turn's checkpoint and a save can all ask at once;
+        # one snapshot at a time keeps the local ref the forge's.
+        _lock(lock)
+        _keep_locked(worktree, _kept_ref(marker["task_id"]))
+
+
+def _keep_locked(worktree: Path, ref: str) -> None:
+    try:
+        last = _git_task(worktree, "rev-parse", "--verify", "-q", ref)
+    except RuntimeError:
+        last = None
+    tree = _working_tree(worktree)
+    quiet = ("-c", "core.hooksPath=/dev/null")
+    if tree is None:
+        if last is None:
+            return
+        try:
+            _git_task(worktree, *quiet, "push", "-q", "origin", f":{ref}")
+        except RuntimeError as exc:
+            if "remote ref does not exist" not in str(exc):
+                raise
+        _git_task(worktree, "update-ref", "-d", ref)
+        return
+    head = _git_task(worktree, "rev-parse", "HEAD")
+    if last is not None:
+        was = _git_task(worktree, "rev-parse", f"{last}^{{tree}}", f"{last}^")
+        if was.split() == [tree, head]:
+            return
+    commit = _git_task(
+        worktree,
+        "commit-tree",
+        "--no-gpg-sign",
+        tree,
+        "-p",
+        head,
+        "-m",
+        "Uncommitted work, kept by the platform",
+        extra_env=_KEPT_IDENTITY,
+    )
+    _git_task(worktree, *quiet, "push", "-q", "origin", f"+{commit}:{ref}")
+    _git_task(worktree, "update-ref", ref, commit)
+
+
+def _keep_quietly(worktree: Path) -> None:
+    """`_keep_working_copy`, and a failure only said: a snapshot that could not
+    be kept never fails the checkpoint or the save it follows."""
+    try:
+        _keep_working_copy(worktree)
+    except (Exception, SystemExit) as exc:
+        print(
+            f"[cheese] 任务目录 {worktree.name} 里没提交的改动没能保存：{exc}",
+            file=sys.stderr,
+        )
+
+
+def _kept_start(repo: Path, data: dict) -> str | None:
+    """Where a new checkout of a task with no branch on the forge starts so
+    its kept snapshot can be laid back: the commit that snapshot was cut from,
+    when the base branch has it. None when there is nothing kept, or it was
+    cut from a commit the base does not have (one that was never pushed)."""
+    if not _keeps_work(data):
+        return None
+    try:
+        parent = _git_task(
+            repo, "rev-parse", "--verify", "-q", f"{_kept_copy(data['task_id'])}^"
+        )
+    except RuntimeError:
+        return None
+    if _is_ancestor(repo, parent, f"refs/remotes/origin/{data['base']}"):
+        return parent
+    return None
+
+
+def _lay_back_kept(task_dir: Path, data: dict) -> None:
+    """Lay a new checkout's kept snapshot back over it (`_keep_working_copy`):
+    its files come back as uncommitted changes, the index stays at HEAD, and
+    files that were untracked are untracked again.
+
+    Only over the HEAD it was cut from. A branch that moved since (a commit
+    pushed from elsewhere, a step that landed) is left clean rather than
+    merged into by guesswork; the snapshot stays on the forge, and the
+    platform tells the teammate and the task's people so
+    (`repository.kept_work`). A snapshot that cannot be laid back fails
+    nothing: the checkout is still the branch."""
+    if not _keeps_work(data):
+        return
+    try:
+        kept = _git_task(
+            task_dir, "rev-parse", "--verify", "-q", _kept_copy(data["task_id"])
+        )
+    except RuntimeError:
+        return
+    try:
+        head = _git_task(task_dir, "rev-parse", "HEAD")
+        parent = _git_task(task_dir, "rev-parse", f"{kept}^")
+        if parent != head:
+            print(
+                "[cheese] 没提交的改动没有放回：保存它们时所在的提交不是现在任务"
+                "分支的最新提交（之后分支有了新提交，或那个提交没推上去）。"
+                f"它们在 {_kept_ref(data['task_id'])}（{kept[:12]}），"
+                f"用 git diff HEAD {kept[:12]} 查看。",
+                file=sys.stderr,
+            )
+            return
+        _git_task(task_dir, "restore", f"--source={kept}", "--worktree", "--", ":/")
+        _git_task(task_dir, "update-ref", _kept_ref(data["task_id"]), kept)
+    except RuntimeError as exc:
+        print(f"[cheese] 没提交的改动没能放回：{exc}", file=sys.stderr)
 
 
 CHECK_DIR = os.path.expanduser("~/.cache/cheese-check")
@@ -8293,13 +8699,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="把任务的提交推上去",
         description=(
             "把任务已提交的代码推到它的分支；默认从当前目录识别任务。"
-            "没提交的文件不上传，机器回收后就没有了。"
+            "没提交的改动不进分支，由平台另外保存（cheese keep）。"
         ),
     )
     psync.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
     psync.add_argument(
         "--all", action="store_true", help="同步本频道机器上已有的全部任务目录"
     )
+    pkeep = sub.add_parser(
+        "keep",
+        help="保存任务目录里没提交的改动",
+        description=(
+            "把任务目录里没提交的改动（含未跟踪、未被忽略的文件）保存到平台，"
+            "不产生提交、不动分支；换了环境后再打开任务目录会原样放回。"
+            "连接 GitHub 的项目不保存。平台在每次停下时和有人保存文件后会自动做。"
+        ),
+    )
+    pkeep.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
 
     pfix = sub.add_parser(
         "push-fix",
@@ -8601,8 +9017,17 @@ def main() -> None:
             # find nothing to do (dev, 10-12..10-17: 169 such calls, 5.2 s at
             # the median). A checkout on the task's branch with nothing to
             # deliver is done after asking only for that branch.
-            if not _synced_already(task):
-                _sync_task(task)
+            try:
+                if not _synced_already(task):
+                    _sync_task(task)
+            finally:
+                # A commit changes what is uncommitted, and this is the hook
+                # every commit runs.
+                _keep_quietly(_task_root() / task)
+    elif a.cmd == "keep":
+        worktree = _task_root() / _task_id(a.task)
+        if (worktree / ".git").exists():
+            _keep_working_copy(worktree)
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)

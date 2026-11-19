@@ -11,13 +11,13 @@ from app.api.routes.tasks._common import (
     CreateSubmissionReviewRequest,
     PatchSubmissionReviewRequest,
 )
-from app.api.task_claims import project_of_claim
 from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
     get_task_submission_review_service,
     get_task_submission_service,
 )
+from app.api.task_hand_in import hand_in_version, refuse_closed, refuse_used_up
 from app.api.write_access import Can
 from app.auth import can
 from app.auth import task_roles as task_seats
@@ -36,7 +36,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.db.session import get_db
-from app.domain.task import auto_score, code_version, usage_score
+from app.domain.task import auto_score, usage_score
 from app.domain.task.access import (
     bind_review_path,
 )
@@ -298,53 +298,22 @@ async def post_task_submission(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError.for_resource("participant", participant_id)
 
-    if membership.approved != 0:
-        raise ForbiddenError(say("submissionClaimNotApproved"))
-    if task.ended_at is not None:
-        raise BadRequestError(say("submissionChallengeEnded"))
-    # A claim's own deadline (set when it is approved, moved by whoever teaches
-    # the task) is the last moment to hand work in: past it with nothing in hand
-    # the claim reads FAILED (`submission_state`, and the deadline sweep writes
-    # the same). A version taken after it would turn that FAILED back into
-    # PENDING_REVIEW behind the teacher's back; moving the deadline is how a
-    # late hand-in is let through.
-    if past_deadline(membership.deadline, datetime.now(UTC)):
-        raise BadRequestError(say("submissionPastDeadline"))
-    # Each stage is handed in on its own, named by its id, and closes at its
-    # own due date.
+    # Each stage is handed in on its own, named by its id.
     stage_at = stage_index(stage, await task_service.stage_keys(task_id))
-    await open_stage(db, task_id, stage_at, datetime.now(UTC))
-
+    await refuse_closed(db, task=task, membership=membership, stage=stage_at)
     await can.require(db, auth_user.user_id, ClaimPermission.hand_in, membership)
-
-    if not task.resubmittable:
-        existing, _ = await submission_service.list_submissions(
-            task_id=task_id,
-            participant_id=participant_id,
-            stage=stage_at,
-            all_versions=False,
-            query_review=False,
-            limit=1,
-        )
-        if existing:
-            raise BadRequestError("Task does not allow resubmission")
-
-    # 这一版要评测的代码（方案 §数据结构）：默认分支现在指着的那个 commit。读不到就留空
-    # —— 交作业不该因为托管方慢而交不上来；连了 GitHub 的项目这一版留空（第 1 步只评
-    # 平台托管的仓库）。带了 ``codeSha`` 就是页面上那一版，核一下它还是不是现在这一版。
-    pending = await _pending_code(
-        db, task=task, membership=membership, user_id=auth_user.user_id
+    await refuse_used_up(
+        submission_service, task=task, membership=membership, stage=stage_at
     )
-    if codeSha and pending is not None and pending.sha != codeSha:
-        raise ConflictError(say("submissionCodeMoved"))
-
-    submission_dto = await submission_service.submit_task(
-        task_id=task_id,
-        participant_id=participant_id,
+    submission_dto = await hand_in_version(
+        db,
+        task=task,
+        membership=membership,
+        stage=stage_at,
         submitter_id=auth_user.user_id,
         contents=contents,
-        stage=stage_at,
-        code_sha=pending.sha if pending is not None else "",
+        submissions=submission_service,
+        code_sha=codeSha,
     )
     # Commit before answering: the page that just submitted opens the submission
     # history next, and must find what it handed in. Same reason as the commit in
@@ -657,18 +626,3 @@ async def delete_task_submission_review(
     await review_service.delete_review(submission_id=submission_id)
     review_dto = await review_service.get_review_dto(submission_id)
     return ok({"review": review_dto})
-
-
-async def _pending_code(db, *, task, membership, user_id: int):
-    """这一版提交将要评测的代码：提交者那条领取的项目的默认分支。
-
-    ``project_of_claim`` 是「继续做」读的那个项目：领取批了、项目开出来了才有，还在等批
-    或者还没「开始做」时是 ``None``。项目没有、连的是 GitHub、或者托管方这一刻读不出来时
-    返回 ``None``：调用方据此留空，绝不因此拒掉这次提交（模块那句「读不到就留空」）。
-    """
-    project = await project_of_claim(
-        db, task=task, membership=membership, user_id=user_id
-    )
-    if project is None:
-        return None
-    return await code_version.for_project(db, project.id)

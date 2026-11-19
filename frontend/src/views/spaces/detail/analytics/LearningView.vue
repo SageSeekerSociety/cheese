@@ -21,6 +21,7 @@
     <BaseEmptyState
       v-if="learningFilters && learningFilters.projectCount === 0"
       size="inline"
+      align="center"
       :title="t('spaces.analytics.learning.noProjects')"
     />
 

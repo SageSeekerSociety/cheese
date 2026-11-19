@@ -222,7 +222,18 @@
         "adviceEmpty": "When enough people are stuck, teaching advice is written every night for the points most are stuck on.",
         "exportPoint": "Export this knowledge point",
         "whoTitle": "Who sees what",
-        "whoBody": "Teachers see only the class as a whole: counts, misconceptions and anonymous excerpts, never who is stuck. Excerpts drop names and student numbers and show only a code fixed per space. A group of fewer than 3 people is not analysed."
+        "whoBody": "Teachers see only the class as a whole: counts, misconceptions and anonymous excerpts, never who is stuck. Excerpts drop names and student numbers and show only a code fixed per space. A group of fewer than 3 people is not analysed.",
+        "pushButton": "Send practice to the members stuck here",
+        "pushHint": "Each member gets a set made from where they are stuck, in their own learning insight. You will not see who received one.",
+        "pushed": "Sent to {n} people",
+        "pushedFew": "Sent (fewer than 3 people, so no count is shown)",
+        "pushTooFew": "Fewer than 3 people are stuck, so nothing was sent",
+        "lastPush": "Last sent: {time}, {who}",
+        "lastPushFew": "fewer than 3 people",
+        "lastPushPeople": "{n} people",
+        "practiceLine": "Of the {practiced} people who did practice, {improved} moved up a level",
+        "practiceFew": "Fewer than 3 people have done practice; no figures yet",
+        "pushFailed": "Could not send; try again later"
       },
       "questions": {
         "title": "Frequent questions",

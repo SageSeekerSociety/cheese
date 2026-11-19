@@ -360,11 +360,12 @@ jobs:
       # src/types/{canvas,ownAgents,modelConnections}.ts directly.
       - name: Type check
         env:
-          # Node's default heap lands around 2GB and vue-tsc on this tree peaks
-          # near 1.7GB — too close to the edge to leave to chance. Raising it
-          # costs nothing (the pool VMs have far more physical memory) and only
-          # removes a cliff. Inherited by the vue-tsc child the ratchet spawns.
-          NODE_OPTIONS: --max-old-space-size=4096
+          # vue-tsc on this tree now needs close to 4GB (TopicView's import graph
+          # alone resident at ~3.9GB on main, 2026-11-17), so a 4GB heap is a
+          # cliff the next page addition falls off. The runners have 16GB; the
+          # heap only bounds the check, it is not a budget anything else shares.
+          # Inherited by the vue-tsc child the ratchet spawns.
+          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm run typecheck
 
       # The collaboration service (collab/) lives in this package because it

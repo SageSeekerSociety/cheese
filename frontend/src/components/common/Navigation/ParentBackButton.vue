@@ -117,7 +117,7 @@ const label = computed(() =>
 
 /**
  * 最外层那一页：桌面上是待办，手机上是首页。两端各是顶端（侧栏、底栏）的落点，
- * 不再是谁的下一层——它自己不画 ←，别的页面绕不出圈时也退到它这儿。
+ * 不再是谁的下一层——没有来路时它不画 ←，别的页面绕不出圈时也退到它这儿。
  *
  * 和 `isProjectRootOf` 一样，两端的答案不是同一条路由，这不是漂移：桌面上侧栏第一格
  * 就是待办，手机上是首页。
@@ -125,9 +125,6 @@ const label = computed(() =>
 const homeRoot = computed(() =>
   mdAndUp.value ? { name: 'inbox', label: t('navigation.inbox') } : { name: 'HomeHub', label: t('navigation.home') }
 )
-
-/** 站在最外层那一页上。它是根，往上没有落脚的地方。 */
-const atHomeRoot = computed(() => nav?.route?.name === homeRoot.value.name)
 
 const toHomeRoot = computed(() => {
   try {
@@ -149,6 +146,25 @@ const behind = computed(() => {
     return null
   }
 })
+
+/**
+ * 对面那颗 ← 按下去，是不是站到这一页上。
+ *
+ * 路径一样当然是。还有一例路径看不出来：桌面上 `/home` 一落地就被换成待办，团队页
+ * 那颗 ← 指向 `/home`，按下去看到的却是待办——两边的路径对不上，地方是同一处，认
+ * 不出来就成了两颗箭头互指。手机上这两格是底栏里不同的格，不能这么认。
+ */
+function backLandsHere(landingPath: string): boolean {
+  const route = nav?.route
+  if (!route) return false
+  if (landingPath === route.path) return true
+  if (!mdAndUp.value || !nav || !isRootRoute(route)) return false
+  try {
+    return nav.router.resolve(landingPath).name === 'HomeHub'
+  } catch {
+    return false
+  }
+}
 
 /**
  * 身后那一页的 ← 正落在这一页上吗？
@@ -176,10 +192,9 @@ const behindPointsHere = computed(() => {
     // 第二参是 vue-router 的 currentLocation：按名字解析时它只读 `params`，用来补
     // 目标路由缺的必填参数；但类型上它要求 `name` 非空，而 `resolve()` 的结果允许无名
     // 路由（`null`）。按住那一处的 `name` 重建一份，别的字段原样带过去。
-    return (
-      nav?.router.resolve({ name: landsOn.name, params: landsOn.params }, { ...from, name: from.name ?? '' }).path ===
-      route.path
-    )
+    const landing =
+      nav?.router.resolve({ name: landsOn.name, params: landsOn.params }, { ...from, name: from.name ?? '' }).path ?? ''
+    return backLandsHere(landing)
   } catch {
     return false
   }
@@ -196,28 +211,55 @@ const behindPointsHere = computed(() => {
  * 声明留着兜底：刷新后第一次打开、贴链接直接进来，历史里没有上一层，`router.
  * back()` 会把人送出整个应用，这时才退到声明的父级（见 `to`）。
  *
- * 两个例外不吃这条历史：站在最外层那一页上（`atHomeRoot`，它是终点，退一格只会在
- * 别的页面之间来回弹），以及身后那一页正把这里当它的上一层（`behindPointsHere`，
- * 两颗箭头互指）。
+ * 两个例外不吃这条历史：站在根那一页上（`atRoot`，它的 ← 由 `rootBack` 管），以及
+ * 身后那一页正把这里当它的上一层（`behindPointsHere`，两颗箭头互指）。
  */
-const historyBack = computed(() => cameFrom.value && !behindPointsHere.value && !atHomeRoot.value)
+const historyBack = computed(() => cameFrom.value && !behindPointsHere.value && !atRoot.value)
 
 /**
- * 手机底栏那三格的落点（首页、频道列表、待办）。它们是根：底栏就是在根之间切换的
- * 地方，根上的 ← 不管退到哪，都是在用一颗箭头做底栏的事，还退到人没想去的那一格。
- * 系统的标签页也是这样，根上没有返回。桌面没有底栏，不在这条里。
+ * 一条地址是不是「根」那一页？根是底栏 / 侧栏那几格的落点，桌面只有待办（首页那一格
+ * 点开的就是它），手机是首页、频道列表、待办那三格。根没有声明的上一层，`to` 那一支
+ * 对它没有意义。
+ *
+ * 两端的根不是同一条路由，这不是漂移：桌面上侧栏第一格就是待办，手机上是首页和它
+ * 旁边那两格。
  */
-const PHONE_ROOTS: ReadonlySet<string> = new Set(['HomeHub', 'workspace-project', 'inbox'])
-const atPhoneRoot = computed(() => !mdAndUp.value && PHONE_ROOTS.has(String(nav?.route?.name ?? '')))
+const ROOT_NAMES: ReadonlySet<string> = new Set(['HomeHub', 'workspace-project', 'inbox'])
+function isRootRoute(route: RouteSnapshot | null | undefined): boolean {
+  const name = String(route?.name ?? '')
+  return mdAndUp.value ? name === 'inbox' : ROOT_NAMES.has(name)
+}
+const atRoot = computed(() => isRootRoute(nav?.route))
+
+/** 身后那一格是不是这几格之一：两个端点的落点都算，不管这一端看不看得见。 */
+function isRootDestination(route: RouteSnapshot | null | undefined): boolean {
+  return ROOT_NAMES.has(String(route?.name ?? ''))
+}
+
+/**
+ * 根上那一颗 ←：有来路才画，没有就不画。
+ *
+ * 根是终点站：刷新、贴链接直接进来时身后什么都没有，画一颗只能原地打转、或者把人
+ * 送去他没想去的地方。可人要是从别处点进来的，「我刚才在哪」照样有个答案——从频道里
+ * 点「首页」落到待办，那颗 ← 就是回那条频道的那一下。
+ *
+ * 身后那一格也是根时不画：底栏 / 侧栏在根之间切换，那不是「回去」，是换一格，做这件
+ * 事的是底栏本身。桌面上 `/home` 还会当场换成待办，真画出来按下去就是原地不动。
+ */
+const rootBack = computed(
+  () => atRoot.value && cameFrom.value && !behindPointsHere.value && !isRootDestination(behind.value)
+)
+
+/** 这一下就是 `history.back()`：根上来路和别的页回来处是同一个动作。 */
+const backOneStep = computed(() => rootBack.value || historyBack.value)
 
 // 页面接管了这一下（topBarBack.ts）：手机上话题里的非对话页签，← 先回到对话。
 const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
 </script>
 
 <template>
-  <template v-if="atPhoneRoot" />
   <BaseButton
-    v-else-if="override"
+    v-if="override"
     icon="mdi-arrow-left"
     kind="ghost"
     size="lg"
@@ -225,11 +267,11 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
     :title="override.label"
     @click="override.onBack()"
   />
-  <!-- 有来路就回来处，哪怕这一页声明了父级（见 `historyBack`）：顶栏这一颗先回答
-       「我刚才在哪」。声明了父级的页面在刷新后、贴链接进来时没有来路，才退到声明的
-       上一层（下一条分支）。 -->
+  <!-- 有来路就回来处（见 `backOneStep`）：别的页答「我刚才在哪」，根答「我从哪一页
+       落到这一格的」。声明了父级的页面在刷新后、贴链接进来时没有来路，才退到声明的
+       上一层（下一条分支）；根上没有声明，没有来路就整颗不画。 -->
   <BaseButton
-    v-else-if="historyBack"
+    v-else-if="backOneStep"
     icon="mdi-arrow-left"
     kind="ghost"
     :size="mdAndUp ? 'sm' : 'lg'"
@@ -244,7 +286,7 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
        顶栏左上角就是一个突兀的灰方块。返回是「离开这一层」，不是「你在这儿」，
        它本来就不该有激活态。 -->
   <BaseButton
-    v-else-if="to"
+    v-else-if="to && !atRoot"
     :to="to"
     :active="false"
     icon="mdi-arrow-left"
@@ -255,9 +297,9 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
   />
   <!-- 身后那一页正把这里当它的上一层（见 `behindPointsHere`）：再吃这条历史就是两颗
        箭头互指，点多少次都在两页之间弹。不吃它，改回最外层那一页——那里是终点，
-       它有进无出，圈就断在这里。 -->
+       它有进无出，圈就断在这里。根上不这么绕（根没有声明的上一层），也不画。 -->
   <BaseButton
-    v-else-if="behindPointsHere && toHomeRoot && !atHomeRoot"
+    v-else-if="behindPointsHere && toHomeRoot && !atRoot"
     :to="toHomeRoot"
     :active="false"
     icon="mdi-arrow-left"

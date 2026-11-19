@@ -22,9 +22,20 @@
       :title="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
       @click="toggle"
     />
-    <!-- 侧栏头上那颗老鼠图标（回首页）：侧栏看不见的时候（这一页没有侧栏、平板上侧栏
-         收着）画在这里，回首页总够得着（Navigation/appNav.ts）。 -->
-    <RailItem v-if="frameInBar && homeItem" :item="homeItem" class="app-bar-home" />
+    <!-- 侧栏上「首页」那一行（回首页，带等你处理的件数）：侧栏看不见的时候（这一页没有侧栏、
+         平板上侧栏收着）画在这里，回首页总够得着（Navigation/appNav.ts）。 -->
+    <router-link
+      v-if="frameInBar && homeItem"
+      :to="homeItem.to ?? '/inbox'"
+      class="app-bar-home"
+      :aria-label="homeLabel"
+      data-testid="bar-home"
+    >
+      <CheeseLogo width="16" height="16" class="app-bar-home__mark" data-home-slot />
+      <span>{{ homeItem.title }}</span>
+      <span v-if="homeItem.badge" class="side-nav__count" aria-hidden="true">{{ countLabel(homeItem.badge) }}</span>
+      <TopicRailBadge v-else-if="homeItem.dot" dot aria-hidden="true" />
+    </router-link>
     <ParentBackButton />
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
@@ -51,6 +62,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import { SIDEBAR_FOLD_KEY } from '@/composables/sidebarWidth'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 
@@ -59,13 +71,16 @@ import { homeItemOf, useAppNav } from './appNav'
 import DesktopUpdateReady from './DesktopUpdateReady.vue'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
-import RailItem from './RailItem.vue'
 
+import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
+import { rememberedFold } from '@/components/layout-area'
+import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'
+import { countLabel } from '@/lib/topicTree'
 import { usePageTitleStore } from '@/stores/title'
 
 // 登录态由外壳传进来（`layouts/AppShell.vue` 本来就有它）：这个组件在
@@ -76,8 +91,17 @@ const props = withDefaults(defineProps<{ loggedIn: boolean; hasSidebar?: boolean
 const { compact, open, toggle } = useSidebarCollapse()
 const appNav = useAppNav()
 const homeItem = computed(() => homeItemOf(appNav?.items.value ?? []))
-// 侧栏看不见：这一页没有侧栏，或平板上侧栏收着。这时首页、问芝士、头像临时住在顶栏。
-const frameInBar = computed(() => !props.hasSidebar || (compact.value && !open.value))
+const homeLabel = computed(() => {
+  const item = homeItem.value
+  if (!item) return undefined
+  if (item.badge) return t('global.labelWithAside', { label: item.title, aside: item.badge })
+  if (item.dot) return t('global.labelWithAside', { label: item.title, aside: t('home.nav.unreadActivity') })
+  return item.title
+})
+// 侧栏看不见：这一页没有侧栏，平板上侧栏收着，或宽档里侧栏收成了一条。这时首页、问芝士、
+// 头像临时住在顶栏。
+const folded = rememberedFold(SIDEBAR_FOLD_KEY)
+const frameInBar = computed(() => !props.hasSidebar || (compact.value ? !open.value : folded.value))
 
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
@@ -151,20 +175,28 @@ const loggedIn = computed(() => props.loggedIn)
   background: var(--fill);
 }
 
-/* 顶栏里的老鼠图标和问芝士：压成和这一簇按钮一样高。 */
-.app-system-bar .app-bar-home.app-rail-item {
-  width: 28px;
+/* 顶栏里的「首页」：和这一簇按钮一样高 28、无边、悬停出底色。 */
+.app-system-bar .app-bar-home {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
   height: 28px;
+  padding: 0 8px;
   margin-inline-end: 4px;
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
-.app-system-bar .app-bar-home .cheese-icon {
-  width: 16px !important;
-  height: 16px !important;
+.app-system-bar .app-bar-home:hover {
+  background: var(--fill);
 }
 
-.app-system-bar .app-bar-home.app-rail-item::before {
-  display: none;
+.app-system-bar .app-bar-home__mark {
+  fill: var(--muted);
 }
 
 .app-system-bar .app-bar-agent.agent-rail {

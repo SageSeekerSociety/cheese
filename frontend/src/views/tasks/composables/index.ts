@@ -1,5 +1,6 @@
 export { useTaskAttachments } from './useTaskAttachments'
 export { useTaskData } from './useTaskData'
+export { useSubmissionJudge } from './useTaskJudge'
 export { useTaskManagement } from './useTaskManagement'
 export { useTaskParticipation } from './useTaskParticipation'
 export { useTaskProgress } from './useTaskProgress'

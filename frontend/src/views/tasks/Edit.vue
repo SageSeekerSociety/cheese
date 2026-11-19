@@ -25,6 +25,7 @@ import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
 
 import { useStageChangeCheck } from './composables/useStageChangeCheck'
+import { provideTestTrial } from './composables/useTaskJudge'
 import { useTaskData } from './composables'
 
 import { axiosErrorMessage } from '@/api/axiosHttp'
@@ -49,6 +50,7 @@ import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import TaskStageChangeConfirm from '@/components/tasks/TaskStageChangeConfirm.vue'
 import TaskStarterPicker from '@/components/tasks/TaskStarterPicker.vue'
+import { userName } from '@/lib/agentNames'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { mentorOptions } from '@/lib/taskMentors'
@@ -73,6 +75,8 @@ const spaceData = useSpaceData()
 const { domainGroups, categories } = storeToRefs(spaceStore)
 
 const spaceId = computed(() => taskData.value?.space?.id ?? Number(route.params.spaceId))
+// 表单里「用参考答案试跑」测试点：算力记在这个空间的所有者头上。
+provideTestTrial(() => spaceId.value)
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
 const detailTo = computed(() => ({ name: 'TasksDetail', params: { spaceId: spaceId.value, taskId } }))
 
@@ -160,7 +164,7 @@ const starter = useStarterUpload<string>({
 const mentorChoices = computed(() =>
   mentorOptions(
     taskData.value?.space?.admins,
-    taskData.value?.creator ? { handle: taskData.value.creator.username, name: taskData.value.creator.nickname } : null
+    taskData.value?.creator ? { handle: taskData.value.creator.username, name: userName(taskData.value.creator) } : null
   )
 )
 

@@ -6,9 +6,10 @@ The rules a person can state without the code:
   hangs under the message that asked for it, and that message is where it
   came from. There is no turning the main line itself into the task.
 - How the task ended is recorded back where it was opened, in the channel's
-  main line, as something that happened rather than anyone's words; the
-  teammate that opened the task is told there, to say the result itself. No
-  支线 opens under the message for it.
+  main line, as something that happened rather than anyone's words. A person
+  who closed it said so by clicking: the teammate that opened the task is not
+  woken, and reads who closed it and how in its next input. No 支线 opens
+  under the message for it.
 """
 
 import uuid
@@ -22,6 +23,9 @@ from tests.integration.conftest import (
     post_project,
     room_agent_seat,
     session_auth_headers,
+)
+from tests.integration.test_the_teammate_that_opened_a_task_hears_how_it_goes import (
+    _next_input_of_the_main_line,
 )
 
 
@@ -118,10 +122,13 @@ def test_how_a_task_opened_in_the_main_line_ended_is_said_there(client, stub_hoo
         "happening",
     )
     assert "做完了" in told[0]["content"]
-    # The teammate that opened it is told there, with what it needs to say.
-    [waiting] = _waiting_for(client, room, seat)
-    assert "登录页" in waiting
-    assert "做完了" in waiting
+    # The person said it by closing it: the teammate that opened it is not
+    # woken to say it again, and reads who closed it and how in its next input.
+    assert _waiting_for(client, room, seat) == []
+    [heard] = _next_input_of_the_main_line(client, room)
+    assert "登录页" in heard
+    assert "做完了" in heard
+    assert "alice" in heard
     under = next(line for line in _main_line(client, room) if line["id"] == asked["id"])
     assert not under.get("thread")
 

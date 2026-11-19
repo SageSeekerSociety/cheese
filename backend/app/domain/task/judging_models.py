@@ -39,8 +39,7 @@ class TaskTestSuite(Base):
     """一道题一个阶段的那一套测试点（方案 §数据结构）。
 
     ``kind`` 是形态：``IO``（输入/输出用例）、``SCRIPT``（出题人的测试文件）、
-    ``COMMAND``（项目自带判分程序）。第 1 步只出 ``IO``，表结构三种都留好，后两种在
-    第 2 步接上 —— 那时只填指令和文件，不再改表。
+    ``COMMAND``（项目自带判分程序）。三种怎么校验、怎么存见 ``test_suite``。
 
     改测试点和改评分要点一样：整份替换，``revision`` 跟着加一，评测记录记下它跑的是
     第几版（``TaskJudgeRun.suite_revision``），于是已出的结果不会随改题而变。
@@ -211,9 +210,10 @@ class TaskTestCase(Base):
 class TaskJudgeRun(Base):
     """一次评测：跑哪一版代码、用第几版测试、结果如何。
 
-    ``purpose`` 是 ``SUBMISSION``（学生提交后自动进队）或 ``TRIAL``（出题人用参考
-    答案试跑、学生自测）—— 后者 ``submission_id`` 为空，代之以 ``trial_spec``（哪一
-    个分支、哪一版代码、谁发起的）。
+    ``purpose`` 是 ``SUBMISSION``（学生提交后自动进队）、``TRIAL``（出题人用参考
+    答案试跑）或 ``SELF_TEST``（学生拿默认分支现在的代码只跑样例用例，不计分）——
+    后两种 ``submission_id`` 为空，代之以 ``trial_spec``（试跑：设置、用例与参考代码在
+    哪；自测：哪个参与者、哪个阶段）。
 
     这条记录**不是评审**：现在的规则是一版提交有一份评审判通过就算通过，把评测写进
     评审会让没批改的作业直接变成已通过（方案 §特殊情况）。所以它单独存，老师批改时
@@ -226,7 +226,8 @@ class TaskJudgeRun(Base):
     __tablename__ = "task_judge_run"
     __table_args__ = (
         CheckConstraint(
-            "purpose IN ('SUBMISSION', 'TRIAL')", name="ck_task_judge_run_purpose"
+            "purpose IN ('SUBMISSION', 'TRIAL', 'SELF_TEST')",
+            name="ck_task_judge_run_purpose",
         ),
         CheckConstraint(
             "state IN ('queued', 'running', 'done', 'failed')",
@@ -242,24 +243,29 @@ class TaskJudgeRun(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, task_judge_run_seq, primary_key=True)
-    task_id: Mapped[int] = mapped_column(
+    #: 哪道题、哪一套测试。出题人在表单里试跑（``purpose = 'TRIAL'``）时题目还没发布，
+    #: 这两格为空，跑什么写在 ``trial_spec`` 里。
+    task_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey(
             "task.id", ondelete="CASCADE", name="fk_task_judge_run_task_id_task"
         ),
-        nullable=False,
+        nullable=True,
         index=True,
     )
-    suite_id: Mapped[int] = mapped_column(
+    suite_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey(
             "task_test_suite.id",
             ondelete="CASCADE",
             name="fk_task_judge_run_suite_id_task_test_suite",
         ),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    #: 算力记在哪个空间头上（试跑那一行用；提交的那一行从题目读）。不是外键，同
+    #: ``project_id``。
+    space_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: 跑的是测试套的第几版（``TaskTestSuite.revision``）。
     suite_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     #: 哪一版提交；试跑与自测为空。
@@ -276,7 +282,8 @@ class TaskJudgeRun(Base):
     purpose: Mapped[str] = mapped_column(
         String(16), nullable=False, default="SUBMISSION", server_default="SUBMISSION"
     )
-    #: 试跑/自测要跑什么：``{branch, codeSha, requestedBy}``。等提交跑的那条为空。
+    #: 试跑要跑什么：测试套的设置、用例和参考代码在私有存储里的位置
+    #: （``app.domain.judge.trials``）。等提交跑的那条为空。
     trial_spec: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     #: 代码从哪个项目取（学生项目的 id）。不是外键：项目删了，这份结果照旧是记录。
     project_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -318,6 +325,9 @@ class TaskJudgeRun(Base):
     machine_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: 编译/运行的输出，截断后。
     compile_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 判分程序的输出里学生看得到的那几行（``TaskTestSuite.student_log_lines``，评测
+    #: 那一刻的设置）；老师看的全文在 ``compile_output``。``IO`` 为空。
+    student_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: 逐个用例的结果：``[{index, name, status, ms, memoryKb, points, ...}]``。
     results: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     #: 通过用例的分值之和 ÷ 全部用例分值之和，算好的两个数。

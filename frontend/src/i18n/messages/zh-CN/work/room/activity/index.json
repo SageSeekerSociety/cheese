@@ -1,8 +1,10 @@
 {
   "retrying": "{name}调用的模型出错了，正在自动重试",
+  "retryingShort": "调用的模型出错了，正在自动重试",
   "separator": " · ",
   "typingMany": "多人正在输入…",
   "typingOne": "{name}正在输入…",
   "typingTwo": "{first}和{second}正在输入…",
-  "working": "{name}正在工作…"
+  "working": "{name}正在工作…",
+  "workingShort": "正在工作"
 }

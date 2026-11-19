@@ -27,6 +27,7 @@ async def get_answers_service(db=Depends(get_db)) -> AnswersService:
         repo=answer_repo,
         question_repo=question_repo,
         profile_repo=profile_repo,
+        session=db,
     )
 
 

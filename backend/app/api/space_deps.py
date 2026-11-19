@@ -15,6 +15,7 @@ from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.learning_class_service import SpaceLearningClassService
 from app.domain.space.learning_insight_service import SpaceLearningInsightService
+from app.domain.space.learning_practice_service import SpaceLearningPracticeService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
@@ -117,3 +118,10 @@ async def get_space_learning_class_service(
 ) -> SpaceLearningClassService:
     """「数据 › 学情分析」：老师看全班整体的七个页签、知识点详情、摘录与导出。"""
     return SpaceLearningClassService.of(db)
+
+
+async def get_space_learning_practice_service(
+    db=Depends(get_db),
+) -> SpaceLearningPracticeService:
+    """巩固练习、复习提醒、讲解（成员本人）与推送巩固题（老师）。"""
+    return SpaceLearningPracticeService.of(db)

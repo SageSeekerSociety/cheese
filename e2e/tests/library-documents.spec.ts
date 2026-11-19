@@ -57,7 +57,8 @@ test('新建文档直接打开，起了名、写了字，回到资料库就在�
     id: string;
   };
   await page.goto(`/projects/${projectId}/topics/${room.id}?tab=file:doc:${docId}`);
-  await expect(page.locator('.tabbar__name', { hasText: title })).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('.work-panel .doc-prose').last()).toContainText('三家都有年付折扣', { timeout: 30_000 });
+  // 桌面上工作面板的每一格是布局区里的一块，页签是布局区画的。
+  await expect(page.locator(`[data-layout-tab="file:doc:${docId}"]`, { hasText: title })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.work-pane .doc-prose').last()).toContainText('三家都有年付折扣', { timeout: 30_000 });
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/library-doc-beside-chat.png` });
 });

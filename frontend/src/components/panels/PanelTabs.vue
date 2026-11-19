@@ -40,12 +40,10 @@ const props = withDefaults(
     phone?: boolean
     /** 页签切换的那块内容区（`role="tabpanel"`）的 id，给每一格的 `aria-controls`。 */
     panelId?: string
-    /** 并排时右边那一格：页签下面一道虚线，看得出它也在屏幕上。 */
-    side?: string | null
-    /** 固定区右边那一格能关的页签（频道里正在审阅的那一件交付）：同一时间只有一格。 */
-    closable?: PanelTab | null
+    /** 固定区右边那几格能关的页签（频道里打开的任务，一件一格）。 */
+    closables?: PanelTab[]
   }>(),
-  { files: () => [], phone: false, panelId: undefined, side: null, closable: null }
+  { files: () => [], phone: false, panelId: undefined, closables: () => [] }
 )
 
 const emit = defineEmits<{
@@ -133,7 +131,7 @@ function placeInk() {
   if (!inkMoves.value) requestAnimationFrame(() => (inkMoves.value = true))
 }
 watch(
-  [() => props.active, () => props.files.length, () => props.closable?.key, tabbarRef],
+  [() => props.active, () => props.files.length, () => props.closables.length, tabbarRef],
   () =>
     void nextTick(() => {
       placeInk()
@@ -180,7 +178,6 @@ const inkStyle = computed(() =>
           class="tabbar__tab"
           :class="{
             'tabbar__tab--on': active === tab.key,
-            'tabbar__tab--side': side === tab.key,
             'tabbar__tab--empty': tab.empty,
           }"
           :aria-selected="active === tab.key"
@@ -207,14 +204,15 @@ const inkStyle = computed(() =>
             >{{ tab.signal.count }}</span
           >
         </button>
-        <!-- The one closable tab right of the fixed ones (a delivery under review). Its
-             close button is a sibling, for the same reason as the free zone's below. -->
-        <div v-if="closable" class="tabbar__file">
+        <!-- The closable tabs right of the fixed ones, one per task opened in the channel.
+             Each close button is a sibling, for the same reason as the free zone's below. -->
+        <span v-if="closables.length" class="tabbar__sep" aria-hidden="true" />
+        <div v-for="closable in closables" :key="closable.key" class="tabbar__file">
           <button
             type="button"
             role="tab"
             class="tabbar__tab"
-            :class="{ 'tabbar__tab--on': active === closable.key, 'tabbar__tab--side': side === closable.key }"
+            :class="{ 'tabbar__tab--on': active === closable.key }"
             :aria-selected="active === closable.key"
             :aria-controls="panelId"
             :title="closable.title ?? closable.label"
@@ -248,7 +246,7 @@ const inkStyle = computed(() =>
             type="button"
             role="tab"
             class="tabbar__tab"
-            :class="{ 'tabbar__tab--on': active === fileKey(f.path), 'tabbar__tab--side': side === fileKey(f.path) }"
+            :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
             :aria-selected="active === fileKey(f.path)"
             :aria-controls="panelId"
             :title="f.pinned ? tabName(f) : t('work.room.tabs.pinHint', { path: tabName(f) })"
@@ -358,19 +356,6 @@ const inkStyle = computed(() =>
    所以是真的长高。 */
 .tabbar--phone .tabbar__tab {
   min-height: 44px;
-}
-
-/* 并排时右边那一格：字和选中的一样深，下面一道虚线（实线是选中那一格的）。 */
-.tabbar__tab--side {
-  color: var(--ink);
-}
-.tabbar__tab--side::after {
-  content: '';
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 0;
-  border-bottom: 2px dashed var(--line-2);
 }
 
 /* 这一格此刻没东西：字退到 --faint，但照样能点，点进去是它自己的「暂无」。 */

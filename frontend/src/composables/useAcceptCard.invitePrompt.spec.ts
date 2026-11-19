@@ -25,6 +25,7 @@ vi.mock('@/api', async () => {
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
     acceptCard: (...a: unknown[]) => acceptCard(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
+    getHandInStanding: vi.fn().mockResolvedValue({ unhanded: false, waiting: false }),
   }
 })
 vi.mock('@/composables/useInvitePrompt', () => ({

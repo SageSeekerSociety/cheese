@@ -1218,8 +1218,10 @@ def test_get_team_and_team_members_deduplicate_team_user_relation_queries(client
     assert _count(team_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 1, [
         s for s in team_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert len(team_sql) <= 5, (
-        f"expected <= 5 SQL statements on GET /teams/{{id}}, got {len(team_sql)}: {team_sql}"
+    # 6, not 5: the viewer's remark for the people listed is one more statement,
+    # fixed per request rather than per member.
+    assert len(team_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /teams/{{id}}, got {len(team_sql)}: {team_sql}"
     )
 
     with counting_sql(client) as mem_sql:
@@ -1228,8 +1230,9 @@ def test_get_team_and_team_members_deduplicate_team_user_relation_queries(client
     assert _count(mem_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 1, [
         s for s in mem_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert len(mem_sql) <= 5, (
-        f"expected <= 5 SQL statements on GET /teams/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
+    # Same remark statement as above: one per request, not one per member.
+    assert len(mem_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /teams/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
     )
 
 

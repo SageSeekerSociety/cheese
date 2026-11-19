@@ -9,26 +9,32 @@
 //
 // 评分要点的一行由谁给分（`app/domain/task/rubric.py` 的 `LINE_KINDS`）：默认是老师
 // 评审时手填（`manual`），也可以加一行额度用量（`usage`），由平台按这份领题用掉的额度
-// 自动算分。「添加一项」是一张小菜单，两种行二选一；额度用量一道题最多一行（后端
-// `rubric._check_automatic`），加过就禁用。含自动算分那一行的阶段合计要等于 100 分，
-// 不然发布会被后端 400，这里先算出来、当场说出来。
+// 自动算分，或一行测试点（`tests`），按这个阶段的评测结果自动算分。「添加一项」是一张
+// 小菜单，三种行选一种；额度用量一道题最多一行、测试点一个阶段最多一行（后端
+// `rubric._check_automatic`），加过就禁用。测试点那一行连着这个阶段挂的那一套用例
+// （`testSuite`，每个阶段至多一套）：加这一行时配上一套起步的用例，删这一行时那一套也
+// 删。含自动算分那一行的阶段合计要等于 100 分，不然发布会被后端 400，这里先算出来、
+// 当场说出来。
 import type {
   TaskRubricLine,
   TaskRubricLineConfig,
   TaskStage,
   TaskSubmissionEntryType,
   TaskSubmissionSchemaEntry,
+  TaskTestSuite,
 } from '@/types'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import TaskFormSection from './TaskFormSection.vue'
+import TaskFormTestSuite from './TaskFormTestSuite.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { settledStage } from '@/lib/taskStages'
+import { newTestSuite } from '@/lib/taskTestSuite'
 
 /** 含自动算分行时，那个阶段的评分要点要到的合计（后端 `rubric.AUTO_TOTAL`）。 */
 const AUTO_TOTAL = 100
@@ -39,13 +45,17 @@ const props = withDefaults(
     missingName?: boolean
     /** 题目的阶段；空 = 不分阶段。 */
     stages?: TaskStage[]
+    /** 点过发布后，有测试点那一行的那一套没写运行命令或没有用例。 */
+    incompleteSuite?: boolean
   }>(),
-  { missingName: false, stages: () => [] }
+  { missingName: false, stages: () => [], incompleteSuite: false }
 )
 
 const items = defineModel<TaskSubmissionSchemaEntry[]>('submissionSchema', { required: true })
 const rubric = defineModel<TaskRubricLine[]>('rubric', { required: true })
 const rubricPublic = defineModel<boolean>('rubricPublic', { required: true })
+/** 各阶段挂的测试点，每个阶段至多一套。 */
+const testSuite = defineModel<TaskTestSuite[]>('testSuite', { default: () => [] })
 
 const { t } = useI18n()
 
@@ -67,8 +77,10 @@ function usageScore(credits: number, points: number, full: number, zero: number)
   return Math.round((points * (zero - credits)) / (zero - full))
 }
 
-/** 这一行是不是平台自动算分的（额度用量）。 */
+/** 这一行是不是平台自动算分的（额度用量、测试点）。 */
 const isAuto = (line: TaskRubricLine) => (line.kind ?? 'manual') !== 'manual'
+const isUsage = (line: TaskRubricLine) => line.kind === 'usage'
+const isTests = (line: TaskRubricLine) => line.kind === 'tests'
 
 /** 每组：一个阶段（不分阶段时是唯一的那一组，没有标题，阶段是 null），和按阶段的 id
  *  归到它下面的提交项、评分要点在整份列表里的位置；手动行和自动行分开画。 */
@@ -88,7 +100,8 @@ const groups = computed(() => {
         .filter(({ entry }) => settledStage(props.stages, entry.stage) === id),
       lines,
       manual: lines.filter(({ line }) => !isAuto(line)),
-      auto: lines.filter(({ line }) => isAuto(line)),
+      auto: lines.filter(({ line }) => isUsage(line)),
+      tests: lines.filter(({ line }) => isTests(line)),
       total: pointsOf(lines.map(({ line }) => line)),
       hasAuto: lines.some(({ line }) => isAuto(line)),
     }
@@ -98,7 +111,7 @@ const groups = computed(() => {
 const staged = computed(() => props.stages.length > 0)
 
 /** 一道题最多一行额度用量：整份评分要点里有一行就算加过了（后端 `rubric.rubricUsageOnce`）。 */
-const hasUsage = computed(() => rubric.value.some(isAuto))
+const hasUsage = computed(() => rubric.value.some(isUsage))
 
 function setItem(index: number, patch: Partial<TaskSubmissionSchemaEntry>) {
   items.value = items.value.map((entry, i) => (i === index ? { ...entry, ...patch } : entry))
@@ -125,6 +138,29 @@ function addUsageLine(stage: string | null) {
     { item: '', points: 0, criteria: '', stage, kind: 'usage', config: { mode: 'threshold', full: 0, zero: 100 } },
   ]
 }
+/** 加一行测试点：名称先填「正确性」，这个阶段还没有测试点就配上一套起步的用例。 */
+function addTestsLine(stage: string | null) {
+  if (rubric.value.some((line) => isTests(line) && settledStage(props.stages, line.stage) === stage)) return
+  rubric.value = [
+    ...rubric.value,
+    { item: t('tasks.judge.form.defaultName'), points: 0, criteria: '', stage, kind: 'tests' },
+  ]
+  if (!suiteOf(stage)) testSuite.value = [...testSuite.value, newTestSuite(stage)]
+}
+/** 这个阶段挂的那一套测试点。 */
+function suiteOf(stage: string | null): TaskTestSuite | undefined {
+  return testSuite.value.find((suite) => settledStage(props.stages, suite.stage) === stage)
+}
+function setSuite(stage: string | null, next: TaskTestSuite) {
+  testSuite.value = testSuite.value.map((suite) =>
+    settledStage(props.stages, suite.stage) === stage ? { ...next, stage } : suite
+  )
+}
+/** 删测试点那一行：这个阶段的那一套用例一起删。 */
+function removeTestsLine(index: number, stage: string | null) {
+  removeLine(index)
+  testSuite.value = testSuite.value.filter((suite) => settledStage(props.stages, suite.stage) !== stage)
+}
 function setUsageConfig(index: number, patch: Partial<TaskRubricLineConfig>) {
   const line = rubric.value[index]
   if (!line) return
@@ -141,7 +177,7 @@ function pointsOf(lines: TaskRubricLine[]): number {
 const total = computed(() => pointsOf(rubric.value))
 
 /** 额度用量在合计里占几成。 */
-const usagePoints = computed(() => pointsOf(rubric.value.filter(isAuto)))
+const usagePoints = computed(() => pointsOf(rubric.value.filter(isUsage)))
 const usageShare = computed(() => (total.value ? Math.round((usagePoints.value / total.value) * 100) : 0))
 
 const nameMissing = (line: TaskRubricLine) =>
@@ -227,7 +263,13 @@ function ruleText(line: TaskRubricLine): string {
     <BaseField
       data-agent-field="rubric"
       :label="t('tasks.form.grading.rubric')"
-      :error="missingName ? t('tasks.form.grading.nameRequired') : undefined"
+      :error="
+        missingName
+          ? t('tasks.form.grading.nameRequired')
+          : incompleteSuite
+            ? t('tasks.judge.form.incomplete')
+            : undefined
+      "
     >
       <div class="tfg__groups" data-testid="task-form-rubric">
         <div v-for="group in groups" :key="group.key" class="tfg__rubric">
@@ -392,6 +434,18 @@ function ruleText(line: TaskRubricLine): string {
                 {{ t('tasks.form.grading.usageRankRule', { points: Number(line.points) || 0 }) }}
               </p>
             </div>
+
+            <!-- 测试点：这一行的分值，连着这个阶段挂的那一套用例。 -->
+            <template v-for="{ line, at } in group.tests" :key="`tests-${at}`">
+              <TaskFormTestSuite
+                v-if="suiteOf(group.stage)"
+                :line="line"
+                :suite="suiteOf(group.stage)!"
+                @update:line="setLine(at, $event)"
+                @update:suite="setSuite(group.stage, $event)"
+                @remove="removeTestsLine(at, group.stage)"
+              />
+            </template>
           </template>
 
           <div class="tfg__foot">
@@ -412,6 +466,16 @@ function ruleText(line: TaskRubricLine): string {
                 <v-list-item data-testid="task-form-add-manual" @click="addLine(group.stage)">
                   <v-list-item-title>{{ t('tasks.form.grading.addManual') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ t('tasks.form.grading.addManualHint') }}</v-list-item-subtitle>
+                </v-list-item>
+                <v-list-item
+                  data-testid="task-form-add-tests"
+                  :disabled="group.tests.length > 0"
+                  @click="addTestsLine(group.stage)"
+                >
+                  <v-list-item-title>{{ t('tasks.judge.form.add') }}</v-list-item-title>
+                  <v-list-item-subtitle>{{
+                    group.tests.length ? t('tasks.judge.form.addDone') : t('tasks.judge.form.addHint')
+                  }}</v-list-item-subtitle>
                 </v-list-item>
                 <v-list-item data-testid="task-form-add-usage" :disabled="hasUsage" @click="addUsageLine(group.stage)">
                   <v-list-item-title>{{ t('tasks.form.grading.addUsage') }}</v-list-item-title>

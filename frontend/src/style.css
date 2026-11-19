@@ -42,10 +42,6 @@
   --text: #36383c; /* body */
   --muted: #5a5e66; /* secondary */
   --faint: #747a82; /* decoration — icons, dividers, placeholder shapes */
-  /* The rail's you-are-here bar sits flush against the screen edge, and on a
-     maximised window that edge is the monitor's black bezel. --text (1.8:1 on
-     black) merges into it; --faint holds 4.1:1 on the rail and 4.8:1 on black. */
-  --rail-mark: var(--faint);
 
   --line: #ecedef; /* hairlines */
   --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
@@ -488,7 +484,6 @@
   --text: #d3d6db;
   --muted: #aeb4bd;
   --faint: #888ea0; /* decoration — icons, dividers, placeholder shapes */
-  --rail-mark: var(--text);
 
   --line: #2b2e33;
   --line-2: #3a3e45; /* dividers AND the selected row's fill */
@@ -1743,6 +1738,21 @@ button:not(.v-btn) {
 
 ::selection {
   background: var(--selection-bg);
+}
+
+/* 富文本正文里的下划线与删除线：浏览器默认会躲开字母的下伸部分（g j p q y 的尾
+   巴），每躲一次断一截——汉字和数字没有下伸，所以中英数混排时线看起来断断续续。
+   关掉它，线是一整条；代价是线会压过那几笔尾巴。三个容器各是一套正文：富文本编辑
+   器与只读（.rt-content）、Markdown 阅读（.md-reader）、实况文档（.doc-prose，含
+   只读的 .doc-reading）。只管编辑器画出来的 <u>/<s>：版本对比里的 <del>/<ins> 另有
+   样式，不在这三套正文里。 */
+.rt-content u,
+.rt-content s,
+.md-reader u,
+.md-reader s,
+.doc-prose u,
+.doc-prose s {
+  text-decoration-skip-ink: none;
 }
 
 /* iOS Safari zooms the page in when a text field under 16px takes focus, and

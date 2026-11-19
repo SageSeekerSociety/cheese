@@ -106,8 +106,7 @@ export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
   );
   await page.goto("/inbox");
   await page
-    .locator(".app-rail-item:not(.app-rail-item--add)")
-    .first()
+    .getByTestId("sidebar-home")
     .waitFor();
 }
 

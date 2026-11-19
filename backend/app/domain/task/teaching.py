@@ -30,7 +30,9 @@ from app.domain.task.models import Task
 from app.domain.task.protocol import Protocol, Teaching, resolve
 
 
-async def protocol_for_task(session: AsyncSession, task: Task) -> Protocol:
+async def protocol_for_task(
+    session: AsyncSession, task: Task, *, project: Project | None = None
+) -> Protocol:
     """这道题在三/四级链上读到的那份协议：把 项目集 / 空间 两级补齐后再 ``resolve``。
 
     ``resolve`` 要的是三行（空间、项目集、题目），而调用方常常手上只有一个 ``Task``
@@ -47,7 +49,7 @@ async def protocol_for_task(session: AsyncSession, task: Task) -> Protocol:
         if getattr(task, "space_id", None)
         else None
     )
-    return resolve(space=space, category=category, task=task)
+    return resolve(space=space, category=category, task=task, project=project)
 
 
 @dataclass(frozen=True)

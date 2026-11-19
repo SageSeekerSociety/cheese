@@ -17,6 +17,7 @@ from app.domain.review import (
     archive,
     commit_message,
     credit,
+    forge_words,
     notes,
     pr_publish,
     pr_text,
@@ -231,8 +232,13 @@ async def redescribe(
     change_subject: str | None = None,
     change_body: str | None = None,
     focus: str | None = None,
+    recorded_by_caller: bool = False,
 ) -> AcceptCard:
     """更正这张卡的描述 —— and rewrite the PR from it in the same breath.
+
+    ``recorded_by_caller``: the change is part of an action that writes its own
+    line in the task (a member handing in another version, `machine.hand_in`),
+    and that one line is the record; this does not add a second.
 
     **Why this may be corrected while the credits may not.** A delivery
     claim is an ASSERTION OF FACT about who wrote the code; letting it be
@@ -311,7 +317,11 @@ async def redescribe(
             )
     # 留痕：谁在什么时候把描述从什么改成了什么。这条入口的存在本身需要可追溯，
     # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。审阅重点不进 PR
-    # 正文，所以只有标题或正文真的变了才去碰 GitHub。
+    # 正文，所以只有标题或正文真的变了才去碰 PR。
+    if recorded_by_caller:
+        await self._session.flush()
+        await self._session.refresh(card)
+        return card
     if text_changed:
         content = say("cardRedescribed", actor=f"<@{actor}>")
         if focus_changed:
@@ -474,6 +484,7 @@ async def reject(
     await self._settle_the_card(card, "rejected")
     card.decided_by = decided_by
     card.decided_by_assistant = by_assistant
+    card.decided_by_seat = None
     card.decided_at = decided = datetime.now(UTC)
     await _back_to_work(self, card, at=decided)
     notes.record(card, None, note)
@@ -520,6 +531,7 @@ async def revoke(
     await self._settle_the_card(card, "voided")
     card.decided_by = decided_by
     card.decided_by_assistant = False
+    card.decided_by_seat = None
     card.decided_at = datetime.now(UTC)
 
     # 撤销的是这次**验收记录**，不是这次合并 —— PR 已经在 main 上了，git 层面
@@ -607,6 +619,9 @@ async def merge_despite_checks(
         card, topic, head_sha, say("verbMergeAnyway")
     )
     assert seen_head is not None  # PR lane; the guard above rules None out
+    # 放行的是规则；保存过、还没再提交一版的修改不在这一版里，放行也带不走它们。
+    if await self._holds_uncommitted(card):
+        raise ValidationError(say("acceptUncommitted"))
 
     forge = await self._resolve_forge(topic.project_id, card=card)
     return await forge.merge_despite_checks(
@@ -692,12 +707,15 @@ async def _override_github_checks(
         raise ValidationError(say("prNewCommitsDuringOverride", number=number))
     if result.queued:
         card.decided_by_assistant = False
+        card.decided_by_seat = None
         await self._record_queue_entry(card, decided_by)
         return card
     if result.sha is None:
+        kind = (await self._resolve_forge(topic.project_id, card=card)).kind
         raise ValidationError(
-            say(
-                "githubMergeRefused",
+            forge_words.said(
+                kind,
+                "prMergeRefused",
                 pr=number,
                 reason=result.blocked_reason or say("reasonUnstated"),
             )
@@ -713,11 +731,14 @@ async def _override_github_checks(
         f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
     )
     card.pr_merged_at = now
+    # Who merged it is on the card before the task hears it landed (the line
+    # its discussion hears names them, `task_landing._step_landed`).
+    card.decided_by = decided_by
+    card.decided_by_assistant = False
+    card.decided_by_seat = None
     await self._mark_task_merged(card, delivered_head=seen_head)
     card.pr_head_sha = result.sha
     await self._repo.add_approval(card.id, decided_by)
-    card.decided_by = decided_by
-    card.decided_by_assistant = False
     card.decided_at = now
     await self._finish_pr_accept(card=card, topic=topic, headline=headline)
     logger.warning(
@@ -805,6 +826,7 @@ async def void(
     if card.decided_by is None:
         card.decided_by = decided_by
         card.decided_by_assistant = False
+        card.decided_by_seat = None
     if card.decided_at is None:
         card.decided_at = datetime.now(UTC)
 

@@ -2,6 +2,7 @@
 // 的一节：cx_types.ts 顶在自己的行数上限上，只能变短。名字照旧从 `@/cx_types`
 // 转出去，所以引它的人一个都不用改。
 import type { Topic, TopicRef } from '@/cx_types'
+import type { ProjectAvatarSpec } from '@/utils/projectAvatar'
 
 // A topic the member started, shown on their member page.
 export type MemberTopic = Pick<Topic, 'id' | 'title' | 'status'>
@@ -25,6 +26,8 @@ export type ProfileProjectRole = 'owner' | 'team' | 'external' | 'agent'
 export interface ProfileProject {
   project_id: string
   name: string
+  /** What the project's tile shows (ProjectAvatar). */
+  avatar?: ProjectAvatarSpec | null
   source: ProfileProjectRole
   topics_started: number
   contributions: number

@@ -9,7 +9,7 @@
 // 正文不在这一层来回搬：编辑器直接绑在协同文档上（useDocCollab），谁打的字都实时合进
 // 同一份，协同服务在停手几秒后把它存回去。存回之后协同连接上会收到一帧（useDocCollab
 // 的 stores），这一层据此重读最近一次编辑和修改建议的理由。
-import type { Block, Topic } from '../cx_types'
+import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
 import type { AuthoredDocument } from '../lib/docAuthors'
 import type { DocEdit } from '../lib/docEdits'
@@ -44,6 +44,7 @@ import { useDocLinks } from './useDocLinks'
 import { useMentionOutside } from './useMentionOutside'
 
 import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 
@@ -68,6 +69,8 @@ export interface PanelDocProps {
   agentHandle?: string | null
   /** 画在一整页里（项目文档页的项目目标）：总览的其余两块不在那儿画，也就不去取。 */
   bare?: boolean
+  /** 项目名册：文档里认人（编辑者、历史作者、@ 候选）时按当前查看者的备注取名字。 */
+  members?: ProjectMemberRow[]
 }
 
 /** 「文档」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
@@ -349,10 +352,13 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
     lastEdit.value = top ? { actor: top.actor, at: top.created_at } : null
   }
 
-  /** handle 读成名字：自己是「你」，AI 队友是它的名字，在线的人用他们的名字。 */
+  /** handle 读成名字：自己是「你」，AI 队友是它的名字，项目名册上的人用当前查看者的
+   *  备注（没有备注就是原名），在线但不在名册上的人用协作广播里的名字。 */
   function nameOf(handle: string): string {
     if (handle === AUTHOR) return t('work.room.doc.you')
     if (handle === props.agentHandle || isAgentHandle(handle)) return props.agentName ?? handle
+    const roster = memberName(props.members?.find((m) => m.user_handle === handle))
+    if (roster) return roster
     return collab.peers.value.find((peer) => peer.handle === handle)?.name ?? handle
   }
 

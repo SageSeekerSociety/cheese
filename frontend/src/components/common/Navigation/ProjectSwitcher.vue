@@ -1,9 +1,7 @@
 <template>
-  <!-- 侧栏头：老鼠图标（回首页）+ 当前项目（点开换项目）。左边那一列方块栏拿掉后
-       （appNav.ts），首页和项目都从这一行进。 -->
+  <!-- 侧栏头只写你在哪儿：项目里是这个项目的头像、名字和团队，首页一带是「首页」。点它
+       换项目。回首页走侧栏头下面那一行「首页」（SidebarFrameTop）。 -->
   <div class="sidebar-header frame-top" data-testid="sidebar-frame-top">
-    <RailItem v-if="homeItem" :item="homeItem" class="frame-top__home" />
-
     <v-menu v-model="open" location="bottom start" :offset="6" :close-on-content-click="false">
       <template #activator="{ props: menuProps }">
         <button
@@ -16,9 +14,18 @@
           :aria-label="t('work.sidebar.switchProject')"
           aria-haspopup="menu"
         >
+          <ProjectAvatar
+            v-if="current"
+            :id="current.projectId ?? ''"
+            :name="current.title"
+            :avatar="current.avatar"
+            :size="26"
+          />
+          <span v-else-if="onHome" class="frame-top__home" data-home-slot><CheeseLogo width="18" height="18" /></span>
           <span class="frame-top__text">
-            <span class="frame-top__name" data-user-content>{{
-              current ? current.title : t('work.sidebar.chooseProject')
+            <span v-if="current" class="frame-top__name" data-user-content>{{ current.title }}</span>
+            <span v-else class="frame-top__name">{{
+              onHome && homeItem ? homeItem.title : t('work.sidebar.chooseProject')
             }}</span>
             <router-link
               v-if="team"
@@ -29,12 +36,13 @@
               >{{ team.label }}</router-link
             >
           </span>
-          <TopicRailBadge
+          <v-icon class="frame-top__caret" size="16" icon="mdi-chevron-down" />
+          <span
             v-if="othersAwaiting > 0"
-            :count="othersAwaiting"
+            class="side-nav__count"
             :title="t('navigation.switcher.othersAwaiting', { n: othersAwaiting })"
-          />
-          <v-icon class="frame-top__caret" size="18" icon="mdi-chevron-down" />
+            >{{ countLabel(othersAwaiting) }}</span
+          >
         </button>
       </template>
 
@@ -91,11 +99,10 @@
               @click="open = false"
             >
               <v-icon v-if="!query" class="switcher__grip" size="14" icon="mdi-drag-vertical" />
-              <UserAvatar
-                :avatar="row.item.img ?? ''"
+              <ProjectAvatar
+                :id="row.item.projectId ?? ''"
                 :name="row.item.title"
-                :seed="row.item.projectId"
-                kind="org"
+                :avatar="row.item.avatar"
                 :size="20"
               />
               <span class="switcher__label" :title="row.item.title" data-user-content>{{ row.item.title }}</span>
@@ -131,6 +138,18 @@
         </router-link>
       </div>
     </v-menu>
+    <!-- 宽档里侧栏能收成一条（布局区那一格），收起之后点那一条展开。 -->
+    <BaseButton
+      v-if="foldSidebar"
+      kind="ghost"
+      size="sm"
+      icon="mdi-page-layout-sidebar-left"
+      class="frame-top__fold"
+      :title="t('navigation.sidebar.collapse')"
+      :aria-label="t('navigation.sidebar.collapse')"
+      data-sidebar-fold
+      @click="foldSidebar()"
+    />
   </div>
 </template>
 
@@ -143,20 +162,22 @@ import { useNavigation } from '@/composables/useNavigation'
 
 import { addItemOf, homeItemOf, projectItemsOf, useAppNav } from './appNav'
 import { railShortcut } from './destinations'
-import RailItem from './RailItem.vue'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
+import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
+import { countLabel } from '@/lib/topicTree'
 import { myHandle } from '@/me'
 
 const nav = useAppNav()
 const navigation = useNavigation()
 
 const items = computed(() => nav?.items.value ?? [])
+const foldSidebar = computed(() => nav?.foldSidebar.value ?? null)
 const homeItem = computed(() => homeItemOf(items.value))
 const addItem = computed(() => addItemOf(items.value))
 const projectItems = computed(() => projectItemsOf(items.value))
@@ -164,7 +185,7 @@ const projectItems = computed(() => projectItemsOf(items.value))
 const path = computed(() => navigation?.route?.path ?? '')
 const current = computed(() => projectItems.value.find((i) => i.match?.(path.value)) ?? null)
 const onHome = computed(() => !!homeItem.value?.match?.(path.value))
-// 只在项目里算：在首页时老鼠图标上那个数就是全部，这里再写一遍是重复。
+// 只在项目里算：首页那一行上的数是全部，在首页一带再写一遍是重复。
 const othersAwaiting = computed(() =>
   current.value ? projectItems.value.filter((i) => i !== current.value).reduce((sum, i) => sum + (i.badge ?? 0), 0) : 0
 )
@@ -257,26 +278,21 @@ function clearDrag() {
   /* 高度和底边线来自全局 .sidebar-header（48px 基线），和右边内容区顶栏那条线接成一条。 */
   flex: none;
   justify-content: flex-start;
-  gap: 6px;
   padding: 6px 8px;
 }
 
-/* 老鼠图标沿用首页那一格（RailItem），在侧栏头里缩到 36px。 */
-.frame-top__home:deep(.app-rail-item),
-.frame-top :deep(.app-rail-item) {
-  width: 36px !important;
-  height: 36px !important;
+.frame-top__home {
+  display: grid;
   flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  background: var(--fill-2);
+  border-radius: var(--radius-md);
 }
 
-.frame-top :deep(.app-rail-item-cheese .cheese-icon) {
-  width: 20px !important;
-  height: 20px !important;
-}
-
-/* 选中竖条贴的是屏幕边，侧栏头里没有那条边，不画。 */
-.frame-top :deep(.app-rail-item::before) {
-  display: none;
+.frame-top__home svg {
+  fill: var(--text);
 }
 
 .frame-top__switch {
@@ -285,7 +301,7 @@ function clearDrag() {
   gap: 6px;
   align-items: center;
   min-width: 0;
-  padding: 4px 6px;
+  padding: 4px;
   color: var(--ink);
   text-align: left;
   cursor: pointer;

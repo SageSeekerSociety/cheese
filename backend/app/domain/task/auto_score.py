@@ -7,7 +7,8 @@
 
 老师填的 ``score`` 是这一阶段**手动**几项的分（0 到这一阶段手动项分值和）。自动行算不
 出来时给 0：``usage`` 行在领题没交作业时给 0；``tests`` 行在这一版还没有跑完的评测、
-或者评测失败时给 0，并在那一行标 ``pending`` —— 老师可以用 ``testsOverride``（带原因）
+评测失败、或者判分失败（测试脚本没写出报告、判分命令没给出分）时给 0，并在那一行
+标 ``pending`` —— 老师可以用 ``testsOverride``（带原因）
 手动给 tests 行分，改过的分记进那一行（``adjusted`` 为真、``reason`` 是原因）。
 
 驳回不记（沿用主干）：``accepted`` 为假时 ``auto_scores`` 是空的、总分原样落库。一道题
@@ -89,14 +90,20 @@ async def _tests_entry(
 ) -> tuple[dict, bool]:
     """``tests`` 行这一刻的分，和它定稿了没有。
 
-    有跑完的评测就按通过用例的分值占比折算；没有（还没跑、或者失败）就给 0 并标
-    ``pending``。``override`` 是老师手动给的分，改过就记下原因、这一行随即定稿。
+    有跑完的评测就按通过用例的分值占比折算；没有（还没跑、失败、或者判分失败）就给
+    0 并标 ``pending``。``override`` 是老师手动给的分，改过就记下原因、这一行随即定稿。
     """
     run = await judge_queue.latest_run(session, submission_id)
     passed = total = 0
     run_id = None
     pending = True
-    if run is not None and run.state == judge_queue.DONE:
+    # 判分失败（``done`` 但带着 ``error``、分数为空）和还没跑完一样：不按 0 分算。
+    if (
+        run is not None
+        and run.state == judge_queue.DONE
+        and not run.error
+        and run.total_points is not None
+    ):
         passed = int(run.passed_points or 0)
         total = int(run.total_points or 0)
         run_id = run.id

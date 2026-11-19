@@ -206,19 +206,21 @@ export namespace TaskBoardApi {
       true
     )
 
-  /** 交一版：`stage` 是交哪个阶段（阶段的 id），不分阶段的题不带。 */
+  /** 交一版：`stage` 是交哪个阶段（阶段的 id），不分阶段的题不带。`codeSha` 是页面上给学生
+   *  看的那一版代码：项目默认分支已经挪走时后端答 409（`submissionCodeMoved`）。 */
   export const createSubmission = (
     taskId: number,
     participantId: number,
     data: PostTaskSubmissionRequestData[],
-    stage: string | null = null
+    stage: string | null = null,
+    codeSha: string | null = null
   ) =>
     axiosRequest<{ submission: TaskSubmission }>(
       {
         url: `/tasks/${taskId}/participants/${participantId}/submissions`,
         method: 'POST',
         data,
-        params: stage ? { stage } : undefined,
+        params: stage || codeSha ? { ...(stage ? { stage } : {}), ...(codeSha ? { codeSha } : {}) } : undefined,
       },
       true
     )

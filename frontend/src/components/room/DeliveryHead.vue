@@ -1,11 +1,16 @@
 <script setup lang="ts">
-// 频道里审阅一件任务时的页头：任务名、第几版、「退回」「采纳」，再是「打开任务」。审阅人
-// 已经决定了的，按钮的位置写决定的结果（已采纳 / 已退回）。桌面上画在交付那一格顶上；
+// 频道里打开一件任务时的页头：任务名、状态词和在等谁、第几版、「退回」「采纳」，再是「打开任务」。审阅人
+// 已经决定了的，按钮的位置写决定的结果（已采纳 / 已退回）。有人保存过、还没交进去的修改时
+// 写「有未提交的修改」，给「提交审阅」；一版在等审阅时是「再提交一版」，那一版不给采纳。桌面上画在交付那一格顶上；
 // 手机上那是一整页，这一行交给顶栏（TopicView 用 useScreenHeader），只有任务名和「打开
 // 任务」，决定在页面底部那一条上。
+import type { HandInAction } from '@/lib/handIn'
+import type { TaskState } from '@/lib/taskState'
+
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 
 defineOptions({ name: 'DeliveryHead' })
@@ -14,6 +19,8 @@ withDefaults(
   defineProps<{
     /** 任务名；还没读回来时是空的。 */
     heading: string
+    /** 这件任务此刻的状态：状态词，等人审阅或回答时再写在等谁。还没读回来时不写。 */
+    state?: TaskState | null
     /** 这一版是第几版；不知道时不写。 */
     version?: number | null
     /** 这一版已经决定了：写结果，不再给按钮。 */
@@ -26,23 +33,48 @@ withDefaults(
     busy?: boolean
     /** 画在手机顶栏里：顶栏自己有高度和底线，这一行不再带。 */
     bar?: boolean
+    /** 有不在最近那一版里的修改。 */
+    unhanded?: boolean
+    /** 给哪颗提交按钮；null 不给。 */
+    handIn?: HandInAction
   }>(),
-  { version: null, decided: null, decide: false, acceptLabel: '', blockedTitle: null, busy: false, bar: false }
+  {
+    state: null,
+    version: null,
+    decided: null,
+    decide: false,
+    acceptLabel: '',
+    blockedTitle: null,
+    busy: false,
+    bar: false,
+    unhanded: false,
+    handIn: null,
+  }
 )
 
 const emit = defineEmits<{
   (e: 'open-task'): void
   (e: 'accept'): void
   (e: 'reject'): void
+  (e: 'hand-in'): void
 }>()
 </script>
 
 <template>
   <header class="delivery-head" :class="{ 'delivery-head--bar': bar }">
-    <h2 class="delivery-head__title t-title" :title="heading">{{ heading }}</h2>
-    <span v-if="version" class="delivery-head__version t-meta">{{
-      t('work.room.delivery.version', { n: version })
-    }}</span>
+    <div class="delivery-head__text">
+      <h2 class="delivery-head__title t-title" :title="heading">{{ heading }}</h2>
+      <span class="delivery-head__meta">
+        <TaskStateMark v-if="state" class="delivery-head__state t-meta" :state="state" :size="14" />
+        <span v-if="state?.waits" class="delivery-head__waits t-meta">{{ state.waits }}</span>
+        <span v-if="version" class="delivery-head__version t-meta">{{
+          t('work.room.delivery.version', { n: version })
+        }}</span>
+        <span v-if="unhanded" class="delivery-head__unhanded t-meta" data-testid="delivery-unhanded">{{
+          t('work.room.accept.handIn.unhanded')
+        }}</span>
+      </span>
+    </div>
     <span class="delivery-head__gap" />
     <span v-if="decided" class="delivery-head__decided t-meta" data-testid="delivery-decided">
       <v-icon v-if="decided === 'accepted'" size="16" class="delivery-head__ok" aria-hidden="true"
@@ -67,6 +99,9 @@ const emit = defineEmits<{
         </BaseButton>
       </span>
     </template>
+    <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="delivery-hand-in" @click="emit('hand-in')">
+      {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
+    </BaseButton>
     <BaseButton
       v-guide-anchor="'review-open-task'"
       kind="secondary"
@@ -96,6 +131,30 @@ const emit = defineEmits<{
   padding: 0 4px 0 0;
   border-bottom: 0;
 }
+.delivery-head__text,
+.delivery-head__meta {
+  display: contents;
+}
+/* 手机顶栏里两行（同任务页的顶栏）：任务名独占第一行、整行宽；状态、在等谁和第几版退到
+   第二行。 */
+.delivery-head--bar .delivery-head__text {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.delivery-head--bar .delivery-head__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.delivery-head--bar .delivery-head__gap {
+  display: none;
+}
 .delivery-head__title {
   flex: 0 1 auto;
   min-width: 0;
@@ -104,7 +163,15 @@ const emit = defineEmits<{
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.delivery-head__version {
+.delivery-head__state,
+.delivery-head__waits {
+  flex: none;
+}
+.delivery-head__waits {
+  color: var(--muted);
+}
+.delivery-head__version,
+.delivery-head__unhanded {
   flex: none;
   color: var(--muted);
 }

@@ -33,7 +33,7 @@ import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import { useAppNav } from './common/Navigation/appNav'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
-import UserAvatar from './common/UserAvatar.vue'
+import ProjectAvatar from './common/ProjectAvatar.vue'
 import VirtualList from './common/VirtualList.vue'
 import TopicRailBrowseRow from './topic-sidebar/TopicRailBrowseRow.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
@@ -470,8 +470,8 @@ const onDocs = computed(() => !!props.activeDocs)
 
 // 项目名那一行：标识、搜索、项目菜单。手机上整页形态的频道列表把它交给顶栏。
 const railHeaderInBar = computed(() => props.page === true && props.column !== true)
-// 桌面宽档：侧栏头是老鼠图标和项目切换器（SecondaryNavigation 画），这里的头只剩一整条
-// 搜索，项目菜单挂到总览、资料库下面的「更多」上。手机整页和平板两栏照旧。
+// 桌面宽档：侧栏头、搜索和「首页」那一行由 SecondaryNavigation 画（SidebarFrameTop），这里
+// 不再画头，项目菜单挂到总览、资料库下面的「更多」上。手机整页和平板两栏照旧。
 const appNav = useAppNav()
 const framed = computed(() => props.page !== true && props.column !== true && !!appNav)
 const pinnedMore = computed(() =>
@@ -500,7 +500,6 @@ const railHeaderBinding = computed(() => ({
   projectSelected: !!props.selectedProjectId,
   canTransfer: canTransfer.value,
   canLeave: canLeave.value,
-  framed: framed.value,
   'onOpen-page': openProjectPage,
   'onOpen-palette': () => openPalette(),
   'onOpen-sheet': () => (projectSheetOpen.value = true),
@@ -546,7 +545,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
          本来就不随话题列表滚。 -->
     <div class="d-flex flex-column fill-height">
       <!-- 整页形态（手机的频道列表）下这一行是顶栏的内容，由这一屏声明；别处画在这里。 -->
-      <TopicRailHeader v-if="!railHeaderInBar" v-bind="railHeaderBinding" />
+      <TopicRailHeader v-if="!railHeaderInBar && !framed" v-bind="railHeaderBinding" />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
@@ -564,10 +563,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :aria-current="p.id === selectedProjectId ? 'true' : undefined"
             @click="switchProjectFromSheet(p.id)"
           >
-            <!-- 项目头像走 UserAvatar（kind="org" = 圆角方块，§3.14）：和左栏人像同一个组件、同一套
-                 「没图就退成底色首字母」的规矩，不再这里自己截首字、自己上色。种子用
-                 项目 id —— 颜色跟着项目走，改名不换色（契约 §3.14）。 -->
-            <UserAvatar kind="org" :name="p.name" :seed="p.id" :size="20" class="project-switch__avatar" />
+            <ProjectAvatar :id="p.id" :name="p.name" :avatar="p.avatar" :size="20" class="project-switch__avatar" />
             <span class="project-switch__name">{{ p.name }}</span>
             <v-icon v-if="p.id === selectedProjectId" size="18" class="project-switch__check" icon="mdi-check" />
           </button>

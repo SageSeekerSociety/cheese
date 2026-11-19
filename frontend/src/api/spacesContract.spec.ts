@@ -184,6 +184,32 @@ const cases: Record<string, ContractCase> = {
     query: [['askedRatio', '0.5']],
   },
   getLearningClassPoint: { method: 'GET', path: '/spaces/7/learning-analysis/class/points/3', args: [7, 3] },
+  pushLearningPractice: { method: 'POST', path: '/spaces/7/learning-analysis/class/points/3/push', args: [7, 3] },
+  readMyLearningPractice: { method: 'GET', path: '/spaces/7/learning-analysis/me/practice', args: [7] },
+  startLearningPractice: {
+    method: 'POST',
+    path: '/spaces/7/learning-analysis/me/practice',
+    args: [7, { knowledgePointId: 3, fresh: true }],
+    body: { knowledgePointId: 3, fresh: true },
+  },
+  readLearningPractice: { method: 'GET', path: '/spaces/7/learning-analysis/me/practice/5', args: [7, 5] },
+  answerLearningPractice: {
+    method: 'POST',
+    path: '/spaces/7/learning-analysis/me/practice/5/answers',
+    args: [7, 5, { question: 1, choice: 2 }],
+    body: { question: 1, choice: 2 },
+  },
+  completeLearningPractice: {
+    method: 'POST',
+    path: '/spaces/7/learning-analysis/me/practice/5/complete',
+    args: [7, 5],
+  },
+  explainLearningPoint: {
+    method: 'POST',
+    path: '/spaces/7/learning-analysis/me/explanation',
+    args: [7, { knowledgePointId: 3 }],
+    body: { knowledgePointId: 3 },
+  },
   getLearningClassQuestions: { method: 'GET', path: '/spaces/7/learning-analysis/class/questions', args: [7] },
   getLearningClassExcerpts: {
     method: 'GET',

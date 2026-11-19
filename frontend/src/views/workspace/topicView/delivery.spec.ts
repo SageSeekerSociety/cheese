@@ -45,21 +45,21 @@ describe('交付到了', () => {
     const { delivery, opened } = setup({ active: 'files' })
     await delivery.arrived('k1')
     expect(opened).toEqual([])
-    expect(delivery.tab.value).toEqual({ taskId: 'k1', dot: true })
+    expect(delivery.tabs.value).toEqual([{ taskId: 'k1', dot: true }])
   })
 
   it('右栏收着：不动它', async () => {
     const { delivery, opened } = setup({ open: false })
     await delivery.arrived('k1')
     expect(opened).toEqual([])
-    expect(delivery.tab.value).toBeNull()
+    expect(delivery.tabs.value).toEqual([])
   })
 
   it('等的不是我：不动它', async () => {
     const { delivery, opened } = setup({ rows: [row('k1', 'bob')] })
     await delivery.arrived('k1')
     expect(opened).toEqual([])
-    expect(delivery.tab.value).toBeNull()
+    expect(delivery.tabs.value).toEqual([])
   })
 
   it('请了几个人审、我是其中一个：照样打开', async () => {
@@ -68,13 +68,24 @@ describe('交付到了', () => {
     expect(opened).toEqual(['k1'])
   })
 
-  it('正看着另一件交付：不换走它', async () => {
-    const { delivery } = setup({
+  it('正看着另一件任务：不换走它，到的这一件多一格带点', async () => {
+    const { delivery, opened } = setup({
       place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k0' },
       rows: [row('k1', 'me')],
     })
     await delivery.arrived('k1')
-    expect(delivery.tab.value).toEqual({ taskId: 'k0', dot: false })
+    expect(opened).toEqual([])
+    expect(delivery.tabs.value).toEqual([
+      { taskId: 'k0', dot: false },
+      { taskId: 'k1', dot: true },
+    ])
+  })
+
+  it('同一版只打开一次：之后关于它的话不再把它打开', async () => {
+    const { delivery, opened } = setup()
+    await delivery.arrived('k1')
+    await delivery.arrived('k1')
+    expect(opened).toEqual(['k1'])
   })
 
   it('正开着的那一件又交了一版：它那一格重读', async () => {
@@ -87,7 +98,7 @@ describe('交付到了', () => {
 describe('右栏里换页签', () => {
   it('在交付的地址上点别的页签：回到频道的地址，开着那一格', () => {
     const { delivery, channelTabs, tabs } = setup({ place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k1' } })
-    expect(delivery.shownTab.value).toBe('delivery')
+    expect(delivery.shownTab.value).toBe('delivery:k1')
     delivery.select('files')
     expect(channelTabs).toEqual(['files'])
     expect(tabs).toEqual([])
@@ -104,7 +115,28 @@ describe('右栏里换页签', () => {
   it('点没选中的交付页签：去它的地址', async () => {
     const { delivery, opened } = setup({ active: 'files' })
     await delivery.arrived('k1')
-    delivery.select('delivery')
+    delivery.select('delivery:k1')
     expect(opened).toEqual(['k1'])
+  })
+})
+
+describe('几件任务同时开着', () => {
+  it('打开另一件任务多一格，先开的那一格还在', () => {
+    const { place, delivery } = setup({ place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k1' } })
+    place.value = { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k2' }
+    return Promise.resolve().then(() => {
+      expect(delivery.tabs.value.map((tab) => tab.taskId)).toEqual(['k1', 'k2'])
+      expect(delivery.shownTab.value).toBe('delivery:k2')
+    })
+  })
+
+  it('点开着的另一格：去它的地址；关掉一格只拿掉那一格', async () => {
+    const { place, delivery, opened } = setup({ place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k1' } })
+    place.value = { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k2' }
+    await Promise.resolve()
+    delivery.select('delivery:k1')
+    expect(opened).toEqual(['k1'])
+    delivery.close('k1')
+    expect(delivery.tabs.value.map((tab) => tab.taskId)).toEqual(['k2'])
   })
 })

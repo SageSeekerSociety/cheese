@@ -154,5 +154,10 @@
   "githubMigrationPushFailed": "Pushing the code to GitHub didn't succeed, and the GitHub repository was left unchanged. Try again later",
   "githubMigrationSourceEmpty": "The platform repository has no branches yet, so there is nothing to move",
   "githubMigrationStarterPending": "The task's starter code is still being written to the platform repository. Move once it's done",
-  "githubMigrationTargetNotEmpty": "This GitHub repository already has other content. Use an empty repository; the platform never overwrites existing commits"
+  "githubMigrationTargetNotEmpty": "This GitHub repository already has other content. Use an empty repository; the platform never overwrites existing commits",
+  "projectAvatarEmoji": "Use a single emoji",
+  "projectAvatarHue": "This colour is not available",
+  "projectAvatarIcon": "This icon is not available",
+  "projectAvatarImage": "This image is not available. Upload it again",
+  "projectAvatarText": "Use up to 2 CJK characters or 4 letters and digits"
 }

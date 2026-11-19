@@ -46,7 +46,7 @@ test('文档里的宽表格在自己那格里横向滚动，不把整栏顶出�
 
   // 面板右边界是硬边界：越过去的部分被上层的 overflow:hidden 剪掉，既看不见也拿
   // 不回来 —— 表格右边几列就是这么消失的，连带把工具栏顶出了屏幕。
-  const panel = page.locator('.work-panel');
+  const panel = page.locator('.work-pane', { has: page.locator('.tableWrapper') });
   const panelBox = (await panel.boundingBox())!;
   const wrapperBox = (await wrapper.boundingBox())!;
   expect(wrapperBox.x + wrapperBox.width).toBeLessThanOrEqual(panelBox.x + panelBox.width + 1);
@@ -89,7 +89,7 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
   });
 
   await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}?tab=overview`);
-  const prose = page.locator('.work-panel .doc-editor .doc-prose');
+  const prose = page.locator('.work-pane .doc-editor .doc-prose');
   await expect(prose).toBeVisible({ timeout: 30_000 });
   // 编辑区（所有者打开，可编辑）才接得住键盘焦点；等它挂上再进。
   await expect(prose).toHaveAttribute('contenteditable', 'true', { timeout: 30_000 });
@@ -97,7 +97,7 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
   // 键盘焦点进正文（没有先按鼠标）：外面的盒子画环。
   await prose.focus();
 
-  const ring = await page.locator('.work-panel .doc-editor').evaluate((el) => {
+  const ring = await page.locator('.work-pane .doc-editor').evaluate((el) => {
     const style = getComputedStyle(el);
     return { style: style.outlineStyle, width: parseFloat(style.outlineWidth) };
   });
@@ -105,7 +105,7 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
   expect(ring.width).toBeGreaterThanOrEqual(2);
 
   // 焦点离开时环收回：它只跟着键盘焦点，不常亮。
-  const outline = () => page.locator('.work-panel .doc-editor').evaluate((el) => getComputedStyle(el).outlineStyle);
+  const outline = () => page.locator('.work-pane .doc-editor').evaluate((el) => getComputedStyle(el).outlineStyle);
   await prose.evaluate((el) => (el as HTMLElement).blur());
   await expect.poll(outline).toBe('none');
 
