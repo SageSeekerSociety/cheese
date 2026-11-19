@@ -114,8 +114,9 @@ _WHOLE_COPY = ("tree", "diff")
 #: The operations that only read the task's files: answered from the forge
 #: while no machine holds them.
 _READS = ("tree", "diff", "read")
-#: The operations that change the task's files: a person's save.
-_WRITES = ("write", "write_bytes")
+#: The operations that change the task's files: a person's save, and their
+#: creating, renaming and deleting files and folders.
+_WRITES = ("write", "write_bytes", "create", "mkdir", "move", "delete")
 
 
 class _ExecutorAbsent(Exception):
@@ -430,10 +431,13 @@ class ProjectFiles:
         return head
 
     async def files(self, source: str):
+        """The copy's files, the source they were read from, and the folders
+        that hold no file yet (only a machine's copy has those)."""
         source = await self.source(source)
         if source == "live":
-            return (await self.live("tree"))["files"], source
-        return await self._listing(await self.revision()), source
+            tree = await self.live("tree")
+            return tree["files"], source, tree.get("dirs", [])
+        return await self._listing(await self.revision()), source, []
 
     async def _listing(self, revision: str) -> list[dict]:
         """Every file one commit has, as the 文件 panel lists them."""
@@ -1017,6 +1021,21 @@ class ProjectFiles:
             )
         saved = await self.write(path, merged, theirs_version)
         return {**saved, "previous": theirs, "merged": True, "content": merged}
+
+    async def arrange(self, operation: str, path: str, to: str | None = None) -> dict:
+        """A person creating (``create``, ``mkdir``), renaming (``move``) or
+        deleting (``delete``) a file or folder of the task's copy. Nothing is
+        replaced: an entry already at the name is refused."""
+        task = await self.task()
+        if task is None or not task_rows.is_open(task):
+            raise ValidationError(say("taskFinishedFilesReadOnly"))
+        params = {"path": clean_path(path)}
+        if to is not None:
+            params["to"] = clean_path(to)
+        result = await self.live(operation, **params)
+        if result.get("error") == "exists":
+            raise ConflictError(say("taskFileExists"))
+        return result
 
     async def write_bytes(self, path: str, data: bytes, version: str):
         task = await self.task()

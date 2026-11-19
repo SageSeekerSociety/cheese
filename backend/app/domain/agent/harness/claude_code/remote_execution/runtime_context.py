@@ -180,7 +180,31 @@ def task_fs(self, params):
                     files.append({"path": name, "bytes": path.stat().st_size})
             except (ValueError, OSError):
                 continue
-        return {"files": files}
+        # A folder a person made and has put nothing in yet: Git lists no
+        # file for it, so it is named on its own.
+        untracked = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "-o",
+                "--directory",
+                "--exclude-standard",
+                "-z",
+            ],
+            capture_output=True,
+            check=True,
+        ).stdout.decode()
+        dirs = [
+            name.rstrip("/")
+            for name in sorted(set(untracked.split("\0")) - {""})
+            if name.endswith("/")
+            and (root / name).is_dir()
+            and not (root / name).is_symlink()
+            and not any((root / name).iterdir())
+        ]
+        return {"files": files, "dirs": dirs}
     name = params.get("path", "")
     relative = Path(name)
     if (
@@ -189,6 +213,11 @@ def task_fs(self, params):
         or any(p in ("..", ".git") for p in relative.parts)
     ):
         raise ValueError("Invalid task file path")
+    if operation in ("create", "mkdir", "move", "delete"):
+        answer = _arrange(root, relative, operation, params)
+        if "error" not in answer and not params.get("in_workspace"):
+            keep_soon(self, task_id)
+        return answer
     path = (root / relative).resolve()
     path.relative_to(root)
     if not path.is_file():
@@ -251,6 +280,59 @@ def task_fs(self, params):
             keep_soon(self, task_id)
         return {"version": hashlib.sha256(data).hexdigest()[:16]}
     raise ValueError("Unknown task filesystem operation")
+
+
+def _entry(root, name):
+    """The entry ``name`` names in the copy, itself (a link is not followed),
+    under a directory that is inside the copy."""
+    relative = Path(name)
+    if (
+        not name
+        or relative.is_absolute()
+        or any(p in ("", ".", "..", ".git") for p in relative.parts)
+    ):
+        raise ValueError("Invalid task file path")
+    entry = root / relative
+    entry.parent.resolve().relative_to(root)
+    return entry
+
+
+def _arrange(root, relative, operation, params):
+    """A person creating, renaming or deleting an entry of the task's copy.
+
+    Nothing is replaced: creating or renaming onto an entry that is there
+    answers ``exists``, and one that is not there answers ``not_found``."""
+    path = _entry(root, relative.as_posix())
+    there = path.exists() or path.is_symlink()
+    if operation in ("create", "mkdir"):
+        if there:
+            return {"error": "exists"}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if operation == "mkdir":
+            path.mkdir()
+            return {"path": relative.as_posix()}
+        with path.open("xb"):
+            pass
+        return {
+            "path": relative.as_posix(),
+            "version": hashlib.sha256(b"").hexdigest()[:16],
+        }
+    if not there:
+        return {"error": "not_found", "missing": "file"}
+    if operation == "delete":
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return {"path": relative.as_posix()}
+    target = _entry(root, params.get("to", ""))
+    if target.parent.resolve().is_relative_to(path.resolve()) and not path.is_symlink():
+        raise ValueError("Invalid task file path")
+    if target.exists() or target.is_symlink():
+        return {"error": "exists"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.rename(path, target)
+    return {"path": target.relative_to(root).as_posix()}
 
 
 #: How long after a person's save the task's checkout is kept off the machine

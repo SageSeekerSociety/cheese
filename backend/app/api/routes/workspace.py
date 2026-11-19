@@ -20,7 +20,7 @@ from app.api.doc_access import require_role
 from app.api.place import rooms_seen
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.auth.project_access import may_read_project
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -122,9 +122,9 @@ async def require_place_access(
             raise NotFoundError(say("topicNotFound"))
         actor = await resolver.resolve(project_id=project_id, topic_id=room.id)
         await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
-        if request.method == "PUT" and room.status == TopicStatus.archived:
+        if request.method != "GET" and room.status == TopicStatus.archived:
             raise ValidationError(say("roomArchivedFilesReadOnly"))
-    if work is not None and request.method == "PUT" and work.status != TaskStatus.open:
+    if work is not None and request.method != "GET" and work.status != TaskStatus.open:
         raise ValidationError(say("taskEndedFilesReadOnly"))
     return work
 
@@ -153,7 +153,7 @@ async def list_files(
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
-    files, actual_source = await ProjectFiles(
+    files, actual_source, dirs = await ProjectFiles(
         db,
         project_id,
         task,
@@ -161,7 +161,7 @@ async def list_files(
         executor=execution.call,
         wake=partial(wake_for_files, db.bind),
     ).files(source)
-    return ok({**page(files, len(files)), "source": actual_source})
+    return ok({**page(files, len(files)), "source": actual_source, "dirs": dirs})
 
 
 @router.get("/{project_id}/file", dependencies=[Depends(require_project_access)])
@@ -304,6 +304,52 @@ async def write_file(
             **({"content": saved["content"]} if saved["merged"] else {}),
         }
     )
+
+
+class FileArrangeIn(BaseModel):
+    #: ``create`` a file, ``mkdir`` a folder, ``move`` (rename) or ``delete``
+    #: a file or folder.
+    operation: Literal["create", "mkdir", "move", "delete"]
+    path: str
+    #: The new name, for ``move``.
+    to: str | None = None
+
+
+class FileArrangeOut(BaseModel):
+    path: str
+
+
+@router.post(
+    "/{project_id}/file/arrange",
+    dependencies=[Depends(require_project_access)],
+    **typed_response(FileArrangeOut),
+)
+async def arrange_file(
+    project_id: uuid.UUID,
+    body: FileArrangeIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    _edits: Annotated[InProject, Can(Permission.edit_content)],
+    task: uuid.UUID | None = None,
+) -> dict:
+    """A person creating, renaming or deleting a file or folder of a task's
+    copy, as they save one (`write_file`): with the same permission, and
+    bringing the task's machine back when none holds the copy."""
+    if task is None:
+        raise ValidationError(say("chooseTaskToEdit"))
+    if body.operation == "move" and not body.to:
+        raise ValidationError(say("pathEmpty"))
+    actor = await resolver.resolve(project_id=project_id, topic_id=task)
+    done = await ProjectFiles(
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=partial(wake_for_files, db.bind),
+        prepare=partial(prepare_for_write, db.bind, actor),
+    ).arrange(body.operation, body.path.strip(), body.to.strip() if body.to else None)
+    return ok({"path": done.get("path", body.path)})
 
 
 class LandedTaskOut(BaseModel):
