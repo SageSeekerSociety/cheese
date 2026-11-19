@@ -30,7 +30,6 @@ from app.domain.agent.turn.store.human import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
-from app.domain.delivery.agent import instances_for_seats
 from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import (
     looks_like_agent_handle,
@@ -254,14 +253,10 @@ async def preview_addressing(
         for h in dict.fromkeys(mentioned_handles(prepared.content))
         if h in set(prepared.agent_handles) and h != author
     ]
-    teammates: list[dict] = []
-    if may_summon and seats:
-        instances = await instances_for_seats(session, project.id, seats)
-        teammates = [
-            {"handle": seat, "name": instances[seat].display_name}
-            for seat in seats
-            if seat in instances
-        ]
+    # 名字取自这封信自己已经读过的那张名册（`person_mentions` 为每个被 @ 到的席位都写了
+    # 一行）：这里是输入框每次停顿都会问一次的地方，再读一遍实例表就是白读。
+    names = {row["handle"]: row["name"] for row in prepared.roster}
+    teammates = [{"handle": seat, "name": names.get(seat) or seat} for seat in seats]
     agent = None
     if recipient["mentioned"] and may_summon:
         instance = await AgentInstanceService(session).get_in_project(
@@ -271,6 +266,12 @@ async def preview_addressing(
             "handle": recipient_seat(recipient),
             "name": instance.display_name,
         }
+    # 一句谁也没 @ 的话，也可能被规矩叫起一位（回复它、任务里、交给过它的支线里）：
+    # 那一位同样是这条会叫到的，`teammates` 要是空的就是在少报。
+    if agent is not None and all(t["handle"] != agent["handle"] for t in teammates):
+        teammates = [agent, *teammates]
+    if not may_summon:
+        teammates = []
     people = [
         h
         for h in dict.fromkeys(mentioned_handles(prepared.content))

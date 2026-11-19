@@ -449,6 +449,20 @@ def test_the_same_teammate_named_twice_is_listed_once(client, stub_hooks):
     assert [mate["handle"] for mate in drafted["teammates"]] == [first]
 
 
+def test_a_draft_that_names_nobody_still_lists_the_teammate_it_calls(
+    client, stub_hooks
+):
+    """谁也没 @，而规矩叫起了一位（这里：别人都退出了项目，只剩 alice 在
+    频道主线上说话）：那一位同样算这条会叫到的，名单不能是空的。"""
+    project, _, room = _channel(client)
+    seat = room_agent_seat(client, room)
+
+    drafted = _for_whom(client, room, content="明天几点开会？")
+
+    assert drafted["agent"]["handle"] == seat
+    assert [mate["handle"] for mate in drafted["teammates"]] == [seat]
+
+
 def test_a_draft_naming_only_people_names_no_teammate(client, stub_hooks):
     project, _, room = _channel(client)
     join_project_team(client, project, "bob")
