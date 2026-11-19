@@ -105,8 +105,11 @@ export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
     { accessToken: loginData.accessToken, user: loginData.user, language },
   );
   await page.goto("/inbox");
+  // The app shell is up when the sidebar head (the project switcher's row) is
+  // there. The 首页 row it used to be is gone (2026-11-19): 待办 is reached
+  // through this row's menu now.
   await page
-    .getByTestId("sidebar-home")
+    .getByTestId("sidebar-frame-top")
     .waitFor();
 }
 

@@ -470,8 +470,8 @@ const onDocs = computed(() => !!props.activeDocs)
 
 // 项目名那一行：标识、搜索、项目菜单。手机上整页形态的频道列表把它交给顶栏。
 const railHeaderInBar = computed(() => props.page === true && props.column !== true)
-// 桌面宽档：侧栏头、搜索和「首页」那一行由 SecondaryNavigation 画（SidebarFrameTop），这里
-// 不再画头，项目菜单挂到总览、资料库下面的「更多」上。手机整页和平板两栏照旧。
+// 桌面宽档：侧栏头和搜索由 SecondaryNavigation 画（SidebarFrameTop），这里不再画头，
+// 项目菜单挂到总览、资料库下面的「更多」上。手机整页和平板两栏照旧。
 const appNav = useAppNav()
 const framed = computed(() => props.page !== true && props.column !== true && !!appNav)
 const pinnedMore = computed(() =>

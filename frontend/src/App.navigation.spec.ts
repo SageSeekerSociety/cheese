@@ -156,21 +156,21 @@ it('keeps the room header usable when the app changes between desktop and mobile
   }
 })
 
-it('desktop sidebar reaches 待办 from its 首页 row, with no separate 待办 row', async () => {
-  const app = await mountApp('/', 1280)
-  try {
-    expect(app.failures).toEqual([])
-    // 首页是侧栏头下面那一行（Navigation/SidebarFrameTop.vue），侧栏看不见时住在顶栏。
-    const side = app.container.querySelector('.page-sidebar') ?? app.container.querySelector('.app-system-bar')
-    expect(side).not.toBeNull()
-    // 首页那一行点开就是待办：桌面上到得了 /inbox，而且只有这一条路，不再多一行「待办」。
-    const toInbox = Array.from(side!.querySelectorAll('a[href="/inbox"]'))
-    expect(toInbox).toHaveLength(1)
-    expect(toInbox[0].getAttribute('aria-label')).toMatch(/^首页/)
-    const labels = Array.from(side!.querySelectorAll('a')).map((a) => a.textContent?.trim())
-    expect(labels).not.toContain('待办')
-  } finally {
-    app.dispose()
+it('外壳里没有去 /inbox 的那一行「首页」：侧栏头和顶栏都没有', async () => {
+  // 2026-11-19 蔡松洋定：侧栏头下面那一行「首页」四处侧栏一起删，顶栏那一处也去掉。
+  // 钉住「删干净了」，免得它从别处又长回来。回首页走项目切换器菜单里那一行。
+  // 侧栏头上剩下的两样（头、搜索）由 SidebarFrameTop.spec.ts 钉。
+  for (const path of ['/projects/p1/topics/t1', '/projects/p1']) {
+    const app = await mountApp(path, 1280)
+    try {
+      expect(app.failures).toEqual([])
+      expect(app.container.querySelector('[data-testid="sidebar-home"]')).toBeNull()
+      expect(app.container.querySelector('[data-testid="bar-home"]')).toBeNull()
+      const toInbox = Array.from(app.container.querySelectorAll('a[href="/inbox"]'))
+      expect(toInbox, path).toHaveLength(0)
+    } finally {
+      app.dispose()
+    }
   }
 })
 

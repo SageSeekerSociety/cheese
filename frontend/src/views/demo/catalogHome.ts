@@ -99,9 +99,9 @@ export const HOME_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '桌面首页列出我的项目',
-        note: '桌面首页侧栏把我的项目列在团队上面，各带等我处理的件数（和侧栏头切换列表里同一份数）；「待办」那一行这时由侧栏头下面的「首页」一行代替（`inbox` 为假）。手机上不给 `projects`，这一段不画。',
+        note: '桌面首页侧栏把我的项目列在团队上面，各带等我处理的件数（和侧栏头切换列表里同一份数）；「待办」那一行照旧在第一行。手机上不给 `projects`，这一段不画。',
         props: {
-          inbox: false,
+          inbox: true,
           projects: [
             { id: 'p-open-day', name: '开放日官网', to: '/projects/open-day', awaiting: 2 },
             { id: 'p-cachelab', name: 'CacheLab 2026', to: '/projects/cachelab' },
@@ -135,7 +135,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
   {
     id: 'home-sidebar-view',
     title: 'HomeSidebarView',
-    about: '桌面首页那一格的侧栏：外面那只抽屉、「首页」那一行页头，和目录本体。',
+    about: '桌面首页那一格的侧栏：外面那只抽屉、待办那一行，和目录本体。',
     file: 'src/views/home/HomeSidebarView.vue',
     component: HomeSidebarView,
     needs: SIDEBAR_T,
@@ -145,7 +145,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '桌面上常驻',
-        note: '和手机整页是同一份目录、同一套值，只是这里坐在抽屉里，顶上多一行「首页」。手机上这一份整个不画（`mdAndUp` 为假），那一格的整页是 `HomeHubView`。',
+        note: '和手机整页是同一份目录、同一套值，只是这里坐在抽屉里；顶上那一行「首页」2026-11-19 删了，去待办走目录自己那一行。手机上这一份整个不画（`mdAndUp` 为假），那一格的整页是 `HomeHubView`。',
         props: {},
         expect: '芝士核心组',
       },

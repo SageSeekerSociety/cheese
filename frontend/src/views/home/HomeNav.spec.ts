@@ -126,7 +126,9 @@ function menuLabels() {
 describe('首页目录的画面', () => {
   it('桌面首页列出我的项目，各带等我处理的件数，排在团队上面；新建项目从这里发出', async () => {
     const { view } = await mount({
-      inbox: false,
+      // 「待办」这一行在桌面首页侧栏上一直画：侧栏头原来那一行「首页」2026-11-19 删了，
+      // 这里是首页桌面上唯一一条去 /inbox 的路。
+      inbox: true,
       teams: [team('crew', '知是开发组')],
       projects: [
         { id: 'p1', name: '开放日官网', to: '/projects/open-day', awaiting: 2 },

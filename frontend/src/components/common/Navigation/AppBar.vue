@@ -22,20 +22,8 @@
       :title="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
       @click="toggle"
     />
-    <!-- 侧栏上「首页」那一行（回首页，带等你处理的件数）：侧栏看不见的时候（这一页没有侧栏、
-         平板上侧栏收着）画在这里，回首页总够得着（Navigation/appNav.ts）。 -->
-    <router-link
-      v-if="frameInBar && homeItem"
-      :to="homeItem.to ?? '/inbox'"
-      class="app-bar-home"
-      :aria-label="homeLabel"
-      data-testid="bar-home"
-    >
-      <CheeseLogo width="16" height="16" class="app-bar-home__mark" data-home-slot />
-      <span>{{ homeItem.title }}</span>
-      <span v-if="homeItem.badge" class="side-nav__count" aria-hidden="true">{{ countLabel(homeItem.badge) }}</span>
-      <TopicRailBadge v-else-if="homeItem.dot" dot aria-hidden="true" />
-    </router-link>
+    <!-- 回首页没有自己的一行（2026-11-19 蔡松洋定：侧栏那一行和这儿一起删）。回首页走
+         项目切换器那一份菜单里的「首页」，命令面板也搜得到「待办」。 -->
     <ParentBackButton />
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
@@ -67,20 +55,16 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import { SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
 
 import AccountButton from './AccountButton.vue'
-import { homeItemOf, useAppNav } from './appNav'
 import DesktopUpdateReady from './DesktopUpdateReady.vue'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 
-import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import { rememberedFold } from '@/components/layout-area'
-import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import { t } from '@/i18n'
 import { titleBarOverlay } from '@/lib/desktopApp'
-import { countLabel } from '@/lib/topicTree'
 import { usePageTitleStore } from '@/stores/title'
 
 // 登录态由外壳传进来（`layouts/AppShell.vue` 本来就有它）：这个组件在
@@ -89,16 +73,7 @@ import { usePageTitleStore } from '@/stores/title'
 const props = withDefaults(defineProps<{ loggedIn: boolean; hasSidebar?: boolean }>(), { hasSidebar: false })
 
 const { compact, open, toggle } = useSidebarCollapse()
-const appNav = useAppNav()
-const homeItem = computed(() => homeItemOf(appNav?.items.value ?? []))
-const homeLabel = computed(() => {
-  const item = homeItem.value
-  if (!item) return undefined
-  if (item.badge) return t('global.labelWithAside', { label: item.title, aside: item.badge })
-  if (item.dot) return t('global.labelWithAside', { label: item.title, aside: t('home.nav.unreadActivity') })
-  return item.title
-})
-// 侧栏看不见：这一页没有侧栏，平板上侧栏收着，或宽档里侧栏收成了一条。这时首页、问芝士、
+// 侧栏看不见：这一页没有侧栏，平板上侧栏收着，或宽档里侧栏收成了一条。这时问芝士和
 // 头像临时住在顶栏。
 const folded = rememberedFold(SIDEBAR_FOLD_KEY)
 const frameInBar = computed(() => !props.hasSidebar || (compact.value ? !open.value : folded.value))
@@ -173,30 +148,6 @@ const loggedIn = computed(() => props.loggedIn)
 
 .app-system-bar.app-system-bar .language-toggle:hover {
   background: var(--fill);
-}
-
-/* 顶栏里的「首页」：和这一簇按钮一样高 28、无边、悬停出底色。 */
-.app-system-bar .app-bar-home {
-  display: inline-flex;
-  flex: none;
-  gap: 6px;
-  align-items: center;
-  height: 28px;
-  padding: 0 8px;
-  margin-inline-end: 4px;
-  font-size: 13px;
-  color: var(--text);
-  text-decoration: none;
-  border-radius: var(--radius-md);
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-
-.app-system-bar .app-bar-home:hover {
-  background: var(--fill);
-}
-
-.app-system-bar .app-bar-home__mark {
-  fill: var(--muted);
 }
 
 .app-system-bar .app-bar-agent.agent-rail {
