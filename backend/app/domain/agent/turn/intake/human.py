@@ -30,9 +30,9 @@ from app.domain.agent.turn.store.human import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
-from app.domain.delivery.agent import instances_for_seats
 from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import (
+    agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
     recipient_seat,
@@ -261,17 +261,21 @@ async def preview_addressing(
     # 席位的老房间、或者只坐在名册上却没有实例的座位，`record_mentions` 叫不起来，列进来
     # 就是说这条会交给一个不会醒的队友。私聊里名册是空的（`person_mentions` 不给），那时
     # 名字从实例表补——不拿 handle 顶，那是人看不到的一串。
-    names = {row["handle"]: row["name"] for row in prepared.roster}
+    # 显示名可能是空的（模型默认就是空串）：那一位仍叫得出名字才写名字，否则留 handle。
+    names = {row["handle"]: row["name"] for row in prepared.roster if row.get("name")}
     missing = [
         seat for seat in seats if seat in prepared.named_seats and seat not in names
     ]
     if missing:
-        for seat, instance in (
-            await instances_for_seats(session, project.id, seats)
-        ).items():
-            names.setdefault(seat, instance.display_name)
+        # 同一个服务类的读法是缓存的（`person_mentions` 几行前刚读过这张表），
+        # 私聊里名册永远是空的，这条就是每次预览都走的那一下。
+        instances = await AgentInstanceService(session).list_for_project(project.id)
+        for instance in instances:
+            handle = agent_instance_handle(instance.id)
+            if handle in missing and instance.display_name:
+                names[handle] = instance.display_name
     teammates = [
-        {"handle": seat, "name": names.get(seat, seat)}
+        {"handle": seat, "name": names.get(seat) or seat}
         for seat in seats
         if seat in prepared.named_seats
     ]
