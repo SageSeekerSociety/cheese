@@ -82,7 +82,11 @@ async function loadJudgeStats(stage?: string | null) {
     const got = await TaskJudgeApi.stats(taskId, wanted)
     if (ticket === judgeTicket) judgeStats.value = got
   } catch {
-    if (ticket === judgeTicket) judgeStats.value = null
+    if (ticket !== judgeTicket) return
+    judgeStats.value = null
+    // 问不到的那个阶段可能已经不在了（出题人删了它或它的测试点）：放掉它，下一次重试
+    // 回到默认阶段，不然阶段切换按钮跟着这一块消失，重试只会再问同一个被拒的阶段。
+    judgeFor = { taskId, stage: null }
   }
 }
 

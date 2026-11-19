@@ -80,6 +80,21 @@ describe('测试点那一块只认最后一次问的回答', () => {
     expect(api.stats).toHaveBeenCalledWith(42, 's2')
   })
 
+  it('选的阶段问不到，重试回到默认阶段', async () => {
+    api.stats.mockResolvedValueOnce({ stage: 's1' })
+    render(Insights, { props: { taskData: task(42), isCreator: true } })
+    await flushPromises()
+    api.stats.mockRejectedValueOnce(new Error('stageReferenceUnknown'))
+    await click('s2')
+    await flushPromises()
+    api.stats.mockClear()
+    api.stats.mockResolvedValueOnce({ stage: 's1' })
+
+    await click('retry')
+    await flushPromises()
+    expect(api.stats).toHaveBeenCalledWith(42, null)
+  })
+
   it('换了一道题，上一道题的数当场清掉', async () => {
     api.stats.mockResolvedValueOnce({ stage: 'old' })
     const view = render(Insights, { props: { taskData: task(42), isCreator: true } })
