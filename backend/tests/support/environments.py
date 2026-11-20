@@ -13,13 +13,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
-from app.domain.machine import holder as holders
-from app.domain.machine.models import (
+from app.domain.environment.models import (
     READY,
     ConversationEnvironment,
     Environment,
     EnvironmentAttachment,
 )
+from app.domain.machine import holder as holders
 
 #: The lease keys that are neither a column of the environment nor of the
 #: attachment: what the install left (``Environment.executor``).
