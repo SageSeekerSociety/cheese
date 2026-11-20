@@ -319,7 +319,9 @@ async def previewed_homes(db, home_ids) -> set[uuid.UUID]:
     return {home_id for home_id, session_id in rows if session_id in previewed}
 
 
-async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> bool:
+async def thaw_if_asked(
+    db, hub, *, environment_id, device_id: str, work_resource
+) -> bool:
     """Wake a sandbox a tool call has already asked for (``thaw_wanted_at``), before
     its executor is asked anything (`session_work._install`, under the claim,
     with no database lock held).
@@ -330,7 +332,7 @@ async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -
     and the next one tries again, which is better than an executor nobody can
     reach for a minute. Answers whether it thawed one.
     """
-    home = await occupants.home_of(db, session_id)
+    home = await occupants.home_of_environment(db, environment_id)
     await db.commit()
     if (
         home is None

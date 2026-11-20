@@ -10,7 +10,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, exists, select, update
+from sqlalchemy import (
+    ColumnElement,
+    String,
+    delete,
+    exists,
+    func,
+    literal_column,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +39,120 @@ _COLUMNS = ("device_id", "resource_id", "room_resource_id", "status")
 _MOMENTS = ("claim_until", "verified_at")
 _ATTACHMENT_KEYS = ("generation", "setup_digest")
 _DERIVED = ("kind", "session_id", "claim")
+
+
+def key(name: str) -> ColumnElement[str]:
+    # Written into the statement, not bound: the keys never change, and bound
+    # they were a dozen parameters on every statement that reads the dict.
+    return literal_column(f"'{name}'", String)
+
+
+def described(*attachment: Any) -> ColumnElement[Any]:
+    """An environment as one dict, for a query over ``environments``: what
+    its install left (``executor``), its machine and home, its status and the
+    install running in it, with the ``attachment`` key/value pairs a reader
+    acting through one of its attachments adds. The one construction of that
+    dict."""
+    return Environment.executor.op("||")(
+        func.jsonb_strip_nulls(
+            func.jsonb_build_object(
+                key("kind"),
+                key("device"),
+                *attachment,
+                key("device_id"),
+                Environment.device_id,
+                key("resource_id"),
+                Environment.resource_id,
+                key("room_resource_id"),
+                Environment.room_resource_id,
+                key("status"),
+                Environment.status,
+                key("claim"),
+                Environment.claim,
+                key("claim_until"),
+                Environment.claim_until,
+                key("verified_at"),
+                Environment.verified_at,
+            )
+        )
+    )
+
+
+async def environment_of_conversation(
+    db: AsyncSession, conversation_id: uuid.UUID
+) -> Environment | None:
+    """The environment the conversation points to: the place of its default
+    choice, found from the conversation and never by picking one of its
+    sessions. None while it points to none."""
+    return await db.scalar(
+        select(Environment)
+        .join(
+            ConversationEnvironment,
+            ConversationEnvironment.environment_id == Environment.id,
+        )
+        .where(ConversationEnvironment.conversation_id == conversation_id)
+        .execution_options(populate_existing=True)
+    )
+
+
+async def view(db: AsyncSession, environment_id: uuid.UUID) -> dict | None:
+    """The environment as one dict (`described`), with no attachment's keys;
+    None while it is on no machine."""
+    return await db.scalar(
+        select(described()).where(
+            Environment.id == environment_id, Environment.device_id.is_not(None)
+        )
+    )
+
+
+async def attachments_of(
+    db: AsyncSession, environment_id: uuid.UUID
+) -> list[EnvironmentAttachment]:
+    """Who is attached to the environment, the one that acted last first."""
+    return list(
+        await db.scalars(
+            select(EnvironmentAttachment)
+            .where(EnvironmentAttachment.environment_id == environment_id)
+            .order_by(
+                EnvironmentAttachment.acted_at.desc(),
+                EnvironmentAttachment.session_id,
+            )
+        )
+    )
+
+
+def holds_a_copy(environment: dict | None) -> bool:
+    """Whether an environment (`view`) has taken its machine: it is ready, or
+    its install got far enough to record where its executor is. One not
+    ready that records nothing is a reservation whose executor is still
+    being installed, or whose install failed and waits for the next call to
+    retry: there is nothing on the machine to ask. One that records where
+    its executor is holds the machine's copy, which may carry work nobody
+    has pushed, and is read."""
+    return environment is not None and bool(
+        environment.get("status", READY) == READY
+        or environment.get("state")
+        or environment.get("home")
+    )
+
+
+async def working_copy(
+    db: AsyncSession, conversation_id: uuid.UUID, generation: str
+) -> tuple[dict, bool] | None:
+    """The environment holding this task's (or 支线's) working copy on the
+    room's current ``generation``: the one the conversation points to, as
+    `view` reads it, and whether nothing on it answers for that copy now —
+    its sandbox was destroyed or parked and nothing has placed it again since
+    (``RELEASED``). Whether an agent attached to it has been told is another
+    fact, and does not enter into this. None while it points to none that
+    holds a copy (`holds_a_copy`) of this generation."""
+    environment = await environment_of_conversation(db, conversation_id)
+    if environment is None or environment.room_resource_id != generation:
+        return None
+    found = await view(db, environment.id)
+    if found is None or not holds_a_copy(found):
+        return None
+    return found, found.get("status") == RELEASED
 
 
 async def environments_held(

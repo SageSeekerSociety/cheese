@@ -258,7 +258,7 @@ def _seed_sandbox(client, topic_id, seat) -> uuid.UUID:
                 active_at=datetime.now(UTC) - timedelta(minutes=15),
             )
             db.add(home)
-            await works_in(db, row.id, home)
+            await works_in(db, row.id, home, pointed=True)
             await db.commit()
             return row.id
 
@@ -461,7 +461,10 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
                 active_at=stale,
             )
             db.add_all([home, other_home])
-            await works_in(db, row.id, home)
+            # The seat's app is in the environment the conversation points
+            # to; the other seat works in one of its own the conversation
+            # does not point to.
+            await works_in(db, row.id, home, pointed=True)
             await works_in(db, other_row.id, other_home)
             await db.commit()
             return home.id, other_home.id
@@ -545,7 +548,7 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
                 frozen_at=stale,
             )
             db.add(home)
-            await works_in(db, row.id, home)
+            await works_in(db, row.id, home, pointed=True)
             await db.commit()
             return home.id, home.resource_id, row.id
 

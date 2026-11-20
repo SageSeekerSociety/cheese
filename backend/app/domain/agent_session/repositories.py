@@ -534,21 +534,6 @@ class AgentSessionRepository:
         await self._session.refresh(row)
         return row
 
-    async def placed_in_conversation(
-        self, conversation_id: uuid.UUID
-    ) -> list[tuple[AgentSession, dict | None]]:
-        """Every session of this one conversation that is sitting on a machine,
-        newest first, with the environment it is attached to."""
-        result = await self._session.execute(
-            select(AgentSession, environment_column())
-            .where(
-                AgentSession.conversation_id == conversation_id,
-                AgentSession.runtime_location.is_not(None),
-            )
-            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
-        )
-        return [(row, environment) for row, environment in result.all()]
-
     async def placed_in_room(
         self, room_id: uuid.UUID
     ) -> list[tuple[AgentSession, dict | None]]:

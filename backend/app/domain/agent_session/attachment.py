@@ -26,8 +26,6 @@ from sqlalchemy import (
     cast,
     delete,
     exists,
-    func,
-    literal_column,
     select,
     update,
 )
@@ -108,46 +106,21 @@ class Attachment:
         return (self.environment or {}).get("device_id")
 
 
-def _key(name: str) -> ColumnElement[str]:
-    # Written into the statement, not bound: the keys never change, and bound
-    # they were a dozen parameters on every statement that reads the dict.
-    return literal_column(f"'{name}'", String)
-
-
 def environment_column() -> ColumnElement[Any]:
     """The environment a session is attached to, as one dict labelled
     ``environment`` (None while it is attached to none), for a query over
-    ``agent_sessions``: what its install left, its machine and home, its
-    status and the install running in it, and the attachment's generation.
-    The one construction of that dict."""
-    described = func.jsonb_strip_nulls(
-        func.jsonb_build_object(
-            _key("kind"),
-            _key("device"),
-            _key("session_id"),
-            cast(EnvironmentAttachment.session_id, String),
-            _key("generation"),
-            EnvironmentAttachment.generation,
-            _key("setup_digest"),
-            EnvironmentAttachment.setup_digest,
-            _key("device_id"),
-            Environment.device_id,
-            _key("resource_id"),
-            Environment.resource_id,
-            _key("room_resource_id"),
-            Environment.room_resource_id,
-            _key("status"),
-            Environment.status,
-            _key("claim"),
-            Environment.claim,
-            _key("claim_until"),
-            Environment.claim_until,
-            _key("verified_at"),
-            Environment.verified_at,
-        )
+    ``agent_sessions``: the environment as `environment_rows.described`
+    reads it, with the attachment's generation and setup digest."""
+    described = environment_rows.described(
+        environment_rows.key("session_id"),
+        cast(EnvironmentAttachment.session_id, String),
+        environment_rows.key("generation"),
+        EnvironmentAttachment.generation,
+        environment_rows.key("setup_digest"),
+        EnvironmentAttachment.setup_digest,
     )
     return (
-        select(Environment.executor.op("||")(described))
+        select(described)
         .join(
             EnvironmentAttachment,
             EnvironmentAttachment.environment_id == Environment.id,
@@ -557,23 +530,3 @@ def take_notice(row: AgentSession) -> Notice:
     if owed.owed:
         row.environment_notice = None
     return owed
-
-
-async def environment_of_conversation(
-    db: AsyncSession, conversation_id: uuid.UUID
-) -> AgentSession | None:
-    """The session whose environment is the conversation's: of its placed
-    sessions, the one attached to an environment, else the one placed last.
-    None while no session of it was ever placed."""
-    rows = (
-        await db.execute(
-            select(AgentSession, is_attached())
-            .where(
-                AgentSession.conversation_id == conversation_id,
-                AgentSession.runtime_location.is_not(None),
-            )
-            .order_by(AgentSession.updated_at.desc())
-        )
-    ).all()
-    on_machine = [row for row, attached in rows if attached]
-    return (on_machine or [row for row, _ in rows] or [None])[0]

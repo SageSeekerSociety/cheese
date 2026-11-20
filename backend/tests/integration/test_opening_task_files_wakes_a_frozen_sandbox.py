@@ -59,7 +59,7 @@ def test_a_frozen_sandbox_is_thawed_before_its_files_are_read(
                 frozen_at=stale,
             )
             db.add(home)
-            await works_in(db, row.id, home)
+            await works_in(db, row.id, home, pointed=True)
             await db.commit()
             return home.id, home.resource_id
 

@@ -13,7 +13,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.attachment import RELEASED, place, place_of
+from app.domain.agent_session.attachment import place, place_of
 from app.domain.agent_session.models import (
     AgentSession,
     SessionPlace,
@@ -250,44 +250,6 @@ class AgentSessionService:
             for row, environment in rows
             if (found := place(row.runtime_location, environment)) is not None
         ]
-
-    async def working_copy(
-        self, conversation_id: uuid.UUID, generation: str
-    ) -> tuple[dict, bool] | None:
-        """The machine lease holding this task's (or 支线's) working copy on the
-        room's current ``generation``, and whether nothing on it answers for
-        that copy now: its sandbox was destroyed or parked and nothing has
-        placed it again since (`Attachment.released`). Whether its agent has
-        been told is another fact (`Attachment.notice`), and does not enter
-        into this.
-
-        Each session works in a home of its own (``SandboxHome``), so a
-        task's files are in its own session's home and in no other session's
-        of the same room. None while no session of it has taken a machine:
-        nothing holds a working copy of it yet.
-
-        A lease that is not ready and names no executor has not taken its
-        machine either: it is a reservation whose executor is still being
-        installed there, or whose installation failed and waits for the next
-        tool call to retry, and there is nothing on the machine to ask. One
-        that is not ready but already records where its executor is (an
-        installation that got that far) does hold the machine's copy, and that
-        copy may carry work nobody has pushed, so it is still read."""
-        for row, lease in await self._repo.placed_in_conversation(conversation_id):
-            found = place(row.runtime_location, lease)
-            if found is None or found.resource_id != generation:
-                continue
-            if (
-                lease is not None
-                and lease.get("kind") == "device"
-                and (
-                    lease.get("status", "ready") == "ready"
-                    or lease.get("state")
-                    or lease.get("home")
-                )
-            ):
-                return lease, lease.get("status") == RELEASED
-        return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
         """Which harness the room's one pane belongs to, if anything is on it.

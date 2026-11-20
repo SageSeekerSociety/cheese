@@ -219,11 +219,14 @@ async def attach_anew(db: AsyncSession, session: AgentSession, lease: dict, **gi
     return await give_environment(db, session, lease, **given)
 
 
-async def works_in(db: AsyncSession, session_id: uuid.UUID, home) -> uuid.UUID:
+async def works_in(
+    db: AsyncSession, session_id: uuid.UUID, home, *, pointed: bool = False
+) -> uuid.UUID:
     """Make the sandbox ``home`` (a ``SandboxHome`` just added) the one the
     session's environment names, as a placement leaves it; an environment
-    of its own is made for a session attached to none. Flushes; the caller
-    commits. Answers the environment."""
+    of its own is made for a session attached to none, which its
+    conversation points to when ``pointed``. Flushes; the caller commits.
+    Answers the environment."""
     await db.flush()
     held = await attachments.attachment_of(db, session_id)
     if held is not None and held.environment_id is not None:
@@ -231,7 +234,7 @@ async def works_in(db: AsyncSession, session_id: uuid.UUID, home) -> uuid.UUID:
     else:
         row = await db.get(AgentSession, session_id)
         assert row is not None
-        environment_id = await unplaced_environment(db, row)
+        environment_id = await unplaced_environment(db, row, pointed=pointed)
     await CloudHostRepository(db).name_home(environment_id, home)
     await db.flush()
     return environment_id

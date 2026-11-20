@@ -86,7 +86,12 @@ def _seat(
                 agent_handle="cheese",
                 environment=lease
                 or (
-                    {"kind": "device", "device_id": device}
+                    {
+                        "kind": "device",
+                        "device_id": device,
+                        # The room generation its environment was made for.
+                        **({"room_resource_id": generation} if generation else {}),
+                    }
                     if device is not None
                     else None
                 ),

@@ -1,18 +1,19 @@
 """A person brings a task's machine back for its files, with no turn.
 
-A task's working copy is in the sandbox of the task's own agent session. When
+A task's working copy is in the environment the task points to. When
 that sandbox is gone — destroyed or parked by the idle sweep, or its executor
 stopped for sitting idle — a person editing the task's files should not have
 to wait for the AI teammate to start a turn. Opening the files reads them off
 the forge (`repository.forge_files`); editing them brings the machine back:
 
-- through the task's own session and its lease, the one machine and the one
-  copy its teammate works in (no second session, no second copy);
+- in the environment the task points to, the one machine and the one copy
+  its teammates work in (no second environment, no second copy), acting
+  through a session attached to it (`task_session`);
 - through the same admission a tool call goes through
   (`session_work.hands_for_a_person`): a parked sandbox starts again where its
   home is, a destroyed one is placed anew and its executor installed, a frozen
   one is thawed, an executor that stopped is started; two callers at once —
-  a person and a turn — are ordered by the lease's claim (`lease_claim`), and
+  a person and a turn — are ordered by the environment's claim (`lease_claim`), and
   the one that waits gets the machine the other brought up;
 - in the person's name, whose project pays for it as it does for the teammate
   (`holder.Room.require_use`), on the sandbox's usual meter (`metering`);
@@ -48,8 +49,8 @@ from app.domain.agent.task_checkout import (
     checkout_answered,
     checkout_request,
 )
-from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
+from app.domain.environment import services as environment_rows
 from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import session_work
@@ -105,9 +106,22 @@ class Status:
 
 
 async def task_session(db: AsyncSession, task_id: uuid.UUID) -> AgentSession | None:
-    """The task's own agent session: the one whose environment is the task's
-    (`attachments.environment_of_conversation`)."""
-    return await attachments.environment_of_conversation(db, task_id)
+    """The session a person's bring-up of the task's machine acts through:
+    one attached to the environment the task points to
+    (`environment_rows.environment_of_conversation`), the one that acted
+    there last. A bring-up is admitted, placed and credentialed as a
+    session's tool call is (`session_work.hands_for_a_person`), and a person
+    is no attachment yet, so it needs one; the environment itself is found
+    from the task alone. None while the task points to no environment, or
+    nobody is attached to the one it points to."""
+    environment = await environment_rows.environment_of_conversation(db, task_id)
+    if environment is None:
+        return None
+    for attached in await environment_rows.attachments_of(db, environment.id):
+        row = await db.get(AgentSession, attached.session_id)
+        if row is not None and row.conversation_id == task_id:
+            return row
+    return None
 
 
 async def prepare(
@@ -163,9 +177,10 @@ async def status(db: AsyncSession, task_id: uuid.UUID) -> Status:
     failed = _failed.get(task_id)
     if task_id in _running:
         return Status(machine="preparing", failed=None)
-    row = await task_session(db, task_id)
-    held = await attachments.attachment_of(db, row.id) if row is not None else None
-    lease = (held.environment if held is not None else None) or {}
+    environment = await environment_rows.environment_of_conversation(db, task_id)
+    lease = (
+        await environment_rows.view(db, environment.id) if environment else None
+    ) or {}
     if still_preparing(lease):
         return Status(machine="preparing", failed=failed)
     if lease.get("kind") == "device" and lease.get("status", "ready") == "ready":

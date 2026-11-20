@@ -1560,7 +1560,7 @@ async def _install(
                 thawed = await thaw_if_asked(
                     db,
                     hub,
-                    session_id=session_id,
+                    environment_id=environment_id,
                     device_id=device_id,
                     work_resource=work_resource,
                 )
