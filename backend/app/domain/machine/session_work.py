@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import httpx
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -42,14 +42,9 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.agent_session.models import (
-    LEFT_HOST_KEY,
-    LOST_KEY,
-    LOST_PROCESSES_KEY,
-    PARKED_KEY,
-    THAW_KEY,
-    AgentSession,
-)
+from app.domain.agent_session import attachment as attachments
+from app.domain.agent_session.attachment import attach, attachment, begin
+from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_of
 from app.domain.delivery.ledger import deliver
@@ -116,7 +111,7 @@ def presentation(row):
     """A session and the machine it holds, for the pages that show it. A
     sandbox on one of the platform's machines does not say which one: that is
     the platform's scheduling and nobody's to read."""
-    lease = row.work_lease
+    lease = attachment(row).environment
     shown = None
     if lease:
         online = device_hub.is_online(lease["device_id"])
@@ -378,7 +373,7 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
         await session.scalars(
             select(AgentSession).where(
                 of_room(AgentSession.conversation_id, topic_id),
-                AgentSession.work_lease.is_not(None),
+                attachments.is_attached(),
             )
         )
     )
@@ -388,7 +383,7 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     for row in rows:
         if row.id in frozen:
             continue
-        lease = row.work_lease or {}
+        lease = attachment(row).environment or {}
         if lease.get("status", "ready") != "ready" or not lease.get("state"):
             continue
         try:
@@ -688,9 +683,7 @@ async def restart_executor(db, row, lease) -> Restart:
     )
     # A lease recorded before it carried its own resource is the generation's,
     # as `_attempt` reads it.
-    work_resource = lease.get("resource_id") or (row.execution_request or {}).get(
-        "generation"
-    )
+    work_resource = lease.get("resource_id") or attachment(row).generation
     api = await device_api_base(db, lease["device_id"], settings.connector_public_base)
     start = partial(
         _start_executor,
@@ -761,7 +754,7 @@ async def switch_environment(
     Asking for one of the platform's sandboxes that the session already has is
     a move, not a no-op (`_another_sandbox_wanted`): it is how a room gets off
     a sandbox it cannot work in, and the new one is placed away from the host
-    the old one was on (``LEFT_HOST_KEY``)."""
+    the old one was on (`attachments.detach`)."""
     # 房间那一把锁：这一条会话的租约和它的执行环境拿着它读、拿着它写，别的请求
     # 看到的是「搬之前」或者「搬之后」，没有中间态。
     await TopicService(db).lock_for_execution(topic_id)
@@ -776,8 +769,7 @@ async def switch_environment(
         and not _another_sandbox_wanted(environment)
     ):
         return
-    request = row.execution_request or {}
-    old = row.work_lease
+    old = attachment(row).environment
     if still_preparing(old):
         raise ConflictError(say("machineAllocationInProgress"))
     if if_idle and await _room_is_working(db, topic_id):
@@ -789,7 +781,7 @@ async def switch_environment(
     # A frozen sandbox is not checkpointed: it was before it was frozen, and
     # its stopped processes could not run `cheese sync` now.
     if old:
-        generation = request.get("generation")
+        generation = attachment(row).generation
         if not await frozen_sessions(db, [session_id]):
             start = await restart_executor(db, row, old)
             await db.commit()
@@ -809,9 +801,9 @@ async def switch_environment(
         row = await sessions.by_id(session_id, lock=True)
         if row is None:
             raise NotFoundError("Session not found")
-        request = row.execution_request or {}
-        old = row.work_lease
-        if request.get("generation") != generation or not old:
+        held = attachment(row)
+        old = held.environment
+        if held.generation != generation or not old:
             raise ConflictError(say("workComputerJustSwitched"))
         if still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
@@ -831,17 +823,12 @@ async def switch_environment(
         environment.model_dump(),
         chosen_by=asdict(actor),
     )
-    request = {
-        "generation": str(uuid.uuid4()),
-        "retained_leases": [*request.get("retained_leases", []), *kept],
-    }
-    if left is not None:
-        # The next sandbox is not put back on the host this one came from
-        # without this (`HostPool._moved_off`): the host it just left is the
-        # full one, and a full host is what placement prefers.
-        request[LEFT_HOST_KEY] = str(left.id)
-    row.execution_request = request
-    row.work_lease = None
+    # The next sandbox is not put back on the host this one came from
+    # without naming it (`HostPool._moved_off`): the host it just left is the
+    # full one, and a full host is what placement prefers.
+    attachments.detach(
+        row, keep=kept, left_host=str(left.id) if left is not None else None
+    )
     await db.commit()
 
 
@@ -900,8 +887,8 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     it; and the lock is released before the machine runs any call, so a call
     admitted the moment before archival commits runs after it here just as it
     does through the lock. An archived room, a rotated room resource (an
-    unarchive), a notice owed to the agent about its sandbox (``LOST_KEY``,
-    ``PARKED_KEY``: only the whole check hands it over, also when a person
+    unarchive), a notice owed to the agent about its sandbox (`Attachment.notice`:
+    only the whole check hands it over, also when a person
     brought the machine back in between), a lease being re-checked or replaced (its ``verified_at`` is dropped, `_attempt`), a
     sandbox being destroyed or not touched for ``ACTIVE_STEP``, and a machine
     the hub does not reach are all left to the whole check."""
@@ -924,8 +911,8 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     if found is None:
         return None
     row, agent_live = found
-    lease = row.work_lease or {}
-    request = row.execution_request or {}
+    held = attachment(row)
+    lease = held.environment or {}
     location = row.runtime_location or {}
     verified = lease.get("verified_at")
     if (
@@ -934,12 +921,11 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         or lease.get("kind") != "device"
         or lease.get("status", "ready") != "ready"
         or not lease.get("generation")
-        or lease["generation"] != request.get("generation")
+        or lease["generation"] != held.generation
         or lease.get("room_resource_id") != resource
         or lease.get("setup_digest") != _setup_digest(env)
-        or request.get(LOST_KEY)
-        or request.get(THAW_KEY)
-        or request.get(PARKED_KEY) is not None
+        or held.notice.owed
+        or held.thaw
         or lease.get("root_snapshot_notice")
         or claims.get("session") != str(row.id)
         or claims.get("t") != str(row.conversation_id)
@@ -971,20 +957,10 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
 async def distrust(db, session_id: uuid.UUID, generation: str | None) -> None:
     """A call on the session's hands failed on the machine's side: the next
     request for them checks them whole (`_verified`). Only this session's row
-    is taken, and only its lease column read and written — the execution route
+    is taken, and only what says its hands were checked read and written — the execution route
     calls this, and it is served by the device connection owner
     (`device/owner_reads.py` says why it names its columns)."""
-    lease = await db.scalar(
-        select(AgentSession.work_lease)
-        .where(AgentSession.id == session_id)
-        .with_for_update()
-    )
-    if lease and "verified_at" in lease and lease.get("generation") == generation:
-        await db.execute(
-            update(AgentSession)
-            .where(AgentSession.id == session_id)
-            .values(work_lease={k: v for k, v in lease.items() if k != "verified_at"})
-        )
+    await attachments.distrust(db, session_id, generation)
     await db.commit()
 
 
@@ -1125,17 +1101,15 @@ async def _attempt(
         or not holder.signed_for(claims)
     ):
         raise ForbiddenError("Execution credential does not own this session")
-    request = row.execution_request or {"generation": str(uuid.uuid4())}
+    generation = begin(row)
     environment = await holder.environment(db, row)
-    row.execution_request = request
-    generation = request["generation"]
-    lease = row.work_lease
+    lease = attachment(row).environment
     if lease and lease.get("status", "ready") == "ready":
         # Recorded pre-existing resources retain their physical identity. A
         # new session never borrows another session's directory or lease.
         if not lease.get("generation"):
             lease = {**lease, "generation": generation, "session_id": str(row.id)}
-            row.work_lease = lease
+            attach(row, lease)
         if lease["generation"] != generation:
             raise ConflictError("The previous work lease has not been released")
     ready = bool(lease and lease.get("status", "ready") == "ready")
@@ -1168,7 +1142,8 @@ async def _attempt(
     if lease and await devices.get_device(lease["device_id"]) is None:
         # Its machine was unbound (a re-bind enrols a new device id): nothing on
         # it can be reached again.
-        row.work_lease = lease = None
+        attach(row, None)
+        lease = None
     spec = spec_of(environment.spec) if isinstance(environment, Sandbox) else None
     if isinstance(environment, Sandbox) and spec is None:
         await db.commit()
@@ -1283,7 +1258,7 @@ async def _attempt(
         # Provisioning releases its transaction around external calls.
         holder = await holders.lock_for_work(db, topic_id)
         row = await sessions.by_id(session_id, lock=True)
-        if row is None or (row.execution_request or {}).get("generation") != generation:
+        if row is None or attachment(row).generation != generation:
             raise ConflictError("Execution request changed during provisioning")
         # Placing a new home commits (`HostPool._place_on_free`), and another
         # attempt of this session — a person's, a parallel tool call — may
@@ -1291,7 +1266,7 @@ async def _attempt(
         # claim is asked again under the lock that writes it, and the lease
         # read as it is now: two installations on one lease left the first
         # one's claim overwritten, and it failed once it was done.
-        lease = row.work_lease
+        lease = attachment(row).environment
         if lease and lease.get("claim_until"):
             if datetime.fromisoformat(lease["claim_until"]) > now:
                 await db.commit()
@@ -1356,7 +1331,7 @@ async def _attempt(
         if lease is not None and ready and lease.get("device_id") == device_id
         else reservation
     )
-    row.work_lease = holding
+    attach(row, holding)
     if await user_by_handle(db, claims.get("a", "")) is None:
         raise ForbiddenError("Execution actor no longer exists")
     await db.commit()
@@ -1586,8 +1561,8 @@ async def _install(
             # Setup is resumable at the same physical allocation; it is not a
             # dispatched model operation and must not create a replacement lease.
             row = await sessions.by_id(session_id, lock=True)
-            if row and (row.work_lease or {}).get("claim") == claim:
-                row.work_lease = {**holding, "claim_until": now.isoformat()}
+            if row and (attachment(row).environment or {}).get("claim") == claim:
+                attach(row, {**holding, "claim_until": now.isoformat()})
             await db.commit()
             if isinstance(exc, launch.SandboxRefused):
                 # The machine cannot make a sandbox and said why, in words for
@@ -1649,7 +1624,7 @@ async def _install(
         row = await sessions.by_id(session_id, lock=True)
         if (
             row is None
-            or (row.work_lease or {}).get("claim") != claim
+            or (attachment(row).environment or {}).get("claim") != claim
             or current.generation != resource
         ):
             raise ConflictError("Execution allocation changed while preparing")
@@ -1662,31 +1637,15 @@ async def _install(
             if tells_agent and target["status"] == "ready"
             else None
         )
-        row.work_lease = target
-        lost = (
-            tells_agent
-            and target["status"] == "ready"
-            and (row.execution_request or {}).get(LOST_KEY)
+        attach(row, target)
+        notice = (
+            attachments.take_notice(row)
+            if tells_agent and target["status"] == "ready"
+            else attachments.Notice()
         )
-        resumed = (
-            tells_agent
-            and not lost
-            and target["status"] == "ready"
-            and (row.execution_request or {}).get(PARKED_KEY) is not None
-        )
-        stopped = []
-        if lost or resumed:
-            request = row.execution_request or {}
-            stopped = [
-                str(one)
-                for one in request.get(LOST_PROCESSES_KEY if lost else PARKED_KEY) or []
-                if one
-            ]
-            row.execution_request = {
-                key: value
-                for key, value in request.items()
-                if key not in (LOST_KEY, LOST_PROCESSES_KEY, PARKED_KEY)
-            }
+        lost = notice.lost
+        resumed = not lost and notice.parked
+        stopped = list(notice.stopped)
         conversation_id = row.conversation_id
         device = (
             await sql_device_service(db).get_device(device_id) if owner_device else None

@@ -13,8 +13,8 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session.attachment import attachment, place_of
 from app.domain.agent_session.models import (
-    RELEASED,
     AgentSession,
     SessionPlace,
 )
@@ -23,13 +23,6 @@ from app.domain.agent_session.repositories import (
     AgentSessionRepository,
     Continuation,
 )
-
-
-def lease_released(lease: dict | None) -> bool:
-    """Whether ``lease``'s sandbox was destroyed or parked since it was placed
-    (``RELEASED``): it names where the session's machine was, and nothing
-    there answers."""
-    return bool(lease) and lease.get("status") == RELEASED
 
 
 class AgentSessionService:
@@ -182,7 +175,7 @@ class AgentSessionService:
     ) -> SessionPlace | None:
         """Where this agent's conversation here is — its machines, resolved."""
         row = await self._repo.get(conversation_id, agent_handle, harness)
-        return row.place() if row is not None else None
+        return place_of(row) if row is not None else None
 
     async def last_used_on(
         self, channel: str, machines: list[str]
@@ -195,7 +188,7 @@ class AgentSessionService:
         a lease on now: a sandbox on one of the platform's machines is not one."""
         held: list[str] = []
         for row in await self._repo.placed_in_room(room_id):
-            lease = row.work_lease or {}
+            lease = attachment(row).environment or {}
             device_id = lease.get("device_id")
             if device_id and not lease.get("platform") and device_id not in held:
                 held.append(device_id)
@@ -238,7 +231,7 @@ class AgentSessionService:
         conversation_id: uuid.UUID,
         agent_handle: str,
         harness: str,
-        work_lease: dict | None,
+        environment: dict | None,
         runtime_location: dict,
     ) -> None:
         """Record the machines this session took."""
@@ -246,14 +239,14 @@ class AgentSessionService:
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
-            work_lease=work_lease,
+            environment=environment,
             runtime_location=runtime_location,
         )
 
     async def places_in_room(self, room_id: uuid.UUID) -> list[SessionPlace]:
         """Every place a session in this room is sitting on."""
         rows = await self._repo.placed_in_room(room_id)
-        return [place for row in rows if (place := row.place()) is not None]
+        return [place for row in rows if (place := place_of(row)) is not None]
 
     async def working_copy(
         self, conversation_id: uuid.UUID, generation: str
@@ -261,8 +254,9 @@ class AgentSessionService:
         """The machine lease holding this task's (or 支线's) working copy on the
         room's current ``generation``, and whether nothing on it answers for
         that copy now: its sandbox was destroyed or parked and nothing has
-        placed it again since (``RELEASED``). Whether its agent has been told
-        is another fact (``LOST_KEY``), and does not enter into this.
+        placed it again since (`Attachment.released`). Whether its agent has
+        been told is another fact (`Attachment.notice`), and does not enter
+        into this.
 
         Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
@@ -277,10 +271,11 @@ class AgentSessionService:
         installation that got that far) does hold the machine's copy, and that
         copy may carry work nobody has pushed, so it is still read."""
         for row in await self._repo.placed_in_conversation(conversation_id):
-            place = row.place()
+            place = place_of(row)
             if place is None or place.resource_id != generation:
                 continue
-            lease = place.lease
+            held = attachment(row)
+            lease = held.environment
             if (
                 lease is not None
                 and lease.get("kind") == "device"
@@ -290,7 +285,7 @@ class AgentSessionService:
                     or lease.get("home")
                 )
             ):
-                return lease, lease_released(lease)
+                return lease, held.released
         return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:

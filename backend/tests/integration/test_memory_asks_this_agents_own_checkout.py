@@ -78,7 +78,7 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
             conversation_id=room.id,
             agent_handle="cheese",
             harness=harness,
-            work_lease={"kind": "device", "device_id": HANDS_OF_THE_DEFAULT},
+            environment={"kind": "device", "device_id": HANDS_OF_THE_DEFAULT},
             runtime_location=_at(HANDS_OF_THE_DEFAULT, generation=generation),
         )
         await session.flush()
@@ -91,7 +91,7 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
             conversation_id=room.id,
             agent_handle="reviewer",
             harness=harness,
-            work_lease={"kind": "device", "device_id": HANDS_OF_THE_REVIEWER},
+            environment={"kind": "device", "device_id": HANDS_OF_THE_REVIEWER},
             runtime_location=_at(HANDS_OF_THE_REVIEWER, generation=generation),
         )
         await session.flush()
@@ -112,7 +112,7 @@ async def test_a_lease_from_a_previous_generation_is_not_this_turns_hand(
             conversation_id=room.id,
             agent_handle="reviewer",
             harness=harness,
-            work_lease={"kind": "device", "device_id": HANDS_OF_THE_REVIEWER},
+            environment={"kind": "device", "device_id": HANDS_OF_THE_REVIEWER},
             runtime_location=_at(HANDS_OF_THE_REVIEWER, generation=str(uuid.uuid4())),
         )
         await session.flush()

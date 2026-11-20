@@ -76,7 +76,7 @@ async def place_session(db, topic, resource, target, *, agent=AGENT, machine="ce
     await AgentSessionService(db).remember_place(
         conversation_id=topic,
         agent_handle=agent,
-        work_lease=target,
+        environment=target,
         runtime_location={
             "device_id": machine,
             "resource_id": str(resource),
@@ -727,7 +727,7 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
             conversation_id=topic,
             agent_handle="pi-teammate",
             harness="pi",
-            work_lease=None,
+            environment=None,
             runtime_location={
                 "device_id": "center",
                 "resource_id": str(resource),

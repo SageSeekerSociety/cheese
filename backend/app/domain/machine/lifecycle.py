@@ -56,7 +56,7 @@ checkpoint or save (``repository.kept_work``) and laid back when a checkout
 of the task is opened again. Installed tools, running processes and the rest
 of the home are gone. The session's next tool call places it in a new
 sandbox, which starts like any new one, and that call's result tells the
-agent it is in a new sandbox (``LOST_KEY``).
+agent it is in a new sandbox (`Attachment.notice`).
 
 While the host removes the home, the row is marked stopped (``stopped_at``):
 a tool call that arrives meanwhile waits for it to go (``SandboxRemoving``)
@@ -100,14 +100,8 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.harness.claude_code import executor_launch
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import (
-    LOST_KEY,
-    LOST_PROCESSES_KEY,
-    PARKED_KEY,
-    THAW_KEY,
-    AgentSession,
-    released_lease,
-)
+from app.domain.agent_session import attachment as attachments
+from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.machine import holder as holders
 from app.domain.machine import metering, root_snapshots, sandbox_home
@@ -307,7 +301,7 @@ async def previewed_sessions(db, session_ids) -> set[uuid.UUID]:
 
 
 async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> bool:
-    """Wake a sandbox a tool call has already asked for (`THAW_KEY`), before
+    """Wake a sandbox a tool call has already asked for (`Attachment.thaw`), before
     its executor is asked anything (`session_work._install`, under the claim,
     with no database lock held).
 
@@ -317,21 +311,17 @@ async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -
     and the next one tries again, which is better than an executor nobody can
     reach for a minute. Answers whether it thawed one.
     """
-    marker = await db.scalar(
-        select(AgentSession.execution_request).where(AgentSession.id == session_id)
-    )
+    held = await attachments.attachment_of(db, session_id)
     await db.commit()
-    thawing = (marker or {}).get(THAW_KEY)
+    thawing = held.thaw if held is not None else None
     if not thawing or str(thawing) != str(work_resource):
         return False
     await thaw_on_host(hub, device_id, str(work_resource))
     row = await db.scalar(
         select(AgentSession).where(AgentSession.id == session_id).with_for_update()
     )
-    if row is not None and (row.execution_request or {}).get(THAW_KEY) == thawing:
-        left = dict(row.execution_request or {})
-        left.pop(THAW_KEY, None)
-        row.execution_request = left
+    if row is not None:
+        attachments.thawed(row, thawing)
     await db.commit()
     return True
 
@@ -798,9 +788,8 @@ class SandboxLifecycle:
             # something outside the machine — so a card nobody looks at again
             # cannot keep a host for a day.
             return None
-        lease = await self._session.scalar(
-            select(AgentSession.work_lease).where(AgentSession.id == home.session_id)
-        )
+        held = await attachments.attachment_of(self._session, home.session_id)
+        lease = held.environment if held is not None else None
         await self._session.commit()
         until = (lease or {}).get("claim_until")
         if until and datetime.fromisoformat(until) > now:
@@ -977,7 +966,7 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if session_row is not None:
-                lease = session_row.work_lease or {}
+                lease = attachments.attachment(session_row).environment or {}
                 until = lease.get("claim_until")
                 if until and datetime.fromisoformat(until) > now:
                     # A tool call is starting it right now.
@@ -1300,15 +1289,7 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if row is not None:
-                request = {
-                    key: value
-                    for key, value in (row.execution_request or {}).items()
-                    if key != THAW_KEY
-                }
-                request[PARKED_KEY] = running
-                row.execution_request = request
-                if (row.work_lease or {}).get("device_id") == device_id:
-                    row.work_lease = released_lease(row.work_lease)
+                attachments.park(row, device_id, running)
         await keep_parked(
             self._session,
             conversation_id=home.topic_id,
@@ -1512,17 +1493,7 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if row is not None:
-                request = {
-                    key: value
-                    for key, value in (row.execution_request or {}).items()
-                    if key != LOST_PROCESSES_KEY
-                }
-                request[LOST_KEY] = True
-                if running:
-                    request[LOST_PROCESSES_KEY] = running
-                row.execution_request = request
-                if (row.work_lease or {}).get("device_id") == device_id:
-                    row.work_lease = released_lease(row.work_lease)
+                attachments.lose(row, device_id, stopped=running)
                 # The platform has just taken this session's machine away, and
                 # it is the one authority that knows a runner will never report
                 # the end of the turn that was running on it. Recording that

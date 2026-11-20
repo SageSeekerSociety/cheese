@@ -182,8 +182,11 @@ class _Db:
     async def commit(self):
         self.commits += 1
 
-    async def scalar(self, *args, **kwargs):
+    async def execute(self, *args, **kwargs):
         # Whether the session's sandbox is to be thawed first: it is not.
+        return SimpleNamespace(first=lambda: None)
+
+    async def scalar(self, *args, **kwargs):
         return None
 
 

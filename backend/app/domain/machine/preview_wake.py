@@ -213,7 +213,7 @@ async def thaw_preview_on_machine(bind, *, session_id: uuid.UUID, hub=None) -> b
     Its processes are resumed the way a tool call's wake does it: the home is
     marked under the pool's lock and the host call runs with no database lock
     held (`lifecycle.thaw_if_asked`). Returns whether there was a frozen home
-    to wake; a failed thaw is logged and leaves `THAW_KEY` behind, which the
+    to wake; a failed thaw is logged and leaves the thaw asked for, which the
     session's next tool call retries."""
     hub = hub or device_hub
     try:

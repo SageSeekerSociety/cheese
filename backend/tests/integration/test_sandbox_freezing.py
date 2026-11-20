@@ -31,7 +31,8 @@ import pytest
 from sqlalchemy import select, update
 
 from app.core.config import settings
-from app.domain.agent_session.models import THAW_KEY, AgentSession
+from app.domain.agent_session.attachment import THAW_KEY
+from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.machine import metering, sandbox_home

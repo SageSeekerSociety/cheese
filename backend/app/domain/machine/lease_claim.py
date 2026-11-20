@@ -12,10 +12,9 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.attachment import attach, attachment, attachment_of
 from app.domain.agent_session.services import AgentSessionService
 
 logger = logging.getLogger(__name__)
@@ -95,12 +94,12 @@ async def _renew(bind, session_id, claim: str, since: datetime, most_s: float) -
         try:
             async with AsyncSession(bind, expire_on_commit=False) as db:
                 row = await AgentSessionService(db).by_id(session_id, lock=True)
-                lease = (row.work_lease if row is not None else None) or {}
+                lease = (attachment(row).environment if row is not None else None) or {}
                 if row is None or lease.get("claim") != claim:
                     # Handed over, lapsed, or taken by a later attempt: the
                     # claim is no longer this installation's to keep.
                     return
-                row.work_lease = {**lease, "claim_until": until.isoformat()}
+                attach(row, {**lease, "claim_until": until.isoformat()})
                 await db.commit()
         except Exception:  # the next beat tries again
             # One missed beat is not the installation's death; a database that
@@ -114,10 +113,9 @@ async def _renew(bind, session_id, claim: str, since: datetime, most_s: float) -
 async def moved(db, session_id, claim) -> bool:
     """Another request of this session holds the installation; it has moved
     on once its claim is gone or has lapsed."""
-    lease = await db.scalar(
-        select(AgentSession.work_lease).where(AgentSession.id == session_id)
-    )
-    if (lease or {}).get("claim") != claim:
+    held = await attachment_of(db, session_id)
+    lease = (held.environment if held is not None else None) or {}
+    if lease.get("claim") != claim:
         return True
     until = lease.get("claim_until")
     return not until or datetime.fromisoformat(until) <= datetime.now(UTC)

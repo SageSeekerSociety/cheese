@@ -17,7 +17,7 @@ from typing import cast
 import pytest
 
 from app.domain.agent import sandbox_image
-from app.domain.agent_session.models import LEFT_HOST_KEY
+from app.domain.agent_session.attachment import LEFT_HOST_KEY
 from app.domain.identity.actor import Actor
 from app.domain.machine import services as machine_services
 from app.domain.machine.models import AiStatus, MachineStatus
@@ -144,8 +144,11 @@ class _Session:
         self.commits += 1
 
     async def scalar(self, query):
-        # The session's execution request, read to see whether a thaw waits.
         return self.row.execution_request
+
+    async def execute(self, query):
+        # The session's attachment, read to see whether a thaw waits.
+        return SimpleNamespace(first=lambda: self.row)
 
 
 class _Hub:

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.services import room_of
 from app.domain.topic.models import Topic
@@ -53,7 +54,7 @@ async def machine_to_read(
     )
     rows.sort(key=lambda row: row.agent_handle != seat)
     for row in rows:
-        lease = row.work_lease or {}
+        lease = attachments.attachment(row).environment or {}
         if (
             lease.get("kind") != "device"
             or lease.get("status", "ready") != "ready"

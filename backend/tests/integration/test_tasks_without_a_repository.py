@@ -202,7 +202,7 @@ def _place(client, task_id: str) -> None:
             await AgentSessionService(session).remember_place(
                 conversation_id=task.id,
                 agent_handle="cheese",
-                work_lease={"kind": "device"},
+                environment={"kind": "device"},
                 runtime_location={
                     "device_id": "test-device",
                     "channel": "central",

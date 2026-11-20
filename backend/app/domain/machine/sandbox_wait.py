@@ -30,8 +30,8 @@ VM_PREPARING = "虚拟机沙箱正在准备，要几分钟；对话和平台工�
 VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 # What a session is told, once, with the first tool call that succeeds in a
 # new sandbox: its old one was destroyed when idle (``lifecycle``) or given up
-# with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
-# the session's ``execution_request``.
+# with its host (``HostPool._fail``). Either owes it to the session
+# (`agent_session.attachment.lose`).
 SANDBOX_LOST = (
     "沙箱环境已换成新的。只有推上去的提交还在，在任务分支上，用 "
     'cd "$(cheese worktree <任务 id>)" 重新打开任务目录。没提交的改动、没推的'

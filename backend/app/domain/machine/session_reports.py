@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.domain.agent.environment import SelfHosted, spec_of, stored
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentEnvironment, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, of_rooms, room_column
@@ -127,7 +128,7 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     placed = [
         (row, topic, environment)
         for row, topic, environment in await _placed_sessions(db, project_id)
-        if (row.work_lease or {}).get("device_id") == device_id
+        if attachments.attachment(row).device_id == device_id
         or (isinstance(environment, SelfHosted) and environment.device_id == device_id)
     ]
     if not placed:
@@ -195,9 +196,9 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
 async def devices_held_by(db, conversation_id) -> set[str]:
     """The devices this conversation's sessions hold a lease on now."""
     leases = await db.scalars(
-        select(AgentSession.work_lease).where(
+        select(attachments.environment_column()).where(
             AgentSession.conversation_id == conversation_id,
-            AgentSession.work_lease.is_not(None),
+            attachments.is_attached(),
         )
     )
     return {lease["device_id"] for lease in leases if (lease or {}).get("device_id")}
@@ -208,10 +209,10 @@ async def leases_on_peoples_devices(db, room_id) -> list[dict]:
     own computers, most recently placed first. A sandbox on the platform's
     machines is the platform's to report (``CloudHostRepository.room_homes``)."""
     leases = await db.scalars(
-        select(AgentSession.work_lease)
+        select(attachments.environment_column())
         .where(
             of_room(AgentSession.conversation_id, room_id),
-            AgentSession.work_lease.is_not(None),
+            attachments.is_attached(),
         )
         .order_by(AgentSession.placed_at.desc().nulls_last())
     )

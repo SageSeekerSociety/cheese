@@ -18,7 +18,7 @@ from app.domain.agent import execution
 from app.domain.agent.device_contract import DeviceCallError
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.models import LOST_KEY, PARKED_KEY, released_lease
+from app.domain.agent_session.attachment import LOST_KEY, PARKED_KEY, released
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.room_task.models import Task
@@ -83,7 +83,7 @@ def _seat(
             await AgentSessionService(session).remember_place(
                 conversation_id=task.id,
                 agent_handle="cheese",
-                work_lease=lease
+                environment=lease
                 or (
                     {"kind": "device", "device_id": device}
                     if device is not None
@@ -105,7 +105,7 @@ def _seat(
                 row.execution_request = (
                     {LOST_KEY: True} if lost else {PARKED_KEY: ["npm run dev"]}
                 )
-                row.work_lease = released_lease(row.work_lease)
+                row.work_lease = released(row.work_lease)
             await session.commit()
 
     asyncio.run(place())

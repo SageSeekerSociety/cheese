@@ -54,7 +54,7 @@ async def _place(db_factory, topic, agent, state, sid, machine=DEVICE) -> None:
             conversation_id=topic,
             agent_handle=agent,
             harness=PI,
-            work_lease=None,
+            environment=None,
             runtime_location={
                 "device_id": machine,
                 "resource_id": f"r-{agent}",

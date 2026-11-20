@@ -40,7 +40,7 @@ async def _place(factory, channel_name, topic) -> None:
             conversation_id=topic,
             agent_handle=AGENT,
             harness=CLAUDE_CODE,
-            work_lease=None,
+            environment=None,
             runtime_location={
                 "device_id": "center",
                 "resource_id": str(topic),

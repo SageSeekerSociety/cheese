@@ -30,6 +30,7 @@ from app.domain.agent.queries import (
     _pass_policy_gate,
 )
 from app.domain.agent.turn.intake.context import TurnBail, _proposal_frames
+from app.domain.agent_session.attachment import begin
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.policy import gate
 from app.domain.usage.ledger import team_terms
@@ -88,8 +89,7 @@ async def check_model_policy(
         conversation = await AgentSessionService(session).ensure(
             place.conversation_id, agent.handle, harness=harness
         )
-        if conversation.execution_request is None:
-            conversation.execution_request = {"generation": str(uuid.uuid4())}
+        begin(conversation)
     if project is not None:
         actor_handle = acting_agent or agent.handle
         tiers = (await team_terms(session, project.team_id)).model_tiers

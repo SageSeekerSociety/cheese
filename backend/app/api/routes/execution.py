@@ -33,7 +33,7 @@ from app.domain.agent.device_hub import (
     DeviceUnreachable,
 )
 from app.domain.agent.task_checkout import checkout_steps
-from app.domain.agent_session.services import lease_released
+from app.domain.agent_session.attachment import attachment
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine import session_work
@@ -202,10 +202,11 @@ async def execute(
     else:
         owned = await owner_reads.legacy_execution(db, topic_id)
         session_id = owned.id if owned is not None else None
-    lease = owned.work_lease if owned is not None else None
-    # Its sandbox was destroyed or parked since (`RELEASED`): the lease is
-    # still this session's, and nothing on it answers.
-    released = lease_released(lease)
+    held = attachment(owned) if owned is not None else None
+    lease = held.environment if held is not None else None
+    # Its sandbox was destroyed or parked since: the environment is still
+    # this session's, and nothing on it answers.
+    released = held is not None and held.released
     current = not (
         owned is None
         or not lease

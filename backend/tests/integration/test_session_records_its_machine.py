@@ -272,7 +272,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
         await sessions.remember_place(
             conversation_id=topic,
             agent_handle="ada",
-            work_lease=before.lease,
+            environment=before.lease,
             runtime_location={
                 "device_id": "center-two",
                 "resource_id": before.resource_id,
@@ -303,7 +303,7 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
         await sessions.remember_place(
             conversation_id=topic,
             agent_handle="ada",
-            work_lease=None,
+            environment=None,
             runtime_location={
                 "device_id": "center",
                 "resource_id": str(topic),
@@ -348,7 +348,7 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
                 conversation_id=topic,
                 agent_handle="ada",
                 harness=harness,
-                work_lease=None,
+                environment=None,
                 runtime_location={
                     "device_id": "center",
                     "resource_id": str(topic),

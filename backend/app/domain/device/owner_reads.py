@@ -47,6 +47,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session.attachment import ATTACHMENT_COLUMNS, attachment
 from app.domain.agent_session.models import AgentSession
 from app.domain.device.models import DeviceRow, HostedDeviceRow, ModelCredentialHost
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -197,9 +198,7 @@ async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
     """
     rows = (
         await session.execute(
-            select(
-                AgentSession.id, AgentSession.runtime_location, AgentSession.work_lease
-            )
+            select(AgentSession.id, AgentSession.runtime_location, *ATTACHMENT_COLUMNS)
             .where(AgentSession.conversation_id == conversation_id)
             .with_for_update(read=True)
         )
@@ -207,10 +206,10 @@ async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
     legacy = [
         row
         for row in rows
-        if row.work_lease
-        and row.work_lease.get("kind") == "device"
-        and not row.work_lease.get("generation")
-        and not row.work_lease.get("session_id")
+        if (environment := attachment(row).environment)
+        and environment.get("kind") == "device"
+        and not environment.get("generation")
+        and not environment.get("session_id")
     ]
     return legacy[0] if len(legacy) == 1 else None
 
@@ -222,8 +221,8 @@ async def session_execution(session: AsyncSession, session_id: uuid.UUID):
         await session.execute(
             select(
                 AgentSession.runtime_location,
-                AgentSession.work_lease,
                 AgentSession.conversation_id,
+                *ATTACHMENT_COLUMNS,
             )
             .where(AgentSession.id == session_id)
             # FOR SHARE, not FOR UPDATE: a lease change still waits for every

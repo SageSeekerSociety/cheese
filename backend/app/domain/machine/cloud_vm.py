@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.domain.agent.environment import VM, spec_of
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim, session_work
@@ -104,7 +105,7 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         if home.session_id is None
         else await AgentSessionService(db).by_id(home.session_id)
     )
-    lease = row.work_lease if row is not None else None
+    lease = attachments.attachment(row).environment if row is not None else None
     if lease is not None and lease.get("device_id") != home.device_id:
         lease = None
     if lease is not None and lease_claim.still_preparing(lease):
@@ -146,8 +147,8 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     if await _at_work(lifecycle, row, now):
         await db.commit()
         return False
-    if row is not None and (row.work_lease or {}).get("device_id") == home.device_id:
-        row.work_lease = None
+    if row is not None and attachments.attachment(row).device_id == home.device_id:
+        attachments.unattach(row)
     minutes = int(idle_for.total_seconds() // 60)
     line = await tell_vm_released(db, current, minutes)
     if home.session_id is None:

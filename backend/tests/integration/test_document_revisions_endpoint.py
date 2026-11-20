@@ -171,7 +171,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
             await AgentSessionService(session).remember_place(
                 conversation_id=task.id,
                 agent_handle="cheese",
-                work_lease={"kind": "device"},
+                environment={"kind": "device"},
                 runtime_location={
                     "device_id": "test-device",
                     "channel": "central",

@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import LOST_KEY
+from app.domain.agent_session.attachment import LOST_KEY
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lifecycle
 from app.domain.machine import session_work as work_lease

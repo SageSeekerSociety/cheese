@@ -48,7 +48,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    literal_column,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -60,70 +59,6 @@ from app.domain.common import Timestamps, UuidPk
 # The registry `conversation_id` points at: mapped wherever a session is, so the
 # foreign key resolves in a process that never imports `app.models`.
 from app.domain.conversation.models import Conversation  # noqa: F401
-
-#: The ``status`` of a lease whose sandbox was destroyed (idle, or given up with
-#: its host) or parked with its processes stopped (``released_lease``): it
-#: still names the machine and home it was on, and nothing there answers for
-#: the session's work until a placement replaces it with a ready lease. Whether
-#: a machine holds the work is this; whether the agent has been told it lost
-#: its sandbox is ``LOST_KEY`` / ``PARKED_KEY``, which the first tool call that
-#: carries a notice reads and clears, whoever brought the machine back.
-RELEASED = "released"
-
-
-def released_lease(lease: dict | None) -> dict | None:
-    """``lease`` as it stands once its sandbox is gone (``RELEASED``): checked
-    by nobody since (`verified_at` dropped), and the claim of an install that
-    was running on it ended with it."""
-    if lease is None:
-        return None
-    return {
-        **{
-            key: value
-            for key, value in lease.items()
-            if key not in ("verified_at", "claim", "claim_until")
-        },
-        "status": RELEASED,
-    }
-
-
-#: Set in a session's ``execution_request`` when its cloud sandbox was destroyed
-#: (idle, or given up with its host): the notice its agent is owed. Cleared by
-#: the first tool call that carries a notice in the sandbox that replaced it —
-#: one the agent placed, or one a person brought back for the task's files.
-#: Whether a machine holds the session's work is its lease's (``RELEASED``).
-LOST_KEY = "sandbox_lost"
-#: Set beside ``LOST_KEY`` when the host could say what was running in the
-#: sandbox it destroyed (``sandbox_home.destroy``): each process's command
-#: line, its executor and bare shells left out, secrets masked. Read with
-#: ``LOST_KEY`` into the notice the next tool call carries, and cleared with
-#: it. Absent when nothing was running, or the host could not read it — the
-#: copy is the same as before there were processes to name.
-LOST_PROCESSES_KEY = "sandbox_lost_processes"
-#: Set in a session's ``execution_request`` when its cloud sandbox was parked
-#: (``lifecycle._park``): its processes stopped, its home kept on the host.
-#: The value is what was running, as ``LOST_PROCESSES_KEY`` names it (an empty
-#: list when nothing was). The agent's first tool call that carries a notice
-#: once it runs again is told its files are all there and its processes are
-#: not, and clears it; like ``LOST_KEY`` it is the notice, not the machine's
-#: state.
-PARKED_KEY = "sandbox_parked"
-#: Set in a session's ``execution_request`` when it asked for another cloud
-#: sandbox while it already had one — the spec it is on, asked again
-#: (``session_work.switch_environment``). The host it left is named here so its
-#: next placement does not go straight back to it, which is what the pool's
-#: preference for the fullest host would otherwise do. Cleared by that
-#: placement (``HostPool._placed_off``).
-LEFT_HOST_KEY = "sandbox_left_host"
-#: Set in a session's ``execution_request`` when a tool call arrives for a
-#: frozen cloud sandbox: the resource id of that sandbox. The row's home is
-#: kept, its ``frozen_at`` is cleared under the pool lock and its ``active_at``
-#: moved to now, but its processes are still stopped, and neither the pool nor
-#: the executor may be asked anything until they run again. The actual thaw
-#: happens off the database locks, in ``session_work._install`` before the
-#: executor starts; it clears this. A stale value is harmless: the same home
-#: thawing twice is a no-op (`machine/services.py`, `sandbox_home.thaw`).
-THAW_KEY = "sandbox_thaw"
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,30 +87,9 @@ class SessionPlace:
     lease: dict | None
 
 
-def place_of(
-    runtime_location: dict | None, work_lease: dict | None
-) -> SessionPlace | None:
-    """The place a session's two columns describe, or None where it has none.
-
-    The one construction of a `SessionPlace` from stored columns. Both the
-    entity and the column-only read of it
-    (`agent_session.repositories.PlacedRow`) call this, so a key added here
-    reaches both instead of one.
-    """
-    if not runtime_location:
-        return None
-    return SessionPlace(
-        machine=runtime_location["device_id"],
-        channel=runtime_location["channel"],
-        resource_id=runtime_location["resource_id"],
-        runtime=runtime_location.get("runtime") or {},
-        lease=work_lease,
-    )
-
-
 #: The device a session's lease is on, as `ix_agent_sessions_lease_device`
 #: indexes it. The key is written as a literal, not bound, so the index serves
-#: a prepared statement's generic plan too (`LEASE_DEVICE`).
+#: a prepared statement's generic plan too (`attachment.attached_on`).
 LEASE_DEVICE_SQL = "(work_lease ->> 'device_id')"
 
 
@@ -280,24 +194,12 @@ class AgentSession(UuidPk, Timestamps, Base):
     # not count for another runner.
     drain_launch: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # What this session's agent is owed about the environment it works in and
-    # has not been told: that its sandbox was destroyed (``LOST_KEY``, with
-    # what was running, ``LOST_PROCESSES_KEY``) or parked (``PARKED_KEY``).
+    # has not been told: that its sandbox was destroyed (with what was
+    # running) or parked.
     # The first tool call that carries a notice reads and clears it.
     environment_notice: Mapped[dict | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
-
-    def place(self) -> SessionPlace | None:
-        """这条会话在哪——它自己那一半地点的唯一入口。
-
-        入口在会话上，不在房间上：同一条会话的每一轮解析出同一个句柄。没有
-        ``runtime_location`` 就是还没有地点，下一轮重新租，而不是去猜房间上记着
-        什么。
-
-        ``lease``（工作机器）是**房间**那一半，见 :class:`SessionPlace`：它跟着
-        这一行走只是为了读的人当场看得见，解析它的是房间那一项。
-        """
-        return place_of(self.runtime_location, self.work_lease)
 
 
 class AgentEnvironment(Base):
@@ -367,7 +269,3 @@ class AgentRead(Base):
     read_through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     read_through_block_id: Mapped[uuid.UUID] = mapped_column()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-#: ``AgentSession.work_lease["device_id"]`` spelled the way the index is.
-LEASE_DEVICE = literal_column("(agent_sessions.work_lease ->> 'device_id')", String)

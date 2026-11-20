@@ -19,12 +19,16 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session.attachment import (
+    attached_values,
+    environment_column,
+    place,
+)
 from app.domain.agent_session.models import (
     AgentEnvironment,
     AgentRead,
     AgentSession,
     SessionPlace,
-    place_of,
 )
 from app.domain.conversation.services import of_room, room_column
 from app.domain.topic.models import Topic
@@ -40,11 +44,11 @@ class PlacedRow:
     harness: str
     resume_token: str | None
     runtime_location: dict | None
-    work_lease: dict | None
+    environment: dict | None
 
     def place(self) -> SessionPlace | None:
         """The session's place, built by the same function the entity uses."""
-        return place_of(self.runtime_location, self.work_lease)
+        return place(self.runtime_location, self.environment)
 
 
 @dataclass(frozen=True)
@@ -313,7 +317,7 @@ class AgentSessionRepository:
         conversation_id: uuid.UUID,
         agent_handle: str,
         harness: str,
-        work_lease: dict | None,
+        environment: dict | None,
         runtime_location: dict,
     ) -> None:
         """Record where this session rented hands and where its process runs.
@@ -332,7 +336,7 @@ class AgentSessionRepository:
             agent_handle=agent_handle,
             harness=harness,
             values={
-                "work_lease": work_lease,
+                **attached_values(environment),
                 "runtime_location": runtime_location,
                 "placed_at": datetime.now(UTC),
             },
@@ -631,7 +635,7 @@ class AgentSessionRepository:
                 AgentSession.harness,
                 AgentSession.resume_token,
                 AgentSession.runtime_location,
-                AgentSession.work_lease,
+                environment_column(),
                 Topic.project_id,
                 room,
             )
@@ -654,7 +658,7 @@ class AgentSessionRepository:
                     harness=row.harness,
                     resume_token=row.resume_token,
                     runtime_location=row.runtime_location,
-                    work_lease=row.work_lease,
+                    environment=row.environment,
                 ),
                 row.project_id,
                 row.room_id,

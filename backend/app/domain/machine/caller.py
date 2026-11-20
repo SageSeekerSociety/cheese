@@ -24,7 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, for_a_machine, mint_scoped_token
 from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
-from app.domain.agent_session.models import LEASE_DEVICE, AgentSession
+from app.domain.agent_session import attachment as attachments
+from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import Conversation
 from app.domain.conversation.services import room_of
 from app.domain.machine.session_work import session_author
@@ -92,14 +93,17 @@ async def caller_of(
     rows = await db.execute(
         select(AgentSession, Conversation.project_id)
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
-        .where(LEASE_DEVICE == device)
+        .where(attachments.attached_on(device))
     )
     attached = [
         (session, project_id)
         for session, project_id in rows
-        if (session.work_lease or {}).get("status", "ready") == "ready"
-        and (session.work_lease or {}).get("state")
-        and _names(session.work_lease["state"], state)
+        if (environment := attachments.attachment(session).environment or {}).get(
+            "status", "ready"
+        )
+        == "ready"
+        and environment.get("state")
+        and _names(environment["state"], state)
     ]
     if attachment:
         held = next((pair for pair in attached if str(pair[0].id) == attachment), None)
@@ -141,7 +145,7 @@ async def credential_of(
     row = caller.row or await db.get(AgentSession, uuid.UUID(caller.session_id))
     if row is None:
         return None
-    lease = row.work_lease or {}
+    lease = attachments.attachment(row).environment or {}
     # A ready lease names its room's resource; only one that does not is
     # given the room's own.
     resource = lease.get("room_resource_id")

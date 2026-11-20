@@ -28,7 +28,8 @@ from app.core.device_failures import LinkInterrupted
 from app.domain.agent import execution
 from app.domain.agent.device_contract import DeviceUnreachable
 from app.domain.agent.device_hub import DeviceCallError
-from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.agent_session.attachment import LOST_KEY
+from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import SandboxHome

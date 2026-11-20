@@ -23,6 +23,7 @@ from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
+from app.domain.agent_session.attachment import place_of
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import local as mcp_local
 from app.domain.remote_mcp import service as remote_mcp
@@ -273,7 +274,7 @@ class CentralChannel(DeviceChannel):
                 session.conversation_id, session.agent_handle, harness=session.harness
             )
             session_id = session_row.id
-            place = session_row.place()
+            place = place_of(session_row)
             await db.commit()
         if place is not None and (
             place.resource_id != str(resource)
@@ -421,7 +422,7 @@ class CentralChannel(DeviceChannel):
                 conversation_id=session.conversation_id,
                 agent_handle=session.agent_handle,
                 harness=session.harness,
-                work_lease=(place.lease if place else None)
+                environment=(place.lease if place else None)
                 if precheck.deferred
                 else target,
                 runtime_location=location,

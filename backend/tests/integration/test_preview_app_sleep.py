@@ -491,7 +491,7 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
     the background, so the app somebody opened goes on running."""
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent_session.models import THAW_KEY
+    from app.domain.agent_session.attachment import THAW_KEY
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.machine import lifecycle
     from app.domain.machine.models import (

@@ -65,7 +65,7 @@ async def _line(
 ) -> dict | None:
     """Say it in the conversation: a person has something to do. A person's
     own 芝士 conversation has no lines of the platform's in it; its 芝士 hears
-    on its next tool call that the sandbox is a new one (``LOST_KEY``) and
+    on its next tool call that the sandbox is a new one (`Attachment.notice`) and
     tells its person, and the line is kept as a record."""
     if home.project_id is None:
         return await _record(session, home, content, meta)

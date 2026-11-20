@@ -21,7 +21,7 @@ the forge (`repository.forge_files`); editing them brings the machine back:
   (`task_checkout.checkout_request`), which is no tool call of the teammate's
   and nothing said in the conversation.
 
-What the teammate is owed about its sandbox (`LOST_KEY`, `PARKED_KEY`) is left
+What the teammate is owed about its sandbox (`Attachment.notice`) is left
 for its own next tool call.
 
 The bring-up runs in the background, one per task in this process, so a person
@@ -38,7 +38,6 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, UpstreamUnavailableError
@@ -49,6 +48,7 @@ from app.domain.agent.task_checkout import (
     checkout_answered,
     checkout_request,
 )
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
@@ -105,20 +105,9 @@ class Status:
 
 
 async def task_session(db: AsyncSession, task_id: uuid.UUID) -> AgentSession | None:
-    """The task's own agent session: the one that holds a machine lease, else
-    the one placed last. None while no session of it was ever placed."""
-    rows = list(
-        await db.scalars(
-            select(AgentSession)
-            .where(
-                AgentSession.conversation_id == task_id,
-                AgentSession.runtime_location.is_not(None),
-            )
-            .order_by(AgentSession.updated_at.desc())
-        )
-    )
-    leased = [row for row in rows if (row.work_lease or {}).get("kind") == "device"]
-    return (leased or rows or [None])[0]
+    """The task's own agent session: the one whose environment is the task's
+    (`attachments.environment_of_conversation`)."""
+    return await attachments.environment_of_conversation(db, task_id)
 
 
 async def prepare(
@@ -175,7 +164,7 @@ async def status(db: AsyncSession, task_id: uuid.UUID) -> Status:
     if task_id in _running:
         return Status(machine="preparing", failed=None)
     row = await task_session(db, task_id)
-    lease = (row.work_lease if row is not None else None) or {}
+    lease = (attachments.attachment(row).environment if row is not None else None) or {}
     if still_preparing(lease):
         return Status(machine="preparing", failed=failed)
     if lease.get("kind") == "device" and lease.get("status", "ready") == "ready":

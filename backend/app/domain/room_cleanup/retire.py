@@ -31,6 +31,7 @@ from app.domain.agent.device_storage import (
     transcripts_upload_url,
 )
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_session.attachment import attachment
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
@@ -225,10 +226,7 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
     )
     devices = sql_device_service(session)
     for conversation in sessions:
-        leases = [
-            *(conversation.execution_request or {}).get("retained_leases", []),
-            *([conversation.work_lease] if conversation.work_lease else []),
-        ]
+        leases = attachment(conversation).environments()
         for lease in leases:
             resource_id = lease.get("resource_id")
             device_id = lease.get("device_id")
