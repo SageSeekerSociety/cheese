@@ -31,6 +31,8 @@ HEAD_TIMEOUT_S = float(os.environ.get("PLATFORM_LOOPBACK_HEAD_TIMEOUT_S", "10"))
 #: What a client of this helper is for. The socket serves more (`/whoami`);
 #: a holder of the prefix reaches only the model channel.
 SERVED = b"/llm/"
+#: Which session attached to the sandbox a request is from.
+ATTACHMENT = b"x-cheese-attachment"
 
 
 def pipe(source, sink):
@@ -44,6 +46,24 @@ def pipe(source, sink):
             sink.shutdown(socket.SHUT_WR)
         except OSError:
             pass
+
+
+def named(rest, attachment):
+    """The head's header lines after the request line, naming the session that
+    started this helper (`CHEESE_ATTACHMENT`) as the one asking, in place of
+    any name the client sent."""
+    if rest.startswith(b"\r\n"):
+        fields, body = b"", rest[2:]
+    else:
+        fields, _, body = rest.partition(b"\r\n\r\n")
+    lines = [
+        line
+        for line in fields.split(b"\r\n")
+        if line and not line.lower().startswith(ATTACHMENT + b":")
+    ]
+    if attachment:
+        lines.append(ATTACHMENT + b": " + attachment.encode())
+    return b"".join(line + b"\r\n" for line in lines) + b"\r\n" + body
 
 
 def serve(client, prefix, platform):
@@ -66,6 +86,7 @@ def serve(client, prefix, platform):
             client.sendall(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n")
             return
         parts[1] = parts[1][len(prefix) :]
+        rest = named(rest, os.environ.get("CHEESE_ATTACHMENT", ""))
         upstream = socket.socket(socket.AF_UNIX)
         try:
             upstream.connect(platform)

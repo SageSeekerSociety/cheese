@@ -20,6 +20,8 @@
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_PLATFORM_SOCKET 机器上的平台 socket；有它时平台调用都经它走，不带
                  凭据，平台按这台机器当前的租约认出是哪个会话
+  CHEESE_ATTACHMENT 发起这条命令的会话 id；有它时经 socket 的每个请求都带上，
+                 平台只认此刻挂在这台机器上的会话
   CHEESE_TOKEN   会话凭据，没有平台 socket 时每个请求都带上（Authorization: Bearer）；
                  有 socket 时，git 和超过 30 MiB 的请求用的是 socket
                  现发的一分钟凭据，不用它
@@ -76,6 +78,8 @@ UTC = timezone.utc  # noqa: UP017
 #: The host name a request to the sandbox's platform socket is addressed to; it
 #: names no machine and is never resolved.
 _SOCKET_HOST = "platform.cheese"
+#: Which session attached to the sandbox a request on its socket is from.
+_ATTACHMENT_HEADER = "X-Cheese-Attachment"
 
 
 def _platform_socket(environ=None) -> str:
@@ -114,10 +118,19 @@ class _ToThePlatformSocket(urllib.request.BaseHandler):
     def http_open(self, req):
         if req.host != _SOCKET_HOST:
             return None
-        # The socket says whose the request is; a token is not sent down it.
+        # The socket says which environment the request is from; a token is
+        # not sent down it. Which session attached to it is asking is the
+        # command's own to say (`CHEESE_ATTACHMENT`).
         for headers in (req.headers, req.unredirected_hdrs):
-            for name in [n for n in headers if n.lower() == "authorization"]:
+            for name in [
+                n
+                for n in headers
+                if n.lower() in ("authorization", _ATTACHMENT_HEADER.lower())
+            ]:
                 del headers[name]
+        attachment = os.environ.get("CHEESE_ATTACHMENT", "")
+        if attachment:
+            req.add_unredirected_header(_ATTACHMENT_HEADER, attachment)
         handler = urllib.request.AbstractHTTPHandler()
         return handler.do_open(
             lambda host, **kwargs: _SocketConnection(
