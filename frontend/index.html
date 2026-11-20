@@ -585,7 +585,9 @@
       }
       #sx-boot-skeleton .sx-side {
         flex: none;
-        width: calc(var(--sx-side-w, 280px) - 1px);
+        /* The cell is the sidebar's whole width; the line right of it is the main
+           pane's left border, where the app's divider sits. */
+        width: var(--sx-side-w, 280px);
         padding-top: 8px;
       }
       html[data-boot='shell'] #sx-boot-skeleton .sx-side,

@@ -909,10 +909,18 @@ test('设置层里打开的下拉菜单画在设置层上面', async ({ page }) 
   await expect(field).toContainText('DeepSeek V4.1 Flash');
 });
 
-// 读的那一栏（`AppPage` 的 `read` 档）在宽屏上封顶居中，页头那一行跟着它：标题和正文
-// 从同一条竖线开始；满宽那一档的标题也和正文缩进一样多。以前页头贴着内容区左边，正文居中，1440 宽时标题和正文差 72px，
+// 读的那一栏（`AppPage` 的 `read` 档）在宽屏上封顶居中，页头那一行跟着它：页头和正文
+// 从同一条竖线开始——页头打头的是这一页的 ←（有的话），否则是标题；满宽那一档的页头也和
+// 正文缩进一样多。以前页头贴着内容区左边，正文居中，1440 宽时标题和正文差 72px，
 // 1920 宽时差三百多。量的是渲染出来的字，因为这种错 vitest 和类型检查都看不见。
-test('页头标题和正文同一条左沿', async ({ page }) => {
+/** 页头那一行打头的东西从哪儿开始：桌面上 ← 画在标题前面（PageBack），没有 ← 就是标题。 */
+async function headStartX(page: Page): Promise<number> {
+  const back = page.locator('.app-page__head .page-back');
+  const lead = (await back.count()) && (await back.first().isVisible()) ? back.first() : page.locator('.app-page__title');
+  return lead.evaluate((el) => el.getBoundingClientRect().x);
+}
+
+test('页头和正文同一条左沿', async ({ page }) => {
   await apiLogin(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await openFirstProject(page);
@@ -927,7 +935,7 @@ test('页头标题和正文同一条左沿', async ({ page }) => {
       await expect(title).toBeVisible();
       const column = page.locator('.app-page__column--read');
       const [titleX, bodyX] = await Promise.all([
-        title.evaluate((el) => el.getBoundingClientRect().x),
+        headStartX(page),
         column.evaluate((el) => el.getBoundingClientRect().x + parseFloat(getComputedStyle(el).paddingLeft)),
       ]);
       expect(Math.abs(titleX - bodyX), `${path} @ ${width}`).toBeLessThanOrEqual(1);
@@ -938,7 +946,7 @@ test('页头标题和正文同一条左沿', async ({ page }) => {
     const title = page.locator('.app-page__title');
     await expect(title).toBeVisible();
     await expect(page.locator('.app-page__body')).not.toHaveText('');
-    const titleX = await title.evaluate((el) => el.getBoundingClientRect().x);
+    const titleX = await headStartX(page);
     const bodyX = await page.locator('.app-page__body').evaluate((body) => {
       const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
       let left = Infinity;
