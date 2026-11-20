@@ -163,7 +163,9 @@ export async function openProjectSwitcher(page: Page) {
   // The place switcher is in the top bar only inside a project or a space; from
   // the home area, step into the first project of its sidebar first.
   const switcher = page.getByTestId("project-switcher");
-  if (!(await switcher.isVisible().catch(() => false))) await clickFirstProject(page);
+  // Right after a load neither is drawn yet: wait for one of them before choosing.
+  await switcher.or(page.getByTestId("home-nav-project")).first().waitFor();
+  if (!(await switcher.isVisible())) await clickFirstProject(page);
   await switcher.click();
   await rows.first().waitFor();
   return rows;
