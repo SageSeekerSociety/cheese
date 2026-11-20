@@ -10,8 +10,8 @@ from app.core.config import settings
 from app.domain.machine import infra_records
 from app.domain.machine.models import (
     CloudHost,
+    Environment,
     MachineStatus,
-    SandboxHome,
     SandboxUsage,
     WarmMachine,
 )
@@ -53,8 +53,8 @@ def _host(name: str, **fields) -> CloudHost:
     )
 
 
-def _home(host, project, room, **fields) -> SandboxHome:
-    return SandboxHome(
+def _home(host, project, room, **fields) -> Environment:
+    return Environment(
         host_id=host.id,
         spec="standard",
         project_id=project,

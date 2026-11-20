@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lifecycle
-from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
+from app.domain.machine.models import AiStatus, CloudHost, Environment, MachineStatus
 from app.domain.machine.preview_wake import wake_for_files
 from tests.integration.test_app_preview_proxy import _project_topic, _room_agent
 from tests.integration.test_app_preview_proxy import preview_config as preview_config
@@ -47,7 +47,7 @@ def test_a_frozen_sandbox_is_thawed_before_its_files_are_read(
             )
             db.add(host)
             await db.flush()
-            home = SandboxHome(
+            home = Environment(
                 host_id=host.id,
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
@@ -75,7 +75,7 @@ def test_a_frozen_sandbox_is_thawed_before_its_files_are_read(
             bind = db.bind
         await wake_for_files(bind, topic_id)
         async with client.test_request_factory() as db:
-            home = await db.get(SandboxHome, home_id)
+            home = await db.get(Environment, home_id)
             return home.frozen_at, home.active_at
 
     frozen_at, active_at = client.portal.call(_open)

@@ -25,7 +25,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
+from app.domain.machine.models import AiStatus, CloudHost, Environment, MachineStatus
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
@@ -1130,7 +1130,7 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
             (other_project.id, other_room.id, str(uuid.uuid4())),
         ):
             session.add(
-                SandboxHome(
+                Environment(
                     host_id=host.id,
                     spec="standard",
                     project_id=project,
@@ -1163,7 +1163,7 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
     async with client.test_factory() as session:
         homes = list(
             await session.scalars(
-                select(SandboxHome.topic_id).where(SandboxHome.host_id == host_id)
+                select(Environment.topic_id).where(Environment.host_id == host_id)
             )
         )
         assert homes == [other_room.id]
@@ -1208,7 +1208,7 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
         await session.flush()
         # Placed on a host that never came up: no directory anywhere.
         session.add(
-            SandboxHome(
+            Environment(
                 host_id=host.id,
                 spec="standard",
                 project_id=operation.project_id,
@@ -1242,7 +1242,7 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
         assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
         assert (
             await session.scalar(
-                select(SandboxHome.id).where(SandboxHome.topic_id == room_id)
+                select(Environment.id).where(Environment.topic_id == room_id)
             )
         ) is None
 

@@ -6,7 +6,7 @@ the same lifecycle; only the idle time differs, and that is the spec's
 
 A sandbox is **idle** when its room runs no turn and its session has asked for
 no tool for its spec's idle time — counted from the later of its last
-tool call (``SandboxHome.active_at``) and the end of the last turn in the
+tool call (``Environment.active_at``) and the end of the last turn in the
 conversation its session works in. A command the executor is still running for
 the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
@@ -112,7 +112,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.machine import holder as holders
 from app.domain.machine import metering, root_snapshots, sandbox_home
 from app.domain.machine.infra_records import keep_frozen, keep_parked
-from app.domain.machine.models import CloudHost, SandboxHome, SandboxUsage
+from app.domain.machine.models import CloudHost, Environment, SandboxUsage
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
 from app.domain.machine.reaper import accepting, free_slots
 from app.domain.machine.repositories import CloudHostRepository
@@ -260,9 +260,9 @@ async def frozen_sessions(db, session_ids) -> set[uuid.UUID]:
     (`session_work.checkpoint_room`, `switch_environment`)."""
     return set(
         await db.scalars(
-            select(SandboxHome.session_id).where(
-                SandboxHome.session_id.in_(list(session_ids)),
-                SandboxHome.frozen_at.is_not(None),
+            select(Environment.session_id).where(
+                Environment.session_id.in_(list(session_ids)),
+                Environment.frozen_at.is_not(None),
             )
         )
     )
@@ -497,10 +497,10 @@ class SandboxLifecycle:
             # the whole fleet's rebuild (dev, 2026-11-01: ten hours).
             rows = list(
                 await self._session.scalars(
-                    select(SandboxHome).where(
-                        SandboxHome.host_id == host.id,
-                        SandboxHome.frozen_at.is_(None),
-                        SandboxHome.stopped_at.is_(None),
+                    select(Environment).where(
+                        Environment.host_id == host.id,
+                        Environment.frozen_at.is_(None),
+                        Environment.stopped_at.is_(None),
                     )
                 )
             )
@@ -521,11 +521,11 @@ class SandboxLifecycle:
         place: its run waits for nothing but parked ones to be on it."""
         rows = list(
             await self._session.scalars(
-                select(SandboxHome).where(
-                    SandboxHome.host_id == host_id,
-                    SandboxHome.frozen_at.is_not(None),
-                    SandboxHome.parked_at.is_(None),
-                    SandboxHome.stopped_at.is_(None),
+                select(Environment).where(
+                    Environment.host_id == host_id,
+                    Environment.frozen_at.is_not(None),
+                    Environment.parked_at.is_(None),
+                    Environment.stopped_at.is_(None),
                 )
             )
         )
@@ -554,13 +554,13 @@ class SandboxLifecycle:
         session_active = (
             select(AgentTurn.id)
             .where(
-                _own_turns(SandboxHome.session_id, correlate=SandboxHome),
+                _own_turns(Environment.session_id, correlate=Environment),
                 or_(
                     and_(
                         AgentTurn.stopped_at.is_(None),
                         or_(
                             AgentTurn.started_at > now - _turn_hold(),
-                            SandboxHome.active_at > now - _turn_hold(),
+                            Environment.active_at > now - _turn_hold(),
                         ),
                     ),
                     AgentTurn.stopped_at > now - narrow,
@@ -570,25 +570,25 @@ class SandboxLifecycle:
         )
         rows = await self._session.execute(
             select(
-                SandboxHome.id,
-                SandboxHome.session_id,
-                SandboxHome.topic_id,
-                SandboxHome.host_id,
-                SandboxHome.active_at,
-                SandboxHome.frozen_at,
-                SandboxHome.parked_at,
-                SandboxHome.stopped_at,
-                SandboxHome.spec,
-                SandboxHome.resource_id,
-                func.coalesce(CloudHost.device_id, SandboxHome.device_id).label(
+                Environment.id,
+                Environment.session_id,
+                Environment.topic_id,
+                Environment.host_id,
+                Environment.active_at,
+                Environment.frozen_at,
+                Environment.parked_at,
+                Environment.stopped_at,
+                Environment.spec,
+                Environment.resource_id,
+                func.coalesce(CloudHost.device_id, Environment.device_id).label(
                     "device_id"
                 ),
             )
-            .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .outerjoin(CloudHost, CloudHost.id == Environment.host_id)
             .where(
                 # On a person's computer, or on a live host.
                 or_(
-                    SandboxHome.host_id.is_(None),
+                    Environment.host_id.is_(None),
                     CloudHost.released_at.is_(None)
                     & CloudHost.device_id.is_not(None)
                     # A session's whole cloud VM is released, not destroyed
@@ -599,14 +599,14 @@ class SandboxLifecycle:
                     # A frozen sandbox is looked at whatever its idle clock
                     # says: it is not running, so it is not pinged, and what
                     # may end it is its keep time or an eviction elsewhere.
-                    SandboxHome.frozen_at.is_not(None),
-                    SandboxHome.stopped_at < now - STOP_HOLD,
-                    (SandboxHome.stopped_at.is_(None))
-                    & (SandboxHome.active_at < now - narrow)
-                    & or_(SandboxHome.session_id.is_(None), ~session_active),
+                    Environment.frozen_at.is_not(None),
+                    Environment.stopped_at < now - STOP_HOLD,
+                    (Environment.stopped_at.is_(None))
+                    & (Environment.active_at < now - narrow)
+                    & or_(Environment.session_id.is_(None), ~session_active),
                 ),
             )
-            .order_by(SandboxHome.active_at)
+            .order_by(Environment.active_at)
         )
         candidates = list(rows.all())
         previewed = await self._previewed(
@@ -704,16 +704,16 @@ class SandboxLifecycle:
         one has a free slot. A wait on a person's computer or on a whole VM
         presses nothing: neither takes one of the shared slots."""
         waiting = await self._session.scalar(
-            select(SandboxHome.id)
-            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
+            select(Environment.id)
+            .join(CloudHost, CloudHost.id == Environment.host_id)
             .where(
                 # A session waiting on a shared host's slot. One waiting on a
                 # person's computer takes no pool slot, and one waiting on a
                 # whole VM it has to itself presses nothing either: freeing a
                 # shared slot does not bring that machine up.
                 CloudHost.whole_machine.is_(False),
-                SandboxHome.waiting_since.is_not(None),
-                SandboxHome.stopped_at.is_(None),
+                Environment.waiting_since.is_not(None),
+                Environment.stopped_at.is_(None),
             )
             .limit(1)
         )
@@ -888,7 +888,7 @@ class SandboxLifecycle:
         """Move a home's idle clock to now: the session is waking to work in
         it, and idleness is measured from the wake."""
         await self._session.execute(
-            update(SandboxHome).where(SandboxHome.id == home_id).values(active_at=now)
+            update(Environment).where(Environment.id == home_id).values(active_at=now)
         )
         await self._session.commit()
 
@@ -1152,19 +1152,19 @@ class SandboxLifecycle:
         run in their own sweep — and one thawed or in use meanwhile is left to
         the idle sweep."""
         now = datetime.now(UTC)
-        device = func.coalesce(CloudHost.device_id, SandboxHome.device_id)
+        device = func.coalesce(CloudHost.device_id, Environment.device_id)
         query = (
-            select(SandboxHome)
-            .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
+            select(Environment)
+            .outerjoin(CloudHost, CloudHost.id == Environment.host_id)
             .where(
                 device == device_id,
-                SandboxHome.frozen_at.is_not(None),
-                SandboxHome.stopped_at.is_(None),
+                Environment.frozen_at.is_not(None),
+                Environment.stopped_at.is_(None),
             )
         )
         if host_id is not None:
-            query = query.where(SandboxHome.host_id == host_id)
-        rows = list(await self._session.scalars(query.order_by(SandboxHome.frozen_at)))
+            query = query.where(Environment.host_id == host_id)
+        rows = list(await self._session.scalars(query.order_by(Environment.frozen_at)))
         previewed = await self._previewed(
             [home.session_id for home in rows if home.session_id is not None]
         )
@@ -1213,12 +1213,12 @@ class SandboxLifecycle:
         by_id = {host.id: host for host in hosts}
         rows = list(
             await self._session.scalars(
-                select(SandboxHome).where(
-                    SandboxHome.host_id.in_(list(by_id)),
-                    SandboxHome.frozen_at.is_not(None),
+                select(Environment).where(
+                    Environment.host_id.in_(list(by_id)),
+                    Environment.frozen_at.is_not(None),
                     # A parked one holds no slot: removing it frees none.
-                    SandboxHome.parked_at.is_(None),
-                    SandboxHome.stopped_at.is_(None),
+                    Environment.parked_at.is_(None),
+                    Environment.stopped_at.is_(None),
                 )
             )
         )
@@ -1324,9 +1324,9 @@ class SandboxLifecycle:
         in a new sandbox, as for any destroyed one."""
         row = (
             await self._session.execute(
-                select(SandboxHome, CloudHost.device_id)
-                .join(CloudHost, CloudHost.id == SandboxHome.host_id)
-                .where(SandboxHome.id == home_id)
+                select(Environment, CloudHost.device_id)
+                .join(CloudHost, CloudHost.id == Environment.host_id)
+                .where(Environment.id == home_id)
             )
         ).one_or_none()
         await self._session.commit()
@@ -1351,15 +1351,15 @@ class SandboxLifecycle:
         rows = list(
             (
                 await self._session.execute(
-                    select(SandboxHome, SandboxUsage.disk_bytes, CloudHost.device_id)
-                    .join(CloudHost, CloudHost.id == SandboxHome.host_id)
-                    .outerjoin(SandboxUsage, SandboxUsage.home_id == SandboxHome.id)
+                    select(Environment, SandboxUsage.disk_bytes, CloudHost.device_id)
+                    .join(CloudHost, CloudHost.id == Environment.host_id)
+                    .outerjoin(SandboxUsage, SandboxUsage.home_id == Environment.id)
                     .where(
-                        SandboxHome.parked_at.is_not(None),
-                        SandboxHome.stopped_at.is_(None),
+                        Environment.parked_at.is_not(None),
+                        Environment.stopped_at.is_(None),
                         CloudHost.released_at.is_(None),
                     )
-                    .order_by(SandboxHome.parked_at.desc())
+                    .order_by(Environment.parked_at.desc())
                 )
             ).all()
         )

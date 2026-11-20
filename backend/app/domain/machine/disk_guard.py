@@ -53,7 +53,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.machine import holder as holders
 from app.domain.machine import lifecycle, readings
 from app.domain.machine.lifecycle import STOP_HOLD
-from app.domain.machine.models import CloudHost, SandboxHome
+from app.domain.machine.models import CloudHost, Environment
 from app.domain.machine.repositories import CloudHostRepository
 
 logger = logging.getLogger("cheese.machine.disk_guard")
@@ -117,15 +117,15 @@ class DiskGuard:
         """Every machine holding a sandbox, and every platform host in the
         pool, holding one or not: its reading is what the machines page shows,
         and one still marked full has the mark taken off by it."""
-        device = func.coalesce(CloudHost.device_id, SandboxHome.device_id)
+        device = func.coalesce(CloudHost.device_id, Environment.device_id)
         holding = await self._session.scalars(
             select(device)
-            .select_from(SandboxHome)
-            .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .select_from(Environment)
+            .outerjoin(CloudHost, CloudHost.id == Environment.host_id)
             .where(
                 device.is_not(None),
                 or_(
-                    SandboxHome.host_id.is_(None),
+                    Environment.host_id.is_(None),
                     CloudHost.released_at.is_(None)
                     # A session's whole cloud VM is its own; nothing to share.
                     & CloudHost.whole_machine.is_(False),
@@ -146,19 +146,19 @@ class DiskGuard:
         return machines
 
     async def _live(self, device_id: str) -> list:
-        device = func.coalesce(CloudHost.device_id, SandboxHome.device_id)
+        device = func.coalesce(CloudHost.device_id, Environment.device_id)
         rows = await self._session.execute(
             select(
-                SandboxHome.id,
-                SandboxHome.project_id,
-                SandboxHome.resource_id,
-                SandboxHome.session_id,
-                SandboxHome.topic_id,
-                SandboxHome.stopped_at,
-                SandboxHome.active_at,
-                SandboxHome.frozen_at,
+                Environment.id,
+                Environment.project_id,
+                Environment.resource_id,
+                Environment.session_id,
+                Environment.topic_id,
+                Environment.stopped_at,
+                Environment.active_at,
+                Environment.frozen_at,
             )
-            .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .outerjoin(CloudHost, CloudHost.id == Environment.host_id)
             .where(device == device_id)
         )
         live = list(rows.all())
@@ -250,14 +250,14 @@ class DiskGuard:
     ) -> bool:
         """Delete a sandbox's home that no sandbox has any more. Asked again
         just before: one placed since the reading keeps its home."""
-        device = func.coalesce(CloudHost.device_id, SandboxHome.device_id)
+        device = func.coalesce(CloudHost.device_id, Environment.device_id)
         placed = await self._session.scalar(
-            select(SandboxHome.id)
-            .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
+            select(Environment.id)
+            .outerjoin(CloudHost, CloudHost.id == Environment.host_id)
             .where(
                 device == device_id,
-                SandboxHome.project_id == uuid.UUID(project),
-                SandboxHome.resource_id == resource,
+                Environment.project_id == uuid.UUID(project),
+                Environment.resource_id == resource,
             )
         )
         await self._session.commit()

@@ -35,7 +35,7 @@ from app.domain.delivery.models import Delivery
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.machine.models import (
     CloudHost,
-    SandboxHome,
+    Environment,
     WarmMachine,
     capacity,
 )
@@ -325,8 +325,8 @@ class GapRepository:
             # A slot is a sandbox; one being destroyed holds it until it goes.
             "host_slots_used": await count(
                 self._session,
-                SandboxHome,
-                SandboxHome.host_id.in_(
+                Environment,
+                Environment.host_id.in_(
                     [host.id for host in live if not host.whole_machine]
                 ),
             ),

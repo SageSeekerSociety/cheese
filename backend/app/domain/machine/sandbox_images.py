@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.domain.agent import sandbox_image, toolchain
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.machine_address import device_api_base
-from app.domain.machine.models import CloudHost, SandboxHome, WarmMachine
+from app.domain.machine.models import CloudHost, Environment, WarmMachine
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ async def image_for_session(db, device_id, session_id):
     if host is None or host.whole_machine:
         return None
     home = await db.scalar(
-        select(SandboxHome).where(SandboxHome.session_id == session_id)
+        select(Environment).where(Environment.session_id == session_id)
     )
     if home is None:
         return host.sandbox_image or None
@@ -98,10 +98,10 @@ async def sweep(sessions):
                     retained = (
                         list(
                             await db.scalars(
-                                select(SandboxHome.sandbox_image)
+                                select(Environment.sandbox_image)
                                 .where(
-                                    SandboxHome.host_id == key,
-                                    SandboxHome.sandbox_image.is_not(None),
+                                    Environment.host_id == key,
+                                    Environment.sandbox_image.is_not(None),
                                 )
                                 .distinct()
                             )

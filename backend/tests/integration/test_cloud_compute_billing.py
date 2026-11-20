@@ -342,7 +342,7 @@ def test_whole_vms_are_opened_with_one_read_of_their_homes_however_many(cloud):
     room and session."""
     from sqlalchemy import event
 
-    from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
+    from app.domain.machine.models import CloudHost, Environment, MachineStatus
     from app.domain.usage.compute import VM, ComputeMeter
 
     async def observe_new(count: int, *, homeless: int = 0):
@@ -370,7 +370,7 @@ def test_whole_vms_are_opened_with_one_read_of_their_homes_however_many(cloud):
                 room = cloud.seats[i % len(cloud.seats)].room
                 session_id = uuid.uuid4()
                 db.add(
-                    SandboxHome(
+                    Environment(
                         host_id=host.id,
                         spec="standard",
                         project_id=cloud.project_id,

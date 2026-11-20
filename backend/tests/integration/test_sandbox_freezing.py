@@ -37,7 +37,7 @@ from app.domain.event_author import AuthorType
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.disk_guard import DiskGuard
-from app.domain.machine.models import CloudHost, SandboxHome, SandboxUsage
+from app.domain.machine.models import CloudHost, Environment, SandboxUsage
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
@@ -78,11 +78,11 @@ def freeze_sweep(case) -> dict:
     return run(case, SandboxSweeper(case.client.test_request_factory).sweep)
 
 
-def home_row(case, seat) -> SandboxHome | None:
+def home_row(case, seat) -> Environment | None:
     async def read():
         async with case.client.test_request_factory() as db:
             return await db.scalar(
-                select(SandboxHome).where(SandboxHome.session_id == seat.session)
+                select(Environment).where(Environment.session_id == seat.session)
             )
 
     return run(case, read)
@@ -115,8 +115,8 @@ def frozen_for(case, seat, by: timedelta) -> None:
     async def age():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                update(Environment)
+                .where(Environment.session_id == seat.session)
                 .values(frozen_at=datetime.now(UTC) - by)
             )
             await db.commit()
@@ -375,8 +375,8 @@ def test_a_tool_call_that_lands_while_it_is_frozen_never_leaves_it_frozen(icy):
         # is the whole of what it changes before the freeze locks again.
         async with icy.client.test_request_factory() as db:
             home = await db.scalar(
-                select(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                select(Environment)
+                .where(Environment.session_id == seat.session)
                 .with_for_update()
             )
             assert home.frozen_at is not None
@@ -611,8 +611,8 @@ def parked_for(case, seat, by: timedelta) -> None:
     async def age():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                update(Environment)
+                .where(Environment.session_id == seat.session)
                 .values(parked_at=datetime.now(UTC) - by)
             )
             await db.commit()

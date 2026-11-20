@@ -279,6 +279,13 @@ class AgentSession(UuidPk, Timestamps, Base):
     # drain that never settled (its runner went away during a takeover) does
     # not count for another runner.
     drain_launch: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # What this session's agent is owed about the environment it worked in and
+    # has not been told: that it was destroyed (``LOST_KEY``, with what was
+    # running, ``LOST_PROCESSES_KEY``) or parked (``PARKED_KEY``). The first
+    # tool call that carries a notice reads and clears it.
+    environment_notice: Mapped[dict | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
 
     def place(self) -> SessionPlace | None:
         """这条会话在哪——它自己那一半地点的唯一入口。

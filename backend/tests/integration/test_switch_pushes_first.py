@@ -38,7 +38,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
-from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
+from app.domain.machine.models import CloudHost, Environment, MachineStatus
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
@@ -300,7 +300,7 @@ async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
         db.add(host)
         await db.flush()
         db.add(
-            SandboxHome(
+            Environment(
                 host_id=host.id,
                 spec="standard",
                 project_id=room.project_id,
@@ -319,7 +319,7 @@ async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
         homes = list(
-            await db.scalars(select(SandboxHome).where(SandboxHome.host_id == host_id))
+            await db.scalars(select(Environment).where(Environment.host_id == host_id))
         )
         host = await db.get(CloudHost, host_id)
         session = await AgentSessionService(db).by_id(room.session_id)
@@ -352,7 +352,7 @@ async def test_a_frozen_sandbox_is_not_checkpointed_on_its_way_out(client, monke
         db.add(host)
         await db.flush()
         db.add(
-            SandboxHome(
+            Environment(
                 host_id=host.id,
                 spec="standard",
                 project_id=room.project_id,

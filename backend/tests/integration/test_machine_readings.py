@@ -32,7 +32,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core import alerting
 from app.core.config import settings
 from app.domain.machine import readings
-from app.domain.machine.models import HostReading, SandboxHome, SandboxUsage
+from app.domain.machine.models import Environment, HostReading, SandboxUsage
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_cloud_host_pool import pool  # noqa: F401 — fixture
 from tests.integration.test_sandbox_disk_guard import (
@@ -283,7 +283,7 @@ def test_a_sandbox_destroyed_while_its_host_is_read_does_not_stop_the_guard(
     async def destroyed_mid_read(device_id, action):
         if device_id == "host-1" and action == "disk":
             async with cloud.client.test_request_factory() as db:
-                await db.delete(await db.get(SandboxHome, gone.id))
+                await db.delete(await db.get(Environment, gone.id))
                 await db.commit()
 
     cloud.hosts.before = destroyed_mid_read
@@ -377,7 +377,7 @@ def test_a_host_whose_sandboxes_are_gone_is_still_read(cloud):  # noqa: F811
     async def gone():
         async with cloud.client.test_request_factory() as db:
             home = await db.scalar(
-                select(SandboxHome).where(SandboxHome.session_id == seat.session)
+                select(Environment).where(Environment.session_id == seat.session)
             )
             await db.delete(home)
             await db.commit()
