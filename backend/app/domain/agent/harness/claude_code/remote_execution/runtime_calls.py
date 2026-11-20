@@ -42,6 +42,7 @@ project_hooks = core.project_hooks
 resolve_program = core.resolve_program
 socket_directory = core.socket_directory
 write_json = core.write_json
+identity = core.identity
 
 
 #: What starts the error a local server's start is refused with on a member's
@@ -83,7 +84,11 @@ def log_tail(path, lines=12):
     return "\n".join(text.splitlines()[-lines:])
 
 
-def client(self, server):
+def client(self, server, caller=None):
+    """The MCP process serving ``server``, started on first use. A project's
+    server keeps the identity of the call that started it (`identity`) for as
+    long as it runs; the build's own (``native``) is the environment's, and
+    names nobody: it serves the file tools every caller shares."""
     with self.client_lock:
         if server not in self.clients:
             if server == "native":
@@ -137,13 +142,14 @@ def client(self, server):
                                 }
                             )
                         )
-                known = {**self.env, **self.server_values.get(server, {})}
+                own = {**self.env, **identity(caller)}
+                known = {**own, **self.server_values.get(server, {})}
                 command = [
                     expand_variables(part, known)
                     for part in [spec["command"], *spec.get("args", [])]
                 ]
                 env = dict(
-                    self.env,
+                    own,
                     **{
                         key: expand_variables(str(value), known)
                         for key, value in spec.get("env", {}).items()
@@ -225,6 +231,7 @@ def invoke(self, params):
                 params.get("server", "native"),
                 params.get("cwd"),
                 tool_hooks=not params.get("platform"),
+                caller=params.get("caller"),
             )
         }
     except Exception as exc:
@@ -238,17 +245,19 @@ def invoke(self, params):
     return result
 
 
-def execute(self, tool, args, key, server="native", cwd=None, tool_hooks=True):
+def execute(
+    self, tool, args, key, server="native", cwd=None, tool_hooks=True, caller=None
+):
     name = tool if server == "native" else f"mcp__{server}__{tool}"
     if tool_hooks:
-        args = self.hooks("PreToolUse", name, args, key, cwd=cwd)
-    result = self.execute_core(tool, args, key, server)
+        args = self.hooks("PreToolUse", name, args, key, cwd=cwd, caller=caller)
+    result = self.execute_core(tool, args, key, server, caller)
     if tool_hooks:
-        self.hooks("PostToolUse", name, args, key, result, cwd=cwd)
+        self.hooks("PostToolUse", name, args, key, result, cwd=cwd, caller=caller)
     return result
 
 
-def hooks(self, event, tool, args, key, result=None, cwd=None, fire=True):
+def hooks(self, event, tool, args, key, result=None, cwd=None, fire=True, caller=None):
     if self.config.get("private"):
         return args
     return project_hooks()["run"](
@@ -258,7 +267,7 @@ def hooks(self, event, tool, args, key, result=None, cwd=None, fire=True):
         call_id=key,
         root=self.root,
         cwd=Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd,
-        env=self.env,
+        env={**self.env, **identity(caller)},
         session_id=self.state.name,
         result=result,
         extra=[self.config.get("settings", {})],
@@ -281,21 +290,24 @@ def tool_hooks(self, params):
             params.get("result"),
             cwd=params.get("cwd"),
             fire=params.get("fire", True),
+            caller=params.get("caller"),
         )
     except PermissionError as denied:
         return {"denied": str(denied)}
     return {"args": args}
 
 
-def execute_core(self, tool, args, key, server="native"):
+def execute_core(self, tool, args, key, server="native", caller=None):
     if tool in self.config.get("deny_tools", []):
         raise PermissionError(f"Remote execution policy denies {tool}")
     if server != "native":
-        return self.client(server).call("tools/call", {"name": tool, "arguments": args})
+        return self.client(server, caller).call(
+            "tools/call", {"name": tool, "arguments": args}
+        )
     if tool not in NATIVE_TOOLS:
         raise ValueError(f"Unsupported remote tool: {tool}")
     if tool == "Bash":
-        return self.bash(args, key)
+        return self.bash(args, key, caller)
     if tool == "TaskStop":
         record = self.stop_command(args["task_id"])
         return {
@@ -318,8 +330,9 @@ def execute_core(self, tool, args, key, server="native"):
 
 def control(self, params):
     kind = params["subtype"]
+    caller = params.get("caller")
     if kind == "checkpoint":
-        self.hooks("Stop", "", {}, params["request_id"])
+        self.hooks("Stop", "", {}, params["request_id"], caller=caller)
         # The platform's own command, not a call of the agent's: the
         # project's tool hooks never see it, as they never would natively.
         args: dict = {"command": "cheese-sync"}
@@ -336,6 +349,9 @@ def control(self, params):
                 "tool": "Bash",
                 "args": args,
                 "platform": True,
+                # The session whose turn it ends: a push that fails is said
+                # in its conversation.
+                **({"caller": caller} if caller else {}),
             }
         )
     if kind == "shell":

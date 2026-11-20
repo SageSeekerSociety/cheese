@@ -287,8 +287,8 @@ class Executor:
 
     # --- the calls -----------------------------------------------------------
 
-    def client(self, server):
-        return calls.client(self, server)
+    def client(self, server, caller=None):
+        return calls.client(self, server, caller)
 
     def _ready_cli_worker(self):
         return calls._ready_cli_worker(self)
@@ -296,25 +296,29 @@ class Executor:
     def invoke(self, params):
         return calls.invoke(self, params)
 
-    def execute(self, tool, args, key, server="native", cwd=None, tool_hooks=True):
-        return calls.execute(self, tool, args, key, server, cwd, tool_hooks)
+    def execute(
+        self, tool, args, key, server="native", cwd=None, tool_hooks=True, caller=None
+    ):
+        return calls.execute(self, tool, args, key, server, cwd, tool_hooks, caller)
 
-    def hooks(self, event, tool, args, key, result=None, cwd=None, fire=True):
-        return calls.hooks(self, event, tool, args, key, result, cwd, fire)
+    def hooks(
+        self, event, tool, args, key, result=None, cwd=None, fire=True, caller=None
+    ):
+        return calls.hooks(self, event, tool, args, key, result, cwd, fire, caller)
 
     def tool_hooks(self, params):
         return calls.tool_hooks(self, params)
 
-    def execute_core(self, tool, args, key, server="native"):
-        return calls.execute_core(self, tool, args, key, server)
+    def execute_core(self, tool, args, key, server="native", caller=None):
+        return calls.execute_core(self, tool, args, key, server, caller)
 
     # --- the commands --------------------------------------------------------
 
     def shell_argv(self, script):
         return commands.shell_argv(self, script)
 
-    def command_env(self):
-        return commands.command_env(self)
+    def command_env(self, caller=None):
+        return commands.command_env(self, caller)
 
     def shell_snapshot(self):
         return commands.shell_snapshot(self)
@@ -420,8 +424,8 @@ class Executor:
                 if meta.get("watched") and time.time() - last > kept:
                     shutil.rmtree(record, ignore_errors=True)
 
-    def bash(self, args, key=None):
-        return commands.bash(self, args, key)
+    def bash(self, args, key=None, caller=None):
+        return commands.bash(self, args, key, caller)
 
     def control(self, params):
         return calls.control(self, params)
@@ -563,7 +567,7 @@ class Executor:
         if method == "repo_search":
             return self.repo_search(params)
         if method == "mcp":
-            return self.client(params["server"]).call(
+            return self.client(params["server"], params.get("caller")).call(
                 params["method"], params.get("params")
             )
         raise ValueError("Unknown executor method")

@@ -621,7 +621,10 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     # A room nobody gave the machine runs isolated there (#2320), and the
     # machine is a person's: nothing is installed on it for the sandbox.
     assert launch_options == {"sandbox": True, "platform_machine": False}
-    assert launch_env["CHEESE_AUTHOR"] == actor_handle
+    # The environment says where it is, not who is asking: each command is
+    # told whose it is by the call that starts it.
+    assert "CHEESE_AUTHOR" not in launch_env
+    assert "CHEESE_TOPIC" not in launch_env
     # Who a commit is by belongs to the task's checkout, not the launch: an
     # author fixed here would override the one a task's checkout sets.
     assert "GIT_AUTHOR_NAME" not in launch_env
