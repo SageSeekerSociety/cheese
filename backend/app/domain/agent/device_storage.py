@@ -39,10 +39,9 @@ from app.core.storage import private_storage
 from app.domain.agent import resource_cleanup
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DEVICE_HOME_ROOT, DEVICE_WORK_ROOT
-from app.domain.agent_session import attachment as attachments
-from app.domain.agent_session.models import AgentSession
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.environment.models import Environment
 from app.domain.notice_meta import (
     EVENT_ROOM_FILES_KEPT,
     SEVERITY_WARN,
@@ -165,8 +164,8 @@ async def _place(session, resource_id: str):
     if place is not None:
         return place
     conversation = await session.scalar(
-        select(AgentSession.conversation_id)
-        .where(attachments.mentions(resource_id))
+        select(Environment.topic_id)
+        .where(Environment.resource_id == resource_id)
         .limit(1)
     )
     return None if conversation is None else await places.conversation(conversation)
@@ -393,7 +392,7 @@ async def keep_device_room_files(
         # A machine no session ever held a lease on has no room's home on it.
 
         worked_on = await session.scalar(
-            select(AgentSession.id).where(attachments.mentions(device_id)).limit(1)
+            select(Environment.id).where(Environment.device_id == device_id).limit(1)
         )
         if worked_on is None:
             return 0

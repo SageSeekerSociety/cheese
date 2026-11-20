@@ -160,10 +160,9 @@ class HostPool(PoolSweep):
         agent_session = await self._session.get(AgentSession, session_id)
         if agent_session is None:
             raise NotFoundError("agent session not found")
-        # A frozen sandbox is being woken (`Attachment.thaw`): it is not in use yet,
-        # though its row no longer says frozen, so every look goes through the
-        # pool until its executor answers again.
-        thawing = bool(attachments.attachment(agent_session).thaw)
+        # A frozen sandbox is being woken (``thaw_wanted_at``): it is not in use
+        # yet, though its row no longer says frozen, so every look goes
+        # through the pool until its executor answers again.
         holder_id = await holders.holder_of(
             self._session, agent_session.conversation_id
         )
@@ -171,6 +170,7 @@ class HostPool(PoolSweep):
         await holder.require_use(self._session, actor)
 
         home = await self._repo.current_home(session_id)
+        thawing = home is not None and home.thaw_wanted_at is not None
         if home is not None and home.stopped_at is not None:
             raise SandboxRemoving()
         if home is not None and home.host_id is None:
@@ -258,8 +258,7 @@ class HostPool(PoolSweep):
                     whole_machine=whole_machine,
                 )
             elif _keeps(host):
-                held = await attachments.attachment_of(self._session, session_id)
-                if home.frozen_at is not None or (held is not None and held.thaw):
+                if home.frozen_at is not None or home.thaw_wanted_at is not None:
                     # Frozen, or already asked to wake: hand it back now and
                     # let the install thaw it with no lock held.
                     await self._wake_frozen(home, session_id)
@@ -661,7 +660,11 @@ class HostPool(PoolSweep):
         — would answer that request with the machine it was asking to get away
         from."""
         row = await self._session.get(AgentSession, session_id)
-        raw = attachments.attachment(row).left_host if row is not None else None
+        raw = (
+            await attachments.left_host_of(self._session, row.conversation_id)
+            if row is not None
+            else None
+        )
         try:
             return uuid.UUID(raw) if raw else None
         except (TypeError, ValueError):
@@ -674,7 +677,7 @@ class HostPool(PoolSweep):
         row = await self._session.get(AgentSession, session_id)
         if row is None:
             return
-        attachments.placed_off(row)
+        await attachments.placed_off(self._session, row.conversation_id)
 
     async def leave_unusable(self, session_id: uuid.UUID, host_id: uuid.UUID) -> bool:
         """Move the session off a host that cannot run its sandbox, when
@@ -712,14 +715,17 @@ class HostPool(PoolSweep):
         # Read without a lock, and before the pool: a tool call holds the
         # session's row and then the pool, and this runs from both sides of it.
         row = await self._session.get(AgentSession, session_id)
-        lease = (
-            attachments.attachment(row).environment if row is not None else None
-        ) or {}
+        held = (
+            await attachments.attachment_of(self._session, session_id)
+            if row is not None
+            else None
+        )
+        lease = (held.environment if held is not None else None) or {}
         if row is not None and (
             lease.get("status", "ready") == "ready"
             and lease.get("device_id") == host.device_id
         ):
-            attachments.lose(row, host.device_id)
+            await attachments.lose(self._session, row, host.device_id)
         await self.leave(session_id)
         return True
 
@@ -791,8 +797,7 @@ class HostPool(PoolSweep):
             or datetime.now(UTC) - home.active_at >= ACTIVE_STEP
         ):
             return False
-        held = await attachments.attachment_of(self._session, session_id)
-        if held is not None and held.thaw:
+        if home.thaw_wanted_at is not None:
             # The row says it is awake but its processes are still stopped:
             # sending a call to it now would wait on the freezer.
             return False
@@ -826,13 +831,9 @@ class HostPool(PoolSweep):
                 return False
         home.parked_at = None
         home.frozen_at = None
+        home.thaw_wanted_at = None
         home.active_at = datetime.now(UTC)
-        row = await self._session.scalar(
-            select(AgentSession).where(AgentSession.id == session_id)
-        )
-        if row is not None:
-            attachments.thawed(row)
-            attachments.unchecked(row)
+        await attachments.unchecked(self._session, session_id)
         return True
 
     async def _wake_frozen(self, home: SandboxHome, session_id: uuid.UUID) -> None:
@@ -845,11 +846,7 @@ class HostPool(PoolSweep):
         The idle clock moves to now: the first real tool call lands here."""
         home.frozen_at = None
         home.active_at = datetime.now(UTC)
-        row = await self._session.scalar(
-            select(AgentSession).where(AgentSession.id == session_id)
-        )
-        if row is not None:
-            attachments.want_thaw(row, home.resource_id)
+        home.thaw_wanted_at = datetime.now(UTC)
 
     async def mark_awake(self, session_id: uuid.UUID) -> tuple[str | None, str] | None:
         """Ask for the session's frozen sandbox to be woken, under the pool's

@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from app.core.config import settings
 from app.core.db import async_session_factory
@@ -23,7 +24,7 @@ from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
-from app.domain.agent_session.attachment import place_of
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import local as mcp_local
 from app.domain.remote_mcp import service as remote_mcp
@@ -274,7 +275,7 @@ class CentralChannel(DeviceChannel):
                 session.conversation_id, session.agent_handle, harness=session.harness
             )
             session_id = session_row.id
-            place = place_of(session_row)
+            place = await attachments.place_of(db, session_row)
             await db.commit()
         if place is not None and (
             place.resource_id != str(resource)
@@ -395,7 +396,7 @@ class CentralChannel(DeviceChannel):
         # changed command or type relaunches an idle session.
         if commands:
             target["mcp_commands"] = commands
-        location = {
+        location: dict[str, Any] = {
             "device_id": center,
             "resource_id": str(resource),
             "channel": self.name,
@@ -403,6 +404,10 @@ class CentralChannel(DeviceChannel):
         }
         if runtime_factory is not None:
             location["runtime"] = runtime_factory(resource)
+        if not precheck.deferred:
+            # Its own scratch area on this machine: no environment, so it
+            # is kept with where its process runs (`attachment.place`).
+            location["scratch"] = target
         # The room is still on the generation this was prepared for, and the
         # lease naming it is published, in one transaction. Checked after the
         # publish instead, it left a published lease for a generation that had
@@ -418,13 +423,14 @@ class CentralChannel(DeviceChannel):
             room = await TopicService(db).lock_for_execution(topic_id)
             if (room.resource_id or room.id) != resource:
                 raise ScreenSetupError(say("screenRoomReopenedOldEnvSkipped"))
+            if place is None or not precheck.deferred:
+                # What it held belongs to another generation of the room, or
+                # it works in a scratch area of its own: it holds nothing.
+                await attachments.unattach(db, session_id)
             await AgentSessionService(db).remember_place(
                 conversation_id=session.conversation_id,
                 agent_handle=session.agent_handle,
                 harness=session.harness,
-                environment=(place.lease if place else None)
-                if precheck.deferred
-                else target,
                 runtime_location=location,
             )
             await db.commit()

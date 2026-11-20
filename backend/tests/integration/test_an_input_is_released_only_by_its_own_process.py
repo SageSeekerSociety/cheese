@@ -41,6 +41,7 @@ from tests.integration.test_a_runner_report_is_applied_once import (
     SESSION,
     _Seat,
 )
+from tests.support.environments import give_environment
 from tests.turn_log import a_topic, open_turn
 from tests.unit.test_a_host_that_stopped_answering_is_left import _host, _Hub, _Repo
 
@@ -198,7 +199,6 @@ async def test_an_input_stays_held_when_the_work_host_is_given_up(business_db_fa
             agent_handle=SEAT,
             harness=HARNESS,
             resume_token=SESSION,
-            work_lease={"status": "ready", "device_id": quiet.device_id},
             runtime_location={
                 "device_id": "session-host",
                 "channel": "device",
@@ -206,6 +206,10 @@ async def test_an_input_stays_held_when_the_work_host_is_given_up(business_db_fa
             },
         )
         session.add(pointer)
+        await session.flush()
+        await give_environment(
+            session, pointer, {"status": "ready", "device_id": quiet.device_id}
+        )
         await session.commit()
         pointer_id = pointer.id
     home = SimpleNamespace(id=uuid.uuid4(), host_id=quiet.id, session_id=pointer_id)

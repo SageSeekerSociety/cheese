@@ -301,7 +301,7 @@ async def previewed_sessions(db, session_ids) -> set[uuid.UUID]:
 
 
 async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> bool:
-    """Wake a sandbox a tool call has already asked for (`Attachment.thaw`), before
+    """Wake a sandbox a tool call has already asked for (``thaw_wanted_at``), before
     its executor is asked anything (`session_work._install`, under the claim,
     with no database lock held).
 
@@ -311,17 +311,20 @@ async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -
     and the next one tries again, which is better than an executor nobody can
     reach for a minute. Answers whether it thawed one.
     """
-    held = await attachments.attachment_of(db, session_id)
+    home = await db.scalar(
+        select(SandboxHome).where(
+            SandboxHome.session_id == session_id,
+            SandboxHome.resource_id == str(work_resource),
+            SandboxHome.thaw_wanted_at.is_not(None),
+        )
+    )
     await db.commit()
-    thawing = held.thaw if held is not None else None
-    if not thawing or str(thawing) != str(work_resource):
+    if home is None:
         return False
     await thaw_on_host(hub, device_id, str(work_resource))
-    row = await db.scalar(
-        select(AgentSession).where(AgentSession.id == session_id).with_for_update()
+    await db.execute(
+        update(SandboxHome).where(SandboxHome.id == home.id).values(thaw_wanted_at=None)
     )
-    if row is not None:
-        attachments.thawed(row, thawing)
     await db.commit()
     return True
 
@@ -966,7 +969,10 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if session_row is not None:
-                lease = attachments.attachment(session_row).environment or {}
+                held_by = await attachments.attachment_of(
+                    self._session, session_row.id, lock=True
+                )
+                lease = (held_by.environment if held_by is not None else None) or {}
                 until = lease.get("claim_until")
                 if until and datetime.fromisoformat(until) > now:
                     # A tool call is starting it right now.
@@ -1289,7 +1295,9 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if row is not None:
-                attachments.park(row, device_id, running)
+                await attachments.park(self._session, row, device_id, running)
+        # Its processes are stopped for good: a wake asked for it is moot.
+        home.thaw_wanted_at = None
         await keep_parked(
             self._session,
             conversation_id=home.topic_id,
@@ -1493,7 +1501,7 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if row is not None:
-                attachments.lose(row, device_id, stopped=running)
+                await attachments.lose(self._session, row, device_id, stopped=running)
                 # The platform has just taken this session's machine away, and
                 # it is the one authority that knows a runner will never report
                 # the end of the turn that was running on it. Recording that

@@ -192,9 +192,20 @@ class _Db:
 
 class _Row:
     def __init__(self):
-        self.work_lease = {"claim": "claim-1"}
-        self.execution_request = None
         self.conversation_id = uuid.uuid4()
+
+
+class _Attachments:
+    """The session's attachment: on an environment whose install holds the
+    claim this installation took."""
+
+    @staticmethod
+    async def attachment_of(db, session_id, *, lock=False):
+        return SimpleNamespace(environment={"claim": "claim-1"})
+
+    @staticmethod
+    async def attach(db, session_id, described, *, where=None):
+        return None
 
 
 class _Holder:
@@ -271,6 +282,10 @@ def _install_case(
     monkeypatch.setattr(holders, "bind_resource_token", lambda *a, **k: "scoped-token")
     monkeypatch.setattr(session_work, "for_a_machine", lambda token: token)
     monkeypatch.setattr(lease_claim, "kept", _kept)
+    monkeypatch.setattr(
+        session_work.attachments, "attachment_of", _Attachments.attachment_of
+    )
+    monkeypatch.setattr(session_work.attachments, "attach", _Attachments.attach)
 
     if call_exc is not None:
         # The executor is already on the machine (a lease with a state), so the

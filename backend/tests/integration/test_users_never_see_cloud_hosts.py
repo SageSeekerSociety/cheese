@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.domain.agent_session.models import AgentSession
 from app.domain.project.repositories import ProjectRepository
 from tests.integration.conftest import new_project, session_auth_headers
+from tests.support.environments import give_environment
 
 HOST_DEVICE = "host-device-7f3a"
 
@@ -24,25 +25,28 @@ def test_a_cloud_sessions_sandbox_is_shown_without_its_host(client, monkeypatch)
     async def seed():
         async with client.test_request_factory() as db:
             generation = str(uuid.uuid4())
-            db.add(
-                AgentSession(
-                    conversation_id=uuid.UUID(room),
-                    agent_handle="agent",
-                    harness="claude-code",
-                    execution_request={"generation": generation},
-                    work_lease={
-                        "kind": "device",
-                        "platform": True,
-                        "generation": generation,
-                        "resource_id": generation,
-                        "device_id": HOST_DEVICE,
-                        "status": "ready",
-                        "home": f"/home/cheese/.cheese/{generation}",
-                        "workspace": f"/home/cheese/.cheese/{generation}/work",
-                        "state": "/state",
-                        "mcp_servers": [],
-                    },
-                )
+            row = AgentSession(
+                conversation_id=uuid.UUID(room),
+                agent_handle="agent",
+                harness="claude-code",
+            )
+            db.add(row)
+            await db.flush()
+            await give_environment(
+                db,
+                row,
+                {
+                    "kind": "device",
+                    "platform": True,
+                    "generation": generation,
+                    "resource_id": generation,
+                    "device_id": HOST_DEVICE,
+                    "status": "ready",
+                    "home": f"/home/cheese/.cheese/{generation}",
+                    "workspace": f"/home/cheese/.cheese/{generation}/work",
+                    "state": "/state",
+                    "mcp_servers": [],
+                },
             )
             await db.commit()
 

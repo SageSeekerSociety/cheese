@@ -697,7 +697,7 @@ class PoolSweep:
         for home in await self._repo.homes_on(host.id):
             row = (worked or {}).get(home.session_id)
             if row is not None:
-                attachments.lose(row, host.device_id)
+                await attachments.lose(self._session, row, host.device_id)
                 lost += 1
                 lines.append((home.topic_id, await tell_lost(self._session, home)))
             elif home.waiting_since is not None:

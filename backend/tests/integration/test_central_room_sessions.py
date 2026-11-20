@@ -60,6 +60,7 @@ from tests.integration.conftest import open_task, post_project, session_auth_hea
 from tests.integration.test_archive_retires_storage import _seed_device
 from tests.pinned_claude import claude_binary
 from tests.support import machine_path, wire
+from tests.support.environments import attach_anew, remember_place
 from tests.support.hang import HANG_S
 from tests.unit.test_device_provider import FakeHub
 
@@ -73,7 +74,8 @@ def ref(project, topic, agent=AGENT):
 
 async def place_session(db, topic, resource, target, *, agent=AGENT, machine="center"):
     """Put one session of this room on a machine, hands and process both."""
-    await AgentSessionService(db).remember_place(
+    await remember_place(
+        db,
         conversation_id=topic,
         agent_handle=agent,
         environment=target,
@@ -723,7 +725,8 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
-        await AgentSessionService(db).remember_place(
+        await remember_place(
+            db,
             conversation_id=topic,
             agent_handle="pi-teammate",
             harness="pi",
@@ -755,7 +758,8 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
 
     response = client.post(endpoint, headers=headers, json=payload)
     assert response.status_code == 200, response.text
-    assert call.await_args.args[0] == target
+    sent_to = call.await_args.args[0]
+    assert {key: sent_to.get(key) for key in target} == target
 
 
 @pytest.mark.anyio
@@ -791,7 +795,8 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
     assert response.json() == {"content": "executor file"}
     assert call.await_args is not None
     sent_to, method, sent = call.await_args.args
-    assert (sent_to, method) == (target, "invoke")
+    # To the environment the session holds, as it was recorded.
+    assert ({key: sent_to.get(key) for key in target}, method) == (target, "invoke")
     # The tool call arrives as asked, and says which conversation it is from.
     assert {key: sent[key] for key in payload["params"]} == payload["params"]
     assert sent["caller"]["conversation"] == str(topic)
@@ -799,7 +804,12 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
     context_fs = {"method": "context_fs", "params": {"operation": "tree"}}
     response = client.post(endpoint, headers=headers, json=context_fs)
     assert response.status_code == 200, response.text
-    assert call.await_args.args == (target, "context_fs", context_fs["params"])
+    sent_to, method, sent = call.await_args.args
+    assert ({key: sent_to.get(key) for key in target}, method, sent) == (
+        target,
+        "context_fs",
+        context_fs["params"],
+    )
     assert call.await_args.kwargs["trace_id"].startswith("execution-")
     assert client.post(endpoint, json=payload).status_code == 401
     assert (
@@ -844,7 +854,12 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
             json=request,
         )
         assert result.status_code == 200, result.text
-        assert call.await_args.args == (target, "control", request["request"])
+        sent_to, method, sent = call.await_args.args
+        assert ({key: sent_to.get(key) for key in target}, method, sent) == (
+            target,
+            "control",
+            request["request"],
+        )
         async with client.test_factory() as db:
             stored = await TopicService(db).get_or_404(topic)
             stored.resource_id = uuid.uuid4()
@@ -1092,15 +1107,19 @@ async def lease_machine(factory, topic, workspace):
             topic, AGENT, harness=harness_for(None)
         )
         generation = str(uuid.uuid4())
-        row.work_lease = {
-            "kind": "device",
-            "device_id": "executor",
-            "generation": generation,
-            "status": "ready",
-            "workspace": workspace,
-            "url": "http://central-api/execution",
-            "state": "/home/machine/.cheese/executor",
-        }
+        await attach_anew(
+            db,
+            row,
+            {
+                "kind": "device",
+                "device_id": "executor",
+                "generation": generation,
+                "status": "ready",
+                "workspace": workspace,
+                "url": "http://central-api/execution",
+                "state": "/home/machine/.cheese/executor",
+            },
+        )
         await db.commit()
     return generation
 

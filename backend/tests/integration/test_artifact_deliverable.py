@@ -17,7 +17,6 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
 from app.domain.topic.models import Topic
 from tests.conftest import seed_user
@@ -35,6 +34,7 @@ from tests.integration.test_accept_pr import (
 )
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_project_artifacts import remote_delivery as remote_delivery
+from tests.support.environments import remember_place
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +73,8 @@ def _place(client, task) -> None:
     async def place():
         async with client.test_factory() as session:
             room = await session.get(Topic, task.room_id)
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task.id,
                 agent_handle="cheese",
                 environment={"kind": "device"},

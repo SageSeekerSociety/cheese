@@ -14,8 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.attachment import attach, attachment, attachment_of
-from app.domain.agent_session.services import AgentSessionService
+from app.domain.agent_session.attachment import attach, attachment_of
 
 logger = logging.getLogger(__name__)
 
@@ -93,13 +92,15 @@ async def _renew(bind, session_id, claim: str, since: datetime, most_s: float) -
         until = min(datetime.now(UTC) + timedelta(seconds=CLAIM_TTL_S), most)
         try:
             async with AsyncSession(bind, expire_on_commit=False) as db:
-                row = await AgentSessionService(db).by_id(session_id, lock=True)
-                lease = (attachment(row).environment if row is not None else None) or {}
-                if row is None or lease.get("claim") != claim:
+                held = await attachment_of(db, session_id, lock=True)
+                lease = (held.environment if held is not None else None) or {}
+                if lease.get("claim") != claim:
                     # Handed over, lapsed, or taken by a later attempt: the
                     # claim is no longer this installation's to keep.
                     return
-                attach(row, {**lease, "claim_until": until.isoformat()})
+                await attach(
+                    db, session_id, {**lease, "claim_until": until.isoformat()}
+                )
                 await db.commit()
         except Exception:  # the next beat tries again
             # One missed beat is not the installation's death; a database that

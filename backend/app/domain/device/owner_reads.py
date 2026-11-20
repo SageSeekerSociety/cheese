@@ -47,10 +47,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.attachment import ATTACHMENT_COLUMNS, attachment
+from app.domain.agent_session.attachment import attachment_columns
 from app.domain.agent_session.models import AgentSession
 from app.domain.device.models import DeviceRow, HostedDeviceRow, ModelCredentialHost
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.environment.models import (
+    ConversationEnvironment,
+    EnvironmentAttachment,
+)
 from app.domain.project.models import Project, ProjectMember
 from app.domain.topic.models import TopicMembership
 from app.domain.user.tokens import digest_token
@@ -191,27 +195,33 @@ async def project_owner(session: AsyncSession, project_id: uuid.UUID) -> str | N
 
 
 async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
-    """Only an un-upgraded lease can be addressed by a pre-session credential.
-
-    A new session becoming the sole row never grants an old room token access.
-    Keep this reader until all old screens have naturally reopened.
-    """
-    rows = (
+    """The session a credential that names only a conversation (one minted
+    before credentials named sessions) works through: one attached to the
+    environment the conversation points to. None when it points to none, or
+    nobody is attached there."""
+    pointed = (
+        select(ConversationEnvironment.environment_id)
+        .where(ConversationEnvironment.conversation_id == conversation_id)
+        .scalar_subquery()
+    )
+    return (
         await session.execute(
-            select(AgentSession.id, AgentSession.runtime_location, *ATTACHMENT_COLUMNS)
-            .where(AgentSession.conversation_id == conversation_id)
-            .with_for_update(read=True)
+            select(
+                AgentSession.id,
+                AgentSession.runtime_location,
+                AgentSession.conversation_id,
+                *attachment_columns(),
+            )
+            .join(
+                EnvironmentAttachment,
+                EnvironmentAttachment.session_id == AgentSession.id,
+            )
+            .where(EnvironmentAttachment.environment_id == pointed)
+            .order_by(AgentSession.placed_at.desc().nulls_last(), AgentSession.id)
+            .limit(1)
+            .with_for_update(read=True, of=AgentSession)
         )
-    ).all()
-    legacy = [
-        row
-        for row in rows
-        if (environment := attachment(row).environment)
-        and environment.get("kind") == "device"
-        and not environment.get("generation")
-        and not environment.get("session_id")
-    ]
-    return legacy[0] if len(legacy) == 1 else None
+    ).one_or_none()
 
 
 async def session_execution(session: AsyncSession, session_id: uuid.UUID):
@@ -222,7 +232,7 @@ async def session_execution(session: AsyncSession, session_id: uuid.UUID):
             select(
                 AgentSession.runtime_location,
                 AgentSession.conversation_id,
-                *ATTACHMENT_COLUMNS,
+                *attachment_columns(),
             )
             .where(AgentSession.id == session_id)
             # FOR SHARE, not FOR UPDATE: a lease change still waits for every

@@ -12,7 +12,9 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.environment.models import (
     READY,
     ConversationEnvironment,
@@ -20,22 +22,23 @@ from app.domain.environment.models import (
     EnvironmentAttachment,
 )
 from app.domain.machine import holder as holders
+from app.domain.topic.models import Topic
 
-#: The lease keys that are neither a column of the environment nor of the
-#: attachment: what the install left (``Environment.executor``).
-EXECUTOR_KEYS = (
-    "platform",
-    "home",
-    "state",
-    "release",
-    "upgrade_pending",
-    "desired_release",
-    "workspace",
-    "mcp_servers",
-    "own",
-    "url",
-    "environment_status",
-    "root_snapshot_notice",
+#: The lease keys that are a column of the environment or of the attachment,
+#: or said by the row itself; every other key is what the install left
+#: (``Environment.executor``).
+NOT_EXECUTOR = (
+    "kind",
+    "session_id",
+    "generation",
+    "setup_digest",
+    "device_id",
+    "resource_id",
+    "room_resource_id",
+    "status",
+    "claim",
+    "claim_until",
+    "verified_at",
 )
 
 
@@ -52,6 +55,7 @@ async def give_environment(
     sandbox_home_id: uuid.UUID | None = None,
     pointed: bool = True,
     environment: Environment | None = None,
+    choice: dict | None = None,
 ) -> EnvironmentAttachment:
     """Attach ``session`` to the environment ``lease`` describes, creating it
     unless ``environment`` is one already there. Flushes; the caller commits.
@@ -62,17 +66,32 @@ async def give_environment(
     if environment is None:
         holder_id = await holders.holder_of(db, session.conversation_id)
         holder = await holders.look(db, holder_id)
-        resource = lease.get("resource_id") or str(uuid.uuid4())
+        # A lease that names no home of its own is in its room's, which an
+        # archived room still names.
+        room = await db.get(Topic, holder_id) if holder is None else None
+        generation = (
+            holder.generation
+            if holder is not None
+            else str(room.resource_id or room.id)
+            if room is not None
+            else str(uuid.uuid4())
+        )
+        resource = lease.get("resource_id") or generation
         environment = Environment(
             topic_id=holder_id,
             project_id=holder.project_id if holder is not None else None,
-            device_id=lease["device_id"],
+            device_id=lease.get("device_id", ""),
             host_id=host_id,
             sandbox_home_id=sandbox_home_id,
             resource_id=resource,
-            room_resource_id=lease.get("room_resource_id")
-            or (holder.generation if holder is not None else resource),
-            executor={key: lease[key] for key in EXECUTOR_KEYS if key in lease},
+            choice=choice
+            or (
+                {"kind": "sandbox", "spec": "standard"}
+                if lease.get("own")
+                else {"kind": "self_hosted", "device_id": lease.get("device_id", "")}
+            ),
+            room_resource_id=lease.get("room_resource_id") or generation,
+            executor={k: v for k, v in lease.items() if k not in NOT_EXECUTOR},
             status=lease.get("status", READY),
             claim=lease.get("claim"),
             claim_until=_moment(lease.get("claim_until")),
@@ -105,3 +124,51 @@ async def give_environment(
     db.add(attachment)
     await db.flush()
     return attachment
+
+
+async def environment_of(db: AsyncSession, session_id: uuid.UUID) -> dict | None:
+    """The environment a session's next call works in, as the platform reads
+    it (`attachment.attachment_of`); None while it is attached to none."""
+    held = await attachments.attachment_of(db, session_id)
+    return held.environment if held is not None else None
+
+
+async def change_environment(
+    db: AsyncSession, session_id: uuid.UUID, lease: dict
+) -> None:
+    """Make the environment a session is attached to read as ``lease`` (a
+    test standing in for what an install or a sweep would have left there).
+    Flushes; the caller commits."""
+    await attachments.attach(db, session_id, lease)
+
+
+async def remember_place(
+    db: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    agent_handle: str,
+    harness: str,
+    runtime_location: dict,
+    environment: dict | None = None,
+) -> None:
+    """Record where a session's process runs and, with ``environment``, the
+    environment it is attached to, as a placement leaves them."""
+    sessions = AgentSessionService(db)
+    await sessions.remember_place(
+        conversation_id=conversation_id,
+        agent_handle=agent_handle,
+        harness=harness,
+        runtime_location=runtime_location,
+    )
+    if environment is None:
+        return
+    row = await sessions.ensure(conversation_id, agent_handle, harness=harness)
+    await attachments.unattach(db, row.id)
+    await give_environment(db, row, environment)
+
+
+async def attach_anew(db: AsyncSession, session: AgentSession, lease: dict, **given):
+    """Attach ``session`` to a new environment ``lease`` describes, leaving
+    the one it was attached to (`give_environment` takes ``given``)."""
+    await attachments.unattach(db, session.id)
+    return await give_environment(db, session, lease, **given)

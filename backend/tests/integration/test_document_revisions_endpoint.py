@@ -21,6 +21,7 @@ from tests.integration.test_file_panel_safety import (
     task_machine,  # noqa: F401
 )
 from tests.integration.test_project_roles import _invite
+from tests.support.environments import remember_place
 
 DECL = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -163,12 +164,12 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
 
     async def place():
         from app.domain.agent.harness import harness_for
-        from app.domain.agent_session.services import AgentSessionService
         from app.domain.topic.models import Topic
 
         async with client.test_factory() as session:
             room = await session.get(Topic, tid)
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task.id,
                 agent_handle="cheese",
                 environment={"kind": "device"},

@@ -43,7 +43,6 @@ from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session import attachment as attachments
-from app.domain.agent_session.attachment import attach, attachment, begin
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_of
@@ -107,11 +106,11 @@ from app.domain.user.services import user_by_handle
 logger = logging.getLogger(__name__)
 
 
-def presentation(row):
-    """A session and the machine it holds, for the pages that show it. A
-    sandbox on one of the platform's machines does not say which one: that is
-    the platform's scheduling and nobody's to read."""
-    lease = attachment(row).environment
+def presentation(row, lease: dict | None):
+    """A session and the machine it holds (``lease``, its environment), for
+    the pages that show it. A sandbox on one of the platform's machines does
+    not say which one: that is the platform's scheduling and nobody's to
+    read."""
     shown = None
     if lease:
         online = device_hub.is_online(lease["device_id"])
@@ -369,21 +368,21 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
     cleanup goes on whatever they answer: what a lost checkpoint does not push
     goes with the machine."""
-    rows = list(
-        await session.scalars(
-            select(AgentSession).where(
+    rows = (
+        await session.execute(
+            select(AgentSession, attachments.environment_column()).where(
                 of_room(AgentSession.conversation_id, topic_id),
                 attachments.is_attached(),
             )
         )
-    )
+    ).all()
     # Frozen: checkpointed before it was frozen, and nothing ran since.
-    frozen = await frozen_sessions(session, [row.id for row in rows])
+    frozen = await frozen_sessions(session, [row.id for row, _ in rows])
     starts = []
-    for row in rows:
+    for row, environment in rows:
         if row.id in frozen:
             continue
-        lease = attachment(row).environment or {}
+        lease = environment or {}
         if lease.get("status", "ready") != "ready" or not lease.get("state"):
             continue
         try:
@@ -683,7 +682,7 @@ async def restart_executor(db, row, lease) -> Restart:
     )
     # A lease recorded before it carried its own resource is the generation's,
     # as `_attempt` reads it.
-    work_resource = lease.get("resource_id") or attachment(row).generation
+    work_resource = lease.get("resource_id") or lease.get("generation")
     api = await device_api_base(db, lease["device_id"], settings.connector_public_base)
     start = partial(
         _start_executor,
@@ -769,7 +768,8 @@ async def switch_environment(
         and not _another_sandbox_wanted(environment)
     ):
         return
-    old = attachment(row).environment
+    held = await attachments.attachment_of(db, row.id, lock=True)
+    old = held.environment if held is not None else None
     if still_preparing(old):
         raise ConflictError(say("machineAllocationInProgress"))
     if if_idle and await _room_is_working(db, topic_id):
@@ -781,7 +781,7 @@ async def switch_environment(
     # A frozen sandbox is not checkpointed: it was before it was frozen, and
     # its stopped processes could not run `cheese sync` now.
     if old:
-        generation = attachment(row).generation
+        generation = held.generation if held is not None else None
         if not await frozen_sessions(db, [session_id]):
             start = await restart_executor(db, row, old)
             await db.commit()
@@ -801,9 +801,9 @@ async def switch_environment(
         row = await sessions.by_id(session_id, lock=True)
         if row is None:
             raise NotFoundError("Session not found")
-        held = attachment(row)
-        old = held.environment
-        if held.generation != generation or not old:
+        held = await attachments.attachment_of(db, row.id, lock=True)
+        old = held.environment if held is not None else None
+        if held is None or held.generation != generation or not old:
             raise ConflictError(say("workComputerJustSwitched"))
         if still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
@@ -826,8 +826,8 @@ async def switch_environment(
     # The next sandbox is not put back on the host this one came from
     # without naming it (`HostPool._moved_off`): the host it just left is the
     # full one, and a full host is what placement prefers.
-    attachments.detach(
-        row, keep=kept, left_host=str(left.id) if left is not None else None
+    await attachments.detach(
+        db, row, keep=bool(kept), left_host=left.id if left is not None else None
     )
     await db.commit()
 
@@ -905,13 +905,14 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
                 exists().where(
                     User.username == claims.get("a", ""), User.deleted_at.is_(None)
                 ),
+                *attachments.attachment_columns(),
             ).where(AgentSession.id == session_id)
         )
     ).first()
     if found is None:
         return None
-    row, agent_live = found
-    held = attachment(row)
+    row, agent_live = found[0], found[1]
+    held = attachments.attachment(found)
     lease = held.environment or {}
     location = row.runtime_location or {}
     verified = lease.get("verified_at")
@@ -925,7 +926,6 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         or lease.get("room_resource_id") != resource
         or lease.get("setup_digest") != _setup_digest(env)
         or held.notice.owed
-        or held.thaw
         or lease.get("root_snapshot_notice")
         or claims.get("session") != str(row.id)
         or claims.get("t") != str(row.conversation_id)
@@ -1101,17 +1101,13 @@ async def _attempt(
         or not holder.signed_for(claims)
     ):
         raise ForbiddenError("Execution credential does not own this session")
-    generation = begin(row)
+    held = await attachments.attachment_of(db, row.id, lock=True)
+    lease = held.environment if held is not None else None
+    # The attachment's generation; a session attached to none is attached
+    # under a new one when its reservation is written below.
+    attached = (lease or {}).get("generation")
+    generation = attached or str(uuid.uuid4())
     environment = await holder.environment(db, row)
-    lease = attachment(row).environment
-    if lease and lease.get("status", "ready") == "ready":
-        # Recorded pre-existing resources retain their physical identity. A
-        # new session never borrows another session's directory or lease.
-        if not lease.get("generation"):
-            lease = {**lease, "generation": generation, "session_id": str(row.id)}
-            attach(row, lease)
-        if lease["generation"] != generation:
-            raise ConflictError("The previous work lease has not been released")
     ready = bool(lease and lease.get("status", "ready") == "ready")
     location = row.runtime_location or {}
     # ponytail: 本地只有一台机器，会话主机与工作电脑必然是同一台；生产护栏
@@ -1142,8 +1138,9 @@ async def _attempt(
     if lease and await devices.get_device(lease["device_id"]) is None:
         # Its machine was unbound (a re-bind enrols a new device id): nothing on
         # it can be reached again.
-        attach(row, None)
+        await attachments.unattach(db, row.id)
         lease = None
+        attached = None
     spec = spec_of(environment.spec) if isinstance(environment, Sandbox) else None
     if isinstance(environment, Sandbox) and spec is None:
         await db.commit()
@@ -1183,7 +1180,15 @@ async def _attempt(
         if selected is None:
             await db.commit()
             return {"unavailable": str(say("specDevicesUnavailable"))}
-    work_resource = (lease or {}).get("resource_id") or generation
+    # A session attached to none keeps the home a placement already gave it
+    # (an attempt that went on to wait for its host attached nothing).
+    work_resource = (
+        (lease or {}).get("resource_id")
+        or await db.scalar(
+            select(SandboxHome.resource_id).where(SandboxHome.session_id == session_id)
+        )
+        or generation
+    )
     if selected is not None and isinstance(environment, Sandbox):
         try:
             await HostPool(db, hub=hub).keep_on_device(
@@ -1258,15 +1263,28 @@ async def _attempt(
         # Provisioning releases its transaction around external calls.
         holder = await holders.lock_for_work(db, topic_id)
         row = await sessions.by_id(session_id, lock=True)
-        if row is None or attachment(row).generation != generation:
+        now_held = (
+            await attachments.attachment_of(db, session_id, lock=True)
+            if row is not None
+            else None
+        )
+        now_attached = now_held.generation if now_held is not None else None
+        if (
+            row is None
+            or (attached is not None and now_attached != attached)
+            or await holder.environment(db, row) != environment
+        ):
             raise ConflictError("Execution request changed during provisioning")
+        if now_attached is not None:
+            # Another attempt of this session attached it meanwhile.
+            attached = generation = now_attached
         # Placing a new home commits (`HostPool._place_on_free`), and another
         # attempt of this session — a person's, a parallel tool call — may
         # have taken the lease's claim meanwhile, or finished with it. The
         # claim is asked again under the lock that writes it, and the lease
         # read as it is now: two installations on one lease left the first
         # one's claim overwritten, and it failed once it was done.
-        lease = attachment(row).environment
+        lease = now_held.environment if now_held is not None else None
         if lease and lease.get("claim_until"):
             if datetime.fromisoformat(lease["claim_until"]) > now:
                 await db.commit()
@@ -1331,7 +1349,24 @@ async def _attempt(
         if lease is not None and ready and lease.get("device_id") == device_id
         else reservation
     )
-    attach(row, holding)
+    if holding is reservation:
+        home = (
+            await db.execute(
+                select(SandboxHome.id, SandboxHome.host_id).where(
+                    SandboxHome.session_id == session_id
+                )
+            )
+        ).first()
+        where = attachments.Where(
+            topic_id=topic_id,
+            project_id=holder.project_id,
+            choice=environment.model_dump(),
+            host_id=home.host_id if home is not None else None,
+            sandbox_home_id=home.id if home is not None else None,
+        )
+        await attachments.attach(db, session_id, holding, where=where)
+    else:
+        await attachments.attach(db, session_id, holding)
     if await user_by_handle(db, claims.get("a", "")) is None:
         raise ForbiddenError("Execution actor no longer exists")
     await db.commit()
@@ -1560,9 +1595,11 @@ async def _install(
         except Exception as exc:
             # Setup is resumable at the same physical allocation; it is not a
             # dispatched model operation and must not create a replacement lease.
-            row = await sessions.by_id(session_id, lock=True)
-            if row and (attachment(row).environment or {}).get("claim") == claim:
-                attach(row, {**holding, "claim_until": now.isoformat()})
+            held = await attachments.attachment_of(db, session_id, lock=True)
+            if held and (held.environment or {}).get("claim") == claim:
+                await attachments.attach(
+                    db, session_id, {**holding, "claim_until": now.isoformat()}
+                )
             await db.commit()
             if isinstance(exc, launch.SandboxRefused):
                 # The machine cannot make a sandbox and said why, in words for
@@ -1622,9 +1659,11 @@ async def _install(
             raise
         current = await holders.lock_for_work(db, holder.id)
         row = await sessions.by_id(session_id, lock=True)
+        held = await attachments.attachment_of(db, session_id, lock=True)
         if (
             row is None
-            or (attachment(row).environment or {}).get("claim") != claim
+            or held is None
+            or (held.environment or {}).get("claim") != claim
             or current.generation != resource
         ):
             raise ConflictError("Execution allocation changed while preparing")
@@ -1637,7 +1676,7 @@ async def _install(
             if tells_agent and target["status"] == "ready"
             else None
         )
-        attach(row, target)
+        await attachments.attach(db, session_id, target)
         notice = (
             attachments.take_notice(row)
             if tells_agent and target["status"] == "ready"

@@ -31,7 +31,6 @@ import pytest
 from sqlalchemy import select, update
 
 from app.core.config import settings
-from app.domain.agent_session.attachment import THAW_KEY
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
@@ -54,6 +53,7 @@ from tests.integration.test_sandbox_idle_stop import (
     tool_call,
     working_on,
 )
+from tests.support.environments import attach_anew
 from tests.support.files_bucket import files_bucket
 
 
@@ -383,11 +383,7 @@ def test_a_tool_call_that_lands_while_it_is_frozen_never_leaves_it_frozen(icy):
             assert home.frozen_at is not None
             home.frozen_at = None
             home.active_at = datetime.now(UTC)
-            row = await db.get(AgentSession, seat.session)
-            row.execution_request = {
-                **(row.execution_request or {}),
-                THAW_KEY: home.resource_id,
-            }
+            home.thaw_wanted_at = datetime.now(UTC)
             await db.commit()
         woke.append(True)
 
@@ -429,14 +425,18 @@ def test_a_frozen_sandbox_is_not_checkpointed_on_its_way_out(icy, monkeypatch):
     async def lease_ready():
         async with icy.client.test_request_factory() as db:
             row = await db.get(AgentSession, seat.session)
-            row.work_lease = {
-                "kind": "device",
-                "platform": True,
-                "session_id": str(seat.session),
-                "device_id": "host-1",
-                "status": "ready",
-                "state": "/state",
-            }
+            await attach_anew(
+                db,
+                row,
+                {
+                    "kind": "device",
+                    "platform": True,
+                    "session_id": str(seat.session),
+                    "device_id": "host-1",
+                    "status": "ready",
+                    "state": "/state",
+                },
+            )
             await db.commit()
 
     run(icy, lease_ready)

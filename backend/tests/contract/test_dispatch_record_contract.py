@@ -47,9 +47,14 @@ from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent_session.models import AgentSession
+from app.domain.environment.models import (
+    ConversationEnvironment,
+    EnvironmentAttachment,
+)
 from app.domain.topic.services import TopicService
 from app.domain.user.tokens import digest_token
 from tests.integration.conftest import project_service, registered
+from tests.support.environments import give_environment
 from tests.turn_log import a_topic, open_turn
 
 # 在任何测试把 `asyncio.sleep` 换掉之前拿住真的那个：重派是一个先睡 3 秒再发的任务，
@@ -454,25 +459,30 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
         await session.flush()
         session.add(HostedDeviceRow(device_id=_MACHINE, owner_user_id=owner.id))
         session_id, generation = uuid.uuid4(), uuid.uuid4()
-        session.add(
-            AgentSession(
-                id=session_id,
-                conversation_id=topic.id,
-                agent_handle="cheese",
-                harness=harness_for(None),
-                runtime_location={
-                    "device_id": _MACHINE,
-                    "channel": "device",
-                    "resource_id": str(topic.id),
-                },
-                work_lease={
-                    "generation": str(generation),
-                    "kind": "device",
-                    "device_id": _MACHINE,
-                    "home": "/home/cheese",
-                    "state": "/home/cheese/.cheese/executor",
-                },
-            )
+        row = AgentSession(
+            id=session_id,
+            conversation_id=topic.id,
+            agent_handle="cheese",
+            harness=harness_for(None),
+            runtime_location={
+                "device_id": _MACHINE,
+                "channel": "device",
+                "resource_id": str(topic.id),
+            },
+        )
+        session.add(row)
+        await session.flush()
+        await give_environment(
+            session,
+            row,
+            {
+                "generation": str(generation),
+                "kind": "device",
+                "device_id": _MACHINE,
+                "home": "/home/cheese",
+                "state": "/home/cheese/.cheese/executor",
+            },
+            pointed=False,
         )
         await session.commit()
         token = mint_scoped_token(
@@ -702,43 +712,28 @@ async def test_a_call_without_an_id_records_nothing(
 
 
 @pytest.mark.anyio
-async def test_old_room_token_only_addresses_unique_unupgraded_lease(
+async def test_an_old_room_token_works_only_through_the_rooms_own_environment(
     db_factory, owner_client, monkeypatch
 ):
+    """A credential minted before credentials named sessions names only a
+    conversation: it reaches the machine through the environment that
+    conversation points to, and through no session's own."""
     project, topic, _ = await _a_room_with_hands(db_factory)
     await _an_attached_machine(monkeypatch, _answers_with_a_result)
     legacy_token = mint_scoped_token(
         project_id=str(project), topic_id=str(topic), resource_id=str(topic)
     )
-    # A single new session is still not an old room capability.
+    # The only environment is one session's own: the room points to none.
     assert (await _invoke(owner_client, topic, legacy_token)).status_code == 409
     async with db_factory() as db:
-        row = await db.scalar(
-            select(AgentSession).where(AgentSession.conversation_id == topic)
+        held = await db.scalar(
+            select(EnvironmentAttachment.environment_id)
+            .join(AgentSession, AgentSession.id == EnvironmentAttachment.session_id)
+            .where(AgentSession.conversation_id == topic)
         )
-        lease = dict(row.work_lease)
-        lease.pop("generation")
-        row.work_lease = lease
+        db.add(ConversationEnvironment(conversation_id=topic, environment_id=held))
         await db.commit()
     assert (
         await _invoke(owner_client, topic, legacy_token, key="legacy")
     ).status_code == 200
-    async with db_factory() as db:
-        row = await db.scalar(
-            select(AgentSession).where(AgentSession.conversation_id == topic)
-        )
-        db.add(
-            AgentSession(
-                conversation_id=topic,
-                agent_handle="other",
-                harness=harness_for(None),
-                runtime_location=dict(row.runtime_location),
-                work_lease=dict(row.work_lease),
-            )
-        )
-        await db.commit()
-    # Never choose the first of two legacy owners.
-    assert (
-        await _invoke(owner_client, topic, legacy_token, key="ambiguous")
-    ).status_code == 409
     assert await _outcomes(db_factory, topic) == [("legacy", "done")]

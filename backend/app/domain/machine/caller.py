@@ -58,6 +58,8 @@ class MachineCaller:
     #: (`credential_of`) reads it from that session's identity map, which keeps
     #: a row only while something refers to it, instead of reading it again.
     row: AgentSession | None = field(default=None, compare=False, repr=False)
+    #: The environment the session is attached to, read with ``row``.
+    environment: dict | None = field(default=None, compare=False, repr=False)
 
 
 def machine_proxy_proof(project_id: str) -> str:
@@ -91,17 +93,14 @@ async def caller_of(
     (`_environments_own`). None when the name is not attached there now, or
     nothing is."""
     rows = await db.execute(
-        select(AgentSession, Conversation.project_id)
+        select(AgentSession, Conversation.project_id, attachments.environment_column())
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
         .where(attachments.attached_on(device))
     )
     attached = [
-        (session, project_id)
-        for session, project_id in rows
-        if (environment := attachments.attachment(session).environment or {}).get(
-            "status", "ready"
-        )
-        == "ready"
+        (session, project_id, environment)
+        for session, project_id, found in rows
+        if (environment := found or {}).get("status", "ready") == "ready"
         and environment.get("state")
         and _names(environment["state"], state)
     ]
@@ -111,7 +110,7 @@ async def caller_of(
         held = _environments_own(attached)
     if held is None:
         return None
-    session, project_id = held
+    session, project_id, environment = held
     project = await ProjectService(db).get(project_id)
     if project is None:
         return None
@@ -121,6 +120,7 @@ async def caller_of(
         conversation_id=str(session.conversation_id),
         agent_handle=await session_author(db, project, session.agent_handle),
         row=session,
+        environment=environment,
     )
 
 
@@ -145,7 +145,11 @@ async def credential_of(
     row = caller.row or await db.get(AgentSession, uuid.UUID(caller.session_id))
     if row is None:
         return None
-    lease = attachments.attachment(row).environment or {}
+    if caller.row is not None:
+        lease = caller.environment or {}
+    else:
+        attached = await attachments.attachment_of(db, row.id)
+        lease = (attached.environment if attached is not None else None) or {}
     # A ready lease names its room's resource; only one that does not is
     # given the room's own.
     resource = lease.get("room_resource_id")

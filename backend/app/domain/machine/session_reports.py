@@ -26,18 +26,18 @@ async def conversation_sessions(db, project, place) -> list[dict]:
     task's), with the seat it acts under, its environment (None until it first
     needs one) and the machine it holds. One entry per agent, its most recent
     session: a change of harness opens another session for the same agent."""
-    rows = await db.scalars(
-        select(AgentSession)
+    rows = await db.execute(
+        select(AgentSession, attachments.environment_column())
         .where(AgentSession.conversation_id == place.conversation_id)
         .order_by(AgentSession.agent_handle, AgentSession.updated_at.desc())
     )
     chosen = await AgentSessionService(db).environments_in(place.conversation_id)
     out, seen = [], set()
-    for row in rows:
+    for row, held in rows.all():
         if row.agent_handle in seen:
             continue
         seen.add(row.agent_handle)
-        shown = presentation(row)
+        shown = presentation(row, held)
         lease = shown["lease"] or {}
         environment = chosen.get(row.agent_handle)
         out.append(
@@ -125,10 +125,12 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     working: a bulk switch skips it rather than take its machine away mid-turn.
     """
 
+    candidates = await _placed_sessions(db, project_id)
+    held = await attachments.environments_of(db, [row.id for row, _t, _e in candidates])
     placed = [
         (row, topic, environment)
-        for row, topic, environment in await _placed_sessions(db, project_id)
-        if attachments.attachment(row).device_id == device_id
+        for row, topic, environment in candidates
+        if (held.get(row.id) or {}).get("device_id") == device_id
         or (isinstance(environment, SelfHosted) and environment.device_id == device_id)
     ]
     if not placed:

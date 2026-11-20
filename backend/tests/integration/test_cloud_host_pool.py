@@ -51,6 +51,7 @@ from app.domain.user.tokens import digest_token
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
+from tests.support.environments import attach_anew
 
 
 class Case:
@@ -152,12 +153,16 @@ class Case:
         async def go():
             async with self.client.test_request_factory() as db:
                 row = await db.get(AgentSession, session_id)
-                row.work_lease = {
-                    "kind": "device",
-                    "session_id": str(session_id),
-                    "device_id": device_id,
-                    "status": "ready",
-                }
+                await attach_anew(
+                    db,
+                    row,
+                    {
+                        "kind": "device",
+                        "session_id": str(session_id),
+                        "device_id": device_id,
+                        "status": "ready",
+                    },
+                )
                 await db.commit()
 
         self.run(go)

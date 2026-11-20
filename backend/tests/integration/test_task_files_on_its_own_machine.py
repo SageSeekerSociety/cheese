@@ -18,14 +18,14 @@ from app.domain.agent import execution
 from app.domain.agent.device_contract import DeviceCallError
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.attachment import LOST_KEY, PARKED_KEY, released
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.repositories import AgentSessionRepository
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task
 from tests.integration.test_file_panel_safety import _mkproject, _owner
 from tests.machine_work import machine_commits, machine_keeps
+from tests.support.environments import remember_place
 
 GONE = "dial unix /tmp/cheese-execution-3f2a.sock: connect: no such file or directory"
 
@@ -80,7 +80,8 @@ def _seat(
         async with client.test_factory() as session:
             room = await session.get(Topic, task.room_id)
             current = str(room.resource_id or room.id)
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task.id,
                 agent_handle="cheese",
                 environment=lease
@@ -102,10 +103,10 @@ def _seat(
                 )
                 # What the sweep leaves: the lease says nothing answers on it,
                 # and the agent is owed a notice.
-                row.execution_request = (
-                    {LOST_KEY: True} if lost else {PARKED_KEY: ["npm run dev"]}
-                )
-                row.work_lease = released(row.work_lease)
+                if lost:
+                    await attachments.lose(session, row, device)
+                else:
+                    await attachments.park(session, row, device, ["npm run dev"])
             await session.commit()
 
     asyncio.run(place())

@@ -30,7 +30,6 @@ from app.domain.agent.queries import (
     _pass_policy_gate,
 )
 from app.domain.agent.turn.intake.context import TurnBail, _proposal_frames
-from app.domain.agent_session.attachment import begin
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.policy import gate
 from app.domain.usage.ledger import team_terms
@@ -86,10 +85,9 @@ async def check_model_policy(
     """Pass the tier policy for the model this turn is about to occupy; return
     the frames that stop it, or ``None`` once the turn may go on."""
     if provider.deferred_work and project is not None and needs_place:
-        conversation = await AgentSessionService(session).ensure(
+        await AgentSessionService(session).ensure(
             place.conversation_id, agent.handle, harness=harness
         )
-        begin(conversation)
     if project is not None:
         actor_handle = acting_agent or agent.handle
         tiers = (await team_terms(session, project.team_id)).model_tiers

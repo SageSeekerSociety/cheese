@@ -33,6 +33,7 @@ import scripts.retained_files as retained_files
 from app.core.config import settings
 from app.core.storage import S3StorageBackend
 from app.domain.agent import device_storage
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
@@ -40,6 +41,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment.models import Environment
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
@@ -48,6 +50,7 @@ from app.domain.topic.models import KeptRoomFiles, RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered, session_auth_headers
 from tests.support.devices import enrollment_team
+from tests.support.environments import give_environment
 
 pytestmark = pytest.mark.anyio
 
@@ -184,11 +187,12 @@ async def _old_room(client, tmp_path, *, files=True):
         worker = await AgentSessionService(session).ensure(
             room.id, "worker", harness="claude-code"
         )
-        worker.execution_request = {
-            "retained_leases": [
-                {"kind": "device", "device_id": device_id, "resource_id": str(room.id)}
-            ]
-        }
+        await give_environment(
+            session,
+            worker,
+            {"kind": "device", "device_id": device_id, "resource_id": str(room.id)},
+        )
+        await attachments.detach(session, worker, keep=True)
         await session.commit()
     machine = Machine(tmp_path / "machine")
     home = machine.home / ".cheese/home" / str(project.id) / str(room.id)
@@ -276,6 +280,9 @@ async def test_a_machine_no_session_worked_on_is_not_looked_at(
     async with client.test_factory() as session:
         for row in await session.scalars(select(AgentSession)):
             await session.delete(row)
+        # Nor any environment: nothing was ever worked on there.
+        for held in await session.scalars(select(Environment)):
+            await session.delete(held)
         await session.commit()
 
     assert _keep(client, device_id, machine) == 0

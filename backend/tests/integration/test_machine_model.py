@@ -16,6 +16,7 @@ from app.api.routes import llm_proxy
 from app.core.config import settings
 from tests.integration.test_llm_proxy import _FakeClient
 from tests.integration.test_switch_pushes_first import _room
+from tests.support.environments import attach_anew
 
 pytestmark = pytest.mark.anyio
 
@@ -106,11 +107,15 @@ async def test_a_teammates_sandbox_calls_as_the_seat_it_acts_under(client):
                 AgentSession.agent_handle == team.handles["opus"]
             )
         )
-        session.work_lease = {
-            "device_id": team.device_id,
-            "state": "/opus/state",
-            "status": "ready",
-        }
+        await attach_anew(
+            db,
+            session,
+            {
+                "device_id": team.device_id,
+                "state": "/opus/state",
+                "status": "ready",
+            },
+        )
         await db.commit()
     headers = {
         "x-device-connection-secret": "owner-secret",

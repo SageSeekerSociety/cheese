@@ -105,7 +105,8 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         if home.session_id is None
         else await AgentSessionService(db).by_id(home.session_id)
     )
-    lease = attachments.attachment(row).environment if row is not None else None
+    held = await attachments.attachment_of(db, row.id) if row is not None else None
+    lease = held.environment if held is not None else None
     if lease is not None and lease.get("device_id") != home.device_id:
         lease = None
     if lease is not None and lease_claim.still_preparing(lease):
@@ -147,8 +148,10 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     if await _at_work(lifecycle, row, now):
         await db.commit()
         return False
-    if row is not None and attachments.attachment(row).device_id == home.device_id:
-        attachments.unattach(row)
+    held = await attachments.attachment_of(db, row.id) if row is not None else None
+    if held is not None and held.device_id == home.device_id:
+        assert row is not None
+        await attachments.unattach(db, row.id)
     minutes = int(idle_for.total_seconds() // 60)
     line = await tell_vm_released(db, current, minutes)
     if home.session_id is None:

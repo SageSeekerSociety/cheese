@@ -37,6 +37,7 @@ from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
+from tests.support.environments import environment_of
 
 
 @pytest.fixture
@@ -433,7 +434,7 @@ def test_a_caller_that_left_stops_the_wait_without_taking_the_machine(
 
     async def lease():
         async with case.client.test_request_factory() as db:
-            return (await AgentSessionService(db).by_id(session_id)).work_lease
+            return await environment_of(db, session_id)
 
     assert case.client.portal.call(lease) is None
 

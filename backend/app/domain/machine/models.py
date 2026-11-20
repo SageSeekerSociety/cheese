@@ -387,6 +387,12 @@ class SandboxHome(UuidPk, Timestamps, Base):
     parked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Since when a tool call has asked for the frozen sandbox to be woken
+    # (`HostPool._wake_frozen`): the install thaws it before its executor is
+    # asked anything, and a park makes the request moot. NULL while nobody has.
+    thaw_wanted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Since when the sandbox is being destroyed: its home is being deleted
     # from the host, and the row goes once it is. A tool call meanwhile waits.
     stopped_at: Mapped[datetime | None] = mapped_column(

@@ -48,13 +48,17 @@ async def machine_to_read(
         return None
     resource = str(topic.resource_id or topic.id)
     rows = list(
-        await db.scalars(
-            select(AgentSession).where(AgentSession.conversation_id == conversation_id)
-        )
+        (
+            await db.execute(
+                select(AgentSession, attachments.environment_column()).where(
+                    AgentSession.conversation_id == conversation_id
+                )
+            )
+        ).all()
     )
-    rows.sort(key=lambda row: row.agent_handle != seat)
-    for row in rows:
-        lease = attachments.attachment(row).environment or {}
+    rows.sort(key=lambda found: found[0].agent_handle != seat)
+    for row, environment in rows:
+        lease = environment or {}
         if (
             lease.get("kind") != "device"
             or lease.get("status", "ready") != "ready"

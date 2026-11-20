@@ -48,6 +48,7 @@ from tests.executor_release import running
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.microcloud import OFFERING, FakeMicroCloud
 from tests.support.devices import enrollment_team
+from tests.support.environments import environment_of
 
 LXC = {**OFFERING, "id": 1, "machineTypeName": "standard-lxc"}
 VM = {
@@ -309,7 +310,7 @@ def _idle_for(case, seat, delta: timedelta):
 def _session_lease(case, seat):
     async def go():
         async with case.client.test_request_factory() as db:
-            return (await AgentSessionService(db).by_id(seat.session)).work_lease
+            return await environment_of(db, seat.session)
 
     return case.client.portal.call(go)
 
@@ -944,7 +945,7 @@ def test_every_sandbox_is_marked_as_its_sessions_own(cloud):
 
     async def lease(seat):
         async with case.client.test_request_factory() as db:
-            return (await AgentSessionService(db).by_id(seat.session)).work_lease
+            return await environment_of(db, seat.session)
 
     assert case.client.portal.call(lease, boxed)["own"] is True
     assert case.client.portal.call(lease, on_vm)["own"] is True

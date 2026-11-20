@@ -164,7 +164,8 @@ async def status(db: AsyncSession, task_id: uuid.UUID) -> Status:
     if task_id in _running:
         return Status(machine="preparing", failed=None)
     row = await task_session(db, task_id)
-    lease = (attachments.attachment(row).environment if row is not None else None) or {}
+    held = await attachments.attachment_of(db, row.id) if row is not None else None
+    lease = (held.environment if held is not None else None) or {}
     if still_preparing(lease):
         return Status(machine="preparing", failed=failed)
     if lease.get("kind") == "device" and lease.get("status", "ready") == "ready":

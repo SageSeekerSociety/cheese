@@ -9,7 +9,11 @@ its own table, ``environments``, with what its executor's install left
 running in it (``claim``). A sandbox stays a ``sandbox_homes`` row, which an
 environment on a sandbox names. A conversation points to its default
 environment (``conversation_environments``), and the agent sessions working
-in one now are attached to it (``environment_attachments``). What an agent is
+in one now are attached to it (``environment_attachments``). An environment
+records the choice it was made for (``choice``, the shape of
+``agent_environments.environment``), so a later attacher with the same choice
+finds it. A tool call's request to wake a frozen sandbox is the sandbox's
+(``sandbox_homes.thaw_wanted_at``). What an agent is
 owed about its environment gets a column of its own,
 ``agent_sessions.environment_notice``.
 
@@ -40,6 +44,10 @@ def upgrade() -> None:
         "agent_sessions",
         sa.Column("environment_notice", postgresql.JSONB(), nullable=True),
     )
+    op.add_column(
+        "sandbox_homes",
+        sa.Column("thaw_wanted_at", sa.DateTime(timezone=True), nullable=True),
+    )
     op.create_table(
         "environments",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -50,6 +58,7 @@ def upgrade() -> None:
         sa.Column("sandbox_home_id", sa.Uuid(), nullable=True),
         sa.Column("resource_id", sa.String(36), nullable=False),
         sa.Column("room_resource_id", sa.String(36), nullable=False),
+        sa.Column("choice", postgresql.JSONB(), nullable=False),
         sa.Column(
             "executor",
             postgresql.JSONB(),
@@ -159,4 +168,5 @@ def downgrade() -> None:
     op.drop_table("environment_attachments")
     op.drop_table("conversation_environments")
     op.drop_table("environments")
+    op.drop_column("sandbox_homes", "thaw_wanted_at")
     op.drop_column("agent_sessions", "environment_notice")

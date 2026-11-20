@@ -79,14 +79,12 @@ def test_the_checkout_sweep_of_a_machine_reads_its_leases_not_whole_rows(client)
     (read,) = [
         s
         for s in statements
-        if "FROM agent_sessions JOIN topics" in s and "topics.status !=" in s
+        if "FROM environments JOIN topics" in s and "topics.status !=" in s
     ]
-    assert "agent_sessions.harness" not in read, read
-    # The lease's machine in the spelling `ix_agent_sessions_lease_device`
-    # indexes, and the request's retained leases as the one path, not whole.
-    assert "work_lease ->> 'device_id'" in read, read
-    assert "execution_request ->" in read, read
-    assert "agent_sessions.execution_request," not in read, read
+    # The machine and home of each environment on that machine, compared as
+    # `ix_environments_device_id` indexes it; not what its install left.
+    assert "environments.device_id = " in read, read
+    assert "environments.executor" not in read, read
 
 
 def test_a_takeover_reads_the_columns_place_needs_not_whole_rows(client):
@@ -126,12 +124,12 @@ def test_a_takeover_reads_the_columns_place_needs_not_whole_rows(client):
     # The columns place() needs are read; the ones it does not are not.
     for column in (
         "agent_sessions.runtime_location",
-        "agent_sessions.work_lease",
+        "environments.executor",
         "agent_sessions.resume_token",
     ):
         assert column in read, read
     for column in (
-        "agent_sessions.execution_request",
+        "agent_sessions.environment_notice",
         "agent_sessions.told",
         "agent_sessions.drain_started_at",
     ):

@@ -13,11 +13,11 @@ import pytest
 
 from app.core.storage import S3StorageBackend
 from app.domain.agent import execution
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lease_claim, root_snapshots, session_work
 from app.domain.machine.models import CloudHost, SandboxHome, SandboxRootSnapshot
 from tests.executor_release import running
 from tests.integration.test_switch_pushes_first import _machines, _room
+from tests.support.environments import change_environment, environment_of
 from tests.support.files_bucket import files_bucket
 
 pytestmark = pytest.mark.anyio
@@ -164,8 +164,10 @@ async def test_root_notice_waits_for_a_tool_and_is_delivered_once(client, monkey
     _machines(monkeypatch)
     notice = root_snapshots.NOTICES["image_changed"]
     async with client.test_factory() as db:
-        session = await AgentSessionService(db).by_id(room.session_id)
-        session.work_lease = {**session.work_lease, "root_snapshot_notice": notice}
+        held = await environment_of(db, room.session_id)
+        await change_environment(
+            db, room.session_id, {**(held or {}), "root_snapshot_notice": notice}
+        )
         await db.commit()
 
     async def execute(target, method, params, **kwargs):

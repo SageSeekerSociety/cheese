@@ -491,7 +491,6 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
     the background, so the app somebody opened goes on running."""
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent_session.attachment import THAW_KEY
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.machine import lifecycle
     from app.domain.machine.models import (
@@ -561,12 +560,7 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
         started = await tasks[0]
         async with client.test_request_factory() as db:
             home = await db.get(SandboxHome, home_id)
-            row = await AgentSessionService(db).by_id(session_id)
-            return (
-                started,
-                home.frozen_at,
-                bool((row.execution_request or {}).get(THAW_KEY)),
-            )
+            return (started, home.frozen_at, home.thaw_wanted_at is not None)
 
     started, frozen_at, still_thawing = client.portal.call(_touch)
     assert started is True

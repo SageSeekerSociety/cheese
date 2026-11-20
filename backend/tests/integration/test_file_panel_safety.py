@@ -17,6 +17,7 @@ from app.domain.agent.harness.claude_code.remote_execution.runtime import Execut
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import post_project
+from tests.support.environments import remember_place
 
 BINARY = bytes(range(256)) * 8
 
@@ -57,10 +58,10 @@ def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
         async with client.test_factory() as session:
             room = await session.get(Topic, room_id)
             from app.domain.agent.harness import harness_for
-            from app.domain.agent_session.services import AgentSessionService
 
             # The task's own session took the machine its working copy is on.
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task_id,
                 agent_handle="cheese",
                 environment={"kind": "device"},

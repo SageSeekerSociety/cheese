@@ -13,11 +13,11 @@ import uuid
 import pytest
 
 from app.domain.agent.harness import harness_for
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.memory.ports import ExecutorCall
 from app.domain.memory.redundant import agent_checkout_search
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
+from tests.support.environments import remember_place
 
 pytestmark = pytest.mark.anyio
 
@@ -72,9 +72,9 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
     async with business_db_factory() as session:
         project, room = await _room(session)
         harness = harness_for(project.settings)
-        sessions = AgentSessionService(session)
         generation = str(room.resource_id or room.id)
-        await sessions.remember_place(
+        await remember_place(
+            session,
             conversation_id=room.id,
             agent_handle="cheese",
             harness=harness,
@@ -87,7 +87,8 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
         assert await search(["pnpm"]) == []
         assert asked == []
 
-        await sessions.remember_place(
+        await remember_place(
+            session,
             conversation_id=room.id,
             agent_handle="reviewer",
             harness=harness,
@@ -108,7 +109,8 @@ async def test_a_lease_from_a_previous_generation_is_not_this_turns_hand(
     async with business_db_factory() as session:
         project, room = await _room(session)
         harness = harness_for(project.settings)
-        await AgentSessionService(session).remember_place(
+        await remember_place(
+            session,
             conversation_id=room.id,
             agent_handle="reviewer",
             harness=harness,

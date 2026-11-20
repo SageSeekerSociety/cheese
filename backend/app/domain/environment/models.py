@@ -96,6 +96,11 @@ class Environment(UuidPk, Timestamps, Base):
     # The room generation it belongs to (``holder.generation``): a room's
     # cleanup removes the environments of the generation it was opened for.
     room_resource_id: Mapped[str] = mapped_column(String(36))
+    # The choice it was made for, in the shape of
+    # ``agent_environments.environment``: a sandbox of a spec, or a
+    # self-hosted machine. Kept when its sandbox is destroyed: used again, it
+    # is given a new one of the same choice.
+    choice: Mapped[dict] = mapped_column(JSONB)
     # The executor installed in it, as the install left it: its home and state
     # directories, release, workspace, MCP servers, the URL it is reached at,
     # whether it is a sandbox of its own, and what its install has to say

@@ -17,7 +17,6 @@ from typing import cast
 import pytest
 
 from app.domain.agent import sandbox_image
-from app.domain.agent_session.attachment import LEFT_HOST_KEY
 from app.domain.identity.actor import Actor
 from app.domain.machine import services as machine_services
 from app.domain.machine.models import AiStatus, MachineStatus
@@ -143,12 +142,33 @@ class _Session:
     async def commit(self):
         self.commits += 1
 
-    async def scalar(self, query):
-        return self.row.execution_request
 
-    async def execute(self, query):
-        # The session's attachment, read to see whether a thaw waits.
-        return SimpleNamespace(first=lambda: self.row)
+class _Attachments:
+    """The session's attachment as these cases read and change it: the
+    environment it is attached to, whether its agent is owed that its sandbox
+    was lost, and the host its conversation asked to be moved off."""
+
+    @staticmethod
+    async def attachment_of(db, session_id, *, lock=False):
+        return SimpleNamespace(environment=db.row.environment)
+
+    @staticmethod
+    async def lose(db, row, device_id, *, stopped=None):
+        row.lost = True
+        if (row.environment or {}).get("device_id") == device_id:
+            row.environment = {**row.environment, "status": "released"}
+
+    @staticmethod
+    async def left_host_of(db, conversation_id):
+        return db.row.left_host
+
+    @staticmethod
+    async def placed_off(db, conversation_id):
+        db.row.left_host = None
+
+    @staticmethod
+    async def unchecked(db, session_id):
+        return None
 
 
 class _Hub:
@@ -206,11 +226,13 @@ class _Case:
             active_at=None,
             frozen_at=None,
             parked_at=None,
+            thaw_wanted_at=None,
         )
         self.row = SimpleNamespace(
             conversation_id=self.home.conversation_id,
-            work_lease={"status": "ready", "device_id": host.device_id},
-            execution_request=None,
+            environment={"status": "ready", "device_id": host.device_id},
+            lost=False,
+            left_host=None,
         )
         self.repo = (_NoHomeAtFirstRead if first_read_empty else _Repo)(
             self.home, [host, *others], load=load
@@ -249,6 +271,10 @@ def _no_other_dependencies(monkeypatch):
 
     monkeypatch.setattr(machine_services.holders, "holder_of", _holder_of)
     monkeypatch.setattr(machine_services, "admit_start", _admit_start)
+    for name in ("attachment_of", "lose", "left_host_of", "placed_off", "unchecked"):
+        monkeypatch.setattr(
+            machine_services.attachments, name, getattr(_Attachments, name)
+        )
 
 
 async def test_a_session_is_placed_on_a_host_that_answers():
@@ -268,7 +294,7 @@ async def test_a_session_is_placed_on_a_host_that_answers():
     assert case.home.session_id is None, "the session still holds the old home"
     # And it is told: what it had there is gone, and a new sandbox is what its
     # next tool call runs in.
-    assert case.row.execution_request["sandbox_lost"] is True
+    assert case.row.lost is True
 
 
 async def test_a_session_stays_where_it_is_when_no_other_host_answers():
@@ -285,7 +311,7 @@ async def test_a_session_stays_where_it_is_when_no_other_host_answers():
     assert host.id == quiet.id
     assert case.home.session_id == session_id, "the session left with nowhere to go"
     assert case.repo.placed == []
-    assert case.row.execution_request is None
+    assert case.row.lost is False
 
 
 async def test_a_host_that_still_answers_keeps_the_session():
@@ -352,7 +378,7 @@ async def test_a_host_that_is_already_reconnecting_keeps_the_session():
     ids=["lease-on-another-machine", "lease-not-ready"],
 )
 async def test_only_a_sandbox_that_was_here_is_declared_lost(lease):
-    """``LOST_KEY`` is what tells the session that what it had on this host is
+    """The lost notice is what tells the session that what it had on this host is
     gone, and its next call then says so to the room. A move is still a move —
     but a session whose live sandbox was never on this host is not told it lost
     one."""
@@ -360,13 +386,13 @@ async def test_only_a_sandbox_that_was_here_is_declared_lost(lease):
     quiet = _host("dev-quiet")
     other = _host("dev-other")
     case = _Case(quiet, session_id, others=[other])
-    case.row.work_lease = lease
+    case.row.environment = lease
 
     moved = await case.leave_unusable(session_id, quiet.id, _Hub({"dev-other"}))
 
     assert moved is True
     assert case.home.session_id is None
-    assert case.row.execution_request is None
+    assert case.row.lost is False
 
 
 async def test_a_host_that_stopped_answering_is_left_the_second_time_too():
@@ -385,7 +411,7 @@ async def test_a_host_that_stopped_answering_is_left_the_second_time_too():
 
     assert host.id == answering.id, "the session was left on a host that is not there"
     assert case.home.session_id is None, "the session still holds the old home"
-    assert case.row.execution_request["sandbox_lost"] is True
+    assert case.row.lost is True
 
 
 async def test_a_session_home_not_on_that_host_is_not_moved_by_it():
@@ -417,13 +443,13 @@ async def test_a_sandbox_asked_for_again_is_not_placed_back_on_the_host_it_left(
     case = _Case(left, session_id, others=[other])
     case.repo.home = None  # the session left it; nothing of it is there now
     case.repo.load = {left.id: 1, other.id: 0}
-    case.row.execution_request = {LEFT_HOST_KEY: str(left.id)}
+    case.row.left_host = str(left.id)
 
     host = await case.place(session_id, _Hub({"dev-left", "dev-other"}))
 
     assert host.id == other.id, "the session was placed back on the host it left"
     assert case.repo.placed and case.repo.placed[0][0] == other.id
-    assert LEFT_HOST_KEY not in case.row.execution_request, (
+    assert case.row.left_host is None, (
         "the host it left is still remembered after it has a sandbox"
     )
 
@@ -438,9 +464,9 @@ async def test_a_session_goes_back_to_the_host_it_left_when_no_other_has_room():
     case = _Case(left, session_id, others=[full])
     case.repo.home = None
     case.repo.load = {left.id: 1, full.id: 2}  # `full` has none to give
-    case.row.execution_request = {LEFT_HOST_KEY: str(left.id)}
+    case.row.left_host = str(left.id)
 
     host = await case.place(session_id, _Hub({"dev-left", "dev-full"}))
 
     assert host.id == left.id, "the session was left with no sandbox at all"
-    assert LEFT_HOST_KEY not in case.row.execution_request
+    assert case.row.left_host is None

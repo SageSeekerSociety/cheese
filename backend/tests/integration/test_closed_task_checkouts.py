@@ -19,6 +19,7 @@ import pytest
 
 from app.domain.agent import device_hub as hub_module
 from app.domain.agent.checkout_sweep import sweep
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.checkouts import remove_closed_checkouts
@@ -26,6 +27,7 @@ from app.domain.room_task.closing import close_task
 from app.domain.room_task.lock_order import lock_tasks_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.environments import give_environment
 
 pytestmark = pytest.mark.anyio
 
@@ -143,11 +145,11 @@ async def _room(client, tmp_path, *, retained: bool = False):
         session = await AgentSessionService(db).ensure(
             topic_id, agent.username, harness="claude-code"
         )
-        session.work_lease = {**leases["a"], "status": "ready"}
-        session.execution_request = {
-            "generation": str(uuid.uuid4()),
-            "retained_leases": [leases["b"]] if retained else [],
-        }
+        if retained:
+            # It worked on b first and left it there.
+            await give_environment(db, session, {**leases["b"], "status": "ready"})
+            await attachments.detach(db, session, keep=True)
+        await give_environment(db, session, {**leases["a"], "status": "ready"})
         await db.commit()
     return SimpleNamespace(project_id=project_id, topic_id=topic_id, machines=machines)
 
